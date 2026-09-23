@@ -1,0 +1,91 @@
+[
+ {
+  "id": "0oa1abc",
+  "name": "oidc_client",
+  "label": "Otter.ai Meeting Notes",
+  "status": "ACTIVE",
+  "signOnMode": "OPENID_CONNECT",
+  "created": "2025-03-01T10:00:00.000Z",
+  "lastUpdated": "2025-08-01T10:00:00.000Z",
+  "settings": {
+   "oauthClient": {
+    "application_type": "web",
+    "grant_types": [
+     "authorization_code",
+     "refresh_token"
+    ],
+    "redirect_uris": [
+     "https://otter.ai/oauth/callback"
+    ]
+   }
+  },
+  "credentials": {
+   "oauthClient": {
+    "client_id": "otter-client-1",
+    "token_endpoint_auth_method": "client_secret_basic"
+   }
+  },
+  "_grants": [
+   {
+    "scopeId": "okta.users.read"
+   }
+  ],
+  "_tokens": [
+   {
+    "userId": "u1",
+    "scopes": [
+     "openid",
+     "email",
+     "okta.users.read"
+    ]
+   },
+   {
+    "userId": "u2",
+    "scopes": [
+     "openid",
+     "email"
+    ]
+   }
+  ]
+ },
+ {
+  "id": "0oa2svc",
+  "name": "oidc_client",
+  "label": "svc-agent-orchestrator",
+  "status": "ACTIVE",
+  "signOnMode": "OPENID_CONNECT",
+  "created": "2025-06-11T10:00:00.000Z",
+  "lastUpdated": "2025-09-01T10:00:00.000Z",
+  "settings": {
+   "oauthClient": {
+    "application_type": "service",
+    "grant_types": [
+     "client_credentials",
+     "urn:ietf:params:oauth:grant-type:token-exchange"
+    ]
+   }
+  },
+  "credentials": {
+   "oauthClient": {
+    "client_id": "0oa2svc-client",
+    "token_endpoint_auth_method": "private_key_jwt"
+   }
+  },
+  "_grants": [
+   {
+    "scopeId": "okta.users.manage"
+   },
+   {
+    "scopeId": "okta.groups.manage"
+   }
+  ],
+  "_tokens": []
+ },
+ {
+  "id": "0oa3bm",
+  "name": "bookmark",
+  "label": "Intranet wiki",
+  "status": "ACTIVE",
+  "signOnMode": "BOOKMARK"
+ }
+]

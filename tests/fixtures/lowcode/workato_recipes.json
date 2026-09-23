@@ -1,0 +1,37 @@
+{
+ "items": [
+  {
+   "id": 1,
+   "name": "Classify tickets with GenAI",
+   "running": true,
+   "author_name": "nina",
+   "created_at": "2025-02-02T00:00:00Z",
+   "last_run_at": "2025-09-10T00:00:00Z",
+   "config": [
+    {
+     "keyword": "application",
+     "provider": "zendesk"
+    },
+    {
+     "keyword": "application",
+     "provider": "workato_genai"
+    }
+   ],
+   "code": "{\"keyword\": \"trigger\", \"provider\": \"zendesk\", \"name\": \"new_ticket\", \"block\": [{\"provider\": \"workato_genai\", \"name\": \"classify\"}]}"
+  },
+  {
+   "id": 2,
+   "name": "Sync employees",
+   "running": true,
+   "config": [
+    {
+     "provider": "workday"
+    },
+    {
+     "provider": "okta"
+    }
+   ],
+   "code": "{\"keyword\": \"trigger\", \"provider\": \"workday\"}"
+  }
+ ]
+}

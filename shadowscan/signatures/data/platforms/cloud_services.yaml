@@ -1,0 +1,199 @@
+# Managed cloud agent services. These are what the cloud connectors enumerate
+# directly; the signatures let IaC, SDK usage, IAM permissions and log hosts
+# that reference them be attributed on other surfaces.
+signatures:
+  - id: cloud.aws-bedrock-agents
+    name: Amazon Bedrock Agents / AgentCore / Flows
+    category: cloud-service
+    vendor: Amazon Web Services
+    homepage: https://aws.amazon.com/bedrock/agents/
+    capabilities: [tool-use, memory]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [bedrock-agentcore, bedrock-agentcore-starter-toolkit, amazon-bedrock-agentcore, agentcore, aws-bedrock-agents]
+        prefixes: [bedrock-agentcore]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: ["@aws-sdk/client-bedrock-agent-runtime", "@aws-sdk/client-bedrock-agent", "@aws-sdk/client-bedrock-agentcore", "@aws-sdk/client-bedrock-agentcore-control", "@cdklabs/generative-ai-cdk-constructs"]
+        weight: 0.95
+      - type: dependency
+        ecosystem: pypi
+        names: ["cdklabs.generative-ai-cdk-constructs"]
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+bedrock_agentcore\b']
+        weight: 0.95
+      - type: code
+        patterns: ['\.client\(\s*["'']bedrock-agent(?:-runtime)?["'']', '\.client\(\s*["'']bedrock-agentcore(?:-control)?["'']', '\binvoke_agent\s*\(', '\bInvokeAgentCommand\b', '\bInvokeAgentRuntimeCommand\b', '\binvoke_agent_runtime\s*\(', '\binvoke_inline_agent\s*\(', '\binvoke_flow\s*\(', '\bBedrockAgentCoreApp\s*\(', '\bcreate_agent\s*\(\s*agentName\s*=', '\bcreate_agent_runtime\s*\(', '\bcreate_agent_action_group\s*\(', '\bBedrockAgentRuntimeClient\s*\(', '\bAgentCoreMemory', '\bagentcore\s+(?:configure|launch|deploy)\b']
+        weight: 0.9
+      - type: iac
+        values: [aws_bedrockagent_agent, aws_bedrockagent_agent_alias, aws_bedrockagent_agent_action_group, aws_bedrockagent_agent_knowledge_base_association, aws_bedrockagent_agent_collaborator, aws_bedrockagent_knowledge_base, aws_bedrockagent_data_source, aws_bedrockagent_flow, aws_bedrockagent_prompt, aws_bedrockagentcore_agent_runtime, aws_bedrockagentcore_agent_runtime_endpoint, aws_bedrockagentcore_gateway, aws_bedrockagentcore_gateway_target, aws_bedrockagentcore_memory, aws_bedrockagentcore_browser, aws_bedrockagentcore_code_interpreter, aws_bedrockagentcore_workload_identity, "AWS::Bedrock::Agent", "AWS::Bedrock::AgentAlias", "AWS::Bedrock::KnowledgeBase", "AWS::Bedrock::DataSource", "AWS::Bedrock::Flow", "AWS::Bedrock::FlowAlias", "AWS::Bedrock::Prompt", "AWS::BedrockAgentCore::Runtime", "AWS::BedrockAgentCore::RuntimeEndpoint", "AWS::BedrockAgentCore::Gateway", "AWS::BedrockAgentCore::GatewayTarget", "AWS::BedrockAgentCore::Memory", "AWS::BedrockAgentCore::CodeInterpreterCustom", "AWS::BedrockAgentCore::BrowserCustom", "AWS::BedrockAgentCore::WorkloadIdentity"]
+        weight: 0.97
+      - type: scope
+        values: ["bedrock:InvokeAgent", "bedrock:InvokeInlineAgent", "bedrock:InvokeFlow", "bedrock:CreateAgent", "bedrock:UpdateAgent", "bedrock:PrepareAgent", "bedrock:CreateAgentActionGroup", "bedrock:CreateAgentAlias", "bedrock:CreateKnowledgeBase", "bedrock:CreateFlow", "bedrock-agentcore:*", "bedrock-agentcore:InvokeAgentRuntime", "bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:InvokeGateway", "bedrock-agentcore:InvokeCodeInterpreter", "bedrock-agentcore:StartBrowserSession", "bedrock-agentcore:GetWorkloadAccessToken", "bedrock-agentcore:GetResourceOauth2Token"]
+        weight: 0.9
+      - type: domain
+        values: ["re:^bedrock-agent(?:-runtime)?(?:-fips)?\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^bedrock-agentcore(?:-control)?\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^[a-z0-9-]+\\.gateway\\.bedrock-agentcore\\.[a-z0-9-]+\\.amazonaws\\.com$"]
+        weight: 0.95
+      - type: name
+        patterns: ['(?i)\bbedrock\b.*\bagent\b', '(?i)\bagentcore\b', '(?i)AmazonBedrockExecutionRoleForAgents', '(?i)AmazonBedrockAgentCore']
+        weight: 0.8
+
+  - id: cloud.aws-other-ai
+    name: Amazon Q Business / Lex / SageMaker AI / Amazon Connect AI / Kendra
+    category: cloud-service
+    vendor: Amazon Web Services
+    signals:
+      - type: code
+        patterns: ['\.client\(\s*["'']qbusiness["'']', '\.client\(\s*["'']qapps["'']', '\.client\(\s*["'']lexv2-(?:runtime|models)["'']', '\.client\(\s*["'']sagemaker-runtime["'']', '\binvoke_endpoint(?:_with_response_stream)?\s*\(', '\bchat_sync\s*\(', '\brecognize_text\s*\(', '\bQBusinessClient\b', '\bLexRuntimeV2Client\b', '\bSageMakerRuntimeClient\b']
+        weight: 0.8
+      - type: iac
+        values: [aws_qbusiness_application, aws_qbusiness_index, aws_qbusiness_retriever, aws_qbusiness_web_experience, aws_lexv2models_bot, aws_lexv2models_bot_version, aws_lexv2models_intent, aws_lex_bot, aws_sagemaker_endpoint, aws_sagemaker_endpoint_configuration, aws_sagemaker_model, aws_kendra_index, aws_connect_instance, "AWS::QBusiness::Application", "AWS::Lex::Bot", "AWS::SageMaker::Endpoint", "AWS::SageMaker::Model", "AWS::Kendra::Index", "AWS::Bedrock::DataAutomationProject"]
+        weight: 0.85
+      - type: scope
+        values: ["qbusiness:*", "qbusiness:ChatSync", "qbusiness:Chat", "qapps:*", "lex:*", "lex:RecognizeText", "lex:StartConversation", "sagemaker:InvokeEndpoint", "sagemaker:InvokeEndpointWithResponseStream", "sagemaker:InvokeEndpointAsync", "kendra:Query", "kendra:Retrieve", "q:*", "q:StartConversation", "q:SendMessage"]
+        weight: 0.7
+      - type: domain
+        values: ["re:^qbusiness\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^runtime-v2-lex\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^runtime\\.sagemaker\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^q\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^codewhisperer\\.[a-z0-9-]+\\.amazonaws\\.com$"]
+        weight: 0.9
+      - type: image
+        patterns: ['huggingface-pytorch-tgi-inference', 'djl-inference', 'huggingface-pytorch-inference', 'pytorch-inference', 'sagemaker-tritonserver', 'lmi', 'vllm']
+        weight: 0.6
+
+  - id: cloud.gcp-vertex-agent-engine
+    name: Vertex AI Agent Engine / Agent Builder / Agentspace
+    category: cloud-service
+    vendor: Google Cloud
+    homepage: https://cloud.google.com/vertex-ai/generative-ai/docs/agent-engine/overview
+    capabilities: [tool-use, memory]
+    agent_indicator: true
+    signals:
+      - type: code
+        patterns: ['\bagent_engines\.(?:create|get|update|list)\s*\(', '\bvertexai\.agent_engines\b', '\breasoning_engines\.(?:ReasoningEngine|LangchainAgent|LanggraphAgent)\b', '\bReasoningEngine\s*\(', '\b(?:LangchainAgent|LanggraphAgent|AG2Agent|AdkApp|A2aAgent|LlamaIndexQueryPipelineAgent)\s*\(', '/reasoningEngines(?:/[^"''/\s]+)?', '\bagent_engines\.AgentEngine\b', '\bAgentEngine\s*\(']
+        weight: 0.9
+      - type: dependency
+        ecosystem: pypi
+        names: [google-cloud-discoveryengine, google-cloud-dialogflow-cx, google-cloud-dialogflow, agent-starter-pack]
+        weight: 0.85
+      - type: domain
+        values: [discoveryengine.googleapis.com, dialogflow.googleapis.com, "re:^[a-z0-9-]+-dialogflow\\.googleapis\\.com$", "re:^[a-z0-9-]+-discoveryengine\\.googleapis\\.com$", agentspace.google.com]
+        weight: 0.9
+      - type: iac
+        values: [google_dialogflow_cx_agent, google_dialogflow_cx_flow, google_dialogflow_cx_intent, google_dialogflow_cx_webhook, google_dialogflow_cx_page, google_dialogflow_cx_generative_settings, google_dialogflow_cx_tool, google_dialogflow_cx_playbook, google_dialogflow_agent, google_dialogflow_intent, google_discovery_engine_data_store, google_discovery_engine_chat_engine, google_discovery_engine_search_engine, google_discovery_engine_target_site, google_vertex_ai_reasoning_engine, google_vertex_ai_rag_engine_config]
+        weight: 0.97
+      - type: scope
+        values: ["roles/dialogflow.admin", "roles/dialogflow.client", "roles/dialogflow.consoleAgentEditor", "roles/dialogflow.serviceAgent", "roles/discoveryengine.admin", "roles/discoveryengine.editor", "roles/discoveryengine.user", "roles/discoveryengine.viewer", "roles/aiplatform.reasoningEngineServiceAgent", "aiplatform.reasoningEngines.query", "aiplatform.reasoningEngines.create", "dialogflow.sessions.detectIntent", "discoveryengine.conversations.converse", "discoveryengine.answers.get", "https://www.googleapis.com/auth/dialogflow"]
+        weight: 0.9
+      - type: name
+        patterns: ['(?i)\breasoning[- ]?engine\b', '(?i)\bagent[- ]?engine\b', '(?i)\bdialogflow\b', '(?i)\bagentspace\b', '(?i)\bagent builder\b']
+        weight: 0.75
+
+  - id: cloud.azure-ai-foundry-agents
+    name: Azure AI Foundry Agent Service
+    category: cloud-service
+    vendor: Microsoft
+    homepage: https://learn.microsoft.com/azure/ai-foundry/agents/
+    capabilities: [tool-use, memory]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [azure-ai-projects, azure-ai-agents, azure-ai-assistants]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: ["@azure/ai-projects", "@azure/ai-agents"]
+        weight: 0.95
+      - type: dependency
+        ecosystem: nuget
+        names: [Azure.AI.Projects, Azure.AI.Agents.Persistent, Azure.AI.Agents]
+        weight: 0.95
+      - type: dependency
+        ecosystem: maven
+        names: ["com.azure:azure-ai-projects", "com.azure:azure-ai-agents-persistent"]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+azure\.ai\.(?:projects|agents)\b']
+        weight: 0.95
+      - type: code
+        patterns: ['\bAIProjectClient\s*\(', '\bAgentsClient\s*\(', '\bPersistentAgentsClient\s*\(', '\.agents\.create_agent\s*\(', '\bcreate_agent\s*\(\s*model\s*=', '\bAzureAIAgent\s*\(', '\bAzureAIAgentClient\s*\(', '\bAgentsClient\.Administration\.CreateAgent', '/agents\?api-version=', '\bBingGroundingTool\s*\(', '\bAzureFunctionTool\s*\(', '\bOpenApiTool\s*\(']
+        weight: 0.9
+      - type: code
+        patterns: ['\bCodeInterpreterTool\s*\(']
+        weight: 0.5
+        capabilities: [code-exec]
+      - type: env
+        names: [AZURE_AI_PROJECT_ENDPOINT, PROJECT_ENDPOINT, AZURE_AI_AGENT_PROJECT_CONNECTION_STRING, AZURE_AI_PROJECT_CONNECTION_STRING, AZURE_AI_AGENT_ENDPOINT, AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME, AZURE_AI_FOUNDRY_PROJECT_ENDPOINT, AZURE_EXISTING_AIPROJECT_ENDPOINT]
+        weight: 0.8
+      - type: domain
+        values: ["*.services.ai.azure.com", "*.api.azureml.ms", "ai.azure.com"]
+        weight: 0.85
+      - type: iac
+        values: [azurerm_ai_foundry, azurerm_ai_foundry_project, azurerm_machine_learning_workspace, "Microsoft.MachineLearningServices/workspaces", "Microsoft.CognitiveServices/accounts/projects", "Microsoft.CognitiveServices/accounts/projects/connections", "Microsoft.CognitiveServices/accounts/capabilityHosts", "Microsoft.CognitiveServices/accounts/projects/capabilityHosts"]
+        weight: 0.85
+      - type: scope
+        values: ["Azure AI Developer", "Azure AI Project Manager", "Azure AI Account Owner", "Azure AI Administrator", "64702f94-c99e-4e88-8e0b-ba3389c66a89", "eadc314b-1a2d-4efa-be10-5d325db5065e", "e503ece1-11d0-4e8e-8e2c-7a6c3bf38815", "b78c5d69-af96-48a3-bf8d-a8b4d589de94"]
+        weight: 0.8
+      - type: name
+        patterns: ['(?i)\bai foundry\b', '(?i)\bazure ai agent', '(?i)\bai studio\b', '(?i)\bfoundry\b']
+        weight: 0.6
+
+  - id: cloud.azure-logic-apps-ai
+    name: Azure Logic Apps with AI connectors
+    category: cloud-service
+    vendor: Microsoft
+    description: Logic Apps workflows using Azure OpenAI / OpenAI / AI Search / Document Intelligence connectors or agent loops.
+    agent_indicator: true
+    signals:
+      - type: code
+        patterns: ['managedApis/(?:azureopenai|openai|azureaisearch|azureaidocumentintelligence|azureopenaiassistants|cognitiveservicestextanalytics|azureai)\b', '"type"\s*:\s*"Agent"\s*,\s*"inputs"', '"agentModelType"\s*:', '"connectionName"\s*:\s*"azureopenai', '"serviceProviderId"\s*:\s*"/serviceProviders/(?:openai|azureopenai|azureaisearch)"']
+        weight: 0.9
+      - type: iac
+        values: [azurerm_logic_app_workflow, azurerm_logic_app_standard, "Microsoft.Logic/workflows"]
+        weight: 0.3
+
+  - id: cloud.oci-generative-ai-agents
+    name: OCI Generative AI Agents / Digital Assistant
+    category: cloud-service
+    vendor: Oracle
+    homepage: https://docs.oracle.com/iaas/Content/generative-ai-agents/home.htm
+    capabilities: [tool-use, rag]
+    agent_indicator: true
+    signals:
+      - type: code
+        patterns: ['\bGenerativeAiAgentClient\s*\(', '\bGenerativeAiAgentRuntimeClient\s*\(', '\boci\.generative_ai_agent(?:_runtime)?\b', '\bcreate_agent_endpoint\s*\(', '\bcreate_agent\s*\(\s*create_agent_details', '\bOciGenAiAgent', '\boci\.oda\b', '\bOdaClient\s*\(', '\bagent-runtime\.generativeai\.']
+        weight: 0.9
+      - type: dependency
+        ecosystem: pypi
+        names: [oci-generative-ai-agents, langchain-oci-generative-ai-agents]
+        weight: 0.9
+      - type: domain
+        values: ["re:^agent-runtime\\.generativeai\\.[a-z0-9-]+\\.oci\\.oraclecloud\\.com$", "re:^agent\\.generativeai\\.[a-z0-9-]+\\.oci\\.oraclecloud\\.com$", "re:^oda\\.[a-z0-9-]+\\.oci\\.oraclecloud\\.com$", "re:.*\\.data\\.digitalassistant\\.oci\\.oraclecloud\\.com$"]
+        weight: 0.95
+      - type: iac
+        values: [oci_generative_ai_agent_agent, oci_generative_ai_agent_agent_endpoint, oci_generative_ai_agent_knowledge_base, oci_generative_ai_agent_data_source, oci_generative_ai_agent_tool, oci_generative_ai_agent_data_ingestion_job, oci_oda_oda_instance, oci_oda_oda_private_endpoint]
+        weight: 0.97
+      - type: scope
+        values: ["generative-ai-agent-family", "generative-ai-agent", "generative-ai-agent-endpoint", "generative-ai-agent-knowledge-base", "generative-ai-agent-session", "generative-ai-agent-tool", "oda-family", "oda-instances"]
+        weight: 0.9
+      - type: name
+        patterns: ['(?i)\bgenerative ai agents?\b', '(?i)\bdigital assistant\b', '(?i)\boda\b']
+        weight: 0.6
+
+  - id: cloud.kubernetes-agent-workloads
+    name: Agent workloads on Kubernetes / containers
+    category: cloud-service
+    vendor: null
+    description: Container images and Helm charts for agent platforms, gateways and self-hosted model servers.
+    signals:
+      - type: code
+        patterns: ['^\s*kind:\s*(?:Deployment|StatefulSet|Job|CronJob|Pod)\s*$']
+        weight: 0.05
+      - type: image
+        patterns: ['kagent-dev/kagent', 'ghcr\.io/kagent-dev', 'agentgateway/agentgateway', 'kgateway', 'ghcr\.io/nvidia/nemo', 'nvcr\.io/nvidia/nemo', 'ghcr\.io/kubeflow/', 'ray-project/ray', 'triton', 'text-generation-inference', 'localai/localai', 'lmstudio', 'ghcr\.io/ggerganov/llama\.cpp', 'ghcr\.io/ggml-org/llama\.cpp', 'ghcr\.io/mudler/localai', 'ghcr\.io/open-webui', 'ghcr\.io/coollabsio', 'anythingllm', 'langgenius', 'flowiseai', 'langflowai', 'n8nio', 'berriai/litellm', 'portkeyai']
+        weight: 0.85

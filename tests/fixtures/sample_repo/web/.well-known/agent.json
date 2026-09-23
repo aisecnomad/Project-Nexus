@@ -1,0 +1,3 @@
+{"name": "Acme Procurement Agent", "description": "Negotiates with suppliers", "url": "https://agents.acme.com/procurement",
+ "version": "1.0.0", "protocolVersion": "0.3.0", "capabilities": {"streaming": true},
+ "skills": [{"id": "quote", "name": "Request quote"}, {"id": "po", "name": "Issue purchase order"}]}

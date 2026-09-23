@@ -1,0 +1,56 @@
+[
+ {
+  "_kind": "teamsApp",
+  "id": "ta1",
+  "externalId": "ext-1",
+  "displayName": "Contoso Copilot Agent",
+  "distributionMethod": "organization",
+  "appDefinitions": [
+   {
+    "version": "1.2.0",
+    "publishingState": "published",
+    "description": "Declarative agent for HR questions",
+    "createdBy": {
+     "user": {
+      "displayName": "Quinn"
+     }
+    },
+    "bot": {
+     "id": "bot-guid-1"
+    },
+    "authorization": {
+     "requiredPermissionSet": {
+      "resourceSpecificPermissions": [
+       {
+        "permissionValue": "ChannelMessage.Read.Group",
+        "permissionType": "application"
+       }
+      ]
+     }
+    }
+   }
+  ]
+ },
+ {
+  "_kind": "installedApp",
+  "_team": "Engineering",
+  "teamsApp": {
+   "id": "ta1"
+  }
+ },
+ {
+  "_kind": "installedApp",
+  "_team": "Sales",
+  "teamsApp": {
+   "id": "ta2",
+   "displayName": "Otter.ai",
+   "distributionMethod": "store"
+  },
+  "teamsAppDefinition": {
+   "version": "3.0",
+   "bot": {
+    "id": "bot-guid-2"
+   }
+  }
+ }
+]

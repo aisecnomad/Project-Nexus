@@ -1,0 +1,109 @@
+# Vendor-neutral heuristics: idioms that indicate agent behaviour or risky
+# capabilities regardless of framework. Weights are deliberately modest; they
+# add up with framework / provider matches through the noisy-OR combination.
+signatures:
+  - id: heuristic.tool-use
+    name: Tool / function registration idioms
+    category: heuristic
+    vendor: null
+    capabilities: [tool-use]
+    signals:
+      - type: code
+        patterns: ['^\s*@(?:[a-z_]+\.)?tool\b', '@function_tool\b', '@kernel_function\b', '@mcp\.tool\b', '\bStructuredTool\b', '\bTool\s*\(\s*name\s*=', '\btools\s*=\s*\[\s*[A-Za-z_]', '\btools\s*:\s*\[\s*\{', '\bFunctionDeclaration\s*\(', '\bFunctionTool\s*\(', '\bToolSet\s*\(', '\bregister_tool\s*\(', '\bregisterTool\s*\(', '\bdefineTool\s*\(', '\btool_registry\b', '\bavailable_tools\b']
+        weight: 0.35
+        agent_indicator: true
+
+  - id: heuristic.system-prompt
+    name: Agent persona / system prompt
+    category: heuristic
+    vendor: null
+    signals:
+      - type: code
+        patterns: ['(?i)you are (?:a|an) (?:helpful |autonomous |expert |senior |friendly |specialised |specialized )?(?:ai )?(?:assistant|agent|bot|copilot)', '(?i)you are an? [a-z ]{0,40}\bagent\b', '\bSYSTEM_PROMPT\s*=', '\bsystem_prompt\s*[=:]', '\bsystemPrompt\s*[=:]', '"role"\s*:\s*"system"', 'role\s*=\s*["'']system["'']', '\binstructions\s*=\s*(?:f?"""|["''])', '(?i)\bact as (?:a|an) [a-z ]{0,30}(?:assistant|agent|expert)\b']
+        weight: 0.3
+
+  - id: heuristic.agent-loop
+    name: Agentic loop / planning idioms
+    category: heuristic
+    vendor: null
+    capabilities: [autonomous]
+    signals:
+      - type: code
+        patterns: ['\bmax_iterations\s*=', '\bmax_steps\s*=', '\bmaxSteps\s*:', '\bmax_turns\s*=', '\bmaxTurns\s*:', '\bmax_tool_calls\b', '\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\bReAct\b', '\breact_agent\b', '\bscratchpad\b', '\bwhile\s+(?:True|not\s+done|not\s+finished|iterations?\s*<)', '\bfor\s+_?\s*(?:step|iteration|turn)\s+in\s+range\(', '\bstop_reason\s*==\s*["'']tool_use["'']', '\bfinish_reason\s*==\s*["'']tool_calls["'']', '\bthought\s*[:=]\s*', '(?i)\bchain[- ]of[- ]thought\b', '\bhandoff\b', '\bsubagent\b', '\bsub_agents?\b', '\bsupervisor\b']
+        weight: 0.35
+        agent_indicator: true
+
+  - id: heuristic.code-execution
+    name: Model-driven code / shell execution
+    category: heuristic
+    vendor: null
+    capabilities: [code-exec]
+    risk_notes: ["Executing model-generated code or commands enables full compromise if prompts are injected."]
+    signals:
+      - type: code
+        patterns: ['\bcode_interpreter\b', '\bCodeInterpreter(?:Tool)?\b', '"type"\s*:\s*"code_interpreter"', '\bPythonREPL\b', '\bexec\(\s*(?:code|response|completion|generated|llm_output|output)\b', '\beval\(\s*(?:code|response|completion|generated|llm_output)\b', '\bsubprocess\.(?:run|Popen|call|check_output)\(\s*(?:cmd|command|response|generated|llm|tool)', '\bos\.system\(\s*(?:cmd|command|response|generated|llm|tool)', '\bShellTool\b', '\bBashTool\b', '\bTerminalTool\b', '\bexecute_(?:shell|bash|command|code|python)\b', '\brun_(?:shell|bash|command|code|python)_?(?:tool|command)?\b', '\bchild_process\b[^\n]*(?:tool|agent|llm)', '\bexecSync\(\s*(?:cmd|command|tool)', '\bcomputer[-_ ]use\b', '\bComputerTool\b', '\bdocker\.containers\.run\(', '\bsandbox\.(?:run_code|exec|commands\.run|process\.start)\(', '\bE2BExecutor\b', '\bLocalPythonExecutor\b']
+        weight: 0.45
+        agent_indicator: true
+
+  - id: heuristic.browsing
+    name: Web browsing / navigation tools
+    category: heuristic
+    vendor: null
+    capabilities: [browsing]
+    signals:
+      - type: code
+        patterns: ['\bBrowserTool\b', '\bbrowser_(?:navigate|click|type|screenshot|use)\b', '\bPlaywrightBrowserToolkit\b', '\bplaywright\b[^\n]*\b(?:agent|llm|tool)\b', '\bpuppeteer\b[^\n]*\b(?:agent|llm|tool)\b', '\bselenium\b[^\n]*\b(?:agent|llm|tool)\b', '\bwebdriver\b[^\n]*\bagent\b', '\bSeleniumURLLoader\b', '\bWebBaseLoader\b', '\bscrape_(?:website|page|url)\b', '\bfetch_(?:url|page|webpage)_?(?:tool)?\b', '\bvisit_webpage\b', '\bDuckDuckGoSearch', '\bWebSearchTool\b', '\bweb_search\b', '\bgoogle_search\b']
+        weight: 0.35
+        agent_indicator: true
+
+  - id: heuristic.memory
+    name: Persistent memory / state
+    category: heuristic
+    vendor: null
+    capabilities: [memory]
+    signals:
+      - type: code
+        patterns: ['\bConversation(?:Buffer|Summary|Entity|Token|BufferWindow|KG)Memory\b', '\bMemorySaver\b', '\bcheckpointer\s*=', '\bthread_id\b', '\blong_term_memory\b', '\bmemory\s*=\s*(?:Memory|[A-Z][A-Za-z]+Memory)\s*\(', '\bchat_history\b', '\bconversation_history\b', '\bsession_memory\b', '\bVectorStoreRetrieverMemory\b', '\bRedisChatMessageHistory\b', '\bPostgresChatMessageHistory\b', '\bmessage_history\b', '\bagent_memory\b']
+        weight: 0.25
+
+  - id: heuristic.autonomy
+    name: Human-in-the-loop disabled / auto-approve
+    category: heuristic
+    vendor: null
+    capabilities: [autonomous]
+    risk_notes: ["Approval gates are disabled; actions execute without human review."]
+    signals:
+      - type: code
+        patterns: ['\bhuman_in_the_loop\s*=\s*False\b', '\bhumanInTheLoop\s*:\s*false\b', '\brequire_approval\s*=\s*False\b', '\brequireApproval\s*:\s*false\b', '\bauto[_-]?approve\b', '\bauto_?accept\b', '\bautoApprove\b', '\balwaysAllow\b', '\ballow_all\s*=\s*True', '--dangerously-skip-permissions', '--dangerously-bypass-approvals-and-sandbox', '--yolo\b', '\byolo_mode\b', '(?i)\bYOLO\b', '\bhuman_input_mode\s*=\s*["'']NEVER["'']', '\binterrupt_before\s*=\s*\[\s*\]', '\bconfirm\s*=\s*False\b', '\bdry_run\s*=\s*False\b', '\bskip_confirmation\b', '\bno_confirm\b', '\bunattended\b', '\bfull[-_]auto\b', '\bapproval_policy\s*=\s*"never"', '\bapprovalMode\s*:\s*["'']yolo["'']', '\bpermissionMode\s*:\s*["'']bypassPermissions["'']', '\bpermission_mode\s*=\s*["'']bypassPermissions["'']', '\btrust-all-tools\b']
+        weight: 0.45
+
+  - id: heuristic.scheduled-agent
+    name: Scheduled / event-driven execution
+    category: heuristic
+    vendor: null
+    description: Agent code wired to cron, queues or webhooks (runs without a human present).
+    capabilities: [autonomous]
+    signals:
+      - type: code
+        patterns: ['^\s*(?:cron|schedule):\s*["'']?[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+', '\bschedule\.every\(', '\b@(?:app\.)?(?:cron|scheduled|periodic_task|repeat_every)\b', '\bCronTrigger\b', '\bAPScheduler\b', '\bBackgroundScheduler\b', '\bcelery\.(?:beat|task)\b', '\b@celery\.task\b', '\baws_events\.Rule\b', '\bschedule_expression\s*=', '\bScheduleExpression\b', '\bcron\(\s*[0-9*]', '\brate\(\s*\d+\s+(?:minute|hour|day)s?\s*\)', 'triggers:\s*\n\s*-?\s*schedule', '\bon:\s*\n\s*schedule:', '\bsqs_trigger\b', '\bEventBridge\b', '\bPubSub\b[^\n]*\bagent\b', '\b@functions_framework\b', '\btemporalio\b', '\bworkflow\.run\b']
+        weight: 0.2
+
+  - id: heuristic.llm-env-names
+    name: Generic LLM / agent environment variables
+    category: heuristic
+    vendor: null
+    signals:
+      - type: env
+        patterns: ['^(?:LLM|AI|AGENT|MCP|GENAI|GEN_AI|CHATBOT|ASSISTANT|COPILOT|RAG)_[A-Z0-9_]+$', '^[A-Z0-9_]*(?:LLM|GPT|GENAI)_(?:API_)?(?:KEY|TOKEN|SECRET|MODEL|ENDPOINT|BASE_URL|PROVIDER)$', '^MODEL_(?:NAME|ID|PROVIDER|ENDPOINT)$', '^(?:EMBEDDING|EMBEDDINGS)_(?:MODEL|API_KEY|ENDPOINT)$', '^SYSTEM_PROMPT$', '^PROMPT_TEMPLATE$', '^MAX_TOKENS$', '^TEMPERATURE$']
+        weight: 0.3
+
+  - id: heuristic.api-key-in-code
+    name: Provider API key assigned in source
+    category: heuristic
+    vendor: null
+    description: Direct assignment of an LLM provider key (the provider-specific `secret` signals detect the value format; this detects the variable).
+    risk_notes: ["Hard-coded credentials; rotate and move to a secret store."]
+    signals:
+      - type: code
+        patterns: ['(?i)\b(?:openai|anthropic|gemini|google|groq|mistral|cohere|together|fireworks|openrouter|deepseek|xai|perplexity|huggingface|hf|replicate|azure_openai|litellm|langsmith|langchain|pinecone|tavily|e2b|serpapi|elevenlabs|voyage|jina)_?(?:api_?)?(?:key|token|secret)\s*[=:]\s*["''][A-Za-z0-9_\-]{16,}["'']', '(?i)\bapi_key\s*=\s*["''](?:sk-|AIza|gsk_|hf_|r8_|xai-|pplx-|tvly-|e2b_)[A-Za-z0-9_\-]{10,}["'']']
+        weight: 0.6

@@ -1,0 +1,195 @@
+# Agent interoperability protocols. An MCP server config or A2A agent card is
+# strong evidence of an agent (or of tools exposed to agents).
+signatures:
+  - id: protocol.mcp
+    name: Model Context Protocol (MCP)
+    category: protocol
+    vendor: Anthropic / Linux Foundation (Agentic AI Foundation)
+    homepage: https://modelcontextprotocol.io
+    description: Standard for connecting agents to tools and data. Servers expose tools (often filesystem, shell, SaaS APIs); clients (Claude Desktop, Cursor, VS Code, custom agents) consume them.
+    capabilities: [tool-use]
+    agent_indicator: true
+    risk_notes:
+      - "MCP servers frequently expose local filesystem / shell / database access; verify auth and transport."
+      - "Client configs commonly embed API keys and tokens in plain text."
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [mcp, fastmcp, mcp-server, langchain-mcp-adapters, mcp-agent, mcpadapt, fastapi-mcp, mcp-use, mcp-proxy]
+        prefixes: [mcp-server-, mcp-]
+        weight: 0.9
+      - type: dependency
+        ecosystem: npm
+        names: ["@modelcontextprotocol/sdk", "@modelcontextprotocol/server-filesystem", "@modelcontextprotocol/server-github", "@modelcontextprotocol/server-postgres", "@modelcontextprotocol/server-slack", "@modelcontextprotocol/server-everything", "@modelcontextprotocol/inspector", fastmcp, mcp-framework, "@mcp-ui/server", "@smithery/sdk", mcp-remote]
+        prefixes: ["@modelcontextprotocol/", "mcp-server-"]
+        weight: 0.9
+      - type: dependency
+        ecosystem: go
+        names: ["github.com/mark3labs/mcp-go", "github.com/modelcontextprotocol/go-sdk", "github.com/metoro-io/mcp-golang", "github.com/mcp-go/mcp-go"]
+        weight: 0.9
+      - type: dependency
+        ecosystem: cargo
+        names: [rmcp, mcp-sdk, rust-mcp-sdk, mcp-core]
+        weight: 0.9
+      - type: dependency
+        ecosystem: maven
+        names: ["io.modelcontextprotocol.sdk:mcp", "io.modelcontextprotocol.sdk:mcp-spring-webmvc", "io.modelcontextprotocol.sdk:mcp-spring-webflux", "org.springframework.ai:spring-ai-starter-mcp-server", "org.springframework.ai:spring-ai-starter-mcp-client", "org.springframework.ai:spring-ai-mcp"]
+        prefixes: ["io.modelcontextprotocol"]
+        weight: 0.9
+      - type: dependency
+        ecosystem: nuget
+        names: [ModelContextProtocol, ModelContextProtocol.AspNetCore, ModelContextProtocol.Core]
+        prefixes: [ModelContextProtocol]
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+(?:mcp|fastmcp)\b', '^\s*from\s+mcp\.server\b', '^\s*from\s+mcp\.client\b']
+        weight: 0.9
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@modelcontextprotocol/sdk', 'from\s+["'']fastmcp["'']', 'from\s+["'']mcp-framework["'']']
+        weight: 0.9
+      - type: import
+        languages: [go]
+        patterns: ['"github\.com/(?:mark3labs/mcp-go|modelcontextprotocol/go-sdk|metoro-io/mcp-golang)']
+        weight: 0.9
+      - type: import
+        languages: [rust]
+        patterns: ['^\s*use\s+rmcp::']
+        weight: 0.9
+      - type: import
+        languages: [java]
+        patterns: ['^\s*import\s+io\.modelcontextprotocol\.']
+        weight: 0.9
+      - type: import
+        languages: [dotnet]
+        patterns: ['^\s*using\s+ModelContextProtocol\b']
+        weight: 0.9
+      - type: code
+        patterns: ['\bFastMCP\s*\(', '@mcp\.tool\b', '@server\.(?:tool|list_tools|call_tool)\b', '\bnew\s+McpServer\s*\(', '\bserver\.(?:tool|registerTool)\s*\(', '\bStdioServerTransport\s*\(', '\bStreamableHTTPServerTransport\s*\(', '\bSSEServerTransport\s*\(', '\bstdio_server\s*\(', '\bSseServerTransport\s*\(', '\bStreamableHTTPSessionManager\s*\(', '\bMcpServer\.Create\s*\(', '\bserver\.NewMCPServer\s*\(', '\[McpServerTool', '\bMultiServerMCPClient\s*\(', '\bClientSession\s*\(', '\bstdio_client\s*\(', '\bstreamablehttp_client\s*\(', '\bsse_client\s*\(', '\bMCPServerStdio\s*\(', '\bMCPServerStreamableHttp\s*\(', '\bMcpToolset\s*\(', '\bMCPClient\s*\(', '\bmcp\.run\s*\(']
+        weight: 0.9
+      - type: code
+        patterns: ['"mcpServers"\s*:', '"mcp"\s*:\s*\{\s*"servers"', '^\s*mcpServers\s*:', '\[mcp_servers\.[A-Za-z0-9_-]+\]', '\[mcp\.servers\.[A-Za-z0-9_-]+\]']
+        weight: 0.95
+        description: MCP client configuration block
+      - type: file
+        globs: [".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json", ".cursor/mcp.json", ".vscode/mcp.json", "claude_desktop_config.json", ".roo/mcp.json", ".windsurf/mcp_config.json", "cline_mcp_settings.json", ".kiro/settings/mcp.json", ".amazonq/mcp.json", ".codeium/windsurf/mcp_config.json", "**/.mcp.json", "**/mcp.json", "**/mcp-config.json", "**/mcp_config.json", "**/mcp-servers.json", "**/claude_desktop_config.json", "**/cline_mcp_settings.json", "**/.cursor/mcp.json", "**/.vscode/mcp.json", "**/.roo/mcp.json", "**/.windsurf/mcp_config.json", "**/.kiro/settings/mcp.json", "**/.amazonq/mcp.json", "smithery.yaml", "**/smithery.yaml", "server.json", "**/.well-known/mcp.json"]
+        weight: 0.9
+      - type: image
+        patterns: ['mcp/[a-z0-9-]+', 'ghcr\.io/github/github-mcp-server', 'modelcontextprotocol/', 'mcp-server']
+        weight: 0.85
+      - type: env
+        names: [MCP_SERVER_URL, MCP_SERVER_PORT, MCP_TRANSPORT, MCP_API_KEY, FASTMCP_PORT, FASTMCP_HOST, SMITHERY_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [server.smithery.ai, registry.smithery.ai, mcp.zapier.com, mcp.composio.dev, api.githubcopilot.com, mcp.notion.com, mcp.linear.app, mcp.atlassian.com, mcp.stripe.com, mcp.paypal.com, mcp.sentry.dev, mcp.cloudflare.com, remote.mcpservers.org, "re:^mcp\\.[a-z0-9-]+\\.[a-z]+$"]
+        weight: 0.85
+      - type: user_agent
+        patterns: ['(?i)\bmcp(?:-|_)?(?:client|server|remote|inspector)\b', '(?i)modelcontextprotocol', '(?i)\bmcp/\d']
+        weight: 0.8
+      - type: name
+        patterns: ['(?i)\bmcp\b', '(?i)model context protocol']
+        weight: 0.6
+
+  - id: protocol.a2a
+    name: Agent2Agent Protocol (A2A)
+    category: protocol
+    vendor: Google / Linux Foundation
+    homepage: https://a2a-protocol.org
+    description: Open protocol for agent-to-agent communication; agents publish an Agent Card at /.well-known/agent.json (or agent-card.json).
+    capabilities: [multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [a2a-sdk, a2a-python, a2a]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: ["@a2a-js/sdk", "a2a-js", "@artinet/sdk"]
+        weight: 0.95
+      - type: dependency
+        ecosystem: maven
+        names: ["io.github.a2asdk:a2a-java-sdk-core", "io.a2a.sdk:a2a-java-sdk-core", "io.a2a:a2a-java-sdk-core"]
+        prefixes: ["io.github.a2asdk", "io.a2a"]
+        weight: 0.95
+      - type: dependency
+        ecosystem: go
+        names: ["github.com/a2aproject/a2a-go", "trpc.group/trpc-go/trpc-a2a-go"]
+        weight: 0.95
+      - type: dependency
+        ecosystem: nuget
+        names: [A2A, A2A.AspNetCore, SharpA2A.Core]
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+a2a\b']
+        weight: 0.95
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@a2a-js/sdk']
+        weight: 0.95
+      - type: code
+        patterns: ['\bAgentCard\s*\(', '\bAgentSkill\s*\(', '\bA2AStarletteApplication\s*\(', '\bA2AFastAPIApplication\s*\(', '\bDefaultRequestHandler\s*\(', '\bA2AClient\s*\(', '\bA2ACardResolver\s*\(', '\bRemoteA2aAgent\s*\(', '"protocolVersion"\s*:\s*"0\.\d', '/\.well-known/agent(?:-card)?\.json']
+        weight: 0.9
+      - type: file
+        globs: [".well-known/agent.json", ".well-known/agent-card.json", "**/.well-known/agent.json", "**/.well-known/agent-card.json", "agent-card.json", "agent_card.json", "**/agent-card.json", "**/agent_card.json"]
+        weight: 0.95
+      - type: user_agent
+        patterns: ['(?i)\ba2a-(?:sdk|python|js|go|java)\b']
+        weight: 0.8
+
+  - id: protocol.acp
+    name: Agent Communication Protocol (ACP)
+    category: protocol
+    vendor: IBM / BeeAI
+    description: REST-based agent communication protocol from the BeeAI project (now converging with A2A).
+    capabilities: [multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [acp-sdk]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: [acp-sdk, "@i-am-bee/acp-sdk"]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+acp_sdk\b']
+        weight: 0.95
+
+  - id: protocol.openai-function-calling
+    name: LLM tool / function calling
+    category: protocol
+    vendor: null
+    description: Generic tool-calling request shapes (OpenAI style `tools`/`tool_choice`, Anthropic `tools`, Gemini `function_declarations`). Marks the caller as tool-enabled.
+    capabilities: [tool-use]
+    signals:
+      - type: code
+        patterns: ['\btool_choice\s*[=:]', '"tool_choice"\s*:', '\bparallel_tool_calls\b', '\btools\s*=\s*\[\s*\{?\s*["'']?type["'']?\s*[:=]\s*["'']function["'']', '"tools"\s*:\s*\[\s*\{\s*"type"\s*:\s*"function"', '"function_declarations"\s*:', '\bfunction_declarations\s*=', '"functions"\s*:\s*\[\s*\{\s*"name"', '\bfunction_call\s*=\s*["'']auto["'']', '"input_schema"\s*:\s*\{', '\btool_calls\b', '\btoolCalls\b', '\btool_use\b', '"type"\s*:\s*"tool_use"']
+        weight: 0.4
+        agent_indicator: true
+
+  - id: protocol.chatgpt-plugin
+    name: ChatGPT plugin / Custom GPT action manifest
+    category: protocol
+    vendor: OpenAI
+    description: Legacy ChatGPT plugin manifests (ai-plugin.json) and GPT Actions OpenAPI specs exposing internal APIs to ChatGPT.
+    capabilities: [tool-use]
+    agent_indicator: true
+    risk_notes: ["Exposes internal APIs to a third-party hosted agent (ChatGPT); review auth type."]
+    signals:
+      - type: file
+        globs: [".well-known/ai-plugin.json", "**/.well-known/ai-plugin.json", "ai-plugin.json", "**/ai-plugin.json"]
+        weight: 0.95
+      - type: code
+        patterns: ['"schema_version"\s*:\s*"v1"\s*,\s*"name_for_model"', '"name_for_model"\s*:', '"auth"\s*:\s*\{\s*"type"\s*:\s*"service_http"', 'x-openai-isConsequential']
+        weight: 0.9
+      - type: domain
+        values: [chat.openai.com, chatgpt.com]
+        weight: 0.6
+      - type: user_agent
+        patterns: ['(?i)ChatGPT-User', '(?i)GPTBot', '(?i)OAI-SearchBot']
+        weight: 0.9

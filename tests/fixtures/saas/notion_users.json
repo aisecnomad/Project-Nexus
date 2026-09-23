@@ -1,0 +1,44 @@
+{
+ "results": [
+  {
+   "object": "user",
+   "id": "n1",
+   "type": "person",
+   "name": "Rita",
+   "person": {
+    "email": "rita@acme.com"
+   }
+  },
+  {
+   "object": "user",
+   "id": "n2",
+   "type": "bot",
+   "name": "Notion AI Connector for Claude",
+   "bot": {
+    "owner": {
+     "type": "workspace",
+     "workspace": true
+    },
+    "workspace_name": "Acme"
+   }
+  },
+  {
+   "object": "user",
+   "id": "n3",
+   "type": "bot",
+   "name": "Zapier",
+   "bot": {
+    "owner": {
+     "type": "user",
+     "user": {
+      "name": "Sam",
+      "person": {
+       "email": "sam@acme.com"
+      }
+     }
+    },
+    "workspace_name": "Acme"
+   }
+  }
+ ]
+}

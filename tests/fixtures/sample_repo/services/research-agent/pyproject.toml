@@ -1,0 +1,14 @@
+[project]
+name = "research-agent"
+version = "0.1.0"
+dependencies = [
+  "langchain>=0.3",
+  "langgraph>=0.2",
+  "langchain-openai",
+  "langchain-anthropic",
+  "tavily-python",
+  "langsmith",
+  "mcp>=1.0",
+]
+[project.optional-dependencies]
+dev = ["pytest"]

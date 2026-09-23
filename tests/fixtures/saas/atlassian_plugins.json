@@ -1,0 +1,36 @@
+{
+ "plugins": [
+  {
+   "key": "com.atlassian.rovo.agents",
+   "name": "Rovo Agents for Jira",
+   "vendor": {
+    "name": "Atlassian"
+   },
+   "enabled": true,
+   "userInstalled": true,
+   "version": "2.1"
+  },
+  {
+   "key": "ai.glean.confluence",
+   "name": "Glean for Confluence",
+   "vendor": {
+    "name": "Glean Technologies",
+    "link": "https://glean.com"
+   },
+   "enabled": true,
+   "userInstalled": true,
+   "version": "1.0",
+   "_product": "confluence"
+  },
+  {
+   "key": "com.example.timesheets",
+   "name": "Timesheets",
+   "vendor": {
+    "name": "Example"
+   },
+   "enabled": true,
+   "userInstalled": true,
+   "version": "1.0"
+  }
+ ]
+}

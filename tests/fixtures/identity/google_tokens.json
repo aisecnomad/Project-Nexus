@@ -1,0 +1,37 @@
+[
+ {
+  "clientId": "1234.apps.googleusercontent.com",
+  "displayText": "Fireflies.ai Notetaker",
+  "scopes": [
+   "https://www.googleapis.com/auth/calendar.readonly",
+   "https://www.googleapis.com/auth/gmail.readonly",
+   "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "userEmail": "alice@acme.com"
+ },
+ {
+  "clientId": "1234.apps.googleusercontent.com",
+  "displayText": "Fireflies.ai Notetaker",
+  "scopes": [
+   "https://www.googleapis.com/auth/calendar.readonly"
+  ],
+  "userEmail": "bob@acme.com"
+ },
+ {
+  "clientId": "5678.apps.googleusercontent.com",
+  "displayText": "ChatGPT",
+  "scopes": [
+   "https://www.googleapis.com/auth/drive.readonly",
+   "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "userEmail": "carol@acme.com"
+ },
+ {
+  "clientId": "9999.apps.googleusercontent.com",
+  "displayText": "Expense Tool",
+  "scopes": [
+   "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "userEmail": "dave@acme.com"
+ }
+]

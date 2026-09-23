@@ -1,0 +1,409 @@
+# Permission classification used by the risk engine. `scope` values are
+# matched case-insensitively against OAuth scopes, Graph permissions, IAM
+# actions, RBAC role names / ids and Slack scopes attached to a finding.
+signatures:
+  - id: policy.privileged-scopes
+    name: Privileged / administrative permissions
+    category: policy
+    vendor: null
+    description: Permissions that let an agent administer a tenant, impersonate users or change security posture.
+    signals:
+      - type: scope
+        values:
+          # Microsoft Graph
+          - Directory.ReadWrite.All
+          - Directory.AccessAsUser.All
+          - User.ReadWrite.All
+          - Group.ReadWrite.All
+          - GroupMember.ReadWrite.All
+          - Application.ReadWrite.All
+          - AppRoleAssignment.ReadWrite.All
+          - RoleManagement.ReadWrite.Directory
+          - Policy.ReadWrite.ConditionalAccess
+          - Sites.FullControl.All
+          - Files.ReadWrite.All
+          - Mail.ReadWrite
+          - Mail.Send
+          - Mail.ReadWrite.All
+          - Mail.Send.Shared
+          - MailboxSettings.ReadWrite
+          - Chat.ReadWrite.All
+          - ChannelMessage.Send
+          - Teamwork.Migrate.All
+          - Exchange.ManageAsApp
+          - full_access_as_app
+          - Domain.ReadWrite.All
+          - DeviceManagementConfiguration.ReadWrite.All
+          - user_impersonation
+          - Copilot.Settings.ReadWrite.All
+          # Google
+          - https://www.googleapis.com/auth/admin.directory.user
+          - https://www.googleapis.com/auth/admin.directory.group
+          - https://www.googleapis.com/auth/admin.directory.customer
+          - https://www.googleapis.com/auth/admin.directory.rolemanagement
+          - https://www.googleapis.com/auth/gmail.modify
+          - https://www.googleapis.com/auth/gmail.send
+          - https://www.googleapis.com/auth/gmail.compose
+          - https://mail.google.com/
+          - https://www.googleapis.com/auth/drive
+          - https://www.googleapis.com/auth/cloud-platform
+          - https://www.googleapis.com/auth/admin.reports.audit.readonly
+          - https://www.googleapis.com/auth/apps.groups.settings
+          - https://www.googleapis.com/auth/ediscovery
+          # Okta
+          - okta.users.manage
+          - okta.groups.manage
+          - okta.apps.manage
+          - okta.roles.manage
+          - okta.authorizationServers.manage
+          - okta.policies.manage
+          - okta.clients.manage
+          - okta.logs.read
+          - okta.users.manage.self
+          # Slack
+          - admin
+          - admin.users:write
+          - admin.apps:write
+          - admin.conversations:write
+          - admin.teams:write
+          - chat:write.customize
+          - users:write
+          - usergroups:write
+          - workflow.steps:execute
+          # GitHub
+          - admin:org
+          - admin:org_hook
+          - admin:enterprise
+          - admin:repo_hook
+          - delete_repo
+          - write:org
+          - workflow
+          - administration:write
+          - organization_administration:write
+          - members:write
+          - secrets:write
+          - actions:write
+          - organization_secrets:write
+          # GitLab
+          - api
+          - sudo
+          - admin_mode
+          - write_repository
+          # Salesforce
+          - full
+          - api
+          - web
+          - refresh_token
+          - offline_access
+          - sfap_api
+          # AWS IAM
+          - "*"
+          - "*:*"
+          - "iam:*"
+          - "iam:PassRole"
+          - "iam:CreateAccessKey"
+          - "iam:AttachRolePolicy"
+          - "iam:PutRolePolicy"
+          - "sts:AssumeRole"
+          - "sts:*"
+          - "secretsmanager:GetSecretValue"
+          - "secretsmanager:*"
+          - "ssm:GetParameter"
+          - "ssm:GetParameters"
+          - "s3:*"
+          - "lambda:*"
+          - "lambda:InvokeFunction"
+          - "ec2:*"
+          - "organizations:*"
+          - "kms:Decrypt"
+          - "kms:*"
+          # Azure RBAC role names / ids
+          - Owner
+          - Contributor
+          - User Access Administrator
+          - Role Based Access Control Administrator
+          - Key Vault Secrets User
+          - Key Vault Secrets Officer
+          - Key Vault Administrator
+          - Storage Blob Data Contributor
+          - 8e3af657-a8ff-443c-a75c-2fe8c4bcb635
+          - b24988ac-6180-42a0-ab88-20f7382dd24c
+          - 18d7d88d-d35e-4fb5-a5c3-7773c20a72d9
+          - 4633458b-17de-408a-b874-0445c86b69e6
+          # GCP
+          - roles/owner
+          - roles/editor
+          - roles/iam.serviceAccountTokenCreator
+          - roles/iam.serviceAccountUser
+          - roles/iam.securityAdmin
+          - roles/resourcemanager.projectIamAdmin
+          - roles/secretmanager.secretAccessor
+          - roles/secretmanager.admin
+          - roles/storage.admin
+          - roles/run.admin
+          - roles/cloudfunctions.admin
+          - roles/iam.serviceAccountAdmin
+          - roles/iam.serviceAccountKeyAdmin
+          # OCI
+          - manage all-resources
+          - manage users
+          - manage groups
+          - manage policies
+          - manage secret-family
+          - manage vaults
+          - use secret-family
+        weight: 0.9
+
+  - id: policy.data-access-scopes
+    name: Broad data read permissions
+    category: policy
+    vendor: null
+    description: Read access to mail, files, chat history, calendars, source code, tickets or CRM records — data that flows to the model.
+    signals:
+      - type: scope
+        values:
+          # Microsoft Graph
+          - Mail.Read
+          - Mail.Read.Shared
+          - Mail.ReadBasic.All
+          - Mail.Read.All
+          - Files.Read.All
+          - Files.Read
+          - Files.ReadWrite
+          - Sites.Read.All
+          - Sites.ReadWrite.All
+          - Sites.Selected
+          - Chat.Read
+          - Chat.Read.All
+          - Chat.ReadBasic
+          - ChatMessage.Read.All
+          - ChannelMessage.Read.All
+          - Calendars.Read
+          - Calendars.ReadWrite
+          - Calendars.Read.Shared
+          - Contacts.Read
+          - People.Read.All
+          - OnlineMeetingTranscript.Read.All
+          - OnlineMeetingRecording.Read.All
+          - OnlineMeetings.Read.All
+          - Notes.Read.All
+          - Directory.Read.All
+          - User.Read.All
+          - AuditLog.Read.All
+          - ExternalItem.Read.All
+          - SharePointTenantSettings.Read.All
+          - Team.ReadBasic.All
+          - TeamsActivity.Read
+          - Copilot.Read.All
+          - ExternalConnection.ReadWrite.OwnedBy
+          # Google
+          - https://www.googleapis.com/auth/gmail.readonly
+          - https://www.googleapis.com/auth/gmail.metadata
+          - https://www.googleapis.com/auth/drive.readonly
+          - https://www.googleapis.com/auth/drive.file
+          - https://www.googleapis.com/auth/drive.metadata.readonly
+          - https://www.googleapis.com/auth/documents
+          - https://www.googleapis.com/auth/documents.readonly
+          - https://www.googleapis.com/auth/spreadsheets
+          - https://www.googleapis.com/auth/spreadsheets.readonly
+          - https://www.googleapis.com/auth/calendar
+          - https://www.googleapis.com/auth/calendar.readonly
+          - https://www.googleapis.com/auth/calendar.events
+          - https://www.googleapis.com/auth/contacts.readonly
+          - https://www.googleapis.com/auth/chat.messages
+          - https://www.googleapis.com/auth/chat.messages.readonly
+          - https://www.googleapis.com/auth/chat.spaces
+          - https://www.googleapis.com/auth/meetings.space.readonly
+          - https://www.googleapis.com/auth/admin.directory.user.readonly
+          - https://www.googleapis.com/auth/admin.directory.group.readonly
+          - https://www.googleapis.com/auth/bigquery
+          - https://www.googleapis.com/auth/bigquery.readonly
+          - https://www.googleapis.com/auth/devstorage.read_only
+          - https://www.googleapis.com/auth/devstorage.read_write
+          # Slack
+          - channels:history
+          - groups:history
+          - im:history
+          - mpim:history
+          - channels:read
+          - groups:read
+          - im:read
+          - mpim:read
+          - files:read
+          - files:write
+          - users:read
+          - users:read.email
+          - search:read
+          - search:read.public
+          - search:read.private
+          - chat:write
+          - chat:write.public
+          - conversations.history
+          - remote_files:read
+          - canvases:read
+          - canvases:write
+          # Okta
+          - okta.users.read
+          - okta.groups.read
+          - okta.apps.read
+          - okta.logs.read
+          - okta.events.read
+          # GitHub
+          - repo
+          - contents:read
+          - contents:write
+          - pull_requests:write
+          - pull_requests:read
+          - issues:write
+          - metadata:read
+          - read:org
+          - read:user
+          - user:email
+          # GitLab
+          - read_api
+          - read_repository
+          - read_user
+          # Salesforce / CRM
+          - chatbot_api
+          - einstein_gpt_api
+          - cdp_query_api
+          - lightning
+          - visualforce
+          # Atlassian
+          - read:jira-work
+          - write:jira-work
+          - read:confluence-content.all
+          - write:confluence-content
+          - read:confluence-space.summary
+          - read:me
+          - read:account
+          # Zoom
+          - meeting:read
+          - meeting:read:admin
+          - recording:read
+          - recording:read:admin
+          - cloud_recording:read:list_user_recordings
+          - user:read:admin
+          - chat_message:read
+          # Notion
+          - read_content
+          - update_content
+          - insert_content
+          - read_user_with_email
+          # HubSpot
+          - crm.objects.contacts.read
+          - crm.objects.contacts.write
+          - crm.objects.deals.read
+          - crm.objects.companies.read
+          - conversations.read
+          - sales-email-read
+          # AWS
+          - "s3:GetObject"
+          - "s3:ListBucket"
+          - "dynamodb:Scan"
+          - "dynamodb:Query"
+          - "dynamodb:*"
+          - "rds-data:ExecuteStatement"
+          - "athena:StartQueryExecution"
+          - "kendra:Query"
+          - "ses:SendEmail"
+          - "ses:SendRawEmail"
+          - "sns:Publish"
+          - "logs:GetLogEvents"
+          - "logs:FilterLogEvents"
+          - "cloudtrail:LookupEvents"
+          # Azure / GCP data roles
+          - Storage Blob Data Reader
+          - Cognitive Services Data Reader
+          - Search Index Data Reader
+          - Search Index Data Contributor
+          - Azure AI Search Index Data Reader
+          - roles/storage.objectViewer
+          - roles/bigquery.dataViewer
+          - roles/bigquery.jobUser
+          - roles/viewer
+          - roles/logging.viewer
+          - roles/datastore.user
+          - roles/spanner.databaseReader
+        weight: 0.8
+
+  - id: policy.llm-access-scopes
+    name: LLM / agent service access permissions
+    category: policy
+    vendor: null
+    description: Permissions that grant use of managed model / agent services; identities holding them are LLM callers.
+    signals:
+      - type: scope
+        values:
+          - "bedrock:*"
+          - "bedrock:InvokeModel"
+          - "bedrock:InvokeModelWithResponseStream"
+          - "bedrock:Converse"
+          - "bedrock:ConverseStream"
+          - "bedrock:InvokeAgent"
+          - "bedrock:InvokeFlow"
+          - "bedrock:InvokeInlineAgent"
+          - "bedrock:RetrieveAndGenerate"
+          - "bedrock:Retrieve"
+          - "bedrock:CallWithBearerToken"
+          - "bedrock-agentcore:*"
+          - "bedrock-agentcore:InvokeAgentRuntime"
+          - "bedrock-agentcore:InvokeGateway"
+          - "sagemaker:InvokeEndpoint"
+          - "sagemaker:InvokeEndpointWithResponseStream"
+          - "qbusiness:Chat"
+          - "qbusiness:ChatSync"
+          - "qbusiness:*"
+          - "lex:RecognizeText"
+          - "lex:StartConversation"
+          - "q:StartConversation"
+          - "q:SendMessage"
+          - "roles/aiplatform.user"
+          - "roles/aiplatform.admin"
+          - "roles/aiplatform.expressUser"
+          - "roles/aiplatform.serviceAgent"
+          - "roles/dialogflow.client"
+          - "roles/dialogflow.admin"
+          - "roles/discoveryengine.user"
+          - "roles/discoveryengine.editor"
+          - "roles/discoveryengine.admin"
+          - "roles/serviceusage.serviceUsageConsumer"
+          - "aiplatform.endpoints.predict"
+          - "aiplatform.reasoningEngines.query"
+          - "dialogflow.sessions.detectIntent"
+          - "https://www.googleapis.com/auth/generative-language"
+          - "https://www.googleapis.com/auth/generative-language.tuning"
+          - "https://www.googleapis.com/auth/generative-language.retriever"
+          - "Cognitive Services OpenAI User"
+          - "Cognitive Services OpenAI Contributor"
+          - "Cognitive Services User"
+          - "Cognitive Services Contributor"
+          - "Azure AI Developer"
+          - "Azure AI User"
+          - "Azure AI Project Manager"
+          - "Azure AI Account Owner"
+          - "Azure AI Inference Deployment Operator"
+          - "AzureML Data Scientist"
+          - "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd"
+          - "a001fd3d-188f-4b5d-821b-7da978bf7442"
+          - "a97b65f3-24c7-4388-baec-2e87135dc908"
+          - "25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68"
+          - "64702f94-c99e-4e88-8e0b-ba3389c66a89"
+          - "53ca6127-db72-4b80-b1b0-d745d6d5456d"
+          - "generative-ai-family"
+          - "generative-ai-agent-family"
+          - "generative-ai-chat"
+          - "generative-ai-model"
+          - "generative-ai-agent-session"
+          - "use generative-ai-family"
+          - "manage generative-ai-family"
+          - "use generative-ai-agent-family"
+          - "manage generative-ai-agent-family"
+          - api.openai.com
+          - Copilot.Read.All
+          - Copilot.Settings.ReadWrite.All
+          - Chat.ReadWrite.WhereInstalled
+          - CopilotStudio.Copilots.Invoke
+          - "https://api.powerplatform.com/CopilotStudio.Copilots.Invoke"
+          - "https://api.powerplatform.com/.default"
+        weight: 0.9

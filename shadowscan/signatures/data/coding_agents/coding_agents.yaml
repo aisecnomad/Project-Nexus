@@ -1,0 +1,334 @@
+# AI coding agents and assistants configured inside repositories. Their
+# instruction files, sub-agent definitions, MCP configs and CI actions show that
+# autonomous agents act on the codebase (often with write access and secrets).
+signatures:
+  - id: coding-agent.claude-code
+    name: Claude Code
+    category: coding-agent
+    vendor: Anthropic
+    homepage: https://docs.anthropic.com/en/docs/claude-code
+    capabilities: [code-exec, tool-use]
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: ["CLAUDE.md", "CLAUDE.local.md", "**/CLAUDE.md", "**/CLAUDE.local.md", ".claude/settings.json", ".claude/settings.local.json", "**/.claude/settings.json", "**/.claude/settings.local.json"]
+        weight: 0.9
+      - type: file
+        globs: [".claude/agents/*.md", "**/.claude/agents/*.md"]
+        weight: 0.97
+        description: Claude Code sub-agent definition
+        capabilities: [multi-agent]
+      - type: file
+        globs: [".claude/commands/*.md", "**/.claude/commands/*.md", ".claude/skills/*/SKILL.md", "**/.claude/skills/*/SKILL.md", ".claude/hooks/*", "**/.claude/hooks/*"]
+        weight: 0.8
+      - type: code
+        patterns: ['uses:\s*anthropics/claude-code-action', 'uses:\s*anthropics/claude-code-base-action', 'npx\s+@anthropic-ai/claude-code', 'claude\s+-p\s+', 'claude\s+--dangerously-skip-permissions']
+        weight: 0.95
+      - type: code
+        patterns: ['--dangerously-skip-permissions', '"defaultMode"\s*:\s*"bypassPermissions"', '"permissions"\s*:\s*\{\s*"allow"\s*:\s*\[\s*"Bash\(\*\)"']
+        weight: 0.5
+        capabilities: [autonomous]
+      - type: env
+        names: [CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_VERTEX, CLAUDE_CODE_MAX_OUTPUT_TOKENS]
+        weight: 0.6
+      - type: user_agent
+        patterns: ['(?i)\bclaude-code\b', '(?i)\bclaude-cli\b']
+        weight: 0.9
+      - type: name
+        patterns: ['(?i)\bclaude code\b', '(?i)\bclaude\b.*\b(?:action|app|bot)\b']
+        weight: 0.7
+
+  - id: coding-agent.github-copilot
+    name: GitHub Copilot (coding agent / custom agents)
+    category: coding-agent
+    vendor: GitHub
+    homepage: https://docs.github.com/copilot
+    capabilities: [code-exec, tool-use]
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".github/copilot-instructions.md", "**/.github/copilot-instructions.md", ".github/instructions/*.instructions.md", "**/.github/instructions/*.instructions.md", ".github/prompts/*.prompt.md", "**/.github/prompts/*.prompt.md", ".copilot/**", "**/.copilot/**", ".github/copilot/**", "copilot-instructions.md"]
+        weight: 0.85
+      - type: file
+        globs: [".github/agents/*.agent.md", "**/.github/agents/*.agent.md", ".github/agents/*.md", "**/.github/agents/*.md", ".github/workflows/copilot-setup-steps.yml", "**/.github/workflows/copilot-setup-steps.yml"]
+        weight: 0.97
+        description: Copilot coding agent / custom agent configuration
+      - type: code
+        patterns: ['copilot-setup-steps', 'copilot-swe-agent', 'uses:\s*github/copilot-[a-z-]+', '\bCopilot\s+coding\s+agent\b']
+        weight: 0.8
+      - type: domain
+        values: [api.githubcopilot.com, copilot-proxy.githubusercontent.com, api.individual.githubcopilot.com, api.business.githubcopilot.com, api.enterprise.githubcopilot.com]
+        weight: 0.9
+      - type: user_agent
+        patterns: ['(?i)GitHubCopilot(?:Chat)?/', '(?i)copilot-(?:swe-)?agent', '(?i)github-copilot']
+        weight: 0.9
+      - type: name
+        patterns: ['(?i)github copilot', '(?i)\bcopilot-swe-agent\b', '(?i)copilot-pull-request-reviewer']
+        weight: 0.8
+
+  - id: coding-agent.cursor
+    name: Cursor
+    category: coding-agent
+    vendor: Anysphere
+    homepage: https://cursor.com
+    capabilities: [code-exec, tool-use]
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".cursorrules", "**/.cursorrules", ".cursor/rules/**", "**/.cursor/rules/**", ".cursor/environment.json", "**/.cursor/environment.json", ".cursorignore", ".cursor/hooks.json", "**/.cursor/hooks.json", ".cursor/BUGBOT.md", "**/.cursor/BUGBOT.md"]
+        weight: 0.9
+      - type: domain
+        values: [api2.cursor.sh, api3.cursor.sh, api4.cursor.sh, repo42.cursor.sh, cursor.com, cursor.sh, "*.cursor.sh"]
+        weight: 0.9
+      - type: user_agent
+        patterns: ['(?i)\bcursor/\d', '(?i)\bcursor-agent\b']
+        weight: 0.85
+      - type: name
+        patterns: ['(?i)\bcursor\b(?!\s*(?:position|pointer))']
+        weight: 0.5
+
+  - id: coding-agent.windsurf
+    name: Windsurf (Codeium)
+    category: coding-agent
+    vendor: Cognition (formerly Codeium)
+    capabilities: [code-exec, tool-use]
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".windsurfrules", "**/.windsurfrules", ".windsurf/rules/**", "**/.windsurf/rules/**", ".windsurf/workflows/**", "**/.windsurf/workflows/**", ".codeiumignore", "global_rules.md"]
+        weight: 0.9
+      - type: domain
+        values: [server.codeium.com, api.codeium.com, "*.codeium.com", windsurf.com, "*.windsurf.com"]
+        weight: 0.9
+      - type: user_agent
+        patterns: ['(?i)\bwindsurf\b', '(?i)\bcodeium\b']
+        weight: 0.85
+      - type: name
+        patterns: ['(?i)\bwindsurf\b', '(?i)\bcodeium\b']
+        weight: 0.7
+
+  - id: coding-agent.cline
+    name: Cline
+    category: coding-agent
+    vendor: Cline Bot Inc.
+    capabilities: [code-exec, tool-use]
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".clinerules", "**/.clinerules", ".clinerules/**", "**/.clinerules/**", ".clineignore", "cline_mcp_settings.json", "**/cline_mcp_settings.json", ".cline/**"]
+        weight: 0.9
+      - type: name
+        patterns: ['(?i)\bcline\b']
+        weight: 0.7
+
+  - id: coding-agent.roo-code
+    name: Roo Code
+    category: coding-agent
+    vendor: Roo Code
+    capabilities: [code-exec, tool-use]
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".roomodes", "**/.roomodes", ".roorules", "**/.roorules", ".roo/**", "**/.roo/**", ".rooignore"]
+        weight: 0.9
+
+  - id: coding-agent.openai-codex
+    name: OpenAI Codex (CLI / cloud agent)
+    category: coding-agent
+    vendor: OpenAI
+    homepage: https://openai.com/codex
+    capabilities: [code-exec, tool-use]
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".codex/config.toml", "**/.codex/config.toml", ".codex/**", "codex.md", "**/codex.md", ".agents/skills/**"]
+        weight: 0.9
+      - type: dependency
+        ecosystem: npm
+        names: ["@openai/codex"]
+        weight: 0.95
+      - type: code
+        patterns: ['uses:\s*openai/codex-action', 'npx\s+@openai/codex', '\bcodex\s+exec\b', '\bcodex\s+--full-auto\b', '--dangerously-bypass-approvals-and-sandbox', 'approval_policy\s*=\s*"never"', 'sandbox_mode\s*=\s*"danger-full-access"']
+        weight: 0.9
+      - type: code
+        patterns: ['--full-auto', '--dangerously-bypass-approvals-and-sandbox', 'approval_policy\s*=\s*"never"']
+        weight: 0.5
+        capabilities: [autonomous]
+      - type: user_agent
+        patterns: ['(?i)codex_cli', '(?i)\bcodex-cli\b', '(?i)openai-codex']
+        weight: 0.9
+      - type: name
+        patterns: ['(?i)\bcodex\b']
+        weight: 0.6
+
+  - id: coding-agent.agents-md
+    name: AGENTS.md convention
+    category: coding-agent
+    vendor: null
+    description: Cross-vendor agent instruction file (OpenAI Codex, Jules, Cursor, Copilot, Amp, Factory, Zed...).
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: ["AGENTS.md", "**/AGENTS.md", "AGENT.md", "**/AGENT.md"]
+        weight: 0.85
+
+  - id: coding-agent.gemini-cli
+    name: Gemini CLI / Jules
+    category: coding-agent
+    vendor: Google
+    capabilities: [code-exec, tool-use]
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: ["GEMINI.md", "**/GEMINI.md", ".gemini/settings.json", "**/.gemini/settings.json", ".gemini/commands/**", "**/.gemini/commands/**", ".gemini/**", ".jules/**", "**/.jules/**"]
+        weight: 0.9
+      - type: dependency
+        ecosystem: npm
+        names: ["@google/gemini-cli", "@google/gemini-cli-core"]
+        weight: 0.95
+      - type: code
+        patterns: ['uses:\s*google-github-actions/run-gemini-cli', 'uses:\s*google-gemini/gemini-cli-action', 'npx\s+@google/gemini-cli', '\bgemini\s+--yolo\b']
+        weight: 0.9
+      - type: code
+        patterns: ['\bgemini\s+--yolo\b', '"approvalMode"\s*:\s*"yolo"']
+        weight: 0.5
+        capabilities: [autonomous]
+      - type: user_agent
+        patterns: ['(?i)GeminiCLI/', '(?i)gemini-cli']
+        weight: 0.9
+      - type: name
+        patterns: ['(?i)gemini cli', '(?i)\bjules\b']
+        weight: 0.6
+
+  - id: coding-agent.amazon-q-developer
+    name: Amazon Q Developer / Kiro
+    category: coding-agent
+    vendor: Amazon Web Services
+    capabilities: [code-exec, tool-use]
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".amazonq/rules/**", "**/.amazonq/rules/**", ".amazonq/**", ".kiro/steering/**", "**/.kiro/steering/**", ".kiro/specs/**", "**/.kiro/specs/**", ".kiro/hooks/**", "**/.kiro/hooks/**", ".kiro/**", ".q/**"]
+        weight: 0.9
+      - type: code
+        patterns: ['uses:\s*aws-actions/amazon-q-developer', '\bq\s+chat\s+--trust-all-tools\b', '\bkiro\b.*\bagent\b']
+        weight: 0.8
+      - type: user_agent
+        patterns: ['(?i)AmazonQ-For-CLI', '(?i)\bkiro\b', '(?i)aws-toolkit']
+        weight: 0.8
+      - type: name
+        patterns: ['(?i)amazon q\b', '(?i)\bkiro\b', '(?i)q developer']
+        weight: 0.7
+
+  - id: coding-agent.goose
+    name: Goose
+    category: coding-agent
+    vendor: Block
+    capabilities: [code-exec, tool-use]
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".goosehints", "**/.goosehints", ".goose/**", "**/.goose/**", "goose.yaml"]
+        weight: 0.9
+      - type: dependency
+        ecosystem: pypi
+        names: [goose-ai]
+        weight: 0.9
+      - type: env
+        names: [GOOSE_PROVIDER, GOOSE_MODEL, GOOSE_MODE]
+        weight: 0.7
+      - type: user_agent
+        patterns: ['(?i)\bgoose/\d']
+        weight: 0.8
+
+  - id: coding-agent.aider
+    name: Aider
+    category: coding-agent
+    vendor: Aider
+    capabilities: [code-exec]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [aider-chat, aider-install]
+        weight: 0.95
+      - type: file
+        globs: [".aider.conf.yml", "**/.aider.conf.yml", ".aider.model.settings.yml", ".aider.model.metadata.json", ".aiderignore", ".aider.chat.history.md", "**/.aider.chat.history.md"]
+        weight: 0.9
+      - type: user_agent
+        patterns: ['(?i)\baider\b']
+        weight: 0.8
+
+  - id: coding-agent.continue
+    name: Continue
+    category: coding-agent
+    vendor: Continue
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".continue/config.json", ".continue/config.yaml", ".continue/config.ts", ".continue/rules/**", ".continue/**", "**/.continue/config.yaml", "**/.continue/config.json", ".continuerc.json"]
+        weight: 0.9
+      - type: user_agent
+        patterns: ['(?i)\bcontinue(?:dev)?/\d']
+        weight: 0.7
+
+  - id: coding-agent.sourcegraph-cody
+    name: Sourcegraph Cody / Amp
+    category: coding-agent
+    vendor: Sourcegraph
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".sourcegraph/**", ".cody/**", "**/.cody/**", "AGENT.md"]
+        weight: 0.8
+      - type: domain
+        values: [sourcegraph.com, ampcode.com, "*.sourcegraph.com", "*.sourcegraphcloud.com"]
+        weight: 0.7
+      - type: name
+        patterns: ['(?i)\bcody\b', '(?i)\bsourcegraph\b', '(?i)\bamp(?:code)?\b']
+        weight: 0.5
+
+  - id: coding-agent.jetbrains-junie
+    name: JetBrains Junie / AI Assistant
+    category: coding-agent
+    vendor: JetBrains
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".junie/guidelines.md", "**/.junie/guidelines.md", ".junie/**", ".aiassistant/rules/**", "**/.aiassistant/rules/**"]
+        weight: 0.9
+      - type: name
+        patterns: ['(?i)\bjunie\b']
+        weight: 0.7
+
+  - id: coding-agent.misc-rules
+    name: Other coding-agent instruction files
+    category: coding-agent
+    vendor: null
+    description: Instruction / rules files for Augment, Trae, Zed, OpenCode, Crush, Warp, Replit, Bolt, Lovable, Devin, Factory, Tabnine.
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: [".augment/rules/**", "**/.augment/rules/**", ".augment-guidelines", ".trae/rules/**", "**/.trae/rules/**", ".rules", "opencode.json", "**/opencode.json", ".opencode/**", ".crush.json", "**/.crush.json", "WARP.md", "**/WARP.md", ".bolt/**", ".lovable/**", ".devin/**", ".factory/**", ".tabnine/**", ".replit", ".idx/airules.md", "**/.idx/airules.md", ".zed/settings.json", "AGENTS.override.md", ".ai/**"]
+        weight: 0.75
+
+  - id: coding-agent.pr-review-bots
+    name: AI pull-request review bots
+    category: coding-agent
+    vendor: null
+    description: Hosted AI reviewers/agents operating on repositories (CodeRabbit, Sweep, Ellipsis, Greptile, Sourcery, Copilot Reviewer, Devin, Cursor Bugbot, Qodo/PR-Agent, Graphite, Korbit, Bito, Codium).
+    agent_indicator: true
+    risk_notes: ["Review bots typically hold org-wide read access to source and PR write permissions."]
+    signals:
+      - type: file
+        globs: [".coderabbit.yaml", ".coderabbit.yml", "**/.coderabbit.yaml", "sweep.yaml", "**/sweep.yaml", ".sweep/**", "ellipsis.yaml", "**/ellipsis.yaml", ".sourcery.yaml", "**/.sourcery.yaml", ".greptile.json", "**/.greptile.json", ".pr_agent.toml", "**/.pr_agent.toml", ".korbit-config.yaml", ".bito/**", ".qodo/**", "**/.qodo/**", "codiumai.toml", ".codiumai.toml", ".mentat/**"]
+        weight: 0.9
+      - type: code
+        patterns: ['uses:\s*coderabbitai/[a-z-]+', 'uses:\s*qodo-ai/pr-agent', 'uses:\s*Codium-ai/pr-agent', 'uses:\s*sweepai/[a-z-]+', 'uses:\s*ellipsis-dev/[a-z-]+', 'uses:\s*greptileai/[a-z-]+']
+        weight: 0.9
+      - type: name
+        patterns: ['(?i)\bcoderabbit(?:ai)?\b', '(?i)\bsweep(?:ai)?\b', '(?i)\bellipsis\b', '(?i)\bgreptile\b', '(?i)\bsourcery(?:-ai)?\b', '(?i)\bpr-agent\b', '(?i)\bqodo\b', '(?i)\bkorbit\b', '(?i)\bbito\b', '(?i)\bcodium(?:ai)?\b', '(?i)\bdevin(?:-ai)?\b', '(?i)\bcursor bugbot\b', '(?i)\bgraphite\b', '(?i)\bmentat\b', '(?i)\bcopilot-pull-request-reviewer\b']
+        weight: 0.8
+      - type: user_agent
+        patterns: ['(?i)coderabbit', '(?i)\bsweep\b', '(?i)greptile']
+        weight: 0.8

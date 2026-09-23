@@ -1,0 +1,11 @@
+# Simple inventory format (alternative to one Agent Capability Card per agent).
+agents:
+  - id: claims-assistant
+    name: Claims Assistant
+    owner: claims-it
+    resources: ["ocid1.genaiagent.oc1.us-chicago-1.agent1"]
+  - id: coderabbit-reviewer
+    name: CodeRabbit
+    owner: dev-productivity
+    resources: ["github:installation:101"]
+    names: [coderabbitai]

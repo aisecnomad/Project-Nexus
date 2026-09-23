@@ -1,0 +1,102 @@
+[
+ {
+  "table": "sn_aia_agent",
+  "result": [
+   {
+    "sys_id": "a1",
+    "name": "Incident Triage Agent",
+    "description": "Triages P1 incidents",
+    "active": "true",
+    "sys_created_by": "jane.doe",
+    "sys_created_on": "2025-06-01 00:00:00",
+    "sys_updated_on": "2025-09-01 00:00:00",
+    "agent_type": "autonomous",
+    "model": "now-llm"
+   }
+  ]
+ },
+ {
+  "table": "sn_aia_tool",
+  "result": [
+   {
+    "sys_id": "t1",
+    "name": "Restart service",
+    "type": "script",
+    "agent": {
+     "value": "a1",
+     "display_value": "Incident Triage Agent"
+    }
+   },
+   {
+    "sys_id": "t2",
+    "name": "Lookup CI",
+    "type": "record operation",
+    "agent": {
+     "value": "a1",
+     "display_value": "Incident Triage Agent"
+    }
+   }
+  ]
+ },
+ {
+  "table": "sn_aia_usecase",
+  "result": [
+   {
+    "sys_id": "u1",
+    "name": "P1 triage",
+    "active": "true",
+    "trigger_type": "record",
+    "sys_created_by": "jane.doe"
+   }
+  ]
+ },
+ {
+  "table": "sn_aia_trigger",
+  "result": [
+   {
+    "sys_id": "tr1",
+    "name": "On P1 incident",
+    "usecase": {
+     "value": "u1",
+     "display_value": "P1 triage"
+    },
+    "trigger_type": "record",
+    "table": "incident",
+    "condition": "priority=1"
+   }
+  ]
+ },
+ {
+  "table": "sys_hub_flow",
+  "result": [
+   {
+    "sys_id": "f1",
+    "name": "Now Assist summarise ticket",
+    "description": "uses generative AI",
+    "active": "true",
+    "type": "flow",
+    "sys_created_by": "jane.doe"
+   },
+   {
+    "sys_id": "f2",
+    "name": "Nightly cleanup",
+    "active": "true",
+    "type": "flow"
+   }
+  ]
+ },
+ {
+  "table": "oauth_entity",
+  "result": [
+   {
+    "sys_id": "o1",
+    "name": "Moveworks",
+    "client_id": "mw-client",
+    "type": "client",
+    "active": "true",
+    "oauth_entity_scope": "useraccount",
+    "redirect_url": "https://api.moveworks.com/oauth"
+   }
+  ]
+ }
+]

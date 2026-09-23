@@ -1,0 +1,107 @@
+[
+ {
+  "_kind": "roleMap",
+  "roles": {
+   "810c84a8-4a9e-49e6-bf7d-12d183f40d01": "Mail.Read",
+   "e2a3a72e-5f79-4c64-b1b1-878b674ecb07": "Mail.ReadWrite",
+   "75359482-048d-4d94-b6cb-4a7ba79f1c5e": "Files.ReadWrite.All",
+   "7ab1d382-f21e-4acd-a863-ba3e13f7da61": "Directory.Read.All"
+  }
+ },
+ {
+  "_kind": "servicePrincipal",
+  "id": "sp-1",
+  "appId": "app-otter",
+  "displayName": "Otter.ai",
+  "publisherName": "AISense Inc.",
+  "servicePrincipalType": "Application",
+  "accountEnabled": true,
+  "createdDateTime": "2025-02-01T00:00:00Z",
+  "appOwnerOrganizationId": "ext-tenant",
+  "homepage": "https://otter.ai",
+  "replyUrls": [
+   "https://otter.ai/oauth/microsoft/callback"
+  ]
+ },
+ {
+  "_kind": "servicePrincipal",
+  "id": "sp-2",
+  "appId": "app-agent",
+  "displayName": "procurement-agent-svc",
+  "servicePrincipalType": "Application",
+  "accountEnabled": true,
+  "createdDateTime": "2025-07-01T00:00:00Z",
+  "appOwnerOrganizationId": "our-tenant",
+  "notes": "LangGraph agent for supplier negotiation"
+ },
+ {
+  "_kind": "servicePrincipal",
+  "id": "sp-3",
+  "appId": "app-mi",
+  "displayName": "aks-agent-runner",
+  "servicePrincipalType": "ManagedIdentity",
+  "accountEnabled": true,
+  "createdDateTime": "2025-05-01T00:00:00Z"
+ },
+ {
+  "_kind": "servicePrincipal",
+  "id": "sp-4",
+  "appId": "app-boring",
+  "displayName": "Payroll SSO",
+  "servicePrincipalType": "Application",
+  "accountEnabled": true,
+  "appOwnerOrganizationId": "ext"
+ },
+ {
+  "_kind": "oauth2PermissionGrant",
+  "clientId": "sp-1",
+  "consentType": "Principal",
+  "principalId": "user-1",
+  "resourceId": "graph",
+  "scope": "Mail.Read Calendars.Read User.Read offline_access OnlineMeetingTranscript.Read.All"
+ },
+ {
+  "_kind": "oauth2PermissionGrant",
+  "clientId": "sp-1",
+  "consentType": "Principal",
+  "principalId": "user-2",
+  "resourceId": "graph",
+  "scope": "Mail.Read Calendars.Read"
+ },
+ {
+  "_kind": "appRoleAssignment",
+  "principalId": "sp-2",
+  "appRoleId": "e2a3a72e-5f79-4c64-b1b1-878b674ecb07",
+  "resourceId": "graph"
+ },
+ {
+  "_kind": "appRoleAssignment",
+  "principalId": "sp-2",
+  "appRoleId": "75359482-048d-4d94-b6cb-4a7ba79f1c5e",
+  "resourceId": "graph"
+ },
+ {
+  "_kind": "application",
+  "id": "reg-1",
+  "appId": "app-agent",
+  "displayName": "procurement-agent-svc",
+  "createdDateTime": "2025-07-01T00:00:00Z",
+  "passwordCredentials": [
+   {
+    "keyId": "k1"
+   }
+  ],
+  "keyCredentials": [],
+  "requiredResourceAccess": [
+   {
+    "resourceAppId": "graph",
+    "resourceAccess": [
+     {
+      "id": "e2a3a72e-5f79-4c64-b1b1-878b674ecb07",
+      "type": "Role"
+     }
+    ]
+   }
+  ]
+ }
+]

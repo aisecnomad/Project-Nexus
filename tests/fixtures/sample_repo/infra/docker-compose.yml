@@ -1,0 +1,12 @@
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    environment:
+      - LITELLM_MASTER_KEY=sk-1234
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+  n8n:
+    image: n8nio/n8n:latest
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+  ollama:
+    image: ollama/ollama

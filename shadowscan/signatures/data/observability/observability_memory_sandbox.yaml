@@ -1,0 +1,354 @@
+# Observability, memory and sandbox layers. Their presence rarely proves an
+# agent on its own, but strongly corroborates one (nobody traces a script that
+# calls an LLM once) and reveals capabilities (memory, code execution).
+signatures:
+  # ------------------------------------------------------- observability
+  - id: observability.langsmith
+    name: LangSmith
+    category: observability
+    vendor: LangChain, Inc.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [langsmith]
+        weight: 0.6
+      - type: dependency
+        ecosystem: npm
+        names: [langsmith]
+        weight: 0.6
+      - type: env
+        names: [LANGSMITH_API_KEY, LANGSMITH_TRACING, LANGSMITH_PROJECT, LANGSMITH_ENDPOINT, LANGCHAIN_API_KEY, LANGCHAIN_TRACING_V2]
+        weight: 0.6
+      - type: domain
+        values: [api.smith.langchain.com, eu.api.smith.langchain.com, smith.langchain.com]
+        weight: 0.8
+      - type: secret
+        patterns: ['\blsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}\b']
+        weight: 0.9
+        description: LangSmith API key
+
+  - id: observability.langfuse
+    name: Langfuse
+    category: observability
+    vendor: Langfuse
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [langfuse]
+        weight: 0.6
+      - type: dependency
+        ecosystem: npm
+        names: [langfuse, langfuse-langchain, langfuse-vercel, "@langfuse/tracing", "@langfuse/otel"]
+        prefixes: ["@langfuse/"]
+        weight: 0.6
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+langfuse\b']
+        weight: 0.6
+      - type: env
+        names: [LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST, LANGFUSE_BASE_URL]
+        weight: 0.6
+      - type: domain
+        values: [cloud.langfuse.com, us.cloud.langfuse.com, eu.cloud.langfuse.com]
+        weight: 0.8
+      - type: image
+        patterns: ['langfuse/langfuse']
+        weight: 0.8
+      - type: secret
+        patterns: ['\bsk-lf-[a-f0-9-]{36}\b']
+        weight: 0.85
+        description: Langfuse secret key
+
+  - id: observability.arize-phoenix
+    name: Arize Phoenix / OpenInference
+    category: observability
+    vendor: Arize AI
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [arize-phoenix, arize-phoenix-otel, arize, openinference-instrumentation-langchain, openinference-instrumentation-openai, openinference-instrumentation-crewai, openinference-instrumentation-llama-index, openinference-instrumentation-smolagents, openinference-instrumentation-google-adk, openinference-instrumentation-mcp, openinference-instrumentation-agno, openinference-instrumentation-openai-agents]
+        prefixes: [openinference-, arize-phoenix]
+        weight: 0.6
+      - type: dependency
+        ecosystem: npm
+        prefixes: ["@arizeai/"]
+        weight: 0.6
+      - type: env
+        names: [PHOENIX_API_KEY, PHOENIX_COLLECTOR_ENDPOINT, PHOENIX_PROJECT_NAME, ARIZE_API_KEY, ARIZE_SPACE_ID]
+        weight: 0.6
+      - type: domain
+        values: [app.phoenix.arize.com, otlp.arize.com, api.arize.com]
+        weight: 0.8
+      - type: image
+        patterns: ['arizephoenix/phoenix']
+        weight: 0.8
+
+  - id: observability.agentops
+    name: AgentOps
+    category: observability
+    vendor: AgentOps
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [agentops]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+agentops\b']
+        weight: 0.8
+      - type: env
+        names: [AGENTOPS_API_KEY]
+        weight: 0.7
+      - type: domain
+        values: [api.agentops.ai, app.agentops.ai]
+        weight: 0.85
+
+  - id: observability.traceloop
+    name: Traceloop / OpenLLMetry
+    category: observability
+    vendor: Traceloop
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [traceloop-sdk, opentelemetry-instrumentation-openai, opentelemetry-instrumentation-anthropic, opentelemetry-instrumentation-langchain, opentelemetry-instrumentation-llamaindex, opentelemetry-instrumentation-bedrock, opentelemetry-instrumentation-vertexai, opentelemetry-instrumentation-crewai, opentelemetry-instrumentation-mcp, opentelemetry-instrumentation-google-generativeai]
+        prefixes: [opentelemetry-instrumentation-openai, opentelemetry-instrumentation-anthropic, opentelemetry-instrumentation-langchain]
+        weight: 0.6
+      - type: dependency
+        ecosystem: npm
+        names: ["@traceloop/node-server-sdk"]
+        prefixes: ["@traceloop/"]
+        weight: 0.6
+      - type: env
+        names: [TRACELOOP_API_KEY, TRACELOOP_BASE_URL]
+        weight: 0.6
+      - type: domain
+        values: [api.traceloop.com]
+        weight: 0.8
+
+  - id: observability.weave
+    name: Weights & Biases Weave
+    category: observability
+    vendor: Weights & Biases
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [weave]
+        weight: 0.5
+      - type: dependency
+        ecosystem: npm
+        names: [weave]
+        weight: 0.5
+      - type: code
+        patterns: ['\bweave\.init\s*\(', '@weave\.op\b']
+        weight: 0.6
+      - type: env
+        names: [WANDB_API_KEY, WEAVE_PROJECT]
+        weight: 0.3
+      - type: domain
+        values: [trace.wandb.ai]
+        weight: 0.8
+
+  - id: observability.misc
+    name: Other LLM observability / evals (Braintrust, Opik, LangWatch, Galileo, Lunary, Laminar, Literal, Maxim, Confident/DeepEval, Promptfoo, HoneyHive, Datadog LLM Obs)
+    category: observability
+    vendor: null
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [braintrust, opik, langwatch, galileo, galileo-observe, promptquality, lunary, lmnr, literalai, maxim-py, deepeval, promptfoo, honeyhive, ddtrace, langtrace-python-sdk, openlit, autoevals, ragas, trulens, trulens-eval, phoenix-evals]
+        weight: 0.5
+      - type: dependency
+        ecosystem: npm
+        names: [braintrust, opik, langwatch, lunary, "@lmnr-ai/lmnr", "@literalai/client", "@maximai/maxim-js", promptfoo, "@langtrase/typescript-sdk", "@honeyhive/sdk"]
+        weight: 0.5
+      - type: env
+        names: [BRAINTRUST_API_KEY, OPIK_API_KEY, OPIK_WORKSPACE, LANGWATCH_API_KEY, GALILEO_API_KEY, LUNARY_PUBLIC_KEY, LMNR_PROJECT_API_KEY, LITERAL_API_KEY, MAXIM_API_KEY, CONFIDENT_API_KEY, HONEYHIVE_API_KEY, LANGTRACE_API_KEY, DD_LLMOBS_ENABLED, DD_LLMOBS_ML_APP, OPENLIT_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.braintrust.dev, api.braintrustdata.com, www.comet.com, api.langwatch.ai, api.galileo.ai, app.galileo.ai, api.lunary.ai, api.lmnr.ai, cloud.getliteral.ai, api.getmaxim.ai, app.confident-ai.com, api.honeyhive.ai, api.langtrace.ai, api.promptfoo.app]
+        weight: 0.8
+
+  # ------------------------------------------------------------- memory
+  - id: memory.mem0
+    name: Mem0
+    category: memory
+    vendor: Mem0
+    capabilities: [memory]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [mem0ai, mem0]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: [mem0ai]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+mem0\b']
+        weight: 0.8
+      - type: env
+        names: [MEM0_API_KEY]
+        weight: 0.7
+      - type: domain
+        values: [api.mem0.ai]
+        weight: 0.85
+
+  - id: memory.zep
+    name: Zep
+    category: memory
+    vendor: Zep
+    capabilities: [memory]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [zep-python, zep-cloud, zep-crewai, zep-autogen]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: ["@getzep/zep-cloud", "@getzep/zep-js"]
+        weight: 0.8
+      - type: env
+        names: [ZEP_API_KEY, ZEP_API_URL]
+        weight: 0.7
+      - type: domain
+        values: [api.getzep.com]
+        weight: 0.85
+
+  - id: memory.vector-stores
+    name: Vector databases (Pinecone, Chroma, Weaviate, Qdrant, Milvus, FAISS, LanceDB, pgvector, Vespa, Turbopuffer, MongoDB Atlas Vector, Elasticsearch vector)
+    category: memory
+    vendor: null
+    capabilities: [rag]
+    description: Retrieval infrastructure; corroborates an LLM/RAG application.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [pinecone, pinecone-client, chromadb, weaviate-client, qdrant-client, pymilvus, faiss-cpu, faiss-gpu, lancedb, pgvector, vecs, turbopuffer, pyvespa, marqo, vectordb, txtai, docarray, "elasticsearch[vectorsearch]", opensearch-py, redisvl]
+        weight: 0.3
+      - type: dependency
+        ecosystem: npm
+        names: ["@pinecone-database/pinecone", chromadb, "weaviate-client", "weaviate-ts-client", "@qdrant/js-client-rest", "@zilliz/milvus2-sdk-node", "@lancedb/lancedb", vectordb, pgvector, "@turbopuffer/turbopuffer", "faiss-node"]
+        weight: 0.3
+      - type: env
+        names: [PINECONE_API_KEY, PINECONE_ENVIRONMENT, PINECONE_INDEX, WEAVIATE_API_KEY, WEAVIATE_URL, QDRANT_API_KEY, QDRANT_URL, CHROMA_HOST, CHROMA_API_KEY, MILVUS_URI, MILVUS_TOKEN, TURBOPUFFER_API_KEY, LANCEDB_API_KEY]
+        weight: 0.4
+      - type: domain
+        values: ["re:.*\\.svc\\.[a-z0-9-]+\\.pinecone\\.io$", api.pinecone.io, "re:.*\\.weaviate\\.cloud$", "re:.*\\.weaviate\\.network$", "re:.*\\.cloud\\.qdrant\\.io$", api.trychroma.com, "re:.*\\.api\\.zillizcloud\\.com$", api.turbopuffer.com]
+        weight: 0.6
+      - type: image
+        patterns: ['chromadb/chroma', 'qdrant/qdrant', 'semitechnologies/weaviate', 'cr\.weaviate\.io/semitechnologies/weaviate', 'milvusdb/milvus', 'pgvector/pgvector', 'redis/redis-stack']
+        weight: 0.5
+      - type: secret
+        patterns: ['\bpcsk_[A-Za-z0-9_]{20,}\b']
+        weight: 0.8
+        description: Pinecone API key
+
+  # ------------------------------------------------------------ sandbox
+  - id: sandbox.e2b
+    name: E2B
+    category: sandbox
+    vendor: E2B
+    capabilities: [code-exec]
+    description: Cloud sandboxes for executing agent-generated code.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [e2b, e2b-code-interpreter, e2b-desktop]
+        weight: 0.9
+      - type: dependency
+        ecosystem: npm
+        names: [e2b, "@e2b/code-interpreter", "@e2b/desktop", "@e2b/sdk"]
+        prefixes: ["@e2b/"]
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+e2b(?:_code_interpreter|_desktop)?\b']
+        weight: 0.9
+      - type: env
+        names: [E2B_API_KEY, E2B_TEMPLATE]
+        weight: 0.7
+      - type: domain
+        values: [api.e2b.dev, "*.e2b.dev", "*.e2b.app"]
+        weight: 0.9
+      - type: secret
+        patterns: ['\be2b_[a-f0-9]{40}\b']
+        weight: 0.9
+        description: E2B API key
+
+  - id: sandbox.daytona
+    name: Daytona
+    category: sandbox
+    vendor: Daytona
+    capabilities: [code-exec]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [daytona, daytona-sdk, daytona-api-client]
+        weight: 0.85
+      - type: dependency
+        ecosystem: npm
+        names: ["@daytonaio/sdk"]
+        weight: 0.85
+      - type: env
+        names: [DAYTONA_API_KEY, DAYTONA_API_URL, DAYTONA_TARGET]
+        weight: 0.7
+      - type: domain
+        values: [app.daytona.io, api.daytona.io]
+        weight: 0.85
+
+  - id: sandbox.misc
+    name: Other code sandboxes (Modal, Riza, Vercel Sandbox, Cloudflare Sandbox, Blaxel, Scrapybara, Piston, CodeSandbox SDK, Fly Sprites, Runloop)
+    category: sandbox
+    vendor: null
+    capabilities: [code-exec]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [rizaio, modal, scrapybara, blaxel, runloop-api-client, morphcloud, together-code-interpreter, bearer-sandbox]
+        weight: 0.6
+      - type: dependency
+        ecosystem: npm
+        names: ["@riza-io/api", "@vercel/sandbox", "@cloudflare/sandbox", "@codesandbox/sdk", "@blaxel/core", scrapybara, "@runloop/api-client", "@morphcloud/sdk"]
+        weight: 0.7
+      - type: env
+        names: [RIZA_API_KEY, SCRAPYBARA_API_KEY, BLAXEL_API_KEY, RUNLOOP_API_KEY, MORPH_API_KEY, CSB_API_KEY, MODAL_TOKEN_ID, MODAL_TOKEN_SECRET]
+        weight: 0.6
+      - type: domain
+        values: [api.riza.io, api.scrapybara.com, api.blaxel.ai, api.runloop.ai, cloud.morph.so, api.codesandbox.io, api.modal.com]
+        weight: 0.8
+      - type: image
+        patterns: ['ghcr\.io/engineer-man/piston', 'codesandbox/', 'e2bdev/']
+        weight: 0.7
+
+  # ------------------------------------------------------- web/search tools
+  - id: tool.web-search-scrape
+    name: Web search / scraping tool providers (Tavily, SerpAPI, Exa, Firecrawl, Brave Search, Jina Reader, Crawl4AI, Apify, ScrapingBee, Bing/Google CSE, DuckDuckGo, Perplexity Sonar)
+    category: sandbox
+    vendor: null
+    capabilities: [browsing]
+    description: Tool APIs that give agents live web access.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [tavily-python, langchain-tavily, serpapi, google-search-results, exa-py, exa_py, firecrawl-py, firecrawl, duckduckgo-search, ddgs, crawl4ai, apify-client, scrapegraphai, linkup-sdk, jina, brave-search, langchain-exa, langchain-community]
+        weight: 0.45
+      - type: dependency
+        ecosystem: npm
+        names: ["@tavily/core", tavily, serpapi, "exa-js", "@mendable/firecrawl-js", "firecrawl", "duck-duck-scrape", "apify-client", "@brave/brave-search", "linkup-sdk"]
+        weight: 0.5
+      - type: code
+        patterns: ['\bTavily(?:Search|SearchResults|Client|Extract)\s*\(', '\bSerpAPIWrapper\s*\(', '\bDuckDuckGoSearch(?:Run|Results)\s*\(', '\bGoogleSearchAPIWrapper\s*\(', '\bBingSearchAPIWrapper\s*\(', '\bFirecrawlApp\s*\(', '\bExa\s*\(', '\bWebSearchTool\s*\(', '\bWebSearch\b', '"type"\s*:\s*"web_search(?:_preview)?(?:_20\d{6})?"', '\bgoogle_search\b', '\bGoogleSearch\s*\(', '\bgrounding\s*=\s*True', '\bBingGroundingTool\s*\(']
+        weight: 0.55
+        agent_indicator: true
+      - type: env
+        names: [TAVILY_API_KEY, SERPAPI_API_KEY, SERP_API_KEY, SERPER_API_KEY, EXA_API_KEY, FIRECRAWL_API_KEY, BRAVE_API_KEY, BRAVE_SEARCH_API_KEY, JINA_API_KEY, APIFY_TOKEN, APIFY_API_TOKEN, SCRAPINGBEE_API_KEY, BING_SUBSCRIPTION_KEY, BING_SEARCH_V7_SUBSCRIPTION_KEY, GOOGLE_CSE_ID, LINKUP_API_KEY, SCRAPEGRAPH_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.tavily.com, serpapi.com, google.serper.dev, api.exa.ai, api.firecrawl.dev, api.search.brave.com, r.jina.ai, s.jina.ai, api.apify.com, app.scrapingbee.com, api.bing.microsoft.com, api.linkup.so, api.scrapegraphai.com]
+        weight: 0.85
+      - type: secret
+        patterns: ['\btvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}\b', '\bfc-[a-f0-9]{32}\b']
+        weight: 0.85
+        description: Tavily / Firecrawl API key
