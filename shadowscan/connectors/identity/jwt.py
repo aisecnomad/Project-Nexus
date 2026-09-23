@@ -38,6 +38,7 @@ from shadowscan.connectors.common import (
     name_matches,
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.utils.jwks import verify_against_jwks
 from shadowscan.utils.text import parse_timestamp, to_iso
 
 _JWT_RX = re.compile(r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*$")
@@ -125,7 +126,6 @@ class JwtConnector(BaseConnector, _NoDump):
             if f:
                 yield f
 
-    # -------------------------------------------------------------- analysis
     def analyze_token(self, token: str, jwks_url: str | None = None, context: str | None = None) -> Finding | None:
         import jwt as pyjwt
 
@@ -138,10 +138,7 @@ class JwtConnector(BaseConnector, _NoDump):
         verified: bool | None = None
         if jwks_url:
             try:
-                client = pyjwt.PyJWKClient(jwks_url)
-                signing_key = client.get_signing_key_from_jwt(token)
-                pyjwt.decode(token, signing_key.key, algorithms=[header.get("alg", "RS256")], options={"verify_exp": False, "verify_aud": False})
-                verified = True
+                verified = verify_against_jwks(token, str(jwks_url), header, issuer=str(claims.get("iss") or "") or None)
             except Exception as exc:  # noqa: BLE001
                 verified = False
                 self.ctx.warn(f"identity.jwt: signature verification failed ({type(exc).__name__})")
