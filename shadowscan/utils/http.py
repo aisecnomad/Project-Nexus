@@ -5,7 +5,10 @@ Kept deliberately thin so connectors read like the API docs they implement.
 
 from __future__ import annotations
 
+import contextvars
+import ipaddress
 import logging
+import socket
 import time
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -22,9 +25,64 @@ DEFAULT_TIMEOUT = 30
 MAX_RETRY_DELAY = 120
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 
+_allow_private_origin: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "shadowscan_allow_private_origin", default=False
+)
 
-def validate_url(url: str, origin: str | None = None) -> str:
-    """Require HTTPS and, for server-supplied links, the credential origin."""
+METADATA_HOSTS = frozenset(
+    {
+        "metadata",
+        "metadata.google.internal",
+        "metadata.google.com",
+        "instance-data",
+        "kubernetes.default",
+        "kubernetes.default.svc",
+    }
+)
+METADATA_NETS = (
+    ipaddress.ip_network("169.254.169.254/32"),
+    ipaddress.ip_network("169.254.169.253/32"),
+    ipaddress.ip_network("169.254.169.250/32"),
+    ipaddress.ip_network("fd00:ec2::254/128"),
+)
+
+
+def set_allow_private_origin(enabled: bool) -> None:
+    """Process-wide default used when validate_url/HttpClient omit the flag."""
+    _allow_private_origin.set(bool(enabled))
+
+
+def _blocked_ip(addr: ipaddress._BaseAddress) -> bool:
+    return bool(
+        addr.is_loopback
+        or addr.is_link_local
+        or addr.is_private
+        or addr.is_unspecified
+        or addr.is_multicast
+        or addr.is_reserved
+        or any(addr in net for net in METADATA_NETS)
+    )
+
+
+def _blocked_host(hostname: str) -> bool:
+    host = hostname.strip("[]").rstrip(".").lower()
+    if host in METADATA_HOSTS or host == "localhost" or host.endswith(".localhost"):
+        return True
+    if host.endswith(".internal") or host.endswith(".local"):
+        return True
+    try:
+        return _blocked_ip(ipaddress.ip_address(host))
+    except ValueError:
+        return False
+
+
+def validate_url(url: str, origin: str | None = None, *, allow_private: bool | None = None) -> str:
+    """Require HTTPS and, for server-supplied links, the credential origin.
+
+    Destinations that resolve to loopback, link-local, private, multicast,
+    unspecified, reserved, or cloud-metadata addresses are rejected unless
+    ``allow_private`` (or the process default) is true.
+    """
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("API URL must use HTTPS without embedded credentials")
@@ -32,6 +90,24 @@ def validate_url(url: str, origin: str | None = None) -> str:
         expected = urlsplit(origin)
         if (parsed.scheme, parsed.hostname, parsed.port or 443) != (expected.scheme, expected.hostname, expected.port or 443):
             raise ValueError("Refusing API URL outside the configured credential origin")
+    allow = _allow_private_origin.get() if allow_private is None else allow_private
+    host = parsed.hostname.strip("[]")
+    if _blocked_host(host) and not allow:
+        raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
+        except socket.gaierror:
+            infos = []
+        for info in infos:
+            try:
+                addr = ipaddress.ip_address(info[4][0])
+            except (ValueError, TypeError, IndexError):
+                continue
+            if _blocked_ip(addr) and not allow:
+                raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination")
     return url
 
 
@@ -63,8 +139,10 @@ class HttpClient:
         session: requests.Session | None = None,
         auth: Any = None,
         on_warning: Callable[[str], None] | None = None,
+        allow_private_origin: bool | None = None,
     ):
         self.base_url = base_url.rstrip("/")
+        self.allow_private_origin = _allow_private_origin.get() if allow_private_origin is None else allow_private_origin
         self.session = session or requests.Session()
         self.session.headers.update({"User-Agent": f"shadowscan/{__version__}", "Accept": "application/json"})
         if headers:
@@ -81,7 +159,7 @@ class HttpClient:
             url = urljoin(self.base_url, path)
         else:
             url = f"{self.base_url}/{path.lstrip('/')}"
-        return validate_url(url, self.base_url or None)
+        return validate_url(url, self.base_url or None, allow_private=self.allow_private_origin)
 
     def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
         url = self._url(path)
@@ -101,7 +179,7 @@ class HttpClient:
                 location = resp.headers.get("Location")
                 if not location or redirects >= 5:
                     raise HttpError(resp.status_code, url, "Invalid or excessive redirect")
-                url = validate_url(urljoin(url, location), origin)
+                url = validate_url(urljoin(url, location), origin, allow_private=self.allow_private_origin)
                 redirects += 1
                 # Do not carry original query parameters onto a redirect target.
                 kwargs.pop("params", None)
@@ -112,7 +190,7 @@ class HttpClient:
                 continue
             if resp.status_code in RETRY_STATUSES and attempt <= self.max_retries:
                 retry_after = resp.headers.get("Retry-After")
-                delay = min(float(retry_after), MAX_RETRY_DELAY) if retry_after and retry_after.isdigit() else min(2**attempt, 30)
+                delay = min(float(retry_after), MAX_RETRY_DELAY) if retry_after and retry_after.isdigit() else min(2 ** attempt, 30)
                 # GitHub style secondary rate limit
                 reset = resp.headers.get("X-RateLimit-Reset")
                 remaining = resp.headers.get("X-RateLimit-Remaining")
@@ -168,7 +246,7 @@ class HttpClient:
         pages = 0
         seen: set[str] = set()
         while url and pages < max_pages:
-            url = validate_url(urljoin(origin, url), origin)
+            url = validate_url(urljoin(origin, url), origin, allow_private=self.allow_private_origin)
             if url in seen:
                 raise RuntimeError("Repeated pagination link; collection incomplete")
             seen.add(url)
@@ -191,7 +269,7 @@ class HttpClient:
         pages = 0
         seen: set[str] = set()
         while url and pages < max_pages:
-            url = validate_url(urljoin(origin, url), origin)
+            url = validate_url(urljoin(origin, url), origin, allow_private=self.allow_private_origin)
             if url in seen:
                 raise RuntimeError("Repeated pagination link; collection incomplete")
             seen.add(url)
