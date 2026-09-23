@@ -110,17 +110,30 @@ class GitLabConnector(BaseConnector):
             self.ctx.warn(f"code.gitlab: metadata HTTP {exc.status} for {path}; coverage unknown", incomplete=True)
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
-        p = Path(path)
-        if not p.is_dir():
+        p = Path(path).expanduser().absolute()
+        if any(part.is_symlink() for part in (p, *p.parents)) or not p.is_dir():
             raise ConnectorError(f"code.gitlab: offline input must be a directory of clones: {path}")
+        root = p.resolve()
         count = 0
-        for child in sorted(p.iterdir()):
-            if child.is_dir():
+        try:
+            for child in sorted(root.iterdir()):
+                if child.is_symlink():
+                    self.ctx.warn("code.gitlab: offline clone symlinks are skipped")
+                    continue
+                if not child.is_dir():
+                    continue
                 if count >= self.max_projects:
                     self.ctx.warn(f"code.gitlab: max_projects ({self.max_projects}) reached", incomplete=True)
                     return
+                try:
+                    child.resolve().relative_to(root)
+                except (OSError, ValueError):
+                    self.ctx.warn("code.gitlab: offline clone path escaped its input directory")
+                    continue
                 count += 1
                 yield {"path_with_namespace": child.name, "_local_path": str(child)}
+        except OSError:
+            self.ctx.warn("code.gitlab: could not enumerate offline clones")
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:

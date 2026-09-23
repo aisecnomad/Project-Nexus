@@ -148,17 +148,30 @@ class GitHubConnector(BaseConnector):
         return True
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
-        p = Path(path)
-        if not p.is_dir():
+        p = Path(path).expanduser().absolute()
+        if any(part.is_symlink() for part in (p, *p.parents)) or not p.is_dir():
             raise ConnectorError(f"code.github: offline input must be a directory of clones: {path}")
+        root = p.resolve()
         count = 0
-        for child in sorted(p.iterdir()):
-            if child.is_dir():
+        try:
+            for child in sorted(root.iterdir()):
+                if child.is_symlink():
+                    self.ctx.warn("code.github: offline clone symlinks are skipped")
+                    continue
+                if not child.is_dir():
+                    continue
                 if count >= self.max_repos:
                     self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
                     return
+                try:
+                    child.resolve().relative_to(root)
+                except (OSError, ValueError):
+                    self.ctx.warn("code.github: offline clone path escaped its input directory")
+                    continue
                 count += 1
                 yield {"full_name": child.name, "_local_path": str(child), "owner": {"login": child.name.split("__")[0] if "__" in child.name else child.name}}
+        except OSError:
+            self.ctx.warn("code.github: could not enumerate offline clones")
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:

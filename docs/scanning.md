@@ -52,6 +52,23 @@ incomplete and require a rerun. `--dump-records` disables cache reuse to ensure 
 requested export is actually collected. JSON connector statistics expose `cached`
 and `cache_key`; cached connectors examine zero objects during analysis.
 
+## Offline input limits
+
+Offline connectors skip symlinks and bound directory walks and file parsing. The
+defaults are 10,000 files, 32 MiB per file, and 256 MiB total per connector input.
+JSONL, CSV and gateway text logs are streamed; individual lines are capped at
+4 MiB. Gzip gateway logs are limited by expanded size as well as compressed file
+size. JSON and YAML documents are parsed only after their file and aggregate byte
+limits pass.
+
+Set `max_input_files`, `max_input_file_bytes` or `max_input_bytes` on a connector
+to change these limits. Gateway scans also honor `max_records` (default 5,000,000)
+while analyzing streamed events. If any limit is reached, ShadowScan retains the
+findings already collected and marks the connector incomplete; check the warnings
+and rerun with an appropriate limit to claim full coverage. The existing hard
+ceilings remain 200,000 directory entries, 64 MiB per file and 512 MiB total.
+`options.min_confidence` must be a finite number from 0 through 1, inclusive.
+
 ## Link code to gateway activity
 
 A static dependency alone cannot establish runtime use. Configure a binding
