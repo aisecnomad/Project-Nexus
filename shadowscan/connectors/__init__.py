@@ -61,11 +61,22 @@ def _load(path: str) -> type[BaseConnector]:
     return cls
 
 
+def builtin_connector_names() -> frozenset[str]:
+    """Names reserved for first-party connectors. Plugins cannot replace them."""
+    return frozenset(_BUILTIN)
+
+
 def available_connectors() -> dict[str, str]:
-    """Return name -> import path for built-in and plugin connectors."""
+    """Return name -> import path for built-in and plugin connectors.
+
+    Third-party ``shadowscan.connectors`` entry points may *add* names. They
+    cannot replace a built-in name: a colliding plugin is ignored.
+    """
     out = dict(_BUILTIN)
     try:
         for ep in entry_points(group="shadowscan.connectors"):
+            if ep.name in _BUILTIN:
+                continue
             out[ep.name] = ep.value
     except Exception:  # pragma: no cover - defensive against odd metadata
         pass
@@ -93,6 +104,7 @@ __all__ = [
     "ConnectorContext",
     "ConnectorError",
     "available_connectors",
+    "builtin_connector_names",
     "get_connector_class",
     "connectors_for_surface",
 ]

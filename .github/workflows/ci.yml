@@ -20,6 +20,8 @@ jobs:
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests
+      - run: mypy shadowscan
+      - run: pip-audit --progress-spinner off
       - run: pytest -q --cov=shadowscan --cov-report=term-missing
       - name: Self-scan (demo, offline)
         run: shadowscan scan -c examples/shadowscan.offline.yaml --format sarif -o shadowscan.sarif
