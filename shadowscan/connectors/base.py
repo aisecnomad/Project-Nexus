@@ -34,7 +34,8 @@ import yaml
 
 from shadowscan.models import Finding, ScanStats, Surface, now_iso
 from shadowscan.signatures import SignatureIndex, get_index
-from shadowscan.utils.redaction import sanitize
+from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize
+from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
 
 
 class ConnectorError(RuntimeError):
@@ -95,6 +96,7 @@ class ConnectorContext:
         self.input_path = input_path or self.config.get("input")
         self.workdir = workdir
         self.stats: ScanStats | None = None
+        self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
 
     # ---------------------------------------------------------------- config
@@ -116,7 +118,12 @@ class ConnectorContext:
 
     def sanitize_message(self, msg: str) -> str:
         """Remove configured credentials even when an upstream error echoes them."""
-        return sanitize({"config": {**self.config, **self._resolved_config}, "message": msg})["message"]
+        try:
+            return sanitize({"config": {**self.config, **self._resolved_config}, "message": msg})["message"]
+        except SanitizationLimitError:
+            if self.stats is not None:
+                self.stats.incomplete = True
+            return f"diagnostic omitted: sanitization safety limit exceeded {REDACTED}"
 
     def warn(self, msg: str, incomplete: bool = True) -> None:
         msg = self.sanitize_message(msg)
@@ -461,7 +468,10 @@ class BaseConnector(ABC):
             return
         if suffix in {".yaml", ".yml"}:
             try:
-                data = yaml.safe_load(text)
+                data = bounded_safe_load(text)
+            except YAMLResourceLimitError:
+                report("YAML safety limit exceeded")
+                return
             except (yaml.YAMLError, RecursionError, ValueError):
                 report("invalid YAML export")
                 return
@@ -596,18 +606,40 @@ class BaseConnector(ABC):
         """
         target = Path(path)
         fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+        written = 0
+        rejected = False
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 for rec in records:
-                    fh.write(json.dumps(sanitize(rec), default=str) + "\n")
+                    offset = fh.tell()
+                    try:
+                        encoded_chars = 0
+                        for chunk in json.JSONEncoder(default=str).iterencode(sanitize(rec)):
+                            encoded_chars += len(chunk)
+                            if encoded_chars > self._MAX_OFFLINE_FILE_BYTES:
+                                raise SanitizationLimitError("export record size limit exceeded")
+                            fh.write(chunk)
+                        fh.write("\n")
+                    except SanitizationLimitError:
+                        # iterencode may already have written part of this
+                        # record. Roll it back before accepting any later one.
+                        fh.seek(offset)
+                        fh.truncate()
+                        rejected = True
+                        self.ctx.error(f"{self.name}: export record rejected: sanitization safety limit exceeded")
+                        continue
+                    written += 1
                     yield rec
-            os.replace(temporary, target)
+            if written or not rejected:
+                os.replace(temporary, target)
+                self.ctx.dump_path = str(target)
         finally:
             Path(temporary).unlink(missing_ok=True)
 
     def run(self) -> list[Finding]:
         stats = ScanStats(connector=self.name, started_at=now_iso())
         self.ctx.stats = stats
+        self.ctx.dump_path = None
         self._offline_bytes_read = 0
         findings: list[Finding] = []
         try:

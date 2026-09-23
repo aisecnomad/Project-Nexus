@@ -22,7 +22,6 @@ import subprocess
 import tomllib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from functools import cache
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
@@ -30,11 +29,22 @@ import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
+from shadowscan.connectors.code.ownership import (
+    MAX_PATTERN_LENGTH,
+    MAX_RULES,
+    OwnershipBudget,
+    OwnershipLimitError,
+)
+from shadowscan.connectors.code.ownership import (
+    codeowners_match as _codeowners_match,
+)
 from shadowscan.connectors.common import apply_matches, finalize, looks_like_placeholder
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, language_for_path
-from shadowscan.utils.redaction import sanitize, sanitize_text
+from shadowscan.utils.git import git_argv_prefix, safe_git_env
+from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
+from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
 from shadowscan.utils.text import excerpt_line, notebook_to_source, read_text, redact, truncate
 
 DEFAULT_EXCLUDES = {
@@ -188,49 +198,6 @@ MCP_CONFIG_NAMES = {
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
 
 
-def _codeowners_match(pattern: str, path: str) -> bool:
-    """Match the small GitHub/GitLab CODEOWNERS glob subset against a file path.
-
-    Leading or interior slashes anchor the path to the root. Basename and
-    trailing-slash directory patterns match at any depth; directory rules
-    own their descendants.
-    """
-    anchored = pattern.startswith("/") or "/" in pattern.rstrip("/")
-    directory = pattern.endswith("/")
-    pattern = pattern.strip("/")
-    if not pattern or path == ".":
-        return False
-    path_parts = PurePosixPath(path).parts
-    globs = tuple(pattern.split("/"))
-    # Literal directory names (and directory rules ending in /) also own their
-    # descendants. Wildcard rules such as docs/* own direct entries only.
-    descendants = directory or not any(c in globs[-1] for c in "*?")
-
-    @cache
-    def matches(parts: tuple[str, ...], selectors: tuple[str, ...]) -> bool:
-        if not selectors:
-            return not parts
-        first = selectors[0]
-        if first == "**":
-            return matches(parts, selectors[1:]) or bool(parts) and matches(parts[1:], selectors)
-        if not parts:
-            return False
-        # GitHub CODEOWNERS supports * and ? inside a path component. Neither
-        # wildcard may cross a slash; unlike fnmatch, this also handles **.
-        expression = "".join(
-            ".*" if char == "*" else "." if char == "?" else re.escape(char)
-            for char in first
-        )
-        return bool(re.fullmatch(expression, parts[0])) and matches(parts[1:], selectors[1:])
-
-    if not anchored:
-        parts_to_check = path_parts if descendants else path_parts[-1:]
-        return any(matches((part,), globs) for part in parts_to_check)
-    if matches(path_parts, globs):
-        return True
-    return descendants and any(matches(path_parts[:i], globs) for i in range(1, len(path_parts)))
-
-
 @dataclass
 class _Project:
     root: str  # relative posix path ("." for scan root)
@@ -278,6 +245,9 @@ class FilesystemConnector(BaseConnector):
         self.provider_override: str | None = ctx.get("provider")
         self.extra_metadata: dict[str, Any] = dict(ctx.get("metadata", {}) or {})
         self._codeowners_cache: dict[Path, list[tuple[str, list[str]]]] = {}
+        self._ownership_budgets: dict[Path, OwnershipBudget] = {}
+        self._ownership_exhausted: set[Path] = set()
+        self._owner_cache: dict[tuple[Path, str], str | None] = {}
 
     # ----------------------------------------------------------------- input
     def _paths(self) -> list[Path]:
@@ -562,9 +532,10 @@ class FilesystemConnector(BaseConnector):
         target = "." if rel_root == "." else rel_root
         try:
             out = subprocess.run(
-                ["git", "-C", str(root), "log", "-1", "--format=%an|%ae|%cI", "--", target],
+                [*git_argv_prefix(), "-C", str(root), "log", "--no-show-signature", "-1", "--format=%an|%ae|%cI", "--", target],
                 capture_output=True,
                 text=True,
+                env=safe_git_env(),
                 timeout=20,
                 check=False,
             )
@@ -599,6 +570,11 @@ class FilesystemConnector(BaseConnector):
                             continue
                         parts = line.split()
                         if parts:
+                            if len(rules) >= MAX_RULES or len(parts[0]) > MAX_PATTERN_LENGTH:
+                                self.ctx.error("code.filesystem: CODEOWNERS rule limit exceeded; ownership incomplete")
+                                rules = []
+                                self._ownership_exhausted.add(root)
+                                break
                             rules.append((parts[0], parts[1:]))
                 except (OSError, RuntimeError):
                     self.ctx.error(f"code.filesystem: could not read {cand}")
@@ -609,12 +585,26 @@ class FilesystemConnector(BaseConnector):
     def _owner_for(self, root: Path, rel_root: str) -> str | None:
         if self.owner:
             return self.owner
+        root = root.resolve()
         rules = self._codeowners(root)
-        best: list[str] | None = None
-        for pattern, owners in rules:
-            if _codeowners_match(pattern, rel_root):
-                best = owners
-        return ", ".join(best) if best else None
+        if root in self._ownership_exhausted:
+            return None
+        key = (root, rel_root)
+        if key in self._owner_cache:
+            return self._owner_cache[key]
+        budget = self._ownership_budgets.setdefault(root, OwnershipBudget())
+        try:
+            # Last matching rule wins, including ownerless exclusions. Stop at
+            # that rule instead of repeatedly re-evaluating overridden rules.
+            for pattern, owners in reversed(rules):
+                if _codeowners_match(pattern, rel_root, budget):
+                    self._owner_cache[key] = ", ".join(owners) if owners else None
+                    return self._owner_cache[key]
+        except OwnershipLimitError:
+            self._ownership_exhausted.add(root)
+            self.ctx.error("code.filesystem: CODEOWNERS processing budget exceeded; ownership incomplete")
+        self._owner_cache[key] = None
+        return None
 
     def _owners_for_files(self, root: Path, files: Iterable[str]) -> tuple[str | None, dict[str, str]]:
         paths = sorted(set(files))
@@ -742,7 +732,7 @@ class FilesystemConnector(BaseConnector):
     def _card_finding(self, label: str, root: Path, rel: str, text: str, kind: str) -> Finding | None:
         data: Any = None
         try:
-            data = yaml.safe_load(text) if rel.endswith((".yaml", ".yml")) else json.loads(text)
+            data = bounded_safe_load(text) if rel.endswith((".yaml", ".yml")) else json.loads(text)
         except (ValueError, RecursionError, yaml.YAMLError):
             self.ctx.error(f"code.filesystem: {rel}: invalid agent manifest")
             return None
@@ -857,7 +847,7 @@ class FilesystemConnector(BaseConnector):
         m = _FRONTMATTER.match(text)
         if m:
             try:
-                fm = yaml.safe_load(m.group(1)) or {}
+                fm = bounded_safe_load(m.group(1)) or {}
             except yaml.YAMLError:
                 self.ctx.error(f"code.filesystem: {rel}: invalid agent definition YAML")
                 fm = {}
@@ -927,10 +917,14 @@ def _safe_source_text(rel: str, text: str) -> str:
         elif rel.endswith(".toml"):
             data = tomllib.loads(text)
         elif rel.endswith((".yaml", ".yml")):
-            data = yaml.safe_load(text)
+            data = bounded_safe_load(text)
         else:
             return sanitize_text(text)
         return sanitize({"source": text, "parsed": data})["source"]
+    except (YAMLResourceLimitError, SanitizationLimitError):
+        # Resource-limit failures must reach the per-file isolation boundary;
+        # lexical fallback would otherwise disguise an incomplete analysis.
+        raise
     except (ValueError, RecursionError, yaml.YAMLError):
         # Dedicated parsers report syntax/shape failures. Lexical redaction still
         # applies if this file cannot supply usable structured context.
@@ -943,7 +937,7 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
         if rel.endswith(".toml"):
             data = tomllib.loads(text)
         elif rel.endswith((".yaml", ".yml")):
-            data = yaml.safe_load(text)
+            data = bounded_safe_load(text)
         else:
             data = json.loads(_strip_json_comments(text))
     except (ValueError, RecursionError, yaml.YAMLError):

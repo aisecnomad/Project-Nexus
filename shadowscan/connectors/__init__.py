@@ -8,6 +8,7 @@ registered here; third parties can add more through the
 from __future__ import annotations
 
 import importlib
+from collections.abc import Sequence
 from importlib.metadata import entry_points
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
@@ -83,7 +84,15 @@ def available_connectors() -> dict[str, str]:
     return out
 
 
-def get_connector_class(name: str) -> type[BaseConnector]:
+def get_connector_class(name: str, *, allowed_plugins: Sequence[str] | None = None) -> type[BaseConnector]:
+    # Check authorization before looking in the cache. A previous scan's plugin
+    # approval must never authorize a later scan in the same process.
+    if name not in _BUILTIN:
+        registry = available_connectors()
+        if name not in registry:
+            raise KeyError(f"unknown connector '{name}'. Known: {', '.join(sorted(registry))}")
+        if isinstance(allowed_plugins, str) or name not in (allowed_plugins or ()):
+            raise ValueError(f"third-party connector '{name}' is not approved; add its exact name to options.plugins")
     if name in _cache:
         return _cache[name]
     registry = available_connectors()

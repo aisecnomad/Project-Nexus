@@ -297,6 +297,7 @@ def test_multi_root_connector_lookup_error_is_reported_as_incomplete(tmp_path, i
 
 def test_reused_engine_reloads_signature_pack_between_runs(tmp_path):
     cfg = config(tmp_path)
+    cfg.allow_signature_override = True
     extra = tmp_path / "signatures"
     extra.mkdir()
     override = extra / "langchain.yaml"

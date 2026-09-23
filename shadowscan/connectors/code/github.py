@@ -29,6 +29,7 @@ from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.utils.git import clone_environment, git_argv_prefix, validate_git_ref
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 
 INTERESTING_DIRS = (".github/", ".claude/", ".cursor/", ".vscode/", ".windsurf/", ".codex/", ".gemini/", ".kiro/", ".amazonq/", ".continue/", ".roo/", ".well-known/", "config/", "infra/", "terraform/", "deploy/", "k8s/", "helm/", "flows/", "workflows/", "agents/", "prompts/")
@@ -45,21 +46,6 @@ def repository_target(root: str, path: str) -> Path:
     if not target.is_relative_to(Path(root).resolve()) or target == Path(root).resolve():
         raise ConnectorError("Repository tree path escapes checkout")
     return target
-
-
-def clone_environment(origin: str, token: str | None, username: str) -> dict[str, str]:
-    """Scope authentication to a verified HTTPS origin and disable redirects."""
-    env = dict(os.environ)
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    config = [("http.followRedirects", "false"), ("credential.helper", ""), ("protocol.allow", "never"), ("protocol.https.allow", "always")]
-    if token:
-        basic = base64.b64encode(f"{username}:{token}".encode()).decode()
-        config.append((f"http.{origin.rstrip('/')}/.extraheader", f"Authorization: Basic {basic}"))
-    env["GIT_CONFIG_COUNT"] = str(len(config))
-    for i, (key, value) in enumerate(config):
-        env[f"GIT_CONFIG_KEY_{i}"] = key
-        env[f"GIT_CONFIG_VALUE_{i}"] = value
-    return env
 
 
 class GitHubConnector(BaseConnector):
@@ -244,9 +230,12 @@ class GitHubConnector(BaseConnector):
         origin = "https://github.com" if api.hostname == "api.github.com" else f"{api.scheme}://{api.netloc}"
         url = validate_url(repo.get("clone_url") or f"{origin}/{repo['full_name']}.git", origin)
         env = clone_environment(origin, self.token, "x-access-token")
-        cmd = ["git", "clone", "--quiet", "--depth", str(self.depth), "--no-tags", "--single-branch"]
-        if repo.get("default_branch"):
-            cmd += ["--branch", repo["default_branch"]]
+        cmd = [*git_argv_prefix(), "clone", "--quiet", "--depth", str(self.depth), "--no-tags", "--single-branch"]
+        branch = validate_git_ref(repo.get("default_branch"))
+        if branch:
+            cmd += ["--branch", branch]
+        elif repo.get("default_branch"):
+            self.ctx.warn("code.github: unsupported default branch; cloned remote HEAD, requested branch coverage unknown", incomplete=True)
         cmd += ["--", url, dest]
         try:
             res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600, check=False)
@@ -260,8 +249,11 @@ class GitHubConnector(BaseConnector):
 
     def _fetch_via_api(self, repo: dict[str, Any], tmp: str) -> str | None:
         full = repo["full_name"]
-        branch = repo.get("default_branch") or "main"
-        tree = self.http.try_get_json(f"/repos/{full}/git/trees/{branch}", params={"recursive": "1"})
+        branch = validate_git_ref(repo.get("default_branch") or "main")
+        if branch is None:
+            self.ctx.warn("code.github: unsupported default branch; repository content skipped", incomplete=True)
+            return None
+        tree = self.http.try_get_json(f"/repos/{full}/git/trees/{quote(branch, safe='')}", params={"recursive": "1"})
         if not tree or "tree" not in tree:
             self.ctx.warn(f"code.github: cannot read tree of {full}", incomplete=True)
             return None

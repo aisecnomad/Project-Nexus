@@ -17,6 +17,7 @@ def response(data=None, status=200, headers=None):
     result = requests.Response()
     result.status_code = status
     result._content = json.dumps(data).encode()
+    result._content_consumed = True
     result.headers.update(headers or {})
     return result
 
@@ -165,3 +166,142 @@ def test_gitlab_api_download_rejects_traversal_before_request(tmp_path, index):
     with pytest.raises(RuntimeError):
         connector._fetch_via_api({"id": 1}, str(tmp_path))
     connector.http.get.assert_not_called()
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "169.254.169.254", "10.2.3.4", "[::1]", "[::ffff:127.0.0.1]", "100.64.0.1", "metadata.google.internal"])
+def test_private_destinations_rejected_before_request(host):
+    http, session = client()
+    # Use an empty base URL to isolate the destination policy from origin checks.
+    http.base_url = ""
+    with pytest.raises(ValueError, match="Refusing"):
+        http.get(f"https://{host}/credentials")
+    session.request.assert_not_called()
+
+
+def test_dns_rebinding_cannot_change_the_connected_address(monkeypatch):
+    import socket
+
+    from shadowscan.utils.http import _PublicHTTPSConnection
+
+    resolver = Mock(side_effect=[
+        [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))],
+        [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 443))],
+    ])
+    sock = Mock()
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolver)
+    monkeypatch.setattr("shadowscan.utils.http.socket.socket", Mock(return_value=sock))
+    connection = _PublicHTTPSConnection("issuer.example", timeout=5)
+    assert connection._new_conn() is sock
+    resolver.assert_called_once()
+    sock.connect.assert_called_once_with(("8.8.8.8", 443))
+    # HTTPSConnection retains the DNS hostname for TLS SNI/certificate checks.
+    assert connection.host == "issuer.example"
+
+
+def test_connect_rejects_private_dns_answer_without_creating_socket(monkeypatch):
+    import socket
+
+    from shadowscan.utils.http import _PublicHTTPSConnection
+
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", Mock(return_value=[
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443)),
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.0.0.1", 443)),
+    ]))
+    factory = Mock()
+    monkeypatch.setattr("shadowscan.utils.http.socket.socket", factory)
+    with pytest.raises(ValueError, match="Refusing"):
+        _PublicHTTPSConnection("issuer.example", timeout=5)._new_conn()
+    factory.assert_not_called()
+
+
+def test_connect_rejects_rebinding_after_url_preflight(monkeypatch):
+    import socket
+
+    from shadowscan.utils.http import _PublicHTTPSConnection, validate_url
+
+    resolver = Mock(side_effect=[
+        [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))],
+        [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("169.254.169.254", 443))],
+    ])
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolver)
+    factory = Mock()
+    monkeypatch.setattr("shadowscan.utils.http.socket.socket", factory)
+    validate_url("https://issuer.example/keys")
+    with pytest.raises(ValueError, match="Refusing"):
+        _PublicHTTPSConnection("issuer.example", timeout=5)._new_conn()
+    factory.assert_not_called()
+
+
+def test_private_override_is_worker_scoped_and_reset():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from shadowscan.utils.http import reset_allow_private_origin, set_allow_private_origin, validate_url
+
+    def default_worker():
+        with pytest.raises(ValueError, match="Refusing"):
+            validate_url("https://127.0.0.1/keys")
+
+    token = set_allow_private_origin(True)
+    try:
+        assert validate_url("https://127.0.0.1/keys") == "https://127.0.0.1/keys"
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(default_worker).result()
+    finally:
+        reset_allow_private_origin(token)
+    default_worker()
+
+
+def test_private_override_does_not_mutate_another_clients_pool():
+    from shadowscan.utils.http import _PrivateHTTPSConnection, _PublicHTTPSConnection
+
+    public = HttpClient()
+    private = HttpClient(allow_private_origin=True)
+    try:
+        public_pool = public.session.get_adapter("https://").poolmanager.connection_from_url("https://example.com")
+        private_pool = private.session.get_adapter("https://").poolmanager.connection_from_url("https://example.com")
+        assert public_pool.ConnectionCls is _PublicHTTPSConnection
+        assert private_pool.ConnectionCls is _PrivateHTTPSConnection
+    finally:
+        public.session.close()
+        private.session.close()
+
+
+def test_environment_proxy_and_explicit_proxy_cannot_bypass_destination_policy(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "https://127.0.0.1:8080")
+    http = HttpClient("https://example.com")
+    try:
+        assert http.session.trust_env is False
+        with pytest.raises(ValueError, match="Proxies"):
+            http.get("/keys", proxies={"https": "https://proxy.example"})
+        with pytest.raises(ValueError, match="Proxies"):
+            http.session.get_adapter("https://").proxy_manager_for("https://proxy.example")
+    finally:
+        http.session.close()
+
+
+def test_tls_verification_cannot_be_disabled():
+    http, session = client()
+    with pytest.raises(ValueError, match="TLS"):
+        http.get("/keys", verify=False)
+    session.request.assert_not_called()
+
+
+def test_bounded_json_reads_streamed_decoded_bytes_and_closes_response():
+    result = response({"keys": []})
+    result.iter_content = Mock(return_value=iter([b'{"keys":', b'[]}']))
+    result.close = Mock()
+    http, session = client(result)
+    assert http.get_json("/keys", max_bytes=16) == {"keys": []}
+    assert session.request.call_args.kwargs["stream"] is True
+    result.close.assert_called_once()
+
+
+@pytest.mark.parametrize("content_length,chunks", [("1000", []), (None, [b"x" * 9, b"y" * 9]), ("3", [b"x" * 17])])
+def test_bounded_json_refuses_oversized_declared_or_decoded_body(content_length, chunks):
+    result = response(headers={"Content-Length": content_length} if content_length else {})
+    result.iter_content = Mock(return_value=iter(chunks))
+    result.close = Mock()
+    http, _ = client(result)
+    with pytest.raises(ValueError, match="byte limit"):
+        http.get_json("/keys", max_bytes=16)
+    result.close.assert_called_once()

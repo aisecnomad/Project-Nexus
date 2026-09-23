@@ -14,6 +14,8 @@ import regex
 import yaml
 
 from shadowscan.signatures.schema import require_list, validate_signature_shape
+from shadowscan.utils.files import policy_files, read_policy_text
+from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
 VALID_CATEGORIES = {
     "framework",  # agent orchestration frameworks (LangChain, CrewAI, ADK...)
@@ -169,12 +171,10 @@ def signature_from_dict(d: dict[str, Any], source: str | None = None) -> Signatu
 
 
 def _iter_yaml_files(root: Path):
-    for path in sorted(root.rglob("*")):
-        if path.is_file() and path.suffix.lower() in {".yaml", ".yml"}:
-            yield path
+    yield from policy_files(root, {".yaml", ".yml"})
 
 
-class _UniqueKeyLoader(yaml.SafeLoader):
+class _UniqueKeyLoader(BoundedSafeLoader):
     """Reject duplicate YAML keys instead of silently retaining the last value."""
 
 
@@ -194,11 +194,10 @@ _UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
 
 
 def load_signature_file(path: Path) -> list[Signature]:
-    with path.open("r", encoding="utf-8") as fh:
-        try:
-            docs = list(yaml.load_all(fh, Loader=_UniqueKeyLoader))
-        except (yaml.YAMLError, ValueError) as exc:
-            raise ValueError(f"{path}: invalid YAML: {exc}") from exc
+    try:
+        docs = list(yaml.load_all(read_policy_text(path), Loader=_UniqueKeyLoader))
+    except (yaml.YAMLError, ValueError) as exc:
+        raise ValueError(f"{path}: invalid YAML: {exc}") from exc
     out: list[Signature] = []
     for i, doc in enumerate(docs, 1):
         context = f"{path}: document {i}"
@@ -226,19 +225,26 @@ def builtin_signature_dir() -> Path:
     return Path(str(resources.files("shadowscan.signatures") / "data"))
 
 
-def load_signatures(extra_dirs: Sequence[str | os.PathLike[str]] | None = None, include_builtin: bool = True) -> list[Signature]:
+def load_signatures(
+    extra_dirs: Sequence[str | os.PathLike[str]] | None = None,
+    include_builtin: bool = True,
+    *, allow_override: bool = False,
+) -> list[Signature]:
     """Load built-in signatures plus any extra packs.
 
-    Later packs override earlier ones with the same id, so organisations can
-    tune or replace built-ins by dropping a YAML file into their own pack dir.
+    Built-in IDs are reserved unless ``allow_override`` is explicitly enabled.
+    Later organization packs may replace IDs from earlier organization packs.
     """
+    if not isinstance(allow_override, bool):
+        raise ValueError("allow_override must be a boolean")
     by_id: dict[str, Signature] = {}
     dirs: list[Path] = []
     if include_builtin:
         dirs.append(builtin_signature_dir())
     for d in extra_dirs or []:
         dirs.append(Path(d))
-    for d in dirs:
+    reserved: set[str] = set()
+    for number, d in enumerate(dirs):
         if not d.is_dir():
             raise FileNotFoundError(f"signature directory not found: {d}")
         pack_ids: set[str] = set()
@@ -246,6 +252,10 @@ def load_signatures(extra_dirs: Sequence[str | os.PathLike[str]] | None = None, 
             for sig in load_signature_file(f):
                 if sig.id in pack_ids:
                     raise ValueError(f"{f}: duplicate signature id {sig.id!r} in {d}")
+                if sig.id in reserved and not allow_override:
+                    raise ValueError(f"{f}: signature id {sig.id!r} is reserved by a built-in; explicitly enable signature overrides")
                 pack_ids.add(sig.id)
                 by_id[sig.id] = sig
+        if include_builtin and number == 0:
+            reserved.update(pack_ids)
     return list(by_id.values())

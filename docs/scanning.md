@@ -69,6 +69,20 @@ and rerun with an appropriate limit to claim full coverage. The existing hard
 ceilings remain 200,000 directory entries, 64 MiB per file and 512 MiB total.
 `options.min_confidence` must be a finite number from 0 through 1, inclusive.
 
+YAML also has structural limits before object construction: 100,000 composed or
+expanded nodes, 1,000 aliases, depth 64 and 64 MiB of expanded scalar content.
+Recursive aliases and excessive merge expansion are rejected. Sanitization uses
+separate structure and work budgets; rejected records mark collection incomplete
+while valid neighboring records remain available. CODEOWNERS matching has a
+bounded per-root work budget and marks exhausted ownership coverage incomplete.
+
+Record dumps use a private directory and distinct filenames per configured
+connector instance. `manifest.json` maps configuration ordinals to committed
+export files and records each instance's completion status. Use only entries
+marked `exported: true`; a failed attempt may leave an older file in place.
+See [deployment and migration](production.md) for explicit plugin, signature
+override and private-endpoint policies, output changes and rollout checks.
+
 ## Link code to gateway activity
 
 A static dependency alone cannot establish runtime use. Configure a binding

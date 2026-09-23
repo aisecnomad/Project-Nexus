@@ -96,4 +96,16 @@ Register it in `pyproject.toml`:
 "platform.acme-hub" = "acme_shadowscan.hub:AcmeAgentHubConnector"
 ```
 
-It then appears in `shadowscan connectors` and can be used in configs.
+It appears in `shadowscan connectors` without importing plugin code. To execute
+it, explicitly permit its exact connector name:
+
+```yaml
+options:
+  plugins: [platform.acme-hub]
+connectors:
+  - name: platform.acme-hub
+    url: https://agents.example.com
+```
+
+Plugins run trusted Python code with scanner privileges. The allowlist expresses
+operator approval; it is not a sandbox. Built-in connector names remain reserved.

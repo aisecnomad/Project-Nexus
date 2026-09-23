@@ -38,7 +38,9 @@ from typing import Any
 import yaml
 
 from shadowscan.models import Finding, Surface
+from shadowscan.utils.files import policy_files, policy_glob, read_policy_text, require_no_symlinks
 from shadowscan.utils.redaction import sanitize_text
+from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
 NAME_FIELDS = ("agent_name", "name", "names", "display_name", "displayName", "app_slug", "okta_name", "developer_name", "schema_name", "caller", "principal", "function_name", "repository", "project", "agents", "agent_definitions")
 
@@ -109,12 +111,13 @@ class Inventory:
         for p in paths:
             path = Path(p).expanduser()
             files: list[Path]
-            if any(ch in str(path) for ch in "*?["):
-                files = sorted(Path().glob(str(path)))
-            elif path.is_dir():
-                files = sorted(f for f in path.rglob("*") if f.suffix.lower() in {".yaml", ".yml", ".json", ".csv"})
-            elif path.exists():
+            if path.is_dir():
+                files = list(policy_files(path, {".yaml", ".yml", ".json", ".csv"}))
+            elif path.exists() or path.is_symlink():
+                require_no_symlinks(path)
                 files = [path]
+            elif any(ch in str(path) for ch in "*?["):
+                files = sorted(policy_glob(path))
             else:
                 raise FileNotFoundError(f"inventory path not found: {p}")
             for f in files:
@@ -125,9 +128,9 @@ class Inventory:
     @classmethod
     def _load_file(cls, path: Path) -> list[InventoryEntry]:
         try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            raise _invalid(path, "document", "could not read UTF-8 inventory") from None
+            text = read_policy_text(path)
+        except (OSError, UnicodeError, ValueError):
+            raise _invalid(path, "document", "could not read bounded regular UTF-8 inventory") from None
         if path.suffix.lower() == ".csv":
             return cls._load_csv(text, path)
         try:
@@ -356,7 +359,7 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-class _InventoryLoader(yaml.SafeLoader):
+class _InventoryLoader(BoundedSafeLoader):
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
         self.flatten_mapping(node)
         mapping: dict = {}
@@ -402,8 +405,10 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
         "security_controls": {"egress_proxy_required": True, "sandbox_type": None, "kill_switch_enabled": False},
         "risk_scoring": {"AARS_initial_score": finding.risk.score, "blast_radius": finding.risk.level.value},
         "discovery": {
-            "resources": [finding.resource],
-            "names": [n for n in {str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}],
+            # The discovered ID is literal. Hand-authored resource entries may
+            # still deliberately use wildcards; generated approvals never do.
+            "resources": [finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})],
+            "names": sorted({str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}),
             "frameworks": finding.frameworks,
             "surfaces": [finding.surface.value],
             "providers": [finding.provider] if finding.provider else [],

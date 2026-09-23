@@ -24,9 +24,10 @@ from urllib.parse import quote, urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
-from shadowscan.connectors.code.github import GitHubConnector, clone_environment, repository_target
+from shadowscan.connectors.code.github import GitHubConnector, repository_target
 from shadowscan.connectors.common import apply_matches, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.utils.git import clone_environment, git_argv_prefix, validate_git_ref
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 
 
@@ -224,9 +225,12 @@ class GitLabConnector(BaseConnector):
         origin = f"{api.scheme}://{api.netloc}"
         url = validate_url(url, origin)
         env = clone_environment(origin, self.token, "oauth2")
-        cmd = ["git", "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch"]
-        if proj.get("default_branch"):
-            cmd += ["--branch", proj["default_branch"]]
+        cmd = [*git_argv_prefix(), "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch"]
+        branch = validate_git_ref(proj.get("default_branch"))
+        if branch:
+            cmd += ["--branch", branch]
+        elif proj.get("default_branch"):
+            self.ctx.warn("code.gitlab: unsupported default branch; cloned remote HEAD, requested branch coverage unknown", incomplete=True)
         cmd += ["--", url, dest]
         try:
             res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600, check=False)
@@ -236,7 +240,10 @@ class GitLabConnector(BaseConnector):
 
     def _fetch_via_api(self, proj: dict[str, Any], tmp: str) -> str | None:
         pid = proj["id"]
-        ref = proj.get("default_branch") or "main"
+        ref = validate_git_ref(proj.get("default_branch") or "main")
+        if ref is None:
+            self.ctx.warn("code.gitlab: unsupported default branch; repository content skipped", incomplete=True)
+            return None
         paths: list[str] = []
         for item in self.http.paginate_link(f"/projects/{pid}/repository/tree", params={"recursive": "true", "per_page": 100, "ref": ref}):
             if item.get("type") == "blob":

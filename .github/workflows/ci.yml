@@ -8,6 +8,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python: ["3.11", "3.12"]
@@ -19,13 +20,15 @@ jobs:
       - name: Update installer and install development checks
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[all]"
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests
       - run: mypy shadowscan
       - run: pip-audit --progress-spinner off
-      - run: pytest -q --cov=shadowscan --cov-report=term-missing
+      - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+      - name: Build distributable wheel
+        run: python -m pip wheel . --no-deps --wheel-dir dist
       - name: Self-scan (demo, offline)
         run: shadowscan scan -c examples/shadowscan.offline.yaml --format sarif -o shadowscan.sarif
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

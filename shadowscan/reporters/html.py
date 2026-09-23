@@ -72,7 +72,7 @@ def render_html(result: ScanResult) -> str:
         parts.append(f"<tr class='row' data-score='{f.risk.score}' data-level='{f.risk.level.value}' data-shadow='{shadow}' data-surface='{_e(f.surface.value)}' data-kind='{_e(f.kind.value)}' data-title='{_e(f.title)}' data-owner='{_e(f.owner or '')}' data-confidence='{f.confidence}' data-text='{_e(text)}'>")
         parts.append(f"<td><span class='pill {f.risk.level.value}'>{f.risk.level.value} {f.risk.score}</span></td><td>{'<span class=shadow>SHADOW</span>' if f.shadow else _e(f.registry_match or shadow)}</td><td>{_e(f.surface.value)}</td><td>{_e(f.kind.value)}</td><td>{_e(f.title)}<br><code>{_e(f.resource)}</code></td><td>{_e(f.owner or '—')}</td><td>{f.confidence:.2f}</td><td>{''.join(f'<span class=tag>{_e(t)}</span>' for t in (f.frameworks + f.model_providers)[:6])}</td></tr>")
         parts.append("<tr class='detail'><td colspan='8'>")
-        parts.append(f"<div><b>Id</b> <code>{f.id}</code> · <b>connector</b> <code>{_e(f.connector)}</code> · <b>type</b> {_e(f.resource_type)} · <b>where</b> {_e(f.provider or '')} {_e(f.account or '')} {_e(f.region or '')} · <b>seen</b> {_e(f.first_seen or '?')} → {_e(f.last_seen or '?')}</div>")
+        parts.append(f"<div><b>Id</b> <code>{_e(f.id)}</code> · <b>connector</b> <code>{_e(f.connector)}</code> · <b>type</b> {_e(f.resource_type)} · <b>where</b> {_e(f.provider or '')} {_e(f.account or '')} {_e(f.region or '')} · <b>seen</b> {_e(f.first_seen or '?')} → {_e(f.last_seen or '?')}</div>")
         if f.capabilities:
             parts.append("<div><b>Capabilities</b> " + "".join(f"<span class=tag>{_e(c)}</span>" for c in f.capabilities) + "</div>")
         if f.tags:
