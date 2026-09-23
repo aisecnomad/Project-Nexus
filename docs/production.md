@@ -1,10 +1,16 @@
 # Deployment and migration
 
-This hardening release addresses the eight findings from the September 2026
-review and completes the published PR #8 helper integration. It adds bounded
-YAML/ownership processing, annotated-assignment redaction, exact generated
-inventory bindings, per-instance record exports, deployed ECS revision discovery,
-GCP basic-role visibility and correct AWS account initialization.
+This hardening change addresses all nine findings in the review of `main` at
+`b13753df3199242c9e13cbfd04aefc18dd31a735`. It closes unsafe Git metadata execution,
+Python credential redaction gaps and falsely complete export scans; corrects
+Foundry and OCI collection; separates remote records from local paths; validates
+every explicit scan selector; stabilizes finding identity; and preserves Google
+Workspace user attribution. It retains the earlier bounded YAML, inventory,
+output, HTTP, JWT and cloud hardening already merged on `main`.
+
+Automated validation establishes implementation behavior. Production rollout
+also requires the tenant canaries and operational checks below; a passing unit
+suite does not establish complete coverage of a particular estate.
 
 ## Explicit security policy
 
@@ -49,6 +55,22 @@ configuring `expected_issuer` also binds the issuer. Neither mode authorizes a
 request or substitutes for audience, expiry and application-policy validation in
 an actual relying service.
 
+## Git metadata policy
+
+All code connectors default to `use_git: false`. Source inspection and
+`CODEOWNERS` still work without invoking Git for history enrichment. For reviewed
+local metadata, set the connector's `use_git: true` explicitly (a YAML boolean).
+History enrichment requires Git 2.45 or later and a self-contained `.git`
+directory; external gitfiles and symlinks are not accepted for enrichment.
+Unsupported versions and failed metadata reads, including unavailable history
+objects, make the scan incomplete while preserving code findings.
+
+Metadata commands disable hooks, lazy fetching and every transport. Authenticated
+cloning uses a separate HTTPS-only policy. Remote JSON fields such as
+`_local_path` cannot select local scan roots or substitute for a verified offline
+record. Use fresh disposable workers and immutable inputs; these controls do not
+turn Git or the scanner into a process sandbox.
+
 ## Resource limits and incomplete scans
 
 YAML parsing checks input size, composed nodes, alias count, nesting, expanded
@@ -61,6 +83,12 @@ A limit hit is a diagnostic and incomplete coverage, not proof of absence. Exit 
 must remain a failed gate in CI. Exit 2 means a complete scan exceeded the chosen
 risk threshold. Hosted CI has a job timeout as an additional containment boundary;
 there is no claim of a universal deadline for all vendor SDKs.
+
+Saved provider errors and unsupported/malformed export records also make scans
+incomplete. Valid neighbors remain available. Explicit empty inventories such
+as `[]` remain valid; an authorization-error document is not an empty inventory.
+Every `--only` value must match an enabled connector name or label, including
+when another selector matches successfully.
 
 Use disposable, resource-limited workers for untrusted repository scans. Keep
 scanner state and output outside the repository under review. Avoid handing
@@ -84,6 +112,31 @@ Generated resource patterns escape literal `*`, `?` and `[` characters. Review
 previously generated cards for those characters and regenerate literal bindings
 where necessary. Existing intentionally authored wildcard approvals remain valid.
 
+## Finding identity and comparison migration
+
+Finding IDs now separate stable source identity from inferred classification.
+A service principal transitioning from delegated to application permissions
+keeps its identity. Stable resource-type families separate different observation
+types on the same resource; plugins can provide an explicit stable
+`identity_discriminator` when needed. Never derive this discriminator from an
+inferred kind, risk level or current permissions.
+
+Reports declare `shadowscan.finding-identity/v2`. Rebuild comparison baselines
+after this upgrade: legacy or mismatched schemas cannot establish resolution
+and diff reports missing findings as unknown. Incremental cache format changes
+force a full rescan; cached approval is never reused. Review any downstream
+deduplication, SARIF alert history and ticket integrations that store old IDs.
+
+Diffs now identify substantive changes in classification, permissions,
+capabilities, technologies, risk score/factors, registration and ownership,
+including changes within the same risk band. `changed_fields` identifies the
+changed attributes. Timestamp and evidence ordering alone do not create changes.
+
+Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
+Pre/post content hashes can detect ordinary concurrent edits but do not form an
+atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
+and revert between those reads.
+
 ## Cloud collection changes
 
 AWS resolves its account before emitting account metadata. ECS discovery follows
@@ -100,10 +153,22 @@ GCP Owner/Editor-only principals remain visible as privileged access findings.
 Neither broad role grants nor ECS deployment references establish that AI code
 actually executed. Use trusted runtime telemetry for additional attribution.
 
+Foundry collection uses the verified classic Agent Service `/assistants` route
+with `api-version=v1` and validates its pagination envelope. Newer `/agents`
+families are outside that contract. OCI Function collection now reads both
+application and function details, merges inherited configuration with function
+overrides, and treats denied detail access as incomplete. Ensure the audit
+identity can read those details, not just enumerate summary records.
+
+Google Workspace per-user token envelopes preserve the parent user in both
+single-object and array forms. Regenerate earlier offline analyses affected by
+lost user attribution before using their counts as governance evidence.
+
 ## Release verification
 
 The CI workflow installs all cloud SDK extras and validates signatures, lint, typing, dependency advisories, tests
-with a minimum 80% statement coverage, wheel creation and offline SARIF output.
+with a minimum 80% statement coverage, wheel creation, installed-wheel validation
+outside the source checkout and offline SARIF output.
 Focused regressions cover the review findings, private-address enforcement,
 public-key verification, plugin policy, artifact permissions and replay integrity.
 Dependabot checks Python and GitHub Actions dependencies weekly.
@@ -114,3 +179,30 @@ operational rollout, run a read-only canary in each target tenant, inspect compl
 coverage and account identity, verify expected known resources, and compare live
 results with the retained export. These environment-specific checks require
 access to those tenants and are not performed by offline CI.
+
+## Rollout acceptance
+
+Before broad deployment, retain evidence for each intended connector instance:
+
+1. Run a read-only canary with the actual audit identity. Record the expected
+   tenant/account, regions and collection scope, then verify known agents and
+   at least one known permission/configuration signal appear.
+2. Verify denied access, malformed exports and partially invalid selections
+   cannot pass the gate. Require `summary.complete=true` and inspect all connector
+   statistics for successful collection; do not infer coverage from finding
+   count or an empty report alone.
+3. Check sanitized artifacts with synthetic credentials and enforce private
+   file/directory modes. Keep configuration, state and outputs outside scanned
+   repositories and restrict access to retained reports.
+4. Replay each exported instance using its manifest filename, checking account,
+   resource identity and detection consistency. Sanitized exports are not
+   lossless raw API backups; credential findings may differ after redaction.
+5. Run a representative large scan in a resource-limited disposable worker.
+   Set a job deadline, monitor incomplete/failed runs and provider throttling,
+   and document how to restore access or rerun after a partial collection.
+6. Pin the reviewed scanner commit and an approved dependency set for rollout.
+   Establish a fresh comparison baseline, retain the prior pinned version for
+   rollback, and keep rollback reports separate from the new identity schema.
+
+These checks require operator-specific tenant access and operational decisions.
+Until completed, describe deployment status as pending tenant acceptance.

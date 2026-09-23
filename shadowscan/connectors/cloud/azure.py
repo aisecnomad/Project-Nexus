@@ -34,6 +34,10 @@ from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
 
 ARM = "https://management.azure.com"
+# Classic Agent Service contract, verified against azure-ai-agents 1.0.0:
+# sdk/ai/azure-ai-agents/azure/ai/agents/operations/_operations.py
+# build_agents_list_agents_request uses /assistants with api-version=v1.
+FOUNDRY_AGENTS_API_VERSION = "v1"
 ARG_QUERY = """
 resources
 | where type in~ (
@@ -229,20 +233,29 @@ class AzureConnector(BaseConnector):
         if not any(host.endswith(suffix) for suffix in (".services.ai.azure.com", ".cognitiveservices.azure.com", ".api.azureml.ms")):
             raise ConnectorError("cloud.azure: refusing Foundry credentials to an unrecognized endpoint origin")
         http = HttpClient(str(endpoint).rstrip("/"), headers={"Authorization": f"Bearer {token}"})
-        params: dict[str, Any] = {"api-version": "2025-05-01", "limit": 100}
+        params: dict[str, Any] = {"api-version": FOUNDRY_AGENTS_API_VERSION, "limit": 100}
         seen: set[str] = set()
         for _ in range(1000):
             try:
-                data = http.get_json("/agents", params=params) or {}
+                data = http.get_json("/assistants", params=dict(params))
             except HttpError as exc:
                 self.ctx.warn(f"cloud.azure: Foundry agents HTTP {exc.status}; coverage unknown", incomplete=True)
                 return
-            for a in data.get("data", []):
-                yield {"_kind": "foundry-agent", "_project": project.get("id"), "_project_name": project.get("name"), "_account": account.get("id"), "_endpoint": endpoint, **a}
-            if not data.get("has_more"):
+            if not isinstance(data, dict) or "error" in data or not isinstance(data.get("data"), list):
+                self.ctx.warn("cloud.azure: invalid Foundry agent response; coverage unknown", incomplete=True)
+                return
+            for a in data["data"]:
+                if not isinstance(a, dict) or not isinstance(a.get("id"), str) or not a["id"].strip():
+                    self.ctx.warn("cloud.azure: invalid Foundry agent record; coverage unknown", incomplete=True)
+                    continue
+                yield {**a, "_kind": "foundry-agent", "_project": project.get("id"), "_project_name": project.get("name"), "_account": account.get("id"), "_endpoint": endpoint}
+            if not isinstance(data.get("has_more"), bool):
+                self.ctx.warn("cloud.azure: invalid Foundry agent pagination status; coverage unknown", incomplete=True)
+                return
+            if not data["has_more"]:
                 return
             after = data.get("last_id")
-            if not after or after in seen:
+            if not isinstance(after, str) or not after.strip() or after in seen or not data["data"] or not isinstance(data["data"][-1], dict) or after != data["data"][-1].get("id"):
                 self.ctx.warn("cloud.azure: invalid Foundry agent continuation", incomplete=True)
                 return
             seen.add(after)

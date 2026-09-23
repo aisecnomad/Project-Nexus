@@ -103,28 +103,43 @@ class GoogleWorkspaceConnector(BaseConnector):
             details = ", ".join(f"{status}: {total}" for status, total in sorted(token_errors.items()))
             self.ctx.warn(f"identity.google-workspace: OAuth tokens unreadable for {sum(token_errors.values())} user(s) ({details}); app inventory incomplete")
 
+    @staticmethod
+    def _is_native_offline_record(data: dict[str, Any]) -> bool:
+        # A user and its tokens form one provider record. Unwrapping only the
+        # token array here would discard the granting user's attribution.
+        return ("tokens" in data and any(key in data for key in ("user", "userEmail", "userKey"))) or BaseConnector._is_native_offline_record(data)
+
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         apps: dict[str, dict[str, Any]] = {}
         for rec in records:
-            nested_tokens = rec.get("tokens")
-            tokens = nested_tokens if isinstance(nested_tokens, list) else [rec]
+            if not self._record_fields_valid(rec, strings=("user", "userEmail", "userKey")):
+                self.ctx.warn("identity.google-workspace: malformed token record or provider error; coverage incomplete")
+                continue
+            if "tokens" in rec and not isinstance(rec["tokens"], list):
+                self.ctx.warn("identity.google-workspace: user tokens must be an array; coverage incomplete")
+                continue
+            tokens = rec.get("tokens", [rec])
             user = rec.get("user") or rec.get("userEmail") or rec.get("userKey")
+            if "tokens" in rec and not user:
+                self.ctx.warn("identity.google-workspace: per-user token export is missing user identity")
             for tok in tokens:
-                if not isinstance(tok, dict):
-                    self.ctx.warn("identity.google-workspace: invalid token record in offline export")
+                if not self._record_fields_valid(tok, required=("clientId",), strings=("displayText", "userEmail", "userKey"), arrays=("scopes",)):
+                    self.ctx.warn("identity.google-workspace: invalid token record or missing clientId; coverage incomplete")
                     continue
-                cid = tok.get("clientId")
-                if not cid:
-                    continue
+                scopes = tok.get("scopes") or []
+                if any(not isinstance(scope, str) or not scope.strip() for scope in scopes):
+                    self.ctx.warn("identity.google-workspace: invalid token scope; coverage incomplete")
+                    scopes = [scope for scope in scopes if isinstance(scope, str) and scope.strip()]
+                cid = tok["clientId"]
                 self.ctx.examined()
                 agg = apps.setdefault(cid, {"clientId": cid, "displayText": tok.get("displayText"), "scopes": set(), "users": set(), "anonymous": tok.get("anonymous"), "nativeApp": tok.get("nativeApp")})
-                agg["scopes"].update(tok.get("scopes") or [])
+                agg["scopes"].update(scopes)
                 u = tok.get("userEmail") or tok.get("userKey") or user
                 if u:
                     agg["users"].add(u)
                 if tok.get("displayText") and not agg["displayText"]:
                     agg["displayText"] = tok["displayText"]
-        for cid, agg in apps.items():
+        for agg in apps.values():
             f = self._app_finding(agg)
             if f:
                 yield f

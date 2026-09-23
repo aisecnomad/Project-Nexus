@@ -42,7 +42,7 @@ from shadowscan.connectors.common import apply_matches, finalize, looks_like_pla
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, language_for_path
-from shadowscan.utils.git import git_argv_prefix, safe_git_env
+from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
 from shadowscan.utils.text import excerpt_line, notebook_to_source, read_text, redact, truncate
@@ -222,7 +222,7 @@ class FilesystemConnector(BaseConnector):
         "max_files": "stop after this many files (default 100000)",
         "scan_timeout": "matching budget in seconds per file (default 2)",
         "scan_secrets": "detect provider credentials (default true)",
-        "use_git": "enrich with git last-commit author/date (default true)",
+        "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
     }
     offline_formats: ClassVar[str] = "n/a (path is the input)"
@@ -235,7 +235,9 @@ class FilesystemConnector(BaseConnector):
         if self.max_file_size < 1 or self.max_files < 1 or not 0 < self.scan_timeout <= 60:
             raise ConnectorError("code.filesystem: limits must be positive; scan_timeout must be at most 60 seconds")
         self.scan_secrets = bool(ctx.get("scan_secrets", True))
-        self.use_git = bool(ctx.get("use_git", True))
+        self.use_git = ctx.get("use_git", False)
+        if not isinstance(self.use_git, bool):
+            raise ConnectorError("code.filesystem: use_git must be a boolean")
         extra = ctx.get("exclude", []) or []
         self.exclude_names = set(DEFAULT_EXCLUDES) | {e for e in extra if "*" not in e and "/" not in e}
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
@@ -527,23 +529,34 @@ class FilesystemConnector(BaseConnector):
         return False
 
     def _git_info(self, root: Path, rel_root: str) -> dict[str, Any]:
-        if not self.use_git or not (root / ".git").exists():
+        if not self.use_git:
+            return {}
+        marker = root / ".git"
+        # Worktree gitfiles and symlinks can redirect Git outside the requested
+        # checkout. Optional enrichment supports self-contained checkouts only.
+        if marker.is_symlink() or (marker.exists() and not marker.is_dir()):
+            self.ctx.warn("code.filesystem: git metadata must be a local .git directory; enrichment skipped")
+            return {}
+        if not marker.exists():
             return {}
         target = "." if rel_root == "." else rel_root
         try:
             out = subprocess.run(
-                [*git_argv_prefix(), "-C", str(root), "log", "--no-show-signature", "-1", "--format=%an|%ae|%cI", "--", target],
+                [*metadata_git_argv_prefix(), "-C", str(root), "log", "--no-show-signature", "--no-ext-diff", "--no-textconv", "-1", "--format=%an|%ae|%cI", "--", target],
                 capture_output=True,
                 text=True,
-                env=safe_git_env(),
+                env=metadata_git_env(),
                 timeout=20,
                 check=False,
             )
             if out.returncode == 0 and out.stdout.strip():
                 an, ae, ci = (out.stdout.strip().split("|") + ["", "", ""])[:3]
                 return {"last_author": an, "last_author_email": ae, "last_commit": ci}
+            if out.returncode == 0:
+                return {}
         except (OSError, subprocess.SubprocessError):
             pass
+        self.ctx.warn("code.filesystem: offline git enrichment failed; Git 2.45+ and locally available history are required")
         return {}
 
     def _codeowners(self, root: Path) -> list[tuple[str, list[str]]]:

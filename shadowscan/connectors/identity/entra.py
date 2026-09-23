@@ -126,7 +126,10 @@ class EntraConnector(BaseConnector):
         applications: list[dict[str, Any]] = []
         role_names: dict[str, str] = {}
         for rec in records:
-            kind = rec.get("_kind") or _infer_kind(rec)
+            kind = self._record_kind(rec)
+            if kind is None:
+                self.ctx.warn("identity.entra: unsupported or malformed Graph record; coverage incomplete")
+                continue
             if kind == "roleMap":
                 role_names.update(rec.get("roles") or {})
             elif kind == "servicePrincipal":
@@ -151,6 +154,48 @@ class EntraConnector(BaseConnector):
             f = self._app_registration_finding(app, sp_by_app_id.get(app.get("appId")), role_names)
             if f:
                 yield f
+
+    def _record_kind(self, rec: dict[str, Any]) -> str | None:
+        if not self._record_fields_valid(
+            rec,
+            strings=("_kind", "id", "appId", "displayName", "appDisplayName", "publisherName", "notes", "description", "servicePrincipalType", "appOwnerOrganizationId", "scope", "consentType", "principalId", "clientId", "appRoleId", "homepage", "loginUrl"),
+            mappings=("verifiedPublisher", "web", "spa", "publicClient", "roles"),
+            arrays=("appRoles", "oauth2PermissionScopes", "replyUrls", "requiredResourceAccess", "passwordCredentials", "keyCredentials", "tags"),
+        ):
+            return None
+        kind = rec.get("_kind") or _infer_kind(rec)
+        required = {
+            "servicePrincipal": ("id",), "application": ("appId",),
+            "oauth2PermissionGrant": ("clientId",), "appRoleAssignment": ("principalId", "appRoleId"),
+            "roleMap": (),
+        }
+        if kind not in required or not self._record_fields_valid(rec, required=required[kind]):
+            return None
+        if kind == "oauth2PermissionGrant" and not isinstance(rec.get("scope"), str):
+            return None
+        if kind == "roleMap":
+            roles = rec.get("roles")
+            if not isinstance(roles, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in roles.items()):
+                return None
+        if not self._record_fields_valid(rec.get("verifiedPublisher") or {}, strings=("displayName",)):
+            return None
+        if rec.get("accountEnabled") is not None and not isinstance(rec["accountEnabled"], bool):
+            return None
+        if any(not isinstance(url, str) for url in rec.get("replyUrls") or []):
+            return None
+        for field in ("appRoles", "oauth2PermissionScopes"):
+            if any(not self._record_fields_valid(role, strings=("id", "value")) for role in rec.get(field) or []):
+                return None
+        for field in ("web", "spa", "publicClient"):
+            config = rec.get(field) or {}
+            if not self._record_fields_valid(config, arrays=("redirectUris",)) or any(not isinstance(uri, str) for uri in config.get("redirectUris") or []):
+                return None
+        for access in rec.get("requiredResourceAccess") or []:
+            if not self._record_fields_valid(access, arrays=("resourceAccess",)):
+                return None
+            if any(not self._record_fields_valid(permission, strings=("id", "type")) for permission in access.get("resourceAccess") or []):
+                return None
+        return kind
 
     def _sp_finding(self, sp: dict[str, Any], grants: list[dict[str, Any]], roles: list[dict[str, Any]], role_names: dict[str, str]) -> Finding | None:
         first_party = sp.get("appOwnerOrganizationId") == FIRST_PARTY_OWNER

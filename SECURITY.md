@@ -48,24 +48,32 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   malformed inputs make coverage incomplete while retaining valid neighboring
   findings. These are resource safeguards, not process isolation or a universal
   deadline across every external SDK call.
-* Git clone/history calls suppress inherited Git configuration overrides and
-  hooks. Clone credentials stay scoped to the approved HTTPS origin and redirects
-  are disabled. Unsafe branch values are dropped with incomplete diagnostics.
-  Repository contents are inspected, not intentionally executed. Keep Git itself
-  patched and run scanners in disposable workers when scanning untrusted inputs.
+* Git history enrichment is disabled by default. Explicit `use_git: true`
+  uses metadata-only commands with lazy fetching and every transport disabled;
+  unsupported Git behavior or failed metadata reads makes coverage incomplete.
+  Clone calls have a separate HTTPS-only policy: credentials stay scoped to the
+  approved origin and redirects are disabled. Hooks and inherited Git overrides
+  are suppressed. Unsafe branch values are dropped with incomplete diagnostics.
+  Remote repository data cannot select an internal offline filesystem path.
+  Keep Git patched and use disposable workers for untrusted inputs.
 * Reports and generated inventory stubs are written atomically with mode 0600.
   Dump directories must be private (0700); record files use 0600 and unique
   per-instance filenames. An export manifest records provenance/completion without
   raw connector configuration. JWT records are never exported. No `--dump-raw`
-  option exists. Redaction handles recognized secrets and annotated source
-  assignments, but arbitrary credentials and sensitive business data may remain.
+  option exists. Redaction handles recognized secrets and sensitive Python
+  assignments, including annotated and multiline expressions, but arbitrary
+  credentials and sensitive business data may remain.
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
   provider and account restrictions still apply; ambiguous matches do not approve.
 * Incomplete scans exit 3 and set SARIF executionSuccessful=false. Only complete
   results qualify for incremental reuse. Comparisons infer resolution only for
-  complete scans with matching collection and detection scope. Runtime telemetry
-  attribution does not prove that a particular dependency executed.
+  complete scans with matching collection, detection and finding-identity schemas.
+  Explicit unmatched connector selections and unsupported/error exports fail
+  visibly. Incremental input roots and ancestor symlinks are ineligible for reuse;
+  pre/post hashing is not an atomic filesystem snapshot. Keep inputs immutable
+  while scanning. Runtime telemetry attribution does not prove that a particular
+  dependency executed.
 
 See [deployment and migration](docs/production.md), [scan semantics](docs/scanning.md),
 and [connector permissions](docs/connectors.md).

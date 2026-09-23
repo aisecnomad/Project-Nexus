@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from io import StringIO
 
+import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
@@ -93,3 +94,39 @@ def test_constructor_errors_redact_configured_and_environment_credentials(monkey
     assert configured not in output and environment not in output
     assert result.stats[0].errors and result.stats[0].skipped
     assert not result.complete and _exit_code(result, None) == 3
+
+
+@pytest.mark.parametrize("selectors", [
+    ["code.filesystem", "cloud.awz"], ["cloud.awz"], ["code.filesystem", "disabled-cloud"],
+    ["disabled-cloud"], ["code.filesystem", "cloud.aws"],
+])
+def test_every_explicit_selector_must_resolve_to_enabled_connector(monkeypatch, index, selectors):
+    def unexpected_lookup(*args, **kwargs):
+        pytest.fail("invalid selections must fail before any connector runs")
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", unexpected_lookup)
+    config = ScanConfig(connectors=[
+        ConnectorSpec("code.filesystem"), ConnectorSpec("cloud.aws", enabled=False, label="disabled-cloud"),
+    ])
+    result = Engine(config, index).run(only=selectors)
+    assert not result.complete and not result.findings and _exit_code(result, "high") == 3
+    assert result.stats[0].connector == "engine.selection"
+    assert "unknown or disabled connector selector" in result.stats[0].errors[0]
+    assert result.collection_scope["comparable"] is False
+
+
+def test_valid_names_and_labels_include_every_matching_enabled_instance(tmp_path, index):
+    (tmp_path / "requirements.txt").write_text("langchain\n")
+    specs = [ConnectorSpec("code.filesystem", {"path": str(tmp_path)}, label=label) for label in ("first", "second")]
+    specs.append(ConnectorSpec("cloud.aws", enabled=False))
+    result = Engine(ScanConfig(connectors=specs), index).run(only=["code.filesystem", "first"])
+    assert result.complete and {stat.connector for stat in result.stats} == {"first", "second"}
+
+
+def test_mixed_selector_typo_fails_cli_gate(tmp_path):
+    config = tmp_path / "scan.yaml"
+    config.write_text(f"connectors:\n  - name: code.filesystem\n    path: {tmp_path}\n")
+    result = CliRunner().invoke(main, ["scan", "-c", str(config), "--only", "code.filesystem", "--only", "cloud.awz",
+                                     "--format", "json", "--fail-on", "high"])
+    assert result.exit_code == 3, result.output
+    assert json.loads(result.stdout)["summary"]["complete"] is False
