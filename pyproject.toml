@@ -33,7 +33,7 @@ dependencies = [
 
 [project.optional-dependencies]
 aws = ["boto3>=1.34"]
-gcp = ["google-auth>=2.29"]
+gcp = ["google-auth>=2.58.0"]
 azure = ["azure-identity>=1.16"]
 oci = ["oci>=2.120"]
 cloud = ["shadowscan[aws,gcp,azure,oci]"]
