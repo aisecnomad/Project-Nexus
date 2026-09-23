@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install "git+https://github.com/aisecnomad/Project-Nexus.git@1a0114f86239dbfea060fc839aae188983c3d7fa"
+      - run: pip install "git+https://github.com/aisecnomad/Project-Nexus.git@31fbf62c1ea9e8df64ced753cf237a3dcff65ef0"
       - run: shadowscan code . --inventory inventory/ --format sarif -o shadowscan.sarif --fail-on critical
       - uses: github/codeql-action/upload-sarif@e429ea58a9912cadc53f8132ad35562b54de1b30 # v3.38.1
         if: always() && hashFiles('shadowscan.sarif') != ''
