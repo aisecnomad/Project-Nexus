@@ -16,7 +16,7 @@ def _f(**kw) -> Finding:
 
 
 def test_inventory_loads_capability_card_and_matches(tmp_path: Path):
-    card = Path(__file__).parents[2] / "Agent Capability Card"
+    card = Path(__file__).parents[1] / "fixtures" / "inventory" / "ops-provisioning-04.yaml"
     inv = Inventory.load([str(card)])
     assert len(inv) == 1 and inv.entries[0].agent_id == "ops-provisioning-04" and inv.entries[0].owner == "Platform-Engineering"
     f = _f(metadata={"agent_name": "ops-provisioning-04"})
@@ -63,7 +63,7 @@ def test_engine_end_to_end_with_config(tmp_path: Path, fixtures):
             ConnectorSpec(name="cloud.aws", config={"input": str(fixtures / "cloud" / "aws_records.jsonl")}),
             ConnectorSpec(name="nope.missing", config={}),
         ],
-        inventory=[str(Path(__file__).parents[2] / "Agent Capability Card")],
+        inventory=[str(Path(__file__).parents[1] / "fixtures" / "inventory" / "ops-provisioning-04.yaml")],
         min_confidence=0.2,
         parallel=2,
     )

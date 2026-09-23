@@ -3,8 +3,8 @@
 A *shadow* agent is one that ShadowScan discovers but that nobody registered.
 The inventory can be supplied as:
 
-* **Agent Capability Cards** – the YAML format used in this repository
-  (``metadata.agent_id``, ``metadata.owner_team`` ...), one file per agent,
+* **Agent Capability Cards** – the YAML format used in this repository (see the
+  ``Agent Card`` file; ``metadata.agent_id``, ``metadata.owner_team`` ...), one file per agent,
   optionally extended with a ``discovery:`` block that lists the concrete
   resources the agent is deployed as::
 

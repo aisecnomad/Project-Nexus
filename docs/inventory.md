@@ -10,7 +10,7 @@ recorded on their card.
 
 ### Agent Capability Cards (one YAML per agent)
 
-The format used by this repository (`Agent Capability Card`). ShadowScan reads
+The format used by this repository (the `Agent Card` file at the repo root). ShadowScan reads
 `metadata.agent_id`, `metadata.name`, `metadata.owner_team` / `owner`,
 `metadata.classification`, and an optional `discovery:` block:
 
