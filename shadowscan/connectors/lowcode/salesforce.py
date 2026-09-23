@@ -107,7 +107,9 @@ class SalesforceConnector(BaseConnector):
         for rec in records:
             kind = rec.get("_kind") or get_path(rec, "attributes.type") or ""
             if kind == "BotDefinition":
-                bots[rec.get("Id") or rec.get("DeveloperName")] = rec
+                key = rec.get("Id") or rec.get("DeveloperName")
+                if isinstance(key, str) and key:
+                    bots[key] = rec
             elif kind == "BotVersion":
                 versions.setdefault(rec.get("BotDefinitionId", ""), []).append(rec)
             elif kind == "GenAiPlannerDefinition":

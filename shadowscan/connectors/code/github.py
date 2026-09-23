@@ -75,6 +75,7 @@ class GitHubConnector(BaseConnector):
         "include_archived": "scan archived repositories (default false)",
         "include_forks": "scan forks (default false)",
         "max_repos": "cap on repositories (default 500)",
+        "scan_timeout": "matching budget in seconds per file (default 2)",
         "clone_depth": "git clone depth (default 1)",
         "topics": "only repositories with any of these topics",
         "input": "offline: directory containing cloned repositories",
@@ -87,6 +88,8 @@ class GitHubConnector(BaseConnector):
         self.token = ctx.get("token", env="GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         self.mode = str(ctx.get("mode", "clone" if shutil.which("git") else "api"))
         self.max_repos = int(ctx.get("max_repos", 500))
+        if self.max_repos < 1:
+            raise ConnectorError("code.github: max_repos must be positive")
         self.depth = int(ctx.get("clone_depth", 1))
         self.include_archived = bool(ctx.get("include_archived", False))
         self.include_forks = bool(ctx.get("include_forks", False))
@@ -106,28 +109,34 @@ class GitHubConnector(BaseConnector):
         seen: set[str] = set()
         if repos:
             for full in repos:
+                if full in seen:
+                    continue
+                if len(seen) >= self.max_repos:
+                    self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
+                    return
                 data = self.http.try_get_json(f"/repos/{full}")
                 if data:
-                    seen.add(data["full_name"])
-                    yield data
+                    if data["full_name"] not in seen:
+                        seen.add(data["full_name"])
+                        yield data
                 else:
                     self.ctx.warn(f"code.github: cannot access {full}", incomplete=True)
         if org:
             for r in self.http.paginate_link(f"/orgs/{org}/repos", params={"per_page": 100, "type": "all", "sort": "pushed"}):
                 if r["full_name"] not in seen and self._wanted(r):
+                    if len(seen) >= self.max_repos:
+                        self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
+                        return
                     seen.add(r["full_name"])
                     yield r
-                if len(seen) >= self.max_repos:
-                    self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
-                    return
         if user:
             for r in self.http.paginate_link(f"/users/{user}/repos", params={"per_page": 100, "sort": "pushed"}):
                 if r["full_name"] not in seen and self._wanted(r):
+                    if len(seen) >= self.max_repos:
+                        self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
+                        return
                     seen.add(r["full_name"])
                     yield r
-                if len(seen) >= self.max_repos:
-                    self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
-                    return
 
     def _wanted(self, r: dict[str, Any]) -> bool:
         if r.get("archived") and not self.include_archived:
@@ -142,8 +151,13 @@ class GitHubConnector(BaseConnector):
         p = Path(path)
         if not p.is_dir():
             raise ConnectorError(f"code.github: offline input must be a directory of clones: {path}")
+        count = 0
         for child in sorted(p.iterdir()):
             if child.is_dir():
+                if count >= self.max_repos:
+                    self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
+                    return
+                count += 1
                 yield {"full_name": child.name, "_local_path": str(child), "owner": {"login": child.name.split("__")[0] if "__" in child.name else child.name}}
 
     # --------------------------------------------------------------- analyze
@@ -175,7 +189,7 @@ class GitHubConnector(BaseConnector):
         full = repo.get("full_name") or Path(local).name
         owner_login = (repo.get("owner") or {}).get("login")
         cfg = {
-            **{k: v for k, v in self.ctx.config.items() if k in {"exclude", "max_file_size", "max_files", "scan_secrets", "use_git"}},
+            **{k: v for k, v in self.ctx.config.items() if k in {"exclude", "max_file_size", "max_files", "scan_timeout", "scan_secrets", "use_git"}},
             "path": local,
             "label": f"github:{full}",
             "account": owner_login,

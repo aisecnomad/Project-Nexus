@@ -30,6 +30,7 @@ import csv
 import fnmatch
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -91,7 +92,7 @@ class Inventory:
 
     # ---------------------------------------------------------------- load
     @classmethod
-    def load(cls, paths: list[str | Path]) -> Inventory:
+    def load(cls, paths: Sequence[str | Path]) -> Inventory:
         inv = cls()
         for p in paths:
             path = Path(p).expanduser()
@@ -112,8 +113,8 @@ class Inventory:
     @classmethod
     def _load_file(cls, path: Path) -> list[InventoryEntry]:
         text = path.read_text(encoding="utf-8", errors="replace")
+        out: list[InventoryEntry] = []
         if path.suffix.lower() == ".csv":
-            out = []
             for row in csv.DictReader(text.splitlines()):
                 aid = row.get("agent_id") or row.get("id") or row.get("name")
                 if not aid:
@@ -138,7 +139,6 @@ class Inventory:
             docs = [data]
         else:
             docs = list(yaml.safe_load_all(_strip_cite_markers(text)))
-        out: list[InventoryEntry] = []
         for doc in docs:
             if not doc:
                 continue

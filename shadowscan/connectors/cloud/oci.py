@@ -27,6 +27,10 @@ from shadowscan.utils.text import truncate
 GENAI_POLICY_RX = re.compile(r"(?i)\b(?:allow)\b.*?\b(?:to\s+)?(manage|use|read|inspect)\s+(generative-ai[a-z-]*|oda[a-z-]*|data-science[a-z-]*|all-resources|ai-service[a-z-]*)\b")
 
 
+def _resource_id(value: Any) -> str:
+    return str(value) if value is not None else ""
+
+
 class OciConnector(BaseConnector):
     name: ClassVar[str] = "cloud.oci"
     surface: ClassVar[Surface] = Surface.CLOUD
@@ -76,15 +80,18 @@ class OciConnector(BaseConnector):
         import oci
 
         try:
-            return list(oci.pagination.list_call_get_all_results(fn, *args, **kwargs).data)
+            data = oci.pagination.list_call_get_all_results(fn, *args, **kwargs).data
+            # The OCI paginator normally flattens collection responses to a
+            # list, but also accept SDK wrappers exposing their `.items`.
+            if isinstance(data, dict):
+                data = data.get("items", [])
+            elif hasattr(data, "items"):
+                data = data.items
+            return list(data)
         except Exception as exc:  # noqa: BLE001
-            msg = str(exc)
-            if "NotAuthorizedOrNotFound" in msg or "404" in msg or "NotAuthenticated" in msg:
-                self.log.debug("oci %s: %s", getattr(fn, "__name__", fn), truncate(msg, 120))
-            elif "NotFound" in msg or "not available" in msg.lower():
-                self.log.debug("oci %s unavailable: %s", getattr(fn, "__name__", fn), truncate(msg, 120))
-            else:
-                self.ctx.warn(f"cloud.oci: {getattr(fn, '__name__', fn)}: {truncate(msg, 160)}")
+            # NotAuthorizedOrNotFound/404 are also returned for denied access.
+            # Returning [] is fine for partial results, but never claim a full scan.
+            self.ctx.warn(f"cloud.oci: {getattr(fn, '__name__', fn)}: {truncate(str(exc), 160)}", incomplete=True)
             return []
 
     @staticmethod
@@ -127,17 +134,21 @@ class OciConnector(BaseConnector):
 
         try:
             agents = self._client(oci.generative_ai_agent.GenerativeAiAgentClient, region)
-            for a in self._all(agents.list_agents, comp):
+            for a in self._all(agents.list_agents, compartment_id=comp):
                 rec = self._d(a)
                 rec.update({"_kind": "genai-agent", "_region": region, "_compartment": comp})
-                rec["_tools"] = [self._d(t) for t in self._all(agents.list_tools, comp, agent_id=a.id)] if hasattr(agents, "list_tools") else []
+                if hasattr(agents, "list_tools"):
+                    rec["_tools"] = [self._d(t) for t in self._all(agents.list_tools, compartment_id=comp, agent_id=a.id)]
+                else:
+                    self.ctx.warn("cloud.oci: list_tools unavailable in installed SDK", incomplete=True)
+                    rec["_tools"] = []
                 yield rec
-            for e in self._all(agents.list_agent_endpoints, comp):
+            for e in self._all(agents.list_agent_endpoints, compartment_id=comp):
                 yield {"_kind": "genai-agent-endpoint", "_region": region, "_compartment": comp, **self._d(e)}
-            for kb in self._all(agents.list_knowledge_bases, comp):
+            for kb in self._all(agents.list_knowledge_bases, compartment_id=comp):
                 yield {"_kind": "genai-knowledge-base", "_region": region, "_compartment": comp, **self._d(kb)}
         except AttributeError:
-            self.log.debug("oci: generative_ai_agent module missing in this SDK")
+            self.ctx.warn("cloud.oci: generative_ai_agent unavailable in installed SDK", incomplete=True)
         try:
             genai = self._client(oci.generative_ai.GenerativeAiClient, region)
             for ep in self._all(genai.list_endpoints, comp):
@@ -150,19 +161,19 @@ class OciConnector(BaseConnector):
                     if d.get("base_model_id"):
                         yield {"_kind": "genai-custom-model", "_region": region, "_compartment": comp, **d}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: generative_ai unavailable in installed SDK", incomplete=True)
         try:
             oda = self._client(oci.oda.OdaClient, region)
             for inst in self._all(oda.list_oda_instances, comp):
                 yield {"_kind": "oda-instance", "_region": region, "_compartment": comp, **self._d(inst)}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: oda unavailable in installed SDK", incomplete=True)
         try:
             ds = self._client(oci.data_science.DataScienceClient, region)
             for md in self._all(ds.list_model_deployments, comp):
                 yield {"_kind": "model-deployment", "_region": region, "_compartment": comp, **self._d(md)}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: data_science unavailable in installed SDK", incomplete=True)
         try:
             fn = self._client(oci.functions.FunctionsManagementClient, region)
             for app in self._all(fn.list_applications, comp):
@@ -170,7 +181,7 @@ class OciConnector(BaseConnector):
                     d = self._d(func)
                     yield {"_kind": "function", "_region": region, "_compartment": comp, "_application": app.display_name, **d}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: functions unavailable in installed SDK", incomplete=True)
         try:
             ci = self._client(oci.container_instances.ContainerInstanceClient, region)
             for inst in self._all(ci.list_container_instances, comp):
@@ -182,13 +193,13 @@ class OciConnector(BaseConnector):
                 d["_containers"] = containers
                 yield {"_kind": "container-instance", "_region": region, "_compartment": comp, **d}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: container_instances unavailable in installed SDK", incomplete=True)
         try:
             vaults = self._client(oci.vault.VaultsClient, region)
             for s in self._all(vaults.list_secrets, comp):
                 yield {"_kind": "secret-name", "_region": region, "_compartment": comp, "id": s.id, "secret_name": s.secret_name, "description": s.description, "time_created": str(s.time_created)}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: vault unavailable in installed SDK", incomplete=True)
 
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -220,7 +231,7 @@ class OciConnector(BaseConnector):
         return {"account": rec.get("_compartment") or self.tenancy, "region": rec.get("_region"), "owner": ((rec.get("freeform_tags") or {}).get("owner") or (rec.get("freeform_tags") or {}).get("Owner") or ((rec.get("defined_tags") or {}).get("Oracle-Tags") or {}).get("CreatedBy")), "first_seen": rec.get("time_created"), "last_seen": rec.get("time_updated")}
 
     def _agent_finding(self, a: dict[str, Any], eps: list[dict[str, Any]]) -> Finding:
-        f = cloud_finding(self.name, "oci", kind=Kind.AGENT, title=f"OCI Generative AI Agent: {a.get('display_name')}", resource=a.get("id") or a.get("display_name"), resource_type="genai-agent", **self._base(a))
+        f = cloud_finding(self.name, "oci", kind=Kind.AGENT, title=f"OCI Generative AI Agent: {a.get('display_name')}", resource=_resource_id(a.get("id") or a.get("display_name")), resource_type="genai-agent", **self._base(a))
         f.add_framework("cloud.oci-generative-ai-agents")
         f.add_model_provider("provider.oci-generative-ai")
         f.add_capability("tool-use")
@@ -243,14 +254,14 @@ class OciConnector(BaseConnector):
         return done(f, self.index, Kind.AGENT)
 
     def _h_genai_knowledge_base(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI GenAI Agents knowledge base: {rec.get('display_name')}", resource=rec.get("id") or rec.get("display_name"), resource_type="genai-knowledge-base", **self._base(rec))
+        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI GenAI Agents knowledge base: {rec.get('display_name')}", resource=_resource_id(rec.get("id") or rec.get("display_name")), resource_type="genai-knowledge-base", **self._base(rec))
         f.add_framework("cloud.oci-generative-ai-agents")
         f.add_capability("rag")
         f.add_evidence(Evidence(signal="oci:knowledge-base", description=f"Knowledge base '{rec.get('display_name')}' ({rec.get('lifecycle_state')})", weight=0.6, signature="cloud.oci-generative-ai-agents"))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_genai_endpoint(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI Generative AI endpoint: {rec.get('display_name')}", resource=rec.get("id") or rec.get("display_name"), resource_type="genai-endpoint", **self._base(rec))
+        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI Generative AI endpoint: {rec.get('display_name')}", resource=_resource_id(rec.get("id") or rec.get("display_name")), resource_type="genai-endpoint", **self._base(rec))
         f.add_model_provider("provider.oci-generative-ai")
         f.models = [str(rec.get("model_id"))] if rec.get("model_id") else []
         apply_matches(f, model_matches(self.index, rec.get("model_id")), weight_scale=0.4)
@@ -259,25 +270,25 @@ class OciConnector(BaseConnector):
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_genai_cluster(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI dedicated AI cluster: {rec.get('display_name')}", resource=rec.get("id") or rec.get("display_name"), resource_type="genai-dedicated-cluster", **self._base(rec))
+        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI dedicated AI cluster: {rec.get('display_name')}", resource=_resource_id(rec.get("id") or rec.get("display_name")), resource_type="genai-dedicated-cluster", **self._base(rec))
         f.add_model_provider("provider.oci-generative-ai")
         f.add_evidence(Evidence(signal="oci:genai-cluster", description=f"Dedicated AI cluster '{rec.get('display_name')}' type {rec.get('type')} units {rec.get('unit_count')} ({rec.get('lifecycle_state')})", weight=0.5))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_genai_custom_model(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI custom (fine-tuned) model: {rec.get('display_name')}", resource=rec.get("id") or rec.get("display_name"), resource_type="genai-custom-model", **self._base(rec))
+        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI custom (fine-tuned) model: {rec.get('display_name')}", resource=_resource_id(rec.get("id") or rec.get("display_name")), resource_type="genai-custom-model", **self._base(rec))
         f.add_model_provider("provider.oci-generative-ai")
         f.add_evidence(Evidence(signal="oci:custom-model", description=f"Custom model '{rec.get('display_name')}' based on {rec.get('base_model_id')}", weight=0.5))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_oda_instance(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "oci", kind=Kind.AGENT, title=f"OCI Digital Assistant: {rec.get('display_name')}", resource=rec.get("id") or rec.get("display_name"), resource_type="oda-instance", **self._base(rec))
+        f = cloud_finding(self.name, "oci", kind=Kind.AGENT, title=f"OCI Digital Assistant: {rec.get('display_name')}", resource=_resource_id(rec.get("id") or rec.get("display_name")), resource_type="oda-instance", **self._base(rec))
         f.add_framework("cloud.oci-generative-ai-agents")
         f.add_evidence(Evidence(signal="oci:oda", description=f"Digital Assistant instance '{rec.get('display_name')}' ({rec.get('lifecycle_state')}, shape {rec.get('shape_name')})", weight=0.85, signature="cloud.oci-generative-ai-agents"))
         return done(f, self.index, Kind.AGENT)
 
     def _h_model_deployment(self, rec: dict[str, Any]) -> Finding | None:
-        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI Data Science model deployment: {rec.get('display_name')}", resource=rec.get("id") or rec.get("display_name"), resource_type="model-deployment", **self._base(rec))
+        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI Data Science model deployment: {rec.get('display_name')}", resource=_resource_id(rec.get("id") or rec.get("display_name")), resource_type="model-deployment", **self._base(rec))
         env = ((rec.get("model_deployment_configuration_details") or {}).get("environment_configuration_details") or {})
         image = env.get("image")
         if image:
@@ -292,7 +303,7 @@ class OciConnector(BaseConnector):
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_function(self, rec: dict[str, Any]) -> Finding | None:
-        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI Function: {rec.get('_application')}/{rec.get('display_name')}", resource=rec.get("id") or rec.get("display_name"), resource_type="function", **self._base(rec))
+        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI Function: {rec.get('_application')}/{rec.get('display_name')}", resource=_resource_id(rec.get("id") or rec.get("display_name")), resource_type="function", **self._base(rec))
         scan_env(self.index, f, rec.get("config"), location=rec.get("id"))
         if rec.get("image"):
             apply_matches(f, self.index.match_image(rec["image"]), location=rec.get("id"))
@@ -304,7 +315,7 @@ class OciConnector(BaseConnector):
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_container_instance(self, rec: dict[str, Any]) -> Finding | None:
-        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI Container Instance: {rec.get('display_name')}", resource=rec.get("id") or rec.get("display_name"), resource_type="container-instance", **self._base(rec))
+        f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI Container Instance: {rec.get('display_name')}", resource=_resource_id(rec.get("id") or rec.get("display_name")), resource_type="container-instance", **self._base(rec))
         for c in rec.get("_containers") or []:
             if c.get("image_url"):
                 apply_matches(f, self.index.match_image(c["image_url"]), location=rec.get("id"))
@@ -328,7 +339,7 @@ class OciConnector(BaseConnector):
 
     def _h_policy(self, rec: dict[str, Any]) -> Finding:
         stmts = rec.get("statements") or []
-        f = cloud_finding(self.name, "oci", kind=Kind.IAM_GRANT, title=f"OCI IAM policy granting AI permissions: {rec.get('name')}", resource=rec.get("id") or rec.get("name"), resource_type="iam-policy", account=rec.get("_compartment") or self.tenancy, first_seen=rec.get("time_created"), surface=Surface.IDENTITY)
+        f = cloud_finding(self.name, "oci", kind=Kind.IAM_GRANT, title=f"OCI IAM policy granting AI permissions: {rec.get('name')}", resource=_resource_id(rec.get("id") or rec.get("name")), resource_type="iam-policy", account=rec.get("_compartment") or self.tenancy, first_seen=rec.get("time_created"), surface=Surface.IDENTITY)
         subjects: list[str] = []
         for s in stmts:
             m = GENAI_POLICY_RX.search(s)

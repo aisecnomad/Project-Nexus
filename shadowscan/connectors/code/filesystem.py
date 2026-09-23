@@ -22,6 +22,7 @@ import subprocess
 import tomllib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
@@ -185,6 +186,49 @@ MCP_CONFIG_NAMES = {
 }
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
+
+
+def _codeowners_match(pattern: str, path: str) -> bool:
+    """Match the small GitHub/GitLab CODEOWNERS glob subset against a file path.
+
+    Leading or interior slashes anchor the path to the root. Basename and
+    trailing-slash directory patterns match at any depth; directory rules
+    own their descendants.
+    """
+    anchored = pattern.startswith("/") or "/" in pattern.rstrip("/")
+    directory = pattern.endswith("/")
+    pattern = pattern.strip("/")
+    if not pattern or path == ".":
+        return False
+    path_parts = PurePosixPath(path).parts
+    globs = tuple(pattern.split("/"))
+    # Literal directory names (and directory rules ending in /) also own their
+    # descendants. Wildcard rules such as docs/* own direct entries only.
+    descendants = directory or not any(c in globs[-1] for c in "*?")
+
+    @cache
+    def matches(parts: tuple[str, ...], selectors: tuple[str, ...]) -> bool:
+        if not selectors:
+            return not parts
+        first = selectors[0]
+        if first == "**":
+            return matches(parts, selectors[1:]) or bool(parts) and matches(parts[1:], selectors)
+        if not parts:
+            return False
+        # GitHub CODEOWNERS supports * and ? inside a path component. Neither
+        # wildcard may cross a slash; unlike fnmatch, this also handles **.
+        expression = "".join(
+            ".*" if char == "*" else "." if char == "?" else re.escape(char)
+            for char in first
+        )
+        return bool(re.fullmatch(expression, parts[0])) and matches(parts[1:], selectors[1:])
+
+    if not anchored:
+        parts_to_check = path_parts if descendants else path_parts[-1:]
+        return any(matches((part,), globs) for part in parts_to_check)
+    if matches(path_parts, globs):
+        return True
+    return descendants and any(matches(path_parts[:i], globs) for i in range(1, len(path_parts)))
 
 
 @dataclass
@@ -429,8 +473,8 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"code.filesystem: {rel}: agent manifest analysis incomplete ({type(exc).__name__})")
         for rel, hits in workflow_files.items():
             yield self._workflow_finding(label, root, rel, hits)
-        for rel, hits in infra_files.items():
-            yield self._infra_finding(label, root, rel, hits, infra_names.get(rel, []))
+        for rel, infra_hits in infra_files.items():
+            yield self._infra_finding(label, root, rel, infra_hits, infra_names.get(rel, []))
         for rel, hits in secret_hits.items():
             yield self._secret_finding(label, root, rel, hits)
 
@@ -509,7 +553,6 @@ class FilesystemConnector(BaseConnector):
                 '"mcpServers"' in head or "mcpServers:" in head or "[mcp_servers." in head
                 or ('"mcp"' in head and '"servers"' in head)
                 or ("mcp:" in head and "servers:" in head)
-                or ('"servers"' in head and ('"command"' in head or '"url"' in head))
             )
         return False
 
@@ -555,7 +598,7 @@ class FilesystemConnector(BaseConnector):
                         if not line:
                             continue
                         parts = line.split()
-                        if len(parts) >= 2:
+                        if parts:
                             rules.append((parts[0], parts[1:]))
                 except (OSError, RuntimeError):
                     self.ctx.error(f"code.filesystem: could not read {cand}")
@@ -569,10 +612,19 @@ class FilesystemConnector(BaseConnector):
         rules = self._codeowners(root)
         best: list[str] | None = None
         for pattern, owners in rules:
-            pat = pattern.strip("/")
-            if pattern == "*" or pat == "" or rel_root == pat or rel_root.startswith(pat + "/") or (rel_root == "." and pattern == "*"):
+            if _codeowners_match(pattern, rel_root):
                 best = owners
         return ", ".join(best) if best else None
+
+    def _owners_for_files(self, root: Path, files: Iterable[str]) -> tuple[str | None, dict[str, str]]:
+        paths = sorted(set(files))
+        by_file = {rel: owner for rel in paths if (owner := self._owner_for(root, rel))}
+        owners = set(by_file.values())
+        if len(owners) == 1 and len(by_file) == len(paths):
+            return owners.pop(), by_file
+        # A project finding summarizes many files. Do not name one file's owner
+        # as the owner of unrelated files if CODEOWNERS has differing rules.
+        return None, by_file
 
     # ----------------------------------------------------------------- emits
     def _base(self, label: str, root: Path, rel: str, kind: Kind, title: str, resource_type: str) -> Finding:
@@ -602,7 +654,10 @@ class FilesystemConnector(BaseConnector):
             f.metadata.update(git)
             if git.get("last_commit"):
                 f.last_seen = git["last_commit"]
-            f.owner = self._owner_for(root, proj.root) or git.get("last_author_email") or f.owner
+            f.owner, by_file = self._owners_for_files(root, (rel for _, rel, _ in tech_matches))
+            f.owner = f.owner or (git.get("last_author_email") if not by_file else None) or self.owner
+            if by_file:
+                f.metadata["codeowners_by_file"] = by_file
             f.metadata["files_scanned"] = proj.files
             f.metadata["languages"] = sorted(proj.languages)
             f.metadata["dependencies_matched"] = sorted({f"{m.signal.ecosystem or 'any'}:{m.value}" for m, _, _ in tech_matches if m.signal.type == "dependency"})
@@ -624,7 +679,10 @@ class FilesystemConnector(BaseConnector):
                 f.metadata["agent_definitions"] = defs
                 f.add_capability("multi-agent")
             f.kind = Kind.AGENT_CONFIG
-            f.owner = self._owner_for(root, proj.root) or f.owner
+            f.owner, by_file = self._owners_for_files(root, files)
+            f.owner = f.owner or self.owner
+            if by_file:
+                f.metadata["codeowners_by_file"] = by_file
             finalize(f, self.index)
             f.kind = Kind.AGENT_CONFIG
             yield f
@@ -674,7 +732,7 @@ class FilesystemConnector(BaseConnector):
         f.metadata["client"] = _mcp_client_for(rel)
         if not servers and "mcpServers" not in text and "mcp_servers" not in text and "servers" not in text:
             return None
-        f.owner = self._owner_for(root, PurePosixPath(rel).parent.as_posix()) or f.owner
+        f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.MCP_SERVER
         if sig:
@@ -751,7 +809,7 @@ class FilesystemConnector(BaseConnector):
             for v in data.values():
                 if isinstance(v, dict) and v.get("llm"):
                     apply_matches(f, self.index.match_model(str(v["llm"]).split("/")[-1]), location=rel, weight_scale=0.6)
-        f.owner = self._owner_for(root, PurePosixPath(rel).parent.as_posix()) or f.owner
+        f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.AGENT
         return f
@@ -762,7 +820,7 @@ class FilesystemConnector(BaseConnector):
             apply_matches(f, [m], location=rel, snippet=snip)
         names = {self.index.get(m.signature_id).name for m, _ in hits if self.index.get(m.signature_id)}  # type: ignore[union-attr]
         f.title = f"Exported AI workflow ({', '.join(sorted(names))}): {rel}"
-        f.owner = self._owner_for(root, PurePosixPath(rel).parent.as_posix()) or f.owner
+        f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.WORKFLOW
         return f
@@ -777,7 +835,7 @@ class FilesystemConnector(BaseConnector):
         f.metadata["resources"] = resources
         if names_found:
             f.metadata["names"] = names_found
-        f.owner = self._owner_for(root, PurePosixPath(rel).parent.as_posix()) or f.owner
+        f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.INFRA
         return f
@@ -789,7 +847,7 @@ class FilesystemConnector(BaseConnector):
         f.add_tag("hardcoded-credential")
         f.metadata["providers"] = sorted({m.signature_id for m, _ in hits})
         f.metadata["count"] = len(hits)
-        f.owner = self._owner_for(root, PurePosixPath(rel).parent.as_posix()) or f.owner
+        f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.SECRET
         return f
@@ -898,7 +956,7 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
     if not isinstance(mcp, dict):
         errors.append("MCP mcp field must be an object")
         mcp = {}
-    servers = next((value for value in (
+    servers: Any = next((value for value in (
         data.get("mcp_servers"), data.get("mcpServers"), mcp.get("servers"), data.get("servers"),
     ) if value is not None), {})
     if isinstance(servers, list):

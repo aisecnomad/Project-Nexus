@@ -29,6 +29,7 @@ from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path, truncate
 
 DEFAULT_LOCATIONS = ["us-central1", "us-east4", "us-west1", "europe-west1", "europe-west4", "asia-southeast1", "asia-northeast1"]
+MAX_LIST_PAGES = 500
 AI_SERVICES = {"aiplatform.googleapis.com": "Vertex AI", "generativelanguage.googleapis.com": "Gemini API", "dialogflow.googleapis.com": "Dialogflow", "discoveryengine.googleapis.com": "Vertex AI Search / Agent Builder / Agentspace", "notebooks.googleapis.com": "Vertex AI Workbench", "speech.googleapis.com": "Speech", "documentai.googleapis.com": "Document AI", "contactcenteraiplatform.googleapis.com": "CCAI"}
 
 
@@ -74,16 +75,15 @@ class GcpConnector(BaseConnector):
             return self.http.get_json(url, params=params or None)
         except HttpError as exc:
             if exc.status in (400, 403, 404, 429):
-                self.log.debug("gcp %s: %s", url, exc.status)
-                if exc.status == 403 and "SERVICE_DISABLED" not in exc.body and "has not been used" not in exc.body:
-                    self.ctx.warn(f"cloud.gcp: access denied for {url.split('?')[0]}")
+                self.ctx.warn(f"cloud.gcp: HTTP {exc.status} reading {url.split('?')[0]}; inventory incomplete", incomplete=True)
                 return None
             raise
 
     def _pages(self, url: str, items_key: str, **params: Any) -> Iterator[dict[str, Any]]:
         assert self.http
         token: str | None = None
-        while True:
+        seen_tokens: set[str] = set()
+        for _ in range(MAX_LIST_PAGES):
             p = dict(params)
             if token:
                 p["pageToken"] = token
@@ -94,6 +94,11 @@ class GcpConnector(BaseConnector):
             token = data.get("nextPageToken")
             if not token:
                 return
+            if token in seen_tokens:
+                self.ctx.warn(f"cloud.gcp: repeated page token for {url}; inventory truncated", incomplete=True)
+                return
+            seen_tokens.add(token)
+        self.ctx.warn(f"cloud.gcp: page limit reached for {url}; inventory truncated", incomplete=True)
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -155,6 +160,7 @@ class GcpConnector(BaseConnector):
         body = {"resourceNames": [f"projects/{project}"], "filter": f'protoPayload.serviceName=("aiplatform.googleapis.com" OR "dialogflow.googleapis.com" OR "discoveryengine.googleapis.com") AND (protoPayload.methodName:("Predict" OR "GenerateContent" OR "StreamGenerateContent" OR "Query" OR "DetectIntent" OR "Converse" OR "Answer")) AND timestamp>="{since}"', "pageSize": 1000, "orderBy": "timestamp desc"}
         token: str | None = None
         pages = 0
+        seen_tokens: set[str] = set()
         while pages < 50:
             if token:
                 body["pageToken"] = token
@@ -170,6 +176,11 @@ class GcpConnector(BaseConnector):
             pages += 1
             if not token:
                 return
+            if token in seen_tokens:
+                self.ctx.warn(f"cloud.gcp: repeated audit page token for {project}; events truncated", incomplete=True)
+                return
+            seen_tokens.add(token)
+        self.ctx.warn(f"cloud.gcp: audit page limit reached for {project}; events truncated", incomplete=True)
 
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -349,7 +360,7 @@ class GcpConnector(BaseConnector):
         unrestricted = not targets
         if not ai_targets and not unrestricted:
             return None
-        f = cloud_finding(self.name, "gcp", kind=Kind.SECRET, title=f"API key {'for ' + ', '.join(AI_SERVICES[t] for t in ai_targets) if ai_targets else '(unrestricted)'}: {rec.get('displayName') or rec.get('uid')}", resource=rec.get("name") or rec.get("uid"), resource_type="api-key", account=rec.get("_project"), first_seen=rec.get("createTime"), last_seen=rec.get("updateTime"))
+        f = cloud_finding(self.name, "gcp", kind=Kind.SECRET, title=f"API key {'for ' + ', '.join(AI_SERVICES[t] for t in ai_targets) if ai_targets else '(unrestricted)'}: {rec.get('displayName') or rec.get('uid')}", resource=str(rec.get("name") or rec.get("uid") or ""), resource_type="api-key", account=rec.get("_project"), first_seen=rec.get("createTime"), last_seen=rec.get("updateTime"))
         if "generativelanguage.googleapis.com" in ai_targets or unrestricted:
             f.add_model_provider("provider.google-gemini")
         if "aiplatform.googleapis.com" in ai_targets:

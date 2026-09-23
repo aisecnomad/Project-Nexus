@@ -12,10 +12,11 @@ import click
 import yaml
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markup import escape
 from rich.table import Table
 
 from shadowscan import __version__
-from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
+from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options, validate_min_confidence
 from shadowscan.connectors import available_connectors, connectors_for_surface, get_connector_class
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, ScanResult, Surface
@@ -23,6 +24,7 @@ from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures import get_index
+from shadowscan.utils.redaction import REDACTED, sanitize_text
 
 console = Console(width=None if sys.stdout.isatty() else 200)
 err_console = Console(stderr=True)
@@ -76,6 +78,13 @@ def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, m
     sys.exit(_exit_code(result, cfg.fail_on))
 
 
+def _min_confidence_option(ctx: click.Context, param: click.Parameter, value: float) -> float:
+    try:
+        return validate_min_confidence(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+
+
 output_options = [
     click.option("--incremental/--no-incremental", default=None, help="reuse completed scans when input content and signatures are unchanged"),
     click.option("--state-dir", type=click.Path(file_okay=False), help="private incremental state directory, outside scanned repositories"),
@@ -83,7 +92,7 @@ output_options = [
     click.option("--output", "-o", type=click.Path(dir_okay=False), help="write the report to a file (table format also prints to the terminal)"),
     click.option("--inventory", "-i", multiple=True, help="sanctioned inventory: Agent Capability Cards dir/file, agents.yaml or CSV (repeatable)"),
     click.option("--signatures", "-s", "signature_dirs", multiple=True, help="extra signature pack directory (repeatable)"),
-    click.option("--min-confidence", type=float, default=0.0, show_default=True, help="drop findings below this confidence"),
+    click.option("--min-confidence", type=float, default=0.0, show_default=True, callback=_min_confidence_option, help="drop findings below this confidence (finite 0–1)"),
     click.option("--fail-on", type=click.Choice(LEVELS), help="exit 2 if any finding reaches this risk level"),
     click.option("--max-rows", type=int, default=None, help="limit rows printed in table mode"),
     click.option("--dump-records", type=click.Path(file_okay=False), help="directory for sanitized connector records (JWTs are never exported)"),
@@ -116,7 +125,10 @@ def main(verbose: int, quiet: bool) -> None:
 @add_options(output_options)
 def scan(config_path: str, only: tuple[str, ...], fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None) -> None:
     """Run every connector defined in a config file."""
-    cfg = ScanConfig.from_yaml(config_path)
+    try:
+        cfg = ScanConfig.from_yaml(config_path)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--config") from exc
     cfg.inventory.extend(inventory)
     cfg.signature_dirs.extend(signature_dirs)
     cfg.min_confidence = max(cfg.min_confidence, min_confidence)
@@ -235,7 +247,7 @@ def jwt(tokens: tuple[str, ...], token_file: str | None, jwks_url: str | None, f
 def list_connectors(surface: str | None, as_json: bool) -> None:
     """List available connectors and their configuration keys."""
     names = connectors_for_surface(surface) if surface else sorted(available_connectors())
-    rows = []
+    rows: list[dict[str, Any]] = []
     for n in names:
         try:
             cls = get_connector_class(n)
@@ -332,7 +344,11 @@ def signatures_test(value: str, kind: str, ecosystem: str, signature_dirs: tuple
     for k in kinds:
         for m in matchers[k](value):
             found = True
-            console.print(f"[bold]{k:11}[/bold] {m.signature_id:40} weight={m.weight:.2f} agent={'yes' if m.agent_indicator else 'no '} caps={','.join(m.capabilities()) or '-'}  ← {m.value[:80]}")
+            # Secret signatures keep raw match values so the scanner can
+            # fingerprint them before producing sanitized findings. Never
+            # reflect those values in terminal output or captured CI logs.
+            shown = REDACTED if k == "secret" else sanitize_text(m.value)[:80]
+            console.print(f"[bold]{k:11}[/bold] {m.signature_id:40} weight={m.weight:.2f} agent={'yes' if m.agent_indicator else 'no '} caps={','.join(m.capabilities()) or '-'}  ← {escape(shown)}")
     if not found:
         console.print("[dim]no match[/dim]")
 

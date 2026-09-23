@@ -260,6 +260,57 @@ def test_input_mutation_during_scan_prevents_snapshot_save(tmp_path, index, monk
     assert not list((tmp_path / "state").glob("*.json"))
 
 
+def test_input_restored_to_original_bytes_during_scan_cannot_be_cached(tmp_path, index, monkeypatch):
+    cfg = config(tmp_path)
+    dependency = tmp_path / "repo" / "requirements.txt"
+    original_run = FilesystemConnector.run
+
+    def run(self):
+        before = dependency.stat()
+        dependency.write_text("langgraph\n")
+        findings = original_run(self)
+        dependency.write_text("langchain\n")
+        os.utime(dependency, ns=(before.st_atime_ns, before.st_mtime_ns))
+        return findings
+
+    monkeypatch.setattr(FilesystemConnector, "run", run)
+    result = Engine(cfg, index).run()
+    assert any("framework.langgraph" in f.frameworks for f in result.findings)
+    assert not result.complete and "changed during the scan" in result.stats[0].errors[0]
+    assert not list((tmp_path / "state").glob("*.json"))
+
+
+def test_multi_root_connector_lookup_error_is_reported_as_incomplete(tmp_path, index, monkeypatch):
+    cfg = config(tmp_path)
+    another = tmp_path / "another"
+    another.mkdir()
+    cfg.connectors[0].config = {"paths": [str(tmp_path / "repo"), str(another)]}
+
+    def missing_connector(_name):
+        raise ImportError("missing plugin dependency")
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", missing_connector)
+    result = Engine(cfg, index).run()
+    assert not result.complete and not result.findings
+    assert result.stats[0].incomplete and "missing plugin dependency" in result.stats[0].errors[0]
+
+
+def test_reused_engine_reloads_signature_pack_between_runs(tmp_path):
+    cfg = config(tmp_path)
+    extra = tmp_path / "signatures"
+    extra.mkdir()
+    override = extra / "langchain.yaml"
+    cfg.signature_dirs = [str(extra)]
+    override.write_text("id: framework.langchain\nname: LangChain\ncategory: framework\nsignals:\n  - type: dependency\n    ecosystem: pypi\n    names: [langchain]\n")
+    engine = Engine(cfg)
+    first = engine.run()
+    assert first.complete and any("framework.langchain" in f.frameworks for f in first.findings)
+    override.write_text("id: framework.langchain\nname: LangChain\ncategory: framework\nsignals:\n  - type: dependency\n    ecosystem: pypi\n    names: [unrelated]\n")
+    second = engine.run()
+    assert second.complete and not second.stats[0].cached
+    assert not any("framework.langchain" in f.frameworks for f in second.findings)
+
+
 def test_cache_never_serializes_post_scan_correlation(tmp_path, index, monkeypatch):
     cfg = config(tmp_path)
 

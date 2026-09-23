@@ -73,6 +73,9 @@ class Event:
     environment: str | None = None
     runtime_frameworks: list[str] = field(default_factory=list)
     code_resources: list[str] = field(default_factory=list)
+    requests: int = 1
+    aggregate: bool = False
+    identity_assurance: str = "unverified"
 
 
 def _b(v: Any) -> bool | None:
@@ -115,20 +118,43 @@ def _has_tools(obj: Any) -> bool | None:
         except json.JSONDecodeError:
             return None
     if isinstance(obj, dict):
+        choice = obj.get("tool_choice")
+        if choice == "none" or isinstance(choice, dict) and choice.get("type") == "none":
+            return False
         for wrapper in ("body", "request", "payload", "json"):
             inner = obj.get(wrapper)
             if isinstance(inner, (dict, str)) and not any(k in obj for k in ("tools", "functions", "messages", "input")):
                 return _has_tools(inner)
-        for key in ("tools", "functions", "tool_choice", "toolConfig", "tool_config", "function_declarations"):
+        for key in ("tools", "functions", "function_declarations"):
             v = obj.get(key)
+            if isinstance(v, str) and v.strip().startswith(("[", "{")):
+                try:
+                    v = json.loads(v)
+                except json.JSONDecodeError:
+                    pass
             if v not in (None, [], {}, ""):
                 return True
+        for key in ("toolConfig", "tool_config"):
+            if isinstance(obj.get(key), (dict, str)) and _has_tools(obj[key]):
+                return True
+        # A choice of "none" (or "auto" without definitions) does not
+        # establish that a tool was available or invoked.
+        if isinstance(choice, dict) and choice.get("type") not in {"none", "auto", None}:
+            return True
         msgs = obj.get("messages") or obj.get("input") or []
         if isinstance(msgs, list):
             for m in msgs:
                 if isinstance(m, dict) and (m.get("tool_calls") or m.get("role") in {"tool", "function"} or m.get("type") in {"function_call", "function_call_output", "tool_use", "tool_result"}):
                     return True
         return False
+    if isinstance(obj, list):
+        return any(
+            isinstance(item, dict) and (
+                bool(item.get("tool_calls")) or item.get("role") in {"tool", "function"}
+                or item.get("type") in {"function_call", "function_call_output", "tool_use", "tool_result"}
+            ) or _has_tools(item) is True
+            for item in obj
+        )
     return None
 
 
@@ -143,10 +169,27 @@ def _has_tool_calls(obj: Any) -> bool | None:
         except json.JSONDecodeError:
             return None
     if isinstance(obj, dict):
-        s = json.dumps(obj)[:200_000]
-        if '"tool_calls"' in s or '"tool_use"' in s or '"function_call"' in s or '"functionCall"' in s or '"stop_reason": "tool_use"' in s or '"finish_reason": "tool_calls"' in s:
+        explicit_empty = False
+        for key in ("tool_calls", "function_call", "functionCall"):
+            if key not in obj:
+                continue
+            value = obj.get(key)
+            if isinstance(value, str) and value.strip().startswith(("[", "{")):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    pass
+            if value not in (None, [], {}, "", False, "none"):
+                return True
+            explicit_empty = True
+        nested = [_has_tool_calls(value) for value in obj.values() if isinstance(value, (dict, list))]
+        if True in nested:
             return True
-        return False
+        if explicit_empty or False in nested:
+            return False
+        return obj.get("type") in {"tool_use", "function_call"} or obj.get("stop_reason") == "tool_use" or obj.get("finish_reason") == "tool_calls"
+    if isinstance(obj, list):
+        return any(_has_tool_calls(item) for item in obj)
     return None
 
 
@@ -286,10 +329,10 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
     if schema == "cloudflare":
         meta = rec.get("metadata") or {}
         user = meta.get("user") or meta.get("user_id") or meta.get("userId") if isinstance(meta, dict) else None
-        caller = user or rec.get("api_key_id") or rec.get("gateway_id") or "unknown"
+        caller = rec.get("api_key_id") or user or rec.get("gateway_id") or "unknown"
         return Event(
             caller=f"cloudflare:{caller}",
-            caller_kind="user" if user else "api-key",
+            caller_kind="api-key" if rec.get("api_key_id") else ("user" if user else "service"),
             caller_label=str(caller),
             timestamp=parse_timestamp(rec.get("created_at") or rec.get("timestamp")),
             model=rec.get("model"),
@@ -436,6 +479,9 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
         user = rec.get("user_id") or get_path(actor, "session.user.email", "api_key.user.email", "api_key.service_account.name", "session.user.id")
         sa = get_path(actor, "api_key.service_account.id", "api_key.service_account.name")
         caller = key_id or sa or user or rec.get("project_id") or "unknown"
+        # Organization usage rows represent a time bucket, not a transaction.
+        # The exported count is the only defensible request volume for that row.
+        raw_requests = get_path(rec, "num_model_requests", "n_requests")
         return Event(
             caller=f"openai:{caller}",
             caller_kind="api-key" if key_id else ("service" if sa else "user"),
@@ -451,6 +497,8 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
             path=rec.get("operation") or rec.get("type") or rec.get("endpoint"),
             metadata={"project": rec.get("project_id"), "num_requests": rec.get("num_model_requests") or rec.get("n_requests"), "batch": rec.get("batch"), "service_account": sa, "event_type": rec.get("type")},
             schema=schema,
+            requests=max(0, _i(raw_requests)) if raw_requests is not None else 1,
+            aggregate=raw_requests is not None,
         )
     if schema == "anthropic-usage":
         caller = rec.get("api_key_id") or rec.get("workspace_id") or "unknown"
@@ -509,6 +557,12 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
     kind = "api-key" if key else "principal" if principal else "user" if user else "user-agent" if ua else "ip"
     req = rec.get("request") or rec.get("request_body") or rec.get("input") or rec.get("body") or rec.get("messages")
     resp = rec.get("response") or rec.get("response_body") or rec.get("output") or rec.get("completion")
+    if req is not None:
+        has_tools = _has_tools(req)
+    elif any(key in rec for key in ("tools", "functions", "function_declarations", "tool_choice", "toolConfig", "tool_config")):
+        has_tools = _has_tools(rec)
+    else:
+        has_tools = _b(get_path(rec, "has_tools", "tool_count", "function_call"))
     return Event(
         caller=f"{kind}:{who}",
         caller_kind=kind,
@@ -521,7 +575,7 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
         ip=str(ip) if ip else None,
         user=str(user) if user else None,
         team=get_path(rec, "team", "team_id", "org", "project", "workspace"),
-        tools=_has_tools(req) if req is not None else _b(get_path(rec, "tools", "has_tools", "tool_count", "function_call", "tool_choice")),
+        tools=has_tools,
         tool_calls=_has_tool_calls(resp) if resp is not None else _b(get_path(rec, "tool_calls", "has_tool_calls")),
         streaming=_b(get_path(rec, "stream", "streaming")),
         tokens_in=_i(get_path(rec, "prompt_tokens", "input_tokens", "tokens_in", "usage.prompt_tokens", "usage.input_tokens", "promptTokens")),
@@ -600,6 +654,8 @@ class _Caller:
     kind: str
     label: str
     events: int = 0
+    records: int = 0
+    aggregate_records: int = 0
     first: datetime | None = None
     last: datetime | None = None
     models: Counter = field(default_factory=Counter)
@@ -636,7 +692,7 @@ class GatewayLogConnector(BaseConnector):
         "min_events": "ignore callers with fewer events (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
         "max_records": "stop after N records (default 5,000,000)",
-        "correlation_bindings": "explicit [{code_resource, caller, scope}] mappings; scope must exactly match log tenant/account/project/workspace fields ({} for unscoped exports)",
+        "correlation_bindings": "explicit [{code_resource, caller, scope}] mappings to workload identities; scope must exactly match log tenant/account/project/workspace fields ({} for unscoped exports)",
     }
     offline_formats: ClassVar[str] = "JSONL / JSON / CSV / text access logs"
 
@@ -677,41 +733,42 @@ class GatewayLogConnector(BaseConnector):
                 for line in fh:
                     rec = parse_text_line(line)
                     if rec:
-                        yield rec
+                        yield from self._expand_export_record(rec)
             return
         if p.suffix.lower() in {".log", ".txt"}:
             with p.open("r", encoding="utf-8", errors="replace") as fh:
                 for line in fh:
                     rec = parse_text_line(line)
                     if rec:
-                        yield rec
+                        yield from self._expand_export_record(rec)
             return
         # JSON exports may wrap records (CloudWatch: {"logEvents": [{"message": "..."}]}, Azure: {"records": [...]})
-        for rec in super().load_offline(path):
-            if "logEvents" in rec and isinstance(rec["logEvents"], list):
-                for ev in rec["logEvents"]:
-                    msg = ev.get("message") if isinstance(ev, dict) else None
-                    if isinstance(msg, str):
-                        inner = parse_text_line(msg)
-                        if inner:
-                            yield inner
-                    elif isinstance(msg, dict):
-                        yield msg
-                continue
-            if "message" in rec and isinstance(rec["message"], str) and rec["message"].strip().startswith("{") and len(rec) <= 4:
-                inner = parse_text_line(rec["message"])
-                if inner:
-                    yield inner
-                    continue
-            if "textPayload" in rec and isinstance(rec["textPayload"], str):
-                inner = parse_text_line(rec["textPayload"])
-                if inner:
-                    yield inner
-                    continue
-            if "jsonPayload" in rec and isinstance(rec["jsonPayload"], dict) and "protoPayload" not in rec:
-                yield rec["jsonPayload"]
-                continue
-            yield rec
+        for exported_record in super().load_offline(path):
+            yield from self._expand_export_record(exported_record)
+
+    @staticmethod
+    def _expand_export_record(rec: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Retain trusted export envelope fields when unwrapping the log body."""
+        if isinstance(rec.get("logEvents"), list):
+            for event in rec["logEvents"]:
+                if isinstance(event, dict):
+                    yield from GatewayLogConnector._expand_export_record(event)
+            return
+        payload = rec.get("jsonPayload") if "protoPayload" not in rec else None
+        inner: dict[str, Any] | None
+        if isinstance(payload, dict):
+            inner = dict(payload)
+        else:
+            body = rec.get("message") or rec.get("textPayload")
+            inner = parse_text_line(body) if isinstance(body, str) else body if isinstance(body, dict) else None
+            if inner is None:
+                yield rec
+                return
+            inner = dict(inner)
+        for key in ("timestamp", "receiveTimestamp", "resource", "labels", "project_id", "logName"):
+            if key in rec:
+                inner.setdefault(key, rec[key])
+        yield inner
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         callers: dict[str, _Caller] = {}
@@ -727,7 +784,7 @@ class GatewayLogConnector(BaseConnector):
             if ev is None:
                 skipped += 1
                 continue
-            if schema == "access-log" and self.llm_hosts_only and not self._is_llm_traffic(ev):
+            if schema in {"access-log", "generic"} and self.llm_hosts_only and not self._is_llm_traffic(ev):
                 skipped += 1
                 continue
             self._runtime_context(ev, rec)
@@ -742,6 +799,7 @@ class GatewayLogConnector(BaseConnector):
 
     def _runtime_context(self, ev: Event, rec: dict[str, Any]) -> None:
         """Operator bindings identify workloads; log names alone never do."""
+        identity_assurance = self._binding_identity_assurance(ev, rec)
         rec = sanitize(rec)
         aliases = {
             "tenant": ("tenant_id", "tenant", "organization_id", "org_id", "metadata.tenant_id", "metadata.tenant", "identity.claims.tid", "properties.identity.claims.tid"),
@@ -762,20 +820,60 @@ class GatewayLogConnector(BaseConnector):
             match.signature.id for match in self.index.match_user_agent(ev.user_agent or "")
             if match.signature.category == "framework"
         })
+        ev.identity_assurance = identity_assurance
         ev.code_resources = sorted({
             binding["code_resource"] for binding in self.correlation_bindings
-            if binding["caller"] == ev.caller and binding["scope"] == ev.scope
+            if ev.identity_assurance != "unverified" and binding["caller"] == ev.caller and binding["scope"] == ev.scope
         })
 
+    @staticmethod
+    def _binding_identity_assurance(ev: Event, rec: dict[str, Any]) -> str:
+        """Bind only a workload credential/principal, never a client hint or a shared scope.
+
+        Generic log principal/service values are explicitly asserted by the
+        operator's exact binding; their authenticity cannot be proven here.
+        """
+        if ev.caller_kind not in {"api-key", "principal", "service"}:
+            return "unverified"
+        schema = ev.schema
+        candidates = {
+            "litellm": get_path(rec, "api_key", "hashed_api_key", "key_hash"),
+            "portkey": get_path(rec, "virtual_key", "config.virtual_key", "metadata.virtual_key", "api_key"),
+            "kong": get_path(rec, "consumer.username", "consumer.id", "authenticated_entity.consumer_id"),
+            "cloudflare": rec.get("api_key_id"),
+            "bedrock": get_path(rec, "identity.arn"),
+            "azure-openai": get_path(rec, "identity.claims.oid", "identity.authorization.objectId", "properties.identity.claims.oid", "properties.identity.authorization.objectId"),
+            "vertex": get_path(rec, "protoPayload.authenticationInfo.principalEmail", "protoPayload.authenticationInfo.principalSubject"),
+            "openai-usage": get_path(rec, "api_key_id", "actor.api_key.id", "api_key.id", "actor.api_key.service_account.id", "actor.api_key.service_account.name"),
+            "anthropic-usage": rec.get("api_key_id"),
+            "access-log": get_path(rec, "api_key", "authorization_hash", "consumer"),
+            "generic": get_path(rec, "api_key", "apiKey", "api_key_id", "key", "key_id", "key_alias", "virtual_key", "token_id") if ev.caller_kind == "api-key" else get_path(rec, "principal", "principal_id", "identity.arn", "caller", "service", "service_name", "app", "application", "app_name"),
+        }
+        # Sentinels often appear in partial exports. A binding to one is not
+        # workload specific even if it matches byte-for-byte.
+        value = str(candidates.get(schema) or "").strip().lower()
+        if value in {"", "anonymous", "unknown", "none", "null", "-", "gateway", "shared"}:
+            return "unverified"
+        return "operator-asserted" if schema in {"generic", "access-log"} else "provider-authenticated-field"
+
     def _is_llm_traffic(self, ev: Event) -> bool:
-        if ev.model:
-            return True
+        if ev.path and re.search(r"(?:^|/)(?:favicon\.ico|robots\.txt|healthz?|readyz?|livez?|metrics)(?:$|[/?#])|\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)(?:$|[?#])", ev.path, re.I):
+            return False
         text = " ".join(x for x in (ev.host, ev.path) if x)
-        if ev.host and self.index.match_domain(ev.host):
-            return True
         if ev.path and re.search(r"/v1/(?:chat/completions|completions|responses|messages|embeddings|models|assistants|threads|runs|audio|images|files|batches|realtime)|/openai/deployments/|/generateContent|:generateContent|:streamGenerateContent|/invoke(?:-with-response-stream)?|/converse|/mcp\b|/sse\b|/a2a\b|/agents?/|/predict\b|/api/(?:chat|generate|tags)\b", text):
             return True
-        return bool(ev.user_agent and self.index.match_user_agent(ev.user_agent))
+        if ev.schema == "access-log" and ev.path:
+            return False
+        if ev.model:
+            return True
+        if ev.schema == "generic" and _provider_signature(self.index, ev.provider):
+            if ev.tokens_in > 0 or ev.tokens_out > 0:
+                return True
+            if ev.path and re.search(r"(?:chat|completions|responses|messages|embeddings|generate|invoke|predict)", ev.path, re.I):
+                return True
+        # Domain-only egress logs can identify a model provider. A path such as
+        # /favicon.ico on that host is not an inference transaction.
+        return bool(ev.host and not ev.path and self.index.match_domain(ev.host))
 
     @staticmethod
     def _accumulate(callers: dict[str, _Caller], ev: Event) -> None:
@@ -783,17 +881,21 @@ class GatewayLogConnector(BaseConnector):
         c = callers.get(identity)
         if c is None:
             c = callers[identity] = _Caller(ev.caller, ev.caller_kind, ev.caller_label, scope=dict(ev.scope))
-        c.events += 1
+        c.records += 1
+        c.events += ev.requests
+        if ev.aggregate:
+            c.aggregate_records += 1
         c.schemas[ev.schema] += 1
         if ev.timestamp:
             c.first = ev.timestamp if not c.first or ev.timestamp < c.first else c.first
             c.last = ev.timestamp if not c.last or ev.timestamp > c.last else c.last
-            c.hours[ev.timestamp.hour] += 1
-            c.weekdays[ev.timestamp.weekday()] += 1
+            if not ev.aggregate:
+                c.hours[ev.timestamp.hour] += 1
+                c.weekdays[ev.timestamp.weekday()] += 1
         if ev.model:
-            c.models[str(ev.model)] += 1
+            c.models[str(ev.model)] += ev.requests
         if ev.provider:
-            c.providers[str(ev.provider)] += 1
+            c.providers[str(ev.provider)] += ev.requests
         if ev.host:
             c.hosts[ev.host] += 1
         if ev.user_agent:
@@ -807,11 +909,11 @@ class GatewayLogConnector(BaseConnector):
         if ev.path:
             c.paths[str(ev.path)[:120]] += 1
         if ev.tools is not None:
-            c.tool_known += 1
+            c.tool_known += ev.requests
             if ev.tools:
-                c.tools_requests += 1
+                c.tools_requests += ev.requests
         if ev.tool_calls:
-            c.tool_call_responses += 1
+            c.tool_call_responses += ev.requests
         c.tokens_in += ev.tokens_in
         c.tokens_out += ev.tokens_out
         c.cost += ev.cost
@@ -820,7 +922,7 @@ class GatewayLogConnector(BaseConnector):
         for k, v in ev.metadata.items():
             if v not in (None, "", {}, []) and k not in c.metadata_samples:
                 c.metadata_samples[k] = v if isinstance(v, (str, int, float, bool)) else json.dumps(v, default=str)[:300]
-        bucket = json.dumps([ev.code_resources, ev.runtime_frameworks, ev.environment])
+        bucket = json.dumps([ev.code_resources, ev.runtime_frameworks, ev.environment, ev.identity_assurance])
         observation = c.observations.setdefault(bucket, {
             "code_resources": ev.code_resources,
             "frameworks": ev.runtime_frameworks,
@@ -831,9 +933,11 @@ class GatewayLogConnector(BaseConnector):
             "first_seen": None,
             "last_seen": None,
             "identity_basis": "configured-exact-caller-and-scope",
+            "identity_assurance": ev.identity_assurance,
+            "environment_assurance": "event-label-unverified" if ev.environment else "absent",
         })
-        observation["events"] += 1
-        if ev.timestamp:
+        observation["events"] += ev.requests
+        if ev.timestamp and not ev.aggregate:
             timestamp = to_iso(ev.timestamp)
             observation["timestamped_events"] += 1
             observation["first_seen"] = min(observation["first_seen"], timestamp) if observation["first_seen"] else timestamp
@@ -908,6 +1012,8 @@ class GatewayLogConnector(BaseConnector):
                 "caller_kind": c.kind,
                 "caller": c.label,
                 "events": c.events,
+                "records": c.records,
+                "aggregate_records": c.aggregate_records,
                 "models": dict(c.models.most_common(10)),
                 "providers": dict(c.providers.most_common(5)),
                 "hosts": dict(c.hosts.most_common(5)),

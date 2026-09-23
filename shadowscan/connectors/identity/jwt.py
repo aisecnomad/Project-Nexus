@@ -114,8 +114,8 @@ class JwtConnector(BaseConnector, _NoDump):
         if jwks_url:
             try:
                 client = pyjwt.PyJWKClient(jwks_url)
-                key = client.get_signing_key_from_jwt(token)
-                pyjwt.decode(token, key.key, algorithms=[header.get("alg", "RS256")], options={"verify_exp": False, "verify_aud": False})
+                signing_key = client.get_signing_key_from_jwt(token)
+                pyjwt.decode(token, signing_key.key, algorithms=[header.get("alg", "RS256")], options={"verify_exp": False, "verify_aud": False})
                 verified = True
             except Exception as exc:  # noqa: BLE001
                 verified = False

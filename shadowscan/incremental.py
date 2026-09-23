@@ -30,7 +30,7 @@ from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.redaction import sanitize
 
 log = logging.getLogger("shadowscan.incremental")
-_FORMAT = 1
+_FORMAT = 2
 _MAX_CACHE_BYTES = 64 * 1024 * 1024
 _MAX_HASH_FILE_BYTES = 64 * 1024 * 1024
 _MAX_HASH_BYTES = 512 * 1024 * 1024
@@ -96,9 +96,13 @@ def _file_digest(path: Path, *, max_bytes: int = _MAX_HASH_FILE_BYTES, budget: _
             digest.update(chunk)
         after = os.fstat(stream.fileno())
     current = path.stat()
-    attrs = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    attrs = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
     if any(getattr(before, a) != getattr(after, a) or getattr(after, a) != getattr(current, a) for a in attrs):
         raise ValueError("input changed while hashing")
+    # Include change time and identity alongside content: a file that changes
+    # A -> B -> A during collection must not make the before/after snapshots
+    # appear equal and permit caching findings derived from B as A.
+    digest.update(_json([getattr(after, attr) for attr in attrs]))
     return digest.hexdigest()
 
 
@@ -153,6 +157,9 @@ def _tree_digest(root: Path, *, code: bool, use_git: bool, budget: _HashBudget, 
         basepath = Path(base)
         rel = basepath.relative_to(root).as_posix()
         digest.update(_json(["directory", rel]))
+        before = basepath.stat(follow_symlinks=False)
+        attrs = ("st_dev", "st_ino", "st_mode", "st_mtime_ns", "st_ctime_ns")
+        digest.update(_json([getattr(before, attr) for attr in attrs]))
         if code and use_git and ".git" in dirs + files:
             digest.update(_json(["git", rel, _git_state(basepath, budget)]))
         kept = []
@@ -180,6 +187,9 @@ def _tree_digest(root: Path, *, code: bool, use_git: bool, budget: _HashBudget, 
             if not stat.S_ISREG(path.stat().st_mode):
                 raise ValueError("special file in input")
             digest.update(_json(["file", path.relative_to(root).as_posix(), _file_digest(path, max_bytes=max_file_bytes, budget=budget)]))
+        after = basepath.stat(follow_symlinks=False)
+        if any(getattr(before, attr) != getattr(after, attr) for attr in attrs):
+            raise ValueError("input directory changed while hashing")
     return digest.hexdigest()
 
 
@@ -188,6 +198,9 @@ def _checkout_container_digest(root: Path, *, use_git: bool, budget: _HashBudget
     if not root.is_dir():
         raise ValueError("checkout container must be a directory")
     digest = hashlib.sha256()
+    before = root.stat(follow_symlinks=False)
+    attrs = ("st_dev", "st_ino", "st_mode", "st_mtime_ns", "st_ctime_ns")
+    digest.update(_json([getattr(before, attr) for attr in attrs]))
     for child in sorted(root.iterdir()):
         budget.check(entries=1)
         if child.is_symlink():
@@ -196,6 +209,9 @@ def _checkout_container_digest(root: Path, *, use_git: bool, budget: _HashBudget
             digest.update(_json([child.name, _tree_digest(
                 child, code=True, use_git=use_git, budget=budget, max_file_bytes=max_file_bytes,
             )]))
+    after = root.stat(follow_symlinks=False)
+    if any(getattr(before, attr) != getattr(after, attr) for attr in attrs):
+        raise ValueError("checkout container changed while hashing")
     return digest.hexdigest()
 
 

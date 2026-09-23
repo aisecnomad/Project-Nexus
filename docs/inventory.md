@@ -10,9 +10,9 @@ recorded on their card.
 
 ### Agent Capability Cards (one YAML per agent)
 
-The format used by this repository (`Agent Card`). ShadowScan reads
+The bundled example is [`agent-card.yaml`](../agent-card.yaml). ShadowScan reads
 `metadata.agent_id`, `metadata.name`, `metadata.owner_team` / `owner`,
-`metadata.classification`, and an `discovery:` block required for automatic registration:
+`metadata.classification`, and a `discovery:` block required for automatic registration:
 
 ```yaml
 metadata:
@@ -71,7 +71,7 @@ explicit resource mismatch cannot fall through to name-based approval. Multiple
 matching inventory entries require review and leave the resource unregistered.
 
 **Migration:** cards that previously matched by name need explicit resource
-bindings. The bundled `Agent Card` contains example bindings for offline AWS
+bindings. The bundled `agent-card.yaml` contains example bindings for offline AWS
 fixtures; replace them with your reviewed identities before production use.
 
 `shadowscan inventory check inventory/` lists what was loaded and how each

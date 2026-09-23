@@ -16,7 +16,7 @@ Offline export: JSONL of dumped records (``_kind`` per record).
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypedDict
 from urllib.parse import parse_qs, urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
@@ -62,6 +62,12 @@ AI_ROLE_IDS = {
     "8e3af657-a8ff-443c-a75c-2fe8c4bcb635": "Owner",
     "b24988ac-6180-42a0-ab88-20f7382dd24c": "Contributor",
 }
+
+
+class _ResourceBase(TypedDict):
+    account: str | None
+    region: str | None
+    owner: str | None
 
 
 class AzureConnector(BaseConnector):
@@ -135,9 +141,10 @@ class AzureConnector(BaseConnector):
                     self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)
                 return None
             items.extend(data["value"])
-            path = data.get("nextLink") or data.get("@odata.nextLink")
-            if not path:
+            next_path = data.get("nextLink") or data.get("@odata.nextLink")
+            if not next_path:
                 return items
+            path = str(next_path)
             # _get/HttpClient reject any nextLink outside ARM before sending auth.
         self.ctx.warn("cloud.azure: list page limit reached", incomplete=True)
         return None
@@ -188,7 +195,7 @@ class AzureConnector(BaseConnector):
                     yield p
                     yield from self._collect_agents(r, p)
             elif t == "microsoft.logic/workflows":
-                wf = self._get(rid, "2019-05-01") or {}
+                wf = self._get(str(rid), "2019-05-01") or {}
                 yield {"_kind": "logicapp-definition", "id": rid, "name": r.get("name"), "definition": get_path(wf, "properties.definition"), "connections": get_path(wf, "properties.parameters.$connections.value"), "state": get_path(wf, "properties.state")}
             elif t == "microsoft.web/sites" and self.include_app_settings:
                 try:
@@ -277,7 +284,7 @@ class AzureConnector(BaseConnector):
         props = r.get("properties") or {}
         tags = r.get("tags") or {}
         owner = tags.get("owner") or tags.get("Owner") or tags.get("team") or tags.get("CreatedBy")
-        base = dict(account=r.get("subscriptionId"), region=r.get("location"), owner=owner)
+        base: _ResourceBase = {"account": r.get("subscriptionId"), "region": r.get("location"), "owner": owner}
         if t == "microsoft.cognitiveservices/accounts":
             kind = str(r.get("kind") or "")
             if kind.lower() not in {"openai", "aiservices"} and not deps:
@@ -358,7 +365,7 @@ class AzureConnector(BaseConnector):
         f.add_framework("cloud.azure-ai-foundry-agents")
         f.add_model_provider("provider.azure-openai")
         f.add_capability("tool-use")
-        f.models = [rec.get("model")] if rec.get("model") else []
+        f.models = [str(rec["model"])] if rec.get("model") else []
         apply_matches(f, model_matches(self.index, rec.get("model")), weight_scale=0.4)
         f.add_evidence(Evidence(signal="azure:foundry-agent", description=f"Agent '{rec.get('name')}' on {rec.get('model')} with tools {', '.join(str(t) for t in tools) or 'none'} in project {rec.get('_project_name')}", location=rec.get("_endpoint"), weight=0.97, signature="cloud.azure-ai-foundry-agents"))
         if "code_interpreter" in tools:

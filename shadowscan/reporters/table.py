@@ -67,7 +67,7 @@ def print_table(result: ScanResult, console: Console | None = None, verbose: boo
                 finding_cell.append(f"\nrisk: {factors}", style="yellow")
             for e in sorted(f.evidence, key=lambda e: -e.weight)[:3]:
                 finding_cell.append(f"\n  • {e.description}" + (f" ({e.location})" if e.location else ""), style="dim")
-        cells = [_level(f)]
+        cells: list[str | Text] = [_level(f)]
         if result.inventory_size:
             cells.append(Text("SHADOW", style="bold red") if f.shadow else Text(f.registry_match or "", style="green"))
         cells += [f.surface.value, f.kind.value, finding_cell, Text(f.owner or "—"), f"{f.confidence:.2f}", Text(tech)]
@@ -78,8 +78,8 @@ def print_table(result: ScanResult, console: Console | None = None, verbose: boo
     errs = [(st.connector, e) for st in result.stats for e in st.errors]
     if errs:
         console.print("[bold red]Connector errors:[/bold red]")
-        for c, e in errs[:20]:
-            console.print(Text(f"  {c}: {e}", style="red"))
+        for connector, error in errs[:20]:
+            console.print(Text(f"  {connector}: {error}", style="red"))
     warns = [(st.connector, w) for st in result.stats for w in st.warnings]
     if warns and (verbose or not result.complete):
         console.print("[bold yellow]Warnings:[/bold yellow]")

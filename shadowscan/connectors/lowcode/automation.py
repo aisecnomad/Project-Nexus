@@ -173,6 +173,7 @@ class MakeConnector(_AutomationBase):
         else:
             raise ConnectorError("lowcode.make: team_id or organization_id required")
         for team in teams:
+            blueprint_errors: dict[int, int] = {}
             offset = 0
             while True:
                 data = http.get_json("/scenarios", params={"teamId": team, "pg[limit]": 100, "pg[offset]": offset}) or {}
@@ -181,21 +182,24 @@ class MakeConnector(_AutomationBase):
                     try:
                         bp = http.get_json(f"/scenarios/{s['id']}/blueprint")
                         s["blueprint"] = (bp or {}).get("response", {}).get("blueprint") or bp
-                    except HttpError:
-                        pass
+                    except HttpError as exc:
+                        blueprint_errors[exc.status] = blueprint_errors.get(exc.status, 0) + 1
                     s["_kind"] = "scenario"
                     s["_team"] = team
                     yield s
                 if len(scenarios) < 100:
                     break
                 offset += 100
+            if blueprint_errors:
+                details = ", ".join(f"HTTP {status}: {count}" for status, count in sorted(blueprint_errors.items()))
+                self.ctx.warn(f"lowcode.make: blueprints unreadable for {sum(blueprint_errors.values())} scenario(s) in team {team} ({details}); workflow inventory incomplete")
             try:
                 for a in (http.get_json("/ai-agents", params={"teamId": team}) or {}).get("aiAgents", []) or []:
                     a["_kind"] = "ai-agent"
                     a["_team"] = team
                     yield a
-            except HttpError:
-                pass
+            except HttpError as exc:
+                self.ctx.warn(f"lowcode.make: AI agents unreadable for team {team} (HTTP {exc.status}); agent inventory incomplete")
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:

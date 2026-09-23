@@ -184,7 +184,7 @@ def sanitize(value: Any) -> Any:
 
     def clean_value(item: Any, depth: int) -> Any:
         if isinstance(item, Mapping):
-            out = {}
+            mapping_out = {}
             for key, child in item.items():
                 name = str(key)
                 if _sensitive_key(name) or (record_has_secret_value(item) and name.lower() == "value"):
@@ -199,20 +199,20 @@ def sanitize(value: Any) -> Any:
                     ]
                 else:
                     result = clean(child, depth + 1)
-                out[text(name)] = result
-            return out
+                mapping_out[text(name)] = result
+            return mapping_out
         if isinstance(item, (list, tuple)):
-            out = []
+            sequence_out = []
             redact_next = False
             for child in item:
                 if redact_next:
-                    out.append(_redact_value(child))
+                    sequence_out.append(_redact_value(child))
                     redact_next = False
                 else:
-                    out.append(clean(child, depth + 1))
+                    sequence_out.append(clean(child, depth + 1))
                     if isinstance(child, str) and child.startswith("-") and "=" not in child:
                         redact_next = _sensitive_key(child.lstrip("-"))
-            return tuple(out) if isinstance(item, tuple) else out
+            return tuple(sequence_out) if isinstance(item, tuple) else sequence_out
         if isinstance(item, str):
             return text(item)
         return item

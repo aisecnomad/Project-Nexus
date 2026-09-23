@@ -64,27 +64,32 @@ class GoogleWorkspaceConnector(BaseConnector):
         self._auth()
         assert self.http
         count = 0
+        token_errors: dict[int, int] = {}
         for user in self.http.paginate_token("/admin/directory/v1/users", params={"customer": self.customer, "maxResults": 500, "projection": "basic"}, items_key="users"):
             count += 1
             if count > self.max_users:
                 self.ctx.warn("identity.google-workspace: max_users reached")
-                return
+                break
             email = user.get("primaryEmail")
             if user.get("suspended"):
                 continue
             try:
                 data = self.http.get_json(f"/admin/directory/v1/users/{email}/tokens")
             except HttpError as exc:
-                self.log.debug("tokens for %s: %s", email, exc)
+                token_errors[exc.status] = token_errors.get(exc.status, 0) + 1
                 continue
             for tok in (data or {}).get("items", []) or []:
                 tok["userEmail"] = email
                 yield tok
+        if token_errors:
+            details = ", ".join(f"HTTP {status}: {count}" for status, count in sorted(token_errors.items()))
+            self.ctx.warn(f"identity.google-workspace: OAuth tokens unreadable for {sum(token_errors.values())} user(s) ({details}); app inventory incomplete")
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         apps: dict[str, dict[str, Any]] = {}
         for rec in records:
-            tokens = rec.get("tokens") if isinstance(rec.get("tokens"), list) else [rec]
+            raw_tokens = rec.get("tokens")
+            tokens = raw_tokens if isinstance(raw_tokens, list) else [rec]
             user = rec.get("user") or rec.get("userEmail") or rec.get("userKey")
             for tok in tokens:
                 cid = tok.get("clientId")

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
 from shadowscan.engine import Engine, correlate, merge
@@ -16,7 +19,7 @@ def _f(**kw) -> Finding:
 
 
 def test_inventory_loads_capability_card_and_matches(tmp_path: Path):
-    card = Path(__file__).parents[2] / "Agent Card"
+    card = Path(__file__).parents[2] / "agent-card.yaml"
     inv = Inventory.load([str(card)])
     assert len(inv) == 1 and inv.entries[0].agent_id == "ops-provisioning-04" and inv.entries[0].owner == "Platform-Engineering"
     f = _f(resource="arn:aws:bedrock:us-east-1:123456789012:agent/AGENT1", metadata={"agent_name": "ops-provisioning-04"})
@@ -57,6 +60,68 @@ def test_merge_and_correlate():
     assert cloud.metadata["related"] == [iac.id] and iac.metadata["related"] == [cloud.id]
 
 
+def test_merge_preserves_runtime_observations_and_variable_names():
+    observed = {
+        "code_resources": ["github:acme/agent"], "frameworks": ["framework.langchain"],
+        "identity_basis": "configured-exact-caller-and-scope", "timestamped_events": 1,
+        "first_seen": "2026-09-22T10:00:00Z", "last_seen": "2026-09-22T10:00:00Z",
+    }
+    gateway = _f(surface=Surface.GATEWAY, connector="gateway.logs", kind=Kind.GATEWAY_CALLER,
+                 resource="caller:abc", metadata={"runtime_source": {"input": "a.jsonl"}, "runtime_observations": [observed]})
+    again = _f(surface=Surface.GATEWAY, connector="gateway.logs", kind=Kind.GATEWAY_CALLER,
+               resource="caller:abc", metadata={"runtime_source": {"input": "b.jsonl"}, "runtime_observations": [observed]})
+    same = _f(surface=Surface.GATEWAY, connector="gateway.logs", kind=Kind.GATEWAY_CALLER,
+              resource="caller:abc", metadata={"runtime_source": {"input": "a.jsonl"}, "runtime_observations": [observed]})
+    first = _f(kind=Kind.SECRET, metadata={"variable_names": ["OPENAI_API_KEY"]})
+    second = _f(kind=Kind.SECRET, metadata={"variable_names": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]})
+    result = merge([gateway, again, same, first, second])
+    merged_gateway = next(f for f in result if f.surface == Surface.GATEWAY)
+    assert {entry["source"]["input"] for entry in merged_gateway.metadata["runtime_observations"]} == {"a.jsonl", "b.jsonl"}
+    assert len(merged_gateway.metadata["runtime_observations"]) == 2
+    assert next(f for f in result if f.kind == Kind.SECRET).metadata["variable_names"] == ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
+
+
+def test_duplicate_gateway_caller_combines_two_export_metrics_and_provenance(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text("langchain\n")
+    binding = {"code_resource": "github:acme/ops-agent", "caller": "principal:svc-ops", "scope": {"tenant": "tenant-a"}}
+    gateway_specs = []
+    for name, timestamp, tokens, cost, environment in (
+        ("a.jsonl", "2026-09-22T10:00:00Z", 100, 0.1, "production"),
+        ("b.jsonl", "2026-09-23T11:00:00Z", 200, 0.2, "staging"),
+    ):
+        export = tmp_path / name
+        export.write_text(json.dumps({
+            "service": "svc-ops", "tenant_id": "tenant-a", "model": "gpt-4o",
+            "user_agent": "langchain/0.3", "timestamp": timestamp,
+            "prompt_tokens": tokens, "completion_tokens": 10, "cost": cost,
+            "environment": environment,
+        }) + "\n")
+        gateway_specs.append(ConnectorSpec("gateway.logs", {
+            "input": str(export), "correlation_bindings": [binding],
+        }, label="shared-gateway"))
+    result = Engine(ScanConfig(connectors=[
+        ConnectorSpec("code.filesystem", {"path": str(repo)}, label="github:acme/ops-agent"),
+        *gateway_specs,
+    ], parallel=1)).run()
+    assert result.complete
+    gateways = [f for f in result.findings if f.surface == Surface.GATEWAY]
+    assert len(gateways) == 1
+    gateway = gateways[0]
+    assert gateway.metadata["events"] == 2 and gateway.metadata["records"] == 2
+    assert gateway.metadata["aggregate_records"] == 0 and gateway.metadata["models"] == {"gpt-4o": 2}
+    assert gateway.metadata["tokens_in"] == 300 and gateway.metadata["tokens_out"] == 20
+    assert gateway.metadata["cost"] == 0.3 and ": 2 requests" in gateway.title
+    snapshots = gateway.metadata["runtime_sources"]
+    assert {Path(source["source"]["input"]).name for source in snapshots} == {"a.jsonl", "b.jsonl"}
+    assert {source["metrics"]["tokens_in"] for source in snapshots} == {100, 200}
+    assert all(source["metrics"]["records"] == 1 for source in snapshots)
+    activity = next(f for f in result.findings if f.surface == Surface.CODE).metadata["runtime_activity"]
+    assert activity["status"] == "observed" and activity["events"] == 2
+    assert {Path(source["source"]["input"]).name for source in activity["sources"]} == {"a.jsonl", "b.jsonl"}
+
+
 def test_engine_end_to_end_with_config(tmp_path: Path, fixtures):
     cfg = ScanConfig(
         connectors=[
@@ -64,7 +129,7 @@ def test_engine_end_to_end_with_config(tmp_path: Path, fixtures):
             ConnectorSpec(name="cloud.aws", config={"input": str(fixtures / "cloud" / "aws_records.jsonl")}),
             ConnectorSpec(name="nope.missing", config={}),
         ],
-        inventory=[str(Path(__file__).parents[2] / "Agent Card")],
+        inventory=[str(Path(__file__).parents[2] / "agent-card.yaml")],
         min_confidence=0.2,
         parallel=2,
     )
@@ -92,3 +157,22 @@ def test_config_yaml_paths_and_env(tmp_path: Path, monkeypatch):
     assert cfg.connectors[1].config == {"org": "acme", "token": "none"} and not cfg.connectors[1].enabled
     assert cfg.inventory == [str(tmp_path / "inventory")] and cfg.fail_on == "high"
     assert parse_set_options(["regions=us-east-1,eu-west-1", "cloudtrail_days=3", "verbose=true", "org=acme"]) == {"regions": ["us-east-1", "eu-west-1"], "cloudtrail_days": 3, "verbose": True, "org": "acme"}
+
+
+@pytest.mark.parametrize("threshold", ["nan", "inf", "-inf", "1.1", "-0.01", "not-a-number", None, True])
+def test_invalid_confidence_threshold_never_clears_scan(threshold):
+    with pytest.raises(ValueError, match="min_confidence must be a finite number between 0 and 1"):
+        ScanConfig.from_dict({"options": {"min_confidence": threshold}})
+    cfg = ScanConfig(min_confidence=threshold)
+    with pytest.raises(ValueError, match="min_confidence must be a finite number between 0 and 1"):
+        Engine(cfg).run()
+
+
+def test_env_connector_enabled_flag_parsed_explicitly(monkeypatch):
+    monkeypatch.setenv("RUN_CLOUD", "false")
+    cfg = ScanConfig.from_dict({"connectors": [{"name": "cloud.aws", "enabled": "${RUN_CLOUD}"}]})
+    assert not cfg.connectors[0].enabled
+    monkeypatch.setenv("RUN_CLOUD", "true")
+    assert ScanConfig.from_dict({"connectors": [{"name": "cloud.aws", "enabled": "${RUN_CLOUD}"}]}).connectors[0].enabled
+    with pytest.raises(ValueError, match="connector enabled"):
+        ScanConfig.from_dict({"connectors": [{"name": "cloud.aws", "enabled": "perhaps"}]})

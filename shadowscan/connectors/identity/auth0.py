@@ -92,8 +92,10 @@ class Auth0Connector(BaseConnector):
         name = c.get("name") or c.get("client_id")
         grant_types = c.get("grant_types") or []
         machine = c.get("app_type") == "non_interactive" or "client_credentials" in grant_types or bool(grants)
-        scopes = sorted({s for g in grants for s in (g.get("scope") or [])})
-        audiences = sorted({g.get("audience") for g in grants if g.get("audience")})
+        scopes = sorted({str(scope) for grant in grants for scope in (
+            grant.get("scope", "").split() if isinstance(grant.get("scope"), str) else grant.get("scope") or []
+        ) if scope})
+        audiences = sorted({str(g["audience"]) for g in grants if g.get("audience")})
         kind = identity_kind_for(user_consented=not machine, machine=machine)
         f = Finding(
             surface=Surface.IDENTITY,

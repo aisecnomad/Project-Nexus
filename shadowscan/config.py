@@ -29,6 +29,7 @@ Example ``shadowscan.yaml``::
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -93,7 +94,7 @@ class ScanConfig:
                 raise ValueError("each connector entry needs a 'name'")
             item = dict(item)
             name = str(item.pop("name"))
-            enabled = bool(item.pop("enabled", True))
+            enabled = _connector_enabled(item.pop("enabled", True))
             label = item.pop("label", None)
             cfg = item.pop("config", None)
             if isinstance(cfg, dict):
@@ -111,7 +112,7 @@ class ScanConfig:
             connectors=specs,
             inventory=[_resolve(base, p) for p in (data.get("inventory") or [])],
             signature_dirs=[_resolve(base, p) for p in (data.get("signatures") or [])],
-            min_confidence=float(opts.get("min_confidence", 0.0)),
+            min_confidence=validate_min_confidence(opts.get("min_confidence", 0.0)),
             fail_on=opts.get("fail_on"),
             dump_records=_resolve(base, opts["dump_records"]) if opts.get("dump_records") else None,
             workdir=opts.get("workdir"),
@@ -143,6 +144,33 @@ def _boolean_option(value: Any, name: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"options.{name} must be a YAML boolean")
     return value
+
+
+def _connector_enabled(value: Any) -> bool:
+    """Expand environment-backed connector flags without relying on string truthiness."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "on", "1"}:
+            return True
+        if normalized in {"false", "no", "off", "0"}:
+            return False
+    raise ValueError("connector enabled must be a boolean (true or false)")
+
+
+def validate_min_confidence(value: Any) -> float:
+    """Keep invalid thresholds from silently filtering out all gated findings."""
+    message = "min_confidence must be a finite number between 0 and 1"
+    if isinstance(value, bool):
+        raise ValueError(message)
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(message) from exc
+    if not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        raise ValueError(message)
+    return confidence
 
 
 def parse_set_options(items: list[str]) -> dict[str, Any]:

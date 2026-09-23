@@ -151,7 +151,11 @@ class SlackConnector(BaseConnector):
 
     def _app_finding(self, app_id: str, app: dict[str, Any], scopes: list[Any], status: str, bot: dict[str, Any] | None, logs: list[dict[str, Any]], team: str | None, requester: str | None = None, message: str | None = None) -> Finding | None:
         name = app.get("name") or get_path(bot or {}, "profile.real_name", "real_name") or app_id
-        scope_names = [s.get("name") if isinstance(s, dict) else str(s) for s in scopes if s]
+        scope_names: list[str] = []
+        for scope in scopes:
+            scope_name = scope.get("name") if isinstance(scope, dict) else scope
+            if scope_name:
+                scope_names.append(str(scope_name))
         installer = None
         installed_at = None
         for log in sorted(logs, key=lambda l: str(l.get("date", ""))):
