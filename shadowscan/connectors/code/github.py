@@ -20,19 +20,46 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterable, Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
+from urllib.parse import quote, urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.http import HttpClient, HttpError, validate_url
 
 INTERESTING_DIRS = (".github/", ".claude/", ".cursor/", ".vscode/", ".windsurf/", ".codex/", ".gemini/", ".kiro/", ".amazonq/", ".continue/", ".roo/", ".well-known/", "config/", "infra/", "terraform/", "deploy/", "k8s/", "helm/", "flows/", "workflows/", "agents/", "prompts/")
 API_MODE_MAX_FILES = 400
 SOURCE_SAMPLE = 150
+
+
+def repository_target(root: str, path: str) -> Path:
+    """Validate API tree paths before fetching or writing outside the checkout."""
+    rel = PurePosixPath(path)
+    if not rel.parts or rel.is_absolute() or ".." in rel.parts or "\\" in path or "\x00" in path or ":" in rel.parts[0]:
+        raise ConnectorError("Refusing unsafe repository tree path")
+    target = (Path(root) / path).resolve()
+    if not target.is_relative_to(Path(root).resolve()) or target == Path(root).resolve():
+        raise ConnectorError("Repository tree path escapes checkout")
+    return target
+
+
+def clone_environment(origin: str, token: str | None, username: str) -> dict[str, str]:
+    """Scope authentication to a verified HTTPS origin and disable redirects."""
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    config = [("http.followRedirects", "false"), ("credential.helper", ""), ("protocol.allow", "never"), ("protocol.https.allow", "always")]
+    if token:
+        basic = base64.b64encode(f"{username}:{token}".encode()).decode()
+        config.append((f"http.{origin.rstrip('/')}/.extraheader", f"Authorization: Basic {basic}"))
+    env["GIT_CONFIG_COUNT"] = str(len(config))
+    for i, (key, value) in enumerate(config):
+        env[f"GIT_CONFIG_KEY_{i}"] = key
+        env[f"GIT_CONFIG_VALUE_{i}"] = value
+    return env
 
 
 class GitHubConnector(BaseConnector):
@@ -67,7 +94,7 @@ class GitHubConnector(BaseConnector):
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
-        self.http = HttpClient(self.api_url, headers=headers)
+        self.http = HttpClient(self.api_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True))
 
     # --------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -84,14 +111,14 @@ class GitHubConnector(BaseConnector):
                     seen.add(data["full_name"])
                     yield data
                 else:
-                    self.ctx.warn(f"code.github: cannot access {full}")
+                    self.ctx.warn(f"code.github: cannot access {full}", incomplete=True)
         if org:
             for r in self.http.paginate_link(f"/orgs/{org}/repos", params={"per_page": 100, "type": "all", "sort": "pushed"}):
                 if r["full_name"] not in seen and self._wanted(r):
                     seen.add(r["full_name"])
                     yield r
                 if len(seen) >= self.max_repos:
-                    self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached")
+                    self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
                     return
         if user:
             for r in self.http.paginate_link(f"/users/{user}/repos", params={"per_page": 100, "sort": "pushed"}):
@@ -99,6 +126,7 @@ class GitHubConnector(BaseConnector):
                     seen.add(r["full_name"])
                     yield r
                 if len(seen) >= self.max_repos:
+                    self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
                     return
 
     def _wanted(self, r: dict[str, Any]) -> bool:
@@ -135,7 +163,7 @@ class GitHubConnector(BaseConnector):
                 if not repo.get("_local_path"):
                     yield from self._repo_level_findings(repo)
             except HttpError as exc:
-                self.ctx.warn(f"code.github: {full}: {exc}")
+                self.ctx.warn(f"code.github: {full}: {exc}", incomplete=True)
             except Exception as exc:  # noqa: BLE001
                 self.ctx.error(f"code.github: {full}: {type(exc).__name__}: {exc}")
                 self.log.debug("repo failure", exc_info=True)
@@ -185,25 +213,21 @@ class GitHubConnector(BaseConnector):
         return self._fetch_via_api(repo, tmp)
 
     def _clone(self, repo: dict[str, Any], dest: str) -> bool:
-        url = repo.get("clone_url") or f"https://github.com/{repo['full_name']}.git"
-        env = dict(os.environ)
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        if self.token:
-            basic = base64.b64encode(f"x-access-token:{self.token}".encode()).decode()
-            env["GIT_CONFIG_COUNT"] = "1"
-            env["GIT_CONFIG_KEY_0"] = "http.extraheader"
-            env["GIT_CONFIG_VALUE_0"] = f"Authorization: Basic {basic}"
+        api = urlsplit(validate_url(self.api_url))
+        origin = "https://github.com" if api.hostname == "api.github.com" else f"{api.scheme}://{api.netloc}"
+        url = validate_url(repo.get("clone_url") or f"{origin}/{repo['full_name']}.git", origin)
+        env = clone_environment(origin, self.token, "x-access-token")
         cmd = ["git", "clone", "--quiet", "--depth", str(self.depth), "--no-tags", "--single-branch"]
         if repo.get("default_branch"):
             cmd += ["--branch", repo["default_branch"]]
-        cmd += [url, dest]
+        cmd += ["--", url, dest]
         try:
             res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600, check=False)
         except (OSError, subprocess.SubprocessError) as exc:
             self.log.debug("git clone error: %s", exc)
             return False
         if res.returncode != 0:
-            self.log.debug("git clone stderr: %s", res.stderr[-500:])
+            self.log.debug("git clone failed with status %s", res.returncode)
             return False
         return True
 
@@ -212,24 +236,31 @@ class GitHubConnector(BaseConnector):
         branch = repo.get("default_branch") or "main"
         tree = self.http.try_get_json(f"/repos/{full}/git/trees/{branch}", params={"recursive": "1"})
         if not tree or "tree" not in tree:
-            self.ctx.warn(f"code.github: cannot read tree of {full}")
+            self.ctx.warn(f"code.github: cannot read tree of {full}", incomplete=True)
             return None
         if tree.get("truncated"):
-            self.ctx.warn(f"code.github: tree of {full} truncated; results partial")
+            self.ctx.warn(f"code.github: tree of {full} truncated; results partial", incomplete=True)
         paths = [t["path"] for t in tree["tree"] if t.get("type") == "blob" and int(t.get("size") or 0) <= 512_000]
         selected = self._select_paths(paths)
+        if len(selected) < sum(t.get("type") == "blob" for t in tree["tree"]):
+            self.ctx.warn(f"code.github: API mode samples repository {full}; source coverage partial", incomplete=True)
         dest = os.path.join(tmp, "repo")
         os.makedirs(dest, exist_ok=True)
         fetched = 0
         for p in selected:
-            data = self.http.try_get_json(f"/repos/{full}/contents/{p}", params={"ref": branch})
+            target = repository_target(dest, p)
+            data = self.http.try_get_json(f"/repos/{full}/contents/{quote(p, safe='/')}", params={"ref": branch})
             if not data or data.get("encoding") != "base64":
+                self.ctx.warn(f"code.github: cannot read content in {full}", incomplete=True)
                 continue
             try:
                 content = base64.b64decode(data.get("content") or "")
             except ValueError:
+                self.ctx.warn(f"code.github: invalid encoded content in {full}", incomplete=True)
                 continue
-            target = Path(dest) / p
+            if len(content) > 512_000:
+                self.ctx.warn(f"code.github: oversized API content in {full}", incomplete=True)
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
             fetched += 1
@@ -255,11 +286,12 @@ class GitHubConnector(BaseConnector):
         full = repo["full_name"]
         names: list[str] = []
         for path in (f"/repos/{full}/actions/secrets", f"/repos/{full}/actions/variables", f"/repos/{full}/codespaces/secrets", f"/repos/{full}/dependabot/secrets"):
-            data = self.http.try_get_json(path, params={"per_page": 100})
-            if isinstance(data, dict):
-                for item in data.get("secrets") or data.get("variables") or []:
+            try:
+                for item in self.http.paginate_link(path, params={"per_page": 100}, item_key="variables" if path.endswith("variables") else "secrets"):
                     if item.get("name"):
                         names.append(item["name"])
+            except HttpError as exc:
+                self.ctx.warn(f"code.github: repository metadata HTTP {exc.status}; coverage unknown", incomplete=True)
         if not names:
             return
         matches = []

@@ -39,14 +39,14 @@ class GitHubAppsConnector(BaseConnector):
         token = self.ctx.get("token", env="GITHUB_TOKEN")
         if not (self.org and token):
             raise ConnectorError("saas.github-apps: org and token required")
-        http = HttpClient(self.api_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
+        http = HttpClient(self.api_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True))
         for inst in http.paginate_link(f"/orgs/{self.org}/installations", params={"per_page": 100}, item_key="installations"):
             inst["_kind"] = "installation"
             yield inst
-        billing = http.try_get_json(f"/orgs/{self.org}/copilot/billing")
+        billing = http.try_get_json(f"/orgs/{self.org}/copilot/billing", ok_statuses={404})
         if billing:
             yield {"_kind": "copilot_billing", **billing}
-        for pat in http.try_get_json(f"/orgs/{self.org}/personal-access-tokens", params={"per_page": 100}, default=[]) or []:
+        for pat in http.paginate_link(f"/orgs/{self.org}/personal-access-tokens", params={"per_page": 100}):
             pat["_kind"] = "pat"
             yield pat
 

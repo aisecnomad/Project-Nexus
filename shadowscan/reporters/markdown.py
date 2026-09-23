@@ -12,12 +12,16 @@ def _esc(s: object) -> str:
 
 
 def render_markdown(result: ScanResult) -> str:
+    for finding in result.findings:
+        finding.sanitize()
     s = result.summary()
     lines: list[str] = []
     lines.append("# ShadowScan report")
     lines.append("")
     lines.append(f"_Generated {result.finished_at or result.started_at} by ShadowScan {result.version}_")
     lines.append("")
+    if not result.complete:
+        lines.extend(["**INCOMPLETE SCAN:** some required inputs could not be assessed. Review connector statistics.", ""])
     lines.append("## Summary")
     lines.append("")
     lines.append(f"- **Findings:** {s['total']}" + (f" (**{s['shadow']} shadow** — not in the inventory of {result.inventory_size} registered agents)" if result.inventory_size else ""))
@@ -50,8 +54,12 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("| Connector | Objects examined | Findings | Errors | Warnings | Status |")
     lines.append("|---|---|---|---|---|---|")
     for st in result.stats:
-        status = f"skipped: {st.skip_reason}" if st.skipped else "ok"
+        status = f"skipped: {st.skip_reason}" if st.skipped else "incomplete" if st.incomplete or st.errors else "cached" if st.cached else "ok"
         lines.append(f"| {st.connector} | {st.objects_examined} | {st.findings} | {len(st.errors)} | {len(st.warnings)} | {_esc(status)} |")
+    lines.append("")
+    for st in result.stats:
+        for diagnostic in [*st.errors, *st.warnings]:
+            lines.append(f"- **{_esc(st.connector)}:** {_esc(diagnostic)}")
     lines.append("")
     return "\n".join(lines)
 
@@ -79,6 +87,12 @@ def _finding_section(f: Finding) -> list[str]:
         out.append(f"- **Permissions:** {', '.join(f.permissions[:15])}{' …' if len(f.permissions) > 15 else ''}  ")
     if f.first_seen or f.last_seen:
         out.append(f"- **Seen:** {f.first_seen or '?'} → {f.last_seen or '?'}  ")
+    activity = f.metadata.get("runtime_activity")
+    if isinstance(activity, dict):
+        out.append(f"- **Gateway activity:** {_esc(activity.get('status'))}; matching events: {activity.get('events', 0)}; production observed: {activity.get('production_observed', False)}  ")
+        if activity.get("window"):
+            out.append(f"- **Observation window:** {_esc(activity['window'].get('start'))} → {_esc(activity['window'].get('end'))}  ")
+        out.append(f"- **Activity limits:** {_esc(activity.get('limitations', ''))}  ")
     related = f.metadata.get("related")
     if related:
         out.append(f"- **Related findings:** {', '.join(f'`{r}`' for r in related[:8])}  ")

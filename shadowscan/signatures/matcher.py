@@ -3,12 +3,55 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
+import json
 import re
 import threading
-from dataclasses import dataclass, field
+import time
+from bisect import bisect_right
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field, fields
 from typing import Any
 
+import regex
+
 from shadowscan.signatures.loader import Signal, Signature, load_signatures, normalise_package_name
+from shadowscan.utils.redaction import sanitize_text
+
+_SCAN_DEADLINE: ContextVar[float | None] = ContextVar("signature_scan_deadline", default=None)
+REGEX_TIMEOUT_SECONDS = 0.1
+DEFAULT_SCAN_BUDGET_SECONDS = 2.0
+
+
+class MatchTimeoutError(RuntimeError):
+    """Matching did not finish; callers must mark the input/scan incomplete."""
+
+
+def _remaining_timeout() -> float:
+    deadline = _SCAN_DEADLINE.get()
+    remaining = REGEX_TIMEOUT_SECONDS if deadline is None else min(REGEX_TIMEOUT_SECONDS, deadline - time.monotonic())
+    if remaining <= 0:
+        raise MatchTimeoutError("signature matching exceeded the input execution budget")
+    return remaining
+
+
+def _finditer(rx: Any, text: str, context: str):
+    try:
+        # Tiny patterns dominate this workload. Releasing/reacquiring the GIL
+        # for every token under parallel connectors can spend the entire wall
+        # deadline waiting for another thread. Engine timeouts remain preemptive
+        # with concurrent=False and also bound any period holding the GIL.
+        yield from rx.finditer(text, timeout=_remaining_timeout(), concurrent=False)
+    except TimeoutError as exc:
+        raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete") from exc
+
+
+def _search(rx: Any, text: str, context: str):
+    try:
+        return rx.search(text, timeout=_remaining_timeout(), concurrent=False)
+    except TimeoutError as exc:
+        raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete") from exc
 
 _LANG_ALIASES = {
     "py": "python",
@@ -110,7 +153,7 @@ class SignatureIndex:
         self._client_ids: dict[str, list[tuple[Signature, Signal]]] = {}
         self._domains: dict[str, list[tuple[Signature, Signal]]] = {}
         self._domain_suffixes: list[tuple[str, Signature, Signal]] = []
-        self._domain_regex: list[tuple[re.Pattern[str], Signature, Signal]] = []
+        self._domain_regex: list[tuple[Any, Signature, Signal]] = []
         self._scopes: dict[str, list[tuple[Signature, Signal]]] = {}
         self._iac: dict[str, list[tuple[Signature, Signal]]] = {}
         self._files: list[tuple[Signature, Signal]] = []
@@ -136,7 +179,7 @@ class SignatureIndex:
                     for v in s.values:
                         v = v.strip()
                         if v.startswith("re:"):
-                            self._domain_regex.append((re.compile(v[3:], re.IGNORECASE), sig, s))
+                            self._domain_regex.append((regex.compile(v[3:], regex.IGNORECASE | regex.VERSION0), sig, s))
                             continue
                         v = v.lower()
                         if v.startswith("*."):
@@ -164,6 +207,37 @@ class SignatureIndex:
     def __len__(self) -> int:
         return len(self.signatures)
 
+    def fingerprint(self) -> str:
+        """Stable digest of detection semantics; independent of load paths/order."""
+        values = []
+        for sig in sorted(self.signatures.values(), key=lambda item: item.id):
+            value = {f.name: getattr(sig, f.name) for f in fields(sig) if f.name not in {"source", "signals"}}
+            value["signals"] = [
+                {f.name: getattr(signal, f.name) for f in fields(signal) if f.name not in {"compiled", "bounded_compiled"}}
+                for signal in sig.signals
+            ]
+            values.append(value)
+        return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+    @contextmanager
+    def scan_budget(self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS):
+        """Share one deadline across all signature operations for an input file.
+
+        Individual regex executions are also preempted by the regex engine. An
+        elapsed deadline always raises, including after non-matching work.
+        """
+        if not 0 < seconds <= 60:
+            raise ValueError("signature scan budget must be greater than zero and at most 60 seconds")
+        deadline = time.monotonic() + seconds
+        outer = _SCAN_DEADLINE.get()
+        token = _SCAN_DEADLINE.set(min(deadline, outer) if outer is not None else deadline)
+        try:
+            _remaining_timeout()
+            yield
+            _remaining_timeout()
+        finally:
+            _SCAN_DEADLINE.reset(token)
+
     # ------------------------------------------------------------- matchers
     def match_dependency(self, ecosystem: str, name: str) -> list[Match]:
         eco = ecosystem.lower()
@@ -185,16 +259,27 @@ class SignatureIndex:
     def _match_regex_signals(
         self, signal_type: str, text: str, language: str | None = None, max_per_signal: int = 3
     ) -> list[Match]:
+        # One deadline covers the whole signal class even outside filesystem scans.
+        with self.scan_budget():
+            return self._match_regex_signals_with_budget(signal_type, text, language, max_per_signal)
+
+    def _match_regex_signals_with_budget(
+        self, signal_type: str, text: str, language: str | None, max_per_signal: int
+    ) -> list[Match]:
         out: list[Match] = []
         for sig, s in self._by_type.get(signal_type, []):
             if language and s.languages and language not in s.languages:
                 continue
             hits = 0
-            for rx in s.compiled:
-                for m in rx.finditer(text):
+            for rx in s.bounded_compiled:
+                for m in _finditer(rx, text, sig.id):
                     line = text.count("\n", 0, m.start()) + 1
                     excerpt = m.group(0)
-                    out.append(Match(sig, s, excerpt[:200], s.weight, line=line))
+                    # Never cut away a credential's recognizable context before
+                    # redaction. Dedicated secret detectors need the raw match
+                    # to create their redacted evidence/fingerprint downstream.
+                    value = excerpt if signal_type == "secret" else sanitize_text(excerpt)[:200]
+                    out.append(Match(sig, s, value, s.weight, line=line))
                     hits += 1
                     if hits >= max_per_signal:
                         break
@@ -247,7 +332,7 @@ class SignatureIndex:
         for sig, s in self._env_exact.get(name.upper(), []):
             out.append(Match(sig, s, name, s.weight))
         for sig, s in self._env_patterns:
-            if any(rx.search(name) for rx in s.compiled):
+            if any(_search(rx, name, sig.id) for rx in s.bounded_compiled):
                 out.append(Match(sig, s, name, s.weight))
         return out
 
@@ -256,7 +341,7 @@ class SignatureIndex:
             return []
         out = [Match(sig, s, client_id, s.weight) for sig, s in self._client_ids.get(client_id.lower(), [])]
         for sig, s in self._by_type.get("client_id", []):
-            if s.compiled and any(rx.search(client_id) for rx in s.compiled):
+            if s.bounded_compiled and any(_search(rx, client_id, sig.id) for rx in s.bounded_compiled):
                 out.append(Match(sig, s, client_id, s.weight))
         return out
 
@@ -273,21 +358,44 @@ class SignatureIndex:
             if h.endswith(suffix) or h == suffix.lstrip("."):
                 out.append(Match(sig, s, h, s.weight))
         for rx, sig, s in self._domain_regex:
-            if rx.search(h) or rx.search(h_with_port):
+            if _search(rx, h, sig.id) or _search(rx, h_with_port, sig.id):
                 out.append(Match(sig, s, h_with_port, s.weight))
         return out
 
     def match_domains_in_text(self, text: str) -> list[Match]:
+        with self.scan_budget():
+            return self._match_domains_in_text_with_budget(text)
+
+    def _match_domains_in_text_with_budget(self, text: str) -> list[Match]:
         out: list[Match] = []
-        seen: set[tuple[str, str]] = set()
-        for m in _HOST_RX.finditer(text):
-            host = m.group(0).lower()
+        seen: set[str] = set()
+        newlines = [m.start() for m in re.finditer("\n", text)]
+        # This fixed tokenizer is a single character class, with linear work.
+        # A regex iterator's timeout also counts caller work between yields;
+        # applying a 100 ms pattern timeout here incorrectly charges all domain
+        # lookup/deduplication work to tokenization. The shared input deadline
+        # below bounds iteration instead. User-defined expressions still use
+        # preemptive regex-engine timeouts.
+        for m in _HOST_TOKEN_RX.finditer(text):
+            _remaining_timeout()
+            host = m.group(0).lower().strip(".")
+            # DNS names are bounded by the protocol. Consume each entire token
+            # once instead of retrying a suffix from every dot on malformed input.
+            if host in seen or len(host) > 253 or "." not in host:
+                continue
+            seen.add(host)
+            labels = host.split(".")
+            if len(labels[-1]) < 2 or not labels[-1].isalpha() or any(
+                not label or len(label) > 63 or not label[0].isalnum() or not label[-1].isalnum()
+                for label in labels
+            ):
+                continue
+            matched_signatures: set[str] = set()
             for match in self.match_domain(host):
-                key = (match.signature.id, host)
-                if key in seen:
+                if match.signature_id in matched_signatures:
                     continue
-                seen.add(key)
-                match.line = text.count("\n", 0, m.start()) + 1
+                matched_signatures.add(match.signature_id)
+                match.line = bisect_right(newlines, m.start()) + 1
                 out.append(match)
         return out
 
@@ -299,21 +407,32 @@ class SignatureIndex:
 
     def match_envs_in_text(self, text: str) -> list[Match]:
         """Find environment variable style identifiers inside arbitrary text."""
+        with self.scan_budget():
+            return self._match_envs_in_text_with_budget(text)
+
+    def _match_envs_in_text_with_budget(self, text: str) -> list[Match]:
         out: list[Match] = []
-        seen: set[tuple[str, str]] = set()
+        seen: set[str] = set()
+        newlines = [m.start() for m in re.finditer("\n", text)]
         for m in _ENV_RX.finditer(text):
+            _remaining_timeout()
             name = m.group(0)
+            if name in seen:
+                continue
+            seen.add(name)
+            matched_signatures: set[str] = set()
             for match in self.match_env(name):
-                key = (match.signature.id, name)
-                if key in seen:
+                if match.signature_id in matched_signatures:
                     continue
-                seen.add(key)
-                match.line = text.count("\n", 0, m.start()) + 1
+                matched_signatures.add(match.signature_id)
+                match.line = bisect_right(newlines, m.start()) + 1
                 out.append(match)
         return out
 
 
-_HOST_RX = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b", re.IGNORECASE)
+_HOST_TOKEN_RX = re.compile(r"[a-z0-9.-]+", re.IGNORECASE)
+# Underscores delimit disjoint alphanumeric groups; neither tokenizer has nested
+# ambiguous repetition. Both operate under the shared input deadline.
 _ENV_RX = re.compile(r"\b[A-Z][A-Z0-9]{2,}(?:_[A-Z0-9]+){1,6}\b")
 
 _index_lock = threading.Lock()

@@ -57,6 +57,8 @@ def _physical_locations(f: Finding) -> list[dict[str, Any]]:
 
 
 def render_sarif(result: ScanResult) -> str:
+    for finding in result.findings:
+        finding.sanitize()
     rules: dict[str, dict[str, Any]] = {}
     results: list[dict[str, Any]] = []
     for f in result.findings:
@@ -108,7 +110,10 @@ def render_sarif(result: ScanResult) -> str:
             {
                 "tool": {"driver": {"name": "ShadowScan", "version": __version__, "informationUri": "https://github.com/aisecnomad/Project-Nexus", "rules": list(rules.values())}},
                 "results": results,
-                "invocations": [{"executionSuccessful": True, "startTimeUtc": result.started_at, "endTimeUtc": result.finished_at}],
+                "invocations": [{"executionSuccessful": result.complete, "startTimeUtc": result.started_at, "endTimeUtc": result.finished_at, "toolExecutionNotifications": [
+                    {"level": "error" if st.errors or st.skipped else "warning", "message": {"text": f"{st.connector}: {msg}"}}
+                    for st in result.stats for msg in dict.fromkeys(st.errors + st.warnings + ([st.skip_reason] if st.skip_reason else []))
+                ]}],
                 "properties": {"summary": result.summary()},
             }
         ],

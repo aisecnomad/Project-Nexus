@@ -9,7 +9,10 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+import regex
 import yaml
+
+from shadowscan.signatures.schema import require_list, validate_signature_shape
 
 VALID_CATEGORIES = {
     "framework",  # agent orchestration frameworks (LangChain, CrewAI, ADK...)
@@ -66,14 +69,25 @@ class Signal:
     agent_indicator: bool = False  # this signal by itself indicates an *agent* (not just LLM use)
     description: str | None = None
     compiled: list[re.Pattern[str]] = field(default_factory=list, repr=False)
+    bounded_compiled: list[Any] = field(default_factory=list, repr=False)
 
     def compile(self) -> None:
         self.compiled = []
+        self.bounded_compiled = []
         for p in self.patterns:
             try:
                 self.compiled.append(re.compile(p, re.MULTILINE))
-            except re.error as exc:  # pragma: no cover - validated by tests
+                self.bounded_compiled.append(regex.compile(p, regex.MULTILINE | regex.VERSION0))
+            except (re.error, regex.error) as exc:
                 raise ValueError(f"invalid regex {p!r}: {exc}") from exc
+        if self.type == "domain":
+            for value in self.values:
+                if value.startswith("re:"):
+                    try:
+                        re.compile(value[3:], re.IGNORECASE)
+                        regex.compile(value[3:], regex.IGNORECASE | regex.VERSION0)
+                    except (re.error, regex.error) as exc:
+                        raise ValueError(f"invalid domain regex {value!r}: {exc}") from exc
 
 
 @dataclass(slots=True)
@@ -133,6 +147,7 @@ def _signal_from_dict(d: dict[str, Any]) -> Signal:
 
 
 def signature_from_dict(d: dict[str, Any], source: str | None = None) -> Signature:
+    validate_signature_shape(d, source or "signature")
     sig = Signature(
         id=str(d["id"]),
         name=str(d.get("name", d["id"])),
@@ -153,26 +168,56 @@ def signature_from_dict(d: dict[str, Any], source: str | None = None) -> Signatu
 
 
 def _iter_yaml_files(root: Path):
-    for path in sorted(root.rglob("*.y*ml")):
-        if path.is_file():
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and path.suffix.lower() in {".yaml", ".yml"}:
             yield path
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Reject duplicate YAML keys instead of silently retaining the last value."""
+
+
+def _unique_mapping(loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False):
+    out = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if not isinstance(key, str):
+            raise ValueError(f"YAML mapping key must be a string at {key_node.start_mark}")
+        if key in out:
+            raise ValueError(f"duplicate YAML key {key!r} at {key_node.start_mark}")
+        out[key] = loader.construct_object(value_node, deep=deep)
+    return out
+
+
+_UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
 
 
 def load_signature_file(path: Path) -> list[Signature]:
     with path.open("r", encoding="utf-8") as fh:
-        docs = list(yaml.safe_load_all(fh))
+        try:
+            docs = list(yaml.load_all(fh, Loader=_UniqueKeyLoader))
+        except (yaml.YAMLError, ValueError) as exc:
+            raise ValueError(f"{path}: invalid YAML: {exc}") from exc
     out: list[Signature] = []
-    for doc in docs:
-        if not doc:
-            continue
+    for i, doc in enumerate(docs, 1):
+        context = f"{path}: document {i}"
         if isinstance(doc, dict) and "signatures" in doc:
-            for item in doc["signatures"]:
-                out.append(signature_from_dict(item, source=str(path)))
+            if set(doc) != {"signatures"}:
+                raise ValueError(f"{context}: only the 'signatures' key is allowed on a pack")
+            for item in require_list(doc["signatures"], context, nonempty=True):
+                out.append(signature_from_dict(item, source=context))
         elif isinstance(doc, dict):
-            out.append(signature_from_dict(doc, source=str(path)))
+            out.append(signature_from_dict(doc, source=context))
         elif isinstance(doc, list):
-            for item in doc:
-                out.append(signature_from_dict(item, source=str(path)))
+            for item in require_list(doc, context, nonempty=True):
+                out.append(signature_from_dict(item, source=context))
+        else:
+            raise ValueError(f"{context}: expected a signature, signature list, or signatures pack")
+    if not out:
+        raise ValueError(f"{path}: empty signature pack")
+    ids = [sig.id for sig in out]
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"{path}: duplicate signature ids in a file")
     return out
 
 
@@ -193,9 +238,13 @@ def load_signatures(extra_dirs: list[str | os.PathLike[str]] | None = None, incl
     for d in extra_dirs or []:
         dirs.append(Path(d))
     for d in dirs:
-        if not d.exists():
+        if not d.is_dir():
             raise FileNotFoundError(f"signature directory not found: {d}")
+        pack_ids: set[str] = set()
         for f in _iter_yaml_files(d):
             for sig in load_signature_file(f):
+                if sig.id in pack_ids:
+                    raise ValueError(f"{f}: duplicate signature id {sig.id!r} in {d}")
+                pack_ids.add(sig.id)
                 by_id[sig.id] = sig
     return list(by_id.values())

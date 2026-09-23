@@ -74,7 +74,7 @@ pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus
 ```
 
 Python 3.11+. Dependencies are deliberately small: `click`, `rich`, `PyYAML`,
-`requests`, `PyJWT`. Cloud SDKs are optional extras; every cloud connector also
+`requests`, `PyJWT`, `regex`. Cloud SDKs are optional extras; every cloud connector also
 accepts an offline record dump.
 
 ## Quick start
@@ -112,7 +112,7 @@ signatures: [./custom-signatures]     # optional: extra or overriding packs
 options:
   min_confidence: 0.3
   fail_on: high
-  dump_records: ./exports             # keep raw API records for evidence / offline re-runs
+  dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs
 connectors:
   - name: code.github
     org: acme
@@ -141,6 +141,18 @@ connectors:
 required extras and offline format. See [docs/connectors.md](docs/connectors.md)
 for credentials and least-privilege scopes per connector.
 
+Use `--incremental` to reuse completed scans of unchanged local checkouts and
+static cloud exports. Live APIs and gateway logs are refreshed on every run.
+Configure `gateway.logs.correlation_bindings` to link a code resource to an exact
+gateway caller and tenant scope; matching timestamped framework fingerprints
+then appear in `metadata.runtime_activity`, including the observation window and
+explicit production attribution. See [scan state and runtime correlation](docs/scanning.md)
+for configuration, limitations, and migration guidance.
+
+The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
+`--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
+scans as unsuccessful, while preserving findings from successfully assessed inputs.
+
 ## What a finding looks like
 
 ```json
@@ -167,7 +179,7 @@ for credentials and least-privilege scopes per connector.
 
 * **confidence** is a noisy-OR of evidence weights — how sure we are this is an agent / agent enabler (not just "a project that imports `openai`").
 * **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence.
-* **shadow** is `true` when no inventory entry matched by resource pattern, agent id or name; the matched entry lends its owner to the finding.
+* **shadow** is `true` unless exactly one inventory entry matches an explicit resource pattern and its configured scope restrictions; names only suggest entries for review. An approved entry lends its owner to the finding.
 * **related** links findings across surfaces (the Terraform that provisions an agent ↔ the agent in the account ↔ the role calling Bedrock ↔ the CloudTrail caller).
 
 Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
@@ -177,7 +189,7 @@ filterable, with evidence drill-down).
 ## Sanctioned inventory
 
 Drop your Agent Capability Cards in a directory. The card's `metadata.agent_id`
-and an optional `discovery:` block bind it to concrete resources:
+identifies the registration; explicit `discovery.resources` bind it to concrete resources:
 
 ```yaml
 metadata:
@@ -207,6 +219,7 @@ turns shadow findings into card skeletons for review. See
 
 ```bash
 pip install -e ".[dev]"
+python -m shadowscan.signatures.validate
 ruff check shadowscan tests
 pytest -q
 shadowscan scan -c examples/shadowscan.offline.yaml
@@ -214,7 +227,7 @@ shadowscan scan -c examples/shadowscan.offline.yaml
 
 ## Safety notes
 
-* Credentials found in code, environments or configs are always **redacted** before they are stored in evidence.
+* Known credential formats, sensitive configuration fields and credential-bearing URLs are **redacted** before findings or sanitized record exports are persisted. Redaction cannot identify every arbitrary secret; reports still contain security-sensitive inventory data.
 * Secret stores (Secrets Manager, Key Vault, Secret Manager, OCI Vault) are read for **names only**.
 * JWTs are never persisted; findings reference a truncated hash.
 * Connectors never modify anything; every API call is read-only.

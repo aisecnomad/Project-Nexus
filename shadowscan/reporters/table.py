@@ -17,11 +17,15 @@ def _level(f: Finding) -> Text:
 
 
 def print_table(result: ScanResult, console: Console | None = None, verbose: bool = False, max_rows: int | None = None) -> None:
+    for finding in result.findings:
+        finding.sanitize()
     console = console or Console()
     if not console.is_terminal and console.width < 140:
         console = Console(width=160, file=console.file, force_terminal=False, color_system=None)
     s = result.summary()
     header = Text()
+    if not result.complete:
+        header.append("INCOMPLETE SCAN  •  ", style="bold red")
     header.append(f"{s['total']} findings", style="bold")
     if result.inventory_size:
         header.append(f"  •  {s['shadow']} shadow", style="bold red")
@@ -50,6 +54,10 @@ def print_table(result: ScanResult, console: Console | None = None, verbose: boo
         tech = ", ".join(t.split(".", 1)[-1] for t in (f.frameworks + f.model_providers)[:5])
         finding_cell = Text(f.title, style="bold")
         finding_cell.append(f"\n{f.resource}", style="dim")
+        activity = f.metadata.get("runtime_activity")
+        if isinstance(activity, dict):
+            suffix = "; production observed" if activity.get("production_observed") else ""
+            finding_cell.append(f"\ngateway: {activity.get('status', 'unknown')}{suffix}", style="cyan")
         if verbose:
             caps = ", ".join(f.capabilities)
             if caps:
@@ -62,7 +70,7 @@ def print_table(result: ScanResult, console: Console | None = None, verbose: boo
         cells = [_level(f)]
         if result.inventory_size:
             cells.append(Text("SHADOW", style="bold red") if f.shadow else Text(f.registry_match or "", style="green"))
-        cells += [f.surface.value, f.kind.value, finding_cell, f.owner or "—", f"{f.confidence:.2f}", tech]
+        cells += [f.surface.value, f.kind.value, finding_cell, Text(f.owner or "—"), f"{f.confidence:.2f}", Text(tech)]
         table.add_row(*cells)
     console.print(table)
     if max_rows is not None and len(result.findings) > max_rows:
@@ -71,10 +79,10 @@ def print_table(result: ScanResult, console: Console | None = None, verbose: boo
     if errs:
         console.print("[bold red]Connector errors:[/bold red]")
         for c, e in errs[:20]:
-            console.print(f"  [red]{c}[/red]: {e}")
+            console.print(Text(f"  {c}: {e}", style="red"))
     warns = [(st.connector, w) for st in result.stats for w in st.warnings]
-    if warns and verbose:
+    if warns and (verbose or not result.complete):
         console.print("[bold yellow]Warnings:[/bold yellow]")
         for c, w in warns[:30]:
-            console.print(f"  [yellow]{c}[/yellow]: {w}")
-    console.print("[dim]" + " · ".join(f"{st.connector}: {st.objects_examined} objects, {st.findings} findings" + (" (skipped)" if st.skipped else "") for st in result.stats) + "[/dim]")
+            console.print(Text(f"  {c}: {w}", style="yellow"))
+    console.print(Text(" · ".join(f"{st.connector}: {st.objects_examined} objects, {st.findings} findings" + (" (skipped)" if st.skipped else " (incomplete)" if st.incomplete or st.errors else " (cached)" if st.cached else "") for st in result.stats), style="dim"))

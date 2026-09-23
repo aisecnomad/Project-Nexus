@@ -9,7 +9,7 @@ signatures:
     capabilities: [tool-use]
     signals:
       - type: code
-        patterns: ['^\s*@(?:[a-z_]+\.)?tool\b', '@function_tool\b', '@kernel_function\b', '@mcp\.tool\b', '\bStructuredTool\b', '\bTool\s*\(\s*name\s*=', '\btools\s*=\s*\[\s*[A-Za-z_]', '\btools\s*:\s*\[\s*\{', '\bFunctionDeclaration\s*\(', '\bFunctionTool\s*\(', '\bToolSet\s*\(', '\bregister_tool\s*\(', '\bregisterTool\s*\(', '\bdefineTool\s*\(', '\btool_registry\b', '\bavailable_tools\b']
+        patterns: ['^[^\S\r\n]*@(?:[a-z_]+\.)?tool\b', '@function_tool\b', '@kernel_function\b', '@mcp\.tool\b', '\bStructuredTool\b', '\bTool\s*\(\s*name\s*=', '\btools\s*=\s*\[\s*[A-Za-z_]', '\btools\s*:\s*\[\s*\{', '\bFunctionDeclaration\s*\(', '\bFunctionTool\s*\(', '\bToolSet\s*\(', '\bregister_tool\s*\(', '\bregisterTool\s*\(', '\bdefineTool\s*\(', '\btool_registry\b', '\bavailable_tools\b']
         weight: 0.35
         agent_indicator: true
 
@@ -85,7 +85,7 @@ signatures:
     capabilities: [autonomous]
     signals:
       - type: code
-        patterns: ['^\s*(?:cron|schedule):\s*["'']?[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+', '\bschedule\.every\(', '\b@(?:app\.)?(?:cron|scheduled|periodic_task|repeat_every)\b', '\bCronTrigger\b', '\bAPScheduler\b', '\bBackgroundScheduler\b', '\bcelery\.(?:beat|task)\b', '\b@celery\.task\b', '\baws_events\.Rule\b', '\bschedule_expression\s*=', '\bScheduleExpression\b', '\bcron\(\s*[0-9*]', '\brate\(\s*\d+\s+(?:minute|hour|day)s?\s*\)', 'triggers:\s*\n\s*-?\s*schedule', '\bon:\s*\n\s*schedule:', '\bsqs_trigger\b', '\bEventBridge\b', '\bPubSub\b[^\n]*\bagent\b', '\b@functions_framework\b', '\btemporalio\b', '\bworkflow\.run\b']
+        patterns: ['^[^\S\r\n]*(?:cron|schedule):\s*["'']?[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+', '\bschedule\.every\(', '\b@(?:app\.)?(?:cron|scheduled|periodic_task|repeat_every)\b', '\bCronTrigger\b', '\bAPScheduler\b', '\bBackgroundScheduler\b', '\bcelery\.(?:beat|task)\b', '\b@celery\.task\b', '\baws_events\.Rule\b', '\bschedule_expression\s*=', '\bScheduleExpression\b', '\bcron\(\s*[0-9*]', '\brate\(\s*\d+\s+(?:minute|hour|day)s?\s*\)', 'triggers:\s*\n\s*-?\s*schedule', '\bon:\s*\n\s*schedule:', '\bsqs_trigger\b', '\bEventBridge\b', '\bPubSub\b[^\n]*\bagent\b', '\b@functions_framework\b', '\btemporalio\b', '\bworkflow\.run\b']
         weight: 0.2
 
   - id: heuristic.llm-env-names

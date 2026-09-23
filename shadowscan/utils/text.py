@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -37,31 +39,69 @@ def is_probably_binary(path: Path) -> bool:
     return False
 
 
-def read_text(path: Path, max_bytes: int) -> str | None:
+def read_text(path: Path, max_bytes: int, errors: list[str] | None = None) -> str | None:
+    """Read a bounded regular file without following its final symlink.
+
+    Validate the opened descriptor, not a separate stat result: the file may
+    change between directory traversal and reading. Binary inputs are ignored;
+    limits and I/O failures are reported to callers that track completeness.
+    """
     try:
-        if path.stat().st_size > max_bytes:
+        if max_bytes < 1:
+            raise ValueError("max_bytes must be positive")
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "rb") as fh:
+            info = os.fstat(fh.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError("not a regular file")
+            if info.st_size > max_bytes:
+                raise ValueError("file exceeds max_file_size")
+            raw = fh.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise ValueError("file exceeds max_file_size")
+        if b"\x00" in raw[:_BINARY_SNIFF]:
             return None
-        if is_probably_binary(path):
-            return None
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+        return raw.decode("utf-8", errors="replace")
+    except (OSError, ValueError) as exc:
+        if errors is not None:
+            # Do not embed raw file contents or exception messages in reports.
+            errors.append(str(exc) if isinstance(exc, ValueError) else "file could not be read")
         return None
 
 
-def notebook_to_source(text: str) -> str:
+def notebook_to_source(text: str, errors: list[str] | None = None) -> str:
     """Extract code cells from a Jupyter notebook as a python source blob."""
     try:
         nb = json.loads(text)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
+        if errors is not None:
+            errors.append("notebook contains invalid JSON")
+        return ""
+    if not isinstance(nb, dict) or not isinstance(nb.get("cells", []), list):
+        if errors is not None:
+            errors.append("notebook cells must be an array")
         return ""
     out: list[str] = []
-    for cell in nb.get("cells", []) or []:
+    for cell in nb.get("cells", []):
+        if not isinstance(cell, dict):
+            if errors is not None:
+                errors.append("notebook cell must be an object")
+            continue
         if cell.get("cell_type") != "code":
             continue
         src = cell.get("source", "")
         if isinstance(src, list):
+            if not all(isinstance(part, str) for part in src):
+                if errors is not None:
+                    errors.append("notebook source array must contain strings")
+                continue
             src = "".join(src)
-        out.append(str(src))
+        if not isinstance(src, str):
+            if errors is not None:
+                errors.append("notebook source must be text or an array of strings")
+            continue
+        out.append(src)
     return "\n".join(out)
 
 

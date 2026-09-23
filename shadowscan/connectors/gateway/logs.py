@@ -30,7 +30,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar
@@ -38,6 +38,7 @@ from typing import Any, ClassVar
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.utils.redaction import credential_id, sanitize
 from shadowscan.utils.text import get_path, host_of, parse_timestamp, redact, to_iso
 
 # ---------------------------------------------------------------- schemas
@@ -68,6 +69,10 @@ class Event:
     path: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     schema: str = "generic"
+    scope: dict[str, str] = field(default_factory=dict)
+    environment: str | None = None
+    runtime_frameworks: list[str] = field(default_factory=list)
+    code_resources: list[str] = field(default_factory=list)
 
 
 def _b(v: Any) -> bool | None:
@@ -177,6 +182,25 @@ def detect_schema(rec: dict[str, Any]) -> str:
 
 
 def normalise(rec: dict[str, Any], schema: str) -> Event | None:
+    """Normalize without retaining credentials, including in nested metadata."""
+    ev = _normalise(rec, schema)
+    if ev is None:
+        return None
+    if ev.caller_kind == "api-key":
+        namespace, _, raw_key = ev.caller.partition(":")
+        opaque_id = credential_id(raw_key)
+        ev.caller = f"{namespace}:{opaque_id}"
+        if not ev.caller_label or ev.caller_label == raw_key or ev.caller_label in raw_key:
+            ev.caller_label = opaque_id
+        if schema == "litellm" and not get_path(rec, "api_key_alias", "key_alias", "metadata.user_api_key_alias"):
+            ev.caller_label = opaque_id
+    # Include original credential-bearing fields so duplicated opaque secrets in
+    # unrelated metadata are scrubbed before samples are truncated.
+    clean = sanitize({"record": rec, "event": asdict(ev)})["event"]
+    return Event(**clean)
+
+
+def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
     if schema == "litellm":
         key = rec.get("api_key") or rec.get("hashed_api_key") or rec.get("key_hash") or ""
         alias = rec.get("api_key_alias") or rec.get("key_alias") or get_path(rec, "metadata.user_api_key_alias") or ""
@@ -597,6 +621,8 @@ class _Caller:
     weekdays: Counter = field(default_factory=Counter)
     schemas: Counter = field(default_factory=Counter)
     metadata_samples: dict[str, Any] = field(default_factory=dict)
+    scope: dict[str, str] = field(default_factory=dict)
+    observations: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class GatewayLogConnector(BaseConnector):
@@ -610,6 +636,7 @@ class GatewayLogConnector(BaseConnector):
         "min_events": "ignore callers with fewer events (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
         "max_records": "stop after N records (default 5,000,000)",
+        "correlation_bindings": "explicit [{code_resource, caller, scope}] mappings; scope must exactly match log tenant/account/project/workspace fields ({} for unscoped exports)",
     }
     offline_formats: ClassVar[str] = "JSONL / JSON / CSV / text access logs"
 
@@ -620,6 +647,18 @@ class GatewayLogConnector(BaseConnector):
         self.llm_hosts_only = bool(ctx.get("llm_hosts_only", True))
         self.max_records = int(ctx.get("max_records", 5_000_000))
         self.label = ctx.get("label") or ctx.get("gateway_name")
+        self.correlation_bindings = ctx.get("correlation_bindings", [])
+        if not isinstance(self.correlation_bindings, list):
+            raise ConnectorError("gateway.logs: correlation_bindings must be a list")
+        for binding in self.correlation_bindings:
+            if (
+                not isinstance(binding, dict)
+                or not isinstance(binding.get("code_resource"), str) or not binding["code_resource"]
+                or not isinstance(binding.get("caller"), str) or not binding["caller"]
+                or not isinstance(binding.get("scope"), dict)
+                or any(k not in {"tenant", "account", "project", "workspace"} or not isinstance(v, str) or not v for k, v in binding["scope"].items())
+            ):
+                raise ConnectorError("gateway.logs: each correlation binding requires exact code_resource, caller and scope mapping")
 
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError("gateway.logs: this connector reads exported logs; set 'input' to a file or directory")
@@ -691,6 +730,7 @@ class GatewayLogConnector(BaseConnector):
             if schema == "access-log" and self.llm_hosts_only and not self._is_llm_traffic(ev):
                 skipped += 1
                 continue
+            self._runtime_context(ev, rec)
             self._accumulate(callers, ev)
         self.ctx.examined(n)
         if skipped:
@@ -699,6 +739,33 @@ class GatewayLogConnector(BaseConnector):
             if c.events < self.min_events:
                 continue
             yield self._finding(c)
+
+    def _runtime_context(self, ev: Event, rec: dict[str, Any]) -> None:
+        """Operator bindings identify workloads; log names alone never do."""
+        rec = sanitize(rec)
+        aliases = {
+            "tenant": ("tenant_id", "tenant", "organization_id", "org_id", "metadata.tenant_id", "metadata.tenant", "identity.claims.tid", "properties.identity.claims.tid"),
+            "account": ("account_id", "accountId", "account", "subscription_id", "subscriptionId", "metadata.account_id", "metadata.account"),
+            "project": ("project_id", "projectId", "project", "metadata.project_id", "resource.labels.project_id"),
+            "workspace": ("workspace_id", "workspace", "metadata.workspace_id"),
+        }
+        for key, paths in aliases.items():
+            value = get_path(rec, *paths)
+            if value is None:
+                value = ev.metadata.get(key)
+            if isinstance(value, (str, int)) and str(value):
+                ev.scope[key] = str(value)
+        environment = get_path(rec, "environment", "deployment_environment", "metadata.environment", "metadata.deployment_environment")
+        if isinstance(environment, str) and environment:
+            ev.environment = environment.strip().lower()
+        ev.runtime_frameworks = sorted({
+            match.signature.id for match in self.index.match_user_agent(ev.user_agent or "")
+            if match.signature.category == "framework"
+        })
+        ev.code_resources = sorted({
+            binding["code_resource"] for binding in self.correlation_bindings
+            if binding["caller"] == ev.caller and binding["scope"] == ev.scope
+        })
 
     def _is_llm_traffic(self, ev: Event) -> bool:
         if ev.model:
@@ -712,9 +779,10 @@ class GatewayLogConnector(BaseConnector):
 
     @staticmethod
     def _accumulate(callers: dict[str, _Caller], ev: Event) -> None:
-        c = callers.get(ev.caller)
+        identity = json.dumps([ev.caller, ev.scope], sort_keys=True)
+        c = callers.get(identity)
         if c is None:
-            c = callers[ev.caller] = _Caller(ev.caller, ev.caller_kind, ev.caller_label)
+            c = callers[identity] = _Caller(ev.caller, ev.caller_kind, ev.caller_label, scope=dict(ev.scope))
         c.events += 1
         c.schemas[ev.schema] += 1
         if ev.timestamp:
@@ -752,6 +820,24 @@ class GatewayLogConnector(BaseConnector):
         for k, v in ev.metadata.items():
             if v not in (None, "", {}, []) and k not in c.metadata_samples:
                 c.metadata_samples[k] = v if isinstance(v, (str, int, float, bool)) else json.dumps(v, default=str)[:300]
+        bucket = json.dumps([ev.code_resources, ev.runtime_frameworks, ev.environment])
+        observation = c.observations.setdefault(bucket, {
+            "code_resources": ev.code_resources,
+            "frameworks": ev.runtime_frameworks,
+            "environment": ev.environment,
+            "scope": dict(ev.scope),
+            "events": 0,
+            "timestamped_events": 0,
+            "first_seen": None,
+            "last_seen": None,
+            "identity_basis": "configured-exact-caller-and-scope",
+        })
+        observation["events"] += 1
+        if ev.timestamp:
+            timestamp = to_iso(ev.timestamp)
+            observation["timestamped_events"] += 1
+            observation["first_seen"] = min(observation["first_seen"], timestamp) if observation["first_seen"] else timestamp
+            observation["last_seen"] = max(observation["last_seen"], timestamp) if observation["last_seen"] else timestamp
 
     def _finding(self, c: _Caller) -> Finding:
         f = Finding(
@@ -762,7 +848,7 @@ class GatewayLogConnector(BaseConnector):
             resource=c.key,
             resource_type=f"caller/{c.kind}",
             provider=self.label or (c.schemas.most_common(1)[0][0] if c.schemas else "gateway"),
-            account=self.label,
+            account=json.dumps(c.scope, sort_keys=True) if c.scope else self.label,
             first_seen=to_iso(c.first),
             last_seen=to_iso(c.last),
         )
@@ -838,6 +924,9 @@ class GatewayLogConnector(BaseConnector):
                 "errors": c.errors,
                 "schemas": dict(c.schemas),
                 "samples": c.metadata_samples,
+                "correlation_scope": c.scope,
+                "runtime_observations": list(c.observations.values()),
+                "runtime_source": {"input": str(self.ctx.get("input") or ""), "label": self.label, "schemas": sorted(c.schemas)},
             }
         )
         finalize(f, self.index)

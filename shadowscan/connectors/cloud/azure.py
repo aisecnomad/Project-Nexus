@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
+from urllib.parse import parse_qs, urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import (
@@ -29,7 +30,7 @@ from shadowscan.connectors.cloud.common import (
 )
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
 
 ARM = "https://management.azure.com"
@@ -109,41 +110,78 @@ class AzureConnector(BaseConnector):
     def _get(self, path: str, api: str, **params: Any) -> Any:
         assert self.http
         try:
-            return self.http.get_json(path, params={"api-version": api, **params})
+            if "api-version" not in parse_qs(urlsplit(path).query):
+                params = {"api-version": api, **params}
+            return self.http.get_json(path, params=params or None)
         except HttpError as exc:
-            if exc.status in (400, 403, 404, 409):
-                self.log.debug("azure %s: %s", path, exc.status)
+            if exc.status in (400, 401, 403, 404, 409):
+                self.ctx.warn(f"cloud.azure: HTTP {exc.status} for {path}; coverage unknown", incomplete=True)
                 return None
             raise
+
+    def _list(self, path: str, api: str) -> list[dict[str, Any]] | None:
+        """Collect ARM nextLink pages; None means coverage is unknown."""
+        assert self.http
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for _ in range(1000):
+            if path in seen:
+                self.ctx.warn("cloud.azure: repeated list continuation", incomplete=True)
+                return None
+            seen.add(path)
+            data = self._get(path, api)
+            if not isinstance(data, dict) or not isinstance(data.get("value"), list):
+                if data is not None:
+                    self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)
+                return None
+            items.extend(data["value"])
+            path = data.get("nextLink") or data.get("@odata.nextLink")
+            if not path:
+                return items
+            # _get/HttpClient reject any nextLink outside ARM before sending auth.
+        self.ctx.warn("cloud.azure: list page limit reached", incomplete=True)
+        return None
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        subs = self.ctx.get("subscriptions") or [s["subscriptionId"] for s in (self._get("/subscriptions", "2022-12-01") or {}).get("value", [])]
+        subs = self.ctx.get("subscriptions") or [s["subscriptionId"] for s in self._list("/subscriptions", "2022-12-01") or []]
         if not subs:
             raise ConnectorError("cloud.azure: no subscriptions visible")
         rows: list[dict[str, Any]] = []
-        skip = 0
-        while True:
-            body = {"subscriptions": subs, "query": ARG_QUERY, "options": {"$top": 1000, "$skip": skip}}
+        skip_token = None
+        seen_tokens: set[str] = set()
+        for _ in range(1000):
+            options: dict[str, Any] = {"$top": 1000, "resultFormat": "objectArray"}
+            if skip_token:
+                options["$skipToken"] = skip_token
+            body = {"subscriptions": subs, "query": ARG_QUERY, "options": options}
             data = self.http.post_json("/providers/Microsoft.ResourceGraph/resources", params={"api-version": "2021-03-01"}, json=body) or {}
             batch = data.get("data", [])
             rows.extend(batch)
-            if len(batch) < 1000 or not data.get("$skipToken"):
+            skip_token = data.get("$skipToken")
+            if not skip_token:
+                if str(data.get("resultTruncated", "false")).lower() == "true":
+                    self.ctx.warn("cloud.azure: Resource Graph results truncated without continuation", incomplete=True)
                 break
-            skip += 1000
+            if skip_token in seen_tokens:
+                self.ctx.warn("cloud.azure: repeated Resource Graph continuation", incomplete=True)
+                break
+            seen_tokens.add(skip_token)
+        else:
+            self.ctx.warn("cloud.azure: Resource Graph page limit reached", incomplete=True)
         for r in rows:
             r["_kind"] = "resource"
             yield r
             t = str(r.get("type", "")).lower()
             rid = r.get("id")
             if t == "microsoft.cognitiveservices/accounts":
-                for d in (self._get(f"{rid}/deployments", "2024-10-01") or {}).get("value", []):
+                for d in self._list(f"{rid}/deployments", "2024-10-01") or []:
                     yield {"_kind": "deployment", "_account": rid, "_account_name": r.get("name"), **d}
-                diag = self._get(f"{rid}/providers/Microsoft.Insights/diagnosticSettings", "2021-05-01-preview") or {}
-                yield {"_kind": "diagnostics", "_account": rid, "settings": diag.get("value", [])}
-                for p in (self._get(f"{rid}/projects", "2025-04-01-preview") or {}).get("value", []):
+                diag = self._list(f"{rid}/providers/Microsoft.Insights/diagnosticSettings", "2021-05-01-preview")
+                yield {"_kind": "diagnostics", "_account": rid, "settings": diag, "coverage": "unknown" if diag is None else "observed"}
+                for p in self._list(f"{rid}/projects", "2025-04-01-preview") or []:
                     p["_kind"] = "resource"
                     p["type"] = "microsoft.cognitiveservices/accounts/projects"
                     p["_account"] = rid
@@ -157,9 +195,9 @@ class AzureConnector(BaseConnector):
                     settings = self.http.post_json(f"{rid}/config/appsettings/list", params={"api-version": "2022-03-01"}) or {}
                     yield {"_kind": "appsettings", "id": rid, "name": r.get("name"), "kind": r.get("kind"), "settings": settings.get("properties") or {}}
                 except HttpError as exc:
-                    self.log.debug("appsettings %s: %s", rid, exc.status)
+                    self.ctx.warn(f"cloud.azure: appsettings HTTP {exc.status} for {rid}", incomplete=True)
         for sub in subs:
-            for ra in (self._get(f"/subscriptions/{sub}/providers/Microsoft.Authorization/roleAssignments", "2022-04-01") or {}).get("value", []):
+            for ra in self._list(f"/subscriptions/{sub}/providers/Microsoft.Authorization/roleAssignments", "2022-04-01") or []:
                 role_id = str(get_path(ra, "properties.roleDefinitionId", default="")).rsplit("/", 1)[-1]
                 if role_id in AI_ROLE_IDS:
                     yield {"_kind": "role-assignment", "_subscription": sub, "role_id": role_id, "role": AI_ROLE_IDS[role_id], **(ra.get("properties") or {}), "id": ra.get("id")}
@@ -168,21 +206,38 @@ class AzureConnector(BaseConnector):
         token = self._foundry()
         endpoint = get_path(project, "properties.endpoints.AI Foundry API") or get_path(account, "properties.endpoints.AI Foundry API")
         if not (token and endpoint):
+            self.ctx.warn("cloud.azure: Foundry agent inventory unavailable; token or endpoint missing", incomplete=True)
             return
+        validate_url(str(endpoint))
+        host = urlsplit(str(endpoint)).hostname or ""
+        if not any(host.endswith(suffix) for suffix in (".services.ai.azure.com", ".cognitiveservices.azure.com", ".api.azureml.ms")):
+            raise ConnectorError("cloud.azure: refusing Foundry credentials to an unrecognized endpoint origin")
         http = HttpClient(str(endpoint).rstrip("/"), headers={"Authorization": f"Bearer {token}"})
-        try:
-            data = http.get_json("/agents", params={"api-version": "2025-05-01", "limit": 100})
-        except HttpError as exc:
-            self.log.debug("foundry agents %s: %s", endpoint, exc.status)
-            return
-        for a in (data or {}).get("data", []):
-            yield {"_kind": "foundry-agent", "_project": project.get("id"), "_project_name": project.get("name"), "_account": account.get("id"), "_endpoint": endpoint, **a}
+        params: dict[str, Any] = {"api-version": "2025-05-01", "limit": 100}
+        seen: set[str] = set()
+        for _ in range(1000):
+            try:
+                data = http.get_json("/agents", params=params) or {}
+            except HttpError as exc:
+                self.ctx.warn(f"cloud.azure: Foundry agents HTTP {exc.status}; coverage unknown", incomplete=True)
+                return
+            for a in data.get("data", []):
+                yield {"_kind": "foundry-agent", "_project": project.get("id"), "_project_name": project.get("name"), "_account": account.get("id"), "_endpoint": endpoint, **a}
+            if not data.get("has_more"):
+                return
+            after = data.get("last_id")
+            if not after or after in seen:
+                self.ctx.warn("cloud.azure: invalid Foundry agent continuation", incomplete=True)
+                return
+            seen.add(after)
+            params["after"] = after
+        self.ctx.warn("cloud.azure: Foundry agent page limit reached", incomplete=True)
 
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         identities: dict[str, str] = {}
         deployments: dict[str, list[dict[str, Any]]] = {}
-        diagnostics: dict[str, list[dict[str, Any]]] = {}
+        diagnostics: dict[str, list[dict[str, Any]] | None] = {}
         resources: list[dict[str, Any]] = []
         others: list[dict[str, Any]] = []
         for rec in records:
@@ -199,7 +254,7 @@ class AzureConnector(BaseConnector):
             elif kind == "deployment":
                 deployments.setdefault(str(rec.get("_account")), []).append(rec)
             elif kind == "diagnostics":
-                diagnostics[str(rec.get("_account"))] = rec.get("settings") or []
+                diagnostics[str(rec.get("_account"))] = None if rec.get("coverage") == "unknown" or rec.get("settings") is None else rec["settings"]
             else:
                 others.append(rec)
         for r in resources:
@@ -242,6 +297,7 @@ class AzureConnector(BaseConnector):
             if diag is not None and not any(any(l.get("enabled") for l in (d.get("properties") or {}).get("logs") or []) for d in diag):
                 f.add_tag("no-diagnostic-logging")
                 f.add_evidence(Evidence(signal="azure:no-diagnostics", description="No diagnostic setting sends request logs anywhere — usage is not auditable", weight=0.1))
+            f.metadata["diagnostic_logging_status"] = "unknown" if diag is None else "observed"
             f.metadata.update({"kind": kind, "endpoint": props.get("endpoint"), "deployments": [{"name": d.get("name"), "model": get_path(d, "properties.model.name"), "version": get_path(d, "properties.model.version"), "capacity": get_path(d, "sku.capacity")} for d in deps], "public_network_access": props.get("publicNetworkAccess"), "disable_local_auth": props.get("disableLocalAuth"), "tags": tags})
             return done(f, self.index, Kind.CLOUD_RESOURCE)
         if t == "microsoft.cognitiveservices/accounts/projects":

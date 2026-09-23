@@ -14,10 +14,10 @@ signatures:
         weight: 0.85
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+litellm\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+litellm\b']
         weight: 0.85
       - type: code
-        patterns: ['\blitellm\.(?:a?completion|Router)\s*\(', '^\s*model_list\s*:\s*$', '^\s*litellm_settings\s*:', '^\s*general_settings\s*:\s*\n\s*master_key']
+        patterns: ['\blitellm\.(?:a?completion|Router)\s*\(', '^[^\S\r\n]*model_list\s*:\s*$', '^[^\S\r\n]*litellm_settings\s*:', '^[^\S\r\n]*general_settings\s*:\s*\n\s*master_key']
         weight: 0.8
       - type: image
         patterns: ['berriai/litellm', 'litellm/litellm']
@@ -137,7 +137,7 @@ signatures:
         names: [dify-client]
         weight: 0.9
       - type: code
-        patterns: ['^\s*mode:\s*(?:agent-chat|advanced-chat|workflow|completion)\s*$', '^\s*kind:\s*app\s*$', 'agent_mode\s*:\s*\n\s*enabled\s*:\s*true']
+        patterns: ['^[^\S\r\n]*mode:\s*(?:agent-chat|advanced-chat|workflow|completion)\s*$', '^[^\S\r\n]*kind:\s*app\s*$', 'agent_mode\s*:\s*\n\s*enabled\s*:\s*true']
         weight: 0.6
       - type: env
         names: [DIFY_API_KEY, DIFY_API_URL, DIFY_BASE_URL]
@@ -322,7 +322,7 @@ signatures:
         names: ["Microsoft.Agents.CopilotStudio.Client", "Microsoft.Agents.AI.CopilotStudio"]
         weight: 0.95
       - type: code
-        patterns: ['\bCopilotStudioClient\s*\(', '\bCopilotStudioAgent\s*\(', '\bCopilotClient\s*\(', 'copilotstudio\.microsoft\.com', '\bPowerVirtualAgents\b', '\bpva\.(?:bot|topic)\b', 'kind:\s*(?:AdaptiveDialog|GptComponentMetadata|OnRecognizedIntent|CustomTopic)', '^\s*kind:\s*(?:BotVariableDefinition|TaskDialog|ConversationalTopic)']
+        patterns: ['\bCopilotStudioClient\s*\(', '\bCopilotStudioAgent\s*\(', '\bCopilotClient\s*\(', 'copilotstudio\.microsoft\.com', '\bPowerVirtualAgents\b', '\bpva\.(?:bot|topic)\b', 'kind:\s*(?:AdaptiveDialog|GptComponentMetadata|OnRecognizedIntent|CustomTopic)', '^[^\S\r\n]*kind:\s*(?:BotVariableDefinition|TaskDialog|ConversationalTopic)']
         weight: 0.85
       - type: env
         names: [COPILOTSTUDIOAGENT__SCHEMANAME, COPILOTSTUDIOAGENT__ENVIRONMENTID, COPILOTSTUDIOAGENT__TENANTID, COPILOTSTUDIOAGENT__APPCLIENTID, COPILOT_STUDIO_ENVIRONMENT_ID, COPILOT_STUDIO_SCHEMA_NAME]

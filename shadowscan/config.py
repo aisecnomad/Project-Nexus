@@ -9,7 +9,7 @@ Example ``shadowscan.yaml``::
     options:
       min_confidence: 0.3
       fail_on: high             # exit non-zero when a finding reaches this level
-      dump_records: ./exports   # save raw connector records (JSONL) for offline re-analysis
+      dump_records: ./exports   # save sanitized connector records (JSONL) for offline re-analysis
     connectors:
       - name: code.github
         org: acme
@@ -76,6 +76,8 @@ class ScanConfig:
     dump_records: str | None = None
     workdir: str | None = None
     parallel: int = 4
+    incremental: bool = False
+    state_dir: str | None = None
     source: str | None = None
 
     @classmethod
@@ -114,6 +116,8 @@ class ScanConfig:
             dump_records=_resolve(base, opts["dump_records"]) if opts.get("dump_records") else None,
             workdir=opts.get("workdir"),
             parallel=int(opts.get("parallel", 4)),
+            incremental=_boolean_option(opts.get("incremental", False), "incremental"),
+            state_dir=_resolve(base, opts["state_dir"]) if opts.get("state_dir") else None,
             source=source,
         )
 
@@ -133,6 +137,12 @@ def _resolve(base: Path, p: str) -> str:
     if path.is_absolute() or any(ch in p for ch in "*?["):
         return str(path)
     return str(base / path)
+
+
+def _boolean_option(value: Any, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"options.{name} must be a YAML boolean")
+    return value
 
 
 def parse_set_options(items: list[str]) -> dict[str, Any]:

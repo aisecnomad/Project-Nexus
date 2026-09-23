@@ -25,7 +25,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+bedrock_agentcore\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+bedrock_agentcore\b']
         weight: 0.95
       - type: code
         patterns: ['\.client\(\s*["'']bedrock-agent(?:-runtime)?["'']', '\.client\(\s*["'']bedrock-agentcore(?:-control)?["'']', '\binvoke_agent\s*\(', '\bInvokeAgentCommand\b', '\bInvokeAgentRuntimeCommand\b', '\binvoke_agent_runtime\s*\(', '\binvoke_inline_agent\s*\(', '\binvoke_flow\s*\(', '\bBedrockAgentCoreApp\s*\(', '\bcreate_agent\s*\(\s*agentName\s*=', '\bcreate_agent_runtime\s*\(', '\bcreate_agent_action_group\s*\(', '\bBedrockAgentRuntimeClient\s*\(', '\bAgentCoreMemory', '\bagentcore\s+(?:configure|launch|deploy)\b']
@@ -118,7 +118,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+azure\.ai\.(?:projects|agents)\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+azure\.ai\.(?:projects|agents)\b']
         weight: 0.95
       - type: code
         patterns: ['\bAIProjectClient\s*\(', '\bAgentsClient\s*\(', '\bPersistentAgentsClient\s*\(', '\.agents\.create_agent\s*\(', '\bcreate_agent\s*\(\s*model\s*=', '\bAzureAIAgent\s*\(', '\bAzureAIAgentClient\s*\(', '\bAgentsClient\.Administration\.CreateAgent', '/agents\?api-version=', '\bBingGroundingTool\s*\(', '\bAzureFunctionTool\s*\(', '\bOpenApiTool\s*\(']
@@ -192,7 +192,7 @@ signatures:
     description: Container images and Helm charts for agent platforms, gateways and self-hosted model servers.
     signals:
       - type: code
-        patterns: ['^\s*kind:\s*(?:Deployment|StatefulSet|Job|CronJob|Pod)\s*$']
+        patterns: ['^[^\S\r\n]*kind:\s*(?:Deployment|StatefulSet|Job|CronJob|Pod)\s*$']
         weight: 0.05
       - type: image
         patterns: ['kagent-dev/kagent', 'ghcr\.io/kagent-dev', 'agentgateway/agentgateway', 'kgateway', 'ghcr\.io/nvidia/nemo', 'nvcr\.io/nvidia/nemo', 'ghcr\.io/kubeflow/', 'ray-project/ray', 'triton', 'text-generation-inference', 'localai/localai', 'lmstudio', 'ghcr\.io/ggerganov/llama\.cpp', 'ghcr\.io/ggml-org/llama\.cpp', 'ghcr\.io/mudler/localai', 'ghcr\.io/open-webui', 'ghcr\.io/coollabsio', 'anythingllm', 'langgenius', 'flowiseai', 'langflowai', 'n8nio', 'berriai/litellm', 'portkeyai']

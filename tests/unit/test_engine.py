@@ -16,17 +16,18 @@ def _f(**kw) -> Finding:
 
 
 def test_inventory_loads_capability_card_and_matches(tmp_path: Path):
-    card = Path(__file__).parents[2] / "Agent Capability Card"
+    card = Path(__file__).parents[2] / "Agent Card"
     inv = Inventory.load([str(card)])
     assert len(inv) == 1 and inv.entries[0].agent_id == "ops-provisioning-04" and inv.entries[0].owner == "Platform-Engineering"
-    f = _f(metadata={"agent_name": "ops-provisioning-04"})
+    f = _f(resource="arn:aws:bedrock:us-east-1:123456789012:agent/AGENT1", metadata={"agent_name": "ops-provisioning-04"})
     assert inv.match(f).agent_id == "ops-provisioning-04"
     assert inv.match(_f(title="Bedrock Agent: other", resource="arn:aws:bedrock:us-east-1:1:agent/B2", metadata={})) is None
     # resource glob patterns and aliases in simple format
     (tmp_path / "agents.yaml").write_text("agents:\n  - id: reviewer\n    name: Code Reviewer\n    owner: dev-prod\n    resources: ['github:installation:*']\n    names: [coderabbitai]\n")
     inv = Inventory.load([str(tmp_path)])
     assert inv.match(_f(resource="github:installation:101", title="GitHub App installed: coderabbitai")).agent_id == "reviewer"
-    assert inv.match(_f(resource="slack:app:1", title="Slack app: CodeRabbitAI")).agent_id == "reviewer"
+    assert inv.match(_f(resource="slack:app:1", title="Slack app: CodeRabbitAI")) is None
+    assert inv.suggest(_f(resource="slack:app:1", title="Slack app: CodeRabbitAI"))[0].agent_id == "reviewer"
     # CSV
     (tmp_path / "agents.yaml").unlink()
     (tmp_path / "inv.csv").write_text("agent_id,name,owner,resources\nhr-helper,HR Helper,erin,power-platform:bot:bot-1|okta:app:x\n")
@@ -63,7 +64,7 @@ def test_engine_end_to_end_with_config(tmp_path: Path, fixtures):
             ConnectorSpec(name="cloud.aws", config={"input": str(fixtures / "cloud" / "aws_records.jsonl")}),
             ConnectorSpec(name="nope.missing", config={}),
         ],
-        inventory=[str(Path(__file__).parents[2] / "Agent Capability Card")],
+        inventory=[str(Path(__file__).parents[2] / "Agent Card")],
         min_confidence=0.2,
         parallel=2,
     )

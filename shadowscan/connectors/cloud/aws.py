@@ -10,7 +10,9 @@ Enumerates, per region:
 * Amazon Q Business applications, Lex V2 bots
 * IAM roles / users / policies granting Bedrock, SageMaker, Q, Lex actions (``iam-grant``)
 * Secrets Manager / SSM parameter *names* hinting LLM credentials
-* CloudTrail ``InvokeModel`` / ``InvokeAgent`` / ``Converse`` callers for the last N days (``gateway-caller``)
+* CloudTrail management-event callers for the last N days (``gateway-caller``).
+  LookupEvents does not expose data events; import exported invocation records
+  for model and agent data-plane activity.
 
 Auth: standard boto3 credential chain (``profile``, ``role_arn`` optional).
 Offline export: JSONL of the raw records this connector emits (``_kind`` per record) – produce one
@@ -106,7 +108,11 @@ class AwsConnector(BaseConnector):
             paginator = client.get_paginator(op)
             for page in paginator.paginate(**kwargs):
                 yield from page.get(key, []) or []
-        except Exception:  # noqa: BLE001 - not every op has a paginator
+        except Exception as exc:  # noqa: BLE001 - not every op has a paginator
+            # Never restart a failed paginator as a one-page request: that can
+            # turn a denied/truncated inventory into apparent success.
+            if type(exc).__name__ != "OperationNotPageableError":
+                raise
             resp = getattr(client, op)(**kwargs)
             yield from resp.get(key, []) or []
             token = resp.get("nextToken") or resp.get("NextToken")
@@ -123,11 +129,11 @@ class AwsConnector(BaseConnector):
         except Exception as exc:  # noqa: BLE001
             msg = str(exc)
             if "AccessDenied" in msg or "UnauthorizedOperation" in msg or "not authorized" in msg:
-                self.ctx.warn(f"cloud.aws: access denied: {truncate(msg, 160)}")
+                self.ctx.warn(f"cloud.aws: access denied: {truncate(msg, 160)}", incomplete=True)
             elif "Could not connect to the endpoint" in msg or "UnknownServiceError" in msg or "EndpointConnectionError" in msg:
-                self.log.debug("cloud.aws: service unavailable in region: %s", truncate(msg, 160))
+                self.ctx.warn(f"cloud.aws: service coverage unavailable: {truncate(msg, 160)}", incomplete=True)
             else:
-                self.ctx.warn(f"cloud.aws: {truncate(msg, 200)}")
+                self.ctx.warn(f"cloud.aws: {truncate(msg, 200)}", incomplete=True)
             return None
 
     # -------------------------------------------------------------- collect
@@ -196,7 +202,7 @@ class AwsConnector(BaseConnector):
         try:
             ac = self._client("bedrock-agentcore-control", region)
         except Exception:  # noqa: BLE001 - old boto3
-            self.log.debug("cloud.aws: bedrock-agentcore-control not available in this boto3")
+            self.ctx.warn("cloud.aws: AgentCore unavailable in installed SDK; collection incomplete", incomplete=True)
             return
         for rt in self._safe(lambda: list(self._paginate(ac, "list_agent_runtimes", "agentRuntimes"))) or []:
             detail = self._safe(ac.get_agent_runtime, agentRuntimeId=rt.get("agentRuntimeId")) or {}
@@ -226,7 +232,7 @@ class AwsConnector(BaseConnector):
         for fn in self._safe(lambda: list(self._paginate(lam, "list_functions", "Functions"))) or []:
             n += 1
             if n > self.max_lambda:
-                self.ctx.warn(f"cloud.aws: max_lambda reached in {region}")
+                self.ctx.warn(f"cloud.aws: max_lambda reached in {region}", incomplete=True)
                 break
             rec = {
                 "_kind": "lambda",
@@ -253,6 +259,8 @@ class AwsConnector(BaseConnector):
     def _collect_ecs(self, region: str) -> Iterator[dict[str, Any]]:
         ecs = self._client("ecs", region)
         families = self._safe(lambda: list(self._paginate(ecs, "list_task_definition_families", "families", status="ACTIVE"))) or []
+        if len(families) > 1000:
+            self.ctx.warn(f"cloud.aws: ECS family limit reached in {region}", incomplete=True)
         for fam in families[:1000]:
             td = self._safe(ecs.describe_task_definition, taskDefinition=fam)
             if not td:
@@ -323,6 +331,9 @@ class AwsConnector(BaseConnector):
         for item in details:
             if item.get("_type") in {"RoleDetailList", "UserDetailList", "GroupDetailList"}:
                 docs = [p.get("PolicyDocument") for p in item.get("RolePolicyList") or item.get("UserPolicyList") or item.get("GroupPolicyList") or []]
+                unresolved = [p.get("PolicyArn") for p in item.get("AttachedManagedPolicies") or [] if p.get("PolicyArn") not in policies]
+                if unresolved:
+                    self.ctx.warn(f"cloud.aws: unresolved attached policies for {item.get('Arn')}: {', '.join(str(p) for p in unresolved)}", incomplete=True)
                 docs += [policies.get(p.get("PolicyArn"), {}) for p in item.get("AttachedManagedPolicies") or []]
                 actions = _actions_from_docs(docs)
                 if any(a.lower().startswith(LLM_ACTION_PREFIXES) or a == "*" for a in actions):
@@ -341,17 +352,22 @@ class AwsConnector(BaseConnector):
 
     def _paginate_details(self, iam: Any) -> Iterator[dict[str, Any]]:
         paginator = iam.get_paginator("get_account_authorization_details")
-        for page in paginator.paginate(Filter=["Role", "User", "Group", "LocalManagedPolicy"]):
+        for page in paginator.paginate(Filter=["Role", "User", "Group", "LocalManagedPolicy", "AWSManagedPolicy"]):
             for key in ("RoleDetailList", "UserDetailList", "GroupDetailList", "Policies"):
                 for item in page.get(key, []) or []:
                     item["_type"] = key
                     yield item
 
     def _collect_cloudtrail(self, region: str) -> Iterator[dict[str, Any]]:
+        self.ctx.warn(
+            f"cloud.aws: CloudTrail LookupEvents in {region} covers management events only; "
+            "model/agent invocation data events require a CloudTrail Lake or trail export. "
+            "No returned callers does not establish absence of runtime activity.", incomplete=True,
+        )
         ct = self._client("cloudtrail", region)
         start = datetime.now(UTC) - timedelta(days=min(self.cloudtrail_days, 90))
         for event_name in CLOUDTRAIL_EVENTS:
-            events = self._safe(lambda: list(self._paginate(ct, "lookup_events", "Events", LookupAttributes=[{"AttributeKey": "EventName", "AttributeValue": event_name}], StartTime=start, PaginationConfig={"MaxItems": 5000})))
+            events = self._safe(lambda: list(self._paginate(ct, "lookup_events", "Events", LookupAttributes=[{"AttributeKey": "EventName", "AttributeValue": event_name}], StartTime=start)))
             for ev in events or []:
                 try:
                     detail = json.loads(ev.get("CloudTrailEvent") or "{}")

@@ -26,7 +26,7 @@ signatures:
         weight: 0.85
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+langchain(?:_[a-z0-9_]+)?\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+langchain(?:_[a-z0-9_]+)?\b']
         weight: 0.85
       - type: import
         languages: [javascript]
@@ -78,7 +78,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+langgraph\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+langgraph\b']
         weight: 0.95
       - type: import
         languages: [javascript]
@@ -124,7 +124,7 @@ signatures:
         weight: 0.85
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+llama_index\b', '^\s*(?:from|import)\s+llama_deploy\b', '^\s*(?:from|import)\s+llama_agents\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+llama_index\b', '^[^\S\r\n]*(?:from|import)\s+llama_deploy\b', '^[^\S\r\n]*(?:from|import)\s+llama_agents\b']
         weight: 0.85
       - type: import
         languages: [javascript]
@@ -164,7 +164,7 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+crewai\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+crewai\b']
         weight: 0.97
       - type: code
         patterns: ['\bCrew\s*\(', '@CrewBase\b', '\bcrew\s*\(\s*\)\s*\.kickoff', '\.kickoff(?:_async|_for_each)?\s*\(', '\bAgent\s*\(\s*role\s*=', '\bLLM\s*\(\s*model\s*=', '\bFlow\[[A-Za-z_]+\]']
@@ -215,11 +215,11 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+google\.adk\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+google\.adk\b']
         weight: 0.97
       - type: import
         languages: [java]
-        patterns: ['^\s*import\s+com\.google\.adk\.']
+        patterns: ['^[^\S\r\n]*import\s+com\.google\.adk\.']
         weight: 0.97
       - type: import
         languages: [go]
@@ -258,7 +258,7 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+strands(?:_tools)?\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+strands(?:_tools)?\b']
         weight: 0.95
       - type: code
         patterns: ['\bfrom\s+strands\s+import\s+Agent\b', '\bAgent\s*\(\s*(?:model|tools|system_prompt)\s*=', '\bBedrockModel\s*\(', '\bstrands_tools\b', '\bGraphBuilder\s*\(', '\bSwarm\s*\(\s*\[']
@@ -292,11 +292,11 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+agent_framework\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+agent_framework\b']
         weight: 0.97
       - type: import
         languages: [dotnet]
-        patterns: ['^\s*using\s+Microsoft\.Agents\.AI\b']
+        patterns: ['^[^\S\r\n]*using\s+Microsoft\.Agents\.AI\b']
         weight: 0.97
       - type: code
         patterns: ['\bChatAgent\s*\(', '\bAzureAIAgentClient\s*\(', '\bAzureOpenAIResponsesClient\s*\(', '\bWorkflowBuilder\s*\(', '\bCreateAIAgent\s*\(', '\bAIAgent\b\s+\w+\s*=', '\bMagenticBuilder\s*\(', '\bHandoffBuilder\s*\(']
@@ -328,11 +328,11 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+semantic_kernel\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+semantic_kernel\b']
         weight: 0.9
       - type: import
         languages: [dotnet]
-        patterns: ['^\s*using\s+Microsoft\.SemanticKernel\b']
+        patterns: ['^[^\S\r\n]*using\s+Microsoft\.SemanticKernel\b']
         weight: 0.9
       - type: code
         patterns: ['\b(?:ChatCompletionAgent|OpenAIAssistantAgent|AzureAIAgent|AgentGroupChat|BedrockAgent|CopilotStudioAgent)\s*\(', '@kernel_function\b', '\[KernelFunction\]', '\bFunctionChoiceBehavior\.Auto\s*\(']
@@ -359,7 +359,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+autogen(?:_agentchat|_core|_ext|studio)?\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+autogen(?:_agentchat|_core|_ext|studio)?\b']
         weight: 0.95
       - type: code
         patterns: ['\b(?:AssistantAgent|ConversableAgent|UserProxyAgent|RoundRobinGroupChat|SelectorGroupChat|MagenticOneGroupChat|Swarm|GroupChatManager)\s*\(']
@@ -388,7 +388,7 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+smolagents\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+smolagents\b']
         weight: 0.97
       - type: code
         patterns: ['\bToolCallingAgent\s*\(', '\bManagedAgent\s*\(', '\b(?:InferenceClientModel|HfApiModel|LiteLLMModel|TransformersModel)\s*\(']
@@ -410,7 +410,7 @@ signatures:
     signals:
       - type: import
         languages: [python]
-        patterns: ['^\s*from\s+transformers(?:\.agents)?\s+import\s+[^\n]*\b(?:ReactCodeAgent|ReactJsonAgent|CodeAgent|HfAgent|Tool|load_tool)\b']
+        patterns: ['^[^\S\r\n]*from\s+transformers(?:\.agents)?\s+import\s+[^\n]*\b(?:ReactCodeAgent|ReactJsonAgent|CodeAgent|HfAgent|Tool|load_tool)\b']
         weight: 0.85
       - type: code
         patterns: ['\bReactCodeAgent\s*\(', '\bReactJsonAgent\s*\(', '\bHfAgent\s*\(']
@@ -437,7 +437,7 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^\s*from\s+agents(?:\.[a-z_.]+)?\s+import\s+[^\n]*\b(?:Agent|Runner|function_tool|handoff|WebSearchTool|ComputerTool|FileSearchTool|CodeInterpreterTool|Guardrail|RunConfig|trace)\b', '^\s*import\s+agents\s*$']
+        patterns: ['^[^\S\r\n]*from\s+agents(?:\.[a-z_.]+)?\s+import\s+[^\n]*\b(?:Agent|Runner|function_tool|handoff|WebSearchTool|ComputerTool|FileSearchTool|CodeInterpreterTool|Guardrail|RunConfig|trace)\b', '^[^\S\r\n]*import\s+agents\s*$']
         weight: 0.9
       - type: import
         languages: [javascript]
@@ -473,7 +473,7 @@ signatures:
         weight: 0.6
       - type: import
         languages: [python]
-        patterns: ['^\s*from\s+swarm\s+import\s+[^\n]*\b(?:Swarm|Agent)\b']
+        patterns: ['^[^\S\r\n]*from\s+swarm\s+import\s+[^\n]*\b(?:Swarm|Agent)\b']
         weight: 0.9
       - type: code
         patterns: ['github\.com/openai/swarm', '\bSwarm\s*\(\s*\)\s*\.run\b']
@@ -498,7 +498,7 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+claude_(?:agent|code)_sdk\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+claude_(?:agent|code)_sdk\b']
         weight: 0.97
       - type: import
         languages: [javascript]
@@ -531,7 +531,7 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+pydantic_ai\b', '^\s*(?:from|import)\s+pydantic_graph\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+pydantic_ai\b', '^[^\S\r\n]*(?:from|import)\s+pydantic_graph\b']
         weight: 0.97
       - type: code
         patterns: ['@agent\.tool(?:_plain)?\b', '\bAgent\s*\(\s*["''][a-z0-9_-]+:[a-z0-9._-]+["'']', '\brun_sync\s*\(', '\bMCPServer(?:Stdio|HTTP|SSE|StreamableHTTP)\s*\(']
@@ -606,7 +606,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+haystack\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+haystack\b']
         weight: 0.9
       - type: code
         patterns: ['\bfrom\s+haystack\.components\.agents\s+import\s+Agent\b', '\bToolInvoker\s*\(', '\bAgent\s*\(\s*chat_generator\s*=']
@@ -626,7 +626,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+dspy\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+dspy\b']
         weight: 0.9
       - type: code
         patterns: ['\bdspy\.ReAct\s*\(', '\bdspy\.ProgramOfThought\s*\(']
@@ -649,7 +649,7 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+agno\b', '^\s*(?:from|import)\s+phi\.(?:agent|assistant|workflow|team)\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+agno\b', '^[^\S\r\n]*(?:from|import)\s+phi\.(?:agent|assistant|workflow|team)\b']
         weight: 0.95
       - type: code
         patterns: ['\bAgentOS\s*\(', '\bfrom\s+agno\.agent\s+import\s+Agent\b', '\bTeam\s*\(\s*(?:members|mode)\s*=']
@@ -677,7 +677,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+(?:letta|memgpt)\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+(?:letta|memgpt)\b']
         weight: 0.95
       - type: image
         patterns: ['letta/letta']
@@ -704,7 +704,7 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+metagpt\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+metagpt\b']
         weight: 0.97
 
   - id: framework.camel-ai
@@ -722,7 +722,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+camel\.(?:agents|societies|toolkits|models|types)\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+camel\.(?:agents|societies|toolkits|models|types)\b']
         weight: 0.95
       - type: code
         patterns: ['\bRolePlaying\s*\(', '\bChatAgent\s*\(\s*system_message\s*=']
@@ -743,7 +743,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+griptape\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+griptape\b']
         weight: 0.95
       - type: env
         names: [GT_CLOUD_API_KEY]
@@ -773,7 +773,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+composio\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+composio\b']
         weight: 0.95
       - type: env
         names: [COMPOSIO_API_KEY]
@@ -798,7 +798,7 @@ signatures:
         weight: 0.35
       - type: import
         languages: [python]
-        patterns: ['^\s*import\s+instructor\b', '^\s*from\s+instructor\s+import\b']
+        patterns: ['^[^\S\r\n]*import\s+instructor\b', '^[^\S\r\n]*from\s+instructor\s+import\b']
         weight: 0.35
 
   - id: framework.langroid
@@ -815,7 +815,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+langroid\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+langroid\b']
         weight: 0.95
 
   - id: framework.agentscope
@@ -832,7 +832,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+agentscope\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+agentscope\b']
         weight: 0.95
 
   - id: framework.swarms
@@ -849,7 +849,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+swarms\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+swarms\b']
         weight: 0.9
       - type: env
         names: [SWARMS_API_KEY]
@@ -871,7 +871,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+(?:autogpt|forge\.sdk|autogpt_libs|backend\.blocks)\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+(?:autogpt|forge\.sdk|autogpt_libs|backend\.blocks)\b']
         weight: 0.85
       - type: image
         patterns: ['significantgravitas/auto_gpt', 'significant-gravitas/autogpt']
@@ -894,7 +894,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+babyagi\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+babyagi\b']
         weight: 0.95
 
   - id: framework.beeai
@@ -917,7 +917,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+beeai_framework\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+beeai_framework\b']
         weight: 0.95
       - type: import
         languages: [javascript]
@@ -937,7 +937,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+atomic_agents\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+atomic_agents\b']
         weight: 0.95
 
   - id: framework.julep
@@ -976,7 +976,7 @@ signatures:
         weight: 0.85
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+(?:marvin|controlflow)\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+(?:marvin|controlflow)\b']
         weight: 0.85
 
   - id: framework.mirascope
@@ -992,7 +992,7 @@ signatures:
         weight: 0.85
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+mirascope\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+mirascope\b']
         weight: 0.85
 
   - id: framework.embedchain
@@ -1008,5 +1008,5 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+embedchain\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+embedchain\b']
         weight: 0.8

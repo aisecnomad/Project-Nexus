@@ -103,6 +103,7 @@ class GenericSaaSConnector(BaseConnector):
         except ValueError:
             user_count = None
         f.add_evidence(Evidence(signal=f"{self.platform}:app", description=f"'{name}' from {self.platform} export; status {self._get(rec, 'status') or 'n/a'}; users {user_count if user_count is not None else users or '?'}; scopes {', '.join(scopes)[:300] or 'n/a'}", weight=0.2 + (min(0.2, user_count / 500) if user_count else 0)))
-        f.metadata.update({"platform": self.platform, "status": self._get(rec, "status"), "users": user_count if user_count is not None else users, "scopes": summarize_scopes(scopes), "raw": {k: v for k, v in rec.items() if isinstance(v, (str, int, float, bool)) and len(str(v)) < 200}})
+        f.metadata.update({"platform": self.platform, "status": self._get(rec, "status"), "users": user_count if user_count is not None else users, "scopes": summarize_scopes(scopes)})
         finalize(f, self.index)
+        f.sanitize()
         return f

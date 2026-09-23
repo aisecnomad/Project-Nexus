@@ -42,10 +42,14 @@ def _e(s: object) -> str:
 
 
 def render_html(result: ScanResult) -> str:
+    for finding in result.findings:
+        finding.sanitize()
     s = result.summary()
     parts: list[str] = []
     parts.append("<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>ShadowScan report</title><style>" + _CSS + "</style></head><body>")
     parts.append(f"<header><h1>ShadowScan report <span>v{_e(result.version)} · {_e(result.finished_at or result.started_at)}</span></h1><div class='muted'>Shadow AI agent discovery across code, identity, gateways, low-code, SaaS and cloud.</div></header>")
+    if not result.complete:
+        parts.append("<div class='controls'><strong class='shadow'>INCOMPLETE SCAN — some required inputs could not be assessed. Review connector statistics.</strong></div>")
     parts.append("<div class='stats'>")
     parts.append(f"<div class='stat'><b>{s['total']}</b>findings</div>")
     if result.inventory_size:
@@ -79,6 +83,10 @@ def render_html(result: ScanResult) -> str:
             parts.append(f"<div><b>Permissions</b> {_e(', '.join(f.permissions[:20]))}{' …' if len(f.permissions) > 20 else ''}</div>")
         if f.metadata.get("related"):
             parts.append("<div><b>Related</b> " + " ".join(f"<code>{_e(r)}</code>" for r in f.metadata["related"][:8]) + "</div>")
+        activity = f.metadata.get("runtime_activity")
+        if isinstance(activity, dict):
+            parts.append(f"<div><b>Gateway activity</b> {_e(activity.get('status'))}; matching events: {_e(activity.get('events', 0))}; production observed: {_e(activity.get('production_observed', False))}</div>")
+            parts.append(f"<div class='muted'>{_e(activity.get('limitations', ''))}</div>")
         factors = [x for x in f.risk.factors if x.weight]
         if factors:
             parts.append("<div><b>Risk factors</b><ul>" + "".join(f"<li>{'+' if x.weight > 0 else ''}{x.weight} {_e(x.description)}</li>" for x in factors) + "</ul></div>")
@@ -93,6 +101,14 @@ def render_html(result: ScanResult) -> str:
             parts.append(f"<details><summary class='muted'>metadata</summary><pre>{_e(json.dumps(meta, indent=2, default=str)[:6000])}</pre></details>")
         parts.append("</td></tr>")
     parts.append("</tbody></table>")
-    parts.append("<footer>Connector stats: " + " · ".join(f"{_e(st.connector)}: {st.objects_examined} examined, {st.findings} findings, {len(st.errors)} errors{' (skipped: ' + _e(st.skip_reason) + ')' if st.skipped else ''}" for st in result.stats) + "</footer>")
+    parts.append("<footer><b>Connector statistics</b><ul>")
+    for st in result.stats:
+        status = "skipped" if st.skipped else "incomplete" if st.incomplete or st.errors else "cached" if st.cached else "complete"
+        parts.append(f"<li>{_e(st.connector)}: {_e(status)}, {st.objects_examined} examined, {st.findings} findings")
+        diagnostics = [*st.errors, *st.warnings, *([st.skip_reason] if st.skip_reason else [])]
+        if diagnostics:
+            parts.append("<ul>" + "".join(f"<li>{_e(message)}</li>" for message in diagnostics) + "</ul>")
+        parts.append("</li>")
+    parts.append("</ul></footer>")
     parts.append("<script>" + _JS + "</script></body></html>")
     return "".join(parts)
