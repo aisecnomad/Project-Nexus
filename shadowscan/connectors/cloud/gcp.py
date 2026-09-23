@@ -360,17 +360,22 @@ class GcpConnector(BaseConnector):
                 for m in b.get("members") or []:
                     per_member.setdefault(m, []).append(role)
         for member, roles in per_member.items():
-            f = cloud_finding(self.name, "gcp", kind=Kind.IAM_GRANT, title=f"IAM member with AI roles in {project}: {member}", resource=f"projects/{project}/iam/{member}", resource_type="iam-binding", account=project, surface=Surface.IDENTITY)
+            roles = sorted(set(roles))
+            broad_roles = [role for role in roles if role in {"roles/owner", "roles/editor"}]
+            f = cloud_finding(self.name, "gcp", kind=Kind.IAM_GRANT, title=f"IAM member with AI or broad project access in {project}: {member}", resource=f"projects/{project}/iam/{member}", resource_type="iam-binding", account=project, surface=Surface.IDENTITY)
             llm = scan_iam_actions(self.index, f, roles, location=f"projects/{project}")
-            if not llm:
+            if not llm and not broad_roles:
                 continue
             f.add_evidence(Evidence(signal="gcp:iam", description=f"{member} holds {', '.join(roles)}", weight=0.45 if member.startswith("serviceAccount:") else 0.25))
+            if broad_roles:
+                f.add_tag("broad-project-access")
+                f.add_evidence(Evidence(signal="gcp:iam-broad-role", description=f"Broad project grant ({', '.join(broad_roles)}) can enable AI access, subject to applicable policies and service availability; this is access evidence, not observed AI execution.", location=f"projects/{project}", weight=0.25))
             if member.startswith("serviceAccount:"):
                 f.add_tag("service-account")
             if member.startswith(("allUsers", "allAuthenticatedUsers")):
                 f.add_tag("public-principal")
             name_hint(self.index, f, member)
-            f.metadata.update({"member": member, "roles": roles})
+            f.metadata.update({"member": member, "roles": roles, "broad_roles": broad_roles, "evidence_class": "access-grant"})
             yield done(f, self.index, Kind.IAM_GRANT)
 
     def _h_service_account(self, rec: dict[str, Any]) -> Finding | None:

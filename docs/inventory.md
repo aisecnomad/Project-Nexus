@@ -93,7 +93,8 @@ shadowscan inventory stubs today.json -o inventory/pending/ --min-risk medium
 
 `inventory stubs` writes one capability-card skeleton per shadow finding (agent,
 mcp-server, workflow, bot-app, agent-config by default): the discovered
-resource goes into `discovery.resources`, detected capabilities into
+resource goes into `discovery.resources` with literal glob characters escaped
+so the generated card approves only that exact resource, detected capabilities into
 `capability_surface`, the risk score into `risk_scoring`, and the owner (when
 known) into `owner_team`. Review, complete and move the card into the inventory
 directory; on the next scan the finding is registered and its risk drops.
@@ -102,3 +103,7 @@ Track drift between runs with `shadowscan diff last.json today.json`: new
 findings, risk-level changes and resolved findings from complete, comparable
 scans. Missing findings from incomplete or differently scoped scans remain
 unknown. See [comparison semantics](scanning.md#comparing-reports).
+
+Generated stub files use mode 0600 in a 0700 output directory. Deliberate wildcard
+approvals remain supported in manually reviewed inventory entries. Do not remove
+the escaping in a generated resource binding unless a broader approval is intended.

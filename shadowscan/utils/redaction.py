@@ -8,7 +8,10 @@ signature settings; disabling secret discovery must never disable redaction.
 from __future__ import annotations
 
 import hashlib
+import io
 import re
+import token
+import tokenize
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import unquote
@@ -20,12 +23,13 @@ _SENSITIVE_SUFFIXES = (
     "accesstoken", "refreshtoken", "idtoken", "authtoken", "clientsecret",
     "authorization", "proxyauthorization", "password", "passwd", "privatekey",
     "credential", "credentials", "bearertoken", "sessiontoken", "signingkey",
-    "secretstring", "secretbinary",
+    "secretstring", "secretbinary", "connectionstring", "connstr",
 )
 _SENSITIVE_NAMES = {"token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie"}
 _SECRET_TOKEN = re.compile(
-    r"\b(?:sk-(?:proj-|ant-|or-v1-)?[A-Za-z0-9_-]{8,}"
+    r"\b(?:sk-(?:proj-|ant-|live-|or-v1-)?[A-Za-z0-9_-]{8,}"
     r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
+    r"|glpat-[A-Za-z0-9_-]{8,}"
     r"|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{16,}"
     r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,})\b"
 )
@@ -40,6 +44,69 @@ _ASSIGNMENT = re.compile(
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;\}\]\)\"']+)"
 )
 _QUERY_SEPARATOR = re.compile(r"[&#]")
+_ANNOTATED_KEY = re.compile(r"(?<![\w-])(?P<key>[A-Za-z_][A-Za-z0-9_.]{0,100})[ \t]*:")
+_MAX_SANITIZATION_NODES = 100_000
+_MAX_SANITIZATION_CHARS = 64 * 1024 * 1024
+_MAX_REDACTION_WORK = 128 * 1024 * 1024
+
+
+class SanitizationLimitError(ValueError):
+    """Evidence cannot be safely sanitized within the work/output budget."""
+
+
+def _redact_annotated_assignments(text: str) -> str:
+    """Redact the entire RHS of sensitive Python annotated assignments.
+
+    Tokenization handles escaped/triple-quoted strings, compound annotations,
+    multiline expressions, and multiple statements without evaluating source.
+    Incomplete RHS syntax is redacted through EOF. Tokenization is attempted
+    only at sensitive ``name:`` candidates, so ordinary evidence stays cheap.
+    """
+    stream: io.StringIO | None = None
+    pieces: list[str] = []
+    cursor = 0
+    work = 0
+    for match in _ANNOTATED_KEY.finditer(text):
+        if match.start() < cursor or not _sensitive_key(match.group("key")):
+            continue
+        if stream is None:
+            stream = io.StringIO(text)
+        stream.seek(match.end())
+        offsets = [match.end()]
+        assigned_at: int | None = None
+        end = len(text)
+
+        def readline() -> str:
+            nonlocal work
+            assert stream is not None
+            line = stream.readline()
+            work += len(line)
+            if work > _MAX_REDACTION_WORK:
+                raise SanitizationLimitError("annotated assignment work limit exceeded")
+            offsets.append(stream.tell())
+            return line
+
+        try:
+            for item in tokenize.generate_tokens(readline):
+                if item.type == token.OP and item.string == "=" and assigned_at is None:
+                    assigned_at = offsets[item.end[0] - 1] + item.end[1]
+                elif item.type in {token.NEWLINE, token.ENDMARKER} or (
+                    assigned_at is not None and item.type == token.OP and item.string == ";"
+                ):
+                    end = offsets[item.start[0] - 1] + item.start[1]
+                    break
+        except (tokenize.TokenError, IndentationError, SyntaxError):
+            # Once '=' is seen, malformed/unfinished source must not expose any
+            # of the RHS, including multiline credential fragments.
+            pass
+        if assigned_at is not None:
+            pieces.append(text[cursor:assigned_at])
+            pieces.append(' "' + REDACTED + '"' + "\n" * text[assigned_at:end].count("\n"))
+            cursor = end
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def _sensitive_key(key: str) -> bool:
@@ -103,6 +170,9 @@ def sanitize_text(text: str) -> str:
     """Redact recognizable credentials, assignments, auth headers and URL secrets."""
     if not isinstance(text, str):
         text = str(text)
+    if len(text) > _MAX_SANITIZATION_CHARS:
+        raise SanitizationLimitError("text sanitization size limit exceeded")
+    text = _redact_annotated_assignments(text)
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
     text = _JWT.sub(REDACTED, text)
@@ -138,6 +208,7 @@ def sanitize(value: Any) -> Any:
     recognize argv pairs, so ``["--token", "opaque-value"]`` is safe to retain.
     Known credential values are also removed from other fields in the same object.
     """
+    _check_sanitization_structure(value)
     known: set[str] = set()
 
     def record_has_secret_value(item: Mapping) -> bool:
@@ -181,15 +252,25 @@ def sanitize(value: Any) -> Any:
 
     discover(value)
     ordered = sorted(known, key=len, reverse=True)
+    redaction_work = 0
 
     def text(item: str) -> str:
+        nonlocal redaction_work
+        redaction_work += len(item) * (len(ordered) + 1)
+        if redaction_work > _MAX_REDACTION_WORK:
+            raise SanitizationLimitError("credential replacement work limit exceeded")
         for secret in ordered:
             item = item.replace(secret, REDACTED)
         return sanitize_text(item)
 
     cleaning: set[int] = set()
+    cleaning_steps = 0
 
     def clean(item: Any, depth: int = 0) -> Any:
+        nonlocal cleaning_steps
+        cleaning_steps += 1
+        if cleaning_steps > _MAX_SANITIZATION_NODES:
+            raise SanitizationLimitError("sanitization work limit exceeded")
         if depth > 64:
             return REDACTED
         if isinstance(item, (Mapping, list, tuple)):
@@ -238,3 +319,45 @@ def sanitize(value: Any) -> Any:
         return item
 
     return clean(value)
+
+
+def _check_sanitization_structure(value: Any) -> None:
+    """Bound expanded output before copying an alias DAG or running redaction.
+
+    Memoized subtree costs count *every occurrence* in JSON serialization,
+    without traversing repeated objects exponentially. Cycles become one
+    redaction marker, matching ``sanitize``; excessive depth is an explicit
+    incomplete scan, never a silently truncated clean result.
+    """
+    active: set[int] = set()
+    memo: dict[int, tuple[int, int, int]] = {}
+
+    def cost(item: Any) -> tuple[int, int, int]:
+        if not isinstance(item, (Mapping, list, tuple)):
+            return 1, len(item) if isinstance(item, str) else 0, 1
+        identity = id(item)
+        if identity in active:
+            return 1, len(REDACTED), 1
+        if identity in memo:
+            return memo[identity]
+        if len(active) >= 64:
+            raise SanitizationLimitError("sanitization nesting limit exceeded")
+        active.add(identity)
+        nodes, chars, height = 1, 0, 1
+        children = item.items() if isinstance(item, Mapping) else ((None, child) for child in item)
+        for key, child in children:
+            child_nodes, child_chars, child_height = cost(child)
+            nodes += child_nodes + (key is not None)
+            chars += child_chars + (len(str(key)) if key is not None else 0)
+            height = max(height, child_height + 1)
+            if nodes > _MAX_SANITIZATION_NODES or chars > _MAX_SANITIZATION_CHARS:
+                raise SanitizationLimitError("sanitization expanded output limit exceeded")
+            if height > 64:
+                raise SanitizationLimitError("sanitization nesting limit exceeded")
+        active.remove(identity)
+        memo[identity] = (nodes, chars, height)
+        return memo[identity]
+
+    nodes, chars, _ = cost(value)
+    if nodes > _MAX_SANITIZATION_NODES or chars > _MAX_SANITIZATION_CHARS:
+        raise SanitizationLimitError("sanitization expanded output limit exceeded")

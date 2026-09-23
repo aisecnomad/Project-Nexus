@@ -4,7 +4,9 @@ Most connectors have a **live** mode (API credentials) and an **offline** mode
 (`input:` pointing at an export). `gateway.logs` reads supplied logs and
 `identity.jwt` reads supplied tokens. Live runs can persist sanitized records with
 `--dump-records DIR` / `options.dump_records` for offline re-analysis. Exports are
-written atomically with mode 0600 and JWT inputs are never exported. Redaction
+written atomically with mode 0600 in a 0700 directory and JWT inputs are never
+exported. Every connector instance has a collision-resistant export filename,
+including repeated connector names or labels that normalize to the same text. Redaction
 removes sensitive values, so an export is not a lossless copy of the API response.
 Live HTTP endpoints require HTTPS; redirects and pagination cannot send credentials
 to another origin. Denied access, collection failures and pagination limits make
@@ -89,7 +91,17 @@ Decodes tokens (never stored) and classifies the holder as `human`, `service`,
 conventions (Entra `idtyp=app`, Okta `cid == sub`, Auth0 `gty`, Google service
 accounts, Cognito, Keycloak, SPIFFE) plus RFC 8693 `act` chains and
 agent-related claims. Scopes/roles are classified by the policy signatures;
-lifetime and algorithm hygiene are flagged. Optional JWKS verification.
+lifetime and algorithm hygiene are flagged. Optional `jwks_url` verification
+fetches a bounded JWKS through the shared HTTPS client and accepts only RS256,
+ES256, EdDSA and PS256 by default. `allowed_algorithms` may narrow that list.
+`expected_issuer` binds verification to an operator-supplied exact issuer; the
+unverified token's issuer does not choose or authorize a key source. The JWKS URL
+is configured by the operator, so legitimate providers may host keys separately.
+Audience and historical-token expiry are not authorization checks here. Read
+`metadata.verified` as signature evidence, not permission to act.
+
+CLI equivalents: `--jwks-url`, `--expected-issuer`, and repeatable
+`--jwt-algorithm`. The latter two require `--jwks-url`.
 
 ## Gateway
 
@@ -172,10 +184,17 @@ Bedrock Agents (action groups, knowledge bases, aliases, collaborators,
 guardrails, memory), Flows, AgentCore (runtimes, gateways = MCP, memories,
 browsers, code interpreters, workload identities), model invocation logging
 state, Lambda (env names, plaintext keys, layers, images, tags), ECS task
-definitions, SageMaker endpoints (LLM containers), Step Functions with Bedrock
+definitions referenced by running tasks and service deployments, plus latest
+registered definitions, SageMaker endpoints (LLM containers), Step Functions with Bedrock
 states, Q Business, Lex, Secrets Manager / SSM names, IAM principals with LLM
 actions (via `get_account_authorization_details`), CloudTrail LLM callers.
-Options: `profile`, `role_arn`, `regions` (`all`), `services`, `cloudtrail_days`.
+Options: `profile`, `role_arn`, `regions` (`all`), `services`, `cloudtrail_days`,
+`max_ecs_api_calls` (default 2000 per region). ECS uses exact task-definition ARNs
+for deployed references, including referenced inactive revisions. Findings
+separate running-task/service references from registered-only definitions; a
+reference does not establish successful AI execution. Exhausted API budgets or
+partial/denied responses mark coverage incomplete. Account identity is resolved
+before collection emits account metadata.
 IAM analysis includes both local and AWS-managed attached policies. Unresolved
 attachments make collection incomplete. CloudTrail LookupEvents only supplies
 management events: `InvokeAgent` / `InvokeInlineAgent` data events require a
@@ -188,7 +207,9 @@ and endpoints per location, Dialogflow CX agents, Discovery Engine /
 Agentspace engines, Cloud Run services, Cloud Functions, project IAM bindings,
 service accounts (user-managed keys), API keys restricted to Gemini, Secret
 Manager names, optional Cloud Audit Log callers (`audit_days`). Auth: ADC via
-`google-auth` or `access_token`.
+`google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
+retained as privileged access findings even without an AI-specific role. A grant
+shows access, not observed agent execution.
 
 ### `cloud.azure`
 Azure Resource Graph inventory across subscriptions, then: OpenAI/AI Services
@@ -219,7 +240,12 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | Okta | API token from a read-only admin, or OAuth `okta.apps.read` |
 | Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user |
 | Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security` |
-| AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents` |
+| AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition` |
 | GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs) |
-| Azure | `Reader` on subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; Website Contributor to read app settings) |
+| Azure | `Reader` on subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |
 | OCI | policy `Allow group audit to read all-resources in tenancy` |
+
+The Azure app-settings permission exposes security-sensitive configuration;
+only grant it for the app resources being audited. Do not grant Website
+Contributor solely for this read operation. See Microsoft's
+[permission definitions](https://learn.microsoft.com/en-us/azure/role-based-access-control/permissions/web-and-mobile).

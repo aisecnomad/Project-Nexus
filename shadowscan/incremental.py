@@ -27,6 +27,7 @@ from shadowscan.connectors import _BUILTIN
 from shadowscan.connectors.code.filesystem import DEFAULT_EXCLUDES
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
+from shadowscan.utils.git import git_argv_prefix, safe_git_env
 from shadowscan.utils.redaction import sanitize
 
 log = logging.getLogger("shadowscan.incremental")
@@ -118,8 +119,8 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     def git(*args: str) -> bytes:
         budget.check()
         result = subprocess.run(
-            ["git", "-C", str(root), *args], check=False, capture_output=True, timeout=10,
-            env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
+            [*git_argv_prefix(), "-C", str(root), *args], check=False, capture_output=True, timeout=10,
+            env=safe_git_env(),
         )
         budget.check(size=len(result.stdout))
         if result.returncode:

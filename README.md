@@ -53,7 +53,7 @@ logic works in a CI job, on an analyst laptop, or from a SIEM export.
 
 ## Frameworks & products recognised
 
-178 signatures / 790 signals, YAML-defined and overridable:
+178 signatures / 790 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -109,8 +109,11 @@ shadowscan diff last-week.json today.json                        # what is new /
 ```yaml
 # shadowscan.yaml
 inventory: [./inventory]              # Agent Capability Cards, agents.yaml or CSV
-signatures: [./custom-signatures]     # optional: extra or overriding packs
+signatures: [./custom-signatures]     # optional: extra packs; overrides require opt-in
 options:
+  plugins: []                        # exact names of reviewed third-party connectors
+  allow_signature_override: false
+  allow_private_origin: false        # opt in only for trusted private HTTPS APIs
   min_confidence: 0.3
   fail_on: high
   dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs
@@ -214,10 +217,11 @@ turns shadow findings into card skeletons for review. See
 ## Extending
 
 * **Signatures** are YAML; add a pack directory with `--signatures` / `signatures:`
-  to add products or override weights. Schema and authoring guide in
+  to add products. Replacing built-in signatures requires explicit opt-in. Schema and authoring guide in
   [docs/signatures.md](docs/signatures.md).
 * **Connectors** implement `collect()` (live) and `analyze()` (records → findings)
-  and register through the `shadowscan.connectors` entry-point group. See
+  and register through the `shadowscan.connectors` entry-point group. Execution
+  requires an exact-name `options.plugins` allowlist entry. See
   [docs/architecture.md](docs/architecture.md).
 
 ## Development
@@ -226,7 +230,9 @@ turns shadow findings into card skeletons for review. See
 pip install -e ".[dev]"
 python -m shadowscan.signatures.validate
 ruff check shadowscan tests
-pytest -q
+mypy shadowscan
+pip-audit --progress-spinner off
+pytest -q --cov=shadowscan --cov-fail-under=80
 shadowscan scan -c examples/shadowscan.offline.yaml
 ```
 
@@ -236,5 +242,8 @@ shadowscan scan -c examples/shadowscan.offline.yaml
 * Secret stores (Secrets Manager, Key Vault, Secret Manager, OCI Vault) are read for **names only**.
 * JWTs are never persisted; findings reference a truncated hash.
 * Connectors never modify anything; every API call is read-only.
+
+Deployment behavior, migration options and limits are documented in
+[SECURITY.md](SECURITY.md) and [docs/production.md](docs/production.md).
 
 License: Apache-2.0.

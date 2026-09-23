@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -11,99 +10,30 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from shadowscan.utils.redaction import credential_id, sanitize, sanitize_text
+
 _BINARY_SNIFF = 8192
 
-# Type prefixes only — never keep a suffix that can correlate a leaked key.
-_KEY_FAMILIES: tuple[tuple[str, str], ...] = (
-    ("sk-ant-", "sk-ant"),
-    ("sk-proj-", "sk-proj"),
-    ("sk-live-", "sk-live"),
-    ("sk-", "sk"),
-    ("ghp_", "ghp"),
-    ("gho_", "gho"),
-    ("ghu_", "ghu"),
-    ("ghs_", "ghs"),
-    ("github_pat_", "github_pat"),
-    ("glpat-", "glpat"),
-    ("xoxb-", "xoxb"),
-    ("xoxp-", "xoxp"),
-    ("xoxa-", "xoxa"),
-    ("xoxr-", "xoxr"),
-    ("xoxs-", "xoxs"),
-    ("AKIA", "AKIA"),
-    ("ASIA", "ASIA"),
-    ("AIza", "AIza"),
-    ("ya29.", "ya29"),
-    ("eyJ", "jwt"),
-)
-
-_SECRET_KEY_RX = re.compile(
-    r"(token|secret|password|passwd|authorization|auth|api[_-]?key|access[_-]?key|"
-    r"private[_-]?key|id_token|refresh_token|client_secret|session|cookie|"
-    r"credential|connectionstring|connstr|bearer|private_key|x-api-key)",
-    re.IGNORECASE,
-)
-
-_SECRET_VALUE_RX = re.compile(
-    r"\b(?:sk-(?:ant-|proj-|live-)?[A-Za-z0-9_\-]{8,}"
-    r"|ghp_[A-Za-z0-9]{20,}"
-    r"|github_pat_[A-Za-z0-9_]{20,}"
-    r"|glpat-[A-Za-z0-9_\-]{20,}"
-    r"|xox[baprs]-[A-Za-z0-9-]{10,}"
-    r"|AKIA[0-9A-Z]{16}"
-    r"|AIza[0-9A-Za-z_\-]{20,}"
-    r"|eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]*"
-    r")\b"
-)
-
-
 def redact(value: str, keep: int = 4) -> str:
-    """Redact a secret. Keep a type prefix only — never a recoverable suffix.
+    """Return a stable opaque credential identity without retaining raw fragments.
 
-    ``keep`` is accepted for call-site compatibility and ignored for known key families.
+    ``keep`` remains accepted for compatibility, but no prefix or suffix is kept.
     """
     if not value:
         return value
-    text = str(value)
-    for prefix, label in _KEY_FAMILIES:
-        if text.startswith(prefix):
-            return f"{label}-…"
-    if len(text) <= keep * 2 + 3:
-        return "*" * len(text)
-    digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:8]
-    return f"…#{digest}"
+    return credential_id(value)
 
 
 def redact_in_text(text: str, patterns: list[re.Pattern[str]] | None = None) -> str:
     if patterns:
         for rx in patterns:
             text = rx.sub(lambda m: redact(m.group(0)), text)
-    return _SECRET_VALUE_RX.sub(lambda m: redact(m.group(0)), text)
+    return sanitize_text(text)
 
 
 def sanitize_record(obj: Any, *, _depth: int = 0) -> Any:
-    """Return a JSON-safe copy with secret-looking keys and values redacted."""
-    if _depth > 12:
-        return "…"
-    if isinstance(obj, dict):
-        out: dict[str, Any] = {}
-        for key, val in obj.items():
-            name = str(key)
-            if _SECRET_KEY_RX.search(name):
-                if isinstance(val, (dict, list)):
-                    out[name] = sanitize_record(val, _depth=_depth + 1)
-                else:
-                    out[name] = redact(str(val)) if val not in (None, "") else val
-            else:
-                out[name] = sanitize_record(val, _depth=_depth + 1)
-        return out
-    if isinstance(obj, list):
-        return [sanitize_record(item, _depth=_depth + 1) for item in obj[:500]]
-    if isinstance(obj, str):
-        if len(obj) > 20 and _SECRET_VALUE_RX.search(obj):
-            return redact_in_text(obj)
-        return obj
-    return obj
+    """Compatibility alias for the shared bounded evidence sanitizer."""
+    return sanitize(obj)
 
 
 def safe_join(root: Path, rel: str) -> Path | None:

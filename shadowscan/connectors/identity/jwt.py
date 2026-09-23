@@ -38,7 +38,7 @@ from shadowscan.connectors.common import (
     name_matches,
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.jwks import verify_against_jwks
+from shadowscan.utils.jwks import verification_algorithms, verify_against_jwks
 from shadowscan.utils.text import parse_timestamp, to_iso
 
 _JWT_RX = re.compile(r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*$")
@@ -53,7 +53,9 @@ class JwtConnector(BaseConnector, _NoDump):
     description: ClassVar[str] = "Classify JWTs as human, service or agent (delegated) identities and assess their privileges."
     config_keys: ClassVar[dict[str, str]] = {
         "tokens": "list of JWT strings",
-        "jwks_url": "optional JWKS endpoint for signature verification",
+        "jwks_url": "optional operator-trusted JWKS endpoint for signature verification",
+        "expected_issuer": "optional exact expected issuer; otherwise signature-only verification",
+        "allowed_algorithms": "optional nonempty subset of RS256, ES256, EdDSA, PS256",
         "input": "file with one token per line or JSON list / objects with `token`",
     }
     offline_formats: ClassVar[str] = "text (one JWT per line) / JSON"
@@ -116,6 +118,13 @@ class JwtConnector(BaseConnector, _NoDump):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         jwks_url = self.ctx.get("jwks_url")
+        try:
+            verification_algorithms(self.ctx.get("allowed_algorithms"))
+            expected_issuer = self.ctx.get("expected_issuer")
+            if expected_issuer is not None and (not isinstance(expected_issuer, str) or not expected_issuer):
+                raise ValueError("expected_issuer must be a nonempty string")
+        except ValueError as exc:
+            raise ConnectorError(f"identity.jwt: {exc}") from exc
         for rec in records:
             token = rec.get("token") or rec.get("jwt") or rec.get("access_token") or rec.get("id_token")
             if not isinstance(token, str) or not _JWT_RX.fullmatch(token.strip()):
@@ -126,19 +135,29 @@ class JwtConnector(BaseConnector, _NoDump):
             if f:
                 yield f
 
+    # -------------------------------------------------------------- analysis
     def analyze_token(self, token: str, jwks_url: str | None = None, context: str | None = None) -> Finding | None:
         import jwt as pyjwt
 
+        if len(token) > 131072:
+            self.ctx.warn("identity.jwt: token exceeds analysis byte limit")
+            return None
         try:
             header = pyjwt.get_unverified_header(token)
             claims = pyjwt.decode(token, options={"verify_signature": False, "verify_exp": False, "verify_aud": False})
-        except pyjwt.PyJWTError as exc:
+        except (pyjwt.PyJWTError, RecursionError, ValueError) as exc:
             self.ctx.warn(f"identity.jwt: cannot decode token ({type(exc).__name__})")
             return None
         verified: bool | None = None
         if jwks_url:
             try:
-                verified = verify_against_jwks(token, str(jwks_url), header, issuer=str(claims.get("iss") or "") or None)
+                verified = verify_against_jwks(
+                    token,
+                    jwks_url,
+                    header,
+                    expected_issuer=self.ctx.get("expected_issuer"),
+                    allowed_algorithms=self.ctx.get("allowed_algorithms"),
+                )
             except Exception as exc:  # noqa: BLE001
                 verified = False
                 self.ctx.warn(f"identity.jwt: signature verification failed ({type(exc).__name__})")
@@ -246,8 +265,16 @@ class JwtConnector(BaseConnector, _NoDump):
         weight = {"human": 0.05, "delegated": 0.35, "service": 0.5, "workload": 0.5, "agent": 0.6, "delegated-agent": 0.75}[identity_type]
         f.add_evidence(Evidence(signal=f"jwt:{identity_type}", description=f"Identity type '{identity_type}' for sub={sub or '?'} iss={iss or '?'}" + (f" ({'; '.join(reasons)})" if reasons else ""), weight=weight))
         if verified is not None:
-            f.add_evidence(Evidence(signal="jwt:signature", description="signature verified against JWKS" if verified else "signature NOT verified", weight=0.0))
+            expected_issuer = self.ctx.get("expected_issuer")
+            verified_description = (
+                "signature and configured issuer verified; expiry and audience NOT validated"
+                if expected_issuer else "signature verified against configured JWKS; issuer, expiry and audience NOT validated"
+            )
+            f.add_evidence(Evidence(signal="jwt:signature", description=verified_description if verified else "signature NOT verified", weight=0.0))
             f.metadata["verified"] = verified
+            f.metadata["verification_scope"] = "signature-and-issuer" if expected_issuer else "signature-only"
+            f.metadata["issuer_verified"] = bool(verified and expected_issuer)
+            f.metadata["authorization_validated"] = False
         f.add_tag(f"identity:{identity_type}")
         f.title = f"JWT ({identity_type}) for {sub or azp or '?'} from {family}"
         f.owner = str(claims.get("email") or claims.get("upn") or claims.get("preferred_username") or "") or None

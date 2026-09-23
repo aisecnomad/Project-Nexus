@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 
 from shadowscan.connectors.code import github as github_mod
-from shadowscan.registry import Inventory, InventoryValidationError
+from shadowscan.registry import Inventory
 from shadowscan.signatures.loader import load_signatures
-from shadowscan.utils.git import clone_environment, git_argv_prefix, safe_git_env, validate_git_ref
+from shadowscan.utils.git import clone_environment, git_argv_prefix, validate_git_ref
 
 
 @pytest.mark.parametrize(

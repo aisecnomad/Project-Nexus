@@ -36,7 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
+from shadowscan.utils.files import read_policy_text
+from shadowscan.utils.safe_yaml import bounded_safe_load
 
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 PATH_KEYS = ("input", "path", "paths", "service_account_file", "config_file", "token_file")
@@ -79,12 +80,27 @@ class ScanConfig:
     parallel: int = 4
     incremental: bool = False
     state_dir: str | None = None
+    plugins: list[str] = field(default_factory=list)
+    allow_signature_override: bool = False
+    allow_private_origin: bool = False
     source: str | None = None
+
+    def __post_init__(self) -> None:
+        self.validate_security_options()
+
+    def validate_security_options(self) -> None:
+        self.plugins = validate_plugins(self.plugins)
+        self.allow_signature_override = _boolean_option(self.allow_signature_override, "allow_signature_override")
+        self.allow_private_origin = _boolean_option(self.allow_private_origin, "allow_private_origin")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], source: str | None = None) -> ScanConfig:
+        if not isinstance(data, dict):
+            raise ValueError("scan configuration must be a mapping")
         data = expand_env(data or {})
         opts = data.get("options") or {}
+        if not isinstance(opts, dict):
+            raise ValueError("options must be a mapping")
         specs: list[ConnectorSpec] = []
         for item in data.get("connectors") or []:
             if isinstance(item, str):
@@ -119,14 +135,18 @@ class ScanConfig:
             parallel=int(opts.get("parallel", 4)),
             incremental=_boolean_option(opts.get("incremental", False), "incremental"),
             state_dir=_resolve(base, opts["state_dir"]) if opts.get("state_dir") else None,
+            plugins=validate_plugins(opts.get("plugins", [])),
+            allow_signature_override=_boolean_option(opts.get("allow_signature_override", False), "allow_signature_override"),
+            allow_private_origin=_boolean_option(opts.get("allow_private_origin", False), "allow_private_origin"),
             source=source,
         )
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ScanConfig:
         p = Path(path)
-        with p.open("r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
+        data = bounded_safe_load(read_policy_text(p))
+        if data is None:
+            data = {}
         return cls.from_dict(data, source=str(p))
 
     def enabled_connectors(self) -> list[ConnectorSpec]:
@@ -144,6 +164,13 @@ def _boolean_option(value: Any, name: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"options.{name} must be a YAML boolean")
     return value
+
+
+def validate_plugins(value: Any) -> list[str]:
+    """Loading a connector imports arbitrary code, so approvals must be explicit names."""
+    if not isinstance(value, list) or any(not isinstance(name, str) or not name.strip() for name in value):
+        raise ValueError("options.plugins must be a list of nonempty connector names")
+    return list(dict.fromkeys(name.strip() for name in value))
 
 
 def _connector_enabled(value: Any) -> bool:

@@ -103,8 +103,9 @@ project from `framework-usage` to `agent`. Plain provider SDK usage never does.
 ## Adding or overriding
 
 Put YAML files in a directory and pass `--signatures DIR` (or `signatures:` in
-the config). A signature with the same `id` as a built-in replaces it
-entirely, so you can:
+the config). Built-in identifiers are reserved by default. A reviewed replacement
+requires `options.allow_signature_override: true` or `--allow-signature-override`;
+it replaces the complete signature, not individual fields. Custom packs can:
 
 * add an internal platform (`platform.acme-agent-runtime`) with its images, hosts and env vars;
 * raise the weight of a scope that is privileged in your tenant;
@@ -145,3 +146,7 @@ risk scoring. `weight` controls confidence in the evidence, not finding severity
 * `file` globs use `fnmatch` on the repository-relative POSIX path; `**/` prefixes match at any depth.
 * Dependency names are normalised PEP 503-style (`Foo_Bar` == `foo-bar`) for every ecosystem.
 * `secret` patterns must be specific enough not to match placeholders; matches are redacted before they reach any report.
+
+Pack traversal does not follow symlinks. Explicit unsafe paths fail validation;
+directory walks skip symlinked entries. YAML parsing has construction budgets
+before schema validation, including bounds on aliases and merge expansion.

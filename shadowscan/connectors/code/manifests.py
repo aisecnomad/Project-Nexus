@@ -16,6 +16,8 @@ from typing import Any
 import regex as re
 import yaml
 
+from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
+
 
 @dataclass(slots=True)
 class Dep:
@@ -244,7 +246,10 @@ def parse_setup_cfg(text: str) -> ManifestResult:
 def parse_conda_env(text: str) -> ManifestResult:
     res = ManifestResult()
     try:
-        data = yaml.safe_load(text)
+        data = bounded_safe_load(text)
+    except YAMLResourceLimitError:
+        res.errors.append("YAML safety limit exceeded")
+        return res
     except yaml.YAMLError:
         res.errors.append("invalid YAML")
         return res

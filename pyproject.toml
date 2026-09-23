@@ -26,7 +26,8 @@ dependencies = [
   "rich>=13.0",
   "PyYAML>=6.0",
   "requests>=2.31",
-  "PyJWT>=2.7",
+  "urllib3>=2.0,<3",
+  "PyJWT[crypto]>=2.7",
   "regex>=2024.5.15",
 ]
 

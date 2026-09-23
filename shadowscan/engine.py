@@ -9,6 +9,7 @@ import os
 import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any
 
 from shadowscan import __version__
@@ -21,7 +22,9 @@ from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface, now
 from shadowscan.registry import Inventory
 from shadowscan.risk import assess
 from shadowscan.signatures import SignatureIndex, get_index
-from shadowscan.utils.redaction import sanitize
+from shadowscan.utils.http import reset_allow_private_origin, set_allow_private_origin
+from shadowscan.utils.output import prepare_private_directory, write_private_text
+from shadowscan.utils.redaction import SanitizationLimitError, sanitize
 
 log = logging.getLogger("shadowscan.engine")
 
@@ -31,8 +34,11 @@ ProgressFn = Callable[[str, str], None]  # (connector id, message)
 class Engine:
     def __init__(self, config: ScanConfig, index: SignatureIndex | None = None, progress: ProgressFn | None = None):
         self.config = config
+        config.validate_security_options()
         self._index_supplied = index is not None
-        self.index = index if index is not None else get_index(extra_dirs=config.signature_dirs or None, reload=True)
+        self.index = index if index is not None else get_index(
+            extra_dirs=config.signature_dirs or None, reload=True, allow_override=config.allow_signature_override,
+        )
         self.progress = progress or (lambda cid, msg: None)
         self.inventory: Inventory | None = None
         if config.inventory:
@@ -41,14 +47,18 @@ class Engine:
     # ------------------------------------------------------------------ run
     def run(self, only: list[str] | None = None) -> ScanResult:
         self.config.min_confidence = validate_min_confidence(self.config.min_confidence)
+        self.config.validate_security_options()
         # A reusable Engine must notice signature pack edits between runs.
         if not self._index_supplied:
-            self.index = get_index(extra_dirs=self.config.signature_dirs or None, reload=True)
+            self.index = get_index(extra_dirs=self.config.signature_dirs or None, reload=True,
+                                   allow_override=self.config.allow_signature_override)
         # Registry approval can change independently of source inputs or an Engine
         # instance's lifetime. It is never persisted in connector cache entries.
         self.inventory = Inventory.load(self.config.inventory) if self.config.inventory else None
         result = ScanResult(version=__version__, inventory_size=len(self.inventory) if self.inventory else 0)
-        specs = [s for s in self.config.enabled_connectors() if not only or s.id in only or s.name in only]
+        jobs = [(number, spec) for number, spec in enumerate(self.config.connectors, 1)
+                if spec.enabled and (not only or spec.id in only or spec.name in only)]
+        specs = [spec for _, spec in jobs]
         result.collection_scope = build_collection_scope(self.config, self.index, specs)
         if not specs:
             log.warning("no connectors selected")
@@ -61,21 +71,28 @@ class Engine:
                 errors=["no connectors selected"],
             ))
         cache = IncrementalCache(self.config, self.index)
-        if self.config.dump_records:
-            os.makedirs(self.config.dump_records, exist_ok=True)
+        dump_directory = prepare_private_directory(self.config.dump_records) if self.config.dump_records else None
+        exports: list[dict[str, Any]] = []
 
-        def _run_one(spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
+        def _lookup(name: str):
+            if self.config.plugins:
+                return get_connector_class(name, allowed_plugins=self.config.plugins)
+            return get_connector_class(name)
+
+        def _run_one(spec: ConnectorSpec, dump_key: str) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
             self.progress(spec.id, "starting")
             cfg = dict(spec.config)
             if spec.label:
                 cfg.setdefault("label", spec.label)
-            if self.config.dump_records:
-                cfg["_dump_path"] = os.path.join(self.config.dump_records, f"{spec.id.replace('.', '_').replace('/', '_')}.jsonl")
+            if dump_directory:
+                label = re.sub(r"[^A-Za-z0-9_-]", "_", spec.id)[:80] or "connector"
+                cfg["_dump_path"] = os.path.join(dump_directory, f"{dump_key}-{label}.jsonl")
             ctx = ConnectorContext(config=cfg, index=self.index, workdir=self.config.workdir)
             fs: list[Finding] = []
             started_at = now_iso()
+            origin_token = set_allow_private_origin(self.config.allow_private_origin)
             try:
-                cls = get_connector_class(spec.name)
+                cls = _lookup(spec.name)
                 # Constructor validation still runs before a cached result is used.
                 connector = cls(ctx)
                 snapshot = cache.snapshot(spec) if cache.supports_connector(spec, cls) else None
@@ -86,15 +103,21 @@ class Engine:
                         self.progress(spec.id, f"{len(fs)} findings (unchanged input; cached)")
                         return spec, fs, st
                 fs = []
-                fs = connector.run()
+                collected = connector.run()
                 st = ctx.stats or ScanStats(
                     connector=spec.id, started_at=started_at, finished_at=now_iso(),
                     incomplete=True, errors=["connector did not report completion status"],
                 )
                 st.connector = spec.id
                 st.incomplete = st.incomplete or bool(st.errors) or st.skipped
-                for finding in fs:
-                    finding.sanitize()
+                for finding in collected:
+                    try:
+                        finding.sanitize()
+                    except SanitizationLimitError:
+                        st.incomplete = True
+                        st.errors.append("finding omitted: sanitization safety limit exceeded")
+                        continue
+                    fs.append(finding)
                 if snapshot and not st.incomplete:
                     # Do not attach a result to a digest computed before an input
                     # changed during collection. Preserve the findings, mark the
@@ -115,13 +138,29 @@ class Engine:
                 st.skip_reason = message if st.skipped else None
                 st.errors.append(message)
                 log.warning("connector failed: %s", message)
+            finally:
+                reset_allow_private_origin(origin_token)
             st.findings = len(fs)
-            st.errors = sanitize(st.errors)
-            st.warnings = sanitize(st.warnings)
+            try:
+                st.errors = sanitize(st.errors)
+                st.warnings = sanitize(st.warnings)
+            except SanitizationLimitError:
+                st.incomplete = True
+                st.errors = ["connector diagnostics omitted: sanitization safety limit exceeded"]
+                st.warnings = []
+            if dump_directory:
+                exported = ctx.dump_path == cfg.get("_dump_path") and ctx.dump_path is not None and not st.skipped
+                exports.append({
+                    "config_ordinal": int(dump_key.split("-")[0]), "part": dump_key,
+                    "connector": spec.name, "label": spec.label,
+                    "filename": Path(ctx.dump_path).name if exported and ctx.dump_path else None,
+                    "complete": not (st.incomplete or st.skipped or st.errors),
+                    "exported": exported,
+                })
             self.progress(spec.id, f"{len(fs)} findings")
             return spec, fs, st
 
-        def _run(spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
+        def _run(number: int, spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
             roots = spec.config.get("paths")
             split_roots = (
                 self.config.incremental and spec.name == "code.filesystem"
@@ -129,21 +168,21 @@ class Engine:
             )
             if split_roots:
                 try:
-                    split_roots = cache.supports_connector(spec, get_connector_class(spec.name))
+                    split_roots = cache.supports_connector(spec, _lookup(spec.name))
                 except Exception:  # noqa: BLE001 - _run_one reports lookup/import failures as incomplete
                     split_roots = False
             if not split_roots or not isinstance(roots, list):
-                return _run_one(spec)
+                return _run_one(spec, f"{number:04d}")
             # Repositories are independent cache units: modifying repo B must not
             # force expensive analysis of unchanged repo A in the same connector.
             combined: list[Finding] = []
             parts: list[ScanStats] = []
-            for root in roots:
+            for root_number, root in enumerate(roots, 1):
                 child_config = {k: v for k, v in spec.config.items() if k != "paths"}
                 child_config["path"] = root
                 _, child_findings, child_stats = _run_one(ConnectorSpec(
                     name=spec.name, config=child_config, label=spec.label,
-                ))
+                ), f"{number:04d}-{root_number:04d}")
                 combined.extend(child_findings)
                 parts.append(child_stats)
             cached_count = sum(s.cached for s in parts)
@@ -164,23 +203,43 @@ class Engine:
 
         workers = max(1, min(self.config.parallel, len(specs) or 1))
         if workers == 1:
-            for spec in specs:
-                _, fs, st = _run(spec)
+            for number, spec in jobs:
+                _, fs, st = _run(number, spec)
                 findings.extend(fs)
                 if st:
                     stats.append(st)
         else:
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="shadowscan") as pool:
-                futures = {pool.submit(_run, spec): spec for spec in specs}
+                futures = {pool.submit(_run, number, spec): spec for number, spec in jobs}
                 for fut in as_completed(futures):
                     _, fs, st = fut.result()
                     findings.extend(fs)
                     if st:
                         stats.append(st)
 
-        findings = merge(findings)
+        omitted = 0
+
+        def safe_findings(candidates: list[Finding]) -> list[Finding]:
+            nonlocal omitted
+            retained = []
+            for finding in candidates:
+                try:
+                    finding.sanitize()
+                except SanitizationLimitError:
+                    omitted += 1
+                    continue
+                retained.append(finding)
+            return retained
+
+        # Individually bounded findings can exceed the output budget when
+        # merged. Reject only that aggregate before correlation touches it.
+        findings = safe_findings(merge(findings))
         correlate(findings)
-        correlate_runtime(findings)
+        postprocess_errors = []
+        try:
+            correlate_runtime(findings)
+        except SanitizationLimitError:
+            postprocess_errors.append("runtime correlation incomplete: sanitization safety limit exceeded")
         for f in findings:
             if self.inventory is not None:
                 entry = self.inventory.match(f)
@@ -189,10 +248,30 @@ class Engine:
                 if entry and not f.owner:
                     f.owner = entry.owner
             f.risk = assess(f, self.index, inventory_present=self.inventory is not None)
-            f.sanitize()
+        findings = safe_findings(findings)
+        if omitted:
+            postprocess_errors.append(f"{omitted} finding(s) omitted after aggregation: sanitization safety limit exceeded")
+        if postprocess_errors:
+            stats.append(ScanStats(
+                connector="engine.postprocess", started_at=result.started_at, finished_at=now_iso(),
+                incomplete=True, errors=postprocess_errors,
+            ))
         if self.config.min_confidence > 0:
             findings = [f for f in findings if f.confidence >= self.config.min_confidence]
         findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
+        if dump_directory:
+            manifest = {
+                "schema": "shadowscan.record-exports/v1", "started_at": result.started_at,
+                "complete": bool(stats) and not any(st.incomplete or st.skipped or st.errors for st in stats),
+                "exports": sorted(exports, key=lambda entry: entry["part"]),
+            }
+            try:
+                write_private_text(Path(dump_directory) / "manifest.json", json.dumps(sanitize(manifest), indent=2) + "\n")
+            except (OSError, ValueError) as exc:
+                stats.append(ScanStats(
+                    connector="engine.exports", started_at=result.started_at, finished_at=now_iso(), incomplete=True,
+                    errors=[f"record export manifest could not be saved: {sanitize(str(exc))}"],
+                ))
         result.findings = findings
         result.stats = sorted(stats, key=lambda s: s.connector)
         result.finished_at = now_iso()

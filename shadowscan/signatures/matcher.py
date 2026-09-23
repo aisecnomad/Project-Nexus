@@ -440,13 +440,13 @@ _index_lock = threading.Lock()
 _default_index: SignatureIndex | None = None
 
 
-def get_index(extra_dirs: list[str] | None = None, reload: bool = False) -> SignatureIndex:
+def get_index(extra_dirs: list[str] | None = None, reload: bool = False, *, allow_override: bool = False) -> SignatureIndex:
     """Return the process-wide signature index (built lazily)."""
     global _default_index
     with _index_lock:
         if _default_index is None or reload or extra_dirs:
             dirs: list[str | os.PathLike[str]] | None = list(extra_dirs) if extra_dirs else None
-            idx = SignatureIndex(load_signatures(extra_dirs=dirs))
+            idx = SignatureIndex(load_signatures(extra_dirs=dirs, allow_override=allow_override))
             if not extra_dirs:
                 _default_index = idx
             return idx

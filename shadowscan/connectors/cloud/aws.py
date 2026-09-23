@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
+from itertools import islice
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
@@ -64,6 +65,7 @@ class AwsConnector(BaseConnector):
         "services": "subset of: bedrock, agentcore, lambda, ecs, sagemaker, stepfunctions, qbusiness, lex, iam, secrets, cloudtrail (default all)",
         "cloudtrail_days": "look-back window for LLM invocation events (default 7, 0 disables)",
         "max_lambda": "cap on Lambda functions per region (default 2000)",
+        "max_ecs_api_calls": "cap on ECS list/detail API calls per region (default 2000; reaching it marks coverage incomplete)",
         "input": "offline: JSONL of dumped records",
     }
     offline_formats: ClassVar[str] = "JSONL dump of records"
@@ -74,6 +76,9 @@ class AwsConnector(BaseConnector):
         self.services = set(ctx.get("services") or ["bedrock", "agentcore", "lambda", "ecs", "sagemaker", "stepfunctions", "qbusiness", "lex", "iam", "secrets", "cloudtrail"])
         self.cloudtrail_days = int(ctx.get("cloudtrail_days", 7))
         self.max_lambda = int(ctx.get("max_lambda", 2000))
+        self.max_ecs_api_calls = int(ctx.get("max_ecs_api_calls", 2000))
+        if self.max_ecs_api_calls < 1:
+            raise ConnectorError("cloud.aws: max_ecs_api_calls must be positive")
         self.account: str | None = ctx.get("account_id")
         self._session: Any = None
 
@@ -145,6 +150,9 @@ class AwsConnector(BaseConnector):
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
+        # Explicit region lists do not create a client. Authenticate before
+        # emitting account metadata rather than relying on region discovery.
+        self._session_()
         regions = self._regions()
         acct = self.account
         yield {"_kind": "account", "account": acct, "regions": regions}
@@ -297,22 +305,153 @@ class AwsConnector(BaseConnector):
 
     def _collect_ecs(self, region: str) -> Iterator[dict[str, Any]]:
         ecs = self._client("ecs", region)
-        families = self._safe(lambda: list(self._paginate(ecs, "list_task_definition_families", "families", status="ACTIVE"))) or []
-        if len(families) > 1000:
-            self.ctx.warn(f"cloud.aws: ECS family limit reached in {region}", incomplete=True)
-        for fam in families[:1000]:
-            td = self._safe(ecs.describe_task_definition, taskDefinition=fam)
-            if not td:
-                continue
-            d = td.get("taskDefinition") or {}
-            yield {
-                "_kind": "ecs-task-definition",
-                "_region": region,
-                "family": fam,
-                "taskDefinitionArn": d.get("taskDefinitionArn"),
-                "taskRoleArn": d.get("taskRoleArn"),
-                "containers": [{"name": c.get("name"), "image": c.get("image"), "environment": {e["name"]: e.get("value") for e in c.get("environment") or []}, "secrets": [s.get("name") for s in c.get("secrets") or []]} for c in d.get("containerDefinitions") or []],
-            }
+        remaining = self.max_ecs_api_calls
+        limit_reported = False
+        definitions: dict[str, dict[str, Any]] = {}
+        attempted: set[str] = set()
+        reference_keys: dict[str, set[str]] = {}
+
+        def call(op: str, **kwargs: Any) -> dict[str, Any] | None:
+            nonlocal remaining, limit_reported
+            if remaining == 0:
+                if not limit_reported:
+                    self.ctx.warn(f"cloud.aws: max_ecs_api_calls reached in {region}", incomplete=True)
+                    limit_reported = True
+                return None
+            remaining -= 1
+            response = self._safe(lambda: getattr(ecs, op)(**kwargs))
+            if response is None:
+                return None
+            if not isinstance(response, dict):
+                self.ctx.warn(f"cloud.aws: invalid ECS {op} response in {region}", incomplete=True)
+                return None
+            if response.get("failures"):
+                self.ctx.warn(f"cloud.aws: partial ECS {op} failure in {region}", incomplete=True)
+            return response
+
+        def identifiers(op: str, key: str, **kwargs: Any) -> Iterator[str]:
+            token = None
+            seen: set[str] = set()
+            while True:
+                response = call(op, maxResults=100, **kwargs, **({"nextToken": token} if token else {}))
+                if response is None:
+                    return
+                values = response.get(key)
+                if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+                    self.ctx.warn(f"cloud.aws: invalid ECS {key} page in {region}", incomplete=True)
+                    return
+                yield from values
+                token = response.get("nextToken")
+                if token is None or token == "":
+                    return
+                if not isinstance(token, str) or token in seen:
+                    self.ctx.warn(f"cloud.aws: invalid or repeated ECS pagination token in {region}", incomplete=True)
+                    return
+                seen.add(token)
+
+        def batches(values: Iterator[str], size: int) -> Iterator[list[str]]:
+            while batch := list(islice(values, size)):
+                yield batch
+
+        def add_definition(identifier: Any, source: str, reference: dict[str, Any] | None = None) -> None:
+            if not isinstance(identifier, str) or not identifier:
+                self.ctx.warn(f"cloud.aws: missing ECS task definition identifier in {region}", incomplete=True)
+                return
+            record = definitions.get(identifier)
+            if record is None:
+                if identifier in attempted:
+                    return
+                attempted.add(identifier)
+                response = call("describe_task_definition", taskDefinition=identifier)
+                if response is None:
+                    return
+                definition = response.get("taskDefinition")
+                if not isinstance(definition, dict) or not isinstance(definition.get("taskDefinitionArn"), str) or not definition["taskDefinitionArn"]:
+                    self.ctx.warn(f"cloud.aws: invalid ECS task definition in {region}", incomplete=True)
+                    return
+                arn = definition["taskDefinitionArn"]
+                if identifier.startswith("arn:") and arn != identifier:
+                    self.ctx.warn(f"cloud.aws: mismatched ECS task definition in {region}", incomplete=True)
+                    return
+                record = definitions.setdefault(arn, {
+                    "_kind": "ecs-task-definition",
+                    "_region": region,
+                    "family": definition.get("family"),
+                    "taskDefinitionArn": arn,
+                    "taskRoleArn": definition.get("taskRoleArn"),
+                    "status": definition.get("status"),
+                    "revision": definition.get("revision"),
+                    "containers": [{"name": c.get("name"), "image": c.get("image"), "environment": {e["name"]: e.get("value") for e in c.get("environment") or []}, "secrets": [s.get("name") for s in c.get("secrets") or []]} for c in definition.get("containerDefinitions") or []],
+                    "discovery_sources": [],
+                    "workload_references": [],
+                    "workload_reference_count": 0,
+                    "workload_references_truncated": False,
+                    "deployment_state": "registered-only",
+                })
+            if source not in record["discovery_sources"]:
+                record["discovery_sources"].append(source)
+            if reference:
+                keys = reference_keys.setdefault(record["taskDefinitionArn"], set())
+                key = json.dumps(reference, sort_keys=True)
+                if key not in keys:
+                    keys.add(key)
+                    record["workload_reference_count"] += 1
+                    # Inventory every referenced definition, but do not embed
+                    # an unbounded fleet of task IDs in a single finding.
+                    if len(record["workload_references"]) < 100:
+                        record["workload_references"].append(reference)
+                    else:
+                        record["workload_references_truncated"] = True
+                if reference.get("task") and reference.get("last_status") == "RUNNING":
+                    record["deployment_state"] = "running-task-observed"
+                elif record["deployment_state"] == "registered-only":
+                    record["deployment_state"] = "workload-referenced"
+
+        # Families resolve to the latest ACTIVE revision, which is not
+        # necessarily deployed. Discover exact references first, including
+        # INACTIVE definitions still used by tasks/services.
+        for cluster in identifiers("list_clusters", "clusterArns"):
+            # Desired RUNNING also covers tasks whose lastStatus is PENDING.
+            tasks = identifiers("list_tasks", "taskArns", cluster=cluster, desiredStatus="RUNNING")
+            for batch in batches(tasks, 100):
+                response = call("describe_tasks", cluster=cluster, tasks=batch)
+                if response is None:
+                    continue
+                returned = response.get("tasks", [])
+                if not isinstance(returned, list) or any(not isinstance(task, dict) for task in returned):
+                    self.ctx.warn(f"cloud.aws: invalid ECS tasks in {region}", incomplete=True)
+                    continue
+                if set(batch) != {task.get("taskArn") for task in returned}:
+                    self.ctx.warn(f"cloud.aws: incomplete ECS task descriptions in {region}", incomplete=True)
+                for task in returned:
+                    add_definition(task.get("taskDefinitionArn"), "task", {
+                        "cluster": cluster, "task": task.get("taskArn"),
+                        "last_status": task.get("lastStatus"), "desired_status": task.get("desiredStatus"),
+                    })
+            services = identifiers("list_services", "serviceArns", cluster=cluster)
+            for batch in batches(services, 10):
+                response = call("describe_services", cluster=cluster, services=batch)
+                if response is None:
+                    continue
+                returned = response.get("services", [])
+                if not isinstance(returned, list) or any(not isinstance(service, dict) for service in returned):
+                    self.ctx.warn(f"cloud.aws: invalid ECS services in {region}", incomplete=True)
+                    continue
+                if set(batch) != {service.get("serviceArn") for service in returned}:
+                    self.ctx.warn(f"cloud.aws: incomplete ECS service descriptions in {region}", incomplete=True)
+                for service in returned:
+                    if service.get("status") == "INACTIVE":
+                        continue
+                    for deployment in [service, *(service.get("deployments") or []), *(service.get("taskSets") or [])]:
+                        if deployment.get("taskDefinition"):
+                            add_definition(deployment["taskDefinition"], "service", {
+                                "cluster": cluster, "service": service.get("serviceArn"),
+                                "deployment": deployment.get("id"), "status": deployment.get("status"),
+                                "running_count": deployment.get("runningCount"), "desired_count": deployment.get("desiredCount"),
+                            })
+        for family in identifiers("list_task_definition_families", "families", status="ACTIVE"):
+            add_definition(family, "registered-family")
+        yield from definitions.values()
 
     def _collect_sagemaker(self, region: str) -> Iterator[dict[str, Any]]:
         sm = self._client("sagemaker", region)
@@ -644,7 +783,9 @@ class AwsConnector(BaseConnector):
         if not f.frameworks and not f.model_providers:
             return None
         f.add_evidence(Evidence(signal="aws:ecs", description=f"Task definition '{rec.get('family')}' containers: {', '.join(str(c.get('image')) for c in rec.get('containers') or [])[:300]}; task role {rec.get('taskRoleArn')}", location=arn, weight=0.2))
-        f.metadata.update({"task_role": rec.get("taskRoleArn"), "containers": [{"name": c.get("name"), "image": c.get("image")} for c in rec.get("containers") or []]})
+        f.metadata.update({"task_role": rec.get("taskRoleArn"), "containers": [{"name": c.get("name"), "image": c.get("image")} for c in rec.get("containers") or []], "task_definition_status": rec.get("status"), "revision": rec.get("revision"), "deployment_state": rec.get("deployment_state", "unknown"), "discovery_sources": rec.get("discovery_sources", []), "workload_references": rec.get("workload_references", []), "workload_reference_count": rec.get("workload_reference_count", len(rec.get("workload_references", []))), "workload_references_truncated": rec.get("workload_references_truncated", False)})
+        if rec.get("workload_references"):
+            f.add_evidence(Evidence(signal="aws:ecs-workload-reference", description="Exact task definition referenced by ECS tasks or services; this shows workload configuration, not observed model invocation.", location=arn, weight=0.2))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_sagemaker_endpoint(self, rec: dict[str, Any]) -> Finding | None:

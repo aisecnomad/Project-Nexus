@@ -9,32 +9,19 @@ import re
 # (release/1.2) are allowed; option-like and traversal forms are not.
 _REF_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$")
 
-_DROP_ENV = (
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_COMMON_DIR",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_REPLACE_REF_BASE",
-    "GIT_SHALLOW_FILE",
-    "GIT_INDEX_FILE",
-    "GIT_PREFIX",
-    "GIT_NAMESPACE",
-    "GIT_CONFIG_PARAMETERS",
-    "GIT_EXEC_PATH",
-)
-
 
 def validate_git_ref(name: str | None) -> str | None:
     """Return *name* if it is a conservative branch/tag, otherwise None."""
     if not isinstance(name, str):
         return None
-    value = name.strip()
+    value = name
     if not value or not _REF_RX.fullmatch(value):
         return None
-    if value.startswith("-") or value.startswith("/") or value.endswith("/") or value.endswith(".lock"):
+    if value.startswith("-") or value.startswith("/") or value.endswith(("/", ".")):
         return None
     if ".." in value or "//" in value or "@{" in value or "\\" in value:
+        return None
+    if any(part.startswith(".") or part.endswith(".lock") for part in value.split("/")):
         return None
     return value
 
@@ -42,14 +29,16 @@ def validate_git_ref(name: str | None) -> str | None:
 def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """Environment for git child processes.
 
-    Drops workspace-override variables and ignores system/global gitconfig so
+    Drops inherited Git variables and ignores system/global gitconfig so
     ``url.*.insteadOf``, credential helpers and smudge filters cannot rewrite
     a clone of untrusted content. Callers may add ``GIT_CONFIG_*`` overlays
     for origin-scoped extraheaders.
     """
-    env = dict(os.environ)
-    for key in _DROP_ENV:
-        env.pop(key, None)
+    # In particular, GIT_CONFIG_COUNT/KEY_n/VALUE_n must not survive: Git gives
+    # them command-scope precedence over the otherwise-disabled config files.
+    # Clear the namespace rather than maintain a partial list of overrides.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.pop("SSH_ASKPASS", None)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
