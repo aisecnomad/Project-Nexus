@@ -10,6 +10,14 @@ Live HTTP endpoints require HTTPS; redirects and pagination cannot send credenti
 to another origin. Denied access, collection failures and pagination limits make
 the scan incomplete rather than producing a clean result.
 
+Offline file and directory inputs use shared safety limits: 10,000 files,
+32 MiB per file and 256 MiB total per connector by default. JSONL, CSV and gateway
+text logs stream line by line, with a 4 MiB line cap; gzip gateway logs are bounded
+by expanded size. Override `max_input_files`, `max_input_file_bytes` or
+`max_input_bytes` in the connector config when a trusted export needs larger
+limits. The existing hard ceilings remain 64 MiB per file and 512 MiB total.
+Any skipped symlink or input-limit hit marks the connector incomplete.
+
 See [scan state and runtime correlation](scanning.md) for incremental scans,
 gateway workload bindings and completion semantics.
 

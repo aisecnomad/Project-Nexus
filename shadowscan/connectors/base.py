@@ -16,14 +16,17 @@ Every connector supports two execution modes:
 from __future__ import annotations
 
 import csv
+import gzip
 import importlib
 import json
 import logging
 import os
 import stat
 import tempfile
+import zlib
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -36,6 +39,43 @@ from shadowscan.utils.redaction import sanitize
 
 class ConnectorError(RuntimeError):
     """Raised when a connector cannot run at all (bad config, missing creds)."""
+
+
+_DEFAULT_MAX_INPUT_BYTES = 256 * 1024 * 1024
+_DEFAULT_MAX_INPUT_FILE_BYTES = 32 * 1024 * 1024
+_DEFAULT_MAX_INPUT_FILES = 10_000
+_MAX_OFFLINE_LINE_BYTES = 4 * 1024 * 1024
+
+
+@dataclass(slots=True)
+class _OfflineInputBudget:
+    max_bytes: int
+    max_files: int
+    bytes_read: int = 0
+    files_seen: int = 0
+    file_limit_warning_sent: bool = False
+
+    @property
+    def remaining_bytes(self) -> int:
+        return max(0, self.max_bytes - self.bytes_read)
+
+    def consume(self, count: int) -> bool:
+        if count < 0 or count > self.remaining_bytes:
+            return False
+        self.bytes_read += count
+        return True
+
+
+def _positive_limit(value: Any, name: str) -> int:
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        raise ConnectorError(f"{name} must be a positive integer")
+    try:
+        limit = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ConnectorError(f"{name} must be a positive integer") from exc
+    if limit < 1:
+        raise ConnectorError(f"{name} must be a positive integer")
+    return limit
 
 
 class ConnectorContext:
@@ -112,6 +152,15 @@ class BaseConnector(ABC):
         self.ctx = ctx
         self.index = ctx.index
         self.log = ctx.log
+        self.max_input_bytes = min(
+            _positive_limit(ctx.get("max_input_bytes", _DEFAULT_MAX_INPUT_BYTES), "max_input_bytes"),
+            self._MAX_OFFLINE_TOTAL_BYTES,
+        )
+        self.max_input_file_bytes = min(
+            _positive_limit(ctx.get("max_input_file_bytes", _DEFAULT_MAX_INPUT_FILE_BYTES), "max_input_file_bytes"),
+            self._MAX_OFFLINE_FILE_BYTES,
+        )
+        self.max_input_files = _positive_limit(ctx.get("max_input_files", _DEFAULT_MAX_INPUT_FILES), "max_input_files")
 
     # ----------------------------------------------------------------- modes
     @property
@@ -144,6 +193,9 @@ class BaseConnector(ABC):
     _MAX_OFFLINE_TOTAL_BYTES = 512 * 1024 * 1024
     _MAX_OFFLINE_ENTRIES = 200_000
 
+    def _offline_budget(self) -> _OfflineInputBudget:
+        return _OfflineInputBudget(self.max_input_bytes, self.max_input_files)
+
     def _offline_files(self, path: str, suffixes: set[str] | None = None) -> Iterator[Path]:
         """Find exports without traversing links; rejected inputs affect completeness."""
         root = Path(path).expanduser().absolute()
@@ -162,6 +214,7 @@ class BaseConnector(ABC):
             self.ctx.error(f"{self.name}: offline input must be a regular file or directory")
             return
         count = 0
+        files_seen = 0
         found = False
 
         def failed(_: OSError) -> None:
@@ -176,7 +229,7 @@ class BaseConnector(ABC):
             kept = []
             for name in sorted(dirs):
                 if (base / name).is_symlink():
-                    self.ctx.error(f"{self.name}: skipped symlink in offline directory")
+                    self.ctx.warn(f"{self.name}: offline input symlinks are skipped")
                 else:
                     kept.append(name)
             dirs[:] = kept
@@ -188,15 +241,19 @@ class BaseConnector(ABC):
                     failed(OSError())
                     continue
                 if not stat.S_ISREG(mode):
-                    self.ctx.error(f"{self.name}: skipped symlink or special file in offline directory")
+                    self.ctx.warn(f"{self.name}: offline input symlinks or special files are skipped")
                     continue
                 if item.suffix.lower() in suffixes:
                     found = True
+                    if files_seen >= self.max_input_files:
+                        self.ctx.warn(f"{self.name}: max_input_files ({self.max_input_files}) reached")
+                        return
+                    files_seen += 1
                     yield item
         if not found:
             self.ctx.error(f"{self.name}: offline directory contains no supported export files")
 
-    def _read_offline_bytes(self, path: Path) -> bytes | None:
+    def _read_offline_bytes(self, path: Path, budget: _OfflineInputBudget | None = None) -> bytes | None:
         """Open every path component without following links, then read a bounded file.
 
         A directory swapped to a symlink after traversal cannot redirect the open.
@@ -218,17 +275,28 @@ class BaseConnector(ABC):
             before = os.fstat(file_fd)
             if not stat.S_ISREG(before.st_mode):
                 raise ValueError("offline input is not a regular file")
-            used = getattr(self, "_offline_bytes_read", 0)
-            remaining = self._MAX_OFFLINE_TOTAL_BYTES - used
-            limit = min(self._MAX_OFFLINE_FILE_BYTES, remaining)
+            used = budget.bytes_read if budget is not None else getattr(self, "_offline_bytes_read", 0)
+            remaining = (budget.max_bytes - used) if budget is not None else (self.max_input_bytes - used)
+            limit = min(self.max_input_file_bytes, remaining, self._MAX_OFFLINE_FILE_BYTES, self._MAX_OFFLINE_TOTAL_BYTES - used)
             if before.st_size > limit:
+                if budget is not None:
+                    limit_name = "max_input_file_bytes" if self.max_input_file_bytes <= remaining else "max_input_bytes"
+                    self.ctx.warn(f"{self.name}: {limit_name} reached; oversized offline input was skipped")
+                    return None
                 raise ValueError("offline input exceeds the byte limit")
             with os.fdopen(file_fd, "rb") as stream:
                 file_fd = None
                 raw = stream.read(limit + 1)
                 after = os.fstat(stream.fileno())
-            self._offline_bytes_read = used + len(raw)
+            if budget is None:
+                self._offline_bytes_read = used + len(raw)
+            else:
+                budget.consume(len(raw))
             if len(raw) > limit:
+                if budget is not None:
+                    limit_name = "max_input_file_bytes" if self.max_input_file_bytes <= remaining else "max_input_bytes"
+                    self.ctx.warn(f"{self.name}: {limit_name} reached; oversized offline input was skipped")
+                    return None
                 raise ValueError("offline input exceeds the byte limit")
             if any(getattr(before, key) != getattr(after, key) for key in ("st_size", "st_mtime_ns", "st_ctime_ns")):
                 raise ValueError("offline input changed while being read")
@@ -244,8 +312,8 @@ class BaseConnector(ABC):
             if parent_fd is not None:
                 os.close(parent_fd)
 
-    def _read_offline_text(self, path: Path) -> str | None:
-        raw = self._read_offline_bytes(path)
+    def _read_offline_text(self, path: Path, budget: _OfflineInputBudget | None = None) -> str | None:
+        raw = self._read_offline_bytes(path, budget)
         if raw is None:
             return None
         try:
@@ -254,39 +322,159 @@ class BaseConnector(ABC):
             self.ctx.error(f"{self.name}: offline input is not valid UTF-8")
             return None
 
+    def _iter_offline_files(
+        self, path: str, budget: _OfflineInputBudget, suffixes: set[str] | None = None
+    ) -> Iterator[Path]:
+        for source in self._offline_files(path, suffixes):
+            if budget.files_seen >= budget.max_files:
+                if not budget.file_limit_warning_sent:
+                    self.ctx.warn(f"{self.name}: max_input_files ({budget.max_files}) reached")
+                    budget.file_limit_warning_sent = True
+                return
+            budget.files_seen += 1
+            yield source
+
+    def read_offline_text(self, path: str) -> str | None:
+        """Read one bounded regular offline text file for specialized connectors."""
+        source = Path(path).expanduser()
+        if source.is_symlink():
+            self.ctx.warn(f"{self.name}: offline input symlinks are skipped")
+            return None
+        if not source.is_file():
+            raise ConnectorError(f"{self.name}: offline input must be a regular file")
+        budget = self._offline_budget()
+        budget.files_seen = 1
+        return self._read_offline_text(source, budget)
+
+    def _iter_bounded_lines(
+        self, path: Path, budget: _OfflineInputBudget, *, compressed: bool = False
+    ) -> Iterator[str]:
+        """Read UTF-8 lines with secure opens and per-file, aggregate, and line caps."""
+        parent_fd: int | None = None
+        file_fd: int | None = None
+        try:
+            absolute = path.expanduser().absolute()
+            if not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd:
+                raise ValueError("secure offline file access is unavailable on this platform")
+            flags = os.O_RDONLY | os.O_NOFOLLOW
+            parent_fd = os.open(absolute.anchor, flags | os.O_DIRECTORY)
+            for part in absolute.parts[1:-1]:
+                next_fd = os.open(part, flags | os.O_DIRECTORY, dir_fd=parent_fd)
+                os.close(parent_fd)
+                parent_fd = next_fd
+            file_fd = os.open(absolute.name, flags | os.O_NONBLOCK, dir_fd=parent_fd)
+            before = os.fstat(file_fd)
+            if not stat.S_ISREG(before.st_mode):
+                self.ctx.warn(f"{self.name}: offline input is not a regular file")
+                return
+            if before.st_size > min(self.max_input_file_bytes, self._MAX_OFFLINE_FILE_BYTES):
+                self.ctx.warn(f"{self.name}: max_input_file_bytes ({self.max_input_file_bytes}) reached")
+                return
+            with os.fdopen(file_fd, "rb") as raw:
+                file_fd = None
+                stream = gzip.GzipFile(fileobj=raw, mode="rb") if compressed else raw
+                file_bytes = 0
+                try:
+                    while True:
+                        remaining = min(self.max_input_file_bytes - file_bytes, budget.remaining_bytes)
+                        read_size = min(_MAX_OFFLINE_LINE_BYTES + 1, remaining + 1)
+                        line = stream.readline(read_size)
+                        if not line:
+                            break
+                        if len(line) > _MAX_OFFLINE_LINE_BYTES:
+                            self.ctx.warn(f"{self.name}: max_input_line_bytes ({_MAX_OFFLINE_LINE_BYTES}) reached")
+                            return
+                        if len(line) > remaining:
+                            limit_name = "max_input_file_bytes" if self.max_input_file_bytes - file_bytes <= budget.remaining_bytes else "max_input_bytes"
+                            self.ctx.warn(f"{self.name}: {limit_name} reached; remaining offline input was skipped")
+                            return
+                        if not budget.consume(len(line)):
+                            self.ctx.warn(f"{self.name}: max_input_bytes ({budget.max_bytes}) reached")
+                            return
+                        file_bytes += len(line)
+                        try:
+                            yield line.decode("utf-8-sig")
+                        except UnicodeDecodeError:
+                            self.ctx.error(f"{self.name}: offline input is not valid UTF-8")
+                            return
+                finally:
+                    if compressed:
+                        stream.close()
+                after = os.fstat(raw.fileno())
+                if any(getattr(before, key) != getattr(after, key) for key in ("st_size", "st_mtime_ns", "st_ctime_ns")):
+                    self.ctx.error(f"{self.name}: offline input changed while being read")
+        except (OSError, EOFError, gzip.BadGzipFile, ValueError, zlib.error) as exc:
+            detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+            self.ctx.warn(f"{self.name}: offline input could not be read ({detail})")
+        finally:
+            if file_fd is not None:
+                os.close(file_fd)
+            if parent_fd is not None:
+                os.close(parent_fd)
+
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
-        """Validate exports and preserve valid records beside malformed records."""
-        for source in self._offline_files(path):
-            text = self._read_offline_text(source)
-            if text is None:
-                continue
-            if not text.strip():
-                self.ctx.error(f"{self.name}: empty offline export; use [] for an empty inventory")
-                continue
-            def report(message: str) -> None:
-                self.ctx.error(f"{self.name}: {message}")
-            suffix = source.suffix.lower()
-            if suffix == ".csv":
-                yield from self._csv_records(text, report)
-            elif suffix in {".yaml", ".yml"}:
-                try:
-                    data = yaml.safe_load(text)
-                except (yaml.YAMLError, RecursionError, ValueError):
-                    report("invalid YAML export")
+        """Validate exports under shared input budgets and preserve valid records."""
+        budget = self._offline_budget()
+        for source in self._iter_offline_files(path, budget, self._OFFLINE_SUFFIXES):
+            yield from self._load_offline_file(source, budget)
+
+    def _load_offline_file(self, source: Path, budget: _OfflineInputBudget) -> Iterator[dict[str, Any]]:
+        suffix = source.suffix.lower()
+        def report(message: str) -> None:
+            self.ctx.error(f"{self.name}: {message}")
+
+        if suffix in {".jsonl", ".ndjson"}:
+            saw_record = False
+            for number, line in enumerate(self._iter_bounded_lines(source, budget), 1):
+                if not line.strip():
                     continue
-                yield from self._unwrap(data, report)
-            elif suffix in {".jsonl", ".ndjson"}:
-                yield from self._json_lines(text, report)
-            else:
+                saw_record = True
                 try:
-                    data = json.loads(text)
-                except json.JSONDecodeError:
-                    # Preserve support for JSONL documents named .json.
-                    yield from self._json_lines(text, report)
-                except (RecursionError, ValueError):
-                    report("invalid JSON export")
-                else:
-                    yield from self._unwrap(data, report)
+                    data = json.loads(line)
+                except (json.JSONDecodeError, RecursionError, ValueError):
+                    report(f"invalid JSON record at line {number}")
+                    continue
+                yield from self._unwrap(data, lambda message: report(f"line {number}: {message}"))
+            if not saw_record:
+                report("empty offline export; use [] for an empty inventory")
+            return
+        if suffix == ".csv":
+            try:
+                reader = csv.DictReader(self._iter_bounded_lines(source, budget), strict=True)
+                fields = reader.fieldnames
+                if not fields or any(not field.strip() for field in fields) or len(set(fields)) != len(fields):
+                    report("CSV export needs unique, nonempty column names")
+                    return
+                for rec in reader:
+                    if None in rec or any(value is None for value in rec.values()):
+                        report(f"CSV row at line {reader.line_num} has the wrong number of columns")
+                        continue
+                    yield rec
+            except csv.Error:
+                report("invalid CSV export")
+            return
+        text = self._read_offline_text(source, budget)
+        if text is None:
+            return
+        if not text.strip():
+            report("empty offline export; use [] for an empty inventory")
+            return
+        if suffix in {".yaml", ".yml"}:
+            try:
+                data = yaml.safe_load(text)
+            except (yaml.YAMLError, RecursionError, ValueError):
+                report("invalid YAML export")
+                return
+            yield from self._unwrap(data, report)
+            return
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            yield from self._json_lines(text, report)
+        except (RecursionError, ValueError):
+            report("invalid JSON export")
+        else:
+            yield from self._unwrap(data, report)
 
     @staticmethod
     def _json_lines(text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:

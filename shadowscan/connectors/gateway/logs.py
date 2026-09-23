@@ -36,7 +36,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.base import (
+    _MAX_OFFLINE_LINE_BYTES,
+    BaseConnector,
+    ConnectorContext,
+    ConnectorError,
+    _positive_limit,
+)
 from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -726,6 +732,9 @@ class GatewayLogConnector(BaseConnector):
         "min_events": "ignore callers with fewer events (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
         "max_records": "stop after N records (default 5,000,000)",
+        "max_input_bytes": "maximum expanded bytes read across offline files (default 256 MiB)",
+        "max_input_file_bytes": "maximum expanded bytes read from one offline file (default 32 MiB)",
+        "max_input_files": "maximum offline files in a directory input (default 10,000)",
         "correlation_bindings": "explicit [{code_resource, caller, scope}] mappings to workload identities; scope must exactly match log tenant/account/project/workspace fields ({} for unscoped exports)",
     }
     offline_formats: ClassVar[str] = "JSONL / JSON / CSV / text access logs"
@@ -735,7 +744,7 @@ class GatewayLogConnector(BaseConnector):
         self.format = ctx.get("format")
         self.min_events = int(ctx.get("min_events", 1))
         self.llm_hosts_only = bool(ctx.get("llm_hosts_only", True))
-        self.max_records = int(ctx.get("max_records", 5_000_000))
+        self.max_records = _positive_limit(ctx.get("max_records", 5_000_000), "max_records")
         self.label = ctx.get("label") or ctx.get("gateway_name")
         if self.format not in {None, "litellm", "portkey", "kong", "cloudflare", "helicone", "langfuse", "bedrock", "azure-openai", "vertex", "openai-usage", "anthropic-usage", "access-log", "generic"}:
             raise ConnectorError("gateway.logs: unsupported format")
@@ -848,64 +857,60 @@ class GatewayLogConnector(BaseConnector):
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
         suffixes = {".json", ".jsonl", ".ndjson", ".csv", ".log", ".txt", ".gz"}
-        for source in self._offline_files(path, suffixes):
-            text: str | None
+        budget = self._offline_budget()
+        for source in self._iter_offline_files(path, budget, suffixes):
             suffix = source.suffix.lower()
             if suffix == ".csv":
-                for rec in super().load_offline(str(source)):
+                for rec in self._load_offline_file(source, budget):
                     yield from self._expand_record(rec)
                 continue
-            if suffix in {".json", ".jsonl", ".ndjson"}:
-                text = self._read_offline_text(source)
+            if suffix in {".jsonl", ".ndjson"}:
+                saw_record = False
+                for number, line in enumerate(self._iter_bounded_lines(source, budget), 1):
+                    if not line.strip():
+                        continue
+                    saw_record = True
+                    try:
+                        data = json.loads(line)
+                    except (json.JSONDecodeError, RecursionError, ValueError):
+                        self.ctx.error(f"gateway.logs: invalid JSON record at line {number}")
+                        continue
+                    if not isinstance(data, dict):
+                        self.ctx.error(f"gateway.logs: line {number}: JSONL records must be objects")
+                        continue
+                    for rec in self._gateway_records(data):
+                        yield from self._expand_record(rec)
+                if not saw_record:
+                    self.ctx.error("gateway.logs: empty offline export; use [] for an empty inventory")
+                continue
+            if suffix == ".json":
+                text = self._read_offline_text(source, budget)
                 if text is None:
                     continue
                 if not text.strip():
                     self.ctx.error("gateway.logs: empty offline export; use [] for an empty inventory")
                     continue
-                if suffix == ".json":
-                    try:
-                        data = json.loads(text)
-                    except json.JSONDecodeError:
-                        # A .json export may contain one JSON object per line.
-                        yield from self._json_gateway_lines(text)
-                    except (RecursionError, ValueError):
-                        self.ctx.error("gateway.logs: invalid JSON export")
-                    else:
-                        for rec in self._gateway_records(data):
-                            yield from self._expand_record(rec)
-                else:
-                    yield from self._json_gateway_lines(text)
-                continue
-            if suffix == ".gz":
-                import gzip
-                import io
-                import zlib
-
-                raw = self._read_offline_bytes(source)
-                if raw is None:
-                    continue
-                remaining = self._MAX_OFFLINE_TOTAL_BYTES - getattr(self, "_offline_bytes_read", 0)
-                limit = min(self._MAX_OFFLINE_FILE_BYTES, remaining)
                 try:
-                    with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
-                        expanded = stream.read(limit + 1)
-                    self._offline_bytes_read += len(expanded)
-                    if len(expanded) > limit:
-                        raise ValueError("expanded log exceeds byte limit")
-                    text = expanded.decode("utf-8-sig")
-                except (OSError, EOFError, ValueError, UnicodeError, zlib.error):
-                    self.ctx.error("gateway.logs: compressed log is invalid or exceeds byte limit")
-                    continue
-            else:
-                text = self._read_offline_text(source)
-                if text is None:
-                    continue
-            if not text.strip():
-                self.ctx.warn("gateway.logs: empty text export; use [] for an empty JSON export")
-            for number, line in enumerate(text.splitlines(), 1):
+                    data = json.loads(text)
+                except json.JSONDecodeError:
+                    # A .json export may contain one JSON object per line.
+                    yield from self._json_gateway_lines(text.splitlines())
+                except (RecursionError, ValueError):
+                    self.ctx.error("gateway.logs: invalid JSON export")
+                else:
+                    for rec in self._gateway_records(data):
+                        yield from self._expand_record(rec)
+                continue
+            saw_content = False
+            for number, line in enumerate(
+                self._iter_bounded_lines(source, budget, compressed=suffix == ".gz"), 1
+            ):
+                saw_content = saw_content or bool(line.strip())
                 parsed = self._parse_line(line, f"line {number}")
                 if parsed is not None:
                     yield from self._expand_record(parsed)
+            if not saw_content:
+                self.ctx.warn("gateway.logs: empty text export; use [] for an empty JSON export")
 
     def _gateway_records(self, data: Any) -> Iterator[dict[str, Any]]:
         # CloudWatch and usage buckets carry context on the enclosing object.
@@ -927,10 +932,13 @@ class GatewayLogConnector(BaseConnector):
         else:
             yield from self._unwrap(data, lambda message: self.ctx.error(f"gateway.logs: {message}"))
 
-    def _json_gateway_lines(self, text: str) -> Iterator[dict[str, Any]]:
-        for number, line in enumerate(text.splitlines(), 1):
+    def _json_gateway_lines(self, lines: Iterable[str]) -> Iterator[dict[str, Any]]:
+        for number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
+            if len(line.encode("utf-8")) > _MAX_OFFLINE_LINE_BYTES:
+                self.ctx.warn(f"gateway.logs: max_input_line_bytes ({_MAX_OFFLINE_LINE_BYTES}) reached")
+                return
             try:
                 data = json.loads(line)
             except (json.JSONDecodeError, RecursionError, ValueError):
@@ -948,10 +956,10 @@ class GatewayLogConnector(BaseConnector):
         n = 0
         skipped = 0
         for rec in records:
-            n += 1
-            if n > self.max_records:
+            if n >= self.max_records:
                 self.ctx.warn(f"gateway.logs: max_records ({self.max_records}) reached")
                 break
+            n += 1
             try:
                 schema = self.format or detect_schema(rec)
                 ev = normalise(rec, schema)
