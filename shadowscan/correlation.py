@@ -9,6 +9,7 @@ or continuing activity beyond the exported observation window.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from shadowscan.models import Evidence, Finding, Surface
@@ -72,6 +73,8 @@ def correlate_runtime(findings: list[Finding]) -> None:
                 "identity_basis": observation["identity_basis"],
             })
         if matches:
+            # Worker completion/configuration order cannot change provenance.
+            matches.sort(key=lambda match: json.dumps(match, sort_keys=True))
             first_seen = min(match["first_seen"] for match in matches)
             last_seen = max(match["last_seen"] for match in matches)
             environments = sorted({match["environment"] for match in matches if match["environment"]})
@@ -87,6 +90,7 @@ def correlate_runtime(findings: list[Finding]) -> None:
                 "production_observed": production_events > 0,
                 "production_events": production_events,
                 "sources": matches,
+                "event_counting": "Source observations; distinct exports may overlap and are not deduplicated into unique requests.",
                 "limitations": "Export-window telemetry and framework fingerprints; not an execution attestation or evidence of current activity.",
             }
             code.add_evidence(Evidence(

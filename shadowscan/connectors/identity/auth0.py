@@ -93,7 +93,14 @@ class Auth0Connector(BaseConnector):
         grant_types = c.get("grant_types") or []
         machine = c.get("app_type") == "non_interactive" or "client_credentials" in grant_types or bool(grants)
         scopes = sorted({s for g in grants for s in (g.get("scope") or [])})
-        audiences = sorted({g.get("audience") for g in grants if g.get("audience")})
+        api_audiences: set[str] = set()
+        for grant in grants:
+            audience = grant.get("audience")
+            if not isinstance(audience, str) or not audience.strip():
+                self.ctx.warn("identity.auth0: client grant has no valid audience identifier")
+                continue
+            api_audiences.add(audience)
+        audiences = sorted(api_audiences)
         kind = identity_kind_for(user_consented=not machine, machine=machine)
         f = Finding(
             surface=Surface.IDENTITY,

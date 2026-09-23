@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from shadowscan import __version__
+from shadowscan.comparison import build_collection_scope
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.correlation import correlate_runtime
@@ -42,6 +43,7 @@ class Engine:
         self.inventory = Inventory.load(self.config.inventory) if self.config.inventory else None
         result = ScanResult(version=__version__, inventory_size=len(self.inventory) if self.inventory else 0)
         specs = [s for s in self.config.enabled_connectors() if not only or s.id in only or s.name in only]
+        result.collection_scope = build_collection_scope(self.config, self.index, specs)
         if not specs:
             log.warning("no connectors selected")
         findings: list[Finding] = []
@@ -190,7 +192,13 @@ class Engine:
 
 
 def merge(findings: list[Finding]) -> list[Finding]:
-    """Merge findings with the same id (same object seen by the same connector twice)."""
+    """Merge findings with the same id (same object seen by the same connector twice).
+
+    Gateway IDs include export source identity. Repeated scans of the same
+    configured source are idempotent here; observations from distinct exports
+    remain separate even if caller and scope match. No cross-source request
+    deduplication is inferred from matching timestamps or caller names.
+    """
     by_id: dict[str, Finding] = {}
     for f in findings:
         cur = by_id.get(f.id)
@@ -278,9 +286,9 @@ def correlate(findings: list[Finding]) -> None:
         return
     by_id = {f.id: f for f in findings}
     for fid, others in related.items():
-        f = by_id.get(fid)
-        if f:
+        linked_finding = by_id.get(fid)
+        if linked_finding:
             # only link across different connectors / surfaces (within one connector duplicates are merged already)
-            links = sorted(o for o in others if by_id.get(o) and (by_id[o].connector != f.connector or by_id[o].surface != f.surface))
+            links = sorted(o for o in others if by_id.get(o) and (by_id[o].connector != linked_finding.connector or by_id[o].surface != linked_finding.surface))
             if links:
-                f.metadata["related"] = links
+                linked_finding.metadata["related"] = links

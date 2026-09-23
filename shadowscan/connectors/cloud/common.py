@@ -20,7 +20,7 @@ def cloud_finding(
     *,
     kind: Kind,
     title: str,
-    resource: str,
+    resource: str | None,
     resource_type: str,
     account: str | None,
     region: str | None = None,
@@ -29,6 +29,8 @@ def cloud_finding(
     last_seen: str | None = None,
     surface: Surface = Surface.CLOUD,
 ) -> Finding:
+    if not isinstance(resource, str) or not resource.strip():
+        raise ValueError("cloud record is missing a nonempty resource identifier")
     return Finding(
         surface=surface,
         connector=connector,

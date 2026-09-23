@@ -240,7 +240,7 @@ class GitLabConnector(BaseConnector):
                 yield self._identity_finding({"_kind": "project_bot", "project": full, **member})
 
     def _variables_finding(self, scope_name: str, variables: list[dict[str, Any]], scope: str) -> Finding | None:
-        names = [v.get("key") for v in variables if v.get("key")]
+        names = [key for v in variables if isinstance(key := v.get("key"), str) and key]
         matches = []
         for n in names:
             matches.extend(self.index.match_env(n))

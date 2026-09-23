@@ -6,7 +6,7 @@ It sweeps the six places agents hide — code repositories, identity providers,
 LLM gateway logs, low-code platforms, SaaS apps and cloud accounts — fingerprints
 the frameworks and model providers they use, scores their risk, and reconciles
 every discovery against your sanctioned inventory of
-[Agent Cards](Agent%20Card). What is left over is
+[Agent Cards](agent-card.yaml). What is left over is
 *shadow*.
 
 ```
