@@ -37,6 +37,23 @@ API_MODE_MAX_FILES = 400
 SOURCE_SAMPLE = 150
 
 
+class _OfflineRepository(dict[str, Any]):
+    """Local scan authority created only by the directory input loader.
+
+    The path is an attribute, never a JSON control field: neither a remote API
+    response nor an exported/reloaded dictionary can impersonate this record.
+    """
+
+    def __init__(self, data: dict[str, Any], local_path: str):
+        super().__init__(data)
+        self.local_path = local_path
+
+
+def _remote_record(data: dict[str, Any]) -> dict[str, Any]:
+    """Discard private dispatch fields before accepting provider JSON."""
+    return {key: value for key, value in data.items() if not key.startswith("_")}
+
+
 def repository_target(root: str, path: str) -> Path:
     """Validate API tree paths before fetching or writing outside the checkout."""
     rel = PurePosixPath(path)
@@ -62,6 +79,7 @@ class GitHubConnector(BaseConnector):
         "include_forks": "scan forks (default false)",
         "max_repos": "cap on repositories (default 500)",
         "scan_timeout": "matching budget in seconds per file (default 2)",
+        "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "clone_depth": "git clone depth (default 1)",
         "topics": "only repositories with any of these topics",
         "input": "offline: directory containing cloned repositories",
@@ -104,7 +122,7 @@ class GitHubConnector(BaseConnector):
                 if data:
                     if data["full_name"] not in seen:
                         seen.add(data["full_name"])
-                        yield data
+                        yield _remote_record(data)
                 else:
                     self.ctx.warn(f"code.github: cannot access {full}", incomplete=True)
         if org:
@@ -114,7 +132,7 @@ class GitHubConnector(BaseConnector):
                         self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
                         return
                     seen.add(r["full_name"])
-                    yield r
+                    yield _remote_record(r)
         if user:
             for r in self.http.paginate_link(f"/users/{user}/repos", params={"per_page": 100, "sort": "pushed"}):
                 if r["full_name"] not in seen and self._wanted(r):
@@ -122,7 +140,7 @@ class GitHubConnector(BaseConnector):
                         self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
                         return
                     seen.add(r["full_name"])
-                    yield r
+                    yield _remote_record(r)
 
     def _wanted(self, r: dict[str, Any]) -> bool:
         if r.get("archived") and not self.include_archived:
@@ -155,7 +173,7 @@ class GitHubConnector(BaseConnector):
                     self.ctx.warn("code.github: offline clone path escaped its input directory")
                     continue
                 count += 1
-                yield {"full_name": child.name, "_local_path": str(child), "owner": {"login": child.name.split("__")[0] if "__" in child.name else child.name}}
+                yield _OfflineRepository({"full_name": child.name, "owner": {"login": child.name.split("__")[0] if "__" in child.name else child.name}}, str(child))
         except OSError:
             self.ctx.warn("code.github: could not enumerate offline clones")
 
@@ -164,7 +182,8 @@ class GitHubConnector(BaseConnector):
         for repo in records:
             full = repo.get("full_name") or repo.get("name")
             self.ctx.examined()
-            local = repo.get("_local_path")
+            offline = isinstance(repo, _OfflineRepository)
+            local = repo.local_path if isinstance(repo, _OfflineRepository) else None
             tmp: str | None = None
             try:
                 if not local:
@@ -173,7 +192,7 @@ class GitHubConnector(BaseConnector):
                     if not local:
                         continue
                 yield from self._scan_local(repo, local)
-                if not repo.get("_local_path"):
+                if not offline:
                     yield from self._repo_level_findings(repo)
             except HttpError as exc:
                 self.ctx.warn(f"code.github: {full}: {exc}", incomplete=True)

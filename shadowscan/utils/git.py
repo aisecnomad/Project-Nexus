@@ -80,3 +80,36 @@ def clone_environment(origin: str, token: str | None, username: str) -> dict[str
 def git_argv_prefix() -> list[str]:
     """Force hooks off even if a repo-local config tries to re-enable them."""
     return ["git", "-c", f"core.hooksPath={os.devnull}"]
+
+
+def metadata_git_env() -> dict[str, str]:
+    """Keep opt-in history inspection offline, including promisor object reads.
+
+    ``protocol.allow=never`` alone is insufficient: a repository can specify a
+    more specific ``protocol.<helper>.allow=always``. An empty allow-list takes
+    precedence over every such setting. Clone authentication must never be
+    passed to this environment.
+    """
+    return safe_git_env({
+        **git_config_overlay([
+            ("core.hooksPath", os.devnull),
+            ("credential.helper", ""),
+            ("core.fsmonitor", "false"),
+            ("maintenance.auto", "false"),
+            ("gc.auto", "0"),
+            ("protocol.allow", "never"),
+        ]),
+        "GIT_ALLOW_PROTOCOL": "",
+        "GIT_PROTOCOL_FROM_USER": "0",
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+    })
+
+
+def metadata_git_argv_prefix() -> list[str]:
+    """Require Git 2.45+ lazy-fetch suppression before opening a repository.
+
+    Using the option as well as the environment variable makes older versions
+    fail closed rather than silently ignore an unknown environment setting.
+    """
+    return [*git_argv_prefix(), "--no-lazy-fetch", "--no-pager", "--literal-pathspecs"]

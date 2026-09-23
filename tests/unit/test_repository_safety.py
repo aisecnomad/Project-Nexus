@@ -151,7 +151,7 @@ def test_metadata_and_incremental_git_ignore_inherited_repo_and_config(tmp_path,
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.repositoryformatversion")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "9999")
-    connector = FilesystemConnector(ConnectorContext(index=index))
+    connector = FilesystemConnector(ConnectorContext(config={"use_git": True}, index=index))
     metadata = connector._git_info(repo, ".")
     assert metadata["last_author_email"] == "expected@example.test"
     assert _git_state(repo, _HashBudget())

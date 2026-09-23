@@ -94,7 +94,8 @@ shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif --fail-on 
 # 4. Single connector, ad-hoc
 shadowscan run identity.entra --set tenant_id=$AZURE_TENANT_ID
 shadowscan run cloud.aws --set regions=us-east-1,eu-west-1 --dump-records ./exports
-shadowscan run cloud.aws --input ./exports/cloud_aws.jsonl        # re-analyse later, offline
+# Read exports/manifest.json and use the exported filename for this instance:
+shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # re-analyse later, offline
 
 # 5. Logs and tokens
 shadowscan gateway litellm-spend.jsonl bedrock-invocations/ egress-proxy.log
@@ -161,6 +162,17 @@ The CLI exits **3** for incomplete scans, **2** for a completed scan that reache
 scans as unsuccessful, while preserving findings from successfully assessed inputs.
 Confidence thresholds must be finite numbers from 0 to 1; invalid CLI or YAML
 values stop the scan before the risk gate runs.
+
+Git history enrichment is disabled by default. Set connector `use_git: true`
+only for a reviewed local checkout when author/history metadata is needed;
+metadata commands cannot fetch missing objects. Every explicit `--only` selector
+must match an enabled connector name or label. Unsupported records and saved API
+error responses cannot establish an empty, successful inventory.
+
+After upgrading from reports without the v2 finding-identity schema, regenerate
+your comparison baseline. Findings now keep their identity when inferred classification changes;
+legacy baselines cannot establish resolution under the new identity schema.
+See [deployment and migration](docs/production.md) for the rollout checks.
 
 ## What a finding looks like
 

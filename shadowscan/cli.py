@@ -482,7 +482,7 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
         click.echo(json.dumps(comparison, indent=2, default=str))
     else:
         new, resolved, unknown, changed = (comparison[key] for key in ("new", "resolved", "unknown", "changed"))
-        console.print(f"[bold]{len(new)} new[/bold], [bold]{len(resolved)} resolved[/bold], [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed risk[/bold]")
+        console.print(f"[bold]{len(new)} new[/bold], [bold]{len(resolved)} resolved[/bold], [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed[/bold]")
         for reason in comparison["reasons"]:
             console.print(f"Comparison incomplete: {reason}", markup=False)
         for marker, records in (("+", new), ("-", resolved), ("?", unknown)):
@@ -490,7 +490,8 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
                 console.print(f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}", markup=False)
         for change in changed:
             x, y = change["before"], change["after"]
-            console.print(f"  ~ {x['risk']['level']} → {y['risk']['level']} {y['title']}", markup=False)
+            fields = ", ".join(change["changed_fields"])
+            console.print(f"  ~ {y['title']}: {fields} (risk {x['risk']['score']} → {y['risk']['score']})", markup=False)
     if not comparison["comparable"]:
         raise click.exceptions.Exit(3)
 

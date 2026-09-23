@@ -41,6 +41,47 @@ def count_runs(monkeypatch):
     return calls
 
 
+@pytest.mark.parametrize("ancestor", [False, True])
+def test_symlink_root_paths_are_never_cached(tmp_path, index, monkeypatch, ancestor):
+    cfg = config(tmp_path)
+    calls = count_runs(monkeypatch)
+    if ancestor:
+        link = tmp_path / "parent-link"
+        link.symlink_to(tmp_path, target_is_directory=True)
+        root = link / "repo"
+    else:
+        root = tmp_path / "repo-link"
+        root.symlink_to(tmp_path / "repo", target_is_directory=True)
+    cfg.connectors[0].config["path"] = str(root)
+    for _ in range(2):
+        result = Engine(cfg, index).run()
+        assert not result.stats[0].cached
+    assert len(calls) == 2
+
+
+def test_symlink_static_export_is_never_cached(tmp_path, index):
+    source = tmp_path / "empty.json"
+    source.write_text("[]")
+    link = tmp_path / "export.json"
+    link.symlink_to(source)
+    cfg = config(tmp_path, connectors=[ConnectorSpec("cloud.aws", {"input": str(link)})])
+    for _ in range(2):
+        result = Engine(cfg, index).run()
+        assert not result.stats[0].cached
+
+
+def test_legacy_identity_cache_format_requires_full_rescan(tmp_path, index, monkeypatch):
+    cfg = config(tmp_path)
+    calls = count_runs(monkeypatch)
+    Engine(cfg, index).run()
+    cache_file = next((tmp_path / "state").glob("*.json"))
+    cached = json.loads(cache_file.read_text())
+    cached["format"] = 2
+    cache_file.write_text(json.dumps(cached))
+    result = Engine(cfg, index).run()
+    assert result.complete and not result.stats[0].cached and len(calls) == 2
+
+
 def test_unchanged_code_reuses_findings_without_leaking_mutations(tmp_path, index, monkeypatch):
     cfg = config(tmp_path)
     calls = count_runs(monkeypatch)

@@ -5,6 +5,9 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -29,6 +32,13 @@ jobs:
       - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Build distributable wheel
         run: python -m pip wheel . --no-deps --wheel-dir dist
+      - name: Validate installed wheel outside the checkout
+        run: |
+          python -m venv "$RUNNER_TEMP/shadowscan-wheel"
+          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m shadowscan.signatures.validate
+          "$RUNNER_TEMP/shadowscan-wheel/bin/shadowscan" --help
       - name: Self-scan (demo, offline)
         run: shadowscan scan -c examples/shadowscan.offline.yaml --format sarif -o shadowscan.sarif
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

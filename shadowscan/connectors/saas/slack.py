@@ -26,6 +26,9 @@ from shadowscan.utils.text import get_path, parse_timestamp, to_iso
 
 class SlackConnector(BaseConnector):
     name: ClassVar[str] = "saas.slack"
+    _OFFLINE_COLLECTION_KINDS: ClassVar[dict[str, str]] = {
+        "approved_apps": "approved_app", "restricted_apps": "restricted_app", "app_requests": "app_request",
+    }
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "slack"
     description: ClassVar[str] = "Slack apps, bot users, approved/restricted apps and install logs."
@@ -108,7 +111,10 @@ class SlackConnector(BaseConnector):
         logs: dict[str, list[dict[str, Any]]] = {}
         requests: list[dict[str, Any]] = []
         for rec in records:
-            kind = rec.get("_kind") or _infer(rec)
+            kind = self._record_kind(rec)
+            if kind is None:
+                self.ctx.warn("saas.slack: unsupported or malformed provider record; coverage incomplete")
+                continue
             if kind == "team":
                 team_name = rec.get("name") or rec.get("domain")
             elif kind == "bot_user":
@@ -116,7 +122,7 @@ class SlackConnector(BaseConnector):
                 bots[str(app_id)] = rec
             elif kind in {"approved_app", "restricted_app"}:
                 app = rec.get("app") or rec
-                app_id = app.get("id") or app.get("app_id") or app.get("name")
+                app_id = app.get("id") or app.get("app_id")
                 entry = apps.setdefault(str(app_id), {"app": app, "scopes": [], "status": kind.replace("_app", ""), "last_resolved_by": None, "date_updated": None})
                 entry["scopes"] = rec.get("scopes") or app.get("scopes") or []
                 entry["last_resolved_by"] = get_path(rec, "last_resolved_by.actor_id", "last_resolved_by.actor_type")
@@ -144,10 +150,40 @@ class SlackConnector(BaseConnector):
         for req in requests:
             self.ctx.examined()
             app = req.get("app") or {}
-            f = self._app_finding(str(app.get("id") or app.get("name")), app, req.get("scopes") or [], "requested", None, [], team_name, requester=get_path(req, "user.email", "user.name", "user.id"), message=req.get("message"))
+            f = self._app_finding(str(app.get("id") or app.get("app_id")), app, req.get("scopes") or [], "requested", None, [], team_name, requester=get_path(req, "user.email", "user.name", "user.id"), message=req.get("message"))
             if f:
                 f.add_tag("pending-request")
                 yield f
+
+    def _record_kind(self, rec: dict[str, Any]) -> str | None:
+        if not self._record_fields_valid(
+            rec, strings=("_kind", "id", "name", "real_name", "domain", "app_id", "service_id", "app_type", "service_type", "change_type", "scope", "user_name", "user_id", "message"),
+            mappings=("profile", "app", "user", "last_resolved_by"),
+        ):
+            return None
+        if any(rec.get(key) is not None and not isinstance(rec[key], bool) for key in ("is_bot", "is_app_user")):
+            return None
+        kind = rec.get("_kind") or _infer(rec)
+        if kind in {"team", "user", "bot_user"}:
+            if not self._record_fields_valid(rec, required=("id",)):
+                return None
+            profile = rec.get("profile") or {}
+            if not self._record_fields_valid(profile, strings=("api_app_id", "real_name", "title")):
+                return None
+        elif kind in {"approved_app", "restricted_app", "app_request"}:
+            app = rec.get("app") if "app" in rec else rec
+            if not isinstance(app, dict) or not self._record_fields_valid(app, strings=("id", "app_id", "name", "description", "additional_info", "publisher", "app_homepage_url", "privacy_policy_url", "app_directory_url")):
+                return None
+            if not (isinstance(app.get("id"), str) and app["id"].strip() or isinstance(app.get("app_id"), str) and app["app_id"].strip()):
+                return None
+            if kind == "app_request" and not isinstance(rec.get("app"), dict):
+                return None
+        elif kind == "integration_log":
+            if not any(isinstance(rec.get(key), str) and rec[key].strip() for key in ("app_id", "service_id", "app_type", "service_type")):
+                return None
+        else:
+            return None
+        return kind
 
     def _app_finding(self, app_id: str, app: dict[str, Any], scopes: list[Any], status: str, bot: dict[str, Any] | None, logs: list[dict[str, Any]], team: str | None, requester: str | None = None, message: str | None = None) -> Finding | None:
         name = app.get("name") or get_path(bot or {}, "profile.real_name", "real_name") or app_id
@@ -200,10 +236,12 @@ class SlackConnector(BaseConnector):
 def _infer(rec: dict[str, Any]) -> str:
     if rec.get("is_bot") or rec.get("is_app_user"):
         return "bot_user"
-    if "app" in rec and ("scopes" in rec or "last_resolved_by" in rec):
-        return "approved_app"
     if "app" in rec and "user" in rec and "message" in rec:
         return "app_request"
+    if "app" in rec and ("scopes" in rec or "last_resolved_by" in rec):
+        return "approved_app"
+    if rec.get("is_bot") is False or rec.get("is_app_user") is False:
+        return "user"
     if "change_type" in rec or "service_type" in rec or ("app_type" in rec and "user_id" in rec):
         return "integration_log"
     if "domain" in rec and "name" in rec and "id" in rec and "is_bot" not in rec:
