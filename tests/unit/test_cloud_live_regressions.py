@@ -163,16 +163,12 @@ def test_oci_collections_and_keyword_only_genai_calls(index, monkeypatch):
     assert not ctx.stats.incomplete
 
 
-def test_oci_denied_inventory_is_incomplete(index, monkeypatch):
-    def denied(*args, **kwargs):
-        raise RuntimeError("NotAuthorizedOrNotFound: 404")
-
-    monkeypatch.setitem(sys.modules, "oci", SimpleNamespace(pagination=SimpleNamespace(list_call_get_all_results=denied)))
+def test_oci_denied_inventory_is_incomplete(index):
     ctx = context(index)
     connector = OciConnector(ctx)
-    assert connector._all(lambda: []) == []
+    assert connector._all(Mock(side_effect=RuntimeError("NotAuthorizedOrNotFound: 404"))) == []
     assert ctx.stats.incomplete
-    assert "NotAuthorizedOrNotFound" in ctx.stats.warnings[0]
+    assert "collection failed" in ctx.stats.warnings[0]
 
 
 def test_gcp_repeated_pagination_token_preserves_partial_data_but_marks_incomplete(index):

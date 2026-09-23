@@ -39,7 +39,7 @@ _ASSIGNMENT = re.compile(
     r"(?P<sep>[\"']\s*:\s*|\s*=\s*|:\s+|:\s*(?=[\"']))"
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;\}\]\)\"']+)"
 )
-_QUERY = re.compile(r"([?&#])([^=&#]+)=([^&#]*)")
+_QUERY_SEPARATOR = re.compile(r"[&#]")
 
 
 def _sensitive_key(key: str) -> bool:
@@ -66,17 +66,37 @@ def _redact_value(value: Any) -> Any:
 def _sanitize_url(match: re.Match[str]) -> str:
     url = match.group(0)
     scheme, rest = url.split("://", 1)
-    authority, *tail = rest.split("/", 1)
+    # Userinfo ends at the authority boundary, not at the first slash alone.
+    # An @ in a query value must not be mistaken for a hostname separator.
+    authority_end = min((pos for c in "/?#" if (pos := rest.find(c)) >= 0), default=len(rest))
+    authority, tail = rest[:authority_end], rest[authority_end:]
     if "@" in authority:
         authority = REDACTED + "@" + authority.rsplit("@", 1)[1]
-    url = scheme + "://" + authority + ("/" + tail[0] if tail else "")
+    url = scheme + "://" + authority + tail
 
-    def query_value(m: re.Match[str]) -> str:
-        key = unquote(m.group(2)).lower()
-        sensitive = _sensitive_key(key) or key in {"key", "sig", "signature", "code", "x-amz-signature", "x-goog-signature"}
-        return m.group(1) + m.group(2) + "=" + (REDACTED if sensitive else m.group(3))
+    def query_value(field: str) -> str:
+        key, equals, value = field.partition("=")
+        if not equals:
+            return field
+        decoded = unquote(key).lower()
+        sensitive = _sensitive_key(decoded) or decoded in {"key", "sig", "signature", "code", "x-amz-signature", "x-goog-signature"}
+        return key + equals + (REDACTED if sensitive else value)
 
-    return _QUERY.sub(query_value, url)
+    # Consume each field once. A regex that retries an unbounded key after every
+    # '?' takes quadratic time on a URL containing many '?' and no '='. Keep '?'
+    # within values (it is legal there) so redacting a secret never retains its
+    # suffix. Fragment parameters receive the same protection as query fields.
+    start = min((pos for c in "?&#" if (pos := url.find(c)) >= 0), default=len(url))
+    if start == len(url):
+        return url
+    parts = [url[:start + 1]]
+    cursor = start + 1
+    for separator in _QUERY_SEPARATOR.finditer(url, cursor):
+        parts.append(query_value(url[cursor:separator.start()]))
+        parts.append(separator.group(0))
+        cursor = separator.end()
+    parts.append(query_value(url[cursor:]))
+    return "".join(parts)
 
 
 def sanitize_text(text: str) -> str:

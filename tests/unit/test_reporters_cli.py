@@ -77,7 +77,8 @@ def test_cli_scan_config_diff_and_stubs(tmp_path: Path, fixtures):
     assert runner.invoke(main, ["scan", "-c", str(cfg), "--only", "cloud.aws", "--format", "json", "-o", str(a)]).exit_code == 0
     assert runner.invoke(main, ["scan", "-c", str(cfg), "--format", "json", "-o", str(b)]).exit_code == 0
     res = runner.invoke(main, ["diff", str(a), str(b)])
-    assert res.exit_code == 0 and "new" in res.output and "Slack" in res.output
+    assert res.exit_code == 3 and "new" in res.output and "Slack" in res.output
+    assert "scope differs" in res.output
     stubs = tmp_path / "stubs"
     res = runner.invoke(main, ["inventory", "stubs", str(b), "-o", str(stubs)])
     assert res.exit_code == 0 and list(stubs.glob("*.yaml"))

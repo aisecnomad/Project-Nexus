@@ -189,6 +189,46 @@ def test_cloudwatch_plaintext_and_cloud_logging_envelopes_preserve_provenance(in
     assert activity["sources"][0]["scope"] == {"project": "project-one"}
 
 
+@pytest.mark.parametrize("suffix", [".json", ".jsonl"])
+def test_top_level_cloudwatch_envelope_keeps_scope_and_timestamp(index, tmp_path, suffix):
+    export = tmp_path / f"cloudwatch{suffix}"
+    envelope = {
+        "timestamp": "2026-09-22T10:00:00Z",
+        "resource": {"labels": {"project_id": "project-one"}},
+        "logEvents": [{"message": json.dumps({"service": "worker", "model": "gpt-4o", "user_agent": "langchain/0.3"})}],
+    }
+    export.write_text(json.dumps(envelope) + ("\n" if suffix == ".jsonl" else ""))
+    connector = GatewayLogConnector(ConnectorContext(config={"input": str(export)}, index=index))
+    records = list(connector.load_offline(str(export)))
+    assert len(records) == 1
+    assert records[0]["resource"] == envelope["resource"]
+    assert records[0]["timestamp"] == envelope["timestamp"]
+    findings, activity = _scan(index, records, scope={"project": "project-one"})
+    assert len(findings) == 1
+    assert activity["status"] == "observed"
+    assert activity["sources"][0]["scope"] == {"project": "project-one"}
+
+
+def test_top_level_openai_results_keep_usage_interval_and_pagination_error(index, tmp_path):
+    export = tmp_path / "usage.json"
+    export.write_text(json.dumps({
+        "start_time": "2026-09-22T10:00:00Z",
+        "end_time": "2026-09-22T11:00:00Z",
+        "nextToken": "another-page",
+        "results": [{"api_key_id": "key-one", "model": "gpt-4o", "n_requests": 7, "input_tokens": 40}],
+    }))
+    context = ConnectorContext(config={"input": str(export), "format": "openai-usage"}, index=index)
+    connector = GatewayLogConnector(context)
+    findings = connector.run()
+    assert context.stats is not None and context.stats.incomplete
+    assert any("uncollected next page" in error for error in context.stats.errors)
+    assert len(findings) == 1
+    assert findings[0].metadata["events"] == 7
+    assert findings[0].metadata["usage_intervals"][0]["start"] == "2026-09-22T10:00:00+00:00"
+    assert findings[0].metadata["usage_intervals"][0]["end"] == "2026-09-22T11:00:00+00:00"
+    assert findings[0].metadata["usage_intervals"][0]["requests"] == 7
+
+
 def test_correlation_uses_source_of_each_merged_observation(index):
     findings, _ = _scan(index, [{"service": "worker", "model": "gpt-4o", "user_agent": "langchain/0.3", "timestamp": "2026-09-22T10:00:00Z"}])
     gateway = findings[0]

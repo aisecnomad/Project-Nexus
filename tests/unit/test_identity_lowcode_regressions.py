@@ -112,8 +112,8 @@ def test_make_missing_blueprint_and_agents_marks_scan_incomplete(monkeypatch, ru
                 return {"response": {"blueprint": {"flow": [{"module": "openai:CreateCompletion"}]}}}
             if path == "/scenarios/without-blueprint/blueprint":
                 raise HttpError(403, "https://eu1.make.com/api/v2/scenarios/without-blueprint/blueprint")
-            if path == "/ai-agents":
-                raise HttpError(403, "https://eu1.make.com/api/v2/ai-agents")
+            if path == "/ai-agents/v1/agents":
+                raise HttpError(403, "https://eu1.make.com/api/v2/ai-agents/v1/agents")
             raise AssertionError(path)
 
     monkeypatch.setattr(automation, "HttpClient", MakeAPI)

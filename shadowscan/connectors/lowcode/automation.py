@@ -14,10 +14,13 @@ Offline exports:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
+
+from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.common import apply_matches, blob_matches, finalize, model_matches, name_matches
@@ -101,17 +104,7 @@ class N8nConnector(_AutomationBase):
         if not (base and key):
             raise ConnectorError("lowcode.n8n: api_url and api_key required")
         http = HttpClient(base, headers={"X-N8N-API-KEY": key})
-        cursor: str | None = None
-        while True:
-            params: dict[str, Any] = {"limit": 250}
-            if cursor:
-                params["cursor"] = cursor
-            data = http.get_json("/workflows", params=params) or {}
-            for w in data.get("data", []):
-                yield w
-            cursor = data.get("nextCursor")
-            if not cursor:
-                break
+        yield from http.paginate_token("/workflows", params={"limit": 250}, items_key="data", token_key="nextCursor", token_param="cursor", max_pages=max(1, int(self.ctx.get("max_pages", 1000))))
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for w in records:
@@ -158,6 +151,29 @@ class MakeConnector(_AutomationBase):
         "input": "offline: scenarios JSON (with blueprint) / ai-agents JSON / blueprint files",
     }
 
+    def _offset_pages(self, http: HttpClient, path: str, items_key: str, **params: Any) -> Iterator[dict[str, Any]]:
+        seen: set[str] = set()
+        for page in range(max(1, int(self.ctx.get("max_pages", 1000)))):
+            try:
+                data = http.get_json(path, params={**params, "pg[limit]": 100, "pg[offset]": page * 100})
+            except (HttpError, RequestException) as exc:
+                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                self.ctx.warn(f"lowcode.make: collection incomplete for {path} ({status})")
+                return
+            items = data.get(items_key) if isinstance(data, dict) else None
+            if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+                self.ctx.warn(f"lowcode.make: invalid {items_key} page")
+                return
+            fingerprint = hashlib.sha256(json.dumps(items, sort_keys=True, default=str).encode()).hexdigest()
+            if fingerprint in seen:
+                self.ctx.warn(f"lowcode.make: repeated pagination page for {path}")
+                return
+            seen.add(fingerprint)
+            yield from items
+            if len(items) < 100:
+                return
+        self.ctx.warn(f"lowcode.make: pagination limit reached for {path}")
+
     def collect(self) -> Iterable[dict[str, Any]]:
         base = str(self.ctx.get("api_url", env="MAKE_API_URL") or "").rstrip("/")
         token = self.ctx.get("token", env="MAKE_API_TOKEN")
@@ -168,38 +184,44 @@ class MakeConnector(_AutomationBase):
         if self.ctx.get("team_id"):
             teams = [str(self.ctx.get("team_id"))]
         elif self.ctx.get("organization_id"):
-            data = http.get_json("/teams", params={"organizationId": self.ctx.get("organization_id"), "pg[limit]": 100}) or {}
-            teams = [str(t["id"]) for t in data.get("teams", [])]
+            teams = [str(t["id"]) for t in self._offset_pages(http, "/teams", "teams", organizationId=self.ctx.get("organization_id"))]
         else:
             raise ConnectorError("lowcode.make: team_id or organization_id required")
         for team in teams:
-            blueprint_errors: dict[int, int] = {}
-            offset = 0
-            while True:
-                data = http.get_json("/scenarios", params={"teamId": team, "pg[limit]": 100, "pg[offset]": offset}) or {}
-                scenarios = data.get("scenarios", [])
-                for s in scenarios:
-                    try:
-                        bp = http.get_json(f"/scenarios/{s['id']}/blueprint")
-                        s["blueprint"] = (bp or {}).get("response", {}).get("blueprint") or bp
-                    except HttpError as exc:
-                        blueprint_errors[exc.status] = blueprint_errors.get(exc.status, 0) + 1
-                    s["_kind"] = "scenario"
-                    s["_team"] = team
-                    yield s
-                if len(scenarios) < 100:
-                    break
-                offset += 100
+            blueprint_errors: dict[str, int] = {}
+            for s in self._offset_pages(http, "/scenarios", "scenarios", teamId=team):
+                try:
+                    bp = http.get_json(f"/scenarios/{s['id']}/blueprint")
+                    response = bp.get("response") if isinstance(bp, dict) else None
+                    blueprint = (response.get("blueprint") if isinstance(response, dict) else None) or bp
+                    if not isinstance(blueprint, dict):
+                        self.ctx.warn(f"lowcode.make: invalid blueprint for scenario {s['id']}")
+                    else:
+                        s["blueprint"] = blueprint
+                except (HttpError, RequestException) as exc:
+                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    blueprint_errors[status] = blueprint_errors.get(status, 0) + 1
+                yield {**s, "_kind": "scenario", "_team": team}
             if blueprint_errors:
-                details = ", ".join(f"HTTP {status}: {count}" for status, count in sorted(blueprint_errors.items()))
+                details = ", ".join(f"{status}: {total}" for status, total in sorted(blueprint_errors.items()))
                 self.ctx.warn(f"lowcode.make: blueprints unreadable for {sum(blueprint_errors.values())} scenario(s) in team {team} ({details}); workflow inventory incomplete")
             try:
-                for a in (http.get_json("/ai-agents", params={"teamId": team}) or {}).get("aiAgents", []) or []:
-                    a["_kind"] = "ai-agent"
-                    a["_team"] = team
-                    yield a
-            except HttpError as exc:
-                self.ctx.warn(f"lowcode.make: AI agents unreadable for team {team} (HTTP {exc.status}); agent inventory incomplete")
+                data = http.get_json("/ai-agents/v1/agents", params={"teamId": team})
+            except (HttpError, RequestException) as exc:
+                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                self.ctx.warn(f"lowcode.make: AI agents unreadable for team {team} ({status}); agent inventory incomplete")
+                continue
+            agents = data
+            if isinstance(data, dict):
+                agents = [data] if data.get("id") and data.get("name") else data.get("aiAgents", data.get("agents"))
+            if not isinstance(agents, list):
+                self.ctx.warn(f"lowcode.make: invalid AI agents response for team {team}")
+                continue
+            for agent in agents:
+                if not isinstance(agent, dict):
+                    self.ctx.warn(f"lowcode.make: invalid AI agent record for team {team}")
+                    continue
+                yield {**agent, "_kind": "ai-agent", "_team": team}
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:
@@ -216,13 +238,13 @@ class MakeConnector(_AutomationBase):
                     created=rec.get("createdAt"),
                     updated=rec.get("updatedAt"),
                     triggers=[],
-                    ai_steps=[f"Make AI Agent (model {rec.get('model') or rec.get('llmModel') or '?'})"],
+                    ai_steps=[f"Make AI Agent (model {rec.get('model') or rec.get('llmModel') or rec.get('defaultModel') or '?'})"],
                     kind=Kind.AGENT,
                     resource_type="ai-agent",
-                    extra={"model": rec.get("model") or rec.get("llmModel"), "tools": [t.get("name") for t in rec.get("tools") or [] if isinstance(t, dict)][:20], "system_prompt": truncate(str(rec.get("systemPrompt") or ""), 200)},
+                    extra={"model": rec.get("model") or rec.get("llmModel") or rec.get("defaultModel"), "tools": [t.get("name") for t in rec.get("tools") or [] if isinstance(t, dict)][:20], "system_prompt": truncate(str(rec.get("systemPrompt") or ""), 200)},
                 )
                 if f:
-                    apply_matches(f, model_matches(self.index, rec.get("model") or rec.get("llmModel")), weight_scale=0.5)
+                    apply_matches(f, model_matches(self.index, rec.get("model") or rec.get("llmModel") or rec.get("defaultModel")), weight_scale=0.5)
                     yield f
                 continue
             bp = rec.get("blueprint") or rec
@@ -267,11 +289,21 @@ class ZapierConnector(_AutomationBase):
             raise ConnectorError("lowcode.zapier: token required (or use an offline export)")
         http = HttpClient("https://api.zapier.com", headers={"Authorization": f"Bearer {token}"})
         url: str | None = "/v2/zaps"
-        while url:
-            data = http.get_json(url, params={"limit": 100}) or {}
-            for z in data.get("data", []):
-                yield z
+        seen: set[str] = set()
+        for _ in range(max(1, int(self.ctx.get("max_pages", 1000)))):
+            if not url:
+                return
+            if not isinstance(url, str) or url in seen:
+                self.ctx.warn("lowcode.zapier: invalid or repeated pagination link")
+                return
+            seen.add(url)
+            data = http.get_json(url, params={"limit": 100})
+            if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+                raise ConnectorError("lowcode.zapier: invalid collection response")
+            yield from data["data"]
             url = get_path(data, "links.next")
+        if url:
+            self.ctx.warn("lowcode.zapier: pagination limit reached")
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:
@@ -325,15 +357,21 @@ class WorkatoConnector(_AutomationBase):
         if not token:
             raise ConnectorError("lowcode.workato: token required")
         http = HttpClient(base, headers={"Authorization": f"Bearer {token}"})
-        page = 1
-        while True:
-            data = http.get_json("/recipes", params={"per_page": 100, "page": page}) or {}
-            items = data.get("items", data if isinstance(data, list) else [])
-            for r in items:
-                yield r
+        seen: set[str] = set()
+        for page in range(1, max(1, int(self.ctx.get("max_pages", 1000))) + 1):
+            data = http.get_json("/recipes", params={"per_page": 100, "page": page})
+            items = data.get("items") if isinstance(data, dict) else data
+            if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+                raise ConnectorError("lowcode.workato: invalid recipe page")
+            fingerprint = hashlib.sha256(json.dumps(items, sort_keys=True, default=str).encode()).hexdigest()
+            if fingerprint in seen:
+                self.ctx.warn("lowcode.workato: repeated pagination page")
+                return
+            seen.add(fingerprint)
+            yield from items
             if len(items) < 100:
-                break
-            page += 1
+                return
+        self.ctx.warn("lowcode.workato: pagination limit reached")
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for r in records:

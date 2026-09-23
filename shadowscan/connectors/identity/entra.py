@@ -19,8 +19,10 @@ from its shape.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
+
+from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize, scope_matches
@@ -70,12 +72,23 @@ class EntraConnector(BaseConnector):
             token = resp.json()["access_token"]
         self.http = HttpClient(GRAPH, headers={"Authorization": f"Bearer {token}", "ConsistencyLevel": "eventual"})
 
+    def _pages(self, path: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
+        assert self.http
+        try:
+            yield from self.http.paginate_odata(path, **kwargs)
+        except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            if path.endswith("/appRoleAssignments"):
+                self.ctx.warn(f"identity.entra: appRoleAssignments unreadable for {path} ({status}); app-only permission inventory incomplete")
+            else:
+                self.ctx.warn(f"identity.entra: collection incomplete for {path} ({status})")
+
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
         sp_select = "id,appId,displayName,appDisplayName,publisherName,servicePrincipalType,accountEnabled,createdDateTime,tags,appOwnerOrganizationId,homepage,replyUrls,signInAudience,verifiedPublisher,notes,appRoleAssignmentRequired,appRoles,oauth2PermissionScopes,description,loginUrl"
-        sps = list(self.http.paginate_odata("/servicePrincipals", params={"$select": sp_select, "$top": 999}))
+        sps = list(self._pages("/servicePrincipals", params={"$select": sp_select, "$top": 999}))
         role_names: dict[str, str] = {}
         for sp in sps:
             for role in (sp.get("appRoles") or []) + (sp.get("oauth2PermissionScopes") or []):
@@ -87,11 +100,10 @@ class EntraConnector(BaseConnector):
             sp.pop("appRoles", None)
             sp.pop("oauth2PermissionScopes", None)
             yield sp
-        for grant in self.http.paginate_odata("/oauth2PermissionGrants", params={"$top": 999}):
+        for grant in self._pages("/oauth2PermissionGrants", params={"$top": 999}):
             grant["_kind"] = "oauth2PermissionGrant"
             yield grant
         lookups = 0
-        failed_lookups: dict[int, int] = {}
         for sp in sps:
             if sp.get("appOwnerOrganizationId") == FIRST_PARTY_OWNER and not self.include_first_party:
                 continue
@@ -99,21 +111,12 @@ class EntraConnector(BaseConnector):
                 self.ctx.warn("identity.entra: max_app_role_lookups reached; app-only permissions partial")
                 break
             lookups += 1
-            try:
-                for a in self.http.paginate_odata(f"/servicePrincipals/{sp['id']}/appRoleAssignments", params={"$top": 999}):
-                    a["_kind"] = "appRoleAssignment"
-                    yield a
-            except HttpError as exc:
-                failed_lookups[exc.status] = failed_lookups.get(exc.status, 0) + 1
-        if failed_lookups:
-            details = ", ".join(f"HTTP {status}: {count}" for status, count in sorted(failed_lookups.items()))
-            self.ctx.warn(f"identity.entra: appRoleAssignments unreadable for {sum(failed_lookups.values())} service principal(s) ({details}); app-only permission inventory incomplete")
-        try:
-            for app in self.http.paginate_odata("/applications", params={"$select": "id,appId,displayName,createdDateTime,requiredResourceAccess,passwordCredentials,keyCredentials,web,spa,publicClient,signInAudience,notes,tags,description", "$top": 999}):
-                app["_kind"] = "application"
-                yield app
-        except HttpError as exc:
-            self.ctx.warn(f"identity.entra: applications not readable: {exc.status}")
+            for a in self._pages(f"/servicePrincipals/{sp['id']}/appRoleAssignments", params={"$top": 999}):
+                a["_kind"] = "appRoleAssignment"
+                yield a
+        for app in self._pages("/applications", params={"$select": "id,appId,displayName,createdDateTime,requiredResourceAccess,passwordCredentials,keyCredentials,web,spa,publicClient,signInAudience,notes,tags,description", "$top": 999}):
+            app["_kind"] = "application"
+            yield app
 
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -161,7 +164,7 @@ class EntraConnector(BaseConnector):
                 admin_consented = True
             elif g.get("principalId"):
                 principals.add(g["principalId"])
-        app_perms = sorted({role_names.get(str(r["appRoleId"]), str(r["appRoleId"])) for r in roles if r.get("appRoleId")})
+        app_perms = sorted({role_names.get(role_id, role_id) for r in roles if isinstance(role_id := r.get("appRoleId"), str) and role_id})
         machine = sp_type == "ManagedIdentity" or bool(app_perms)
         user_consented = bool(principals) or admin_consented
         kind = identity_kind_for(user_consented=user_consented, machine=machine)

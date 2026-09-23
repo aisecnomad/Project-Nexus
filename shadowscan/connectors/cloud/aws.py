@@ -45,8 +45,10 @@ CLOUDTRAIL_EVENTS = ["InvokeModel", "InvokeModelWithResponseStream", "Converse",
 
 
 def _resource_id(value: Any) -> str:
-    """Normalize a provider identifier for the canonical Finding.resource field."""
-    return str(value) if value is not None else ""
+    """Reject malformed provider identifiers instead of inventing an identity."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("invalid AWS resource identifier")
+    return value
 
 
 class AwsConnector(BaseConnector):
@@ -428,22 +430,34 @@ class AwsConnector(BaseConnector):
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         callers: dict[str, dict[str, Any]] = {}
+        handlers = {name[3:].replace("_", "-"): getattr(self, name) for name in dir(type(self)) if name.startswith("_h_")}
         for rec in records:
-            kind = rec.get("_kind")
-            if kind == "account":
-                self.account = self.account or rec.get("account")
-                continue
             self.ctx.examined()
-            handler = getattr(self, f"_h_{kind.replace('-', '_')}", None) if kind else None
-            if kind == "cloudtrail-event":
-                self._acc_caller(callers, rec)
+            kind = rec.get("_kind") if isinstance(rec, dict) else None
+            if not isinstance(kind, str) or kind not in handlers.keys() | {"account", "cloudtrail-event"}:
+                self.ctx.warn("cloud.aws: record has missing, invalid, or unsupported _kind")
                 continue
-            if handler:
-                f = handler(rec)
-                if f:
-                    yield f
+            try:
+                if kind == "account":
+                    if not isinstance(rec.get("account"), str) or not rec["account"]:
+                        raise ValueError("account")
+                    self.account = self.account or rec["account"]
+                elif kind == "cloudtrail-event":
+                    for field in ("principal", "userAgent", "modelId", "eventName", "sourceIp", "eventTime", "_region"):
+                        if rec.get(field) is not None and not isinstance(rec[field], str):
+                            raise ValueError("event field")
+                    self._acc_caller(callers, rec)
+                else:
+                    f = handlers[kind](rec)
+                    if f:
+                        yield f
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.aws: record has invalid fields for its _kind")
         for key, agg in callers.items():
-            yield self._caller_finding(key, agg)
+            try:
+                yield self._caller_finding(key, agg)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.aws: invalid aggregated caller fields")
 
     def _arn_account(self, arn: str | None) -> str | None:
         try:
@@ -457,10 +471,21 @@ class AwsConnector(BaseConnector):
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_model_provider("provider.aws-bedrock")
         f.add_capability("tool-use")
-        details = rec.get("_version_details") or {}
-        f.models = sorted({m for m in [rec.get("foundationModel"), *(v.get("foundationModel") for v in details.values())] if m})
-        for model in f.models:
-            apply_matches(f, model_matches(self.index, model), weight_scale=0.5)
+        raw_details = rec.get("_version_details") or {}
+        if not isinstance(raw_details, dict):
+            self.ctx.warn("cloud.aws: Bedrock agent has invalid version details")
+            raw_details = {}
+        details: dict[str, dict[str, Any]] = {}
+        for version, version_detail in raw_details.items():
+            if not isinstance(version_detail, dict):
+                self.ctx.warn("cloud.aws: Bedrock agent has invalid version details")
+                continue
+            details[str(version)] = version_detail
+        models = [rec.get("foundationModel"), *(v.get("foundationModel") for v in details.values())]
+        if any(model is not None and not isinstance(model, str) for model in models):
+            self.ctx.warn("cloud.aws: Bedrock agent has an invalid foundation model identifier")
+        f.models = sorted({model for model in models if isinstance(model, str) and model})
+        apply_matches(f, model_matches(self.index, *f.models), weight_scale=0.5)
         ags = rec.get("_action_groups") or []
         kbs = rec.get("_knowledge_bases") or []
         f.add_evidence(Evidence(signal="aws:bedrock-agent", description=f"Agent '{rec.get('agentName')}' ({rec.get('agentStatus')}) on {rec.get('foundationModel')} with {len(ags)} action group version(s), {len(kbs)} knowledge base association(s), {len(rec.get('_aliases') or [])} alias(es); role {rec.get('agentResourceRoleArn')}", location=arn, weight=0.97, signature="cloud.aws-bedrock-agents"))

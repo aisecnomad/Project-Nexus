@@ -11,8 +11,10 @@ Offline export: teamsApp objects (with ``appDefinitions``) and/or installedApps 
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
+
+from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize
@@ -56,31 +58,30 @@ class TeamsConnector(BaseConnector):
             token = resp.json()["access_token"]
         return HttpClient(GRAPH, headers={"Authorization": f"Bearer {token}"})
 
+    def _pages(self, http: HttpClient, path: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
+        try:
+            yield from http.paginate_odata(path, **kwargs)
+        except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            self.ctx.warn(f"saas.microsoft-teams: collection incomplete for {path} ({status})")
+
     def collect(self) -> Iterable[dict[str, Any]]:
         http = self._client()
         flt = None if self.include_store else "distributionMethod eq 'organization'"
         params = {"$expand": "appDefinitions($expand=bot)"}
         if flt:
             params["$filter"] = flt
-        for app in http.paginate_odata("/appCatalogs/teamsApps", params=params):
+        for app in self._pages(http, "/appCatalogs/teamsApps", params=params):
             app["_kind"] = "teamsApp"
             yield app
-        n = 0
-        try:
-            for team in http.paginate_odata("/teams", params={"$select": "id,displayName", "$top": 999}):
-                n += 1
-                if n > self.max_teams:
-                    self.ctx.warn("saas.microsoft-teams: max_teams reached")
-                    break
-                try:
-                    for inst in http.paginate_odata(f"/teams/{team['id']}/installedApps", params={"$expand": "teamsApp,teamsAppDefinition"}):
-                        inst["_kind"] = "installedApp"
-                        inst["_team"] = team.get("displayName")
-                        yield inst
-                except HttpError as exc:
-                    self.log.debug("installedApps %s: %s", team.get("id"), exc)
-        except HttpError as exc:
-            self.ctx.warn(f"saas.microsoft-teams: teams not listable ({exc.status})")
+        for n, team in enumerate(self._pages(http, "/teams", params={"$select": "id,displayName", "$top": 999})):
+            if n >= self.max_teams:
+                self.ctx.warn("saas.microsoft-teams: max_teams reached")
+                break
+            for inst in self._pages(http, f"/teams/{team['id']}/installedApps", params={"$expand": "teamsApp,teamsAppDefinition"}):
+                inst["_kind"] = "installedApp"
+                inst["_team"] = team.get("displayName")
+                yield inst
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         apps: dict[str, dict[str, Any]] = {}

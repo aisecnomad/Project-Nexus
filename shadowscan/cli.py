@@ -16,11 +16,12 @@ from rich.markup import escape
 from rich.table import Table
 
 from shadowscan import __version__
+from shadowscan.comparison import compare_reports
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options, validate_min_confidence
 from shadowscan.connectors import available_connectors, connectors_for_surface, get_connector_class
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, ScanResult, Surface
-from shadowscan.registry import Inventory, card_stub_for
+from shadowscan.registry import Inventory, InventoryValidationError, card_stub_for
 from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures import get_index
@@ -72,8 +73,13 @@ def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, m
     def progress(cid: str, msg: str) -> None:
         err_console.print(f"[dim]{cid}: {msg}[/dim]")
 
-    engine = Engine(cfg, progress=progress if verbose else None)
-    result = engine.run(only=only)
+    try:
+        engine = Engine(cfg, progress=progress if verbose else None)
+        result = engine.run(only=only)
+    except InventoryValidationError as exc:
+        raise click.ClickException(str(exc)) from None
+    except (ValueError, TypeError, OSError, yaml.YAMLError):
+        raise click.ClickException("scan setup failed; check connector configuration, signature packs and inventory") from None
     _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows)
     sys.exit(_exit_code(result, cfg.fail_on))
 
@@ -128,7 +134,11 @@ def scan(config_path: str, only: tuple[str, ...], fmt: str, output: str | None, 
     try:
         cfg = ScanConfig.from_yaml(config_path)
     except ValueError as exc:
-        raise click.BadParameter(str(exc), param_hint="--config") from exc
+        if str(exc) == "min_confidence must be a finite number between 0 and 1":
+            raise click.BadParameter(str(exc), param_hint="--config") from None
+        raise click.ClickException("invalid scan configuration; check YAML structure and option types") from None
+    except (TypeError, AttributeError, OSError, yaml.YAMLError):
+        raise click.ClickException("invalid scan configuration; check YAML structure and option types") from None
     cfg.inventory.extend(inventory)
     cfg.signature_dirs.extend(signature_dirs)
     cfg.min_confidence = max(cfg.min_confidence, min_confidence)
@@ -151,7 +161,10 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], fmt: 
     """Run a single connector, e.g. `shadowscan run identity.okta --set org_url=https://acme.okta.com`."""
     if connector not in available_connectors():
         raise click.BadParameter(f"unknown connector {connector!r}; see `shadowscan connectors`")
-    conf = parse_set_options(list(settings))
+    try:
+        conf = parse_set_options(list(settings))
+    except (ValueError, TypeError):
+        raise click.BadParameter("--set expects key=value pairs") from None
     if input_path:
         conf["input"] = input_path
     cfg = ScanConfig(connectors=[ConnectorSpec(name=connector, config=conf)], inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir)
@@ -363,7 +376,12 @@ def inventory() -> None:
 @click.argument("paths", nargs=-1, required=True)
 def inventory_check(paths: tuple[str, ...]) -> None:
     """Validate inventory files and list the registered agents."""
-    inv = Inventory.load(list(paths))
+    try:
+        inv = Inventory.load(list(paths))
+    except InventoryValidationError as exc:
+        raise click.ClickException(str(exc)) from None
+    except (ValueError, TypeError, OSError, yaml.YAMLError):
+        raise click.ClickException("could not load inventory; check file access and document structure") from None
     table = Table(title=f"{len(inv)} registered agents", header_style="bold")
     table.add_column("Agent id")
     table.add_column("Name")
@@ -371,7 +389,7 @@ def inventory_check(paths: tuple[str, ...]) -> None:
     table.add_column("Resources")
     table.add_column("Source")
     for e in inv.entries:
-        table.add_row(e.agent_id, e.name or "", e.owner or "", "\n".join(e.resources) or "[dim]none (matched by id/name)[/dim]", e.source or "")
+        table.add_row(e.agent_id, e.name or "", e.owner or "", "\n".join(e.resources) or "[dim]none (suggestions only)[/dim]", e.source or "")
     console.print(table)
 
 
@@ -405,22 +423,29 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
 @click.argument("current", type=click.Path(exists=True, dir_okay=False))
 @click.option("--json", "as_json", is_flag=True)
 def diff(baseline: str, current: str, as_json: bool) -> None:
-    """Compare two JSON reports: new, resolved and changed-risk findings."""
-    b = {d["id"]: d for d in json.loads(Path(baseline).read_text(encoding="utf-8")).get("findings", [])}
-    c = {d["id"]: d for d in json.loads(Path(current).read_text(encoding="utf-8")).get("findings", [])}
-    new = [c[i] for i in c.keys() - b.keys()]
-    resolved = [b[i] for i in b.keys() - c.keys()]
-    changed = [(b[i], c[i]) for i in b.keys() & c.keys() if b[i]["risk"]["level"] != c[i]["risk"]["level"]]
+    """Compare reports; missing findings require complete, comparable scans to resolve."""
+    try:
+        comparison = compare_reports(
+            json.loads(Path(baseline).read_text(encoding="utf-8")),
+            json.loads(Path(current).read_text(encoding="utf-8")),
+        )
+    except (ValueError, TypeError, OSError):
+        raise click.ClickException("invalid comparison input; expected two ShadowScan JSON reports") from None
     if as_json:
-        click.echo(json.dumps({"new": new, "resolved": resolved, "changed": [{"before": x, "after": y} for x, y in changed]}, indent=2, default=str))
-        return
-    console.print(f"[bold]{len(new)} new[/bold], [bold]{len(resolved)} resolved[/bold], [bold]{len(changed)} changed risk[/bold]")
-    for d in sorted(new, key=lambda d: -d["risk"]["score"]):
-        console.print(f"  [green]+[/green] {d['risk']['level']:8} {d['title']}  [dim]{d['resource']}[/dim]")
-    for d in resolved:
-        console.print(f"  [red]-[/red] {d['risk']['level']:8} {d['title']}  [dim]{d['resource']}[/dim]")
-    for x, y in changed:
-        console.print(f"  [yellow]~[/yellow] {x['risk']['level']} → {y['risk']['level']} {y['title']}")
+        click.echo(json.dumps(comparison, indent=2, default=str))
+    else:
+        new, resolved, unknown, changed = (comparison[key] for key in ("new", "resolved", "unknown", "changed"))
+        console.print(f"[bold]{len(new)} new[/bold], [bold]{len(resolved)} resolved[/bold], [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed risk[/bold]")
+        for reason in comparison["reasons"]:
+            console.print(f"Comparison incomplete: {reason}", markup=False)
+        for marker, records in (("+", new), ("-", resolved), ("?", unknown)):
+            for d in sorted(records, key=lambda d: -d["risk"]["score"]):
+                console.print(f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}", markup=False)
+        for change in changed:
+            x, y = change["before"], change["after"]
+            console.print(f"  ~ {x['risk']['level']} → {y['risk']['level']} {y['title']}", markup=False)
+    if not comparison["comparable"]:
+        raise click.exceptions.Exit(3)
 
 
 if __name__ == "__main__":  # pragma: no cover

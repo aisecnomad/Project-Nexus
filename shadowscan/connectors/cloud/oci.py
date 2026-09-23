@@ -28,7 +28,9 @@ GENAI_POLICY_RX = re.compile(r"(?i)\b(?:allow)\b.*?\b(?:to\s+)?(manage|use|read|
 
 
 def _resource_id(value: Any) -> str:
-    return str(value) if value is not None else ""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("invalid OCI resource identifier")
+    return value
 
 
 class OciConnector(BaseConnector):
@@ -49,6 +51,7 @@ class OciConnector(BaseConnector):
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
+        self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
         self._config: dict[str, Any] = {}
         self._signer: Any = None
         self.tenancy: str | None = ctx.get("tenancy")
@@ -77,22 +80,41 @@ class OciConnector(BaseConnector):
         return cls(cfg, signer=self._signer) if self._signer else cls(cfg)
 
     def _all(self, fn: Any, *args: Any, **kwargs: Any) -> list[Any]:
-        import oci
-
-        try:
-            data = oci.pagination.list_call_get_all_results(fn, *args, **kwargs).data
-            # The OCI paginator normally flattens collection responses to a
-            # list, but also accept SDK wrappers exposing their `.items`.
-            if isinstance(data, dict):
-                data = data.get("items", [])
-            elif hasattr(data, "items"):
-                data = data.items
-            return list(data)
-        except Exception as exc:  # noqa: BLE001
-            # NotAuthorizedOrNotFound/404 are also returned for denied access.
-            # Returning [] is fine for partial results, but never claim a full scan.
-            self.ctx.warn(f"cloud.oci: {getattr(fn, '__name__', fn)}: {truncate(str(exc), 160)}", incomplete=True)
-            return []
+        """Keep successful pages when a later OCI request fails or pagination stalls."""
+        records: list[Any] = []
+        seen: set[str] = set()
+        operation = getattr(fn, "__name__", "list operation")
+        for _ in range(self.max_pages):
+            try:
+                response = fn(*args, **kwargs)
+                # OCI Response wraps either a list or a collection with .items.
+                # Also accept direct collections returned by lightweight clients.
+                data = getattr(response, "data", response)
+                if isinstance(data, dict):
+                    items = data.get("items")
+                elif isinstance(data, (list, tuple)):
+                    items = data
+                else:
+                    items = getattr(data, "items", None)
+                if not isinstance(items, (list, tuple)):
+                    self.ctx.warn(f"cloud.oci: invalid collection response for {operation}")
+                    return records
+                records.extend(items)
+                if not getattr(response, "has_next_page", False):
+                    return records
+                token = getattr(response, "next_page", None)
+                if not isinstance(token, str) or not token or token in seen:
+                    self.ctx.warn(f"cloud.oci: invalid or repeated pagination token for {operation}")
+                    return records
+                seen.add(token)
+                kwargs["page"] = token
+            except Exception as exc:  # noqa: BLE001 - SDK errors must not erase successful pages
+                status = getattr(exc, "status", None)
+                detail = f"HTTP {status}" if isinstance(status, int) else type(exc).__name__
+                self.ctx.warn(f"cloud.oci: {operation} collection failed ({detail})")
+                return records
+        self.ctx.warn(f"cloud.oci: pagination limit reached for {operation}")
+        return records
 
     @staticmethod
     def _d(obj: Any) -> dict[str, Any]:
@@ -188,7 +210,11 @@ class OciConnector(BaseConnector):
                 d = self._d(inst)
                 containers = []
                 for c in self._all(ci.list_containers, comp, container_instance_id=inst.id):
-                    cd = self._d(ci.get_container(c.id).data)
+                    try:
+                        cd = self._d(ci.get_container(c.id).data)
+                    except Exception as exc:  # noqa: BLE001 - continue other containers
+                        self.ctx.warn(f"cloud.oci: container detail collection failed ({type(exc).__name__})")
+                        continue
                     containers.append({"display_name": cd.get("display_name"), "image_url": cd.get("image_url"), "environment_variables": cd.get("environment_variables") or {}})
                 d["_containers"] = containers
                 yield {"_kind": "container-instance", "_region": region, "_compartment": comp, **d}
@@ -206,26 +232,40 @@ class OciConnector(BaseConnector):
         endpoints: dict[str, list[dict[str, Any]]] = {}
         agents: list[dict[str, Any]] = []
         others: list[dict[str, Any]] = []
+        handlers = {name[3:].replace("_", "-"): getattr(self, name) for name in dir(type(self)) if name.startswith("_h_")}
         for rec in records:
-            kind = rec.get("_kind")
-            if kind == "tenancy":
-                self.tenancy = self.tenancy or rec.get("tenancy")
-            elif kind == "genai-agent":
-                agents.append(rec)
-            elif kind == "genai-agent-endpoint":
-                endpoints.setdefault(str(rec.get("agent_id")), []).append(rec)
-            else:
-                others.append(rec)
+            self.ctx.examined()
+            kind = rec.get("_kind") if isinstance(rec, dict) else None
+            if not isinstance(kind, str) or kind not in handlers.keys() | {"tenancy", "genai-agent", "genai-agent-endpoint"}:
+                self.ctx.warn("cloud.oci: record has missing, invalid, or unsupported _kind")
+                continue
+            try:
+                if kind == "tenancy":
+                    if not isinstance(rec.get("tenancy"), str) or not rec["tenancy"]:
+                        raise ValueError("tenancy")
+                    self.tenancy = self.tenancy or rec["tenancy"]
+                elif kind == "genai-agent":
+                    agents.append(rec)
+                elif kind == "genai-agent-endpoint":
+                    if not isinstance(rec.get("agent_id"), str) or not rec["agent_id"]:
+                        raise ValueError("agent_id")
+                    endpoints.setdefault(rec["agent_id"], []).append(rec)
+                else:
+                    others.append(rec)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.oci: record has invalid fields for its _kind")
         for a in agents:
-            self.ctx.examined()
-            yield self._agent_finding(a, endpoints.get(str(a.get("id")), []))
+            try:
+                yield self._agent_finding(a, endpoints.get(str(a.get("id")), []))
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.oci: record has invalid agent fields")
         for rec in others:
-            self.ctx.examined()
-            handler = getattr(self, f"_h_{str(rec.get('_kind')).replace('-', '_')}", None)
-            if handler:
-                f = handler(rec)
+            try:
+                f = handlers[rec["_kind"]](rec)
                 if f:
                     yield f
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.oci: record has invalid fields for its _kind")
 
     def _base(self, rec: dict[str, Any]) -> dict[str, Any]:
         return {"account": rec.get("_compartment") or self.tenancy, "region": rec.get("_region"), "owner": ((rec.get("freeform_tags") or {}).get("owner") or (rec.get("freeform_tags") or {}).get("Owner") or ((rec.get("defined_tags") or {}).get("Oracle-Tags") or {}).get("CreatedBy")), "first_seen": rec.get("time_created"), "last_seen": rec.get("time_updated")}

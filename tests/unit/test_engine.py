@@ -81,7 +81,7 @@ def test_merge_preserves_runtime_observations_and_variable_names():
     assert next(f for f in result if f.kind == Kind.SECRET).metadata["variable_names"] == ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
 
 
-def test_duplicate_gateway_caller_combines_two_export_metrics_and_provenance(tmp_path: Path):
+def test_gateway_caller_keeps_export_metrics_separate_and_correlates_both(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "requirements.txt").write_text("langchain\n")
@@ -107,19 +107,18 @@ def test_duplicate_gateway_caller_combines_two_export_metrics_and_provenance(tmp
     ], parallel=1)).run()
     assert result.complete
     gateways = [f for f in result.findings if f.surface == Surface.GATEWAY]
-    assert len(gateways) == 1
-    gateway = gateways[0]
-    assert gateway.metadata["events"] == 2 and gateway.metadata["records"] == 2
-    assert gateway.metadata["aggregate_records"] == 0 and gateway.metadata["models"] == {"gpt-4o": 2}
-    assert gateway.metadata["tokens_in"] == 300 and gateway.metadata["tokens_out"] == 20
-    assert gateway.metadata["cost"] == 0.3 and ": 2 requests" in gateway.title
-    snapshots = gateway.metadata["runtime_sources"]
-    assert {Path(source["source"]["input"]).name for source in snapshots} == {"a.jsonl", "b.jsonl"}
-    assert {source["metrics"]["tokens_in"] for source in snapshots} == {100, 200}
-    assert all(source["metrics"]["records"] == 1 for source in snapshots)
+    assert len(gateways) == 2
+    assert len({gateway.id for gateway in gateways}) == 2
+    assert {Path(gateway.metadata["runtime_source"]["input"]).name for gateway in gateways} == {"a.jsonl", "b.jsonl"}
+    assert all(gateway.metadata["events"] == gateway.metadata["records"] == 1 for gateway in gateways)
+    assert all(gateway.metadata["aggregate_records"] == 0 and gateway.metadata["models"] == {"gpt-4o": 1} for gateway in gateways)
+    assert {gateway.metadata["tokens_in"] for gateway in gateways} == {100, 200}
+    assert all(gateway.metadata["tokens_out"] == 10 for gateway in gateways)
+    assert {gateway.metadata["cost"] for gateway in gateways} == {0.1, 0.2}
     activity = next(f for f in result.findings if f.surface == Surface.CODE).metadata["runtime_activity"]
     assert activity["status"] == "observed" and activity["events"] == 2
     assert {Path(source["source"]["input"]).name for source in activity["sources"]} == {"a.jsonl", "b.jsonl"}
+    assert {source["gateway_finding_id"] for source in activity["sources"]} == {gateway.id for gateway in gateways}
 
 
 def test_engine_end_to_end_with_config(tmp_path: Path, fixtures):

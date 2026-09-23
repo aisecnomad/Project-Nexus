@@ -196,7 +196,7 @@ def test_static_cloud_exports_reused_and_updated(tmp_path, index, fixtures):
     second = Engine(cfg, index).run()
     assert first.complete and first.findings and second.stats[0].cached
     assert [f.to_dict() for f in first.findings] == [f.to_dict() for f in second.findings]
-    export.write_text("")
+    export.write_text('{"records": []}\n')  # explicit, valid empty inventory
     deleted = Engine(cfg, index).run()
     assert deleted.complete and not deleted.stats[0].cached and not deleted.findings
 

@@ -57,6 +57,13 @@ hr-helper,HR Helper,erin@acme.com,power-platform:bot:bot-1|okta:app:0oa9x,HR bot
 Pass any mix with `--inventory` (repeatable) or `inventory:` in the config;
 directories are searched recursively.
 
+YAML and JSON list fields (`resources`, `names`, `surfaces`, `providers`,
+`accounts`, `frameworks`, `tags`) must be arrays of nonempty strings. Quote
+numeric account IDs. Optional lists may be omitted or empty; scalar strings
+are rejected rather than interpreted character by character. CSV retains
+pipe-separated lists. Malformed entries, duplicate keys, unknown simple-inventory
+or discovery fields and inconsistent CSV columns fail validation before scanning.
+
 ## Matching and approval
 
 Automatic registration requires exactly one matching `discovery.resources`
@@ -92,4 +99,6 @@ known) into `owner_team`. Review, complete and move the card into the inventory
 directory; on the next scan the finding is registered and its risk drops.
 
 Track drift between runs with `shadowscan diff last.json today.json`: new
-findings, resolved findings and risk-level changes.
+findings, risk-level changes and resolved findings from complete, comparable
+scans. Missing findings from incomplete or differently scoped scans remain
+unknown. See [comparison semantics](scanning.md#comparing-reports).
