@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
@@ -225,7 +226,7 @@ def builtin_signature_dir() -> Path:
     return Path(str(resources.files("shadowscan.signatures") / "data"))
 
 
-def load_signatures(extra_dirs: list[str | os.PathLike[str]] | None = None, include_builtin: bool = True) -> list[Signature]:
+def load_signatures(extra_dirs: Sequence[str | os.PathLike[str]] | None = None, include_builtin: bool = True) -> list[Signature]:
     """Load built-in signatures plus any extra packs.
 
     Later packs override earlier ones with the same id, so organisations can

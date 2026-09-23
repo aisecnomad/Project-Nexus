@@ -26,6 +26,7 @@ Input: JSONL / JSON / CSV / plain text access logs, file or directory.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections import Counter
@@ -38,6 +39,7 @@ from typing import Any, ClassVar
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.redaction import credential_id, sanitize
 from shadowscan.utils.text import get_path, host_of, parse_timestamp, redact, to_iso
 
@@ -52,6 +54,9 @@ class Event:
     caller_kind: str  # api-key | principal | service | user | user-agent | ip
     caller_label: str  # human readable
     timestamp: datetime | None = None
+    interval_end: datetime | None = None
+    request_count: int = 1
+    aggregated: bool = False
     model: str | None = None
     provider: str | None = None
     host: str | None = None
@@ -142,12 +147,25 @@ def _has_tool_calls(obj: Any) -> bool | None:
             obj = json.loads(obj)
         except json.JSONDecodeError:
             return None
-    if isinstance(obj, dict):
-        s = json.dumps(obj)[:200_000]
-        if '"tool_calls"' in s or '"tool_use"' in s or '"function_call"' in s or '"functionCall"' in s or '"stop_reason": "tool_use"' in s or '"finish_reason": "tool_calls"' in s:
-            return True
-        return False
-    return None
+    if not isinstance(obj, (dict, list)):
+        return None
+    # Inspect structured response fields, never serialized keys or free text:
+    # optional null/empty fields are normal in non-tool model responses.
+    pending = [obj]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, list):
+            pending.extend(item)
+        elif isinstance(item, dict):
+            if isinstance(item.get("tool_calls"), list) and any(isinstance(call, dict) and call for call in item["tool_calls"]):
+                return True
+            for key in ("function_call", "functionCall", "tool_use"):
+                if isinstance(item.get(key), dict) and item[key]:
+                    return True
+            if item.get("type") in {"tool_use", "function_call"} or item.get("stop_reason") == "tool_use" or item.get("finish_reason") in {"tool_calls", "function_call"}:
+                return True
+            pending.extend(value for value in item.values() if isinstance(value, (dict, list)))
+    return False
 
 
 def detect_schema(rec: dict[str, Any]) -> str:
@@ -186,6 +204,16 @@ def normalise(rec: dict[str, Any], schema: str) -> Event | None:
     ev = _normalise(rec, schema)
     if ev is None:
         return None
+    # Validate scalar fields before attribution or counters are updated. JSON
+    # containers in headers/identity fields otherwise fail partway through
+    # accumulation and can discard all callers collected before that record.
+    if isinstance(ev.status, int) and not isinstance(ev.status, bool):
+        ev.status = str(ev.status)
+    for name in ("caller", "caller_kind", "caller_label", "model", "provider", "host",
+                 "user_agent", "ip", "user", "team", "status", "path"):
+        value = getattr(ev, name)
+        if value is not None and not isinstance(value, str):
+            raise ConnectorError(f"gateway.logs: normalized {name} must be a string")
     if ev.caller_kind == "api-key":
         namespace, _, raw_key = ev.caller.partition(":")
         opaque_id = credential_id(raw_key)
@@ -375,10 +403,9 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
     if schema == "azure-openai":
         props = rec.get("properties") or {}
         if isinstance(props, str):
-            try:
-                props = json.loads(props)
-            except json.JSONDecodeError:
-                props = {}
+            props = json.loads(props)
+        if not isinstance(props, dict):
+            raise ConnectorError("gateway.logs: Azure properties must be an object")
         ident = rec.get("identity") or props.get("identity") or {}
         oid = get_path(ident, "claims.oid", "authorization.objectId", "claims.appid", "oid") if isinstance(ident, dict) else None
         upn = get_path(ident, "claims.upn", "claims.name", "claims.email", "claims.appid") if isinstance(ident, dict) else None
@@ -436,11 +463,21 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
         user = rec.get("user_id") or get_path(actor, "session.user.email", "api_key.user.email", "api_key.service_account.name", "session.user.id")
         sa = get_path(actor, "api_key.service_account.id", "api_key.service_account.name")
         caller = key_id or sa or user or rec.get("project_id") or "unknown"
+        aggregate = any(key in rec for key in ("num_model_requests", "n_requests"))
+        count = rec.get("num_model_requests", rec.get("n_requests", 1))
+        if aggregate:
+            if isinstance(count, str) and count.isdecimal():
+                count = int(count)
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise ConnectorError("gateway.logs: OpenAI usage request count must be a nonnegative integer")
         return Event(
             caller=f"openai:{caller}",
             caller_kind="api-key" if key_id else ("service" if sa else "user"),
             caller_label=str(sa or user or key_id or caller),
-            timestamp=parse_timestamp(rec.get("start_time") or rec.get("effective_at") or rec.get("aggregation_timestamp") or rec.get("timestamp")),
+            timestamp=parse_timestamp(get_path(rec, "start_time", "effective_at", "aggregation_timestamp", "timestamp")),
+            interval_end=parse_timestamp(rec.get("end_time")) if aggregate else None,
+            request_count=count,
+            aggregated=aggregate,
             model=rec.get("model") or rec.get("snapshot_id"),
             provider="openai",
             host="api.openai.com",
@@ -546,11 +583,11 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
     line = line.strip()
     if not line:
         return None
-    if line.startswith("{"):
-        try:
-            return json.loads(line)
-        except json.JSONDecodeError:
-            return None
+    if line.startswith(("{", "[")):
+        rec = json.loads(line)
+        if not isinstance(rec, dict):
+            raise ValueError("gateway text log JSON must be an object")
+        return rec
     m = _COMBINED.match(line)
     if m:
         d = m.groupdict()
@@ -600,6 +637,8 @@ class _Caller:
     kind: str
     label: str
     events: int = 0
+    records: int = 0
+    usage_intervals: list[dict[str, Any]] = field(default_factory=list)
     first: datetime | None = None
     last: datetime | None = None
     models: Counter = field(default_factory=Counter)
@@ -647,6 +686,10 @@ class GatewayLogConnector(BaseConnector):
         self.llm_hosts_only = bool(ctx.get("llm_hosts_only", True))
         self.max_records = int(ctx.get("max_records", 5_000_000))
         self.label = ctx.get("label") or ctx.get("gateway_name")
+        if self.format not in {None, "litellm", "portkey", "kong", "cloudflare", "helicone", "langfuse", "bedrock", "azure-openai", "vertex", "openai-usage", "anthropic-usage", "access-log", "generic"}:
+            raise ConnectorError("gateway.logs: unsupported format")
+        # A caller is scoped to its configured export source. Repeating the same
+        # source is idempotent; distinct sources retain their own observations.
         self.correlation_bindings = ctx.get("correlation_bindings", [])
         if not isinstance(self.correlation_bindings, list):
             raise ConnectorError("gateway.logs: correlation_bindings must be a list")
@@ -659,59 +702,107 @@ class GatewayLogConnector(BaseConnector):
                 or any(k not in {"tenant", "account", "project", "workspace"} or not isinstance(v, str) or not v for k, v in binding["scope"].items())
             ):
                 raise ConnectorError("gateway.logs: each correlation binding requires exact code_resource, caller and scope mapping")
+        source = str(Path(ctx.input_path).expanduser().resolve()) if ctx.input_path else ""
+        identity = json.dumps([source, self.label, self.format, self.min_events,
+                               self.llm_hosts_only, self.max_records,
+                               sorted(self.correlation_bindings, key=lambda b: json.dumps(b, sort_keys=True))], sort_keys=True)
+        self.source_id = hashlib.sha256(identity.encode()).hexdigest()
 
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError("gateway.logs: this connector reads exported logs; set 'input' to a file or directory")
 
-    def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
-        p = Path(path)
-        if p.is_dir():
-            for f in sorted(p.rglob("*")):
-                if f.is_file() and f.suffix.lower() in {".json", ".jsonl", ".ndjson", ".csv", ".log", ".txt", ".gz"}:
-                    yield from self.load_offline(str(f))
-            return
-        if p.suffix.lower() == ".gz":
-            import gzip
+    def _parse_line(self, line: str, location: str) -> dict[str, Any] | None:
+        if not line.strip():
+            return None
+        try:
+            rec = parse_text_line(line)
+        except (ValueError, TypeError, RecursionError):
+            self.ctx.warn(f"gateway.logs: invalid JSON/text record at {location}")
+            return None
+        if rec is None:
+            self.ctx.warn(f"gateway.logs: unrecognized text record at {location}")
+        return rec
 
-            with gzip.open(p, "rt", encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    rec = parse_text_line(line)
-                    if rec:
-                        yield rec
-            return
-        if p.suffix.lower() in {".log", ".txt"}:
-            with p.open("r", encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    rec = parse_text_line(line)
-                    if rec:
-                        yield rec
-            return
-        # JSON exports may wrap records (CloudWatch: {"logEvents": [{"message": "..."}]}, Azure: {"records": [...]})
-        for rec in super().load_offline(path):
-            if "logEvents" in rec and isinstance(rec["logEvents"], list):
-                for ev in rec["logEvents"]:
-                    msg = ev.get("message") if isinstance(ev, dict) else None
-                    if isinstance(msg, str):
-                        inner = parse_text_line(msg)
-                        if inner:
-                            yield inner
-                    elif isinstance(msg, dict):
-                        yield msg
-                continue
-            if "message" in rec and isinstance(rec["message"], str) and rec["message"].strip().startswith("{") and len(rec) <= 4:
-                inner = parse_text_line(rec["message"])
-                if inner:
-                    yield inner
+    def _expand_record(self, rec: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        # Base loading removes the outer data[] page. OpenAI usage requires a
+        # second, schema-specific expansion; bucket boundaries are provenance,
+        # not individual request timestamps.
+        if rec.get("object") == "bucket" or (self.format == "openai-usage" and "results" in rec):
+            results = rec.get("results")
+            first, last = parse_timestamp(rec.get("start_time")), parse_timestamp(rec.get("end_time"))
+            if not isinstance(results, list) or first is None or last is None or last <= first:
+                self.ctx.warn("gateway.logs: malformed OpenAI usage bucket (results and a valid interval are required)")
+                return
+            for result in results:
+                if not isinstance(result, dict) or not any(k in result for k in ("num_model_requests", "n_requests")):
+                    self.ctx.warn("gateway.logs: malformed OpenAI usage result (request count is required)")
                     continue
-            if "textPayload" in rec and isinstance(rec["textPayload"], str):
-                inner = parse_text_line(rec["textPayload"])
-                if inner:
-                    yield inner
+                if "object" in result and not str(result["object"]).startswith("organization.usage."):
+                    self.ctx.warn("gateway.logs: unsupported OpenAI usage result type")
                     continue
-            if "jsonPayload" in rec and isinstance(rec["jsonPayload"], dict) and "protoPayload" not in rec:
-                yield rec["jsonPayload"]
+                yield {**result, "object": result.get("object") or "organization.usage.completions.result",
+                       "start_time": rec["start_time"], "end_time": rec["end_time"]}
+            return
+        if "logEvents" in rec and isinstance(rec["logEvents"], list):
+            for event in rec["logEvents"]:
+                if isinstance(event, dict):
+                    yield from self._expand_record(event)
+                else:
+                    self.ctx.warn("gateway.logs: malformed CloudWatch log event")
+            return
+        for key in ("message", "textPayload"):
+            if isinstance(rec.get(key), str) and (key == "textPayload" or rec[key].strip().startswith(("{", "[")) and len(rec) <= 4):
+                inner = self._parse_line(rec[key], key)
+                if inner is not None:
+                    yield from self._expand_record(inner)
+                return
+        if "jsonPayload" in rec and "protoPayload" not in rec:
+            if isinstance(rec["jsonPayload"], dict):
+                yield from self._expand_record(rec["jsonPayload"])
+            else:
+                self.ctx.warn("gateway.logs: jsonPayload must be an object")
+            return
+        yield rec
+
+    def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
+        suffixes = {".json", ".jsonl", ".ndjson", ".csv", ".log", ".txt", ".gz"}
+        for source in self._offline_files(path, suffixes):
+            text: str | None
+            suffix = source.suffix.lower()
+            if suffix not in {".gz", ".log", ".txt"}:
+                for rec in super().load_offline(str(source)):
+                    yield from self._expand_record(rec)
                 continue
-            yield rec
+            if suffix == ".gz":
+                import gzip
+                import io
+                import zlib
+
+                raw = self._read_offline_bytes(source)
+                if raw is None:
+                    continue
+                remaining = self._MAX_OFFLINE_TOTAL_BYTES - getattr(self, "_offline_bytes_read", 0)
+                limit = min(self._MAX_OFFLINE_FILE_BYTES, remaining)
+                try:
+                    with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
+                        expanded = stream.read(limit + 1)
+                    self._offline_bytes_read += len(expanded)
+                    if len(expanded) > limit:
+                        raise ValueError("expanded log exceeds byte limit")
+                    text = expanded.decode("utf-8-sig")
+                except (OSError, EOFError, ValueError, zlib.error):
+                    self.ctx.error("gateway.logs: compressed log is invalid or exceeds byte limit")
+                    continue
+            else:
+                text = self._read_offline_text(source)
+                if text is None:
+                    continue
+            if not text.strip():
+                self.ctx.warn("gateway.logs: empty text export; use [] for an empty JSON export")
+            for number, line in enumerate(text.splitlines(), 1):
+                parsed = self._parse_line(line, f"line {number}")
+                if parsed is not None:
+                    yield from self._expand_record(parsed)
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         callers: dict[str, _Caller] = {}
@@ -722,16 +813,24 @@ class GatewayLogConnector(BaseConnector):
             if n > self.max_records:
                 self.ctx.warn(f"gateway.logs: max_records ({self.max_records}) reached")
                 break
-            schema = self.format or detect_schema(rec)
-            ev = normalise(rec, schema)
-            if ev is None:
-                skipped += 1
+            try:
+                schema = self.format or detect_schema(rec)
+                ev = normalise(rec, schema)
+                if ev is None:
+                    self.ctx.warn(f"gateway.logs: unrecognized record {n}; could not identify a caller")
+                    skipped += 1
+                    continue
+                if ev.request_count == 0:
+                    continue
+                if schema == "access-log" and self.llm_hosts_only and not self._is_llm_traffic(ev):
+                    skipped += 1
+                    continue
+                self._runtime_context(ev, rec)
+                self._accumulate(callers, ev)
+            except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
+                    RecursionError, ConnectorError, MatchTimeoutError) as exc:
+                self.ctx.warn(f"gateway.logs: invalid record {n}: {type(exc).__name__}")
                 continue
-            if schema == "access-log" and self.llm_hosts_only and not self._is_llm_traffic(ev):
-                skipped += 1
-                continue
-            self._runtime_context(ev, rec)
-            self._accumulate(callers, ev)
         self.ctx.examined(n)
         if skipped:
             self.log.info("gateway.logs: %d/%d records skipped (unrecognised or non-LLM)", skipped, n)
@@ -783,29 +882,35 @@ class GatewayLogConnector(BaseConnector):
         c = callers.get(identity)
         if c is None:
             c = callers[identity] = _Caller(ev.caller, ev.caller_kind, ev.caller_label, scope=dict(ev.scope))
-        c.events += 1
+        c.events += ev.request_count
+        c.records += 1
         c.schemas[ev.schema] += 1
         if ev.timestamp:
             c.first = ev.timestamp if not c.first or ev.timestamp < c.first else c.first
-            c.last = ev.timestamp if not c.last or ev.timestamp > c.last else c.last
-            c.hours[ev.timestamp.hour] += 1
-            c.weekdays[ev.timestamp.weekday()] += 1
+            end = ev.interval_end or ev.timestamp
+            c.last = end if not c.last or end > c.last else c.last
+            if not ev.aggregated:
+                c.hours[ev.timestamp.hour] += 1
+                c.weekdays[ev.timestamp.weekday()] += 1
+        if ev.aggregated:
+            c.usage_intervals.append({"start": to_iso(ev.timestamp), "end": to_iso(ev.interval_end),
+                                      "requests": ev.request_count, "model": ev.model})
         if ev.model:
-            c.models[str(ev.model)] += 1
+            c.models[str(ev.model)] += ev.request_count
         if ev.provider:
-            c.providers[str(ev.provider)] += 1
+            c.providers[str(ev.provider)] += ev.request_count
         if ev.host:
-            c.hosts[ev.host] += 1
+            c.hosts[ev.host] += ev.request_count
         if ev.user_agent:
-            c.user_agents[str(ev.user_agent)[:160]] += 1
+            c.user_agents[str(ev.user_agent)[:160]] += ev.request_count
         if ev.ip:
-            c.ips[ev.ip] += 1
+            c.ips[ev.ip] += ev.request_count
         if ev.user:
-            c.users[ev.user] += 1
+            c.users[ev.user] += ev.request_count
         if ev.team:
-            c.teams[str(ev.team)] += 1
+            c.teams[str(ev.team)] += ev.request_count
         if ev.path:
-            c.paths[str(ev.path)[:120]] += 1
+            c.paths[str(ev.path)[:120]] += ev.request_count
         if ev.tools is not None:
             c.tool_known += 1
             if ev.tools:
@@ -832,8 +937,8 @@ class GatewayLogConnector(BaseConnector):
             "last_seen": None,
             "identity_basis": "configured-exact-caller-and-scope",
         })
-        observation["events"] += 1
-        if ev.timestamp:
+        observation["events"] += ev.request_count
+        if ev.timestamp and not ev.aggregated:
             timestamp = to_iso(ev.timestamp)
             observation["timestamped_events"] += 1
             observation["first_seen"] = min(observation["first_seen"], timestamp) if observation["first_seen"] else timestamp
@@ -908,6 +1013,9 @@ class GatewayLogConnector(BaseConnector):
                 "caller_kind": c.kind,
                 "caller": c.label,
                 "events": c.events,
+                "records": c.records,
+                "usage_intervals": c.usage_intervals,
+                "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
                 "models": dict(c.models.most_common(10)),
                 "providers": dict(c.providers.most_common(5)),
                 "hosts": dict(c.hosts.most_common(5)),
@@ -926,9 +1034,10 @@ class GatewayLogConnector(BaseConnector):
                 "samples": c.metadata_samples,
                 "correlation_scope": c.scope,
                 "runtime_observations": list(c.observations.values()),
-                "runtime_source": {"input": str(self.ctx.get("input") or ""), "label": self.label, "schemas": sorted(c.schemas)},
+                "runtime_source": {"id": self.source_id, "input": str(self.ctx.input_path or ""), "label": self.label, "schemas": sorted(c.schemas)},
             }
         )
+        f.id = "ss-" + hashlib.sha256(f"{f.compute_id()}|{self.source_id}".encode()).hexdigest()[:16]
         finalize(f, self.index)
         f.kind = Kind.GATEWAY_CALLER
         what = "Agentic caller" if f.metadata.get("agent_indicators") else "LLM caller"

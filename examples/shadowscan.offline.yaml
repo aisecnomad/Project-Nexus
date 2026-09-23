@@ -2,7 +2,7 @@
 # exports shipped with the repository. No credentials needed.
 #   shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 inventory:
-  - ../Agent Card
+  - ../agent-card.yaml
   - ./inventory
 options:
   min_confidence: 0.2

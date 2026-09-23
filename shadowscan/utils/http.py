@@ -163,8 +163,8 @@ class HttpClient:
     # ------------------------------------------------------------ paginators
     def paginate_link(self, path: str, params: dict[str, Any] | None = None, item_key: str | None = None, max_pages: int = 1000) -> Iterator[Any]:
         """RFC 5988 ``Link: rel=next`` pagination (GitHub, GitLab)."""
-        url: str | None = self._url(path)
-        origin = url
+        origin = self._url(path)
+        url: str | None = origin
         pages = 0
         seen: set[str] = set()
         while url and pages < max_pages:
@@ -186,8 +186,8 @@ class HttpClient:
 
     def paginate_odata(self, path: str, params: dict[str, Any] | None = None, max_pages: int = 1000) -> Iterator[dict[str, Any]]:
         """Microsoft Graph / OData ``@odata.nextLink`` pagination."""
-        url: str | None = self._url(path)
-        origin = url
+        origin = self._url(path)
+        url: str | None = origin
         pages = 0
         seen: set[str] = set()
         while url and pages < max_pages:

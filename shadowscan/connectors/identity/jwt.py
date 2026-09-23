@@ -27,7 +27,6 @@ import json
 import re
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorError, _NoDump
@@ -62,38 +61,64 @@ class JwtConnector(BaseConnector, _NoDump):
         tokens = self.ctx.get("tokens") or []
         if not tokens:
             raise ConnectorError("identity.jwt: provide 'tokens' or an input file")
+        if not isinstance(tokens, list):
+            raise ConnectorError("identity.jwt: tokens must be a list")
         for t in tokens:
             yield {"token": t}
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
-        p = Path(path)
-        text = p.read_text(encoding="utf-8", errors="replace")
-        stripped = text.strip()
-        if stripped.startswith(("[", "{")):
-            try:
-                data = json.loads(stripped)
-            except json.JSONDecodeError:
-                data = None
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, str):
-                        yield {"token": item}
-                    elif isinstance(item, dict):
-                        yield item
-                return
-            if isinstance(data, dict):
-                yield data
-                return
-        for line in text.splitlines():
-            line = line.strip().strip('"').removeprefix("Bearer ").strip()
-            if _JWT_RX.match(line):
-                yield {"token": line}
+        suffixes = {".json", ".jsonl", ".ndjson", ".txt", ".jwt"}
+        for source in self._offline_files(path, suffixes):
+            text = self._read_offline_text(source)
+            if text is None:
+                continue
+            stripped = text.strip()
+            if not stripped:
+                self.ctx.error("identity.jwt: empty token export; use [] for an empty token list")
+                continue
+            if source.suffix.lower() in {".jsonl", ".ndjson"}:
+                for number, line in enumerate(text.splitlines(), 1):
+                    if not line.strip():
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except (json.JSONDecodeError, RecursionError, ValueError):
+                        self.ctx.error(f"identity.jwt: invalid JSON record at line {number}")
+                        continue
+                    yield from self._token_records(data)
+            elif source.suffix.lower() == ".json" or stripped.startswith(("[", "{")):
+                try:
+                    data = json.loads(stripped)
+                except (json.JSONDecodeError, RecursionError, ValueError):
+                    self.ctx.error("identity.jwt: invalid JSON token export")
+                    continue
+                yield from self._token_records(data)
+            else:
+                for number, line in enumerate(text.splitlines(), 1):
+                    if not line.strip():
+                        continue
+                    token = line.strip().strip('"').removeprefix("Bearer ").strip()
+                    if _JWT_RX.fullmatch(token):
+                        yield {"token": token}
+                    else:
+                        self.ctx.error(f"identity.jwt: invalid token record at line {number}")
+
+    def _token_records(self, data: Any) -> Iterator[dict[str, Any]]:
+        records = data if isinstance(data, list) else [data]
+        for number, record in enumerate(records, 1):
+            if isinstance(record, str):
+                yield {"token": record}
+            elif self._valid_record(record):
+                yield record
+            else:
+                self.ctx.error(f"identity.jwt: invalid token export record {number}")
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         jwks_url = self.ctx.get("jwks_url")
         for rec in records:
             token = rec.get("token") or rec.get("jwt") or rec.get("access_token") or rec.get("id_token")
-            if not token or not _JWT_RX.match(str(token).strip()):
+            if not isinstance(token, str) or not _JWT_RX.fullmatch(token.strip()):
+                self.ctx.error("identity.jwt: record is missing a valid JWT token")
                 continue
             self.ctx.examined()
             f = self.analyze_token(str(token).strip(), jwks_url=jwks_url, context=rec.get("context") or rec.get("source"))
@@ -108,18 +133,18 @@ class JwtConnector(BaseConnector, _NoDump):
             header = pyjwt.get_unverified_header(token)
             claims = pyjwt.decode(token, options={"verify_signature": False, "verify_exp": False, "verify_aud": False})
         except pyjwt.PyJWTError as exc:
-            self.ctx.warn(f"identity.jwt: cannot decode token: {exc}")
+            self.ctx.warn(f"identity.jwt: cannot decode token ({type(exc).__name__})")
             return None
         verified: bool | None = None
         if jwks_url:
             try:
                 client = pyjwt.PyJWKClient(jwks_url)
-                key = client.get_signing_key_from_jwt(token)
-                pyjwt.decode(token, key.key, algorithms=[header.get("alg", "RS256")], options={"verify_exp": False, "verify_aud": False})
+                signing_key = client.get_signing_key_from_jwt(token)
+                pyjwt.decode(token, signing_key.key, algorithms=[header.get("alg", "RS256")], options={"verify_exp": False, "verify_aud": False})
                 verified = True
             except Exception as exc:  # noqa: BLE001
                 verified = False
-                self.ctx.warn(f"identity.jwt: signature verification failed: {exc}")
+                self.ctx.warn(f"identity.jwt: signature verification failed ({type(exc).__name__})")
 
         digest = hashlib.sha256(token.encode()).hexdigest()[:16]
         iss = str(claims.get("iss") or "")

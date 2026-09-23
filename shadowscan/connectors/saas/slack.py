@@ -144,14 +144,23 @@ class SlackConnector(BaseConnector):
         for req in requests:
             self.ctx.examined()
             app = req.get("app") or {}
-            f = self._app_finding(str(app.get("id") or app.get("name")), app, [s.get("name") if isinstance(s, dict) else s for s in req.get("scopes") or []], "requested", None, [], team_name, requester=get_path(req, "user.email", "user.name", "user.id"), message=req.get("message"))
+            f = self._app_finding(str(app.get("id") or app.get("name")), app, req.get("scopes") or [], "requested", None, [], team_name, requester=get_path(req, "user.email", "user.name", "user.id"), message=req.get("message"))
             if f:
                 f.add_tag("pending-request")
                 yield f
 
     def _app_finding(self, app_id: str, app: dict[str, Any], scopes: list[Any], status: str, bot: dict[str, Any] | None, logs: list[dict[str, Any]], team: str | None, requester: str | None = None, message: str | None = None) -> Finding | None:
         name = app.get("name") or get_path(bot or {}, "profile.real_name", "real_name") or app_id
-        scope_names = [s.get("name") if isinstance(s, dict) else str(s) for s in scopes if s]
+        scope_names: list[str] = []
+        if not isinstance(scopes, list):
+            self.ctx.warn("saas.slack: app scopes must be a list; scope coverage unknown")
+            scopes = []
+        for scope in scopes:
+            scope_name = scope.get("name") if isinstance(scope, dict) else scope
+            if not isinstance(scope_name, str) or not scope_name.strip():
+                self.ctx.warn("saas.slack: invalid app scope entry; scope coverage unknown")
+                continue
+            scope_names.append(scope_name.strip())
         installer = None
         installed_at = None
         for log in sorted(logs, key=lambda l: str(l.get("date", ""))):

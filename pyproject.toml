@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=83", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -36,7 +36,7 @@ gcp = ["google-auth>=2.29"]
 azure = ["azure-identity>=1.16"]
 oci = ["oci>=2.120"]
 cloud = ["shadowscan[aws,gcp,azure,oci]"]
-dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.5", "mypy>=1.10", "types-PyYAML", "types-requests", "responses>=0.25"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.5", "mypy>=1.10", "types-PyYAML", "types-requests", "responses>=0.25", "pip-audit>=2.7"]
 all = ["shadowscan[cloud,dev]"]
 
 [project.scripts]

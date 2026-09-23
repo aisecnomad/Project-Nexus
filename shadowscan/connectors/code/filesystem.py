@@ -429,8 +429,8 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"code.filesystem: {rel}: agent manifest analysis incomplete ({type(exc).__name__})")
         for rel, hits in workflow_files.items():
             yield self._workflow_finding(label, root, rel, hits)
-        for rel, hits in infra_files.items():
-            yield self._infra_finding(label, root, rel, hits, infra_names.get(rel, []))
+        for rel, infra_hits in infra_files.items():
+            yield self._infra_finding(label, root, rel, infra_hits, infra_names.get(rel, []))
         for rel, hits in secret_hits.items():
             yield self._secret_finding(label, root, rel, hits)
 
@@ -898,7 +898,7 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
     if not isinstance(mcp, dict):
         errors.append("MCP mcp field must be an object")
         mcp = {}
-    servers = next((value for value in (
+    servers: Any = next((value for value in (
         data.get("mcp_servers"), data.get("mcpServers"), mcp.get("servers"), data.get("servers"),
     ) if value is not None), {})
     if isinstance(servers, list):

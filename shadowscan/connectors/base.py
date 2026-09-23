@@ -20,9 +20,10 @@ import importlib
 import json
 import logging
 import os
+import stat
 import tempfile
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -138,55 +139,265 @@ class BaseConnector(ABC):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         """Turn raw records into findings."""
 
-    def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
-        """Load exported records from a file or directory of files."""
-        p = Path(path)
-        if p.is_dir():
-            for f in sorted(p.rglob("*")):
-                if f.is_file() and f.suffix.lower() in {".json", ".jsonl", ".ndjson", ".yaml", ".yml", ".csv"}:
-                    yield from self.load_offline(str(f))
+    _OFFLINE_SUFFIXES = {".json", ".jsonl", ".ndjson", ".yaml", ".yml", ".csv"}
+    _MAX_OFFLINE_FILE_BYTES = 64 * 1024 * 1024
+    _MAX_OFFLINE_TOTAL_BYTES = 512 * 1024 * 1024
+    _MAX_OFFLINE_ENTRIES = 200_000
+
+    def _offline_files(self, path: str, suffixes: set[str] | None = None) -> Iterator[Path]:
+        """Find exports without traversing links; rejected inputs affect completeness."""
+        root = Path(path).expanduser().absolute()
+        suffixes = self._OFFLINE_SUFFIXES if suffixes is None else suffixes
+        try:
+            if any(part.is_symlink() for part in (root, *root.parents)):
+                raise ValueError("symlink input is not allowed")
+            mode = root.stat().st_mode
+        except (OSError, ValueError):
+            self.ctx.error(f"{self.name}: offline input is missing, inaccessible, or a symlink")
             return
-        if not p.exists():
-            raise ConnectorError(f"{self.name}: input file not found: {path}")
-        suffix = p.suffix.lower()
-        text = p.read_text(encoding="utf-8", errors="replace")
-        if suffix in {".jsonl", ".ndjson"}:
-            for line in text.splitlines():
-                line = line.strip()
-                if line:
-                    yield json.loads(line)
-        elif suffix == ".csv":
-            yield from csv.DictReader(text.splitlines())
-        elif suffix in {".yaml", ".yml"}:
-            data = yaml.safe_load(text)
-            yield from self._unwrap(data)
-        else:
-            try:
-                data = json.loads(text)
-            except json.JSONDecodeError:
-                # tolerate JSON lines in a .json file
-                for line in text.splitlines():
-                    line = line.strip()
-                    if line:
-                        yield json.loads(line)
+        if stat.S_ISREG(mode):
+            yield root
+            return
+        if not stat.S_ISDIR(mode):
+            self.ctx.error(f"{self.name}: offline input must be a regular file or directory")
+            return
+        count = 0
+        found = False
+
+        def failed(_: OSError) -> None:
+            self.ctx.error(f"{self.name}: offline directory could not be read")
+
+        for directory, dirs, files in os.walk(root, followlinks=False, onerror=failed):
+            count += 1 + len(dirs) + len(files)
+            if count > self._MAX_OFFLINE_ENTRIES:
+                self.ctx.error(f"{self.name}: offline directory entry limit exceeded")
                 return
-            yield from self._unwrap(data)
+            base = Path(directory)
+            kept = []
+            for name in sorted(dirs):
+                if (base / name).is_symlink():
+                    self.ctx.error(f"{self.name}: skipped symlink in offline directory")
+                else:
+                    kept.append(name)
+            dirs[:] = kept
+            for name in sorted(files):
+                item = base / name
+                try:
+                    mode = item.lstat().st_mode
+                except OSError:
+                    failed(OSError())
+                    continue
+                if not stat.S_ISREG(mode):
+                    self.ctx.error(f"{self.name}: skipped symlink or special file in offline directory")
+                    continue
+                if item.suffix.lower() in suffixes:
+                    found = True
+                    yield item
+        if not found:
+            self.ctx.error(f"{self.name}: offline directory contains no supported export files")
+
+    def _read_offline_bytes(self, path: Path) -> bytes | None:
+        """Open every path component without following links, then read a bounded file.
+
+        A directory swapped to a symlink after traversal cannot redirect the open.
+        NONBLOCK also prevents a replaced FIFO from hanging before descriptor checks.
+        """
+        parent_fd: int | None = None
+        file_fd: int | None = None
+        try:
+            absolute = path.expanduser().absolute()
+            if not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd:
+                raise ValueError("secure offline file access is unavailable on this platform")
+            flags = os.O_RDONLY | os.O_NOFOLLOW
+            parent_fd = os.open(absolute.anchor, flags | os.O_DIRECTORY)
+            for part in absolute.parts[1:-1]:
+                next_fd = os.open(part, flags | os.O_DIRECTORY, dir_fd=parent_fd)
+                os.close(parent_fd)
+                parent_fd = next_fd
+            file_fd = os.open(absolute.name, flags | os.O_NONBLOCK, dir_fd=parent_fd)
+            before = os.fstat(file_fd)
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError("offline input is not a regular file")
+            used = getattr(self, "_offline_bytes_read", 0)
+            remaining = self._MAX_OFFLINE_TOTAL_BYTES - used
+            limit = min(self._MAX_OFFLINE_FILE_BYTES, remaining)
+            if before.st_size > limit:
+                raise ValueError("offline input exceeds the byte limit")
+            with os.fdopen(file_fd, "rb") as stream:
+                file_fd = None
+                raw = stream.read(limit + 1)
+                after = os.fstat(stream.fileno())
+            self._offline_bytes_read = used + len(raw)
+            if len(raw) > limit:
+                raise ValueError("offline input exceeds the byte limit")
+            if any(getattr(before, key) != getattr(after, key) for key in ("st_size", "st_mtime_ns", "st_ctime_ns")):
+                raise ValueError("offline input changed while being read")
+            return raw
+        except (OSError, ValueError) as exc:
+            # Parser and OS exception strings may contain raw data or secret paths.
+            reason = str(exc) if isinstance(exc, ValueError) else "offline input could not be securely read"
+            self.ctx.error(f"{self.name}: {reason}")
+            return None
+        finally:
+            if file_fd is not None:
+                os.close(file_fd)
+            if parent_fd is not None:
+                os.close(parent_fd)
+
+    def _read_offline_text(self, path: Path) -> str | None:
+        raw = self._read_offline_bytes(path)
+        if raw is None:
+            return None
+        try:
+            return raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            self.ctx.error(f"{self.name}: offline input is not valid UTF-8")
+            return None
+
+    def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
+        """Validate exports and preserve valid records beside malformed records."""
+        for source in self._offline_files(path):
+            text = self._read_offline_text(source)
+            if text is None:
+                continue
+            if not text.strip():
+                self.ctx.error(f"{self.name}: empty offline export; use [] for an empty inventory")
+                continue
+            def report(message: str) -> None:
+                self.ctx.error(f"{self.name}: {message}")
+            suffix = source.suffix.lower()
+            if suffix == ".csv":
+                yield from self._csv_records(text, report)
+            elif suffix in {".yaml", ".yml"}:
+                try:
+                    data = yaml.safe_load(text)
+                except (yaml.YAMLError, RecursionError, ValueError):
+                    report("invalid YAML export")
+                    continue
+                yield from self._unwrap(data, report)
+            elif suffix in {".jsonl", ".ndjson"}:
+                yield from self._json_lines(text, report)
+            else:
+                try:
+                    data = json.loads(text)
+                except json.JSONDecodeError:
+                    # Preserve support for JSONL documents named .json.
+                    yield from self._json_lines(text, report)
+                except (RecursionError, ValueError):
+                    report("invalid JSON export")
+                else:
+                    yield from self._unwrap(data, report)
 
     @staticmethod
-    def _unwrap(data: Any) -> Iterator[dict[str, Any]]:
-        """Accept a list of records or a dict wrapping a list under common keys."""
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict):
-                    yield item
-        elif isinstance(data, dict):
-            for key in ("records", "items", "value", "data", "results", "resources", "logs", "entries", "plugins", "installations", "apps", "users", "members", "workflows", "scenarios", "aiAgents", "teamsApps", "servicePrincipals", "clients", "tokens", "agents", "bots", "flows", "Records", "logEvents", "hits"):
-                if isinstance(data.get(key), list):
-                    for item in data[key]:
-                        if isinstance(item, dict):
-                            yield item
+    def _json_lines(text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:
+        for number, line in enumerate(text.splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+            except (json.JSONDecodeError, RecursionError, ValueError):
+                report(f"invalid JSON record at line {number}")
+                continue
+            if not isinstance(data, dict):
+                report(f"line {number}: JSONL records must be objects")
+                continue
+            yield from BaseConnector._unwrap(data, lambda message: report(f"line {number}: {message}"))
+
+    @staticmethod
+    def _csv_records(text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:
+        import io
+
+        try:
+            reader = csv.DictReader(io.StringIO(text), strict=True)
+            fields = reader.fieldnames
+            if not fields or any(not field.strip() for field in fields) or len(set(fields)) != len(fields):
+                report("CSV export needs unique, nonempty column names")
+                return
+            for rec in reader:
+                if None in rec or any(value is None for value in rec.values()):
+                    report(f"CSV row at line {reader.line_num} has the wrong number of columns")
+                    continue
+                yield rec
+        except csv.Error:
+            report("invalid CSV export")
+
+    @staticmethod
+    def _valid_record(data: Any) -> bool:
+        """Validate structural shape without echoing data; reject YAML alias cycles."""
+        if not isinstance(data, dict) or not data:
+            return False
+        active: set[int] = set()
+        remaining = 100_000
+
+        def check(value: Any, depth: int = 0) -> bool:
+            nonlocal remaining
+            remaining -= 1
+            if depth > 64 or remaining < 0:
+                return False
+            if not isinstance(value, (dict, list)):
+                return not isinstance(value, (set, bytes))
+            identity = id(value)
+            if identity in active:
+                return False
+            active.add(identity)
+            try:
+                if isinstance(value, dict):
+                    return all(isinstance(key, str) and check(item, depth + 1) for key, item in value.items())
+                return all(check(item, depth + 1) for item in value)
+            finally:
+                active.remove(identity)
+
+        return check(data)
+
+    @staticmethod
+    def _unwrap(data: Any, on_error: Callable[[str], None] | None = None) -> Iterator[dict[str, Any]]:
+        """Accept records or a common envelope, rejecting invalid shapes explicitly.
+
+        Identified native records keep nested fields such as data/results intact.
+        An envelope containing more than one collection is ambiguous, not empty.
+        """
+        def failed(message: str) -> None:
+            if on_error is None:
+                raise ConnectorError(message)
+            on_error(message)
+
+        wrappers = {
+            "records", "items", "value", "data", "results", "resources", "logs", "entries",
+            "plugins", "installations", "apps", "users", "members", "workflows", "scenarios",
+            "aiAgents", "teamsApps", "servicePrincipals", "clients", "tokens", "agents", "bots",
+            "flows", "Records", "logEvents", "hits",
+        }
+        if isinstance(data, dict):
+            # Lists supplied as records are never recursively unwrapped. Direct
+            # single-record exports require the same protection from field collisions.
+            identity_keys = {"id", "_id", "_kind", "name", "arn", "type", "kind", "resource", "resourceId"}
+            native = bool(identity_keys.intersection(data)) or data.get("object") not in (None, "list", "page")
+            keys = wrappers.intersection(data) if not native else set()
+            if len(keys) > 1:
+                failed("ambiguous export envelope contains multiple record collections")
+                return
+            if keys:
+                pagination_keys = (
+                    "has_more", "next_page", "nextPage", "next_page_token", "nextPageToken",
+                    "nextToken", "NextToken", "@odata.nextLink", "nextLink", "nextCursor",
+                )
+                if any(data.get(key) for key in pagination_keys):
+                    failed("offline export contains an uncollected next page")
+                collection = data[next(iter(keys))]
+                if not isinstance(collection, list):
+                    failed("export envelope record collection must be an array")
                     return
-            yield data
+                data = collection
+            else:
+                data = [data]
+        if not isinstance(data, list):
+            failed("offline export must contain an object or an array of objects")
+            return
+        for number, item in enumerate(data, 1):
+            if not BaseConnector._valid_record(item):
+                failed(f"invalid export record {number}; expected a nonempty object with string keys")
+                continue
+            yield item
 
     # ------------------------------------------------------------------- run
     def _tee(self, records: Iterable[dict[str, Any]], path: str) -> Iterator[dict[str, Any]]:
@@ -209,6 +420,7 @@ class BaseConnector(ABC):
     def run(self) -> list[Finding]:
         stats = ScanStats(connector=self.name, started_at=now_iso())
         self.ctx.stats = stats
+        self._offline_bytes_read = 0
         findings: list[Finding] = []
         try:
             if self.offline:

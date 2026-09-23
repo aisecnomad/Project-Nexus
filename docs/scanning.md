@@ -29,7 +29,7 @@ connectors:
 Each `code.filesystem.paths` root is a separate cache unit. Offline local directory
 inputs to `code.github` / `code.gitlab` and static exports to the four `cloud.*`
 connectors are also eligible. Live remote repositories, live cloud APIs, gateway
-logs, identity, SaaS inputs and plugin overrides of built-in connectors are collected anew: unchanged configuration cannot
+logs, identity, SaaS inputs and third-party connectors are collected anew: unchanged configuration cannot
 establish that remote state is unchanged. Hashing still reads eligible inputs;
 the saving is avoiding repeated parsing and signature evaluation.
 
@@ -105,6 +105,34 @@ inactivity, and old events do not establish current execution. Correlation does
 not increase confidence or reduce risk. Supply fresh, trusted gateway exports to
 assess recent production activity.
 
+Gateway finding IDs include the canonical input path and relevant connector
+configuration (label, format, filters and bindings). This changes IDs from older
+reports. Repeating an identical configured source is idempotent; distinct exports
+retain separate provenance. Overlapping exports count observations from each
+source, so aggregate counts are not guaranteed to represent unique requests.
+
+OpenAI organization usage exports with `data[].results[]` are supported.
+`metadata.events` counts requests and `metadata.records` counts exported rows;
+`usage_intervals` preserves bucket boundaries and counts. A bucket is not a
+per-request timestamp: it cannot establish hourly continuous activity or confirm
+timestamped framework execution for runtime correlation.
+
+## Comparing reports
+
+`shadowscan diff baseline.json current.json` reports new findings and risk-level
+changes. Missing findings count as resolved only when both reports completed
+and have the same `collection_scope` fingerprint. This opaque digest covers
+selected source paths, connector settings, filters, confidence threshold,
+signatures and scanner implementation. File contents and inventory approvals
+are excluded so real removals and approval changes can be compared.
+
+Incomplete scans, changed scope, older reports without provenance, live provider
+collections and third-party connectors cannot establish equivalent coverage.
+Their missing findings are reported as `unknown`, and diff exits 3. New and
+changed findings remain visible. Currently only local repositories and offline
+exports from built-in connectors can attest comparable scope; live account and
+permission coverage require additional provider-specific provenance.
+
 ## Completion and migration
 
 | CLI exit | Meaning |
@@ -119,6 +147,22 @@ Malformed files are isolated, so one bad manifest cannot suppress neighboring
 findings. Regex matches have time budgets; exhausted budgets mark the scan
 incomplete. Configure `code.filesystem.scan_timeout` in seconds to adjust the
 shared per-file regex budget (default 2 seconds).
+
+Denied or failed API requests and exhausted pagination mark collection incomplete.
+Offline exports require valid objects or arrays of objects; scalar records,
+invalid envelopes and malformed rows are errors. Use `[]` in JSON/YAML or
+`{"records": []}` in JSONL for an explicitly empty inventory; an empty file does
+not establish successful collection. Valid neighboring records are retained.
+Export files are capped at 64 MiB each, 512 MiB total and 200,000 filesystem
+entries; symlinks and special files are rejected. Gateway gzip input is bounded
+before and after decompression. These limits also apply to custom gateway and
+JWT loaders.
+
+Cloud offline inputs use ShadowScan's normalized record format, including a
+recognized `_kind` discriminator (see `tests/fixtures/cloud/`). Arbitrary raw
+provider responses need conversion to that format. Missing or unsupported
+record kinds and malformed resource identifiers make collection incomplete;
+they are never treated as a successfully scanned empty inventory.
 
 Existing inventory entries that rely on names alone must add reviewed `resources`
 bindings. Names now offer review suggestions without approving a finding or

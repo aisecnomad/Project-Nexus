@@ -135,9 +135,13 @@ class AzureConnector(BaseConnector):
                     self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)
                 return None
             items.extend(data["value"])
-            path = data.get("nextLink") or data.get("@odata.nextLink")
-            if not path:
+            next_path = data.get("nextLink", data.get("@odata.nextLink"))
+            if next_path is None or next_path == "":
                 return items
+            if not isinstance(next_path, str):
+                self.ctx.warn("cloud.azure: invalid list continuation; coverage unknown", incomplete=True)
+                return None
+            path = next_path
             # _get/HttpClient reject any nextLink outside ARM before sending auth.
         self.ctx.warn("cloud.azure: list page limit reached", incomplete=True)
         return None
@@ -172,10 +176,16 @@ class AzureConnector(BaseConnector):
         else:
             self.ctx.warn("cloud.azure: Resource Graph page limit reached", incomplete=True)
         for r in rows:
+            if not isinstance(r, dict):
+                self.ctx.warn("cloud.azure: Resource Graph returned an invalid resource record", incomplete=True)
+                continue
+            rid = r.get("id")
+            if not isinstance(rid, str) or not rid.strip():
+                self.ctx.warn("cloud.azure: Resource Graph resource has no valid identifier", incomplete=True)
+                continue
             r["_kind"] = "resource"
             yield r
             t = str(r.get("type", "")).lower()
-            rid = r.get("id")
             if t == "microsoft.cognitiveservices/accounts":
                 for d in self._list(f"{rid}/deployments", "2024-10-01") or []:
                     yield {"_kind": "deployment", "_account": rid, "_account_name": r.get("name"), **d}
@@ -240,44 +250,65 @@ class AzureConnector(BaseConnector):
         diagnostics: dict[str, list[dict[str, Any]] | None] = {}
         resources: list[dict[str, Any]] = []
         others: list[dict[str, Any]] = []
+        handlers = {name[3:].replace("_", "-"): getattr(self, name) for name in dir(type(self)) if name.startswith("_h_")}
         for rec in records:
-            kind = rec.get("_kind")
-            if kind == "resource":
-                resources.append(rec)
-                if str(rec.get("type", "")).lower() == "microsoft.managedidentity/userassignedidentities":
-                    pid = get_path(rec, "properties.principalId")
-                    if pid:
-                        identities[str(pid)] = str(rec.get("name"))
-                sys_pid = get_path(rec, "identity.principalId")
-                if sys_pid:
-                    identities[str(sys_pid)] = f"{rec.get('name')} (system-assigned)"
-            elif kind == "deployment":
-                deployments.setdefault(str(rec.get("_account")), []).append(rec)
-            elif kind == "diagnostics":
-                diagnostics[str(rec.get("_account"))] = None if rec.get("coverage") == "unknown" or rec.get("settings") is None else rec["settings"]
-            else:
-                others.append(rec)
+            self.ctx.examined()
+            kind = rec.get("_kind") if isinstance(rec, dict) else None
+            if not isinstance(kind, str) or kind not in handlers.keys() | {"resource", "deployment", "diagnostics"}:
+                self.ctx.warn("cloud.azure: record has missing, invalid, or unsupported _kind")
+                continue
+            try:
+                if kind == "resource":
+                    if str(rec.get("type", "")).lower() == "microsoft.managedidentity/userassignedidentities":
+                        pid = get_path(rec, "properties.principalId")
+                        if pid:
+                            identities[str(pid)] = str(rec.get("name"))
+                    sys_pid = get_path(rec, "identity.principalId")
+                    if sys_pid:
+                        identities[str(sys_pid)] = f"{rec.get('name')} (system-assigned)"
+                    resources.append(rec)
+                elif kind in {"deployment", "diagnostics"}:
+                    if not isinstance(rec.get("_account"), str) or not rec["_account"]:
+                        raise ValueError("_account")
+                    if kind == "deployment":
+                        if not isinstance(rec.get("properties", {}), dict):
+                            raise ValueError("properties")
+                        deployments.setdefault(rec["_account"], []).append(rec)
+                    else:
+                        settings = rec.get("settings")
+                        if settings is not None and (not isinstance(settings, list) or any(not isinstance(item, dict) for item in settings)):
+                            raise ValueError("settings")
+                        diagnostics[rec["_account"]] = None if rec.get("coverage") == "unknown" or settings is None else settings
+                else:
+                    others.append(rec)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.azure: record has invalid fields for its _kind")
         for r in resources:
-            self.ctx.examined()
-            f = self._resource_finding(r, deployments.get(str(r.get("id")), []), diagnostics.get(str(r.get("id"))))
-            if f:
-                yield f
-        for rec in others:
-            self.ctx.examined()
-            kind = rec.get("_kind")
-            handler = getattr(self, f"_h_{str(kind).replace('-', '_')}", None)
-            if handler:
-                f = handler(rec, identities) if kind == "role-assignment" else handler(rec)
+            try:
+                f = self._resource_finding(r, deployments.get(str(r.get("id")), []), diagnostics.get(str(r.get("id"))))
                 if f:
                     yield f
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.azure: record has invalid resource fields")
+        for rec in others:
+            try:
+                handler = handlers[rec["_kind"]]
+                f = handler(rec, identities) if rec["_kind"] == "role-assignment" else handler(rec)
+                if f:
+                    yield f
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.azure: record has invalid fields for its _kind")
 
     def _resource_finding(self, r: dict[str, Any], deps: list[dict[str, Any]], diag: list[dict[str, Any]] | None) -> Finding | None:
         t = str(r.get("type", "")).lower()
-        rid = str(r.get("id"))
+        rid = r.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            self.ctx.warn("cloud.azure: resource has no valid identifier", incomplete=True)
+            return None
         props = r.get("properties") or {}
         tags = r.get("tags") or {}
         owner = tags.get("owner") or tags.get("Owner") or tags.get("team") or tags.get("CreatedBy")
-        base = dict(account=r.get("subscriptionId"), region=r.get("location"), owner=owner)
+        base: dict[str, Any] = dict(account=r.get("subscriptionId"), region=r.get("location"), owner=owner)
         if t == "microsoft.cognitiveservices/accounts":
             kind = str(r.get("kind") or "")
             if kind.lower() not in {"openai", "aiservices"} and not deps:
@@ -358,8 +389,11 @@ class AzureConnector(BaseConnector):
         f.add_framework("cloud.azure-ai-foundry-agents")
         f.add_model_provider("provider.azure-openai")
         f.add_capability("tool-use")
-        f.models = [rec.get("model")] if rec.get("model") else []
-        apply_matches(f, model_matches(self.index, rec.get("model")), weight_scale=0.4)
+        model = rec.get("model")
+        if model is not None and not isinstance(model, str):
+            self.ctx.warn("cloud.azure: Foundry agent has an invalid model identifier")
+        f.models = [model] if isinstance(model, str) and model else []
+        apply_matches(f, model_matches(self.index, *f.models), weight_scale=0.4)
         f.add_evidence(Evidence(signal="azure:foundry-agent", description=f"Agent '{rec.get('name')}' on {rec.get('model')} with tools {', '.join(str(t) for t in tools) or 'none'} in project {rec.get('_project_name')}", location=rec.get("_endpoint"), weight=0.97, signature="cloud.azure-ai-foundry-agents"))
         if "code_interpreter" in tools:
             f.add_capability("code-exec")

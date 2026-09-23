@@ -391,22 +391,34 @@ class AwsConnector(BaseConnector):
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         callers: dict[str, dict[str, Any]] = {}
+        handlers = {name[3:].replace("_", "-"): getattr(self, name) for name in dir(type(self)) if name.startswith("_h_")}
         for rec in records:
-            kind = rec.get("_kind")
-            if kind == "account":
-                self.account = self.account or rec.get("account")
-                continue
             self.ctx.examined()
-            handler = getattr(self, f"_h_{kind.replace('-', '_')}", None) if kind else None
-            if kind == "cloudtrail-event":
-                self._acc_caller(callers, rec)
+            kind = rec.get("_kind") if isinstance(rec, dict) else None
+            if not isinstance(kind, str) or kind not in handlers.keys() | {"account", "cloudtrail-event"}:
+                self.ctx.warn("cloud.aws: record has missing, invalid, or unsupported _kind")
                 continue
-            if handler:
-                f = handler(rec)
-                if f:
-                    yield f
+            try:
+                if kind == "account":
+                    if not isinstance(rec.get("account"), str) or not rec["account"]:
+                        raise ValueError("account")
+                    self.account = self.account or rec["account"]
+                elif kind == "cloudtrail-event":
+                    for field in ("principal", "userAgent", "modelId", "eventName", "sourceIp", "eventTime", "_region"):
+                        if rec.get(field) is not None and not isinstance(rec[field], str):
+                            raise ValueError("event field")
+                    self._acc_caller(callers, rec)
+                else:
+                    f = handlers[kind](rec)
+                    if f:
+                        yield f
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.aws: record has invalid fields for its _kind")
         for key, agg in callers.items():
-            yield self._caller_finding(key, agg)
+            try:
+                yield self._caller_finding(key, agg)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.aws: invalid aggregated caller fields")
 
     def _arn_account(self, arn: str | None) -> str | None:
         try:
@@ -420,8 +432,11 @@ class AwsConnector(BaseConnector):
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_model_provider("provider.aws-bedrock")
         f.add_capability("tool-use")
-        f.models = [rec.get("foundationModel")] if rec.get("foundationModel") else []
-        apply_matches(f, model_matches(self.index, rec.get("foundationModel")), weight_scale=0.5)
+        model = rec.get("foundationModel")
+        if model is not None and not isinstance(model, str):
+            self.ctx.warn("cloud.aws: Bedrock agent has an invalid foundation model identifier")
+        f.models = [model] if isinstance(model, str) and model else []
+        apply_matches(f, model_matches(self.index, *f.models), weight_scale=0.5)
         ags = rec.get("_action_groups") or []
         kbs = rec.get("_knowledge_bases") or []
         f.add_evidence(Evidence(signal="aws:bedrock-agent", description=f"Agent '{rec.get('agentName')}' ({rec.get('agentStatus')}) on {rec.get('foundationModel')} with {len(ags)} action group(s), {len(kbs)} knowledge base(s), {len(rec.get('_aliases') or [])} alias(es); role {rec.get('agentResourceRoleArn')}", location=arn, weight=0.97, signature="cloud.aws-bedrock-agents"))
@@ -636,7 +651,7 @@ class AwsConnector(BaseConnector):
     def _name_only_secret(self, rec: dict[str, Any], rtype: str, arn: str | None) -> Finding | None:
         name = str(rec.get("Name") or "")
         norm = "".join(ch if ch.isalnum() else "_" for ch in name).upper().strip("_")
-        matches = self.index.match_env(norm) + [m for part in norm.split("_") if len(part) > 3 for m in []]
+        matches = self.index.match_env(norm)
         text_hits = [m for m in self.index.match_name(name.replace("/", " ").replace("-", " ")) if m.signature.category != "identity-app"]
         if not matches and not any(k in name.lower() for k in ("openai", "anthropic", "claude", "gemini", "llm", "bedrock", "huggingface", "mistral", "cohere", "groq", "langsmith", "langfuse", "pinecone", "tavily")):
             return None

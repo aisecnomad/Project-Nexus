@@ -45,6 +45,7 @@ class OciConnector(BaseConnector):
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
+        self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
         self._config: dict[str, Any] = {}
         self._signer: Any = None
         self.tenancy: str | None = ctx.get("tenancy")
@@ -73,19 +74,34 @@ class OciConnector(BaseConnector):
         return cls(cfg, signer=self._signer) if self._signer else cls(cfg)
 
     def _all(self, fn: Any, *args: Any, **kwargs: Any) -> list[Any]:
-        import oci
-
-        try:
-            return list(oci.pagination.list_call_get_all_results(fn, *args, **kwargs).data)
-        except Exception as exc:  # noqa: BLE001
-            msg = str(exc)
-            if "NotAuthorizedOrNotFound" in msg or "404" in msg or "NotAuthenticated" in msg:
-                self.log.debug("oci %s: %s", getattr(fn, "__name__", fn), truncate(msg, 120))
-            elif "NotFound" in msg or "not available" in msg.lower():
-                self.log.debug("oci %s unavailable: %s", getattr(fn, "__name__", fn), truncate(msg, 120))
-            else:
-                self.ctx.warn(f"cloud.oci: {getattr(fn, '__name__', fn)}: {truncate(msg, 160)}")
-            return []
+        """Keep successful pages when a later OCI request fails or pagination stalls."""
+        records: list[Any] = []
+        seen: set[str] = set()
+        operation = getattr(fn, "__name__", "list operation")
+        for _ in range(self.max_pages):
+            try:
+                response = fn(*args, **kwargs)
+                data = response.data
+                items = data if isinstance(data, list) else getattr(data, "items", None)
+                if not isinstance(items, list):
+                    self.ctx.warn(f"cloud.oci: invalid collection response for {operation}")
+                    return records
+                records.extend(items)
+                if not response.has_next_page:
+                    return records
+                token = response.next_page
+                if not isinstance(token, str) or not token or token in seen:
+                    self.ctx.warn(f"cloud.oci: invalid or repeated pagination token for {operation}")
+                    return records
+                seen.add(token)
+                kwargs["page"] = token
+            except Exception as exc:  # noqa: BLE001 - SDK errors must not erase successful pages
+                status = getattr(exc, "status", None)
+                detail = f"HTTP {status}" if isinstance(status, int) else type(exc).__name__
+                self.ctx.warn(f"cloud.oci: {operation} collection failed ({detail})")
+                return records
+        self.ctx.warn(f"cloud.oci: pagination limit reached for {operation}")
+        return records
 
     @staticmethod
     def _d(obj: Any) -> dict[str, Any]:
@@ -137,7 +153,7 @@ class OciConnector(BaseConnector):
             for kb in self._all(agents.list_knowledge_bases, comp):
                 yield {"_kind": "genai-knowledge-base", "_region": region, "_compartment": comp, **self._d(kb)}
         except AttributeError:
-            self.log.debug("oci: generative_ai_agent module missing in this SDK")
+            self.ctx.warn("cloud.oci: Generative AI Agent collection unsupported by installed SDK")
         try:
             genai = self._client(oci.generative_ai.GenerativeAiClient, region)
             for ep in self._all(genai.list_endpoints, comp):
@@ -150,19 +166,19 @@ class OciConnector(BaseConnector):
                     if d.get("base_model_id"):
                         yield {"_kind": "genai-custom-model", "_region": region, "_compartment": comp, **d}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: Generative AI collection unsupported by installed SDK")
         try:
             oda = self._client(oci.oda.OdaClient, region)
             for inst in self._all(oda.list_oda_instances, comp):
                 yield {"_kind": "oda-instance", "_region": region, "_compartment": comp, **self._d(inst)}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: Digital Assistant collection unsupported by installed SDK")
         try:
             ds = self._client(oci.data_science.DataScienceClient, region)
             for md in self._all(ds.list_model_deployments, comp):
                 yield {"_kind": "model-deployment", "_region": region, "_compartment": comp, **self._d(md)}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: Data Science collection unsupported by installed SDK")
         try:
             fn = self._client(oci.functions.FunctionsManagementClient, region)
             for app in self._all(fn.list_applications, comp):
@@ -170,51 +186,69 @@ class OciConnector(BaseConnector):
                     d = self._d(func)
                     yield {"_kind": "function", "_region": region, "_compartment": comp, "_application": app.display_name, **d}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: Functions collection unsupported by installed SDK")
         try:
             ci = self._client(oci.container_instances.ContainerInstanceClient, region)
             for inst in self._all(ci.list_container_instances, comp):
                 d = self._d(inst)
                 containers = []
                 for c in self._all(ci.list_containers, comp, container_instance_id=inst.id):
-                    cd = self._d(ci.get_container(c.id).data)
+                    try:
+                        cd = self._d(ci.get_container(c.id).data)
+                    except Exception as exc:  # noqa: BLE001 - continue other containers
+                        self.ctx.warn(f"cloud.oci: container detail collection failed ({type(exc).__name__})")
+                        continue
                     containers.append({"display_name": cd.get("display_name"), "image_url": cd.get("image_url"), "environment_variables": cd.get("environment_variables") or {}})
                 d["_containers"] = containers
                 yield {"_kind": "container-instance", "_region": region, "_compartment": comp, **d}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: Container Instances collection unsupported by installed SDK")
         try:
             vaults = self._client(oci.vault.VaultsClient, region)
             for s in self._all(vaults.list_secrets, comp):
                 yield {"_kind": "secret-name", "_region": region, "_compartment": comp, "id": s.id, "secret_name": s.secret_name, "description": s.description, "time_created": str(s.time_created)}
         except AttributeError:
-            pass
+            self.ctx.warn("cloud.oci: Vault collection unsupported by installed SDK")
 
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         endpoints: dict[str, list[dict[str, Any]]] = {}
         agents: list[dict[str, Any]] = []
         others: list[dict[str, Any]] = []
+        handlers = {name[3:].replace("_", "-"): getattr(self, name) for name in dir(type(self)) if name.startswith("_h_")}
         for rec in records:
-            kind = rec.get("_kind")
-            if kind == "tenancy":
-                self.tenancy = self.tenancy or rec.get("tenancy")
-            elif kind == "genai-agent":
-                agents.append(rec)
-            elif kind == "genai-agent-endpoint":
-                endpoints.setdefault(str(rec.get("agent_id")), []).append(rec)
-            else:
-                others.append(rec)
+            self.ctx.examined()
+            kind = rec.get("_kind") if isinstance(rec, dict) else None
+            if not isinstance(kind, str) or kind not in handlers.keys() | {"tenancy", "genai-agent", "genai-agent-endpoint"}:
+                self.ctx.warn("cloud.oci: record has missing, invalid, or unsupported _kind")
+                continue
+            try:
+                if kind == "tenancy":
+                    if not isinstance(rec.get("tenancy"), str) or not rec["tenancy"]:
+                        raise ValueError("tenancy")
+                    self.tenancy = self.tenancy or rec["tenancy"]
+                elif kind == "genai-agent":
+                    agents.append(rec)
+                elif kind == "genai-agent-endpoint":
+                    if not isinstance(rec.get("agent_id"), str) or not rec["agent_id"]:
+                        raise ValueError("agent_id")
+                    endpoints.setdefault(rec["agent_id"], []).append(rec)
+                else:
+                    others.append(rec)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.oci: record has invalid fields for its _kind")
         for a in agents:
-            self.ctx.examined()
-            yield self._agent_finding(a, endpoints.get(str(a.get("id")), []))
+            try:
+                yield self._agent_finding(a, endpoints.get(str(a.get("id")), []))
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.oci: record has invalid agent fields")
         for rec in others:
-            self.ctx.examined()
-            handler = getattr(self, f"_h_{str(rec.get('_kind')).replace('-', '_')}", None)
-            if handler:
-                f = handler(rec)
+            try:
+                f = handlers[rec["_kind"]](rec)
                 if f:
                     yield f
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.oci: record has invalid fields for its _kind")
 
     def _base(self, rec: dict[str, Any]) -> dict[str, Any]:
         return {"account": rec.get("_compartment") or self.tenancy, "region": rec.get("_region"), "owner": ((rec.get("freeform_tags") or {}).get("owner") or (rec.get("freeform_tags") or {}).get("Owner") or ((rec.get("defined_tags") or {}).get("Oracle-Tags") or {}).get("CreatedBy")), "first_seen": rec.get("time_created"), "last_seen": rec.get("time_updated")}
