@@ -92,7 +92,20 @@ class Auth0Connector(BaseConnector):
         name = c.get("name") or c.get("client_id")
         grant_types = c.get("grant_types") or []
         machine = c.get("app_type") == "non_interactive" or "client_credentials" in grant_types or bool(grants)
-        scopes = sorted({s for g in grants for s in (g.get("scope") or [])})
+        scope_names: set[str] = set()
+        for grant in grants:
+            raw_scopes = grant.get("scope") or []
+            if isinstance(raw_scopes, str):
+                raw_scopes = raw_scopes.split()
+            if not isinstance(raw_scopes, list):
+                self.ctx.warn("identity.auth0: client grant has invalid scopes")
+                continue
+            for scope in raw_scopes:
+                if not isinstance(scope, str) or not scope.strip():
+                    self.ctx.warn("identity.auth0: client grant has invalid scope entry")
+                    continue
+                scope_names.add(scope.strip())
+        scopes = sorted(scope_names)
         api_audiences: set[str] = set()
         for grant in grants:
             audience = grant.get("audience")

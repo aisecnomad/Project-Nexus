@@ -44,6 +44,13 @@ LLM_ACTION_PREFIXES = ("bedrock:", "bedrock-agentcore:", "sagemaker:invoke", "qb
 CLOUDTRAIL_EVENTS = ["InvokeModel", "InvokeModelWithResponseStream", "Converse", "ConverseStream", "InvokeAgent", "InvokeFlow", "InvokeInlineAgent", "InvokeAgentRuntime", "RetrieveAndGenerate", "InvokeEndpoint", "ChatSync"]
 
 
+def _resource_id(value: Any) -> str:
+    """Reject malformed provider identifiers instead of inventing an identity."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("invalid AWS resource identifier")
+    return value
+
+
 class AwsConnector(BaseConnector):
     name: ClassVar[str] = "cloud.aws"
     surface: ClassVar[Surface] = Surface.CLOUD
@@ -172,10 +179,38 @@ class AwsConnector(BaseConnector):
             agent = (detail or {}).get("agent", summary)
             agent["_kind"] = "bedrock-agent"
             agent["_region"] = region
-            agent["_action_groups"] = self._safe(lambda: list(self._paginate(ba, "list_agent_action_groups", "actionGroupSummaries", agentId=summary["agentId"], agentVersion="DRAFT"))) or []
-            agent["_knowledge_bases"] = self._safe(lambda: list(self._paginate(ba, "list_agent_knowledge_bases", "agentKnowledgeBaseSummaries", agentId=summary["agentId"], agentVersion="DRAFT"))) or []
-            agent["_aliases"] = self._safe(lambda: list(self._paginate(ba, "list_agent_aliases", "agentAliasSummaries", agentId=summary["agentId"]))) or []
-            agent["_collaborators"] = self._safe(lambda: list(self._paginate(ba, "list_agent_collaborators", "agentCollaboratorSummaries", agentId=summary["agentId"], agentVersion="DRAFT"))) or []
+            agent_id = summary["agentId"]
+            aliases = self._safe(lambda: list(self._paginate(ba, "list_agent_aliases", "agentAliasSummaries", agentId=agent_id))) or []
+            agent["_aliases"] = aliases
+            # An alias can route to a published version with different actions
+            # from DRAFT. List summaries do not contain executors or built-ins.
+            versions = {"DRAFT"}
+            for alias in aliases:
+                versions.update(route["agentVersion"] for route in alias.get("routingConfiguration") or [] if route.get("agentVersion"))
+            groups: list[dict[str, Any]] = []
+            knowledge_bases: list[dict[str, Any]] = []
+            collaborators: list[dict[str, Any]] = []
+            version_details: dict[str, dict[str, Any]] = {"DRAFT": agent}
+            for version in sorted(versions):
+                if version != "DRAFT":
+                    version_result = self._safe(ba.get_agent_version, agentId=agent_id, agentVersion=version)
+                    if isinstance(version_result, dict) and isinstance(version_result.get("agentVersion"), dict):
+                        version_details[version] = version_result["agentVersion"]
+                    elif version_result is not None:
+                        self.ctx.warn(f"cloud.aws: invalid agent version response for {agent_id} version {version}", incomplete=True)
+                summaries = self._safe(lambda: list(self._paginate(ba, "list_agent_action_groups", "actionGroupSummaries", agentId=agent_id, agentVersion=version))) or []
+                for action in summaries:
+                    detail = self._safe(ba.get_agent_action_group, agentId=agent_id, agentVersion=version, actionGroupId=action["actionGroupId"])
+                    groups.append({**action, **((detail or {}).get("agentActionGroup") or {}), "agentVersion": version})
+                kbs = self._safe(lambda: list(self._paginate(ba, "list_agent_knowledge_bases", "agentKnowledgeBaseSummaries", agentId=agent_id, agentVersion=version))) or []
+                knowledge_bases.extend({**kb, "_agentVersion": version} for kb in kbs)
+                collabs = self._safe(lambda: list(self._paginate(ba, "list_agent_collaborators", "agentCollaboratorSummaries", agentId=agent_id, agentVersion=version))) or []
+                collaborators.extend({**collab, "_agentVersion": version} for collab in collabs)
+            agent["_versions_scanned"] = sorted(versions)
+            agent["_version_details"] = version_details
+            agent["_action_groups"] = groups
+            agent["_knowledge_bases"] = knowledge_bases
+            agent["_collaborators"] = collaborators
             yield agent
         for kb in self._safe(lambda: list(self._paginate(ba, "list_knowledge_bases", "knowledgeBaseSummaries"))) or []:
             kb["_kind"] = "bedrock-knowledge-base"
@@ -211,8 +246,12 @@ class AwsConnector(BaseConnector):
             rec["_region"] = region
             yield rec
         for gw in self._safe(lambda: list(self._paginate(ac, "list_gateways", "items"))) or []:
-            targets = self._safe(lambda: list(self._paginate(ac, "list_gateway_targets", "items", gatewayIdentifier=gw.get("gatewayId")))) or []
-            gw["_targets"] = targets
+            gateway_id = gw.get("gatewayId")
+            targets = self._safe(lambda: list(self._paginate(ac, "list_gateway_targets", "items", gatewayIdentifier=gateway_id))) or []
+            gw["_targets"] = []
+            for target in targets:
+                detail = self._safe(ac.get_gateway_target, gatewayIdentifier=gateway_id, targetId=target["targetId"])
+                gw["_targets"].append({**target, **{k: v for k, v in (detail or {}).items() if k != "ResponseMetadata"}})
             gw["_kind"] = "agentcore-gateway"
             gw["_region"] = region
             yield gw
@@ -428,50 +467,64 @@ class AwsConnector(BaseConnector):
 
     def _h_bedrock_agent(self, rec: dict[str, Any]) -> Finding:
         arn = rec.get("agentArn") or rec.get("agentId")
-        f = cloud_finding(self.name, "aws", kind=Kind.AGENT, title=f"Bedrock Agent: {rec.get('agentName')}", resource=arn, resource_type="bedrock-agent", account=self._arn_account(arn), region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None, last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None)
+        f = cloud_finding(self.name, "aws", kind=Kind.AGENT, title=f"Bedrock Agent: {rec.get('agentName')}", resource=_resource_id(arn), resource_type="bedrock-agent", account=self._arn_account(arn), region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None, last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None)
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_model_provider("provider.aws-bedrock")
         f.add_capability("tool-use")
-        model = rec.get("foundationModel")
-        if model is not None and not isinstance(model, str):
+        raw_details = rec.get("_version_details") or {}
+        if not isinstance(raw_details, dict):
+            self.ctx.warn("cloud.aws: Bedrock agent has invalid version details")
+            raw_details = {}
+        details: dict[str, dict[str, Any]] = {}
+        for version, version_detail in raw_details.items():
+            if not isinstance(version_detail, dict):
+                self.ctx.warn("cloud.aws: Bedrock agent has invalid version details")
+                continue
+            details[str(version)] = version_detail
+        models = [rec.get("foundationModel"), *(v.get("foundationModel") for v in details.values())]
+        if any(model is not None and not isinstance(model, str) for model in models):
             self.ctx.warn("cloud.aws: Bedrock agent has an invalid foundation model identifier")
-        f.models = [model] if isinstance(model, str) and model else []
+        f.models = sorted({model for model in models if isinstance(model, str) and model})
         apply_matches(f, model_matches(self.index, *f.models), weight_scale=0.5)
         ags = rec.get("_action_groups") or []
         kbs = rec.get("_knowledge_bases") or []
-        f.add_evidence(Evidence(signal="aws:bedrock-agent", description=f"Agent '{rec.get('agentName')}' ({rec.get('agentStatus')}) on {rec.get('foundationModel')} with {len(ags)} action group(s), {len(kbs)} knowledge base(s), {len(rec.get('_aliases') or [])} alias(es); role {rec.get('agentResourceRoleArn')}", location=arn, weight=0.97, signature="cloud.aws-bedrock-agents"))
+        f.add_evidence(Evidence(signal="aws:bedrock-agent", description=f"Agent '{rec.get('agentName')}' ({rec.get('agentStatus')}) on {rec.get('foundationModel')} with {len(ags)} action group version(s), {len(kbs)} knowledge base association(s), {len(rec.get('_aliases') or [])} alias(es); role {rec.get('agentResourceRoleArn')}", location=arn, weight=0.97, signature="cloud.aws-bedrock-agents"))
         for ag in ags:
+            if ag.get("actionGroupState") == "DISABLED":
+                continue
             ex = ag.get("actionGroupExecutor") or {}
             if ex.get("lambda"):
                 f.add_capability("code-exec")
                 f.add_evidence(Evidence(signal="aws:action-group", description=f"Action group '{ag.get('actionGroupName')}' executes Lambda {ex.get('lambda')}", weight=0.4))
-            if ag.get("parentActionGroupSignature") == "AMAZON.CodeInterpreter":
+            if ag.get("parentActionSignature") == "AMAZON.CodeInterpreter":
                 f.add_capability("code-exec")
                 f.add_evidence(Evidence(signal="aws:code-interpreter", description="Built-in code interpreter enabled", weight=0.4))
-            if ag.get("parentActionGroupSignature") == "AMAZON.UserInput":
+            if ag.get("parentActionSignature") == "AMAZON.UserInput":
                 f.add_tag("asks-user")
-        if kbs:
+        if any(k.get("knowledgeBaseState") != "DISABLED" for k in kbs):
             f.add_capability("rag")
         if rec.get("_collaborators"):
             f.add_capability("multi-agent")
-        if not rec.get("guardrailConfiguration"):
+        deployed_versions = [v for v in rec.get("_versions_scanned") or [] if v != "DRAFT"]
+        observed_versions = [details[v] for v in deployed_versions if v in details] if deployed_versions else [rec]
+        if observed_versions and any(not v.get("guardrailConfiguration") for v in observed_versions):
             f.add_tag("no-guardrail")
-        if rec.get("memoryConfiguration"):
+        if rec.get("memoryConfiguration") or any(v.get("memoryConfiguration") for v in details.values()):
             f.add_capability("memory")
         f.owner = (rec.get("tags") or {}).get("owner") or (rec.get("tags") or {}).get("Owner")
         name_hint(self.index, f, rec.get("agentName"), rec.get("description"))
-        f.metadata.update({"agent_id": rec.get("agentId"), "status": rec.get("agentStatus"), "foundation_model": rec.get("foundationModel"), "role": rec.get("agentResourceRoleArn"), "instruction": truncate(rec.get("instruction"), 300), "action_groups": [{"name": a.get("actionGroupName"), "lambda": (a.get("actionGroupExecutor") or {}).get("lambda"), "state": a.get("actionGroupState")} for a in ags], "knowledge_bases": [k.get("knowledgeBaseId") for k in kbs], "aliases": [a.get("agentAliasName") for a in rec.get("_aliases") or []], "guardrail": rec.get("guardrailConfiguration"), "collaboration": rec.get("agentCollaboration")})
+        f.metadata.update({"agent_id": rec.get("agentId"), "status": rec.get("agentStatus"), "foundation_model": rec.get("foundationModel"), "role": rec.get("agentResourceRoleArn"), "instruction": truncate(rec.get("instruction"), 300), "versions_scanned": rec.get("_versions_scanned") or [], "version_models": {v: d.get("foundationModel") for v, d in details.items()}, "version_guardrails": {v: d.get("guardrailConfiguration") for v, d in details.items()}, "action_groups": [{"name": a.get("actionGroupName"), "lambda": (a.get("actionGroupExecutor") or {}).get("lambda"), "state": a.get("actionGroupState"), "version": a.get("agentVersion")} for a in ags], "knowledge_bases": sorted({k.get("knowledgeBaseId") for k in kbs if k.get("knowledgeBaseId")}), "knowledge_base_versions": [{"id": k.get("knowledgeBaseId"), "version": k.get("_agentVersion"), "state": k.get("knowledgeBaseState")} for k in kbs], "collaborator_versions": [{"name": c.get("collaboratorName"), "id": c.get("collaboratorId"), "version": c.get("_agentVersion")} for c in rec.get("_collaborators") or []], "aliases": [a.get("agentAliasName") for a in rec.get("_aliases") or []], "guardrail": rec.get("guardrailConfiguration"), "collaboration": rec.get("agentCollaboration")})
         return done(f, self.index, Kind.AGENT)
 
     def _h_bedrock_knowledge_base(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Bedrock Knowledge Base: {rec.get('name')}", resource=rec.get("knowledgeBaseId") or rec.get("name"), resource_type="bedrock-knowledge-base", account=self.account, region=rec.get("_region"), last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None)
+        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Bedrock Knowledge Base: {rec.get('name')}", resource=_resource_id(rec.get("knowledgeBaseId") or rec.get("name")), resource_type="bedrock-knowledge-base", account=self.account, region=rec.get("_region"), last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None)
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("rag")
         f.add_evidence(Evidence(signal="aws:knowledge-base", description=f"Knowledge base '{rec.get('name')}' ({rec.get('status')}): {truncate(rec.get('description'), 120)}", weight=0.6, signature="cloud.aws-bedrock-agents"))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_bedrock_flow(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.WORKFLOW, title=f"Bedrock Flow: {rec.get('name')}", resource=rec.get("arn") or rec.get("id"), resource_type="bedrock-flow", account=self.account, region=rec.get("_region"), last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None)
+        f = cloud_finding(self.name, "aws", kind=Kind.WORKFLOW, title=f"Bedrock Flow: {rec.get('name')}", resource=_resource_id(rec.get("arn") or rec.get("id")), resource_type="bedrock-flow", account=self.account, region=rec.get("_region"), last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None)
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_model_provider("provider.aws-bedrock")
         f.add_evidence(Evidence(signal="aws:bedrock-flow", description=f"Flow '{rec.get('name')}' ({rec.get('status')}) v{rec.get('version')}", weight=0.9, signature="cloud.aws-bedrock-agents"))
@@ -490,14 +543,14 @@ class AwsConnector(BaseConnector):
         return None  # informational; agents reference guardrails directly
 
     def _h_bedrock_custom_model(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Bedrock custom model: {rec.get('modelName')}", resource=rec.get("modelArn") or rec.get("modelName"), resource_type="bedrock-custom-model", account=self.account, region=rec.get("_region"), first_seen=str(rec.get("creationTime")) if rec.get("creationTime") else None)
+        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Bedrock custom model: {rec.get('modelName')}", resource=_resource_id(rec.get("modelArn") or rec.get("modelName")), resource_type="bedrock-custom-model", account=self.account, region=rec.get("_region"), first_seen=str(rec.get("creationTime")) if rec.get("creationTime") else None)
         f.add_model_provider("provider.aws-bedrock")
         f.add_evidence(Evidence(signal="aws:custom-model", description=f"Custom model '{rec.get('modelName')}' based on {rec.get('baseModelName')}", weight=0.5))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_agentcore_runtime(self, rec: dict[str, Any]) -> Finding:
         arn = rec.get("agentRuntimeArn") or rec.get("agentRuntimeId")
-        f = cloud_finding(self.name, "aws", kind=Kind.AGENT, title=f"Bedrock AgentCore runtime: {rec.get('agentRuntimeName')}", resource=arn, resource_type="agentcore-runtime", account=self._arn_account(arn), region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None, last_seen=str(rec.get("lastUpdatedAt")) if rec.get("lastUpdatedAt") else None)
+        f = cloud_finding(self.name, "aws", kind=Kind.AGENT, title=f"Bedrock AgentCore runtime: {rec.get('agentRuntimeName')}", resource=_resource_id(arn), resource_type="agentcore-runtime", account=self._arn_account(arn), region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None, last_seen=str(rec.get("lastUpdatedAt")) if rec.get("lastUpdatedAt") else None)
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("tool-use")
         artifact = rec.get("agentRuntimeArtifact") or {}
@@ -515,40 +568,40 @@ class AwsConnector(BaseConnector):
     def _h_agentcore_gateway(self, rec: dict[str, Any]) -> Finding:
         arn = rec.get("gatewayArn") or rec.get("gatewayId")
         targets = rec.get("_targets") or []
-        f = cloud_finding(self.name, "aws", kind=Kind.MCP_SERVER, title=f"AgentCore Gateway (MCP): {rec.get('name')}", resource=arn, resource_type="agentcore-gateway", account=self._arn_account(arn), region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None)
+        f = cloud_finding(self.name, "aws", kind=Kind.MCP_SERVER, title=f"AgentCore Gateway (MCP): {rec.get('name')}", resource=_resource_id(arn), resource_type="agentcore-gateway", account=self._arn_account(arn), region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None)
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_framework("protocol.mcp")
         f.add_capability("tool-use")
         f.add_capability("saas-actions")
         f.add_evidence(Evidence(signal="aws:agentcore-gateway", description=f"Gateway '{rec.get('name')}' ({rec.get('status')}) protocol {rec.get('protocolType')} authorizer {rec.get('authorizerType')} with {len(targets)} target(s): {', '.join(str(t.get('name')) for t in targets[:8])}", location=arn, weight=0.95, signature="cloud.aws-bedrock-agents"))
-        if any((t.get("targetConfiguration") or {}).get("mcp", {}).get("lambda") for t in targets):
+        if any(t.get("targetType") == "LAMBDA" or (t.get("targetConfiguration") or {}).get("mcp", {}).get("lambda") for t in targets):
             f.add_capability("code-exec")
         f.metadata.update({"protocol": rec.get("protocolType"), "authorizer": rec.get("authorizerType"), "targets": [{"name": t.get("name"), "status": t.get("status")} for t in targets][:30], "url": rec.get("gatewayUrl")})
         return done(f, self.index, Kind.MCP_SERVER)
 
     def _h_agentcore_memory(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"AgentCore Memory: {rec.get('name') or rec.get('id')}", resource=rec.get("arn") or rec.get("id"), resource_type="agentcore-memory", account=self.account, region=rec.get("_region"))
+        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"AgentCore Memory: {rec.get('name') or rec.get('id')}", resource=_resource_id(rec.get("arn") or rec.get("id")), resource_type="agentcore-memory", account=self.account, region=rec.get("_region"))
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("memory")
         f.add_evidence(Evidence(signal="aws:agentcore-memory", description=f"Memory store '{rec.get('name') or rec.get('id')}' ({rec.get('status')})", weight=0.7, signature="cloud.aws-bedrock-agents"))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_agentcore_browser(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"AgentCore Browser: {rec.get('name') or rec.get('browserId')}", resource=rec.get("browserArn") or rec.get("browserId"), resource_type="agentcore-browser", account=self.account, region=rec.get("_region"))
+        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"AgentCore Browser: {rec.get('name') or rec.get('browserId')}", resource=_resource_id(rec.get("browserArn") or rec.get("browserId")), resource_type="agentcore-browser", account=self.account, region=rec.get("_region"))
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("browsing")
         f.add_evidence(Evidence(signal="aws:agentcore-browser", description=f"Managed browser '{rec.get('name')}' ({rec.get('status')})", weight=0.7, signature="cloud.aws-bedrock-agents"))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_agentcore_code_interpreter(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"AgentCore Code Interpreter: {rec.get('name') or rec.get('codeInterpreterId')}", resource=rec.get("codeInterpreterArn") or rec.get("codeInterpreterId"), resource_type="agentcore-code-interpreter", account=self.account, region=rec.get("_region"))
+        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"AgentCore Code Interpreter: {rec.get('name') or rec.get('codeInterpreterId')}", resource=_resource_id(rec.get("codeInterpreterArn") or rec.get("codeInterpreterId")), resource_type="agentcore-code-interpreter", account=self.account, region=rec.get("_region"))
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("code-exec")
         f.add_evidence(Evidence(signal="aws:agentcore-code-interpreter", description=f"Code interpreter '{rec.get('name')}' ({rec.get('status')})", weight=0.7, signature="cloud.aws-bedrock-agents"))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_agentcore_workload_identity(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.SERVICE_IDENTITY, title=f"AgentCore workload identity: {rec.get('name')}", resource=rec.get("workloadIdentityArn") or rec.get("name"), resource_type="agentcore-workload-identity", account=self.account, region=rec.get("_region"), surface=Surface.IDENTITY)
+        f = cloud_finding(self.name, "aws", kind=Kind.SERVICE_IDENTITY, title=f"AgentCore workload identity: {rec.get('name')}", resource=_resource_id(rec.get("workloadIdentityArn") or rec.get("name")), resource_type="agentcore-workload-identity", account=self.account, region=rec.get("_region"), surface=Surface.IDENTITY)
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("delegated-identity")
         f.add_evidence(Evidence(signal="aws:agentcore-identity", description=f"Agent workload identity '{rec.get('name')}' (OAuth return URLs: {', '.join(rec.get('allowedResourceOauth2ReturnUrls') or [])[:200] or 'none'})", weight=0.8, signature="cloud.aws-bedrock-agents"))
@@ -556,7 +609,7 @@ class AwsConnector(BaseConnector):
 
     def _h_lambda(self, rec: dict[str, Any]) -> Finding | None:
         arn = rec.get("FunctionArn")
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Lambda function: {rec.get('FunctionName')}", resource=arn or rec.get("FunctionName"), resource_type="lambda-function", account=self._arn_account(arn), region=rec.get("_region"), last_seen=rec.get("LastModified"))
+        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Lambda function: {rec.get('FunctionName')}", resource=_resource_id(arn or rec.get("FunctionName")), resource_type="lambda-function", account=self._arn_account(arn), region=rec.get("_region"), last_seen=rec.get("LastModified"))
         scan_env(self.index, f, rec.get("Environment"), location=arn)
         for layer in rec.get("Layers") or []:
             for m in self.index.match_domains_in_text(layer) + self.index.match_code(layer.rsplit(":", 2)[0].rsplit(":", 1)[-1].replace("-", " ") if ":" in layer else layer):
@@ -581,7 +634,7 @@ class AwsConnector(BaseConnector):
 
     def _h_ecs_task_definition(self, rec: dict[str, Any]) -> Finding | None:
         arn = rec.get("taskDefinitionArn")
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"ECS task definition: {rec.get('family')}", resource=arn or rec.get("family"), resource_type="ecs-task-definition", account=self._arn_account(arn), region=rec.get("_region"))
+        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"ECS task definition: {rec.get('family')}", resource=_resource_id(arn or rec.get("family")), resource_type="ecs-task-definition", account=self._arn_account(arn), region=rec.get("_region"))
         for c in rec.get("containers") or []:
             if c.get("image"):
                 apply_matches(f, self.index.match_image(c["image"]), location=arn)
@@ -596,7 +649,7 @@ class AwsConnector(BaseConnector):
 
     def _h_sagemaker_endpoint(self, rec: dict[str, Any]) -> Finding | None:
         arn = rec.get("EndpointArn")
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"SageMaker endpoint: {rec.get('EndpointName')}", resource=arn or rec.get("EndpointName"), resource_type="sagemaker-endpoint", account=self._arn_account(arn), region=rec.get("_region"), first_seen=rec.get("CreationTime"), last_seen=rec.get("LastModifiedTime"))
+        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"SageMaker endpoint: {rec.get('EndpointName')}", resource=_resource_id(arn or rec.get("EndpointName")), resource_type="sagemaker-endpoint", account=self._arn_account(arn), region=rec.get("_region"), first_seen=rec.get("CreationTime"), last_seen=rec.get("LastModifiedTime"))
         llm = False
         for m in rec.get("models") or []:
             for img in m.get("images") or []:
@@ -617,7 +670,7 @@ class AwsConnector(BaseConnector):
 
     def _h_state_machine(self, rec: dict[str, Any]) -> Finding | None:
         arn = rec.get("stateMachineArn")
-        f = cloud_finding(self.name, "aws", kind=Kind.WORKFLOW, title=f"Step Functions workflow with LLM steps: {rec.get('name')}", resource=arn, resource_type="state-machine", account=self._arn_account(arn), region=rec.get("_region"), first_seen=rec.get("creationDate"))
+        f = cloud_finding(self.name, "aws", kind=Kind.WORKFLOW, title=f"Step Functions workflow with LLM steps: {rec.get('name')}", resource=_resource_id(arn), resource_type="state-machine", account=self._arn_account(arn), region=rec.get("_region"), first_seen=rec.get("creationDate"))
         definition = rec.get("definition") or ""
         if "bedrock" not in definition.lower() and "sagemaker" not in definition.lower():
             return None
@@ -664,7 +717,7 @@ class AwsConnector(BaseConnector):
 
     def _h_iam_principal(self, rec: dict[str, Any]) -> Finding | None:
         actions = rec.get("actions") or []
-        f = cloud_finding(self.name, "aws", kind=Kind.IAM_GRANT, title=f"IAM {rec.get('type')} with LLM/agent permissions: {rec.get('name')}", resource=rec.get("arn") or rec.get("name"), resource_type=f"iam-{str(rec.get('type', 'principal')).lower()}", account=self._arn_account(rec.get("arn")), first_seen=rec.get("created"), last_seen=rec.get("last_used"), surface=Surface.IDENTITY)
+        f = cloud_finding(self.name, "aws", kind=Kind.IAM_GRANT, title=f"IAM {rec.get('type')} with LLM/agent permissions: {rec.get('name')}", resource=_resource_id(rec.get("arn") or rec.get("name")), resource_type=f"iam-{str(rec.get('type', 'principal')).lower()}", account=self._arn_account(rec.get("arn")), first_seen=rec.get("created"), last_seen=rec.get("last_used"), surface=Surface.IDENTITY)
         llm = scan_iam_actions(self.index, f, actions, location=rec.get("arn"))
         wildcard = [a for a in actions if a == "*" or a.endswith(":*")]
         if not llm and not wildcard:

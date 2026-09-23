@@ -10,9 +10,9 @@ recorded on their card.
 
 ### Agent Capability Cards (one YAML per agent)
 
-The format used by this repository (`agent-card.yaml`). ShadowScan reads
+The bundled example is [`agent-card.yaml`](../agent-card.yaml). ShadowScan reads
 `metadata.agent_id`, `metadata.name`, `metadata.owner_team` / `owner`,
-`metadata.classification`, and an `discovery:` block required for automatic registration:
+`metadata.classification`, and a `discovery:` block required for automatic registration:
 
 ```yaml
 metadata:

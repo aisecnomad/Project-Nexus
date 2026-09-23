@@ -16,7 +16,7 @@ Offline export: JSONL of dumped records (``_kind`` per record).
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypedDict
 from urllib.parse import parse_qs, urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
@@ -62,6 +62,12 @@ AI_ROLE_IDS = {
     "8e3af657-a8ff-443c-a75c-2fe8c4bcb635": "Owner",
     "b24988ac-6180-42a0-ab88-20f7382dd24c": "Contributor",
 }
+
+
+class _ResourceBase(TypedDict):
+    account: str | None
+    region: str | None
+    owner: str | None
 
 
 class AzureConnector(BaseConnector):
@@ -198,7 +204,7 @@ class AzureConnector(BaseConnector):
                     yield p
                     yield from self._collect_agents(r, p)
             elif t == "microsoft.logic/workflows":
-                wf = self._get(rid, "2019-05-01") or {}
+                wf = self._get(str(rid), "2019-05-01") or {}
                 yield {"_kind": "logicapp-definition", "id": rid, "name": r.get("name"), "definition": get_path(wf, "properties.definition"), "connections": get_path(wf, "properties.parameters.$connections.value"), "state": get_path(wf, "properties.state")}
             elif t == "microsoft.web/sites" and self.include_app_settings:
                 try:
@@ -308,7 +314,7 @@ class AzureConnector(BaseConnector):
         props = r.get("properties") or {}
         tags = r.get("tags") or {}
         owner = tags.get("owner") or tags.get("Owner") or tags.get("team") or tags.get("CreatedBy")
-        base: dict[str, Any] = dict(account=r.get("subscriptionId"), region=r.get("location"), owner=owner)
+        base: _ResourceBase = {"account": r.get("subscriptionId"), "region": r.get("location"), "owner": owner}
         if t == "microsoft.cognitiveservices/accounts":
             kind = str(r.get("kind") or "")
             if kind.lower() not in {"openai", "aiservices"} and not deps:

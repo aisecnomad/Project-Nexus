@@ -1,7 +1,8 @@
 # Connectors
 
-Every connector has a **live** mode (API credentials) and an **offline** mode
-(`input:` pointing at an export). Live runs can persist sanitized records with
+Most connectors have a **live** mode (API credentials) and an **offline** mode
+(`input:` pointing at an export). `gateway.logs` reads supplied logs and
+`identity.jwt` reads supplied tokens. Live runs can persist sanitized records with
 `--dump-records DIR` / `options.dump_records` for offline re-analysis. Exports are
 written atomically with mode 0600 and JWT inputs are never exported. Redaction
 removes sensitive values, so an export is not a lossless copy of the API response.
@@ -93,7 +94,13 @@ combined or JSON, keeps only LLM/agent hosts and paths by default) or
 `generic`. Each caller (API key, principal, service, user, user agent or IP)
 becomes a finding with models, providers, frameworks (user agent
 fingerprints), tool-use ratio, tool-call responses, temporal shape (24×7 /
-night / weekend → `always-on`), volume, tokens, cost, errors.
+night / weekend → `always-on`), volume, tokens, cost, errors. A gateway finding
+for an anonymous, shared or user-agent/IP fallback caller cannot establish
+the identity of a code workload in cross-layer correlation. Aggregate provider
+usage exports count requests from provider counters; aggregate buckets are
+not individual timestamped transaction events. Log fields for environment
+and caller identity are evidence from the supplied export; assess the
+producer and delivery chain before treating them as verified production facts.
 
 ## Low-code
 

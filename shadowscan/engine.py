@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -12,11 +13,11 @@ from typing import Any
 
 from shadowscan import __version__
 from shadowscan.comparison import build_collection_scope
-from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.config import ConnectorSpec, ScanConfig, validate_min_confidence
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.correlation import correlate_runtime
 from shadowscan.incremental import IncrementalCache
-from shadowscan.models import Finding, Kind, ScanResult, ScanStats, now_iso
+from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory
 from shadowscan.risk import assess
 from shadowscan.signatures import SignatureIndex, get_index
@@ -30,7 +31,8 @@ ProgressFn = Callable[[str, str], None]  # (connector id, message)
 class Engine:
     def __init__(self, config: ScanConfig, index: SignatureIndex | None = None, progress: ProgressFn | None = None):
         self.config = config
-        self.index = index or get_index(extra_dirs=config.signature_dirs or None)
+        self._index_supplied = index is not None
+        self.index = index if index is not None else get_index(extra_dirs=config.signature_dirs or None, reload=True)
         self.progress = progress or (lambda cid, msg: None)
         self.inventory: Inventory | None = None
         if config.inventory:
@@ -38,6 +40,10 @@ class Engine:
 
     # ------------------------------------------------------------------ run
     def run(self, only: list[str] | None = None) -> ScanResult:
+        self.config.min_confidence = validate_min_confidence(self.config.min_confidence)
+        # A reusable Engine must notice signature pack edits between runs.
+        if not self._index_supplied:
+            self.index = get_index(extra_dirs=self.config.signature_dirs or None, reload=True)
         # Registry approval can change independently of source inputs or an Engine
         # instance's lifetime. It is never persisted in connector cache entries.
         self.inventory = Inventory.load(self.config.inventory) if self.config.inventory else None
@@ -117,11 +123,16 @@ class Engine:
 
         def _run(spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
             roots = spec.config.get("paths")
-            if not (
+            split_roots = (
                 self.config.incremental and spec.name == "code.filesystem"
                 and not spec.config.get("input") and isinstance(roots, list) and len(roots) > 1
-                and cache.supports_connector(spec, get_connector_class(spec.name))
-            ):
+            )
+            if split_roots:
+                try:
+                    split_roots = cache.supports_connector(spec, get_connector_class(spec.name))
+                except Exception:  # noqa: BLE001 - _run_one reports lookup/import failures as incomplete
+                    split_roots = False
+            if not split_roots or not isinstance(roots, list):
                 return _run_one(spec)
             # Repositories are independent cache units: modifying repo B must not
             # force expensive analysis of unchanged repo A in the same connector.
@@ -190,6 +201,64 @@ class Engine:
 
 # ------------------------------------------------------------------ merging
 
+_GATEWAY_TOTALS = (
+    "events", "records", "aggregate_records", "tool_known", "tool_requests",
+    "tool_call_responses", "tokens_in", "tokens_out", "cost", "errors",
+)
+_GATEWAY_DISTRIBUTIONS = ("models", "providers", "hosts", "user_agents", "source_ips", "end_users", "teams", "operations", "schemas")
+
+
+def _gateway_source_snapshot(finding: Finding) -> dict[str, Any]:
+    metadata = finding.metadata
+    observations = metadata.get("runtime_observations", [])
+    digest = hashlib.sha256(json.dumps(observations, sort_keys=True, default=str).encode()).hexdigest()
+    return {
+        "source": metadata.get("runtime_source", {}),
+        "window": {"first_seen": finding.first_seen, "last_seen": finding.last_seen},
+        "observation_sha256": digest,
+        "metrics": {key: metadata[key] for key in (*_GATEWAY_TOTALS, *_GATEWAY_DISTRIBUTIONS) if key in metadata},
+    }
+
+
+def _gateway_sources(finding: Finding) -> list[dict[str, Any]]:
+    existing = finding.metadata.get("runtime_sources")
+    return existing if isinstance(existing, list) else [_gateway_source_snapshot(finding)]
+
+
+def _merge_gateway_sources(cur: Finding, sources: list[dict[str, Any]]) -> None:
+    unique: list[dict[str, Any]] = []
+    for source in sources:
+        if isinstance(source, dict) and source not in unique:
+            unique.append(source)
+    cur.metadata["runtime_sources"] = unique
+    for key in _GATEWAY_TOTALS:
+        values = [source.get("metrics", {}).get(key) for source in unique]
+        numbers = [value for value in values if isinstance(value, (int, float)) and not isinstance(value, bool)]
+        if numbers:
+            total = sum(numbers)
+            cur.metadata[key] = round(total, 4) if key == "cost" else total
+    for key in _GATEWAY_DISTRIBUTIONS:
+        counts: dict[str, int | float] = {}
+        for source in unique:
+            distribution = source.get("metrics", {}).get(key)
+            if isinstance(distribution, dict):
+                for name, value in distribution.items():
+                    if isinstance(name, str) and isinstance(value, (int, float)) and not isinstance(value, bool):
+                        counts[name] = counts.get(name, 0) + value
+        if counts:
+            cur.metadata[key] = dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+    events = cur.metadata.get("events")
+    if isinstance(events, int):
+        cur.title = re.sub(r": \d+ requests\b", f": {events} requests", cur.title, count=1)
+        identity_signal = "gateway:" + str(cur.metadata.get("caller_kind", ""))
+        identity_evidence = [ev for ev in cur.evidence if ev.signal == identity_signal]
+        if identity_evidence:
+            primary = identity_evidence[0]
+            primary.description = re.sub(r"^\d+ LLM request\(s\)", f"{events} LLM request(s)", primary.description)
+            cur.evidence = [ev for ev in cur.evidence if ev.signal != identity_signal or ev is primary]
+    if len(unique) > 1:
+        cur.metadata["runtime_merge_note"] = "Counts sum records across inputs; overlapping exports can represent the same requests."
+
 
 def merge(findings: list[Finding]) -> list[Finding]:
     """Merge findings with the same id (same object seen by the same connector twice).
@@ -205,6 +274,7 @@ def merge(findings: list[Finding]) -> list[Finding]:
         if cur is None:
             by_id[f.id] = f
             continue
+        gateway_sources = _gateway_sources(cur) + _gateway_sources(f) if cur.surface == f.surface == Surface.GATEWAY else []
         seen = {(e.signal, e.location, e.description) for e in cur.evidence}
         for e in f.evidence:
             if (e.signal, e.location, e.description) not in seen:
@@ -227,7 +297,30 @@ def merge(findings: list[Finding]) -> list[Finding]:
         cur.first_seen = min(x for x in (cur.first_seen, f.first_seen) if x) if (cur.first_seen or f.first_seen) else None
         cur.last_seen = max(x for x in (cur.last_seen, f.last_seen) if x) if (cur.last_seen or f.last_seen) else None
         for k, v in f.metadata.items():
-            cur.metadata.setdefault(k, v)
+            if k == "variable_names" and isinstance(v, list):
+                existing = cur.metadata.get(k, [])
+                if isinstance(existing, list):
+                    cur.metadata[k] = sorted(set(existing) | set(v))
+            elif k == "runtime_observations" and isinstance(v, list):
+                # A merged gateway caller may have been exported from several
+                # inputs. Keep each source alongside its observation so the
+                # correlation report does not attribute every event to input A.
+                old = cur.metadata.get(k, [])
+                observations = []
+                for finding, group in ((cur, old), (f, v)):
+                    if not isinstance(group, list):
+                        continue
+                    for observation in group:
+                        if isinstance(observation, dict):
+                            entry = dict(observation)
+                            entry.setdefault("source", finding.metadata.get("runtime_source", {}))
+                            if entry not in observations:
+                                observations.append(entry)
+                cur.metadata[k] = observations
+            else:
+                cur.metadata.setdefault(k, v)
+        if gateway_sources:
+            _merge_gateway_sources(cur, gateway_sources)
         if f.kind == Kind.AGENT and cur.kind == Kind.FRAMEWORK_USAGE:
             cur.kind = Kind.AGENT
         cur.recompute_confidence()

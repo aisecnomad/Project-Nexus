@@ -5,6 +5,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -444,7 +445,8 @@ def get_index(extra_dirs: list[str] | None = None, reload: bool = False) -> Sign
     global _default_index
     with _index_lock:
         if _default_index is None or reload or extra_dirs:
-            idx = SignatureIndex(load_signatures(extra_dirs=extra_dirs))
+            dirs: list[str | os.PathLike[str]] | None = list(extra_dirs) if extra_dirs else None
+            idx = SignatureIndex(load_signatures(extra_dirs=dirs))
             if not extra_dirs:
                 _default_index = idx
             return idx

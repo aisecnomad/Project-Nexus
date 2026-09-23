@@ -42,6 +42,7 @@ class GitLabConnector(BaseConnector):
         "mode": "clone | api",
         "include_archived": "default false",
         "max_projects": "default 500",
+        "scan_timeout": "matching budget in seconds per file (default 2)",
         "input": "offline: directory of cloned projects",
     }
     offline_formats: ClassVar[str] = "directory of cloned projects"
@@ -52,6 +53,8 @@ class GitLabConnector(BaseConnector):
         self.token = ctx.get("token", env="GITLAB_TOKEN")
         self.mode = str(ctx.get("mode", "clone" if shutil.which("git") else "api"))
         self.max_projects = int(ctx.get("max_projects", 500))
+        if self.max_projects < 1:
+            raise ConnectorError("code.gitlab: max_projects must be positive")
         self.include_archived = bool(ctx.get("include_archived", False))
         headers = {"PRIVATE-TOKEN": self.token} if self.token else {}
         self.http = HttpClient(self.api_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True))
@@ -62,9 +65,16 @@ class GitLabConnector(BaseConnector):
         if not (group or projects):
             raise ConnectorError("code.gitlab: set 'group' or 'projects'")
         seen: set[int] = set()
+        requested: set[str] = set()
         for p in projects:
+            if str(p) in requested:
+                continue
+            requested.add(str(p))
+            if len(seen) >= self.max_projects:
+                self.ctx.warn(f"code.gitlab: max_projects ({self.max_projects}) reached", incomplete=True)
+                return
             data = self.http.try_get_json(f"/projects/{quote(str(p), safe='')}")
-            if data:
+            if data and data["id"] not in seen:
                 seen.add(data["id"])
                 yield data
         if group:
@@ -75,19 +85,20 @@ class GitLabConnector(BaseConnector):
             for p in self.http.paginate_link(f"/groups/{gid}/projects", params=params):
                 if p["id"] in seen:
                     continue
-                seen.add(p["id"])
-                yield p
                 if len(seen) >= self.max_projects:
                     self.ctx.warn(f"code.gitlab: max_projects ({self.max_projects}) reached", incomplete=True)
                     return
+                seen.add(p["id"])
+                yield p
 
     def _group_identities(self, gid: str) -> Iterator[dict[str, Any]]:
         for sa in self._optional_list(f"/groups/{gid}/service_accounts"):
             yield {"_kind": "service_account", **sa}
         for tok in self._optional_list(f"/groups/{gid}/access_tokens"):
             yield {"_kind": "group_access_token", **tok}
-        for var in self._optional_list(f"/groups/{gid}/variables"):
-            yield {"_kind": "group_variable", "group": gid, **{k: v for k, v in var.items() if k != "value"}}
+        variables = [{k: v for k, v in var.items() if k != "value"} for var in self._optional_list(f"/groups/{gid}/variables")]
+        if variables:
+            yield {"_kind": "group_variables", "group": gid, "variables": variables}
         group = self.http.try_get_json(f"/groups/{gid}")
         if isinstance(group, dict) and (group.get("duo_features_enabled") is not None):
             yield {"_kind": "duo", "group": group.get("full_path"), "duo_features_enabled": group.get("duo_features_enabled"), "lock_duo_features_enabled": group.get("lock_duo_features_enabled")}
@@ -102,21 +113,28 @@ class GitLabConnector(BaseConnector):
         p = Path(path)
         if not p.is_dir():
             raise ConnectorError(f"code.gitlab: offline input must be a directory of clones: {path}")
+        count = 0
         for child in sorted(p.iterdir()):
             if child.is_dir():
+                if count >= self.max_projects:
+                    self.ctx.warn(f"code.gitlab: max_projects ({self.max_projects}) reached", incomplete=True)
+                    return
+                count += 1
                 yield {"path_with_namespace": child.name, "_local_path": str(child)}
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        group_variables: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
             kind = rec.get("_kind")
             if kind == "service_account" or kind == "group_access_token":
                 yield self._identity_finding(rec)
                 continue
             if kind == "group_variable":
-                f = self._variables_finding(str(rec.get("group")), [rec], scope="group")
-                if f:
-                    yield f
+                group_variables.setdefault(str(rec.get("group")), []).append(rec)
+                continue
+            if kind == "group_variables":
+                group_variables.setdefault(str(rec.get("group")), []).extend(rec.get("variables") or [])
                 continue
             if kind == "duo":
                 if rec.get("duo_features_enabled"):
@@ -143,12 +161,16 @@ class GitLabConnector(BaseConnector):
             finally:
                 if tmp:
                     shutil.rmtree(tmp, ignore_errors=True)
+        for group, variables in group_variables.items():
+            f = self._variables_finding(group, variables, scope="group")
+            if f:
+                yield f
 
     def _scan_local(self, proj: dict[str, Any], local: str) -> Iterable[Finding]:
         full = proj.get("path_with_namespace") or Path(local).name
         ns = (proj.get("namespace") or {}).get("full_path") or full.rsplit("/", 1)[0]
         cfg = {
-            **{k: v for k, v in self.ctx.config.items() if k in {"exclude", "max_file_size", "max_files", "scan_secrets", "use_git"}},
+            **{k: v for k, v in self.ctx.config.items() if k in {"exclude", "max_file_size", "max_files", "scan_timeout", "scan_secrets", "use_git"}},
             "path": local,
             "label": f"gitlab:{full}",
             "account": ns,
@@ -240,7 +262,7 @@ class GitLabConnector(BaseConnector):
                 yield self._identity_finding({"_kind": "project_bot", "project": full, **member})
 
     def _variables_finding(self, scope_name: str, variables: list[dict[str, Any]], scope: str) -> Finding | None:
-        names = [key for v in variables if isinstance(key := v.get("key"), str) and key]
+        names = [name for v in variables if isinstance(name := v.get("key"), str) and name]
         matches = []
         for n in names:
             matches.extend(self.index.match_env(n))
@@ -256,7 +278,11 @@ class GitLabConnector(BaseConnector):
             provider="gitlab",
             account=scope_name.split("/")[0],
         )
-        unmasked = [v["key"] for v in variables if v.get("key") and any(m.value == v["key"] for m in matches) and not v.get("masked")]
+        matched_names = {m.value for m in matches}
+        unmasked = [
+            name for v in variables
+            if isinstance(name := v.get("key"), str) and name in matched_names and not v.get("masked")
+        ]
         f.add_evidence(Evidence(signal="ci:variable-names", description=f"CI/CD variable names: {', '.join(sorted(set(names)))[:400]}", weight=0.3))
         apply_matches(f, matches, location=f"{scope_name} ({scope} CI/CD variables)", weight_scale=0.8)
         if unmasked:

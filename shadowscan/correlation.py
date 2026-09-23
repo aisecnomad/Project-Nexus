@@ -30,7 +30,9 @@ def correlate_runtime(findings: list[Finding]) -> None:
         if not isinstance(observations, list):
             continue
         for observation in observations:
-            if not isinstance(observation, dict) or observation.get("identity_basis") != "configured-exact-caller-and-scope":
+            if (not isinstance(observation, dict)
+                    or observation.get("identity_basis") != "configured-exact-caller-and-scope"
+                    or observation.get("identity_assurance") == "unverified"):
                 continue
             resources = observation.get("code_resources", [])
             if isinstance(resources, list):
@@ -63,7 +65,7 @@ def correlate_runtime(findings: list[Finding]) -> None:
             matches.append({
                 "gateway_finding_id": gateway.id,
                 "gateway_resource": gateway.resource,
-                "source": gateway.metadata.get("runtime_source", {}),
+                "source": observation.get("source", gateway.metadata.get("runtime_source", {})),
                 "scope": observation.get("scope", {}),
                 "frameworks": frameworks,
                 "events": events,
@@ -71,6 +73,8 @@ def correlate_runtime(findings: list[Finding]) -> None:
                 "last_seen": to_iso(last),
                 "environment": observation.get("environment"),
                 "identity_basis": observation["identity_basis"],
+                "identity_assurance": observation.get("identity_assurance", "unspecified"),
+                "environment_assurance": observation.get("environment_assurance", "unspecified"),
             })
         if matches:
             # Worker completion/configuration order cannot change provenance.
@@ -89,9 +93,10 @@ def correlate_runtime(findings: list[Finding]) -> None:
                 "environments": environments,
                 "production_observed": production_events > 0,
                 "production_events": production_events,
+                "production_label_verified": False,
                 "sources": matches,
                 "event_counting": "Source observations; distinct exports may overlap and are not deduplicated into unique requests.",
-                "limitations": "Export-window telemetry and framework fingerprints; not an execution attestation or evidence of current activity.",
+                "limitations": "Export-window telemetry and spoofable framework fingerprints, not an execution attestation. Production is an event label, not a verified deployment identity; generic log identities require an operator assertion.",
             }
             code.add_evidence(Evidence(
                 signal="runtime:gateway-observed",
@@ -108,6 +113,7 @@ def correlate_runtime(findings: list[Finding]) -> None:
                 "window": None,
                 "last_seen": None,
                 "production_observed": False,
+                "production_label_verified": False,
                 "sources": [],
                 "limitations": "Absence in exported telemetry does not establish that the framework is inactive.",
             }

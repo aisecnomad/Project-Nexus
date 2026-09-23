@@ -66,12 +66,16 @@ class GoogleWorkspaceConnector(BaseConnector):
         self._auth()
         assert self.http
         count = 0
+        token_errors: dict[str, int] = {}
         try:
             for user in self.http.paginate_token("/admin/directory/v1/users", params={"customer": self.customer, "maxResults": 500, "projection": "basic"}, items_key="users"):
                 count += 1
                 if count > self.max_users:
                     self.ctx.warn("identity.google-workspace: max_users reached")
-                    return
+                    break
+                if not isinstance(user, dict):
+                    self.ctx.warn("identity.google-workspace: invalid user record")
+                    continue
                 email = user.get("primaryEmail")
                 if user.get("suspended"):
                     continue
@@ -82,7 +86,7 @@ class GoogleWorkspaceConnector(BaseConnector):
                     data = self.http.get_json(f"/admin/directory/v1/users/{email}/tokens")
                 except (HttpError, RequestException) as exc:
                     status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
-                    self.ctx.warn(f"identity.google-workspace: tokens not readable for {email} ({status})")
+                    token_errors[status] = token_errors.get(status, 0) + 1
                     continue
                 if not isinstance(data, dict) or "error" in data or not isinstance(data.get("items", []), list):
                     self.ctx.warn(f"identity.google-workspace: invalid token response for {email}")
@@ -95,6 +99,9 @@ class GoogleWorkspaceConnector(BaseConnector):
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
             status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
             self.ctx.warn(f"identity.google-workspace: user enumeration incomplete ({status})")
+        if token_errors:
+            details = ", ".join(f"{status}: {total}" for status, total in sorted(token_errors.items()))
+            self.ctx.warn(f"identity.google-workspace: OAuth tokens unreadable for {sum(token_errors.values())} user(s) ({details}); app inventory incomplete")
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         apps: dict[str, dict[str, Any]] = {}
@@ -103,6 +110,9 @@ class GoogleWorkspaceConnector(BaseConnector):
             tokens = nested_tokens if isinstance(nested_tokens, list) else [rec]
             user = rec.get("user") or rec.get("userEmail") or rec.get("userKey")
             for tok in tokens:
+                if not isinstance(tok, dict):
+                    self.ctx.warn("identity.google-workspace: invalid token record in offline export")
+                    continue
                 cid = tok.get("clientId")
                 if not cid:
                     continue

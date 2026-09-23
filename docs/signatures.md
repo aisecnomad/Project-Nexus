@@ -11,6 +11,10 @@ shadowscan signatures test "api2.cursor.sh"            # auto-detects the kind
 shadowscan signatures test langchain-aws --kind dependency --ecosystem pypi
 ```
 
+For `--kind secret` (including auto-detected secret matches), the CLI shows
+`[REDACTED]` instead of the matched credential. Use synthetic test values:
+command arguments can still be retained in shell history or process listings.
+
 ## Anatomy
 
 ```yaml

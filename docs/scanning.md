@@ -54,8 +54,8 @@ and `cache_key`; cached connectors examine zero objects during analysis.
 
 ## Link code to gateway activity
 
-A static dependency alone cannot establish production use. Configure a binding
-using the exact `resource` values from your code and gateway findings:
+A static dependency alone cannot establish runtime use. Configure a binding
+between a specific code `resource` and gateway caller from your own inventory:
 
 ```yaml
 connectors:
@@ -76,11 +76,21 @@ An example generic gateway record:
 {"service":"svc-ops","tenant_id":"tenant-a","user_agent":"langchain/0.3","model":"gpt-4o","timestamp":"2026-09-22T10:00:00Z","environment":"production"}
 ```
 
+In this example, `service` and `environment` are assertions made by the export.
+An operator should verify that the log producer supplies a trustworthy workload
+identity and deployment label before using the result as production evidence.
+
 `scope` is required. It must exactly match all detected canonical `tenant`,
 `account`, `project` and `workspace` fields. Use `{}` only for an unscoped export.
 Names, shared providers, shared frameworks and pre-existing `related` links do
-not establish workload identity. A duplicated code resource across distinct
-accounts, providers or connectors is ambiguous and remains unknown.
+not establish workload identity. User-agent/IP address, anonymous, and shared
+gateway or workspace fallback callers cannot be bound to a code resource,
+even when the string is an exact match. A duplicated code resource across
+distinct accounts, providers or connectors is ambiguous and remains unknown.
+The gateway must also identify an LLM transaction by model or compatible
+endpoint/host. Access logs with a path require a recognized LLM/API route;
+a framework user agent or model field on `/favicon.ico` does not qualify as
+execution evidence.
 
 API-key callers use a stable `credential:sha256:<64 hex digits>` identifier.
 Copy the full caller resource from the gateway report (for example
@@ -91,19 +101,24 @@ Code findings with frameworks gain `metadata.runtime_activity`:
 
 | Field | Meaning |
 |---|---|
-| `status: observed` | The bound gateway recorded timestamped requests bearing a matching framework fingerprint. |
-| `status: unobserved` | Linked telemetry exists but contains no matching framework fingerprint. |
-| `status: unknown` | No trusted binding, ambiguous code identity, or missing matching-event timestamps. |
+| `status: observed` | The bound gateway export contains timestamped, LLM-classified requests bearing a matching framework fingerprint. |
+| `status: unobserved` | Linked telemetry exists but contains no matching framework fingerprint within the export window. |
+| `status: unknown` | No eligible binding, ambiguous code identity, or missing matching-event timestamps. |
 | `window`, `last_seen`, `events` | Time bounds and counts of matching timestamped events. |
-| `production_observed` | At least one matching event explicitly declares `environment` or `deployment_environment` as `prod` or `production` (also accepted in event metadata). |
-| `sources` | Gateway finding IDs, export provenance, scope and per-observation details. |
+| `production_observed` | At least one matching event carries `prod`/`production` in `environment` or `deployment_environment` (including event metadata). This is a label in the supplied data, not independently established deployment state. |
+| `production_label_verified` | `false`: ShadowScan cannot establish the origin or accuracy of deployment labels in imported logs. |
+| `sources` | Gateway finding IDs, export provenance, scope, identity and environment assurance, and per-observation details. |
 
 Timestamp, framework and production label must belong to the same event. A caller
-named `prod-agent` is insufficient. This is telemetry-based attribution within the
-exported time window: user agents can be spoofed, missing logs do not prove
-inactivity, and old events do not establish current execution. Correlation does
-not increase confidence or reduce risk. Supply fresh, trusted gateway exports to
-assess recent production activity.
+named `prod-agent` is insufficient. Generic service or principal fields carry
+`operator-asserted` identity assurance. A recognized provider field can carry
+`provider-authenticated-field` assurance when it originates from a trusted
+provider export, but ShadowScan does not cryptographically verify that provenance.
+Framework fingerprints in user agents can be spoofed. Inspect the source
+assurance and validate the export's trust chain before claiming an identified
+workload is executing in production. Missing logs do not prove inactivity, and
+old events do not establish current execution. Correlation does not increase
+static confidence or reduce risk.
 
 Gateway finding IDs include the canonical input path and relevant connector
 configuration (label, format, filters and bindings). This changes IDs from older
@@ -141,8 +156,13 @@ permission coverage require additional provider-specific provenance.
 | `2` | Completed scan reached `--fail-on` (Click also uses 2 for invocation errors). |
 | `3` | Collection or analysis was incomplete, including empty connector selection. |
 
+`--min-confidence` and YAML `options.min_confidence` accept finite values in
+`[0, 1]`; invalid thresholds stop the scan instead of silently clearing the gate.
+
 Incomplete results preserve valid findings, set `summary.complete` to false and
 SARIF `invocations[].executionSuccessful` to false, and include diagnostics.
+Failed or denied live collection for an enabled source marks coverage incomplete;
+review per-connector diagnostics and rerun after restoring access.
 Malformed files are isolated, so one bad manifest cannot suppress neighboring
 findings. Regex matches have time budgets; exhausted budgets mark the scan
 incomplete. Configure `code.filesystem.scan_timeout` in seconds to adjust the

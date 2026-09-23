@@ -9,18 +9,19 @@ every discovery against your sanctioned inventory of
 [Agent Cards](agent-card.yaml). What is left over is
 *shadow*.
 
+Example findings from the bundled offline fixtures (totals vary as signatures evolve):
+
 ```
-$ shadowscan scan -c shadowscan.yaml --inventory inventory/ --format html -o report.html
+$ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
-│ 97 findings  •  94 shadow (inventory: 3 registered agents)                  │
-│ critical 14  high 47  medium 35  low 1  •  code 12 identity 21 cloud 27 …   │
+│ 101 findings  •  97 shadow (inventory: 3 registered agents)                 │
+│ critical 14  high 52  medium 35  •  code 12 identity 19 cloud 27 …          │
 ╰────────────────────────────────────────────────────────────────────────────╯
+ CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
  CRITICAL 95  SHADOW  code      mcp-server   MCP configuration: .mcp.json (inline GitHub PAT, Zapier remote MCP, docker/postgres)
- CRITICAL 90  SHADOW  cloud     agent        Bedrock AgentCore runtime: strands_support_agent (plaintext OPENAI_API_KEY, public network)
- CRITICAL 77  SHADOW  identity  token        JWT (delegated-agent) for 0oa2svc-client from okta (RFC 8693 actor chain, okta.users.manage)
- CRITICAL 75  SHADOW  gateway   caller       Agentic caller 'research-agent-prod': 200 requests via LangChain, 100% tool use, 24x7
- HIGH     73  SHADOW  lowcode   agent        Copilot Studio agent: HR Helper (generative answers, flow actions, no authentication)
+ CRITICAL 90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
+ HIGH     73  SHADOW  lowcode   agent        Copilot Studio agent: HR Helper
  MEDIUM   33  ops-provisioning-04  cloud  agent  Bedrock Agent: ops-provisioning-04   ← registered, owner inherited from its card
 ```
 
@@ -56,7 +57,7 @@ logic works in a CI job, on an analyst laptop, or from a SIEM export.
 
 * **Orchestrators** – LangChain, LangGraph, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
-* **Coding agents** – Claude Code, GitHub Copilot coding agent, Cursor, Windsurf, Cline, Roo, OpenAI Codex, Gemini CLI/Jules, Amazon Q/Kiro, Goose, Aider, Continue, Cody/Amp, Junie, AGENTS. md, PR review bots (CodeRabbit, Sweep, Ellipsis, Greptile, Qodo…)md, PR review bots (CodeRabbit, Sweep, Ellipsis, Greptile, Qodo…)
+* **Coding agents** – Claude Code, GitHub Copilot coding agent, Cursor, Windsurf, Cline, Roo, OpenAI Codex, Gemini CLI/Jules, Amazon Q/Kiro, Goose, Aider, Continue, Cody/Amp, Junie, AGENTS.md, PR review bots (CodeRabbit, Sweep, Ellipsis, Greptile, Qodo…)
 * **Platforms/gateways** – LiteLLM, Portkey, Kong AI Gateway, Helicone, OpenAI AgentKit, Dify, Flowise, Langflow, n8n, Make, Zapier, Workato, Copilot Studio, Power Platform AI connectors, M365 declarative agents, Agentforce, Now Assist, Retool, Open WebUI/LibreChat/AnythingLLM, Coze/Relevance/Lindy/Vellum…
 * **Model providers** – OpenAI, Anthropic, Gemini API, Vertex AI, Bedrock, Azure OpenAI, Mistral, Cohere, Groq, Together, Fireworks, OpenRouter, Ollama, vLLM, Hugging Face, xAI, DeepSeek, Perplexity, Replicate, Cerebras, SambaNova, NVIDIA NIM, OCI Generative AI, watsonx, Databricks, Cloudflare Workers AI, Snowflake Cortex (deps, imports, endpoints, env vars, user agents, model IDs, **key formats**)
 * **Observability/memory/sandboxes** – LangSmith, Langfuse, Phoenix, AgentOps, Traceloop, Weave, Braintrust…, Mem0, Zep, vector stores, E2B, Daytona, web search/scrape tool providers
@@ -81,7 +82,7 @@ accepts an offline record dump.
 
 ```bash
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
-shadowscan code. --inventory inventory/
+shadowscan code . --inventory agent-card.yaml
 
 # 2. Try every connector against the bundled fixtures (offline demo)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
@@ -90,7 +91,7 @@ shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif --fail-on high
 
 # 4. Single connector, ad-hoc
-shadowscan run identity. entra --set tenant_id=$AZURE_TENANT_ID
+shadowscan run identity.entra --set tenant_id=$AZURE_TENANT_ID
 shadowscan run cloud.aws --set regions=us-east-1,eu-west-1 --dump-records ./exports
 shadowscan run cloud.aws --input ./exports/cloud_aws.jsonl        # re-analyse later, offline
 
@@ -143,15 +144,19 @@ for credentials and least-privilege scopes per connector.
 
 Use `--incremental` to reuse completed scans of unchanged local checkouts and
 static cloud exports. Live APIs and gateway logs are refreshed on every run.
-Configure `gateway.logs.correlation_bindings` to link a code resource to an exact
-gateway caller and tenant scope; matching timestamped framework fingerprints
-then appear in `metadata.runtime_activity`, including the observation window and
-explicit production attribution. See [scan state and runtime correlation](docs/scanning.md)
+Configure `gateway.logs.correlation_bindings` to link a code resource to a
+specific gateway caller and scope; matching timestamped framework fingerprints
+then appear in `metadata.runtime_activity`, including the observation window
+and any production label claimed in the logs. Treat caller and environment
+fields according to the export's provenance; ShadowScan does not authenticate
+the source of an imported log. See [scan state and runtime correlation](docs/scanning.md)
 for configuration, limitations, and migration guidance.
 
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
 scans as unsuccessful, while preserving findings from successfully assessed inputs.
+Confidence thresholds must be finite numbers from 0 to 1; invalid CLI or YAML
+values stop the scan before the risk gate runs.
 
 ## What a finding looks like
 

@@ -123,18 +123,22 @@ _GIT_URL = re.compile(r"(?:git\+)?(?:https?|ssh|git)://[^\s#]+?/([A-Za-z0-9_.-]+
 def parse_requirements(text: str) -> ManifestResult:
     res = ManifestResult()
     for i, raw in enumerate(text.splitlines(), 1):
-        line = raw.split("#", 1)[0].strip()
-        if not line or line.startswith(("-", "--")):
+        line = raw.strip()
+        if line.startswith(("-e ", "--editable ")):
+            line = line.split(None, 1)[1].strip()
+        if not line or line.startswith("#") or line.startswith("-"):
             continue
         if line.startswith(("http://", "https://", "git+", "ssh://", "git://")) or "://" in line:
-            egg = re.search(r"#egg=([A-Za-z0-9_.-]+)", line, timeout=0.1)
+            # The fragment is part of a VCS requirement, not a comment.
+            egg = re.search(r"(?:#|&)egg=([A-Za-z0-9_.-]+)", line, timeout=0.1)
             if egg:
                 res.deps.append(Dep("pypi", egg.group(1), line, i))
                 continue
-            m = _GIT_URL.search(line, timeout=0.1)
+            m = _GIT_URL.search(line.split("#", 1)[0], timeout=0.1)
             if m:
                 res.deps.append(Dep("pypi", m.group(1), line, i))
             continue
+        line = line.split("#", 1)[0].strip()
         if "@" in line and not line.startswith("-e"):
             # PEP 508 direct reference: name @ url
             name = line.split("@", 1)[0].strip()

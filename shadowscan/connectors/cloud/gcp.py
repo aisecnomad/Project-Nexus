@@ -31,6 +31,7 @@ from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path, truncate
 
 DEFAULT_LOCATIONS = ["us-central1", "us-east4", "us-west1", "europe-west1", "europe-west4", "asia-southeast1", "asia-northeast1"]
+MAX_LIST_PAGES = 500
 AI_SERVICES = {"aiplatform.googleapis.com": "Vertex AI", "generativelanguage.googleapis.com": "Gemini API", "dialogflow.googleapis.com": "Dialogflow", "discoveryengine.googleapis.com": "Vertex AI Search / Agent Builder / Agentspace", "notebooks.googleapis.com": "Vertex AI Workbench", "speech.googleapis.com": "Speech", "documentai.googleapis.com": "Document AI", "contactcenteraiplatform.googleapis.com": "CCAI"}
 
 
@@ -86,7 +87,7 @@ class GcpConnector(BaseConnector):
     def _pages(self, url: str, items_key: str, **params: Any) -> Iterator[dict[str, Any]]:
         token: str | None = None
         seen: set[str] = set()
-        for _ in range(self.max_pages):
+        for _ in range(min(MAX_LIST_PAGES, self.max_pages)):
             p = dict(params)
             if token:
                 p["pageToken"] = token
@@ -102,7 +103,7 @@ class GcpConnector(BaseConnector):
                 return
             yield from items
             token = data.get("nextPageToken")
-            if not token:
+            if token is None or token == "":
                 return
             if not isinstance(token, str) or token in seen:
                 self.ctx.warn(f"cloud.gcp: invalid or repeated pagination token for {url}")
@@ -187,10 +188,13 @@ class GcpConnector(BaseConnector):
                 self.ctx.warn(f"cloud.gcp: invalid audit log response for {project}")
                 return
             for e in data.get("entries", []):
+                if not isinstance(e, dict) or not isinstance(e.get("protoPayload") or {}, dict):
+                    self.ctx.warn(f"cloud.gcp: invalid audit log entry for {project}")
+                    continue
                 pp = e.get("protoPayload") or {}
                 yield {"_kind": "audit-event", "_project": project, "principal": get_path(pp, "authenticationInfo.principalEmail"), "method": pp.get("methodName"), "resource": pp.get("resourceName"), "timestamp": e.get("timestamp"), "userAgent": get_path(pp, "requestMetadata.callerSuppliedUserAgent"), "ip": get_path(pp, "requestMetadata.callerIp"), "delegation": get_path(pp, "authenticationInfo.serviceAccountDelegationInfo")}
             token = data.get("nextPageToken")
-            if not token:
+            if token is None or token == "":
                 return
             if not isinstance(token, str) or token in seen:
                 self.ctx.warn(f"cloud.gcp: invalid or repeated audit pagination token for {project}")
@@ -387,7 +391,7 @@ class GcpConnector(BaseConnector):
         unrestricted = not targets
         if not ai_targets and not unrestricted:
             return None
-        f = cloud_finding(self.name, "gcp", kind=Kind.SECRET, title=f"API key {'for ' + ', '.join(AI_SERVICES[t] for t in ai_targets) if ai_targets else '(unrestricted)'}: {rec.get('displayName') or rec.get('uid')}", resource=rec.get("name") or rec.get("uid"), resource_type="api-key", account=rec.get("_project"), first_seen=rec.get("createTime"), last_seen=rec.get("updateTime"))
+        f = cloud_finding(self.name, "gcp", kind=Kind.SECRET, title=f"API key {'for ' + ', '.join(AI_SERVICES[t] for t in ai_targets) if ai_targets else '(unrestricted)'}: {rec.get('displayName') or rec.get('uid')}", resource=str(rec.get("name") or rec.get("uid") or ""), resource_type="api-key", account=rec.get("_project"), first_seen=rec.get("createTime"), last_seen=rec.get("updateTime"))
         if "generativelanguage.googleapis.com" in ai_targets or unrestricted:
             f.add_model_provider("provider.google-gemini")
         if "aiplatform.googleapis.com" in ai_targets:

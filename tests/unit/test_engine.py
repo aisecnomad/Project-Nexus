@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
 from shadowscan.engine import Engine, correlate, merge
@@ -57,6 +60,67 @@ def test_merge_and_correlate():
     assert cloud.metadata["related"] == [iac.id] and iac.metadata["related"] == [cloud.id]
 
 
+def test_merge_preserves_runtime_observations_and_variable_names():
+    observed = {
+        "code_resources": ["github:acme/agent"], "frameworks": ["framework.langchain"],
+        "identity_basis": "configured-exact-caller-and-scope", "timestamped_events": 1,
+        "first_seen": "2026-09-22T10:00:00Z", "last_seen": "2026-09-22T10:00:00Z",
+    }
+    gateway = _f(surface=Surface.GATEWAY, connector="gateway.logs", kind=Kind.GATEWAY_CALLER,
+                 resource="caller:abc", metadata={"runtime_source": {"input": "a.jsonl"}, "runtime_observations": [observed]})
+    again = _f(surface=Surface.GATEWAY, connector="gateway.logs", kind=Kind.GATEWAY_CALLER,
+               resource="caller:abc", metadata={"runtime_source": {"input": "b.jsonl"}, "runtime_observations": [observed]})
+    same = _f(surface=Surface.GATEWAY, connector="gateway.logs", kind=Kind.GATEWAY_CALLER,
+              resource="caller:abc", metadata={"runtime_source": {"input": "a.jsonl"}, "runtime_observations": [observed]})
+    first = _f(kind=Kind.SECRET, metadata={"variable_names": ["OPENAI_API_KEY"]})
+    second = _f(kind=Kind.SECRET, metadata={"variable_names": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]})
+    result = merge([gateway, again, same, first, second])
+    merged_gateway = next(f for f in result if f.surface == Surface.GATEWAY)
+    assert {entry["source"]["input"] for entry in merged_gateway.metadata["runtime_observations"]} == {"a.jsonl", "b.jsonl"}
+    assert len(merged_gateway.metadata["runtime_observations"]) == 2
+    assert next(f for f in result if f.kind == Kind.SECRET).metadata["variable_names"] == ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
+
+
+def test_gateway_caller_keeps_export_metrics_separate_and_correlates_both(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text("langchain\n")
+    binding = {"code_resource": "github:acme/ops-agent", "caller": "principal:svc-ops", "scope": {"tenant": "tenant-a"}}
+    gateway_specs = []
+    for name, timestamp, tokens, cost, environment in (
+        ("a.jsonl", "2026-09-22T10:00:00Z", 100, 0.1, "production"),
+        ("b.jsonl", "2026-09-23T11:00:00Z", 200, 0.2, "staging"),
+    ):
+        export = tmp_path / name
+        export.write_text(json.dumps({
+            "service": "svc-ops", "tenant_id": "tenant-a", "model": "gpt-4o",
+            "user_agent": "langchain/0.3", "timestamp": timestamp,
+            "prompt_tokens": tokens, "completion_tokens": 10, "cost": cost,
+            "environment": environment,
+        }) + "\n")
+        gateway_specs.append(ConnectorSpec("gateway.logs", {
+            "input": str(export), "correlation_bindings": [binding],
+        }, label="shared-gateway"))
+    result = Engine(ScanConfig(connectors=[
+        ConnectorSpec("code.filesystem", {"path": str(repo)}, label="github:acme/ops-agent"),
+        *gateway_specs,
+    ], parallel=1)).run()
+    assert result.complete
+    gateways = [f for f in result.findings if f.surface == Surface.GATEWAY]
+    assert len(gateways) == 2
+    assert len({gateway.id for gateway in gateways}) == 2
+    assert {Path(gateway.metadata["runtime_source"]["input"]).name for gateway in gateways} == {"a.jsonl", "b.jsonl"}
+    assert all(gateway.metadata["events"] == gateway.metadata["records"] == 1 for gateway in gateways)
+    assert all(gateway.metadata["aggregate_records"] == 0 and gateway.metadata["models"] == {"gpt-4o": 1} for gateway in gateways)
+    assert {gateway.metadata["tokens_in"] for gateway in gateways} == {100, 200}
+    assert all(gateway.metadata["tokens_out"] == 10 for gateway in gateways)
+    assert {gateway.metadata["cost"] for gateway in gateways} == {0.1, 0.2}
+    activity = next(f for f in result.findings if f.surface == Surface.CODE).metadata["runtime_activity"]
+    assert activity["status"] == "observed" and activity["events"] == 2
+    assert {Path(source["source"]["input"]).name for source in activity["sources"]} == {"a.jsonl", "b.jsonl"}
+    assert {source["gateway_finding_id"] for source in activity["sources"]} == {gateway.id for gateway in gateways}
+
+
 def test_engine_end_to_end_with_config(tmp_path: Path, fixtures):
     cfg = ScanConfig(
         connectors=[
@@ -92,3 +156,22 @@ def test_config_yaml_paths_and_env(tmp_path: Path, monkeypatch):
     assert cfg.connectors[1].config == {"org": "acme", "token": "none"} and not cfg.connectors[1].enabled
     assert cfg.inventory == [str(tmp_path / "inventory")] and cfg.fail_on == "high"
     assert parse_set_options(["regions=us-east-1,eu-west-1", "cloudtrail_days=3", "verbose=true", "org=acme"]) == {"regions": ["us-east-1", "eu-west-1"], "cloudtrail_days": 3, "verbose": True, "org": "acme"}
+
+
+@pytest.mark.parametrize("threshold", ["nan", "inf", "-inf", "1.1", "-0.01", "not-a-number", None, True])
+def test_invalid_confidence_threshold_never_clears_scan(threshold):
+    with pytest.raises(ValueError, match="min_confidence must be a finite number between 0 and 1"):
+        ScanConfig.from_dict({"options": {"min_confidence": threshold}})
+    cfg = ScanConfig(min_confidence=threshold)
+    with pytest.raises(ValueError, match="min_confidence must be a finite number between 0 and 1"):
+        Engine(cfg).run()
+
+
+def test_env_connector_enabled_flag_parsed_explicitly(monkeypatch):
+    monkeypatch.setenv("RUN_CLOUD", "false")
+    cfg = ScanConfig.from_dict({"connectors": [{"name": "cloud.aws", "enabled": "${RUN_CLOUD}"}]})
+    assert not cfg.connectors[0].enabled
+    monkeypatch.setenv("RUN_CLOUD", "true")
+    assert ScanConfig.from_dict({"connectors": [{"name": "cloud.aws", "enabled": "${RUN_CLOUD}"}]}).connectors[0].enabled
+    with pytest.raises(ValueError, match="connector enabled"):
+        ScanConfig.from_dict({"connectors": [{"name": "cloud.aws", "enabled": "perhaps"}]})

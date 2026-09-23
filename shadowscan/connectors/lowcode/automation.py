@@ -188,23 +188,28 @@ class MakeConnector(_AutomationBase):
         else:
             raise ConnectorError("lowcode.make: team_id or organization_id required")
         for team in teams:
+            blueprint_errors: dict[str, int] = {}
             for s in self._offset_pages(http, "/scenarios", "scenarios", teamId=team):
                 try:
                     bp = http.get_json(f"/scenarios/{s['id']}/blueprint")
-                    blueprint = (bp.get("response") or {}).get("blueprint") or bp if isinstance(bp, dict) else None
+                    response = bp.get("response") if isinstance(bp, dict) else None
+                    blueprint = (response.get("blueprint") if isinstance(response, dict) else None) or bp
                     if not isinstance(blueprint, dict):
                         self.ctx.warn(f"lowcode.make: invalid blueprint for scenario {s['id']}")
                     else:
                         s["blueprint"] = blueprint
                 except (HttpError, RequestException) as exc:
                     status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
-                    self.ctx.warn(f"lowcode.make: blueprint not readable for scenario {s['id']} ({status})")
+                    blueprint_errors[status] = blueprint_errors.get(status, 0) + 1
                 yield {**s, "_kind": "scenario", "_team": team}
+            if blueprint_errors:
+                details = ", ".join(f"{status}: {total}" for status, total in sorted(blueprint_errors.items()))
+                self.ctx.warn(f"lowcode.make: blueprints unreadable for {sum(blueprint_errors.values())} scenario(s) in team {team} ({details}); workflow inventory incomplete")
             try:
                 data = http.get_json("/ai-agents/v1/agents", params={"teamId": team})
             except (HttpError, RequestException) as exc:
                 status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
-                self.ctx.warn(f"lowcode.make: AI agents not readable for team {team} ({status})")
+                self.ctx.warn(f"lowcode.make: AI agents unreadable for team {team} ({status}); agent inventory incomplete")
                 continue
             agents = data
             if isinstance(data, dict):
