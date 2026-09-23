@@ -1,0 +1,223 @@
+# Known AI SaaS products and agents as they appear in identity providers
+# (OAuth consent grants, enterprise apps, service principals), SaaS app
+# directories (Slack apps, Teams apps, GitHub Apps, Marketplace installs) and
+# egress logs. `name` patterns are matched against display names, publishers
+# and descriptions; `domain` values against reply URLs, homepages and hosts.
+#
+# tags:
+#   assistant       general-purpose chat assistant (data leaves the tenant)
+#   meeting-bot     joins calls / reads calendars & transcripts
+#   coding          acts on source code
+#   automation      executes actions in other SaaS on the user's behalf
+#   agent-platform  hosts autonomous agents
+signatures:
+  - id: identity-app.openai-chatgpt
+    name: ChatGPT / OpenAI
+    category: identity-app
+    vendor: OpenAI
+    tags: [assistant, agent-platform]
+    agent_indicator: true
+    signals:
+      - type: name
+        patterns: ['(?i)\bchat\s?gpt\b', '(?i)\bopenai\b', '(?i)\bgpt-?4\b', '(?i)\bsora\b', '(?i)\bopenai (?:operator|codex|deep research)\b']
+        weight: 0.9
+      - type: domain
+        values: [chatgpt.com, chat.openai.com, platform.openai.com, auth.openai.com, auth0.openai.com, operator.chatgpt.com, sora.com, "*.openai.com"]
+        weight: 0.9
+
+  - id: identity-app.anthropic-claude
+    name: Claude / Anthropic
+    category: identity-app
+    vendor: Anthropic
+    tags: [assistant, agent-platform, coding]
+    agent_indicator: true
+    signals:
+      - type: name
+        patterns: ['(?i)\bclaude\b', '(?i)\banthropic\b']
+        weight: 0.9
+      - type: domain
+        values: [claude.ai, claude.com, console.anthropic.com, "*.anthropic.com", "*.claude.ai"]
+        weight: 0.9
+
+  - id: identity-app.google-gemini
+    name: Google Gemini / AI Studio / NotebookLM
+    category: identity-app
+    vendor: Google
+    tags: [assistant, agent-platform]
+    agent_indicator: true
+    signals:
+      - type: name
+        patterns: ['(?i)\bgemini\b', '(?i)\bai studio\b', '(?i)\bnotebooklm\b', '(?i)\bgoogle ai\b', '(?i)\bproject mariner\b']
+        weight: 0.85
+      - type: domain
+        values: [gemini.google.com, aistudio.google.com, notebooklm.google.com, makersuite.google.com, bard.google.com]
+        weight: 0.9
+
+  - id: identity-app.microsoft-copilot
+    name: Microsoft Copilot / M365 Copilot
+    category: identity-app
+    vendor: Microsoft
+    tags: [assistant, agent-platform]
+    agent_indicator: true
+    signals:
+      - type: name
+        patterns: ['(?i)\bmicrosoft (?:365 )?copilot\b', '(?i)\bcopilot\b(?! studio)', '(?i)\bbing chat\b', '(?i)\bm365 copilot\b']
+        weight: 0.8
+      - type: domain
+        values: [copilot.microsoft.com, m365.cloud.microsoft, copilot.cloud.microsoft, "*.copilot.microsoft.com", substrate.office.com]
+        weight: 0.9
+      - type: client_id
+        names: ["fb8d773d-7ef8-4ec0-a117-179f88add510", "ab3be6b7-f5df-413d-ac2d-abf1e3fd9c0b", "c2d02d8c-3dc4-4d3d-8bb0-d7a6d4d6d1c1"]
+        weight: 0.9
+        description: Microsoft first-party Copilot service principals
+
+  - id: identity-app.perplexity
+    name: Perplexity
+    category: identity-app
+    vendor: Perplexity AI
+    tags: [assistant]
+    agent_indicator: true
+    signals:
+      - type: name
+        patterns: ['(?i)\bperplexity\b', '(?i)\bcomet browser\b']
+        weight: 0.9
+      - type: domain
+        values: [perplexity.ai, www.perplexity.ai, "*.perplexity.ai"]
+        weight: 0.9
+
+  - id: identity-app.glean
+    name: Glean
+    category: identity-app
+    vendor: Glean
+    tags: [assistant, agent-platform]
+    description: Enterprise search / AI assistant that indexes many SaaS sources; Glean Agents automate workflows.
+    agent_indicator: true
+    signals:
+      - type: name
+        patterns: ['(?i)\bglean\b']
+        weight: 0.9
+      - type: domain
+        values: [glean.com, "*.glean.com", app.glean.com]
+        weight: 0.9
+
+  - id: identity-app.meeting-notetakers
+    name: AI meeting note-takers (Otter, Fireflies, Read.ai, Fathom, tl;dv, Gong, Avoma, Fellow, Grain, Krisp, Zoom AI Companion, Sembly, Supernormal, Circleback, Granola)
+    category: identity-app
+    vendor: null
+    tags: [meeting-bot]
+    description: Bots that join meetings, record and transcribe them and read calendars; frequent source of shadow AI in Google Workspace / Microsoft 365 consent grants.
+    agent_indicator: true
+    risk_notes: ["Meeting bots capture confidential conversations and often request calendar and mail scopes."]
+    signals:
+      - type: name
+        patterns: ['(?i)\botter(?:\.ai)?\b', '(?i)\bfireflies(?:\.ai)?\b', '(?i)\bread\.?ai\b', '(?i)\bfathom\b', '(?i)\btl;?dv\b', '(?i)\bgong\b', '(?i)\bavoma\b', '(?i)\bfellow(?:\.app)?\b', '(?i)\bgrain\b', '(?i)\bkrisp\b', '(?i)\bai companion\b', '(?i)\bsembly\b', '(?i)\bsupernormal\b', '(?i)\bcircleback\b', '(?i)\bgranola\b', '(?i)\bnotetaker\b', '(?i)\bnote[- ]?taker\b', '(?i)\bmeetgeek\b', '(?i)\bbluedot\b', '(?i)\bjamie\b']
+        weight: 0.85
+      - type: domain
+        values: [otter.ai, "*.otter.ai", fireflies.ai, "*.fireflies.ai", read.ai, "*.read.ai", fathom.video, "*.fathom.video", tldv.io, "*.tldv.io", gong.io, "*.gong.io", avoma.com, fellow.app, grain.com, "*.grain.com", krisp.ai, sembly.ai, supernormal.com, circleback.ai, granola.ai, meetgeek.ai, bluedothq.com]
+        weight: 0.9
+
+  - id: identity-app.writing-assistants
+    name: AI writing assistants (Grammarly, Jasper, Writer, Copy.ai, QuillBot, Wordtune, DeepL Write, Notion AI, Gamma, Tome, Beautiful.ai)
+    category: identity-app
+    vendor: null
+    tags: [assistant]
+    signals:
+      - type: name
+        patterns: ['(?i)\bgrammarly\b', '(?i)\bjasper(?:\.ai)?\b', '(?i)\bwriter(?:\.com| ai)\b', '(?i)\bcopy\.ai\b', '(?i)\bquillbot\b', '(?i)\bwordtune\b', '(?i)\bdeepl\b', '(?i)\bnotion ai\b', '(?i)\bgamma(?:\.app)?\b', '(?i)\btome\b', '(?i)\bbeautiful\.ai\b', '(?i)\bcompose ai\b', '(?i)\bhyperwrite\b', '(?i)\brytr\b']
+        weight: 0.8
+      - type: domain
+        values: [grammarly.com, "*.grammarly.com", jasper.ai, "*.jasper.ai", writer.com, app.writer.com, copy.ai, quillbot.com, wordtune.com, deepl.com, "*.deepl.com", gamma.app, tome.app, beautiful.ai, hyperwriteai.com]
+        weight: 0.85
+
+  - id: identity-app.coding-assistants-saas
+    name: AI coding products (Cursor, Windsurf, Replit, Lovable, Bolt, v0, Devin, Cognition, Factory, Tabnine, Augment, Sourcegraph, Warp, Zed AI, Codeium, Qodo, Snyk DeepCode AI, GitLab Duo, JetBrains AI)
+    category: identity-app
+    vendor: null
+    tags: [coding, agent-platform]
+    agent_indicator: true
+    signals:
+      - type: name
+        patterns: ['(?i)\bcursor\b', '(?i)\bwindsurf\b', '(?i)\bcodeium\b', '(?i)\breplit\b', '(?i)\blovable\b', '(?i)\bbolt\.new\b', '(?i)\bstackblitz\b', '(?i)\bv0(?:\.dev| by vercel)\b', '(?i)\bdevin\b', '(?i)\bcognition\b', '(?i)\bfactory(?:\.ai| droid)\b', '(?i)\btabnine\b', '(?i)\baugment(?: code)?\b', '(?i)\bsourcegraph\b', '(?i)\bwarp\b', '(?i)\bzed\b', '(?i)\bqodo\b', '(?i)\bgitlab duo\b', '(?i)\bjetbrains ai\b', '(?i)\bcopilot workspace\b', '(?i)\bmagic\.dev\b', '(?i)\bpoolside\b', '(?i)\bcline\b', '(?i)\broo code\b', '(?i)\bkilo code\b', '(?i)\bopenhands\b', '(?i)\ball hands\b']
+        weight: 0.8
+      - type: domain
+        values: [cursor.com, cursor.sh, windsurf.com, codeium.com, replit.com, "*.replit.com", "*.repl.co", lovable.dev, "*.lovable.app", bolt.new, stackblitz.com, v0.dev, v0.app, devin.ai, app.devin.ai, cognition.ai, factory.ai, app.factory.ai, tabnine.com, augmentcode.com, sourcegraph.com, ampcode.com, warp.dev, app.warp.dev, zed.dev, qodo.ai, app.all-hands.dev]
+        weight: 0.9
+
+  - id: identity-app.automation-agents
+    name: AI automation / agent platforms (Zapier, Make, n8n cloud, Workato, Bardeen, Lindy, Relevance AI, Dust, Beam, Adept, MultiOn, Manus, Genspark, Sana, Moveworks, Aisera, Kore.ai, Ada, Sierra, Decagon, Intercom Fin, Forethought, Cresta, Salesforce Agentforce, Now Assist)
+    category: identity-app
+    vendor: null
+    tags: [automation, agent-platform]
+    agent_indicator: true
+    risk_notes: ["Automation platforms hold long-lived OAuth tokens and execute write actions across SaaS."]
+    signals:
+      - type: name
+        patterns: ['(?i)\bzapier\b', '(?i)\bmake\.com\b', '(?i)\bintegromat\b', '(?i)\bn8n\b', '(?i)\bworkato\b', '(?i)\bbardeen\b', '(?i)\blindy\b', '(?i)\brelevance ai\b', '(?i)\bdust(?:\.tt)?\b', '(?i)\bbeam\.ai\b', '(?i)\badept\b', '(?i)\bmultion\b', '(?i)\bmanus\b', '(?i)\bgenspark\b', '(?i)\bsana(?: ai| labs)?\b', '(?i)\bmoveworks\b', '(?i)\baisera\b', '(?i)\bkore\.ai\b', '(?i)\bada(?:\.cx| cx)\b', '(?i)\bsierra(?:\.ai)?\b', '(?i)\bdecagon\b', '(?i)\bintercom fin\b', '(?i)\bfin ai\b', '(?i)\bforethought\b', '(?i)\bcresta\b', '(?i)\bagentforce\b', '(?i)\bnow assist\b', '(?i)\brovo\b', '(?i)\bcopilot studio\b', '(?i)\bpower automate\b', '(?i)\bgumloop\b', '(?i)\bparabola\b', '(?i)\bactivepieces\b', '(?i)\bpipedream\b', '(?i)\btray\.(?:io|ai)\b', '(?i)\bcomposio\b', '(?i)\bparagon\b', '(?i)\bnango\b']
+        weight: 0.8
+      - type: domain
+        values: [zapier.com, "*.zapier.com", make.com, "*.make.com", "*.n8n.cloud", workato.com, "*.workato.com", bardeen.ai, lindy.ai, "*.lindy.ai", relevanceai.com, "*.relevanceai.com", dust.tt, "*.dust.tt", beam.ai, adept.ai, multion.ai, manus.im, genspark.ai, sana.ai, moveworks.com, aisera.com, kore.ai, ada.cx, sierra.ai, decagon.ai, forethought.ai, cresta.com, gumloop.com, activepieces.com, pipedream.com, tray.io, composio.dev, useparagon.com, nango.dev]
+        weight: 0.85
+
+  - id: identity-app.ai-search-research
+    name: AI research / search assistants (Elicit, Consensus, Scite, You.com, Andi, Kagi, Exa, Hebbia, Harvey, Legora, Spellbook, CoCounsel, Lexis+ AI)
+    category: identity-app
+    vendor: null
+    tags: [assistant]
+    signals:
+      - type: name
+        patterns: ['(?i)\belicit\b', '(?i)\bconsensus\b', '(?i)\bscite\b', '(?i)\byou\.com\b', '(?i)\bkagi\b', '(?i)\bhebbia\b', '(?i)\bharvey(?:\.ai)?\b', '(?i)\blegora\b', '(?i)\bspellbook\b', '(?i)\bcocounsel\b', '(?i)\blexis\+ ai\b', '(?i)\bcasetext\b']
+        weight: 0.8
+      - type: domain
+        values: [elicit.com, consensus.app, scite.ai, you.com, kagi.com, hebbia.ai, harvey.ai, "*.harvey.ai", legora.com, spellbook.legal, casetext.com]
+        weight: 0.85
+
+  - id: identity-app.creative-media
+    name: AI media generation (Midjourney, Runway, ElevenLabs, Synthesia, Descript, HeyGen, Pika, Luma, Suno, Udio, Stability, Ideogram, Leonardo, Canva Magic, Adobe Firefly, D-ID, Captions, Opus Clip)
+    category: identity-app
+    vendor: null
+    tags: [assistant]
+    signals:
+      - type: name
+        patterns: ['(?i)\bmidjourney\b', '(?i)\brunway(?:ml)?\b', '(?i)\belevenlabs\b', '(?i)\bsynthesia\b', '(?i)\bdescript\b', '(?i)\bheygen\b', '(?i)\bpika\b', '(?i)\bluma(?: ai| labs)?\b', '(?i)\bsuno\b', '(?i)\budio\b', '(?i)\bstability ai\b', '(?i)\bideogram\b', '(?i)\bleonardo\.ai\b', '(?i)\bfirefly\b', '(?i)\bd-id\b', '(?i)\bopus ?clip\b', '(?i)\bkling\b', '(?i)\bhailuo\b']
+        weight: 0.75
+      - type: domain
+        values: [midjourney.com, runwayml.com, elevenlabs.io, api.elevenlabs.io, synthesia.io, descript.com, heygen.com, pika.art, lumalabs.ai, suno.com, udio.com, stability.ai, ideogram.ai, leonardo.ai, d-id.com, opus.pro, klingai.com]
+        weight: 0.85
+
+  - id: identity-app.browser-extensions-ai
+    name: AI browser agents / extensions (Monica, Merlin, Sider, Harpa, MaxAI, Magical, Wiseone, Arc Max, Opera Aria, Brave Leo, Dia)
+    category: identity-app
+    vendor: null
+    tags: [assistant, automation]
+    risk_notes: ["Browser AI extensions read page content, including internal apps, and send it to third-party models."]
+    signals:
+      - type: name
+        patterns: ['(?i)\bmonica\b', '(?i)\bmerlin\b', '(?i)\bsider\b', '(?i)\bharpa\b', '(?i)\bmaxai\b', '(?i)\bmagical\b', '(?i)\bwiseone\b', '(?i)\bopera aria\b', '(?i)\bbrave leo\b', '(?i)\bdia browser\b']
+        weight: 0.7
+      - type: domain
+        values: [monica.im, "*.monica.im", getmerlin.in, "*.getmerlin.in", sider.ai, "*.sider.ai", harpa.ai, app.maxai.me, "*.maxai.me", getmagical.com, wiseone.io, aria.opera.com, leo.brave.com]
+        weight: 0.85
+
+  - id: identity-app.hr-sales-support-ai
+    name: AI in sales / support / HR (Gong, Clari, Apollo AI, Outreach Kaia, Salesloft Rhythm, Regie, Lavender, HubSpot Breeze, Drift, Qualified, Clay, 11x, Artisan, Ema, Leena, Paradox, HiBob AI, Workday Illuminate)
+    category: identity-app
+    vendor: null
+    tags: [automation, agent-platform]
+    agent_indicator: true
+    signals:
+      - type: name
+        patterns: ['(?i)\bclari\b', '(?i)\bapollo(?:\.io)?\b', '(?i)\bkaia\b', '(?i)\bregie(?:\.ai)?\b', '(?i)\blavender\b', '(?i)\bbreeze (?:agent|copilot|intelligence)\b', '(?i)\bdrift\b', '(?i)\bqualified\b', '(?i)\bclay(?:\.com)?\b', '(?i)\b11x(?:\.ai)?\b', '(?i)\bartisan(?:\.co)?\b', '(?i)\bema(?: unlimited)?\b', '(?i)\bleena ai\b', '(?i)\bparadox(?:\.ai)?\b', '(?i)\bolivia\b', '(?i)\bworkday illuminate\b', '(?i)\bpiper\b']
+        weight: 0.6
+      - type: domain
+        values: [clari.com, app.apollo.io, regie.ai, lavender.ai, drift.com, qualified.com, clay.com, "*.clay.com", 11x.ai, artisan.co, ema.co, leena.ai, paradox.ai]
+        weight: 0.8
+
+  - id: identity-app.generic-ai-name
+    name: Generic AI / bot naming
+    category: identity-app
+    vendor: null
+    description: Display names suggesting an AI agent, assistant or bot without matching a known product.
+    signals:
+      - type: name
+        patterns: ['(?i)\bai[- ]?(?:agent|assistant|bot|copilot|helper|companion)\b', '(?i)\b(?:llm|gpt|genai|gen-ai|generative ai)\b', '(?i)\bagents?\b', '(?i)\bassistant\b', '(?i)\bcopilot\b', '(?i)\bchat ?bot\b', '(?i)\b(?:auto|autonomous)[- ]?(?:agent|pilot)\b', '(?i)\brag\b', '(?i)\bmcp\b', '(?i)\b(?:svc|service)[-_ ]?(?:agent|ai|llm)\b', '(?i)\bbot\b']
+        weight: 0.35

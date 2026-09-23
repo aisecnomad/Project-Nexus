@@ -1,0 +1,36 @@
+[
+ {
+  "_kind": "client",
+  "client_id": "c1",
+  "name": "support-agent-m2m",
+  "app_type": "non_interactive",
+  "grant_types": [
+   "client_credentials"
+  ],
+  "description": "LangChain support agent backend",
+  "is_first_party": true,
+  "token_endpoint_auth_method": "client_secret_post"
+ },
+ {
+  "_kind": "client",
+  "client_id": "c2",
+  "name": "Customer Portal",
+  "app_type": "spa",
+  "grant_types": [
+   "authorization_code"
+  ],
+  "callbacks": [
+   "https://portal.acme.com/cb"
+  ]
+ },
+ {
+  "_kind": "client_grant",
+  "client_id": "c1",
+  "audience": "https://api.acme.com/",
+  "scope": [
+   "read:tickets",
+   "write:tickets",
+   "read:users"
+  ]
+ }
+]

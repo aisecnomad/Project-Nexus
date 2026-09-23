@@ -1,0 +1,877 @@
+# Model providers / inference APIs. Presence of a provider SDK proves LLM use,
+# not necessarily an agent; agent_indicator stays false unless the signal is an
+# agent-specific API (Assistants, Responses with tools, Bedrock Agents...).
+#
+# `secret` patterns are matched against file contents; connectors redact the
+# match before storing it as evidence.
+signatures:
+  - id: provider.openai
+    name: OpenAI
+    category: provider
+    vendor: OpenAI
+    homepage: https://platform.openai.com
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [openai]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: [openai]
+        weight: 0.8
+      - type: dependency
+        ecosystem: go
+        names: ["github.com/openai/openai-go", "github.com/sashabaranov/go-openai"]
+        weight: 0.8
+      - type: dependency
+        ecosystem: cargo
+        names: [async-openai, openai-api-rs, openai]
+        weight: 0.8
+      - type: dependency
+        ecosystem: maven
+        names: ["com.openai:openai-java", "com.theokanning.openai-gpt3-java:service", "com.theokanning.openai-gpt3-java:client"]
+        prefixes: ["com.openai"]
+        weight: 0.8
+      - type: dependency
+        ecosystem: nuget
+        names: [OpenAI, "OpenAI-DotNet", Betalgo.OpenAI, "Betalgo.Ranul.OpenAI"]
+        weight: 0.8
+      - type: dependency
+        ecosystem: rubygems
+        names: [ruby-openai, openai]
+        weight: 0.8
+      - type: dependency
+        ecosystem: composer
+        names: [openai-php/client, openai-php/laravel]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+openai\b']
+        weight: 0.8
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']openai(?:/[^"'']+)?["'']', 'require\(\s*["'']openai["'']\s*\)']
+        weight: 0.8
+      - type: import
+        languages: [go]
+        patterns: ['"github\.com/(?:openai/openai-go|sashabaranov/go-openai)']
+        weight: 0.8
+      - type: import
+        languages: [dotnet]
+        patterns: ['^\s*using\s+OpenAI\b']
+        weight: 0.7
+      - type: code
+        patterns: ['\bchat\.completions\.create\s*\(', '\bresponses\.create\s*\(', '\bclient\.beta\.assistants\.create\s*\(', '\bbeta\.threads\.runs\.create\s*\(']
+        weight: 0.7
+      - type: code
+        patterns: ['\bassistants\.create\s*\(', '"type"\s*:\s*"code_interpreter"', '"type"\s*:\s*"file_search"', '"type"\s*:\s*"computer_use_preview"', '"type"\s*:\s*"web_search_preview"']
+        weight: 0.8
+        agent_indicator: true
+        capabilities: [tool-use]
+      - type: env
+        names: [OPENAI_API_KEY, OPENAI_ORG_ID, OPENAI_ORGANIZATION, OPENAI_BASE_URL, OPENAI_API_BASE, OPENAI_PROJECT_ID, OPENAI_ADMIN_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.openai.com, "*.api.openai.com"]
+        weight: 0.9
+      - type: user_agent
+        patterns: ['(?i)\bOpenAI/(?:Python|JS|NET|Go|Java|Ruby)', '(?i)openai-(?:python|node|go|java|ruby|dotnet)', '(?i)\bAsyncOpenAI\b']
+        weight: 0.7
+      - type: model
+        patterns: ['^(?:gpt-|o1|o3|o4|chatgpt-|text-embedding-|dall-e|whisper|tts-|davinci|babbage|computer-use-preview|codex-)']
+        weight: 0.8
+      - type: secret
+        patterns: ['\bsk-(?!ant-|or-)(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}\b']
+        weight: 0.9
+        description: OpenAI API key
+
+  - id: provider.anthropic
+    name: Anthropic
+    category: provider
+    vendor: Anthropic
+    homepage: https://docs.anthropic.com
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [anthropic]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: ["@anthropic-ai/sdk", "@anthropic-ai/bedrock-sdk", "@anthropic-ai/vertex-sdk"]
+        prefixes: ["@anthropic-ai/"]
+        weight: 0.8
+      - type: dependency
+        ecosystem: go
+        names: ["github.com/anthropics/anthropic-sdk-go"]
+        weight: 0.8
+      - type: dependency
+        ecosystem: maven
+        names: ["com.anthropic:anthropic-java", "com.anthropic:anthropic-java-core"]
+        prefixes: ["com.anthropic"]
+        weight: 0.8
+      - type: dependency
+        ecosystem: nuget
+        names: [Anthropic.SDK, Anthropic]
+        weight: 0.8
+      - type: dependency
+        ecosystem: cargo
+        names: [anthropic, anthropic-sdk, clust]
+        weight: 0.7
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+anthropic\b']
+        weight: 0.8
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@anthropic-ai/(?:sdk|bedrock-sdk|vertex-sdk)']
+        weight: 0.8
+      - type: import
+        languages: [go]
+        patterns: ['"github\.com/anthropics/anthropic-sdk-go']
+        weight: 0.8
+      - type: code
+        patterns: ['\bmessages\.create\s*\(\s*(?:model\s*=\s*)?["'']?claude', '\bAnthropic\s*\(\s*\)', '\bAnthropicBedrock\s*\(', '\bAnthropicVertex\s*\(', '\bclient\.beta\.messages\.']
+        weight: 0.7
+      - type: env
+        names: [ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_VERTEX, ANTHROPIC_ADMIN_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.anthropic.com]
+        weight: 0.9
+      - type: user_agent
+        patterns: ['(?i)\bAnthropic/(?:Python|JS|Go|Java|Ruby)', '(?i)anthropic-sdk-(?:python|typescript|go|java)', '(?i)\bclaude-cli/', '(?i)\bclaude-code/']
+        weight: 0.7
+      - type: model
+        patterns: ['^claude-', 'anthropic\.claude-']
+        weight: 0.8
+      - type: secret
+        patterns: ['\bsk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{20,}\b']
+        weight: 0.9
+        description: Anthropic API key
+
+  - id: provider.google-gemini
+    name: Google Gemini API (AI Studio)
+    category: provider
+    vendor: Google
+    homepage: https://ai.google.dev
+    description: Gemini Developer API via API keys (consumer/AI Studio path, outside Google Cloud IAM).
+    risk_notes: ["Gemini API keys bypass Cloud IAM and are often created in personal AI Studio accounts."]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [google-genai, google-generativeai, google-ai-generativelanguage]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: ["@google/genai", "@google/generative-ai"]
+        weight: 0.8
+      - type: dependency
+        ecosystem: go
+        names: ["google.golang.org/genai", "github.com/google/generative-ai-go"]
+        weight: 0.8
+      - type: dependency
+        ecosystem: maven
+        names: ["com.google.genai:google-genai"]
+        prefixes: ["com.google.genai", "com.google.ai.client.generativeai"]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+google\.genai\b', '^\s*(?:from|import)\s+google\.generativeai\b', '^\s*from\s+google\s+import\s+genai\b']
+        weight: 0.8
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@google/(?:genai|generative-ai)["'']']
+        weight: 0.8
+      - type: code
+        patterns: ['\bgenai\.Client\s*\(', '\bGenerativeModel\s*\(', '\bgenerate_content\s*\(', '\bgenerateContent\s*\(', '\bautomatic_function_calling\b', '\bFunctionDeclaration\s*\(']
+        weight: 0.6
+      - type: env
+        names: [GEMINI_API_KEY, GOOGLE_API_KEY, GOOGLE_GENAI_API_KEY, GOOGLE_GEMINI_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [generativelanguage.googleapis.com, aistudio.google.com]
+        weight: 0.9
+      - type: user_agent
+        patterns: ['(?i)google-genai-sdk', '(?i)genai-(?:js|python|go)', '(?i)google-generativeai']
+        weight: 0.7
+      - type: model
+        patterns: ['^(?:gemini-|gemma-|imagen-|veo-|text-bison|chat-bison|textembedding-gecko|text-embedding-00|learnlm-)']
+        weight: 0.8
+      - type: secret
+        patterns: ['\bAIza[0-9A-Za-z_-]{35}\b']
+        weight: 0.6
+        description: Google API key (may be restricted to Gemini or other Google APIs)
+
+  - id: provider.google-vertex-ai
+    name: Google Vertex AI
+    category: provider
+    vendor: Google Cloud
+    homepage: https://cloud.google.com/vertex-ai
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [google-cloud-aiplatform, vertexai]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: ["@google-cloud/vertexai", "@google-cloud/aiplatform"]
+        weight: 0.8
+      - type: dependency
+        ecosystem: go
+        names: ["cloud.google.com/go/aiplatform", "cloud.google.com/go/vertexai"]
+        weight: 0.8
+      - type: dependency
+        ecosystem: maven
+        names: ["com.google.cloud:google-cloud-aiplatform", "com.google.cloud:google-cloud-vertexai"]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+vertexai\b', '^\s*(?:from|import)\s+google\.cloud\.aiplatform\b']
+        weight: 0.8
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@google-cloud/(?:vertexai|aiplatform)']
+        weight: 0.8
+      - type: code
+        patterns: ['\bvertexai\.init\s*\(', '\baiplatform\.init\s*\(', '\bvertexai\.generative_models\b', '\bVertexAI\s*\(\s*\{']
+        weight: 0.7
+      - type: env
+        names: [GOOGLE_GENAI_USE_VERTEXAI, VERTEXAI_PROJECT, VERTEXAI_LOCATION, VERTEX_AI_PROJECT, GOOGLE_VERTEX_PROJECT, GOOGLE_VERTEX_LOCATION]
+        weight: 0.6
+      - type: domain
+        values: [aiplatform.googleapis.com, "re:^[a-z0-9-]+-aiplatform\\.googleapis\\.com$"]
+        weight: 0.9
+      - type: iac
+        values: [google_vertex_ai_endpoint, google_vertex_ai_index, google_vertex_ai_index_endpoint, google_vertex_ai_deployment_resource_pool, google_vertex_ai_feature_online_store, google_vertex_ai_tensorboard, google_vertex_ai_metadata_store]
+        weight: 0.85
+      - type: scope
+        values: ["roles/aiplatform.user", "roles/aiplatform.admin", "roles/aiplatform.serviceAgent", "roles/aiplatform.expressUser", "roles/aiplatform.viewer", "aiplatform.endpoints.predict", "aiplatform.reasoningEngines.query", "https://www.googleapis.com/auth/cloud-platform"]
+        weight: 0.6
+      - type: model
+        patterns: ['^publishers/google/models/', '^projects/[^/]+/locations/[^/]+/(?:publishers|endpoints|models)/']
+        weight: 0.8
+
+  - id: provider.aws-bedrock
+    name: Amazon Bedrock
+    category: provider
+    vendor: Amazon Web Services
+    homepage: https://aws.amazon.com/bedrock/
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@aws-sdk/client-bedrock-runtime", "@aws-sdk/client-bedrock", "@aws-sdk/client-bedrock-agent-runtime", "@aws-sdk/client-bedrock-agent", "@aws-sdk/client-bedrock-agentcore", "@aws-sdk/client-bedrock-agentcore-control"]
+        prefixes: ["@aws-sdk/client-bedrock"]
+        weight: 0.85
+      - type: dependency
+        ecosystem: go
+        names: ["github.com/aws/aws-sdk-go-v2/service/bedrockruntime", "github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime", "github.com/aws/aws-sdk-go-v2/service/bedrockagent", "github.com/aws/aws-sdk-go-v2/service/bedrock"]
+        prefixes: ["github.com/aws/aws-sdk-go-v2/service/bedrock"]
+        weight: 0.85
+      - type: dependency
+        ecosystem: maven
+        names: ["software.amazon.awssdk:bedrockruntime", "software.amazon.awssdk:bedrockagentruntime", "software.amazon.awssdk:bedrockagent", "software.amazon.awssdk:bedrock"]
+        weight: 0.85
+      - type: dependency
+        ecosystem: nuget
+        names: [AWSSDK.BedrockRuntime, AWSSDK.BedrockAgentRuntime, AWSSDK.BedrockAgent, AWSSDK.Bedrock]
+        prefixes: [AWSSDK.Bedrock]
+        weight: 0.85
+      - type: dependency
+        ecosystem: pypi
+        names: [langchain-aws, llama-index-llms-bedrock, llama-index-llms-bedrock-converse, aws-bedrock-sdk]
+        weight: 0.7
+      - type: code
+        patterns: ['\.client\(\s*["'']bedrock-runtime["'']', '\.client\(\s*["'']bedrock["'']', '\bBedrockRuntimeClient\s*\(', '\bbedrockruntime\.New', '\binvoke_model(?:_with_response_stream)?\s*\(', '\bInvokeModelCommand\b', '\bConverseCommand\b', '\bclient\.converse(?:_stream)?\s*\(', '\bChatBedrock(?:Converse)?\s*\(']
+        weight: 0.8
+      - type: env
+        names: [BEDROCK_MODEL_ID, AWS_BEDROCK_MODEL_ID, BEDROCK_REGION, AWS_REGION_BEDROCK]
+        weight: 0.5
+      - type: domain
+        values: ["re:^bedrock(?:-runtime|-agent-runtime|-agent|-agentcore|-data-automation-runtime)?(?:-fips)?\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^bedrock-mantle\\.[a-z0-9-]+\\.api\\.aws$"]
+        weight: 0.9
+      - type: iac
+        values: [aws_bedrock_guardrail, aws_bedrock_custom_model, aws_bedrock_model_invocation_logging_configuration, aws_bedrock_provisioned_model_throughput, aws_bedrock_inference_profile, "AWS::Bedrock::Guardrail", "AWS::Bedrock::ApplicationInferenceProfile", "AWS::Bedrock::ModelInvocationLoggingConfiguration"]
+        weight: 0.85
+      - type: scope
+        values: ["bedrock:*", "bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:Converse", "bedrock:ConverseStream", "bedrock:Retrieve", "bedrock:RetrieveAndGenerate", "bedrock:GetFoundationModel", "bedrock:ListFoundationModels", "bedrock:CallWithBearerToken"]
+        weight: 0.6
+      - type: model
+        patterns: ['^(?:us\.|eu\.|apac\.|global\.)?(?:anthropic|amazon|meta|mistral|cohere|ai21|stability|deepseek|writer|qwen|openai|twelvelabs)\.[a-z0-9.-]+(?::\d+)?(?:-v\d)?', '^arn:aws:bedrock:']
+        weight: 0.85
+      - type: user_agent
+        patterns: ['(?i)\bBedrock\b']
+        weight: 0.5
+
+  - id: provider.azure-openai
+    name: Azure OpenAI
+    category: provider
+    vendor: Microsoft
+    homepage: https://learn.microsoft.com/azure/ai-services/openai/
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@azure/openai", "@azure/openai-assistants", "@azure-rest/ai-inference", "@azure/ai-inference"]
+        weight: 0.85
+      - type: dependency
+        ecosystem: nuget
+        names: [Azure.AI.OpenAI, Azure.AI.Inference, Azure.AI.OpenAI.Assistants]
+        weight: 0.85
+      - type: dependency
+        ecosystem: maven
+        names: ["com.azure:azure-ai-openai", "com.azure:azure-ai-inference"]
+        weight: 0.85
+      - type: dependency
+        ecosystem: pypi
+        names: [azure-ai-inference]
+        weight: 0.8
+      - type: code
+        patterns: ['\b(?:Async)?AzureOpenAI\s*\(', '\bAzureChatOpenAI\s*\(', '\bAzureOpenAIClient\s*\(', '\bOpenAIClient\s*\(\s*new\s+Uri', 'api_type\s*=\s*["'']azure["'']', '\bazure_endpoint\s*=', '\bazure_deployment\s*=']
+        weight: 0.8
+      - type: env
+        names: [AZURE_OPENAI_API_KEY, AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT, AZURE_OPENAI_DEPLOYMENT_NAME, AZURE_OPENAI_API_VERSION, AZURE_OPENAI_CHAT_DEPLOYMENT_NAME, OPENAI_API_TYPE, AZURE_INFERENCE_ENDPOINT, AZURE_INFERENCE_CREDENTIAL]
+        weight: 0.6
+      - type: domain
+        values: ["*.openai.azure.com", "*.cognitiveservices.azure.com", "*.services.ai.azure.com", "*.models.ai.azure.com", "*.inference.ai.azure.com"]
+        weight: 0.9
+      - type: iac
+        values: [azurerm_cognitive_account, azurerm_cognitive_deployment, azurerm_ai_services, "Microsoft.CognitiveServices/accounts", "Microsoft.CognitiveServices/accounts/deployments"]
+        weight: 0.85
+      - type: scope
+        values: ["Cognitive Services OpenAI User", "Cognitive Services OpenAI Contributor", "Cognitive Services User", "Cognitive Services Contributor", "Azure AI Inference Deployment Operator", "Azure AI User", "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd", "a001fd3d-188f-4b5d-821b-7da978bf7442", "a97b65f3-24c7-4388-baec-2e87135dc908", "53ca6127-db72-4b80-b1b0-d745d6d5456d"]
+        weight: 0.7
+      - type: model
+        patterns: ['^(?:gpt-|o1|o3|o4|text-embedding-|dall-e|whisper)']
+        weight: 0.4
+
+  - id: provider.mistral
+    name: Mistral AI
+    category: provider
+    vendor: Mistral AI
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [mistralai, mistral-common]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: ["@mistralai/mistralai"]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+mistralai\b']
+        weight: 0.8
+      - type: env
+        names: [MISTRAL_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.mistral.ai, codestral.mistral.ai]
+        weight: 0.9
+      - type: model
+        patterns: ['^(?:mistral-|mixtral-|codestral|ministral|pixtral|magistral|devstral|open-mistral|open-mixtral)']
+        weight: 0.8
+
+  - id: provider.cohere
+    name: Cohere
+    category: provider
+    vendor: Cohere
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [cohere]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: [cohere-ai]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+cohere\b']
+        weight: 0.8
+      - type: env
+        names: [COHERE_API_KEY, CO_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.cohere.ai, api.cohere.com]
+        weight: 0.9
+      - type: model
+        patterns: ['^(?:command(?:-|$)|embed-(?:english|multilingual|v)|rerank-)']
+        weight: 0.8
+
+  - id: provider.groq
+    name: Groq
+    category: provider
+    vendor: Groq
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [groq]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: [groq-sdk]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+groq\b']
+        weight: 0.8
+      - type: env
+        names: [GROQ_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.groq.com]
+        weight: 0.9
+      - type: secret
+        patterns: ['\bgsk_[A-Za-z0-9]{40,}\b']
+        weight: 0.9
+        description: Groq API key
+
+  - id: provider.together
+    name: Together AI
+    category: provider
+    vendor: Together AI
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [together]
+        weight: 0.75
+      - type: dependency
+        ecosystem: npm
+        names: [together-ai]
+        weight: 0.8
+      - type: env
+        names: [TOGETHER_API_KEY, TOGETHERAI_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.together.xyz, api.together.ai]
+        weight: 0.9
+      - type: secret
+        patterns: ['\btgp_v1_[A-Za-z0-9_-]{30,}\b']
+        weight: 0.85
+        description: Together AI API key
+
+  - id: provider.fireworks
+    name: Fireworks AI
+    category: provider
+    vendor: Fireworks AI
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [fireworks-ai]
+        weight: 0.8
+      - type: env
+        names: [FIREWORKS_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.fireworks.ai]
+        weight: 0.9
+      - type: model
+        patterns: ['^accounts/fireworks/models/']
+        weight: 0.9
+
+  - id: provider.openrouter
+    name: OpenRouter
+    category: provider
+    vendor: OpenRouter
+    risk_notes: ["OpenRouter aggregates many third-party model hosts; data residency is provider dependent."]
+    signals:
+      - type: env
+        names: [OPENROUTER_API_KEY, OPENROUTER_BASE_URL]
+        weight: 0.6
+      - type: domain
+        values: [openrouter.ai]
+        weight: 0.9
+      - type: secret
+        patterns: ['\bsk-or-v1-[a-f0-9]{64}\b']
+        weight: 0.9
+        description: OpenRouter API key
+      - type: user_agent
+        patterns: ['(?i)openrouter']
+        weight: 0.6
+
+  - id: provider.ollama
+    name: Ollama
+    category: provider
+    vendor: Ollama
+    description: Local / self-hosted model runner exposing an OpenAI-compatible API on port 11434.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [ollama, langchain-ollama, llama-index-llms-ollama]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: [ollama, ollama-ai-provider, "@langchain/ollama"]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+ollama\b']
+        weight: 0.8
+      - type: code
+        patterns: ['\bollama\.(?:chat|generate)\s*\(', '\bChatOllama\s*\(', '\bOllamaLLM\s*\(', 'localhost:11434', '127\.0\.0\.1:11434']
+        weight: 0.7
+      - type: env
+        names: [OLLAMA_HOST, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_BASE]
+        weight: 0.6
+      - type: domain
+        values: ["re:.*:11434$"]
+        weight: 0.8
+      - type: image
+        patterns: ['^ollama/ollama']
+        weight: 0.9
+      - type: file
+        globs: ["Modelfile", "**/Modelfile"]
+        weight: 0.8
+
+  - id: provider.vllm
+    name: vLLM
+    category: provider
+    vendor: vLLM
+    description: Self-hosted high-throughput inference server (OpenAI-compatible).
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [vllm]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+vllm\b']
+        weight: 0.8
+      - type: image
+        patterns: ['vllm/vllm-openai', 'vllm-openai']
+        weight: 0.9
+      - type: code
+        patterns: ['vllm\.entrypoints\.openai\.api_server', '\bvllm\s+serve\b']
+        weight: 0.85
+      - type: user_agent
+        patterns: ['(?i)\bvllm\b']
+        weight: 0.6
+
+  - id: provider.huggingface
+    name: Hugging Face Hub / Inference
+    category: provider
+    vendor: Hugging Face
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [huggingface-hub, text-generation, text-generation-inference, langchain-huggingface, llama-index-llms-huggingface]
+        weight: 0.6
+      - type: dependency
+        ecosystem: pypi
+        names: [transformers, sentence-transformers, diffusers, accelerate, peft]
+        weight: 0.2
+      - type: dependency
+        ecosystem: npm
+        names: ["@huggingface/inference", "@huggingface/hub", "@huggingface/transformers"]
+        prefixes: ["@huggingface/"]
+        weight: 0.6
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+huggingface_hub\b']
+        weight: 0.6
+      - type: code
+        patterns: ['\bInferenceClient\s*\(', '\bHfInference\s*\(', '\bHuggingFaceEndpoint\s*\(']
+        weight: 0.6
+      - type: env
+        names: [HF_TOKEN, HUGGINGFACEHUB_API_TOKEN, HUGGING_FACE_HUB_TOKEN, HF_API_KEY, HF_HUB_TOKEN]
+        weight: 0.6
+      - type: domain
+        values: [api-inference.huggingface.co, router.huggingface.co, huggingface.co, "*.endpoints.huggingface.cloud"]
+        weight: 0.8
+      - type: image
+        patterns: ['huggingface/text-generation-inference', 'huggingface/text-embeddings-inference']
+        weight: 0.85
+      - type: secret
+        patterns: ['\bhf_[A-Za-z0-9]{30,}\b']
+        weight: 0.9
+        description: Hugging Face access token
+
+  - id: provider.xai
+    name: xAI
+    category: provider
+    vendor: xAI
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [xai-sdk, langchain-xai]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: ["@ai-sdk/xai"]
+        weight: 0.8
+      - type: env
+        names: [XAI_API_KEY, GROK_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.x.ai]
+        weight: 0.9
+      - type: model
+        patterns: ['^grok-']
+        weight: 0.8
+      - type: secret
+        patterns: ['\bxai-[A-Za-z0-9]{60,}\b']
+        weight: 0.9
+        description: xAI API key
+
+  - id: provider.deepseek
+    name: DeepSeek
+    category: provider
+    vendor: DeepSeek
+    risk_notes: ["DeepSeek's hosted API processes data in the PRC; review data-transfer policy."]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [langchain-deepseek]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: ["@ai-sdk/deepseek"]
+        weight: 0.8
+      - type: env
+        names: [DEEPSEEK_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.deepseek.com]
+        weight: 0.9
+      - type: model
+        patterns: ['^deepseek-']
+        weight: 0.7
+
+  - id: provider.perplexity
+    name: Perplexity API
+    category: provider
+    vendor: Perplexity AI
+    capabilities: [browsing]
+    signals:
+      - type: env
+        names: [PERPLEXITY_API_KEY, PPLX_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.perplexity.ai]
+        weight: 0.9
+      - type: model
+        patterns: ['^(?:sonar|pplx-)']
+        weight: 0.8
+      - type: secret
+        patterns: ['\bpplx-[A-Za-z0-9]{40,}\b']
+        weight: 0.9
+        description: Perplexity API key
+
+  - id: provider.replicate
+    name: Replicate
+    category: provider
+    vendor: Replicate
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [replicate]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: [replicate]
+        weight: 0.8
+      - type: env
+        names: [REPLICATE_API_TOKEN, REPLICATE_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.replicate.com]
+        weight: 0.9
+      - type: secret
+        patterns: ['\br8_[A-Za-z0-9]{30,}\b']
+        weight: 0.9
+        description: Replicate API token
+
+  - id: provider.cerebras
+    name: Cerebras
+    category: provider
+    vendor: Cerebras
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [cerebras-cloud-sdk]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: ["@cerebras/cerebras_cloud_sdk"]
+        weight: 0.8
+      - type: env
+        names: [CEREBRAS_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.cerebras.ai]
+        weight: 0.9
+      - type: secret
+        patterns: ['\bcsk-[A-Za-z0-9]{30,}\b']
+        weight: 0.85
+        description: Cerebras API key
+
+  - id: provider.sambanova
+    name: SambaNova
+    category: provider
+    vendor: SambaNova
+    signals:
+      - type: env
+        names: [SAMBANOVA_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.sambanova.ai]
+        weight: 0.9
+
+  - id: provider.nvidia-nim
+    name: NVIDIA NIM / API Catalog
+    category: provider
+    vendor: NVIDIA
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [langchain-nvidia-ai-endpoints, nvidia-nim, llama-index-llms-nvidia]
+        weight: 0.8
+      - type: env
+        names: [NVIDIA_API_KEY, NVIDIA_NIM_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [integrate.api.nvidia.com, build.nvidia.com, ai.api.nvidia.com]
+        weight: 0.9
+      - type: image
+        patterns: ['nvcr\.io/nim/']
+        weight: 0.9
+      - type: secret
+        patterns: ['\bnvapi-[A-Za-z0-9_-]{60,}\b']
+        weight: 0.9
+        description: NVIDIA API key
+
+  - id: provider.oci-generative-ai
+    name: Oracle Cloud Generative AI
+    category: provider
+    vendor: Oracle
+    homepage: https://www.oracle.com/artificial-intelligence/generative-ai/
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [langchain-oci, oci-langchain, llama-index-llms-oci-genai, oci-generative-ai]
+        weight: 0.85
+      - type: code
+        patterns: ['\bGenerativeAiInferenceClient\s*\(', '\bGenerativeAiClient\s*\(', '\boci\.generative_ai_inference\b', '\boci\.generative_ai\b', '\bChatOCIGenAI\s*\(', '\bOCIGenAI\w*\s*\(']
+        weight: 0.85
+      - type: env
+        names: [OCI_GENAI_ENDPOINT, OCI_COMPARTMENT_ID, OCI_GENAI_MODEL_ID, OCI_GENAI_SERVICE_ENDPOINT]
+        weight: 0.6
+      - type: domain
+        values: ["re:^(?:inference\\.)?generativeai\\.[a-z0-9-]+\\.oci\\.oraclecloud\\.com$"]
+        weight: 0.9
+      - type: iac
+        values: [oci_generative_ai_endpoint, oci_generative_ai_dedicated_ai_cluster, oci_generative_ai_model]
+        weight: 0.85
+      - type: scope
+        values: ["generative-ai-family", "generative-ai-model", "generative-ai-endpoint", "generative-ai-dedicated-ai-cluster", "generative-ai-chat", "generative-ai-text-generation"]
+        weight: 0.7
+      - type: model
+        patterns: ['^ocid1\.generativeaimodel\.', '^(?:cohere\.command|meta\.llama|xai\.grok|google\.gemini)']
+        weight: 0.6
+
+  - id: provider.ibm-watsonx
+    name: IBM watsonx.ai
+    category: provider
+    vendor: IBM
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [ibm-watsonx-ai, ibm-watson-machine-learning, langchain-ibm, llama-index-llms-ibm]
+        weight: 0.85
+      - type: dependency
+        ecosystem: npm
+        names: ["@ibm-cloud/watsonx-ai"]
+        weight: 0.85
+      - type: env
+        names: [WATSONX_APIKEY, WATSONX_API_KEY, WATSONX_PROJECT_ID, WATSONX_URL, WATSONX_SPACE_ID]
+        weight: 0.6
+      - type: domain
+        values: ["*.ml.cloud.ibm.com", "api.dataplatform.cloud.ibm.com"]
+        weight: 0.9
+      - type: model
+        patterns: ['^ibm/granite', '^ibm-granite/']
+        weight: 0.8
+
+  - id: provider.databricks
+    name: Databricks Model Serving / Mosaic AI
+    category: provider
+    vendor: Databricks
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [databricks-langchain, databricks-agents, databricks-openai, databricks-ai-bridge, mlflow, mlflow-skinny]
+        weight: 0.5
+      - type: code
+        patterns: ['\bChatDatabricks\s*\(', '\bserving_endpoints\.query\s*\(', '\bmlflow\.(?:langchain|openai|pyfunc)\.log_model\s*\(', '\bmlflow\.models\.ResourcesFromStub', '\bdatabricks\.agents\b', '\bagents\.deploy\s*\(']
+        weight: 0.7
+      - type: env
+        names: [DATABRICKS_TOKEN, DATABRICKS_HOST, DATABRICKS_SERVING_ENDPOINT]
+        weight: 0.4
+      - type: domain
+        values: ["re:.*\\.cloud\\.databricks\\.com$", "re:.*\\.azuredatabricks\\.net$", "re:.*\\.gcp\\.databricks\\.com$"]
+        weight: 0.5
+      - type: model
+        patterns: ['^databricks-(?:meta-llama|dbrx|mixtral|gte|bge|claude|gemma|gpt)']
+        weight: 0.8
+
+  - id: provider.cloudflare-workers-ai
+    name: Cloudflare Workers AI / AI Gateway
+    category: provider
+    vendor: Cloudflare
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@cloudflare/ai", "workers-ai-provider"]
+        weight: 0.85
+      - type: code
+        patterns: ['\benv\.AI\.run\s*\(', '\[ai\]\s*\n\s*binding\s*=\s*"AI"', '\bAi\s*\(\s*env\.AI\s*\)']
+        weight: 0.85
+      - type: domain
+        values: [gateway.ai.cloudflare.com, "re:^api\\.cloudflare\\.com$"]
+        weight: 0.7
+      - type: model
+        patterns: ['^@cf/', '^@hf/']
+        weight: 0.9
+
+  - id: provider.snowflake-cortex
+    name: Snowflake Cortex
+    category: provider
+    vendor: Snowflake
+    signals:
+      - type: code
+        patterns: ['\bSNOWFLAKE\.CORTEX\.(?:COMPLETE|AGENT|SEARCH_PREVIEW|EXTRACT_ANSWER|SUMMARIZE)\s*\(', '\bsnowflake\.cortex\b', '\bcortex\.Complete\s*\(', '/api/v2/cortex/agent']
+        weight: 0.85
+      - type: domain
+        values: ["re:.*\\.snowflakecomputing\\.com$"]
+        weight: 0.3
+
+  - id: provider.voyage-ai
+    name: Voyage AI (embeddings)
+    category: provider
+    vendor: Voyage AI
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [voyageai, langchain-voyageai]
+        weight: 0.6
+      - type: env
+        names: [VOYAGE_API_KEY]
+        weight: 0.5
+      - type: domain
+        values: [api.voyageai.com]
+        weight: 0.8
+
+  - id: provider.openai-compatible
+    name: OpenAI-compatible endpoint override
+    category: provider
+    vendor: null
+    description: Client configured with a non-default base URL, typically a self-hosted or third-party OpenAI-compatible server (LM Studio, LocalAI, vLLM, TGI, LiteLLM...).
+    signals:
+      - type: code
+        patterns: ['\bbase_url\s*=\s*["'']https?://(?!api\.openai\.com)[^"'']+/v1["'']', '\bbaseURL\s*:\s*["'']https?://(?!api\.openai\.com)[^"'']+/v1["'']', '\bopenai\.api_base\s*=\s*["'']https?://(?!api\.openai\.com)']
+        weight: 0.6
+      - type: domain
+        values: ["re:.*:1234$", "re:.*:8080/v1$", "re:.*:8000/v1$", "re:.*:4000$"]
+        weight: 0.3
+      - type: env
+        names: [OPENAI_API_HOST, LLM_BASE_URL, LLM_API_BASE, OPENAI_COMPAT_BASE_URL, LMSTUDIO_BASE_URL, LOCALAI_BASE_URL]
+        weight: 0.5

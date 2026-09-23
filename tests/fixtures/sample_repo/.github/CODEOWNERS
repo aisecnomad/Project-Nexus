@@ -1,0 +1,3 @@
+*                      @acme/platform
+services/research-agent @acme/data-science
+services/support-bot    @acme/cx-eng

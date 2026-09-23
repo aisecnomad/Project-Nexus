@@ -1,0 +1,81 @@
+# Demo configuration: runs every connector in offline mode against the fixture
+# exports shipped with the repository. No credentials needed.
+#   shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
+inventory:
+  - ../Agent Capability Card
+  - ./inventory
+options:
+  min_confidence: 0.2
+  parallel: 6
+connectors:
+  - name: code.filesystem
+    path: ../tests/fixtures/sample_repo
+    label: github:acme/sample-monorepo
+  - name: identity.okta
+    input: ../tests/fixtures/identity/okta_apps.json
+    org_url: https://acme.okta.com
+  - name: identity.entra
+    input: ../tests/fixtures/identity/entra_graph.json
+    tenant_id: our-tenant
+  - name: identity.google-workspace
+    input: ../tests/fixtures/identity/google_tokens.json
+  - name: identity.auth0
+    input: ../tests/fixtures/identity/auth0_clients.json
+    domain: acme.eu.auth0.com
+  - name: identity.jwt
+    input: ../tests/fixtures/identity/tokens.txt
+  - name: gateway.logs
+    label: litellm-proxy
+    input: ../tests/fixtures/gateway/litellm_spend.jsonl
+  - name: gateway.logs
+    label: bedrock-invocation-logs
+    input: ../tests/fixtures/gateway/bedrock_invocations.jsonl
+  - name: gateway.logs
+    label: azure-openai-diagnostics
+    input: ../tests/fixtures/gateway/azure_openai_diag.json
+  - name: gateway.logs
+    label: egress-proxy
+    input: ../tests/fixtures/gateway/egress_proxy.log
+  - name: lowcode.power-platform
+    input: ../tests/fixtures/lowcode/power_platform.json
+  - name: lowcode.salesforce
+    input: ../tests/fixtures/lowcode/salesforce.json
+    instance_url: https://acme.my.salesforce.com
+  - name: lowcode.servicenow
+    input: ../tests/fixtures/lowcode/servicenow.json
+    instance: https://acme.service-now.com
+  - name: lowcode.n8n
+    input: ../tests/fixtures/lowcode/n8n_workflows.json
+  - name: lowcode.make
+    input: ../tests/fixtures/lowcode/make_scenarios.json
+  - name: lowcode.zapier
+    input: ../tests/fixtures/lowcode/zapier_zaps.csv
+  - name: lowcode.workato
+    input: ../tests/fixtures/lowcode/workato_recipes.json
+  - name: saas.slack
+    input: ../tests/fixtures/saas/slack.json
+  - name: saas.microsoft-teams
+    input: ../tests/fixtures/saas/teams_apps.json
+    tenant_id: our-tenant
+  - name: saas.github-apps
+    input: ../tests/fixtures/saas/github_installations.json
+    org: acme
+  - name: saas.atlassian
+    input: ../tests/fixtures/saas/atlassian_plugins.json
+    site: https://acme.atlassian.net
+  - name: saas.notion
+    input: ../tests/fixtures/saas/notion_users.json
+  - name: saas.zoom
+    input: ../tests/fixtures/saas/zoom_apps.json
+  - name: saas.generic
+    input: ../tests/fixtures/saas/generic_apps.csv
+    platform: google-marketplace
+    fields: {name: "App Name", scopes: "Permissions", users: "Users", owner: "Installed By", url: "Domain"}
+  - name: cloud.aws
+    input: ../tests/fixtures/cloud/aws_records.jsonl
+  - name: cloud.gcp
+    input: ../tests/fixtures/cloud/gcp_records.jsonl
+  - name: cloud.azure
+    input: ../tests/fixtures/cloud/azure_records.jsonl
+  - name: cloud.oci
+    input: ../tests/fixtures/cloud/oci_records.jsonl

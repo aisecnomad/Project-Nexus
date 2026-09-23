@@ -1,0 +1,53 @@
+[
+ {
+  "_kind": "scenario",
+  "id": 11,
+  "name": "Ticket summariser",
+  "isActive": true,
+  "teamId": 5,
+  "createdByUser": {
+   "name": "kim"
+  },
+  "scheduling": {
+   "type": "interval",
+   "interval": 15
+  },
+  "blueprint": {
+   "name": "Ticket summariser",
+   "flow": [
+    {
+     "id": 1,
+     "module": "zendesk:watchTickets"
+    },
+    {
+     "id": 2,
+     "module": "openai-gpt-3:CreateCompletion",
+     "mapper": {
+      "model": "gpt-4o"
+     }
+    },
+    {
+     "id": 3,
+     "module": "slack:createMessage"
+    }
+   ]
+  }
+ },
+ {
+  "_kind": "ai-agent",
+  "id": "ag1",
+  "name": "Procurement negotiator",
+  "teamId": 5,
+  "model": "gpt-4o",
+  "systemPrompt": "You are a procurement agent...",
+  "tools": [
+   {
+    "name": "send_email"
+   },
+   {
+    "name": "create_po"
+   }
+  ],
+  "createdAt": "2025-08-01T00:00:00Z"
+ }
+]

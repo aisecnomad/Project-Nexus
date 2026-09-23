@@ -1,0 +1,150 @@
+"""Google Workspace: third-party OAuth apps authorised by users (Admin SDK tokens).
+
+For every user, ``GET /admin/directory/v1/users/{user}/tokens`` lists the
+OAuth clients that hold refresh tokens with their scopes. Results are
+aggregated per client id so a single finding represents "Otter.ai has Gmail +
+Calendar access for 214 users".
+
+Auth: a service-account key with domain-wide delegation (impersonating an
+admin, ``admin_email``) or a pre-issued ``access_token`` with
+``admin.directory.user.readonly`` + ``admin.directory.user.security`` scopes.
+
+Offline export: list of token objects (each with ``userKey`` / ``userEmail``)
+or per-user dicts ``{"user": ..., "tokens": [...]}``.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any, ClassVar
+
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.common import finalize
+from shadowscan.connectors.identity.common import assess_app, summarize_scopes
+from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.utils.http import HttpClient, HttpError
+
+SCOPES = "https://www.googleapis.com/auth/admin.directory.user.readonly https://www.googleapis.com/auth/admin.directory.user.security"
+
+
+class GoogleWorkspaceConnector(BaseConnector):
+    name: ClassVar[str] = "identity.google-workspace"
+    surface: ClassVar[Surface] = Surface.IDENTITY
+    provider: ClassVar[str | None] = "google-workspace"
+    description: ClassVar[str] = "OAuth apps authorised by Google Workspace users (Admin SDK tokens), aggregated per client."
+    config_keys: ClassVar[dict[str, str]] = {
+        "service_account_file": "SA key JSON with domain-wide delegation (env GOOGLE_APPLICATION_CREDENTIALS)",
+        "admin_email": "admin user to impersonate (env GOOGLE_ADMIN_EMAIL)",
+        "access_token": "pre-issued token instead of SA (env GOOGLE_ACCESS_TOKEN)",
+        "customer": "customer id (default my_customer)",
+        "max_users": "cap on users enumerated (default 10000)",
+        "input": "offline: JSON export of token objects",
+    }
+
+    def __init__(self, ctx: ConnectorContext):
+        super().__init__(ctx)
+        self.customer = ctx.get("customer", "my_customer")
+        self.max_users = int(ctx.get("max_users", 10_000))
+        self.http: HttpClient | None = None
+
+    def _auth(self) -> None:
+        token = self.ctx.get("access_token", env="GOOGLE_ACCESS_TOKEN")
+        if not token:
+            sa_file = self.ctx.get("service_account_file", env="GOOGLE_APPLICATION_CREDENTIALS")
+            admin = self.ctx.get("admin_email", env="GOOGLE_ADMIN_EMAIL")
+            if not (sa_file and admin):
+                raise ConnectorError("identity.google-workspace: service_account_file + admin_email (or access_token) required")
+            token = _dwd_token(Path(sa_file), admin, SCOPES)
+        self.http = HttpClient("https://admin.googleapis.com", headers={"Authorization": f"Bearer {token}"})
+
+    def collect(self) -> Iterable[dict[str, Any]]:
+        self._auth()
+        assert self.http
+        count = 0
+        for user in self.http.paginate_token("/admin/directory/v1/users", params={"customer": self.customer, "maxResults": 500, "projection": "basic"}, items_key="users"):
+            count += 1
+            if count > self.max_users:
+                self.ctx.warn("identity.google-workspace: max_users reached")
+                return
+            email = user.get("primaryEmail")
+            if user.get("suspended"):
+                continue
+            try:
+                data = self.http.get_json(f"/admin/directory/v1/users/{email}/tokens")
+            except HttpError as exc:
+                self.log.debug("tokens for %s: %s", email, exc)
+                continue
+            for tok in (data or {}).get("items", []) or []:
+                tok["userEmail"] = email
+                yield tok
+
+    def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        apps: dict[str, dict[str, Any]] = {}
+        for rec in records:
+            tokens = rec.get("tokens") if isinstance(rec.get("tokens"), list) else [rec]
+            user = rec.get("user") or rec.get("userEmail") or rec.get("userKey")
+            for tok in tokens:
+                cid = tok.get("clientId")
+                if not cid:
+                    continue
+                self.ctx.examined()
+                agg = apps.setdefault(cid, {"clientId": cid, "displayText": tok.get("displayText"), "scopes": set(), "users": set(), "anonymous": tok.get("anonymous"), "nativeApp": tok.get("nativeApp")})
+                agg["scopes"].update(tok.get("scopes") or [])
+                u = tok.get("userEmail") or tok.get("userKey") or user
+                if u:
+                    agg["users"].add(u)
+                if tok.get("displayText") and not agg["displayText"]:
+                    agg["displayText"] = tok["displayText"]
+        for cid, agg in apps.items():
+            f = self._app_finding(agg)
+            if f:
+                yield f
+
+    def _app_finding(self, agg: dict[str, Any]) -> Finding | None:
+        name = agg.get("displayText") or agg["clientId"]
+        scopes = sorted(agg["scopes"])
+        f = Finding(
+            surface=Surface.IDENTITY,
+            connector=self.name,
+            kind=Kind.OAUTH_GRANT,
+            title=f"Google Workspace OAuth app: {name}",
+            resource=f"google-workspace:oauth-client:{agg['clientId']}",
+            resource_type="oauth-client",
+            provider="google-workspace",
+            account=self.customer if self.customer != "my_customer" else None,
+        )
+        assess_app(self.index, f, name=name, scopes=scopes, client_id=agg["clientId"])
+        interesting = bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags)
+        if not interesting:
+            return None
+        users = agg["users"]
+        f.add_evidence(Evidence(signal="google:oauth-token", description=f"{len(users)} user(s) granted '{name}' ({agg['clientId']}) scopes: {' '.join(scopes)[:400]}", weight=0.2 + min(0.3, len(users) / 200)))
+        if agg.get("anonymous"):
+            f.add_tag("anonymous-client")
+        if agg.get("nativeApp"):
+            f.add_tag("native-app")
+        f.metadata.update({"client_id": agg["clientId"], "scopes": summarize_scopes(scopes), "user_count": len(users), "users_sample": sorted(users)[:10], "anonymous": agg.get("anonymous"), "native_app": agg.get("nativeApp")})
+        finalize(f, self.index)
+        f.kind = Kind.OAUTH_GRANT
+        return f
+
+
+def _dwd_token(sa_file: Path, subject: str, scopes: str) -> str:
+    """Mint a domain-wide-delegation access token from a service-account key (no google-auth needed)."""
+    try:
+        import jwt  # PyJWT
+    except ImportError as exc:  # pragma: no cover
+        raise ConnectorError("identity.google-workspace: PyJWT with cryptography is required") from exc
+    info = json.loads(sa_file.read_text(encoding="utf-8"))
+    now = int(time.time())
+    assertion = jwt.encode(
+        {"iss": info["client_email"], "sub": subject, "scope": scopes, "aud": info.get("token_uri", "https://oauth2.googleapis.com/token"), "iat": now, "exp": now + 3600},
+        info["private_key"],
+        algorithm="RS256",
+        headers={"kid": info.get("private_key_id")},
+    )
+    resp = HttpClient().post(info.get("token_uri", "https://oauth2.googleapis.com/token"), data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion})
+    return resp.json()["access_token"]

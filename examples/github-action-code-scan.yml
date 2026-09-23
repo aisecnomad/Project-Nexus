@@ -1,0 +1,27 @@
+# Drop into .github/workflows/ of any repository: scans the checkout for
+# agent frameworks, MCP configs, coding-agent configs, IaC and LLM credentials
+# and uploads the results to GitHub code scanning as SARIF.
+name: ShadowScan
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  shadowscan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "git+https://github.com/aisecnomad/Project-Nexus.git"
+      - run: shadowscan code . --inventory inventory/ --format sarif -o shadowscan.sarif --fail-on critical
+        continue-on-error: true
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: shadowscan.sarif

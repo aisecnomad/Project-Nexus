@@ -1,0 +1,120 @@
+[
+ {
+  "attributes": {
+   "type": "BotDefinition"
+  },
+  "Id": "0Xx1",
+  "DeveloperName": "Service_Agent",
+  "MasterLabel": "Service Agent",
+  "Description": "Agentforce service agent",
+  "CreatedDate": "2025-06-01T00:00:00.000+0000",
+  "LastModifiedDate": "2025-09-01T00:00:00.000+0000",
+  "CreatedBy": {
+   "Name": "Frank Admin"
+  }
+ },
+ {
+  "attributes": {
+   "type": "BotVersion"
+  },
+  "Id": "0Xv1",
+  "BotDefinitionId": "0Xx1",
+  "Status": "Active",
+  "VersionNumber": 3
+ },
+ {
+  "attributes": {
+   "type": "GenAiPlannerDefinition"
+  },
+  "Id": "0GP1",
+  "DeveloperName": "Order_Assistant",
+  "MasterLabel": "Order Assistant",
+  "CreatedDate": "2025-07-01T00:00:00.000+0000",
+  "CreatedBy": {
+   "Name": "Grace"
+  }
+ },
+ {
+  "attributes": {
+   "type": "GenAiPluginDefinition"
+  },
+  "Id": "0GL1",
+  "DeveloperName": "Order_Status",
+  "MasterLabel": "Order Status"
+ },
+ {
+  "attributes": {
+   "type": "GenAiFunctionDefinition"
+  },
+  "Id": "0GF1",
+  "DeveloperName": "Refund_Order",
+  "MasterLabel": "Refund Order",
+  "InvocationTargetType": "apex",
+  "InvocationTarget": "RefundService"
+ },
+ {
+  "attributes": {
+   "type": "GenAiPromptTemplate"
+  },
+  "Id": "0GT1",
+  "DeveloperName": "Case_Summary",
+  "MasterLabel": "Case Summary",
+  "Type": "einstein_gpt__fieldCompletion",
+  "CreatedBy": {
+   "Name": "Grace"
+  }
+ },
+ {
+  "attributes": {
+   "type": "ConnectedApplication"
+  },
+  "Id": "0H41",
+  "Name": "Gong",
+  "CreatedDate": "2024-01-01T00:00:00.000+0000",
+  "OptionsAllowAdminApprovedUsersOnly": false,
+  "CreatedBy": {
+   "Name": "Frank Admin"
+  }
+ },
+ {
+  "attributes": {
+   "type": "OauthToken"
+  },
+  "Id": "0T1",
+  "AppName": "Gong",
+  "UserId": "005A",
+  "User": {
+   "Username": "heidi@acme.com"
+  },
+  "LastUsedDate": "2025-09-10T00:00:00.000+0000",
+  "UseCount": 420,
+  "CreatedDate": "2024-02-01T00:00:00.000+0000"
+ },
+ {
+  "attributes": {
+   "type": "OauthToken"
+  },
+  "Id": "0T2",
+  "AppName": "Clay",
+  "UserId": "005B",
+  "User": {
+   "Username": "ivan@acme.com"
+  },
+  "LastUsedDate": "2025-09-11T00:00:00.000+0000",
+  "UseCount": 10,
+  "CreatedDate": "2025-08-01T00:00:00.000+0000"
+ },
+ {
+  "attributes": {
+   "type": "FlowDefinitionView"
+  },
+  "Id": "300F",
+  "ApiName": "Prompt_Case_Summary_Flow",
+  "Label": "Prompt: summarise case with Einstein",
+  "ProcessType": "AutoLaunchedFlow",
+  "TriggerType": "RecordAfterSave",
+  "IsActive": true,
+  "LastModifiedDate": "2025-08-01T00:00:00.000+0000",
+  "LastModifiedBy": "Grace"
+ }
+]

@@ -1,0 +1,149 @@
+"""GitHub organisation: installed GitHub Apps (AI reviewers, coding agents, CI bots) and Copilot enablement.
+
+Live: ``GET /orgs/{org}/installations`` (org admin), ``GET /orgs/{org}/copilot/billing`` (optional),
+``GET /orgs/{org}/personal-access-tokens`` (fine-grained PATs approved for the org, optional).
+
+Offline export: installations JSON (``installations`` array or list).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Any, ClassVar
+
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.common import finalize
+from shadowscan.connectors.identity.common import assess_app, summarize_scopes
+from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.utils.http import HttpClient
+
+
+class GitHubAppsConnector(BaseConnector):
+    name: ClassVar[str] = "saas.github-apps"
+    surface: ClassVar[Surface] = Surface.SAAS
+    provider: ClassVar[str | None] = "github"
+    description: ClassVar[str] = "GitHub Apps installed on an organisation (AI reviewers, coding agents), Copilot seats and approved fine-grained PATs."
+    config_keys: ClassVar[dict[str, str]] = {
+        "org": "organisation login (env GITHUB_ORG)",
+        "token": "org admin token (env GITHUB_TOKEN)",
+        "api_url": "default https://api.github.com",
+        "input": "offline: installations JSON",
+    }
+
+    def __init__(self, ctx: ConnectorContext):
+        super().__init__(ctx)
+        self.org = ctx.get("org", env="GITHUB_ORG")
+        self.api_url = str(ctx.get("api_url", "https://api.github.com", env="GITHUB_API_URL")).rstrip("/")
+
+    def collect(self) -> Iterable[dict[str, Any]]:
+        token = self.ctx.get("token", env="GITHUB_TOKEN")
+        if not (self.org and token):
+            raise ConnectorError("saas.github-apps: org and token required")
+        http = HttpClient(self.api_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
+        for inst in http.paginate_link(f"/orgs/{self.org}/installations", params={"per_page": 100}, item_key="installations"):
+            inst["_kind"] = "installation"
+            yield inst
+        billing = http.try_get_json(f"/orgs/{self.org}/copilot/billing")
+        if billing:
+            yield {"_kind": "copilot_billing", **billing}
+        for pat in http.try_get_json(f"/orgs/{self.org}/personal-access-tokens", params={"per_page": 100}, default=[]) or []:
+            pat["_kind"] = "pat"
+            yield pat
+
+    def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        for rec in records:
+            kind = rec.get("_kind") or ("copilot_billing" if "seat_breakdown" in rec else "pat" if "token_id" in rec else "installation")
+            self.ctx.examined()
+            if kind == "installation":
+                f = self._installation_finding(rec)
+                if f:
+                    yield f
+            elif kind == "copilot_billing":
+                yield self._copilot_finding(rec)
+            elif kind == "pat":
+                f = self._pat_finding(rec)
+                if f:
+                    yield f
+
+    def _installation_finding(self, inst: dict[str, Any]) -> Finding | None:
+        slug = inst.get("app_slug") or str(inst.get("app_id"))
+        perms = inst.get("permissions") or {}
+        scopes = [f"{k}:{v}" for k, v in perms.items()]
+        events = inst.get("events") or []
+        f = Finding(
+            surface=Surface.SAAS,
+            connector=self.name,
+            kind=Kind.BOT_APP,
+            title=f"GitHub App installed: {slug}",
+            resource=f"github:installation:{inst.get('id') or slug}",
+            resource_type="github-app-installation",
+            provider="github",
+            account=self.org or (inst.get("account") or {}).get("login"),
+            first_seen=inst.get("created_at"),
+            last_seen=inst.get("updated_at"),
+        )
+        assess_app(self.index, f, name=slug, description=str(inst.get("target_type")), urls=[inst.get("html_url")], scopes=scopes, client_id=str(inst.get("client_id") or ""))
+        write_perms = [k for k, v in perms.items() if v in {"write", "admin"}]
+        if not f.frameworks and not write_perms:
+            return None
+        f.add_evidence(Evidence(signal="github:installation", description=f"App '{slug}' on {inst.get('repository_selection')} repositories; permissions {', '.join(scopes)[:300]}; events {', '.join(events)[:200]}", location=inst.get("html_url"), weight=0.3))
+        if inst.get("repository_selection") == "all":
+            f.add_tag("all-repositories")
+        if write_perms:
+            f.add_tag("write-access")
+            f.add_capability("saas-actions")
+        if "contents" in write_perms or "pull_requests" in write_perms:
+            f.add_capability("code-exec")
+        if inst.get("suspended_at"):
+            f.add_tag("suspended")
+        f.metadata.update({"app_id": inst.get("app_id"), "app_slug": slug, "repository_selection": inst.get("repository_selection"), "permissions": perms, "write_permissions": write_perms, "events": events[:30], "suspended_at": inst.get("suspended_at")})
+        finalize(f, self.index)
+        f.kind = Kind.BOT_APP
+        return f
+
+    def _copilot_finding(self, rec: dict[str, Any]) -> Finding:
+        seats = rec.get("seat_breakdown") or {}
+        f = Finding(
+            surface=Surface.SAAS,
+            connector=self.name,
+            kind=Kind.AGENT_CONFIG,
+            title=f"GitHub Copilot enabled for organisation {self.org or ''}".strip(),
+            resource=f"github:{self.org}/copilot",
+            resource_type="copilot-billing",
+            provider="github",
+            account=self.org,
+        )
+        f.add_framework("coding-agent.github-copilot")
+        f.add_capability("code-exec")
+        f.add_evidence(Evidence(signal="github:copilot", description=f"Copilot plan {rec.get('plan_type')}, {seats.get('total', 0)} seats ({seats.get('active_this_cycle', 0)} active); seat management {rec.get('seat_management_setting')}; public code suggestions {rec.get('public_code_suggestions')}; IDE chat {rec.get('ide_chat')}; platform chat {rec.get('platform_chat')}; CLI {rec.get('cli')}", weight=0.9, signature="coding-agent.github-copilot"))
+        f.metadata.update({k: v for k, v in rec.items() if not k.startswith("_")})
+        finalize(f, self.index)
+        f.kind = Kind.AGENT_CONFIG
+        return f
+
+    def _pat_finding(self, pat: dict[str, Any]) -> Finding | None:
+        owner = (pat.get("owner") or {}).get("login")
+        perms = pat.get("permissions") or {}
+        scopes = [f"{scope}/{k}:{v}" for scope, d in perms.items() if isinstance(d, dict) for k, v in d.items()]
+        name = pat.get("token_name") or f"pat-{pat.get('token_id')}"
+        f = Finding(
+            surface=Surface.SAAS,
+            connector=self.name,
+            kind=Kind.SERVICE_IDENTITY,
+            title=f"Fine-grained PAT approved for org: {name} ({owner})",
+            resource=f"github:pat:{pat.get('token_id') or name}",
+            resource_type="fine-grained-pat",
+            provider="github",
+            account=self.org,
+            owner=owner,
+            first_seen=pat.get("access_granted_at"),
+            last_seen=pat.get("token_last_used_at"),
+        )
+        assess_app(self.index, f, name=name, scopes=[s.split("/", 1)[-1] for s in scopes])
+        if not f.frameworks and not any(t.startswith("policy.") for t in f.tags):
+            return None
+        f.add_evidence(Evidence(signal="github:pat", description=f"Fine-grained PAT '{name}' owned by {owner}; {pat.get('repository_selection')} repositories; expires {pat.get('token_expires_at') or 'never'}", weight=0.25))
+        f.metadata.update({"token_id": pat.get("token_id"), "repository_selection": pat.get("repository_selection"), "expires_at": pat.get("token_expires_at"), "permissions": summarize_scopes(scopes)})
+        finalize(f, self.index)
+        f.kind = Kind.SERVICE_IDENTITY
+        return f

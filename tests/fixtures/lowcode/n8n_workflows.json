@@ -1,0 +1,62 @@
+{
+ "data": [
+  {
+   "id": "w1",
+   "name": "Lead qualifier agent",
+   "active": true,
+   "createdAt": "2025-05-01T00:00:00Z",
+   "updatedAt": "2025-09-01T00:00:00Z",
+   "homeProject": {
+    "name": "Sales Ops"
+   },
+   "nodes": [
+    {
+     "type": "n8n-nodes-base.scheduleTrigger",
+     "name": "Every hour",
+     "parameters": {}
+    },
+    {
+     "type": "@n8n/n8n-nodes-langchain.agent",
+     "name": "AI Agent",
+     "parameters": {
+      "promptType": "define"
+     }
+    },
+    {
+     "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+     "name": "OpenAI",
+     "parameters": {
+      "model": {
+       "value": "gpt-4o-mini"
+      }
+     }
+    },
+    {
+     "type": "@n8n/n8n-nodes-langchain.toolCode",
+     "name": "Code tool",
+     "parameters": {}
+    },
+    {
+     "type": "n8n-nodes-base.hubspot",
+     "name": "HubSpot",
+     "parameters": {}
+    }
+   ]
+  },
+  {
+   "id": "w2",
+   "name": "Backup sheets",
+   "active": true,
+   "nodes": [
+    {
+     "type": "n8n-nodes-base.cron",
+     "name": "cron"
+    },
+    {
+     "type": "n8n-nodes-base.googleSheets",
+     "name": "Sheets"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,475 @@
+# Hosted / low-code agent platforms, LLM gateways and self-hosted agent UIs.
+signatures:
+  # ------------------------------------------------------------ gateways
+  - id: platform.litellm
+    name: LiteLLM (SDK / Proxy)
+    category: platform
+    vendor: BerriAI
+    homepage: https://litellm.ai
+    description: Unified LLM SDK and self-hosted AI gateway (proxy) with virtual keys and spend logs.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [litellm, litellm-proxy]
+        weight: 0.85
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+litellm\b']
+        weight: 0.85
+      - type: code
+        patterns: ['\blitellm\.(?:a?completion|Router)\s*\(', '^\s*model_list\s*:\s*$', '^\s*litellm_settings\s*:', '^\s*general_settings\s*:\s*\n\s*master_key']
+        weight: 0.8
+      - type: image
+        patterns: ['berriai/litellm', 'litellm/litellm']
+        weight: 0.95
+      - type: file
+        globs: ["litellm_config.yaml", "**/litellm_config.yaml", "litellm.yaml", "**/litellm.yaml"]
+        weight: 0.9
+      - type: env
+        names: [LITELLM_MASTER_KEY, LITELLM_API_KEY, LITELLM_PROXY_API_KEY, LITELLM_SALT_KEY, LITELLM_LOG]
+        weight: 0.7
+      - type: user_agent
+        patterns: ['(?i)\blitellm\b']
+        weight: 0.85
+      - type: secret
+        patterns: ['\bsk-litellm-[A-Za-z0-9_-]{16,}\b']
+        weight: 0.7
+        description: LiteLLM virtual key
+
+  - id: platform.portkey
+    name: Portkey AI Gateway
+    category: platform
+    vendor: Portkey
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [portkey-ai]
+        weight: 0.9
+      - type: dependency
+        ecosystem: npm
+        names: [portkey-ai, "@portkey-ai/gateway"]
+        weight: 0.9
+      - type: env
+        names: [PORTKEY_API_KEY, PORTKEY_VIRTUAL_KEY, PORTKEY_GATEWAY_URL, PORTKEY_CONFIG]
+        weight: 0.7
+      - type: domain
+        values: [api.portkey.ai]
+        weight: 0.9
+      - type: image
+        patterns: ['portkeyai/gateway']
+        weight: 0.9
+      - type: user_agent
+        patterns: ['(?i)portkey']
+        weight: 0.8
+
+  - id: platform.kong-ai-gateway
+    name: Kong AI Gateway
+    category: platform
+    vendor: Kong
+    signals:
+      - type: code
+        patterns: ['\bname\s*:\s*ai-proxy(?:-advanced)?\b', '\bai-prompt-guard\b', '\bai-request-transformer\b', '\bai-response-transformer\b', '\bai-semantic-cache\b', '\bai-rate-limiting-advanced\b', '"ai\.proxy\.']
+        weight: 0.85
+      - type: user_agent
+        patterns: ['(?i)\bkong\b.*\bai\b']
+        weight: 0.5
+
+  - id: platform.helicone
+    name: Helicone
+    category: observability
+    vendor: Helicone
+    description: LLM observability proxy / gateway.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [helicone, helicone-async]
+        weight: 0.85
+      - type: dependency
+        ecosystem: npm
+        names: ["@helicone/helicone", "@helicone/helpers", helicone]
+        prefixes: ["@helicone/"]
+        weight: 0.85
+      - type: env
+        names: [HELICONE_API_KEY, HELICONE_BASE_URL]
+        weight: 0.7
+      - type: domain
+        values: [oai.helicone.ai, gateway.helicone.ai, api.helicone.ai, anthropic.helicone.ai, gateway.hconeai.com, oai.hconeai.com, ai-gateway.helicone.ai]
+        weight: 0.9
+
+  - id: platform.openai-agent-builder
+    name: OpenAI AgentKit / ChatKit
+    category: platform
+    vendor: OpenAI
+    description: OpenAI hosted agent workflows (Agent Builder), ChatKit embeds and Connector Registry.
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@openai/chatkit", "@openai/chatkit-react"]
+        weight: 0.95
+      - type: dependency
+        ecosystem: pypi
+        names: [openai-chatkit]
+        weight: 0.95
+      - type: code
+        patterns: ['\bchatkit\.sessions\.create\s*\(', '\bworkflow\s*:\s*\{\s*id\s*:\s*["'']wf_', '"workflow_id"\s*:\s*"wf_', 'wf_[a-f0-9]{24,}']
+        weight: 0.85
+
+  # ------------------------------------------------------- self-hosted
+  - id: platform.dify
+    name: Dify
+    category: platform
+    vendor: LangGenius
+    homepage: https://dify.ai
+    description: Open-source LLM app / agent builder (self-hosted or Dify Cloud).
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: image
+        patterns: ['langgenius/dify-api', 'langgenius/dify-web', 'langgenius/dify-sandbox', 'langgenius/dify-plugin-daemon']
+        weight: 0.97
+      - type: dependency
+        ecosystem: pypi
+        names: [dify-client, dify-plugin]
+        weight: 0.9
+      - type: dependency
+        ecosystem: npm
+        names: [dify-client]
+        weight: 0.9
+      - type: code
+        patterns: ['^\s*mode:\s*(?:agent-chat|advanced-chat|workflow|completion)\s*$', '^\s*kind:\s*app\s*$', 'agent_mode\s*:\s*\n\s*enabled\s*:\s*true']
+        weight: 0.6
+      - type: env
+        names: [DIFY_API_KEY, DIFY_API_URL, DIFY_BASE_URL]
+        weight: 0.7
+      - type: domain
+        values: [api.dify.ai, cloud.dify.ai, udify.app]
+        weight: 0.9
+      - type: secret
+        patterns: ['\bapp-[A-Za-z0-9]{24}\b']
+        weight: 0.4
+        description: Dify app API key (low-confidence format)
+
+  - id: platform.flowise
+    name: Flowise
+    category: platform
+    vendor: FlowiseAI
+    description: Low-code drag-and-drop LLM/agent flow builder.
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: image
+        patterns: ['flowiseai/flowise']
+        weight: 0.97
+      - type: dependency
+        ecosystem: npm
+        names: [flowise, flowise-components, flowise-ui, flowise-sdk]
+        prefixes: [flowise]
+        weight: 0.95
+      - type: dependency
+        ecosystem: pypi
+        names: [flowise]
+        weight: 0.9
+      - type: code
+        patterns: ['"category"\s*:\s*"(?:Agents|Multi Agents|Sequential Agents|Agentflow)"', '"name"\s*:\s*"(?:toolAgent|openAIFunctionAgent|conversationalAgent|reactAgentLLM|supervisor|worker|agentflow)"']
+        weight: 0.9
+      - type: env
+        names: [FLOWISE_API_KEY, FLOWISE_USERNAME, FLOWISE_PASSWORD, FLOWISE_SECRETKEY_OVERWRITE]
+        weight: 0.7
+      - type: domain
+        values: [cloud.flowiseai.com]
+        weight: 0.9
+
+  - id: platform.langflow
+    name: Langflow
+    category: platform
+    vendor: DataStax / Langflow
+    description: Visual builder for LLM flows and agents.
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [langflow, langflow-base]
+        weight: 0.95
+      - type: image
+        patterns: ['langflowai/langflow', 'logspace/langflow']
+        weight: 0.97
+      - type: code
+        patterns: ['"last_tested_version"\s*:', '"is_component"\s*:\s*(?:true|false)\s*,\s*"last_tested_version"', '"type"\s*:\s*"Agent"\s*,\s*"display_name"\s*:\s*"Agent"']
+        weight: 0.8
+      - type: env
+        names: [LANGFLOW_API_KEY, LANGFLOW_SUPERUSER, LANGFLOW_SUPERUSER_PASSWORD, LANGFLOW_AUTO_LOGIN]
+        weight: 0.7
+      - type: domain
+        values: [api.langflow.astra.datastax.com]
+        weight: 0.9
+
+  - id: platform.n8n
+    name: n8n
+    category: platform
+    vendor: n8n
+    description: Workflow automation with native AI Agent, LLM and MCP nodes.
+    capabilities: [tool-use]
+    signals:
+      - type: image
+        patterns: ['n8nio/n8n', 'docker\.n8n\.io/n8nio/n8n']
+        weight: 0.9
+      - type: dependency
+        ecosystem: npm
+        names: [n8n, "@n8n/n8n-nodes-langchain", n8n-nodes-base, n8n-workflow, n8n-core]
+        prefixes: [n8n-nodes-, "@n8n/"]
+        weight: 0.9
+      - type: code
+        patterns: ['@n8n/n8n-nodes-langchain\.(?:agent|agentTool|openAiAssistant|mcpTrigger|mcpClientTool|toolWorkflow|toolCode|toolHttpRequest|chainLlm|lmChat[A-Za-z]+|lmOpenAi|openAi|memory[A-Za-z]+|vectorStore[A-Za-z]+)', 'n8n-nodes-base\.openAi\b']
+        weight: 0.95
+        agent_indicator: true
+      - type: code
+        patterns: ['@n8n/n8n-nodes-langchain\.toolCode', 'n8n-nodes-base\.(?:code|executeCommand|ssh)\b']
+        weight: 0.4
+        capabilities: [code-exec]
+      - type: env
+        names: [N8N_API_KEY, N8N_ENCRYPTION_KEY, N8N_HOST, N8N_WEBHOOK_URL]
+        weight: 0.6
+      - type: domain
+        values: ["re:.*\\.app\\.n8n\\.cloud$", "re:.*\\.n8n\\.cloud$"]
+        weight: 0.8
+      - type: name
+        patterns: ['(?i)\bn8n\b']
+        weight: 0.5
+
+  - id: platform.make
+    name: Make (Integromat)
+    category: platform
+    vendor: Celonis / Make
+    description: Automation scenarios and Make AI Agents.
+    signals:
+      - type: code
+        patterns: ['"module"\s*:\s*"(?:openai-gpt-3|openai-gpt|anthropic-claude|google-gemini|make-ai-agents|perplexity-ai|mistral-ai|hugging-face|eden-ai|ai-agents|openai-assistants)[^"]*"', '"module"\s*:\s*"make-ai-agents:']
+        weight: 0.95
+        agent_indicator: true
+      - type: domain
+        values: ["re:^(?:eu|us)\\d*\\.make\\.com$", "re:^hook\\.(?:eu|us)\\d*\\.make\\.com$", "re:.*\\.make\\.celonis\\.com$", integromat.com, "*.integromat.com"]
+        weight: 0.8
+      - type: env
+        names: [MAKE_API_KEY, MAKE_API_TOKEN]
+        weight: 0.6
+      - type: name
+        patterns: ['(?i)\bmake\.com\b', '(?i)\bintegromat\b']
+        weight: 0.6
+
+  - id: platform.zapier
+    name: Zapier
+    category: platform
+    vendor: Zapier
+    description: Zaps with AI steps, Zapier Agents (agents.zapier.com), Zapier MCP and Natural Language Actions.
+    capabilities: [tool-use, saas-actions]
+    signals:
+      - type: domain
+        values: [hooks.zapier.com, nla.zapier.com, actions.zapier.com, mcp.zapier.com, agents.zapier.com, api.zapier.com, zapier.com]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: [zapier-platform-core, zapier-platform-cli]
+        weight: 0.5
+      - type: code
+        patterns: ['\bZapierNLAWrapper\s*\(', '\bZapierToolkit\b', 'nla\.zapier\.com/api/v1', 'mcp\.zapier\.com/api/mcp', 'agents\.zapier\.com']
+        weight: 0.85
+        agent_indicator: true
+      - type: env
+        names: [ZAPIER_NLA_API_KEY, ZAPIER_API_KEY, ZAPIER_MCP_URL]
+        weight: 0.7
+      - type: name
+        patterns: ['(?i)\bzapier\b']
+        weight: 0.6
+
+  - id: platform.workato
+    name: Workato
+    category: platform
+    vendor: Workato
+    description: Enterprise automation recipes with Workato GenAI / Copilot and agentic recipes.
+    signals:
+      - type: domain
+        values: [www.workato.com, app.workato.com, apim.workato.com, "*.workato.com", webhooks.workato.com]
+        weight: 0.7
+      - type: code
+        patterns: ['"provider"\s*:\s*"workato_genai"', '"provider"\s*:\s*"(?:openai|azure_openai|anthropic|google_vertex|amazon_bedrock|cohere|gemini)"', 'workato_agentic', '"provider"\s*:\s*"workato_agent']
+        weight: 0.85
+        agent_indicator: true
+      - type: name
+        patterns: ['(?i)\bworkato\b']
+        weight: 0.5
+
+  - id: platform.copilot-studio
+    name: Microsoft Copilot Studio
+    category: platform
+    vendor: Microsoft
+    homepage: https://www.microsoft.com/microsoft-copilot/microsoft-copilot-studio
+    description: Low-code agent builder in Power Platform (formerly Power Virtual Agents); agents publish to Teams, M365 Copilot, web and Bot Framework channels.
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [microsoft-agents-copilotstudio-client, agent-framework-copilotstudio]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: ["@microsoft/agents-copilotstudio-client"]
+        weight: 0.95
+      - type: dependency
+        ecosystem: nuget
+        names: ["Microsoft.Agents.CopilotStudio.Client", "Microsoft.Agents.AI.CopilotStudio"]
+        weight: 0.95
+      - type: code
+        patterns: ['\bCopilotStudioClient\s*\(', '\bCopilotStudioAgent\s*\(', '\bCopilotClient\s*\(', 'copilotstudio\.microsoft\.com', '\bPowerVirtualAgents\b', '\bpva\.(?:bot|topic)\b', 'kind:\s*(?:AdaptiveDialog|GptComponentMetadata|OnRecognizedIntent|CustomTopic)', '^\s*kind:\s*(?:BotVariableDefinition|TaskDialog|ConversationalTopic)']
+        weight: 0.85
+      - type: env
+        names: [COPILOTSTUDIOAGENT__SCHEMANAME, COPILOTSTUDIOAGENT__ENVIRONMENTID, COPILOTSTUDIOAGENT__TENANTID, COPILOTSTUDIOAGENT__APPCLIENTID, COPILOT_STUDIO_ENVIRONMENT_ID, COPILOT_STUDIO_SCHEMA_NAME]
+        weight: 0.8
+      - type: domain
+        values: ["re:.*\\.api\\.powerplatform\\.com$", "re:.*\\.environment\\.api\\.powerplatform\\.com$", "re:.*\\.copilotstudio\\.microsoft\\.com$", "re:.*\\.powerva\\.microsoft\\.com$", copilotstudio.microsoft.com, "*.botframework.com"]
+        weight: 0.85
+      - type: iac
+        values: [azurerm_bot_service_azure_bot, azurerm_bot_channels_registration, azurerm_bot_web_app, azurerm_bot_channel_ms_teams, azurerm_bot_channel_direct_line, "Microsoft.BotService/botServices", "Microsoft.BotService/botServices/channels"]
+        weight: 0.85
+      - type: name
+        patterns: ['(?i)copilot studio', '(?i)power virtual agents?', '(?i)\bpva\b']
+        weight: 0.8
+
+  - id: platform.power-platform-ai
+    name: Power Platform AI connectors (Power Automate / Power Apps / AI Builder)
+    category: platform
+    vendor: Microsoft
+    description: Flows and apps using AI Builder, OpenAI / Azure OpenAI connectors, Copilot Studio actions or the "Create text with GPT" actions.
+    signals:
+      - type: code
+        patterns: ['shared_(?:openai|azureopenai|aibuilder|microsoftcopilotstudio|chatgpt|cognitiveservicestextanalytics|cognitiveservicescomputervision|azuredocumentintelligence|anthropic|googlegemini|huggingface|cohere|perplexity|mistral)\b', '"operationId"\s*:\s*"(?:CreateTextWithGPT|CreateTextV2|PredictV2|Predict|ChatCompletion|GenerateText|CompleteTextV2)"', '/apis/shared_(?:openai|azureopenai|aibuilder)', 'AIBuilderPredict', 'AI Builder']
+        weight: 0.9
+        agent_indicator: true
+      - type: domain
+        values: [api.flow.microsoft.com, api.bap.microsoft.com, "re:.*\\.flow\\.microsoft\\.com$", "re:.*\\.dynamics\\.com$", "re:.*\\.crm[0-9]*\\.dynamics\\.com$", "re:.*\\.powerapps\\.com$", make.powerautomate.com, make.powerapps.com]
+        weight: 0.5
+      - type: name
+        patterns: ['(?i)power automate', '(?i)power apps?', '(?i)ai builder', '(?i)\bdataverse\b']
+        weight: 0.5
+
+  - id: platform.m365-declarative-agent
+    name: Microsoft 365 Copilot declarative / custom engine agents
+    category: platform
+    vendor: Microsoft
+    description: Teams app packages carrying Copilot declarative agents (declarativeAgent.json), API plugins or custom engine agents built with the M365 Agents Toolkit.
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: ["declarativeAgent.json", "**/declarativeAgent.json", "declarativeAgent*.json", "**/appPackage/declarativeAgent*.json", "**/appPackage/instruction.txt", "**/appPackage/ai-plugin.json", "m365agents.yml", "m365agents.local.yml", "**/m365agents.yml", "**/m365agents.local.yml", "teamsapp.yml", "teamsapp.local.yml", "**/teamsapp.yml", "**/teamsapp.local.yml", "**/.m365agents/**", "**/env/.env.dev"]
+        weight: 0.9
+      - type: code
+        patterns: ['"copilotAgents"\s*:', '"declarativeAgents"\s*:', '"customEngineAgents"\s*:', 'json-schemas/copilot/declarative-agent/', 'json-schemas/copilot/plugin/', '"copilotExtensions"\s*:', 'schema_version"\s*:\s*"v2\.\d+"\s*,\s*"name_for_human"']
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: ["@microsoft/m365agentstoolkit-cli", "@microsoft/teamsfx", "@microsoft/teamsfx-cli", "@microsoft/teams-js"]
+        weight: 0.6
+      - type: name
+        patterns: ['(?i)declarative agent', '(?i)copilot (?:extension|plugin)', '(?i)custom engine agent']
+        weight: 0.7
+
+  - id: platform.salesforce-agentforce
+    name: Salesforce Agentforce / Einstein
+    category: platform
+    vendor: Salesforce
+    description: Agentforce agents (GenAiPlanner/Plugin/Function metadata), Einstein Bots, prompt templates and the Models API.
+    capabilities: [tool-use, saas-actions]
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: ["**/genAiPlanners/*.genAiPlanner-meta.xml", "**/genAiPlannerBundles/**", "**/genAiPlugins/*.genAiPlugin-meta.xml", "**/genAiFunctions/**/*.genAiFunction-meta.xml", "**/genAiPromptTemplates/*.genAiPromptTemplate-meta.xml", "**/bots/**/*.bot-meta.xml", "**/bots/**/*.botVersion-meta.xml", "**/aiAssistantTemplates/**", "**/aiApplications/*.ai-meta.xml"]
+        weight: 0.95
+      - type: code
+        patterns: ['<GenAiPlanner\b', '<GenAiPlugin\b', '<GenAiFunction\b', '<GenAiPromptTemplate\b', '<BotDefinition\b', '<BotVersion\b', '\bGenAiPlannerBundle\b', '/einstein/platform/v1/models/', '\bagentforce\b', 'sfdc\.agentforce', '@InvocableMethod\b[^\n]*(?:prompt|agent)']
+        weight: 0.9
+      - type: dependency
+        ecosystem: pypi
+        names: [agentforce-sdk, agent-sdk, salesforce-agentforce]
+        weight: 0.9
+      - type: domain
+        values: [api.salesforce.com, "re:.*\\.my\\.salesforce\\.com$", "re:.*\\.my\\.salesforce-setup\\.com$"]
+        weight: 0.4
+      - type: name
+        patterns: ['(?i)\bagentforce\b', '(?i)\beinstein\b', '(?i)\bcopilot for (?:sales|service)\b']
+        weight: 0.8
+
+  - id: platform.servicenow-now-assist
+    name: ServiceNow Now Assist / AI Agents
+    category: platform
+    vendor: ServiceNow
+    capabilities: [tool-use, saas-actions]
+    agent_indicator: true
+    signals:
+      - type: code
+        patterns: ['\bsn_aia_(?:agent|tool|usecase|trigger|team|task|agent_tool_m2m)\b', '\bsn_generative_ai\b', '\bsn_gen_ai\b', '\bsn_nowassist\b', '\bsn_ai_agent_studio\b', '\bsn_one_extend\b', '\bsn_agentic\b']
+        weight: 0.95
+      - type: domain
+        values: ["re:.*\\.service-now\\.com$", "re:.*\\.servicenow\\.com$"]
+        weight: 0.3
+      - type: name
+        patterns: ['(?i)now assist', '(?i)servicenow ai agent', '(?i)\bai agent studio\b']
+        weight: 0.8
+
+  - id: platform.retool
+    name: Retool Agents / AI
+    category: platform
+    vendor: Retool
+    agent_indicator: true
+    signals:
+      - type: domain
+        values: ["re:.*\\.retool\\.com$", api.retool.com]
+        weight: 0.3
+      - type: code
+        patterns: ['"type"\s*:\s*"(?:AIAgentQuery|RetoolAIQuery|AgentQuery)"', '\bretool\s+agents?\b']
+        weight: 0.8
+      - type: name
+        patterns: ['(?i)retool agents?', '(?i)retool ai']
+        weight: 0.7
+
+  - id: platform.self-hosted-chat-ui
+    name: Self-hosted chat UIs (Open WebUI, LibreChat, AnythingLLM, Lobe Chat, Chatbot UI, Big-AGI)
+    category: platform
+    vendor: null
+    description: Self-hosted LLM front-ends, often deployed by teams outside central governance; many support tools, MCP and agents.
+    capabilities: [tool-use]
+    signals:
+      - type: image
+        patterns: ['open-webui/open-webui', 'danny-avila/librechat', 'mintplexlabs/anythingllm', 'lobehub/lobe-chat', 'mckaywrigley/chatbot-ui', 'enricoros/big-agi', 'huggingface/chat-ui', 'oobabooga/text-generation-webui', 'pipelines/pipelines', 'open-webui/pipelines']
+        weight: 0.95
+      - type: env
+        names: [WEBUI_SECRET_KEY, WEBUI_AUTH, OPENAI_API_BASE_URL, LIBRECHAT_API_KEY, ANYTHINGLLM_API_KEY, LOBE_ACCESS_CODE, OPEN_WEBUI_PORT]
+        weight: 0.6
+
+  - id: platform.agent-hosting-misc
+    name: Other agent hosting platforms (SuperAGI, AgentGPT, Coze, Relevance AI, Lindy, Stack AI, Vellum, Humanloop, Botpress Cloud, Voiceflow, Rasa, Kore.ai, Moveworks)
+    category: platform
+    vendor: null
+    agent_indicator: true
+    signals:
+      - type: image
+        patterns: ['superagi/superagi', 'reworkd/agentgpt', 'agentgpt']
+        weight: 0.9
+      - type: domain
+        values: [api.coze.com, api.coze.cn, api-bots.relevanceai.com, api.relevanceai.com, api.lindy.ai, api.stack-ai.com, api.vellum.ai, api.humanloop.com, api.voiceflow.com, general-runtime.voiceflow.com, "re:.*\\.kore\\.ai$", api.moveworks.ai, api.dust.tt, dust.tt]
+        weight: 0.85
+      - type: dependency
+        ecosystem: pypi
+        names: [vellum-ai, humanloop, relevanceai, cozepy, superagi, agentops-ai, stack-ai]
+        weight: 0.85
+      - type: dependency
+        ecosystem: npm
+        names: [vellum-ai, humanloop, "@coze/api", "@dust-tt/client"]
+        weight: 0.85
+      - type: env
+        names: [VELLUM_API_KEY, HUMANLOOP_API_KEY, RELEVANCE_API_KEY, COZE_API_TOKEN, VOICEFLOW_API_KEY, DUST_API_KEY, LINDY_API_KEY]
+        weight: 0.7
+      - type: name
+        patterns: ['(?i)\bsuperagi\b', '(?i)\bagentgpt\b', '(?i)\bcoze\b', '(?i)relevance ai', '(?i)\blindy\b', '(?i)stack ai', '(?i)\bvellum\b', '(?i)\bhumanloop\b', '(?i)\bvoiceflow\b', '(?i)\bkore\.ai\b', '(?i)\bmoveworks\b', '(?i)\bdust\.tt\b']
+        weight: 0.7

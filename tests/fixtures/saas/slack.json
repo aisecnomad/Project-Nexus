@@ -1,0 +1,91 @@
+[
+ {
+  "_kind": "team",
+  "id": "T1",
+  "name": "acme",
+  "domain": "acme"
+ },
+ {
+  "_kind": "bot_user",
+  "id": "U1",
+  "is_bot": true,
+  "name": "claude",
+  "real_name": "Claude",
+  "profile": {
+   "api_app_id": "A1",
+   "real_name": "Claude",
+   "title": "Anthropic assistant"
+  },
+  "updated": 1725000000
+ },
+ {
+  "_kind": "approved_app",
+  "app": {
+   "id": "A1",
+   "name": "Claude",
+   "app_homepage_url": "https://claude.ai",
+   "is_app_directory_approved": true
+  },
+  "scopes": [
+   {
+    "name": "channels:history"
+   },
+   {
+    "name": "chat:write"
+   },
+   {
+    "name": "files:read"
+   },
+   {
+    "name": "users:read.email"
+   }
+  ],
+  "last_resolved_by": {
+   "actor_id": "U9"
+  },
+  "date_updated": 1725000000
+ },
+ {
+  "_kind": "approved_app",
+  "app": {
+   "id": "A2",
+   "name": "Lead Bot 3000",
+   "is_app_directory_approved": false
+  },
+  "scopes": [
+   {
+    "name": "chat:write"
+   },
+   {
+    "name": "im:history"
+   },
+   {
+    "name": "users:read"
+   }
+  ]
+ },
+ {
+  "_kind": "app_request",
+  "app": {
+   "id": "A3",
+   "name": "Read.ai"
+  },
+  "user": {
+   "email": "oscar@acme.com"
+  },
+  "message": "need meeting notes",
+  "scopes": [
+   {
+    "name": "channels:history"
+   }
+  ]
+ },
+ {
+  "_kind": "integration_log",
+  "app_id": "A1",
+  "user_name": "peggy",
+  "change_type": "added",
+  "date": "1724000000",
+  "scope": "chat:write,channels:history"
+ }
+]

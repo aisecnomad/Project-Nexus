@@ -1,0 +1,1012 @@
+# Agent orchestration frameworks (Python / JavaScript first-class).
+#
+# Weight guidance:
+#   0.9+  unambiguous (dedicated package / config file / agent class)
+#   0.6-0.85 strong (import of framework namespace)
+#   0.3-0.5  supporting (env var, generic idiom)
+signatures:
+  - id: framework.langchain
+    name: LangChain
+    category: framework
+    vendor: LangChain, Inc.
+    homepage: https://python.langchain.com
+    description: LLM application framework with agents, tools, chains and integrations.
+    capabilities: [tool-use]
+    agent_indicator: false
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [langchain, langchain-core, langchain-community, langchain-classic, langchain-experimental, langchain-openai, langchain-anthropic, langchain-google-genai, langchain-google-vertexai, langchain-aws, langchain-mistralai, langchain-cohere, langchain-groq, langchain-ollama, langchain-huggingface, langchain-mcp-adapters, langchain-text-splitters]
+        prefixes: [langchain]
+        weight: 0.85
+      - type: dependency
+        ecosystem: npm
+        names: [langchain, "@langchain/core", "@langchain/community", "@langchain/openai", "@langchain/anthropic", "@langchain/google-genai", "@langchain/google-vertexai", "@langchain/aws", "@langchain/mcp-adapters"]
+        prefixes: ["@langchain/"]
+        weight: 0.85
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+langchain(?:_[a-z0-9_]+)?\b']
+        weight: 0.85
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@?langchain(?:/[^"'']+)?["'']', 'require\(\s*["'']@?langchain']
+        weight: 0.85
+      - type: code
+        patterns: ['\bAgentExecutor\s*\(', '\binitialize_agent\s*\(', '\bcreate_(?:react|tool_calling|openai_tools|openai_functions|structured_chat|json_chat|xml|self_ask_with_search|conversational_retrieval|sql)_agent\s*\(', '\bcreate_agent\s*\(', '\bcreateReactAgent\s*\(', '\bcreateToolCallingAgent\s*\(', '\bAgentType\.']
+        weight: 0.9
+        agent_indicator: true
+        capabilities: [tool-use]
+      - type: code
+        patterns: ['\bPythonREPL(?:Tool)?\s*\(', '\bShellTool\s*\(', '\bBashProcess\s*\(', '\bPythonAstREPLTool\s*\(']
+        weight: 0.6
+        agent_indicator: true
+        capabilities: [code-exec]
+      - type: code
+        patterns: ['\bConversationBufferMemory\s*\(', '\bConversationSummaryMemory\s*\(', '\bMemorySaver\s*\(']
+        weight: 0.4
+        capabilities: [memory]
+      - type: code
+        patterns: ['\b(?:StructuredTool|Tool)\s*\(\s*name\s*=', '\bStructuredTool\.from_function\s*\(', '@tool\s*(?:\(|\n)']
+        weight: 0.5
+        capabilities: [tool-use]
+      - type: env
+        names: [LANGCHAIN_API_KEY, LANGCHAIN_TRACING_V2, LANGCHAIN_PROJECT, LANGCHAIN_ENDPOINT]
+        weight: 0.5
+      - type: user_agent
+        patterns: ['(?i)\blangchain\b']
+        weight: 0.8
+
+  - id: framework.langgraph
+    name: LangGraph
+    category: framework
+    vendor: LangChain, Inc.
+    homepage: https://langchain-ai.github.io/langgraph/
+    description: Graph-based stateful multi-actor agent runtime (LangGraph, LangGraph Platform).
+    capabilities: [tool-use, memory]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [langgraph, langgraph-cli, langgraph-sdk, langgraph-api, langgraph-checkpoint, langgraph-checkpoint-postgres, langgraph-checkpoint-sqlite, langgraph-prebuilt, langgraph-supervisor, langgraph-swarm]
+        prefixes: [langgraph]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: ["@langchain/langgraph", "@langchain/langgraph-sdk", "@langchain/langgraph-cli", "@langchain/langgraph-checkpoint", "@langchain/langgraph-supervisor", "@langchain/langgraph-swarm"]
+        prefixes: ["@langchain/langgraph"]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+langgraph\b']
+        weight: 0.95
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@langchain/langgraph']
+        weight: 0.95
+      - type: code
+        patterns: ['\bStateGraph\s*\(', '\bcreate_react_agent\s*\(', '\bcreate_supervisor\s*\(', '\bcreate_swarm\s*\(', '\bMessagesState\b', '\bCompiledStateGraph\b']
+        weight: 0.9
+      - type: code
+        patterns: ['\binterrupt_before\s*=\s*\[\s*\]', '\bMemorySaver\s*\(', '\bPostgresSaver\b', '\bcheckpointer\s*=']
+        weight: 0.4
+        capabilities: [memory]
+      - type: file
+        globs: ["langgraph.json", "**/langgraph.json"]
+        weight: 0.98
+      - type: image
+        patterns: ['langchain/langgraph-api', 'langchain/langgraphjs-api']
+        weight: 0.95
+      - type: env
+        names: [LANGGRAPH_API_KEY, LANGGRAPH_CLOUD_LICENSE_KEY, LANGGRAPH_AUTH_TYPE]
+        weight: 0.6
+      - type: user_agent
+        patterns: ['(?i)\blanggraph\b']
+        weight: 0.85
+
+  - id: framework.llamaindex
+    name: LlamaIndex
+    category: framework
+    vendor: LlamaIndex Inc.
+    homepage: https://www.llamaindex.ai
+    description: Data framework with agents, workflows and RAG pipelines (LlamaIndex, LlamaCloud, llama-deploy).
+    capabilities: [tool-use, rag]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [llama-index, llama-index-core, llama-index-agent-openai, llama-index-llms-openai, llama-index-llms-anthropic, llama-index-llms-bedrock-converse, llama-index-llms-vertex, llama-index-tools-mcp, llama-deploy, llama-agents, llama-cloud, llama-cloud-services, llama-parse]
+        prefixes: [llama-index, llama-cloud]
+        weight: 0.85
+      - type: dependency
+        ecosystem: npm
+        names: [llamaindex, "@llamaindex/core", "@llamaindex/openai", "@llamaindex/workflow", "@llamaindex/tools"]
+        prefixes: ["@llamaindex/"]
+        weight: 0.85
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+llama_index\b', '^\s*(?:from|import)\s+llama_deploy\b', '^\s*(?:from|import)\s+llama_agents\b']
+        weight: 0.85
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@?llamaindex']
+        weight: 0.85
+      - type: code
+        patterns: ['\b(?:ReActAgent|FunctionAgent|FunctionCallingAgent|OpenAIAgent|AgentWorkflow|CodeActAgent|AgentRunner)\s*(?:\(|\.from_tools)', '\bagent\s*=\s*(?:ReActAgent|FunctionAgent)\b']
+        weight: 0.9
+        agent_indicator: true
+      - type: code
+        patterns: ['\bCodeActAgent\b']
+        weight: 0.5
+        capabilities: [code-exec]
+      - type: env
+        names: [LLAMA_CLOUD_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.cloud.llamaindex.ai, cloud.llamaindex.ai]
+        weight: 0.7
+      - type: user_agent
+        patterns: ['(?i)llama[-_ ]?index']
+        weight: 0.8
+
+  - id: framework.crewai
+    name: CrewAI
+    category: framework
+    vendor: CrewAI Inc.
+    homepage: https://www.crewai.com
+    description: Role-playing multi-agent framework (crews, flows) with CrewAI Enterprise (AMP) hosting.
+    capabilities: [tool-use, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [crewai, crewai-tools]
+        prefixes: [crewai]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+crewai\b']
+        weight: 0.97
+      - type: code
+        patterns: ['\bCrew\s*\(', '@CrewBase\b', '\bcrew\s*\(\s*\)\s*\.kickoff', '\.kickoff(?:_async|_for_each)?\s*\(', '\bAgent\s*\(\s*role\s*=', '\bLLM\s*\(\s*model\s*=', '\bFlow\[[A-Za-z_]+\]']
+        weight: 0.9
+      - type: code
+        patterns: ['\bCodeInterpreterTool\s*\(', '\ballow_code_execution\s*=\s*True']
+        weight: 0.6
+        capabilities: [code-exec]
+      - type: file
+        globs: ["**/config/agents.yaml", "**/config/tasks.yaml", "**/crew.py"]
+        weight: 0.75
+      - type: env
+        names: [CREWAI_API_KEY, CREWAI_TRACING_ENABLED, CREWAI_PLUS_URL]
+        weight: 0.6
+      - type: domain
+        values: [app.crewai.com, telemetry.crewai.com]
+        weight: 0.7
+      - type: user_agent
+        patterns: ['(?i)\bcrewai\b']
+        weight: 0.85
+
+  - id: framework.google-adk
+    name: Google Agent Development Kit (ADK)
+    category: framework
+    vendor: Google
+    homepage: https://google.github.io/adk-docs/
+    description: Google's open-source Agent Development Kit for building and deploying agents (Python, Java, Go); deploys to Vertex AI Agent Engine, Cloud Run, GKE.
+    capabilities: [tool-use, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [google-adk]
+        weight: 0.97
+      - type: dependency
+        ecosystem: maven
+        names: ["com.google.adk:google-adk", "com.google.adk:google-adk-dev"]
+        prefixes: ["com.google.adk"]
+        weight: 0.97
+      - type: dependency
+        ecosystem: go
+        names: ["google.golang.org/adk"]
+        prefixes: ["google.golang.org/adk"]
+        weight: 0.97
+      - type: dependency
+        ecosystem: npm
+        names: ["@google/adk", "@iqai/adk"]
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+google\.adk\b']
+        weight: 0.97
+      - type: import
+        languages: [java]
+        patterns: ['^\s*import\s+com\.google\.adk\.']
+        weight: 0.97
+      - type: import
+        languages: [go]
+        patterns: ['"google\.golang\.org/adk(?:/[^"]+)?"']
+        weight: 0.97
+      - type: code
+        patterns: ['\b(?:LlmAgent|SequentialAgent|ParallelAgent|LoopAgent)\s*\(', '\broot_agent\s*=\s*(?:LlmAgent|Agent)\s*\(', '\bInMemoryRunner\s*\(', '\bRunner\s*\(\s*(?:agent|app_name)\s*=', '\bagent_engines\.create\s*\(']
+        weight: 0.9
+      - type: code
+        patterns: ['\bBuiltInCodeExecutor\s*\(', '\bcode_executor\s*=']
+        weight: 0.5
+        capabilities: [code-exec]
+      - type: file
+        globs: ["**/.adk/**", "**/agent_engine_app.py"]
+        weight: 0.6
+      - type: env
+        names: [GOOGLE_GENAI_USE_VERTEXAI, ADK_API_KEY]
+        weight: 0.4
+      - type: user_agent
+        patterns: ['(?i)google-adk', '(?i)\badk/\d']
+        weight: 0.85
+
+  - id: framework.aws-strands
+    name: AWS Strands Agents
+    category: framework
+    vendor: Amazon Web Services
+    homepage: https://strandsagents.com
+    description: Model-driven agent SDK from AWS (Strands Agents) with tools, MCP support and Bedrock AgentCore deployment.
+    capabilities: [tool-use, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [strands-agents, strands-agents-tools, strands-agents-builder, strands-agents-evals]
+        prefixes: [strands-agents]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+strands(?:_tools)?\b']
+        weight: 0.95
+      - type: code
+        patterns: ['\bfrom\s+strands\s+import\s+Agent\b', '\bAgent\s*\(\s*(?:model|tools|system_prompt)\s*=', '\bBedrockModel\s*\(', '\bstrands_tools\b', '\bGraphBuilder\s*\(', '\bSwarm\s*\(\s*\[']
+        weight: 0.8
+      - type: code
+        patterns: ['\bfrom\s+strands_tools\s+import\s+[^\n]*\b(?:shell|python_repl|editor|file_write)\b']
+        weight: 0.7
+        capabilities: [code-exec]
+      - type: user_agent
+        patterns: ['(?i)strands-agents']
+        weight: 0.9
+
+  - id: framework.microsoft-agent-framework
+    name: Microsoft Agent Framework
+    category: framework
+    vendor: Microsoft
+    homepage: https://github.com/microsoft/agent-framework
+    description: Microsoft's unified agent framework (successor to Semantic Kernel Agents and AutoGen) for .NET and Python, with workflows, A2A and Azure AI Foundry integration.
+    capabilities: [tool-use, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [agent-framework, agent-framework-core, agent-framework-azure-ai, agent-framework-openai, agent-framework-foundry, agent-framework-copilotstudio, agent-framework-a2a, agent-framework-mem0, agent-framework-redis, agent-framework-devui, agent-framework-anthropic, agent-framework-ollama]
+        prefixes: [agent-framework]
+        weight: 0.97
+      - type: dependency
+        ecosystem: nuget
+        names: ["Microsoft.Agents.AI", "Microsoft.Agents.AI.OpenAI", "Microsoft.Agents.AI.AzureAI", "Microsoft.Agents.AI.Workflows", "Microsoft.Agents.AI.A2A", "Microsoft.Agents.AI.Abstractions", "Microsoft.Agents.AI.CopilotStudio"]
+        prefixes: ["Microsoft.Agents.AI"]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+agent_framework\b']
+        weight: 0.97
+      - type: import
+        languages: [dotnet]
+        patterns: ['^\s*using\s+Microsoft\.Agents\.AI\b']
+        weight: 0.97
+      - type: code
+        patterns: ['\bChatAgent\s*\(', '\bAzureAIAgentClient\s*\(', '\bAzureOpenAIResponsesClient\s*\(', '\bWorkflowBuilder\s*\(', '\bCreateAIAgent\s*\(', '\bAIAgent\b\s+\w+\s*=', '\bMagenticBuilder\s*\(', '\bHandoffBuilder\s*\(']
+        weight: 0.85
+      - type: user_agent
+        patterns: ['(?i)agent-framework']
+        weight: 0.8
+
+  - id: framework.semantic-kernel
+    name: Semantic Kernel
+    category: framework
+    vendor: Microsoft
+    homepage: https://learn.microsoft.com/semantic-kernel/
+    description: Microsoft Semantic Kernel SDK (plugins, planners, Agent Framework) for .NET, Python and Java.
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [semantic-kernel]
+        weight: 0.9
+      - type: dependency
+        ecosystem: nuget
+        names: ["Microsoft.SemanticKernel", "Microsoft.SemanticKernel.Agents.Core", "Microsoft.SemanticKernel.Agents.OpenAI", "Microsoft.SemanticKernel.Agents.AzureAI", "Microsoft.SemanticKernel.Connectors.OpenAI", "Microsoft.SemanticKernel.Planners.OpenAI"]
+        prefixes: ["Microsoft.SemanticKernel"]
+        weight: 0.9
+      - type: dependency
+        ecosystem: maven
+        prefixes: ["com.microsoft.semantic-kernel"]
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+semantic_kernel\b']
+        weight: 0.9
+      - type: import
+        languages: [dotnet]
+        patterns: ['^\s*using\s+Microsoft\.SemanticKernel\b']
+        weight: 0.9
+      - type: code
+        patterns: ['\b(?:ChatCompletionAgent|OpenAIAssistantAgent|AzureAIAgent|AgentGroupChat|BedrockAgent|CopilotStudioAgent)\s*\(', '@kernel_function\b', '\[KernelFunction\]', '\bFunctionChoiceBehavior\.Auto\s*\(']
+        weight: 0.85
+        agent_indicator: true
+
+  - id: framework.autogen
+    name: AutoGen / AG2
+    category: framework
+    vendor: Microsoft / AG2
+    homepage: https://microsoft.github.io/autogen/
+    description: Multi-agent conversation frameworks AutoGen (Microsoft) and AG2 (community fork).
+    capabilities: [tool-use, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [autogen-agentchat, autogen-core, autogen-ext, autogenstudio, pyautogen, ag2, autogen]
+        prefixes: [autogen-, ag2]
+        weight: 0.95
+      - type: dependency
+        ecosystem: nuget
+        prefixes: ["Microsoft.AutoGen", "AutoGen"]
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+autogen(?:_agentchat|_core|_ext|studio)?\b']
+        weight: 0.95
+      - type: code
+        patterns: ['\b(?:AssistantAgent|ConversableAgent|UserProxyAgent|RoundRobinGroupChat|SelectorGroupChat|MagenticOneGroupChat|Swarm|GroupChatManager)\s*\(']
+        weight: 0.9
+      - type: code
+        patterns: ['\bhuman_input_mode\s*=\s*["'']NEVER["'']']
+        weight: 0.5
+        capabilities: [autonomous]
+      - type: code
+        patterns: ['\b(?:LocalCommandLineCodeExecutor|DockerCommandLineCodeExecutor|PythonCodeExecutionTool|CodeExecutorAgent)\s*\(', '\bcode_execution_config\s*=']
+        weight: 0.6
+        capabilities: [code-exec]
+
+  - id: framework.smolagents
+    name: Hugging Face smolagents
+    category: framework
+    vendor: Hugging Face
+    homepage: https://huggingface.co/docs/smolagents
+    description: Minimal agent library from Hugging Face; CodeAgent executes model-written Python.
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [smolagents]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+smolagents\b']
+        weight: 0.97
+      - type: code
+        patterns: ['\bToolCallingAgent\s*\(', '\bManagedAgent\s*\(', '\b(?:InferenceClientModel|HfApiModel|LiteLLMModel|TransformersModel)\s*\(']
+        weight: 0.85
+      - type: code
+        patterns: ['\bCodeAgent\s*\(', '\badditional_authorized_imports\s*=', '\bE2BExecutor\b', '\bLocalPythonExecutor\b']
+        weight: 0.9
+        capabilities: [code-exec]
+      - type: user_agent
+        patterns: ['(?i)smolagents']
+        weight: 0.9
+
+  - id: framework.transformers-agents
+    name: Transformers Agents (legacy)
+    category: framework
+    vendor: Hugging Face
+    description: Legacy agent API inside the transformers library (predecessor of smolagents).
+    agent_indicator: true
+    signals:
+      - type: import
+        languages: [python]
+        patterns: ['^\s*from\s+transformers(?:\.agents)?\s+import\s+[^\n]*\b(?:ReactCodeAgent|ReactJsonAgent|CodeAgent|HfAgent|Tool|load_tool)\b']
+        weight: 0.85
+      - type: code
+        patterns: ['\bReactCodeAgent\s*\(', '\bReactJsonAgent\s*\(', '\bHfAgent\s*\(']
+        weight: 0.85
+        capabilities: [code-exec]
+
+  - id: framework.openai-agents-sdk
+    name: OpenAI Agents SDK
+    category: framework
+    vendor: OpenAI
+    homepage: https://openai.github.io/openai-agents-python/
+    description: OpenAI's Agents SDK (Python and TypeScript) with handoffs, guardrails, tracing and hosted tools.
+    capabilities: [tool-use, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [openai-agents]
+        weight: 0.97
+      - type: dependency
+        ecosystem: npm
+        names: ["@openai/agents", "@openai/agents-core", "@openai/agents-openai", "@openai/agents-realtime", "@openai/agents-extensions"]
+        prefixes: ["@openai/agents"]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^\s*from\s+agents(?:\.[a-z_.]+)?\s+import\s+[^\n]*\b(?:Agent|Runner|function_tool|handoff|WebSearchTool|ComputerTool|FileSearchTool|CodeInterpreterTool|Guardrail|RunConfig|trace)\b', '^\s*import\s+agents\s*$']
+        weight: 0.9
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@openai/agents']
+        weight: 0.97
+      - type: code
+        patterns: ['\bRunner\.run(?:_sync|_streamed|Sync)?\s*\(', '@function_tool\b', '\bhandoffs\s*=\s*\[', '\bAgent\s*\(\s*name\s*=\s*["''][^"'']+["'']\s*,\s*instructions\s*=', '\bnew\s+Agent\s*\(\s*\{\s*name\s*:']
+        weight: 0.85
+      - type: code
+        patterns: ['\bComputerTool\s*\(', '\bCodeInterpreterTool\s*\(', '\bLocalShellTool\s*\(']
+        weight: 0.6
+        capabilities: [code-exec]
+      - type: code
+        patterns: ['\bWebSearchTool\s*\(']
+        weight: 0.5
+        capabilities: [browsing]
+      - type: user_agent
+        patterns: ['(?i)openai-agents', '(?i)Agents/Python', '(?i)agents-sdk']
+        weight: 0.85
+
+  - id: framework.openai-swarm
+    name: OpenAI Swarm (experimental)
+    category: framework
+    vendor: OpenAI
+    homepage: https://github.com/openai/swarm
+    description: Experimental lightweight multi-agent orchestration library (superseded by the Agents SDK).
+    capabilities: [multi-agent, tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [swarm, openai-swarm]
+        weight: 0.6
+      - type: import
+        languages: [python]
+        patterns: ['^\s*from\s+swarm\s+import\s+[^\n]*\b(?:Swarm|Agent)\b']
+        weight: 0.9
+      - type: code
+        patterns: ['github\.com/openai/swarm', '\bSwarm\s*\(\s*\)\s*\.run\b']
+        weight: 0.9
+
+  - id: framework.claude-agent-sdk
+    name: Claude Agent SDK
+    category: framework
+    vendor: Anthropic
+    homepage: https://docs.anthropic.com/en/api/agent-sdk/overview
+    description: Anthropic's Agent SDK (formerly Claude Code SDK) for building agents on the Claude Code harness.
+    capabilities: [tool-use, code-exec, memory]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [claude-agent-sdk, claude-code-sdk]
+        weight: 0.97
+      - type: dependency
+        ecosystem: npm
+        names: ["@anthropic-ai/claude-agent-sdk", "@anthropic-ai/claude-code"]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+claude_(?:agent|code)_sdk\b']
+        weight: 0.97
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@anthropic-ai/claude-(?:agent-sdk|code)["'']']
+        weight: 0.97
+      - type: code
+        patterns: ['\bClaudeSDKClient\s*\(', '\bClaudeAgentOptions\s*\(', '\bClaudeCodeOptions\s*\(', '\bpermission_mode\s*=\s*["'']bypassPermissions["'']', '\bpermissionMode\s*:\s*["'']bypassPermissions["'']']
+        weight: 0.9
+      - type: code
+        patterns: ['bypassPermissions', 'dangerously-skip-permissions']
+        weight: 0.5
+        capabilities: [autonomous]
+      - type: user_agent
+        patterns: ['(?i)claude-agent-sdk', '(?i)claude-code-sdk']
+        weight: 0.9
+
+  - id: framework.pydantic-ai
+    name: Pydantic AI
+    category: framework
+    vendor: Pydantic Services
+    homepage: https://ai.pydantic.dev
+    description: Type-safe agent framework built on Pydantic with tools, MCP and multi-provider support.
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [pydantic-ai, pydantic-ai-slim, pydantic-graph, pydantic-evals]
+        prefixes: [pydantic-ai]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+pydantic_ai\b', '^\s*(?:from|import)\s+pydantic_graph\b']
+        weight: 0.97
+      - type: code
+        patterns: ['@agent\.tool(?:_plain)?\b', '\bAgent\s*\(\s*["''][a-z0-9_-]+:[a-z0-9._-]+["'']', '\brun_sync\s*\(', '\bMCPServer(?:Stdio|HTTP|SSE|StreamableHTTP)\s*\(']
+        weight: 0.8
+      - type: user_agent
+        patterns: ['(?i)pydantic[-_ ]ai']
+        weight: 0.85
+
+  - id: framework.vercel-ai-sdk
+    name: Vercel AI SDK
+    category: framework
+    vendor: Vercel
+    homepage: https://ai-sdk.dev
+    description: TypeScript toolkit for LLM apps and agents (generateText/streamText with tools, ToolLoopAgent).
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: [ai, "@ai-sdk/openai", "@ai-sdk/anthropic", "@ai-sdk/google", "@ai-sdk/google-vertex", "@ai-sdk/amazon-bedrock", "@ai-sdk/azure", "@ai-sdk/mistral", "@ai-sdk/groq", "@ai-sdk/react", "@ai-sdk/provider", "@ai-sdk/openai-compatible", "@ai-sdk/mcp"]
+        prefixes: ["@ai-sdk/"]
+        weight: 0.85
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']ai["'']', 'from\s+["'']@ai-sdk/']
+        weight: 0.85
+      - type: code
+        patterns: ['\b(?:generateText|streamText|generateObject|streamObject)\s*\(\s*\{']
+        weight: 0.6
+      - type: code
+        patterns: ['\b(?:ToolLoopAgent|Experimental_Agent)\s*\(', '\bmaxSteps\s*:\s*\d+', '\bstopWhen\s*:\s*stepCountIs\s*\(', '\btools\s*:\s*\{[^}]*\btool\s*\(']
+        weight: 0.8
+        agent_indicator: true
+        capabilities: [tool-use]
+      - type: user_agent
+        patterns: ['(?i)\bai-sdk/', '(?i)vercel ai sdk']
+        weight: 0.8
+
+  - id: framework.mastra
+    name: Mastra
+    category: framework
+    vendor: Mastra
+    homepage: https://mastra.ai
+    description: TypeScript agent framework with agents, workflows, memory and MCP.
+    capabilities: [tool-use, memory]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@mastra/core", "mastra", "@mastra/memory", "@mastra/mcp", "@mastra/rag"]
+        prefixes: ["@mastra/"]
+        weight: 0.97
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@mastra/']
+        weight: 0.97
+      - type: code
+        patterns: ['\bnew\s+Mastra\s*\(\s*\{', '\bnew\s+Agent\s*\(\s*\{\s*name\s*:', '\bcreateTool\s*\(\s*\{']
+        weight: 0.7
+
+  - id: framework.haystack
+    name: Haystack
+    category: framework
+    vendor: deepset
+    homepage: https://haystack.deepset.ai
+    description: deepset's LLM orchestration framework with Agent and Tool components.
+    capabilities: [tool-use, rag]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [haystack-ai, farm-haystack, haystack-experimental, deepset-cloud-sdk]
+        prefixes: [haystack-]
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+haystack\b']
+        weight: 0.9
+      - type: code
+        patterns: ['\bfrom\s+haystack\.components\.agents\s+import\s+Agent\b', '\bToolInvoker\s*\(', '\bAgent\s*\(\s*chat_generator\s*=']
+        weight: 0.9
+        agent_indicator: true
+
+  - id: framework.dspy
+    name: DSPy
+    category: framework
+    vendor: Stanford NLP
+    homepage: https://dspy.ai
+    description: Declarative LM programming framework (modules, optimizers, ReAct agents).
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [dspy, dspy-ai]
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+dspy\b']
+        weight: 0.9
+      - type: code
+        patterns: ['\bdspy\.ReAct\s*\(', '\bdspy\.ProgramOfThought\s*\(']
+        weight: 0.9
+        agent_indicator: true
+        capabilities: [tool-use]
+
+  - id: framework.agno
+    name: Agno (formerly Phidata)
+    category: framework
+    vendor: Agno
+    homepage: https://agno.com
+    description: Multi-agent framework with AgentOS runtime, teams, memory and knowledge.
+    capabilities: [tool-use, multi-agent, memory]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [agno, phidata]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+agno\b', '^\s*(?:from|import)\s+phi\.(?:agent|assistant|workflow|team)\b']
+        weight: 0.95
+      - type: code
+        patterns: ['\bAgentOS\s*\(', '\bfrom\s+agno\.agent\s+import\s+Agent\b', '\bTeam\s*\(\s*(?:members|mode)\s*=']
+        weight: 0.8
+      - type: env
+        names: [AGNO_API_KEY, AGNO_MONITOR]
+        weight: 0.6
+
+  - id: framework.letta
+    name: Letta (MemGPT)
+    category: framework
+    vendor: Letta
+    homepage: https://www.letta.com
+    description: Stateful agents with long-term memory (formerly MemGPT).
+    capabilities: [tool-use, memory]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [letta, letta-client, pymemgpt, memgpt]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: ["@letta-ai/letta-client"]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+(?:letta|memgpt)\b']
+        weight: 0.95
+      - type: image
+        patterns: ['letta/letta']
+        weight: 0.95
+      - type: env
+        names: [LETTA_API_KEY, LETTA_SERVER_PASSWORD]
+        weight: 0.6
+      - type: domain
+        values: [api.letta.com, app.letta.com]
+        weight: 0.7
+
+  - id: framework.metagpt
+    name: MetaGPT
+    category: framework
+    vendor: DeepWisdom
+    homepage: https://github.com/geekan/MetaGPT
+    description: Multi-agent "software company" framework with roles and SOPs.
+    capabilities: [multi-agent, code-exec]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [metagpt]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+metagpt\b']
+        weight: 0.97
+
+  - id: framework.camel-ai
+    name: CAMEL-AI
+    category: framework
+    vendor: CAMEL-AI.org
+    homepage: https://www.camel-ai.org
+    description: Multi-agent role-playing framework (also underpins OWL).
+    capabilities: [multi-agent, tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [camel-ai, owl-agent]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+camel\.(?:agents|societies|toolkits|models|types)\b']
+        weight: 0.95
+      - type: code
+        patterns: ['\bRolePlaying\s*\(', '\bChatAgent\s*\(\s*system_message\s*=']
+        weight: 0.8
+
+  - id: framework.griptape
+    name: Griptape
+    category: framework
+    vendor: Griptape
+    homepage: https://www.griptape.ai
+    description: Python framework for agents, pipelines and workflows with Griptape Cloud hosting.
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [griptape, griptape-cloud]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+griptape\b']
+        weight: 0.95
+      - type: env
+        names: [GT_CLOUD_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [cloud.griptape.ai]
+        weight: 0.7
+
+  - id: framework.composio
+    name: Composio
+    category: framework
+    vendor: Composio
+    homepage: https://composio.dev
+    description: Tool/integration platform giving agents authenticated access to 250+ SaaS apps.
+    capabilities: [tool-use, saas-actions]
+    risk_notes: ["Composio brokers OAuth access to SaaS on behalf of agents; review connected accounts."]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [composio, composio-core, composio-langchain, composio-openai, composio-crewai, composio-autogen, composio-llamaindex, composio-langgraph, composio-claude]
+        prefixes: [composio]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: [composio-core, "@composio/core", "@composio/openai", "@composio/vercel"]
+        prefixes: ["@composio/"]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+composio\b']
+        weight: 0.95
+      - type: env
+        names: [COMPOSIO_API_KEY]
+        weight: 0.7
+      - type: domain
+        values: [backend.composio.dev, api.composio.dev]
+        weight: 0.8
+
+  - id: framework.instructor
+    name: Instructor
+    category: framework
+    vendor: Instructor
+    description: Structured-output library over LLM APIs (supporting signal, not an agent by itself).
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [instructor]
+        weight: 0.35
+      - type: dependency
+        ecosystem: npm
+        names: ["@instructor-ai/instructor"]
+        weight: 0.35
+      - type: import
+        languages: [python]
+        patterns: ['^\s*import\s+instructor\b', '^\s*from\s+instructor\s+import\b']
+        weight: 0.35
+
+  - id: framework.langroid
+    name: Langroid
+    category: framework
+    vendor: Langroid
+    description: Multi-agent programming framework.
+    capabilities: [multi-agent, tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [langroid]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+langroid\b']
+        weight: 0.95
+
+  - id: framework.agentscope
+    name: AgentScope
+    category: framework
+    vendor: Alibaba
+    description: Multi-agent platform from Alibaba.
+    capabilities: [multi-agent, tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [agentscope]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+agentscope\b']
+        weight: 0.95
+
+  - id: framework.swarms
+    name: Swarms
+    category: framework
+    vendor: Swarms Corp
+    description: Enterprise multi-agent orchestration framework.
+    capabilities: [multi-agent, tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [swarms, swarms-memory, swarms-tools]
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+swarms\b']
+        weight: 0.9
+      - type: env
+        names: [SWARMS_API_KEY]
+        weight: 0.6
+
+  - id: framework.autogpt
+    name: AutoGPT
+    category: framework
+    vendor: Significant Gravitas
+    homepage: https://agpt.co
+    description: Autonomous GPT-4 agent platform (classic AutoGPT and AutoGPT Platform).
+    capabilities: [autonomous, tool-use, code-exec, browsing]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [autogpt, agpt, autogpt-forge, autogpt-libs, autogpt-platform-backend]
+        prefixes: [autogpt]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+(?:autogpt|forge\.sdk|autogpt_libs|backend\.blocks)\b']
+        weight: 0.85
+      - type: image
+        patterns: ['significantgravitas/auto_gpt', 'significant-gravitas/autogpt']
+        weight: 0.95
+      - type: file
+        globs: ["**/ai_settings.yaml", "**/autogpt_platform/**"]
+        weight: 0.6
+
+  - id: framework.babyagi
+    name: BabyAGI
+    category: framework
+    vendor: Yohei Nakajima
+    description: Task-driven autonomous agent.
+    capabilities: [autonomous]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [babyagi]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+babyagi\b']
+        weight: 0.95
+
+  - id: framework.beeai
+    name: BeeAI Framework
+    category: framework
+    vendor: IBM
+    homepage: https://framework.beeai.dev
+    description: IBM's open-source agent framework (formerly Bee Agent Framework), Python and TypeScript.
+    capabilities: [tool-use, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [beeai-framework, beeai-cli, beeai-sdk]
+        prefixes: [beeai]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: [beeai-framework, bee-agent-framework]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+beeai_framework\b']
+        weight: 0.95
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["''](?:beeai-framework|bee-agent-framework)']
+        weight: 0.95
+
+  - id: framework.atomic-agents
+    name: Atomic Agents
+    category: framework
+    vendor: Brainblend AI
+    description: Lightweight modular agent framework.
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [atomic-agents]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+atomic_agents\b']
+        weight: 0.95
+
+  - id: framework.julep
+    name: Julep
+    category: framework
+    vendor: Julep AI
+    description: Serverless platform for stateful agents and multi-step tasks.
+    capabilities: [tool-use, memory]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [julep]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: ["@julep/sdk"]
+        weight: 0.95
+      - type: env
+        names: [JULEP_API_KEY]
+        weight: 0.7
+      - type: domain
+        values: [api.julep.ai, dev.julep.ai]
+        weight: 0.8
+
+  - id: framework.marvin
+    name: Marvin
+    category: framework
+    vendor: Prefect
+    description: Agentic AI toolkit from Prefect (built on Pydantic AI in v3).
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [marvin, controlflow]
+        weight: 0.85
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+(?:marvin|controlflow)\b']
+        weight: 0.85
+
+  - id: framework.mirascope
+    name: Mirascope
+    category: framework
+    vendor: Mirascope
+    description: LLM toolkit with provider-agnostic calls and tools.
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [mirascope]
+        weight: 0.85
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+mirascope\b']
+        weight: 0.85
+
+  - id: framework.embedchain
+    name: Embedchain
+    category: framework
+    vendor: Mem0
+    description: RAG framework (now part of mem0).
+    capabilities: [rag]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [embedchain]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+embedchain\b']
+        weight: 0.8

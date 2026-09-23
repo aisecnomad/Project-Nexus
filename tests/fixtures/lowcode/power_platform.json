@@ -1,0 +1,102 @@
+[
+ {
+  "_kind": "environment",
+  "name": "Default-1",
+  "properties": {
+   "displayName": "Default (acme)",
+   "linkedEnvironmentMetadata": {
+    "instanceUrl": "https://acme.crm.dynamics.com/"
+   }
+  }
+ },
+ {
+  "_kind": "flow",
+  "name": "flow-1",
+  "_environment": "Default (acme)",
+  "properties": {
+   "displayName": "Summarise support emails with GPT",
+   "state": "Started",
+   "createdTime": "2025-04-01T00:00:00Z",
+   "lastModifiedTime": "2025-08-01T00:00:00Z",
+   "creator": {
+    "userPrincipalName": "dave@acme.com"
+   },
+   "definitionSummary": {
+    "triggers": [
+     {
+      "type": "Recurrence"
+     }
+    ],
+    "actions": [
+     {
+      "type": "OpenApiConnection",
+      "swaggerOperationId": "CreateTextWithGPT"
+     }
+    ]
+   },
+   "connectionReferences": {
+    "shared_azureopenai": {
+     "id": "/providers/Microsoft.PowerApps/apis/shared_azureopenai"
+    },
+    "shared_office365": {
+     "id": "/providers/Microsoft.PowerApps/apis/shared_office365"
+    }
+   }
+  }
+ },
+ {
+  "_kind": "flow",
+  "name": "flow-2",
+  "_environment": "Default (acme)",
+  "properties": {
+   "displayName": "Copy files nightly",
+   "state": "Started",
+   "definitionSummary": {
+    "triggers": [
+     {
+      "type": "Recurrence"
+     }
+    ],
+    "actions": [
+     {
+      "type": "OpenApiConnection"
+     }
+    ]
+   },
+   "connectionReferences": {
+    "shared_sharepointonline": {
+     "id": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+    }
+   }
+  }
+ },
+ {
+  "_kind": "bot",
+  "botid": "bot-1",
+  "name": "HR Helper",
+  "schemaname": "cr1a2_hrHelper",
+  "statecode": 0,
+  "createdon": "2025-05-01T00:00:00Z",
+  "modifiedon": "2025-09-01T00:00:00Z",
+  "publishedon": "2025-09-01T00:00:00Z",
+  "authenticationmode": 0,
+  "_environment": "Default (acme)",
+  "_ownerid_value": "erin@acme.com"
+ },
+ {
+  "_kind": "botcomponent",
+  "botcomponentid": "c1",
+  "_parentbotid_value": "bot-1",
+  "componenttype": 0,
+  "name": "Leave policy",
+  "data": "kind: AdaptiveDialog\nbeginDialog:\n  kind: OnRecognizedIntent\n  actions:\n    - kind: SearchAndSummarizeContent\n    - kind: InvokeFlowAction\n      flowId: flow-1\n"
+ },
+ {
+  "_kind": "botcomponent",
+  "botcomponentid": "c2",
+  "_parentbotid_value": "bot-1",
+  "componenttype": 9,
+  "name": "Generative answers",
+  "data": "kind: GptComponentMetadata\n"
+ }
+]

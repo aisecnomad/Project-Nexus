@@ -1,0 +1,3 @@
+App Name,Publisher,Permissions,Users,Installed By,Status,Domain
+Perplexity,Perplexity AI,"https://www.googleapis.com/auth/drive.readonly, https://www.googleapis.com/auth/userinfo.email",57,tom@acme.com,unsanctioned,perplexity.ai
+Lucidchart,Lucid,https://www.googleapis.com/auth/drive.file,300,admin,sanctioned,lucid.app

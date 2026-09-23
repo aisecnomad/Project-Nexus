@@ -1,0 +1,491 @@
+# Agent frameworks for JVM, Go, Rust, .NET and TypeScript runtimes, plus
+# conversational-bot SDKs and browser / computer-use agents.
+signatures:
+  - id: framework.langchain4j
+    name: LangChain4j
+    category: framework
+    vendor: LangChain4j
+    homepage: https://docs.langchain4j.dev
+    description: Java LLM framework with AI Services, tools and agents.
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j", "dev.langchain4j:langchain4j-core", "dev.langchain4j:langchain4j-open-ai", "dev.langchain4j:langchain4j-anthropic", "dev.langchain4j:langchain4j-bedrock", "dev.langchain4j:langchain4j-mcp", "dev.langchain4j:langchain4j-agentic"]
+        prefixes: ["dev.langchain4j"]
+        weight: 0.9
+      - type: import
+        languages: [java]
+        patterns: ['^\s*import\s+dev\.langchain4j\.']
+        weight: 0.9
+      - type: code
+        patterns: ['\bAiServices\.builder\s*\(', '\bAiServices\.create\s*\(', '@Tool\s*(?:\(|\n)', '\bAgenticServices\.']
+        weight: 0.85
+        agent_indicator: true
+
+  - id: framework.spring-ai
+    name: Spring AI
+    category: framework
+    vendor: VMware / Broadcom
+    homepage: https://spring.io/projects/spring-ai
+    description: Spring portable AI abstraction with ChatClient, tools/function calling and MCP.
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: maven
+        prefixes: ["org.springframework.ai"]
+        weight: 0.9
+      - type: import
+        languages: [java]
+        patterns: ['^\s*import\s+org\.springframework\.ai\.']
+        weight: 0.9
+      - type: code
+        patterns: ['\bChatClient\.(?:builder|create)\s*\(', '\bToolCallback\b', '@Tool\s*\(\s*(?:name|description)\s*=', '\bMethodToolCallbackProvider\b', '\bSyncMcpToolCallbackProvider\b']
+        weight: 0.8
+        agent_indicator: true
+
+  - id: framework.rig
+    name: Rig
+    category: framework
+    vendor: Playgrounds Analytics
+    homepage: https://rig.rs
+    description: Rust library for LLM applications and agents.
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: cargo
+        names: [rig-core, rig-mongodb, rig-lancedb, rig-qdrant]
+        prefixes: [rig-]
+        weight: 0.9
+      - type: import
+        languages: [rust]
+        patterns: ['^\s*use\s+rig::']
+        weight: 0.9
+      - type: code
+        patterns: ['\.agent\s*\(\s*"[^"]+"\s*\)', '\bAgentBuilder\b']
+        weight: 0.6
+        agent_indicator: true
+
+  - id: framework.langchaingo
+    name: LangChainGo
+    category: framework
+    vendor: tmc
+    description: Go port of LangChain with agents and tools.
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: go
+        names: ["github.com/tmc/langchaingo"]
+        prefixes: ["github.com/tmc/langchaingo"]
+        weight: 0.9
+      - type: import
+        languages: [go]
+        patterns: ['"github\.com/tmc/langchaingo(?:/[^"]+)?"']
+        weight: 0.9
+      - type: code
+        patterns: ['\bagents\.NewExecutor\s*\(', '\bagents\.NewOneShotAgent\s*\(', '\bagents\.NewConversationalAgent\s*\(']
+        weight: 0.9
+        agent_indicator: true
+
+  - id: framework.genkit
+    name: Firebase Genkit
+    category: framework
+    vendor: Google
+    homepage: https://genkit.dev
+    description: Google's open-source framework for AI-powered apps and agents (JS, Go, Python).
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: [genkit, "@genkit-ai/core", "@genkit-ai/ai", "@genkit-ai/googleai", "@genkit-ai/google-genai", "@genkit-ai/vertexai", "@genkit-ai/mcp", "genkitx-openai", "genkitx-anthropic"]
+        prefixes: ["@genkit-ai/", "genkitx-"]
+        weight: 0.9
+      - type: dependency
+        ecosystem: pypi
+        names: [genkit, genkit-plugin-google-genai, genkit-plugin-vertex-ai]
+        prefixes: [genkit]
+        weight: 0.9
+      - type: dependency
+        ecosystem: go
+        names: ["github.com/firebase/genkit"]
+        prefixes: ["github.com/firebase/genkit"]
+        weight: 0.9
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["''](?:genkit|@genkit-ai/)']
+        weight: 0.9
+      - type: import
+        languages: [go]
+        patterns: ['"github\.com/firebase/genkit']
+        weight: 0.9
+      - type: code
+        patterns: ['\bai\.defineTool\s*\(', '\bai\.defineFlow\s*\(', '\bgenkit\s*\(\s*\{\s*plugins']
+        weight: 0.8
+        agent_indicator: true
+
+  - id: framework.eino
+    name: Eino
+    category: framework
+    vendor: CloudWeGo (ByteDance)
+    description: Go LLM/agent application framework.
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: go
+        names: ["github.com/cloudwego/eino", "github.com/cloudwego/eino-ext"]
+        prefixes: ["github.com/cloudwego/eino"]
+        weight: 0.95
+      - type: import
+        languages: [go]
+        patterns: ['"github\.com/cloudwego/eino']
+        weight: 0.95
+
+  - id: framework.microsoft-extensions-ai
+    name: Microsoft.Extensions.AI
+    category: framework
+    vendor: Microsoft
+    description: .NET AI abstractions (IChatClient, function invocation) used by agent stacks.
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: nuget
+        names: ["Microsoft.Extensions.AI", "Microsoft.Extensions.AI.OpenAI", "Microsoft.Extensions.AI.Abstractions", "Microsoft.Extensions.AI.Ollama", "Microsoft.Extensions.AI.AzureAIInference"]
+        prefixes: ["Microsoft.Extensions.AI"]
+        weight: 0.75
+      - type: import
+        languages: [dotnet]
+        patterns: ['^\s*using\s+Microsoft\.Extensions\.AI\b']
+        weight: 0.75
+      - type: code
+        patterns: ['\bUseFunctionInvocation\s*\(', '\bAIFunctionFactory\.Create\s*\(']
+        weight: 0.8
+        agent_indicator: true
+
+  - id: framework.m365-agents-sdk
+    name: Microsoft 365 Agents SDK
+    category: framework
+    vendor: Microsoft
+    homepage: https://learn.microsoft.com/microsoft-365/agents-sdk/
+    description: SDK (successor of Bot Framework) for building custom engine agents for Microsoft 365 Copilot, Teams and web.
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@microsoft/agents-hosting", "@microsoft/agents-hosting-express", "@microsoft/agents-hosting-extensions-teams", "@microsoft/agents-activity", "@microsoft/agents-copilotstudio-client"]
+        prefixes: ["@microsoft/agents-"]
+        weight: 0.95
+      - type: dependency
+        ecosystem: pypi
+        names: [microsoft-agents-hosting-core, microsoft-agents-hosting-aiohttp, microsoft-agents-activity, microsoft-agents-authentication-msal, microsoft-agents-copilotstudio-client]
+        prefixes: [microsoft-agents-]
+        weight: 0.95
+      - type: dependency
+        ecosystem: nuget
+        names: ["Microsoft.Agents.Hosting.AspNetCore", "Microsoft.Agents.Builder", "Microsoft.Agents.Authentication.Msal", "Microsoft.Agents.CopilotStudio.Client", "Microsoft.Agents.Core"]
+        prefixes: ["Microsoft.Agents.Hosting", "Microsoft.Agents.Builder", "Microsoft.Agents.Authentication", "Microsoft.Agents.CopilotStudio"]
+        weight: 0.95
+      - type: import
+        languages: [dotnet]
+        patterns: ['^\s*using\s+Microsoft\.Agents\.(?:Builder|Hosting|Core|Authentication)\b']
+        weight: 0.95
+      - type: code
+        patterns: ['\bAgentApplication\s*\(', '\bAgentApplicationOptions\b', '\bCloudAdapter\s*\(', '\bCopilotClient\s*\(', '\bCopilotStudioClient\s*\(']
+        weight: 0.85
+
+  - id: framework.bot-framework
+    name: Microsoft Bot Framework
+    category: framework
+    vendor: Microsoft
+    description: Bot Builder SDK (v4) for Azure Bot Service / Teams bots; often the delivery channel for LLM agents.
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: [botbuilder, botbuilder-core, botbuilder-dialogs, botbuilder-ai, botframework-connector, botbuilder-azure]
+        prefixes: [botbuilder-, botframework-]
+        weight: 0.75
+      - type: dependency
+        ecosystem: pypi
+        names: [botbuilder-core, botbuilder-dialogs, botbuilder-ai, botbuilder-integration-aiohttp, botframework-connector]
+        prefixes: [botbuilder-, botframework-]
+        weight: 0.75
+      - type: dependency
+        ecosystem: nuget
+        names: ["Microsoft.Bot.Builder", "Microsoft.Bot.Builder.Integration.AspNet.Core", "Microsoft.Bot.Builder.AI.Luis", "Microsoft.Bot.Builder.Dialogs"]
+        prefixes: ["Microsoft.Bot."]
+        weight: 0.75
+      - type: code
+        patterns: ['\bActivityHandler\b', '\bBotFrameworkAdapter\s*\(', '\bCloudAdapter\s*\(', '\bTeamsActivityHandler\b']
+        weight: 0.6
+      - type: env
+        names: [MICROSOFTAPPID, MICROSOFTAPPPASSWORD, MICROSOFTAPPTENANTID, MICROSOFTAPPTYPE, BOT_ID, BOT_PASSWORD]
+        weight: 0.5
+      - type: domain
+        values: [directline.botframework.com, token.botframework.com, smba.trafficmanager.net, "*.botframework.com"]
+        weight: 0.6
+
+  - id: framework.teams-ai
+    name: Teams AI Library
+    category: framework
+    vendor: Microsoft
+    description: Microsoft Teams AI library for LLM-powered Teams apps and agents.
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@microsoft/teams-ai", "@microsoft/teams.ai", "@microsoft/teams.apps", "@microsoft/teams.api"]
+        prefixes: ["@microsoft/teams."]
+        weight: 0.95
+      - type: dependency
+        ecosystem: pypi
+        names: [teams-ai, microsoft-teams-ai, microsoft-teams-apps]
+        weight: 0.95
+      - type: dependency
+        ecosystem: nuget
+        names: ["Microsoft.Teams.AI", "Microsoft.Teams.Apps"]
+        weight: 0.95
+      - type: code
+        patterns: ['\bActionPlanner\s*\(', '\bOpenAIModel\s*\(\s*\{', '\bChatPrompt\s*\(', '\bnew\s+Application<']
+        weight: 0.7
+
+  - id: framework.cloudflare-agents
+    name: Cloudflare Agents SDK
+    category: framework
+    vendor: Cloudflare
+    homepage: https://developers.cloudflare.com/agents/
+    description: Agents SDK running on Cloudflare Workers with Durable Objects state, MCP and Workers AI.
+    capabilities: [tool-use, memory]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: [agents, "@cloudflare/agents", "@cloudflare/ai-chat", "workers-ai-provider"]
+        weight: 0.9
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']agents(?:/[a-z-]+)?["'']', 'from\s+["'']@cloudflare/agents']
+        weight: 0.9
+      - type: code
+        patterns: ['\bextends\s+(?:AIChatAgent|Agent|McpAgent)\b', '\brouteAgentRequest\s*\(', '\bgetAgentByName\s*\(']
+        weight: 0.8
+
+  - id: framework.inngest-agentkit
+    name: Inngest AgentKit
+    category: framework
+    vendor: Inngest
+    description: TypeScript framework for agent networks orchestrated by Inngest.
+    capabilities: [tool-use, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@inngest/agent-kit"]
+        weight: 0.95
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@inngest/agent-kit']
+        weight: 0.95
+      - type: code
+        patterns: ['\bcreateAgent\s*\(\s*\{', '\bcreateNetwork\s*\(\s*\{']
+        weight: 0.6
+
+  - id: framework.voltagent
+    name: VoltAgent
+    category: framework
+    vendor: VoltAgent
+    description: TypeScript AI agent framework with observability.
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@voltagent/core", "@voltagent/vercel-ai", "@voltagent/cli"]
+        prefixes: ["@voltagent/"]
+        weight: 0.95
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@voltagent/']
+        weight: 0.95
+
+  - id: framework.copilotkit
+    name: CopilotKit / AG-UI
+    category: framework
+    vendor: CopilotKit
+    description: In-app agent UI runtime (CopilotKit) and the Agent-User Interaction protocol (AG-UI).
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@copilotkit/react-core", "@copilotkit/runtime", "@copilotkit/react-ui", "@ag-ui/core", "@ag-ui/client", "@ag-ui/langgraph"]
+        prefixes: ["@copilotkit/", "@ag-ui/"]
+        weight: 0.9
+      - type: dependency
+        ecosystem: pypi
+        names: [copilotkit, ag-ui-protocol, ag-ui-langgraph, ag-ui-crewai]
+        prefixes: [ag-ui-]
+        weight: 0.9
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@(?:copilotkit|ag-ui)/']
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+(?:copilotkit|ag_ui)\b']
+        weight: 0.9
+      - type: env
+        names: [COPILOT_CLOUD_PUBLIC_API_KEY, COPILOTKIT_API_KEY]
+        weight: 0.6
+
+  - id: framework.rasa
+    name: Rasa
+    category: framework
+    vendor: Rasa Technologies
+    description: Conversational AI framework (Rasa Open Source / Rasa Pro with CALM LLM dialogue).
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [rasa, rasa-sdk, rasa-pro]
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+rasa(?:_sdk)?\b']
+        weight: 0.9
+      - type: image
+        patterns: ['rasa/rasa', 'rasa/rasa-pro', 'rasa/rasa-sdk']
+        weight: 0.9
+      - type: file
+        globs: ["**/domain.yml", "**/endpoints.yml", "**/credentials.yml"]
+        weight: 0.35
+      - type: env
+        names: [RASA_PRO_LICENSE, RASA_TOKEN]
+        weight: 0.6
+
+  - id: framework.botpress
+    name: Botpress
+    category: framework
+    vendor: Botpress
+    description: Botpress agent/bot platform SDK.
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@botpress/sdk", "@botpress/client", "@botpress/cli", "botpress"]
+        prefixes: ["@botpress/"]
+        weight: 0.9
+      - type: file
+        globs: ["bot.definition.ts", "integration.definition.ts", "**/bot.definition.ts", "**/integration.definition.ts"]
+        weight: 0.9
+      - type: domain
+        values: [api.botpress.cloud, webhook.botpress.cloud]
+        weight: 0.8
+      - type: env
+        names: [BOTPRESS_TOKEN, BP_TOKEN]
+        weight: 0.6
+
+  - id: framework.browser-use
+    name: Browser Use
+    category: framework
+    vendor: Browser Use
+    description: Browser automation agent driving a real browser from LLM decisions.
+    capabilities: [browsing, autonomous]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [browser-use]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+browser_use\b']
+        weight: 0.97
+      - type: env
+        names: [BROWSER_USE_API_KEY]
+        weight: 0.7
+      - type: domain
+        values: [api.browser-use.com, cloud.browser-use.com]
+        weight: 0.8
+
+  - id: framework.stagehand
+    name: Stagehand / Browserbase
+    category: framework
+    vendor: Browserbase
+    description: AI browser automation SDK and hosted headless browsers.
+    capabilities: [browsing]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@browserbasehq/stagehand", "@browserbasehq/sdk"]
+        prefixes: ["@browserbasehq/"]
+        weight: 0.95
+      - type: dependency
+        ecosystem: pypi
+        names: [stagehand, browserbase, stagehand-py]
+        weight: 0.9
+      - type: env
+        names: [BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID]
+        weight: 0.7
+      - type: domain
+        values: [api.browserbase.com, connect.browserbase.com]
+        weight: 0.8
+
+  - id: framework.openhands
+    name: OpenHands (OpenDevin)
+    category: framework
+    vendor: All Hands AI
+    description: Autonomous software-engineering agent platform.
+    capabilities: [code-exec, autonomous, browsing]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [openhands-ai, openhands, openhands-sdk, openhands-agent-server]
+        prefixes: [openhands]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+openhands\b']
+        weight: 0.95
+      - type: image
+        patterns: ['all-hands-ai/openhands', 'all-hands-ai/runtime', 'docker\.all-hands\.dev']
+        weight: 0.95
+      - type: env
+        names: [SANDBOX_RUNTIME_CONTAINER_IMAGE, OPENHANDS_API_KEY]
+        weight: 0.5
+
+  - id: framework.nova-act
+    name: Amazon Nova Act
+    category: framework
+    vendor: Amazon Web Services
+    description: Amazon browser-agent SDK built on Nova models.
+    capabilities: [browsing, autonomous]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [nova-act]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^\s*(?:from|import)\s+nova_act\b']
+        weight: 0.97
+      - type: env
+        names: [NOVA_ACT_API_KEY]
+        weight: 0.7
+
+  - id: framework.anthropic-computer-use
+    name: Anthropic Computer Use
+    category: framework
+    vendor: Anthropic
+    description: Computer-use / bash / text-editor tool types in the Anthropic Messages API (agentic desktop control).
+    capabilities: [code-exec, browsing, autonomous]
+    agent_indicator: true
+    signals:
+      - type: code
+        patterns: ['"type"\s*:\s*"computer_20\d{6}"', '"type"\s*:\s*"bash_20\d{6}"', '"type"\s*:\s*"text_editor_20\d{6}"', 'computer-use-20\d{2}-\d{2}-\d{2}', '\bBetaToolComputerUse\w*\b', '\bComputerUseAgent\b']
+        weight: 0.9
+      - type: image
+        patterns: ['anthropic-quickstarts:computer-use-demo', 'computer-use-demo']
+        weight: 0.9

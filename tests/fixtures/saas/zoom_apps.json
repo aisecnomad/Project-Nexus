@@ -1,0 +1,26 @@
+{
+ "apps": [
+  {
+   "app_id": "z1",
+   "app_name": "Fathom AI Notetaker",
+   "developer_name": "Fathom Video",
+   "app_usage": "account",
+   "scopes": [
+    "meeting:read",
+    "recording:read",
+    "user:read"
+   ],
+   "installed_users_count": 214,
+   "created_at": "2025-02-02"
+  },
+  {
+   "app_id": "z2",
+   "app_name": "Whiteboard Sync",
+   "developer_name": "Example",
+   "scopes": [
+    "user:read"
+   ],
+   "installed_users_count": 3
+  }
+ ]
+}
