@@ -13,6 +13,7 @@ from bisect import bisect_right
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
+from itertools import islice
 from typing import Any
 
 import regex
@@ -37,13 +38,19 @@ def _remaining_timeout() -> float:
     return remaining
 
 
-def _finditer(rx: Any, text: str, context: str):
+def _finditer(rx: Any, text: str, context: str, limit: int) -> list[Any]:
     try:
         # Tiny patterns dominate this workload. Releasing/reacquiring the GIL
         # for every token under parallel connectors can spend the entire wall
         # deadline waiting for another thread. Engine timeouts remain preemptive
         # with concurrent=False and also bound any period holding the GIL.
-        yield from rx.finditer(text, timeout=_remaining_timeout(), concurrent=False)
+        # The regex engine's iterator timeout also charges CPU work performed
+        # between next() calls. Consume only the caller's remaining match quota
+        # before redaction or other connector threads can process yielded hits.
+        # Never materialize the unbounded sequence of matches in a large input.
+        matches = list(islice(rx.finditer(text, timeout=_remaining_timeout(), concurrent=False), limit))
+        _remaining_timeout()
+        return matches
     except TimeoutError as exc:
         raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete") from exc
 
@@ -273,7 +280,7 @@ class SignatureIndex:
                 continue
             hits = 0
             for rx in s.bounded_compiled:
-                for m in _finditer(rx, text, sig.id):
+                for m in _finditer(rx, text, sig.id, max_per_signal - hits):
                     line = text.count("\n", 0, m.start()) + 1
                     excerpt = m.group(0)
                     # Never cut away a credential's recognizable context before

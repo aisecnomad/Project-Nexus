@@ -148,6 +148,43 @@ def test_parallel_tokenization_does_not_exhaust_regex_deadlines(index):
         assert {"provider.openai", "provider.anthropic"} <= {m.signature_id for m in matches}
 
 
+def test_parallel_match_processing_is_not_charged_to_regex_iterator(monkeypatch):
+    import shadowscan.signatures.matcher as matcher_module
+
+    matcher = SignatureIndex([signature_from_dict(_signature())])
+    original = matcher_module.sanitize_text
+
+    def expensive_callback(value):
+        # regex's timeout includes CPU consumed outside the regex while its
+        # iterator is suspended. Simulate bounded redaction/caller processing,
+        # including competing connector workers, exceeding a pattern budget
+        # while remaining well inside the unchanged two-second input budget.
+        deadline = time.process_time() + 0.12
+        while time.process_time() < deadline:
+            pass
+        return original(value)
+
+    monkeypatch.setattr(matcher_module, "sanitize_text", expensive_callback)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(matcher.match_code, ["ExampleAgent ExampleAgent"] * 4))
+    assert all([match.value for match in result] == ["ExampleAgent", "ExampleAgent"] for result in results)
+
+
+def test_regex_iterator_consumes_only_the_remaining_match_quota():
+    import regex
+
+    from shadowscan.signatures.matcher import _finditer
+
+    class GuardedPattern:
+        def finditer(self, text, **kwargs):
+            for number, match in enumerate(regex.compile("a").finditer(text, **kwargs)):
+                if number >= 3:
+                    pytest.fail("Matcher consumed beyond the caller's remaining quota")
+                yield match
+
+    assert len(_finditer(GuardedPattern(), "a" * 10_000, "bounded.quota", 3)) == 3
+
+
 @pytest.mark.parametrize("signal_type", ["code", "domain", "env", "client_id"])
 def test_untrusted_regex_execution_is_preempted(signal_type):
     # A subprocess timeout also bounds the regression test if runtime preemption
