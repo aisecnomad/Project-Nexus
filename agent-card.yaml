@@ -40,10 +40,6 @@ security_controls:
   kill_switch_enabled: true
   red_team_clearance: "2026-Q1-Certified"
 
-risk_scoring:
-  AARS_initial_score: 42
-  blast_radius: "Medium"
-
 discovery:
   resources:
     - "arn:aws:bedrock:us-east-1:123456789012:agent/AGENT1"
