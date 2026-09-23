@@ -33,6 +33,7 @@ from shadowscan.connectors.common import apply_matches, finalize, looks_like_pla
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, language_for_path
+from shadowscan.utils.redaction import sanitize, sanitize_text
 from shadowscan.utils.text import excerpt_line, notebook_to_source, read_text, redact, truncate
 
 DEFAULT_EXCLUDES = {
@@ -208,6 +209,7 @@ class FilesystemConnector(BaseConnector):
         "exclude": "extra directory names / glob patterns to skip",
         "max_file_size": "bytes; larger files are skipped (default 1 MiB)",
         "max_files": "stop after this many files (default 100000)",
+        "scan_timeout": "matching budget in seconds per file (default 2)",
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "enrich with git last-commit author/date (default true)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
@@ -218,6 +220,9 @@ class FilesystemConnector(BaseConnector):
         super().__init__(ctx)
         self.max_file_size = int(ctx.get("max_file_size", 1_000_000))
         self.max_files = int(ctx.get("max_files", 100_000))
+        self.scan_timeout = float(ctx.get("scan_timeout", 2.0))
+        if self.max_file_size < 1 or self.max_files < 1 or not 0 < self.scan_timeout <= 60:
+            raise ConnectorError("code.filesystem: limits must be positive; scan_timeout must be at most 60 seconds")
         self.scan_secrets = bool(ctx.get("scan_secrets", True))
         self.use_git = bool(ctx.get("use_git", True))
         extra = ctx.get("exclude", []) or []
@@ -228,6 +233,7 @@ class FilesystemConnector(BaseConnector):
         self.owner: str | None = ctx.get("owner")
         self.provider_override: str | None = ctx.get("provider")
         self.extra_metadata: dict[str, Any] = dict(ctx.get("metadata", {}) or {})
+        self._codeowners_cache: dict[Path, list[tuple[str, list[str]]]] = {}
 
     # ----------------------------------------------------------------- input
     def _paths(self) -> list[Path]:
@@ -254,6 +260,9 @@ class FilesystemConnector(BaseConnector):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:
             root = Path(rec["path"]).expanduser().resolve()
+            if not root.exists():
+                self.ctx.error(f"code.filesystem: path not found: {root}")
+                continue
             yield from self.scan_tree(root)
 
     # ------------------------------------------------------------------ walk
@@ -272,7 +281,10 @@ class FilesystemConnector(BaseConnector):
         if root.is_file():
             yield root.name, root, "."
             return
-        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        def walk_error(exc: OSError) -> None:
+            self.ctx.error(f"code.filesystem: could not enumerate a directory under {root}")
+
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=walk_error):
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else rel_dir
             dirnames[:] = sorted(d for d in dirnames if not self._excluded(f"{rel_dir}/{d}".lstrip("./"), d))
@@ -290,10 +302,11 @@ class FilesystemConnector(BaseConnector):
                     if p.is_symlink() or not p.is_file():
                         continue
                 except OSError:
+                    self.ctx.error(f"code.filesystem: could not inspect {rel}")
                     continue
                 count += 1
                 if count > self.max_files:
-                    self.ctx.warn(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
+                    self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
                     return
                 yield rel, p, proj
 
@@ -308,91 +321,112 @@ class FilesystemConnector(BaseConnector):
         infra_files: dict[str, list[tuple[Match, str, str]]] = {}  # relpath -> (match, value, snippet)
         infra_names: dict[str, list[str]] = {}  # relpath -> display / resource names
         for rel, path, proj_root in self._iter_files(root):
-            proj = projects.setdefault(proj_root, _Project(proj_root))
-            proj.files += 1
-            self.ctx.examined()
-            name = path.name
-            lower = name.lower()
-            ext = path.suffix.lower()
-            lang = language_for_path(rel)
-            if lang:
-                proj.languages.add(lang)
+            try:
+                with self.index.scan_budget(seconds=self.scan_timeout):
+                    proj = projects.setdefault(proj_root, _Project(proj_root))
+                    proj.files += 1
+                    self.ctx.examined()
+                    name = path.name
+                    lower = name.lower()
+                    ext = path.suffix.lower()
+                    lang = language_for_path(rel)
+                    if lang:
+                        proj.languages.add(lang)
 
-            # 1. file-name signals (config files of agents / MCP / A2A ...)
-            file_matches = self.index.match_file(rel)
-            for m in file_matches:
-                self._record(proj, m, rel, None)
+                    # 1. file-name signals (config files of agents / MCP / A2A ...)
+                    file_matches = self.index.match_file(rel)
+                    for m in file_matches:
+                        self._record(proj, m, rel, None)
 
-            is_source = ext in SOURCE_EXTENSIONS
-            is_text_cfg = ext in TEXT_CONFIG_EXTENSIONS or lower.startswith(".env") or is_manifest_name(name) or "." not in name
-            if not (is_source or is_text_cfg or file_matches):
-                continue
-            text = read_text(path, self.max_file_size)
-            if text is None:
-                continue
-            if ext == ".ipynb":
-                text = notebook_to_source(text)
-                lang = "python"
-
-            # 2. manifests (dependencies, images, env names, IaC types)
-            manifest = parse_manifest(rel, text) if (is_manifest_name(name) or ext in {".tf", ".bicep", ".yml", ".yaml", ".json", ".hcl"} or ".github/workflows" in rel) else None
-            if manifest:
-                for dep in manifest.deps:
-                    proj.deps.append(dep)
-                    for m in self.index.match_dependency(dep.ecosystem, dep.name):
-                        m.line = dep.line
-                        self._record(proj, m, rel, f"{dep.ecosystem}: {dep.name} {dep.spec or ''}".strip())
-                for art in manifest.artifacts:
-                    self._handle_artifact(proj, art, rel, text, infra_files, secret_hits, infra_names)
-
-            # 3. source & config content
-            is_mcp = self._looks_like_mcp_config(rel, name, text)
-            if is_source:
-                for m in self.index.match_imports(text, lang):
-                    self._record(proj, m, rel, excerpt_line(text, m.line or 1))
-                for m in self.index.match_code(text, lang):
-                    self._record(proj, m, rel, excerpt_line(text, m.line or 1))
-            else:
-                for m in self.index.match_code(text, None):
-                    self._record(proj, m, rel, excerpt_line(text, m.line or 1))
-                    if m.signature.category in {"platform", "cloud-service"} and m.agent_indicator and ext in {".json", ".yaml", ".yml"} and not is_mcp:
-                        workflow_files.setdefault(rel, []).append((m, excerpt_line(text, m.line or 1)))
-            for m in self.index.match_envs_in_text(text):
-                self._record(proj, m, rel, excerpt_line(text, m.line or 1))
-            for m in self.index.match_domains_in_text(text):
-                self._record(proj, m, rel, excerpt_line(text, m.line or 1))
-            if self.scan_secrets:
-                for m in self.index.match_secrets(text):
-                    if looks_like_placeholder(m.value):
+                    is_source = ext in SOURCE_EXTENSIONS
+                    is_text_cfg = ext in TEXT_CONFIG_EXTENSIONS or lower.startswith(".env") or is_manifest_name(name) or "." not in name
+                    if not (is_source or is_text_cfg or file_matches):
                         continue
-                    secret_hits.setdefault(rel, []).append((m, excerpt_line(text, m.line or 1).replace(m.value, redact(m.value))))
-                    self._record(proj, m, rel, None)
+                    read_errors: list[str] = []
+                    text = read_text(path, self.max_file_size, read_errors)
+                    for issue in read_errors:
+                        self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                    if text is None:
+                        continue
+                    if ext == ".ipynb":
+                        notebook_errors: list[str] = []
+                        text = notebook_to_source(text, notebook_errors)
+                        for issue in dict.fromkeys(notebook_errors):
+                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                        lang = "python"
+                    safe_text = _safe_source_text(rel, text)
 
-            # 4. special files
-            if is_mcp:
-                mcp_files.append((rel, text))
-            if lower in {"agent.json", "agent-card.json", "agent_card.json"} and ".well-known" in rel or lower in {"agent-card.json", "agent_card.json"}:
-                card_files.append((rel, text, "a2a"))
-            elif lower.startswith("declarativeagent") and ext == ".json":
-                card_files.append((rel, text, "m365"))
-            elif lower == "langgraph.json":
-                card_files.append((rel, text, "langgraph"))
-            elif lower == "agents.yaml" and "config" in rel:
-                card_files.append((rel, text, "crewai"))
-            if ext in {".md", ".mdc"} and (".claude/agents/" in rel or ".github/agents/" in rel or ".cursor/rules/" in rel or ".windsurf/rules/" in rel):
-                proj.agent_defs.append(self._parse_agent_definition(rel, text))
+                    # 2. manifests (dependencies, images, env names, IaC types)
+                    manifest = parse_manifest(rel, text) if (is_manifest_name(name) or ext in {".tf", ".bicep", ".yml", ".yaml", ".json", ".hcl"} or ".github/workflows" in rel) else None
+                    if manifest:
+                        for issue in dict.fromkeys(manifest.errors):
+                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                        for dep in manifest.deps:
+                            proj.deps.append(dep)
+                            for m in self.index.match_dependency(dep.ecosystem, dep.name):
+                                m.line = dep.line
+                                self._record(proj, m, rel, f"{dep.ecosystem}: {dep.name} {dep.spec or ''}".strip())
+                        for art in manifest.artifacts:
+                            self._handle_artifact(proj, art, rel, text, infra_files, secret_hits, infra_names)
+
+                    # 3. source & config content
+                    is_mcp = self._looks_like_mcp_config(rel, name, text)
+                    if is_source:
+                        for m in self.index.match_imports(text, lang):
+                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                        for m in self.index.match_code(text, lang):
+                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                    else:
+                        for m in self.index.match_code(text, None):
+                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                            if m.signature.category in {"platform", "cloud-service"} and m.agent_indicator and ext in {".json", ".yaml", ".yml"} and not is_mcp:
+                                workflow_files.setdefault(rel, []).append((m, excerpt_line(safe_text, m.line or 1)))
+                    for m in self.index.match_envs_in_text(text):
+                        self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                    for m in self.index.match_domains_in_text(text):
+                        self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                    if self.scan_secrets:
+                        for m in self.index.match_secrets(text):
+                            if looks_like_placeholder(m.value):
+                                continue
+                            secret_hits.setdefault(rel, []).append((m, excerpt_line(safe_text, m.line or 1).replace(m.value, redact(m.value))))
+                            self._record(proj, m, rel, None)
+
+                    # 4. special files
+                    if is_mcp:
+                        mcp_files.append((rel, text))
+                    if lower in {"agent.json", "agent-card.json", "agent_card.json"} and ".well-known" in rel or lower in {"agent-card.json", "agent_card.json"}:
+                        card_files.append((rel, text, "a2a"))
+                    elif lower.startswith("declarativeagent") and ext == ".json":
+                        card_files.append((rel, text, "m365"))
+                    elif lower == "langgraph.json":
+                        card_files.append((rel, text, "langgraph"))
+                    elif lower == "agents.yaml" and "config" in rel:
+                        card_files.append((rel, text, "crewai"))
+                    if ext in {".md", ".mdc"} and (".claude/agents/" in rel or ".github/agents/" in rel or ".cursor/rules/" in rel or ".windsurf/rules/" in rel):
+                        proj.agent_defs.append(self._parse_agent_definition(rel, text))
+            except Exception as exc:  # noqa: BLE001 - isolate hostile files and retain other findings
+                self.ctx.error(f"code.filesystem: {rel}: file analysis incomplete ({type(exc).__name__})")
 
         # ------------------------------------------------------------ emit
         for proj in projects.values():
             yield from self._emit_project(label, root, proj)
         for rel, text in mcp_files:
-            f = self._mcp_finding(label, root, rel, text)
-            if f:
-                yield f
+            try:
+                with self.index.scan_budget(seconds=self.scan_timeout):
+                    f = self._mcp_finding(label, root, rel, text)
+                    if f:
+                        yield f
+            except Exception as exc:  # noqa: BLE001 - retain findings from other configurations
+                self.ctx.error(f"code.filesystem: {rel}: MCP analysis incomplete ({type(exc).__name__})")
         for rel, text, kind in card_files:
-            f = self._card_finding(label, root, rel, text, kind)
-            if f:
-                yield f
+            try:
+                with self.index.scan_budget(seconds=self.scan_timeout):
+                    f = self._card_finding(label, root, rel, text, kind)
+                    if f:
+                        yield f
+            except Exception as exc:  # noqa: BLE001 - retain findings from other manifests
+                self.ctx.error(f"code.filesystem: {rel}: agent manifest analysis incomplete ({type(exc).__name__})")
         for rel, hits in workflow_files.items():
             yield self._workflow_finding(label, root, rel, hits)
         for rel, hits in infra_files.items():
@@ -402,6 +436,7 @@ class FilesystemConnector(BaseConnector):
 
     # --------------------------------------------------------------- helpers
     def _record(self, proj: _Project, m: Match, rel: str, snippet: str | None) -> None:
+        snippet = sanitize_text(snippet) if snippet is not None else None
         if m.signature.category == "identity-app":
             return  # identity-app signatures describe OAuth/SaaS apps, not code
         if m.signature.category == "coding-agent":
@@ -470,7 +505,12 @@ class FilesystemConnector(BaseConnector):
             return True
         if lower in MCP_CONFIG_NAMES or rel.endswith((".json", ".toml", ".yaml", ".yml")):
             head = text[:200_000]
-            return bool(re.search(r'"mcpServers"\s*:|^\s*mcpServers\s*:|\[mcp_servers\.[A-Za-z0-9_-]+\]|"mcp"\s*:\s*\{\s*"servers"|^\s*mcp:\s*\n\s+servers:|"servers"\s*:\s*\{[^}]*"(?:command|url)"', head, re.M))
+            return (
+                '"mcpServers"' in head or "mcpServers:" in head or "[mcp_servers." in head
+                or ('"mcp"' in head and '"servers"' in head)
+                or ("mcp:" in head and "servers:" in head)
+                or ('"servers"' in head and ('"command"' in head or '"url"' in head))
+            )
         return False
 
     def _git_info(self, root: Path, rel_root: str) -> dict[str, Any]:
@@ -493,24 +533,34 @@ class FilesystemConnector(BaseConnector):
         return {}
 
     def _codeowners(self, root: Path) -> list[tuple[str, list[str]]]:
-        if hasattr(self, "_codeowners_cache"):
-            return self._codeowners_cache  # type: ignore[attr-defined]
+        root = root.resolve()
+        if root in self._codeowners_cache:
+            return self._codeowners_cache[root]
         rules: list[tuple[str, list[str]]] = []
         for cand in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS"):
             p = root / cand
-            if p.is_file():
+            if p.exists() or p.is_symlink():
                 try:
-                    for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if not p.resolve().is_relative_to(root) or any(
+                        part.is_symlink() for part in [p, *p.parents] if part != root and root in part.parents
+                    ):
+                        self.ctx.error(f"code.filesystem: ignored unsafe CODEOWNERS path {cand}")
+                        break
+                    errors: list[str] = []
+                    content = read_text(p, self.max_file_size, errors)
+                    for issue in errors:
+                        self.ctx.error(f"code.filesystem: {cand}: {issue}")
+                    for line in (content or "").splitlines():
                         line = line.split("#", 1)[0].strip()
                         if not line:
                             continue
                         parts = line.split()
                         if len(parts) >= 2:
                             rules.append((parts[0], parts[1:]))
-                except OSError:
-                    pass
+                except (OSError, RuntimeError):
+                    self.ctx.error(f"code.filesystem: could not read {cand}")
                 break
-        self._codeowners_cache = rules  # type: ignore[attr-defined]
+        self._codeowners_cache[root] = rules
         return rules
 
     def _owner_for(self, root: Path, rel_root: str) -> str | None:
@@ -593,7 +643,10 @@ class FilesystemConnector(BaseConnector):
         return f"{what} in {where}: {detail}"
 
     def _mcp_finding(self, label: str, root: Path, rel: str, text: str) -> Finding | None:
-        servers = _parse_mcp_servers(rel, text)
+        errors: list[str] = []
+        servers = _parse_mcp_servers(rel, text, errors)
+        for issue in dict.fromkeys(errors):
+            self.ctx.error(f"code.filesystem: {rel}: {issue}")
         f = self._base(label, root, rel, Kind.MCP_SERVER, f"MCP configuration: {rel}", "mcp-config")
         sig = self.index.get("protocol.mcp")
         f.add_framework("protocol.mcp")
@@ -606,7 +659,7 @@ class FilesystemConnector(BaseConnector):
                     if m.signature.category != "identity-app":
                         apply_matches(f, [m], location=rel)
                 remote_hosts.append(s["url"])
-            for env_name in s.get("env", []):
+            for env_name in s.get("env_names", []):
                 for m in self.index.match_env(env_name):
                     apply_matches(f, [m], location=rel, weight_scale=0.5)
             if s.get("secrets_inline"):
@@ -632,10 +685,15 @@ class FilesystemConnector(BaseConnector):
         data: Any = None
         try:
             data = yaml.safe_load(text) if rel.endswith((".yaml", ".yml")) else json.loads(text)
-        except (ValueError, yaml.YAMLError):
+        except (ValueError, RecursionError, yaml.YAMLError):
+            self.ctx.error(f"code.filesystem: {rel}: invalid agent manifest")
             return None
         if not isinstance(data, dict):
+            self.ctx.error(f"code.filesystem: {rel}: agent manifest must be an object")
             return None
+        # Retain sibling credential context before projecting descriptive fields.
+        # An opaque secret may also appear in a description, URL or dependency.
+        data = sanitize(data)
         f = self._base(label, root, rel, Kind.AGENT, "", "agent-manifest")
         if kind == "a2a":
             f.title = f"A2A agent card: {data.get('name') or rel}"
@@ -644,7 +702,7 @@ class FilesystemConnector(BaseConnector):
             f.add_evidence(Evidence(signal="file:protocol.a2a", description="A2A Agent Card", location=rel, weight=0.95, signature="protocol.a2a"))
             f.metadata["agent_card"] = {
                 "name": data.get("name"),
-                "description": truncate(str(data.get("description", "")), 300),
+                "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
                 "url": data.get("url"),
                 "version": data.get("version"),
                 "protocol_version": data.get("protocolVersion"),
@@ -662,8 +720,8 @@ class FilesystemConnector(BaseConnector):
             f.add_evidence(Evidence(signal="file:platform.m365-declarative-agent", description="Microsoft 365 declarative agent manifest", location=rel, weight=0.95, signature="platform.m365-declarative-agent"))
             f.metadata["declarative_agent"] = {
                 "name": data.get("name"),
-                "description": truncate(str(data.get("description", "")), 300),
-                "instructions": truncate(str(data.get("instructions", "")), 300),
+                "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
+                "instructions": truncate(sanitize_text(str(data.get("instructions", ""))), 300),
                 "capabilities": [c.get("name") for c in data.get("capabilities", []) or [] if isinstance(c, dict)],
                 "actions": [a.get("id") or a.get("file") for a in data.get("actions", []) or [] if isinstance(a, dict)],
                 "conversation_starters": len(data.get("conversation_starters", []) or []),
@@ -677,7 +735,10 @@ class FilesystemConnector(BaseConnector):
             graphs = data.get("graphs", {}) or {}
             f.metadata["graphs"] = list(graphs.keys()) if isinstance(graphs, dict) else graphs
             f.metadata["dependencies"] = data.get("dependencies")
-            f.metadata["env"] = data.get("env")
+            env = data.get("env")
+            f.metadata["env_names"] = sorted(env) if isinstance(env, dict) else []
+            if isinstance(env, str):
+                f.metadata["env_file"] = sanitize_text(env)
             f.add_capability("tool-use")
         elif kind == "crewai":
             f.title = f"CrewAI agent definitions: {rel}"
@@ -685,7 +746,7 @@ class FilesystemConnector(BaseConnector):
             f.add_capability("multi-agent")
             f.add_evidence(Evidence(signal="file:framework.crewai", description="CrewAI agents.yaml", location=rel, weight=0.9, signature="framework.crewai"))
             f.metadata["agents"] = [
-                {"name": k, "role": truncate(str((v or {}).get("role", "")), 120), "llm": (v or {}).get("llm")} for k, v in data.items() if isinstance(v, dict)
+                {"name": k, "role": truncate(sanitize_text(str((v or {}).get("role", ""))), 120), "llm": (v or {}).get("llm")} for k, v in data.items() if isinstance(v, dict)
             ]
             for v in data.values():
                 if isinstance(v, dict) and v.get("llm"):
@@ -733,20 +794,21 @@ class FilesystemConnector(BaseConnector):
         f.kind = Kind.SECRET
         return f
 
-    @staticmethod
-    def _parse_agent_definition(rel: str, text: str) -> dict[str, Any]:
+    def _parse_agent_definition(self, rel: str, text: str) -> dict[str, Any]:
         info: dict[str, Any] = {"file": rel, "name": PurePosixPath(rel).stem}
         m = _FRONTMATTER.match(text)
         if m:
             try:
                 fm = yaml.safe_load(m.group(1)) or {}
             except yaml.YAMLError:
+                self.ctx.error(f"code.filesystem: {rel}: invalid agent definition YAML")
                 fm = {}
             if isinstance(fm, dict):
+                fm = sanitize(fm)
                 for k in ("name", "description", "tools", "model", "permissionMode", "mode", "globs", "alwaysApply"):
                     if k in fm:
                         v = fm[k]
-                        info[k] = truncate(str(v), 200) if isinstance(v, str) else v
+                        info[k] = truncate(sanitize_text(v), 200) if isinstance(v, str) else sanitize(v)
         return info
 
 
@@ -795,61 +857,180 @@ def _mcp_client_for(rel: str) -> str:
 _SECRETISH = re.compile(r"(?i)(key|token|secret|password|passwd|credential|auth)")
 
 
-def _parse_mcp_servers(rel: str, text: str) -> list[dict[str, Any]]:
-    servers: dict[str, Any] = {}
+def _safe_source_text(rel: str, text: str) -> str:
+    """Use structured credential context while retaining source line positions.
+
+    An opaque argv value is identifiable only alongside its flag, and environment
+    values must not reappear in source snippets after being removed from metadata.
+    """
+    try:
+        if rel.endswith((".json", ".jsonc", ".json5")):
+            data = json.loads(_strip_json_comments(text))
+        elif rel.endswith(".toml"):
+            data = tomllib.loads(text)
+        elif rel.endswith((".yaml", ".yml")):
+            data = yaml.safe_load(text)
+        else:
+            return sanitize_text(text)
+        return sanitize({"source": text, "parsed": data})["source"]
+    except (ValueError, RecursionError, yaml.YAMLError):
+        # Dedicated parsers report syntax/shape failures. Lexical redaction still
+        # applies if this file cannot supply usable structured context.
+        return sanitize_text(text)
+
+
+def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:
+    errors = errors if errors is not None else []
     try:
         if rel.endswith(".toml"):
             data = tomllib.loads(text)
-            servers = data.get("mcp_servers", {}) or (data.get("mcp", {}) or {}).get("servers", {}) or {}
         elif rel.endswith((".yaml", ".yml")):
-            data = yaml.safe_load(text) or {}
-            raw = data.get("mcpServers") or (data.get("mcp", {}) or {}).get("servers") or data.get("servers") or {}
-            if isinstance(raw, list):  # continue.dev style list
-                servers = {str(s.get("name", i)): s for i, s in enumerate(raw) if isinstance(s, dict)}
-            else:
-                servers = raw
+            data = yaml.safe_load(text)
         else:
             data = json.loads(_strip_json_comments(text))
-            servers = data.get("mcpServers") or (data.get("mcp", {}) or {}).get("servers") or data.get("servers") or {}
-            if not servers and data.get("name") and (data.get("packages") or data.get("remotes")):
-                servers = {data["name"]: data}
-    except (ValueError, tomllib.TOMLDecodeError, yaml.YAMLError, AttributeError):
+    except (ValueError, RecursionError, yaml.YAMLError):
+        errors.append("invalid MCP configuration syntax")
+        return []
+    if not isinstance(data, dict):
+        errors.append("MCP configuration must be an object")
+        return []
+    mcp = data.get("mcp", {})
+    if not isinstance(mcp, dict):
+        errors.append("MCP mcp field must be an object")
+        mcp = {}
+    servers = next((value for value in (
+        data.get("mcp_servers"), data.get("mcpServers"), mcp.get("servers"), data.get("servers"),
+    ) if value is not None), {})
+    if isinstance(servers, list):
+        if any(not isinstance(server, dict) for server in servers):
+            errors.append("MCP server entries must be objects")
+        servers = {str(server.get("name", i)): server for i, server in enumerate(servers) if isinstance(server, dict)}
+    if not servers and isinstance(data.get("name"), str) and (data.get("packages") or data.get("remotes")):
+        servers = {data["name"]: data}
+    if not isinstance(servers, dict):
+        errors.append("MCP servers must be an object or array")
         return []
     out: list[dict[str, Any]] = []
-    if not isinstance(servers, dict):
-        return out
     for name, cfg in servers.items():
         if not isinstance(cfg, dict):
+            errors.append("MCP server entry must be an object")
             continue
-        env = cfg.get("env") or cfg.get("environment") or {}
-        headers = cfg.get("headers") or {}
+        env = cfg.get("env", cfg.get("environment", {}))
+        headers = cfg.get("headers", {})
+        env = {} if env is None else env
+        headers = {} if headers is None else headers
+        if not isinstance(env, dict):
+            errors.append("MCP env must be an object")
+            env = {}
+        if not isinstance(headers, dict):
+            errors.append("MCP headers must be an object")
+            headers = {}
         url = cfg.get("url") or cfg.get("serverUrl") or cfg.get("endpoint")
-        if not url and isinstance(cfg.get("remotes"), list) and cfg["remotes"]:
-            url = cfg["remotes"][0].get("url")
-        inline = False
-        for k, v in list(env.items()) + list(headers.items()):
-            if isinstance(v, str) and v and not v.startswith("${") and not looks_like_placeholder(v) and _SECRETISH.search(str(k)) and len(v) >= 12:
-                inline = True
-        transport = cfg.get("type") or cfg.get("transport") or ("stdio" if cfg.get("command") else ("http" if url else "unknown"))
-        out.append(
-            {
+        remotes = cfg.get("remotes")
+        if not url and isinstance(remotes, list) and remotes:
+            if isinstance(remotes[0], dict):
+                url = remotes[0].get("url")
+            else:
+                errors.append("MCP remote entry must be an object")
+        if url is not None and not isinstance(url, str):
+            errors.append("MCP url must be a string")
+            url = None
+        command = cfg.get("command")
+        if command is not None and not isinstance(command, str):
+            errors.append("MCP command must be a string")
+            command = None
+        args = cfg.get("args", [])
+        args = [] if args is None else args
+        if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+            errors.append("MCP args must be an array of strings")
+            args = []
+        inline = any(
+            isinstance(value, str) and value and not value.startswith("${")
+            and not looks_like_placeholder(value) and _SECRETISH.search(str(key)) and len(value) >= 12
+            for key, value in [*env.items(), *headers.items()]
+        )
+        transport = cfg.get("type") or cfg.get("transport") or ("stdio" if command else ("http" if url else "unknown"))
+        if not isinstance(transport, str):
+            errors.append("MCP transport must be a string")
+            transport = "unknown"
+        # Project only after sanitizing with the entire config: a credential in
+        # env/headers may be repeated as an otherwise unrecognizable argument.
+        safe = sanitize({
+            "context": cfg,
+            "fields": {
                 "name": str(name),
                 "transport": transport,
-                "command": cfg.get("command"),
-                "args": [str(a) for a in (cfg.get("args") or [])][:12],
+                "command": command,
+                "args": args,
                 "url": url,
-                "env": sorted(env.keys()) if isinstance(env, dict) else [],
-                "headers": sorted(headers.keys()) if isinstance(headers, dict) else [],
-                "secrets_inline": inline,
-                "disabled": bool(cfg.get("disabled", False)),
+                "env_names": sorted(str(key) for key in env),
+                "headers": sorted(str(key) for key in headers),
                 "auto_approve": cfg.get("autoApprove") or cfg.get("alwaysAllow"),
-            }
-        )
-    return out
+            },
+        })["fields"]
+        inline = inline or safe["args"] != args or safe["url"] != url or safe["command"] != command
+        safe["args"] = safe["args"][:12]
+        safe["secrets_inline"] = bool(inline)
+        safe["disabled"] = bool(cfg.get("disabled", False))
+        out.append(safe)
+    return sanitize({"context": data, "servers": out})["servers"]
 
 
 def _strip_json_comments(text: str) -> str:
-    text = re.sub(r"^\s*//.*$", "", text, flags=re.M)
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    text = re.sub(r",(\s*[}\]])", r"\1", text)
-    return text
+    """Tolerate JSONC comments and trailing commas without rewriting strings."""
+    out: list[str] = []
+    i = 0
+    in_string = False
+    while i < len(text):
+        char = text[i]
+        if in_string:
+            out.append(char)
+            if char == "\\" and i + 1 < len(text):
+                i += 1
+                out.append(text[i])
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+            out.append(char)
+        elif text.startswith("//", i):
+            end = text.find("\n", i + 2)
+            i = len(text) if end == -1 else end
+            out.append("\n")
+            continue
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            if end == -1:
+                raise ValueError("unterminated JSON comment")
+            out.append(" " + "\n" * text.count("\n", i, end + 2))
+            i = end + 2
+            continue
+        else:
+            out.append(char)
+        i += 1
+    stripped = "".join(out)
+    out = []
+    in_string = False
+    i = 0
+    while i < len(stripped):
+        char = stripped[i]
+        if in_string:
+            out.append(char)
+            if char == "\\" and i + 1 < len(stripped):
+                i += 1
+                out.append(stripped[i])
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+            out.append(char)
+        elif char == ",":
+            end = i + 1
+            while end < len(stripped) and stripped[end].isspace():
+                end += 1
+            if end == len(stripped) or stripped[end] not in "}]":
+                out.append(char)
+        else:
+            out.append(char)
+        i += 1
+    return "".join(out)

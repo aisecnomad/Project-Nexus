@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -12,10 +13,13 @@ from typing import Any
 from shadowscan import __version__
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext, get_connector_class
+from shadowscan.correlation import correlate_runtime
+from shadowscan.incremental import IncrementalCache
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, now_iso
 from shadowscan.registry import Inventory
 from shadowscan.risk import assess
 from shadowscan.signatures import SignatureIndex, get_index
+from shadowscan.utils.redaction import sanitize
 
 log = logging.getLogger("shadowscan.engine")
 
@@ -33,33 +37,117 @@ class Engine:
 
     # ------------------------------------------------------------------ run
     def run(self, only: list[str] | None = None) -> ScanResult:
+        # Registry approval can change independently of source inputs or an Engine
+        # instance's lifetime. It is never persisted in connector cache entries.
+        self.inventory = Inventory.load(self.config.inventory) if self.config.inventory else None
         result = ScanResult(version=__version__, inventory_size=len(self.inventory) if self.inventory else 0)
         specs = [s for s in self.config.enabled_connectors() if not only or s.id in only or s.name in only]
         if not specs:
             log.warning("no connectors selected")
         findings: list[Finding] = []
         stats: list[ScanStats] = []
+        if not specs:
+            stats.append(ScanStats(
+                connector="engine", started_at=now_iso(), finished_at=now_iso(),
+                skipped=True, skip_reason="no connectors selected", incomplete=True,
+                errors=["no connectors selected"],
+            ))
+        cache = IncrementalCache(self.config, self.index)
         if self.config.dump_records:
             os.makedirs(self.config.dump_records, exist_ok=True)
 
-        def _run(spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats | None]:
+        def _run_one(spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
             self.progress(spec.id, "starting")
             cfg = dict(spec.config)
+            if spec.label:
+                cfg.setdefault("label", spec.label)
             if self.config.dump_records:
                 cfg["_dump_path"] = os.path.join(self.config.dump_records, f"{spec.id.replace('.', '_').replace('/', '_')}.jsonl")
             ctx = ConnectorContext(config=cfg, index=self.index, workdir=self.config.workdir)
+            fs: list[Finding] = []
+            started_at = now_iso()
             try:
                 cls = get_connector_class(spec.name)
-            except KeyError as exc:
-                st = ScanStats(connector=spec.id, started_at=now_iso(), finished_at=now_iso(), skipped=True, skip_reason=str(exc), errors=[str(exc)])
-                return spec, [], st
-            connector = cls(ctx)
-            fs = connector.run()
-            st = ctx.stats
-            if st:
+                # Constructor validation still runs before a cached result is used.
+                connector = cls(ctx)
+                snapshot = cache.snapshot(spec) if cache.supports_connector(spec, cls) else None
+                cached = cache.load(spec, snapshot) if snapshot else None
+                if cached is not None:
+                    fs, st = cached
+                    if cache.snapshot(spec) == snapshot:
+                        self.progress(spec.id, f"{len(fs)} findings (unchanged input; cached)")
+                        return spec, fs, st
+                fs = []
+                fs = connector.run()
+                st = ctx.stats or ScanStats(
+                    connector=spec.id, started_at=started_at, finished_at=now_iso(),
+                    incomplete=True, errors=["connector did not report completion status"],
+                )
                 st.connector = spec.id
+                st.incomplete = st.incomplete or bool(st.errors) or st.skipped
+                for finding in fs:
+                    finding.sanitize()
+                if snapshot and not st.incomplete:
+                    # Do not attach a result to a digest computed before an input
+                    # changed during collection. Preserve the findings, mark the
+                    # scan incomplete and require a fresh scan for security gates.
+                    if cache.snapshot(spec) == snapshot:
+                        st.cache_key = snapshot.fingerprint
+                        cache.save(snapshot, fs, st)
+                    else:
+                        st.incomplete = True
+                        st.errors.append("static input changed during the scan; rerun required")
+            except Exception as exc:  # noqa: BLE001 - isolate construction as well as collection failures
+                message = ctx.sanitize_message(f"{spec.name}: {type(exc).__name__}: {exc}")
+                st = ctx.stats or ScanStats(connector=spec.id, started_at=started_at)
+                st.connector = spec.id
+                st.finished_at = now_iso()
+                st.incomplete = True
+                st.skipped = not fs
+                st.skip_reason = message if st.skipped else None
+                st.errors.append(message)
+                log.warning("connector failed: %s", message)
+            st.findings = len(fs)
+            st.errors = sanitize(st.errors)
+            st.warnings = sanitize(st.warnings)
             self.progress(spec.id, f"{len(fs)} findings")
             return spec, fs, st
+
+        def _run(spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
+            roots = spec.config.get("paths")
+            if not (
+                self.config.incremental and spec.name == "code.filesystem"
+                and not spec.config.get("input") and isinstance(roots, list) and len(roots) > 1
+                and cache.supports_connector(spec, get_connector_class(spec.name))
+            ):
+                return _run_one(spec)
+            # Repositories are independent cache units: modifying repo B must not
+            # force expensive analysis of unchanged repo A in the same connector.
+            combined: list[Finding] = []
+            parts: list[ScanStats] = []
+            for root in roots:
+                child_config = {k: v for k, v in spec.config.items() if k != "paths"}
+                child_config["path"] = root
+                _, child_findings, child_stats = _run_one(ConnectorSpec(
+                    name=spec.name, config=child_config, label=spec.label,
+                ))
+                combined.extend(child_findings)
+                parts.append(child_stats)
+            cached_count = sum(s.cached for s in parts)
+            stats = ScanStats(
+                connector=spec.id, started_at=min(s.started_at for s in parts),
+                finished_at=now_iso(), findings=len(combined),
+                objects_examined=sum(s.objects_examined for s in parts),
+                errors=[e for s in parts for e in s.errors],
+                warnings=[w for s in parts for w in s.warnings],
+                incomplete=any(s.incomplete or s.skipped or s.errors for s in parts),
+                skipped=all(s.skipped for s in parts), cached=cached_count == len(parts),
+            )
+            if cached_count:
+                stats.warnings.append(f"incremental: reused {cached_count}/{len(parts)} unchanged repository roots")
+            if all(s.cache_key for s in parts):
+                stats.cache_key = hashlib.sha256("|".join(s.cache_key or "" for s in parts).encode()).hexdigest()
+            return spec, combined, stats
 
         workers = max(1, min(self.config.parallel, len(specs) or 1))
         if workers == 1:
@@ -79,6 +167,7 @@ class Engine:
 
         findings = merge(findings)
         correlate(findings)
+        correlate_runtime(findings)
         for f in findings:
             if self.inventory is not None:
                 entry = self.inventory.match(f)
@@ -87,6 +176,7 @@ class Engine:
                 if entry and not f.owner:
                     f.owner = entry.owner
             f.risk = assess(f, self.index, inventory_present=self.inventory is not None)
+            f.sanitize()
         if self.config.min_confidence > 0:
             findings = [f for f in findings if f.confidence >= self.config.min_confidence]
         findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))

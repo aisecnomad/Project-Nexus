@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+
+from shadowscan.utils.redaction import sanitize
 
 
 class Surface(str, Enum):
@@ -96,6 +98,14 @@ class Evidence:
     signature: str | None = None  # signature id that produced it, if any
     attributes: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        self.sanitize()
+
+    def sanitize(self) -> None:
+        values = sanitize({attr.name: getattr(self, attr.name) for attr in fields(self)})
+        for name, value in values.items():
+            setattr(self, name, value)
+
 
 @dataclass(slots=True)
 class RiskFactor:
@@ -144,13 +154,34 @@ class Finding:
         if not self.id:
             self.id = self.compute_id()
         self.likelihood = Likelihood.from_confidence(self.confidence)
+        self.sanitize()
 
     # ------------------------------------------------------------------ helpers
     def compute_id(self) -> str:
         raw = f"{self.surface.value}|{self.connector}|{self.kind.value}|{self.provider}|{self.account}|{self.resource}"
         return "ss-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
+    def sanitize(self) -> None:
+        """Remove credentials from every persisted/reportable field in place."""
+        values = {
+            attr.name: getattr(self, attr.name) for attr in fields(self)
+            if attr.name not in {"surface", "kind", "likelihood", "risk", "evidence"}
+        }
+        values["evidence"] = [{attr.name: getattr(ev, attr.name) for attr in fields(ev)} for ev in self.evidence]
+        values["risk_factors"] = [asdict(factor) for factor in self.risk.factors]
+        values = sanitize(values)
+        for name, value in values.items():
+            if name not in {"evidence", "risk_factors"}:
+                setattr(self, name, value)
+        for ev, clean in zip(self.evidence, values["evidence"], strict=True):
+            for name, value in clean.items():
+                setattr(ev, name, value)
+        for factor, clean in zip(self.risk.factors, values["risk_factors"], strict=True):
+            factor.id = clean["id"]
+            factor.description = clean["description"]
+
     def add_evidence(self, ev: Evidence) -> None:
+        ev.sanitize()
         self.evidence.append(ev)
 
     def add_framework(self, sig_id: str) -> None:
@@ -182,6 +213,7 @@ class Finding:
         self.likelihood = Likelihood.from_confidence(self.confidence)
 
     def to_dict(self) -> dict[str, Any]:
+        self.sanitize()
         d = asdict(self)
         d["surface"] = self.surface.value
         d["kind"] = self.kind.value
@@ -216,6 +248,9 @@ class ScanStats:
     warnings: list[str] = field(default_factory=list)
     skipped: bool = False
     skip_reason: str | None = None
+    cached: bool = False
+    cache_key: str | None = None
+    incomplete: bool = False
 
 
 @dataclass(slots=True)
@@ -227,6 +262,15 @@ class ScanResult:
     version: str = ""
     inventory_size: int = 0
 
+    def __post_init__(self) -> None:
+        for finding in self.findings:
+            finding.sanitize()
+
+    @property
+    def complete(self) -> bool:
+        """Only a scan whose requested connectors all completed is successful."""
+        return bool(self.stats) and not any(s.errors or s.skipped or s.incomplete for s in self.stats)
+
     def summary(self) -> dict[str, Any]:
         by_surface: dict[str, int] = {}
         by_kind: dict[str, int] = {}
@@ -235,6 +279,7 @@ class ScanResult:
         providers: dict[str, int] = {}
         shadow = 0
         for f in self.findings:
+            f.sanitize()
             by_surface[f.surface.value] = by_surface.get(f.surface.value, 0) + 1
             by_kind[f.kind.value] = by_kind.get(f.kind.value, 0) + 1
             by_level[f.risk.level.value] = by_level.get(f.risk.level.value, 0) + 1
@@ -245,6 +290,8 @@ class ScanResult:
             if f.shadow:
                 shadow += 1
         return {
+            "complete": self.complete,
+            "status": "complete" if self.complete else "incomplete",
             "total": len(self.findings),
             "shadow": shadow,
             "by_surface": by_surface,
@@ -262,7 +309,7 @@ class ScanResult:
             "finished_at": self.finished_at,
             "inventory_size": self.inventory_size,
             "summary": self.summary(),
-            "stats": [asdict(s) for s in self.stats],
+            "stats": [sanitize(asdict(s)) for s in self.stats],
             "findings": [f.to_dict() for f in self.findings],
         }
 

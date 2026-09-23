@@ -20,7 +20,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.http import HttpClient
+from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path, parse_timestamp, to_iso
 
 
@@ -44,10 +44,10 @@ class SlackConnector(BaseConnector):
         if not token:
             raise ConnectorError("saas.slack: token required")
         http = HttpClient("https://slack.com/api", headers={"Authorization": f"Bearer {token}"})
-        info = http.try_get_json("/team.info") or {}
+        info = self._api(http, "/team.info") or {}
         team = (info.get("team") or {})
         yield {"_kind": "team", **team}
-        for u in http.paginate_cursor("/users.list", params={"limit": 200}, items_key="members"):
+        for u in self._cursor(http, "/users.list", {"limit": 200}, "members"):
             if u.get("is_bot") or u.get("is_app_user"):
                 u["_kind"] = "bot_user"
                 yield u
@@ -55,17 +55,51 @@ class SlackConnector(BaseConnector):
         if self.team_id:
             params["team_id"] = self.team_id
         for method, kind, key in (("admin.apps.approved.list", "approved_app", "approved_apps"), ("admin.apps.restricted.list", "restricted_app", "restricted_apps"), ("admin.apps.requests.list", "app_request", "app_requests")):
-            data = http.try_get_json(f"/{method}", params=params) or {}
-            if not data.get("ok"):
-                self.log.debug("slack %s: %s", method, data.get("error"))
-                continue
-            for item in data.get(key, []) or []:
+            for item in self._cursor(http, f"/{method}", params, key):
                 item["_kind"] = kind
                 yield item
-        data = http.try_get_json("/team.integrationLogs", params={"count": 1000}) or {}
-        for log in data.get("logs", []) or []:
-            log["_kind"] = "integration_log"
-            yield log
+        page = 1
+        while page <= 1000:
+            data = self._api(http, "/team.integrationLogs", {"count": 1000, "page": page})
+            if data is None:
+                return
+            for entry in data.get("logs", []) or []:
+                yield {"_kind": "integration_log", **entry}
+            paging = data.get("paging") or {}
+            if page >= int(paging.get("pages", 1)):
+                return
+            page += 1
+        self.ctx.warn("saas.slack: integration log page limit reached", incomplete=True)
+
+    def _api(self, http: HttpClient, path: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        try:
+            data = http.get_json(path, params=params)
+        except HttpError as exc:
+            self.ctx.warn(f"saas.slack: {path}: HTTP {exc.status}; coverage unknown", incomplete=True)
+            return None
+        if not isinstance(data, dict) or data.get("ok") is not True:
+            error = data.get("error", "invalid response") if isinstance(data, dict) else "invalid response"
+            self.ctx.warn(f"saas.slack: {path}: {error}; coverage unknown", incomplete=True)
+            return None
+        return data
+
+    def _cursor(self, http: HttpClient, path: str, params: dict[str, Any], key: str) -> Iterable[dict[str, Any]]:
+        params = dict(params)
+        seen: set[str] = set()
+        for _ in range(1000):
+            data = self._api(http, path, params)
+            if data is None:
+                return
+            yield from data.get(key, []) or []
+            cursor = str((data.get("response_metadata") or {}).get("next_cursor") or "").strip()
+            if not cursor:
+                return
+            if cursor in seen:
+                self.ctx.warn(f"saas.slack: repeated cursor for {path}", incomplete=True)
+                return
+            seen.add(cursor)
+            params["cursor"] = cursor
+        self.ctx.warn(f"saas.slack: page limit for {path}", incomplete=True)
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         team_name: str | None = None

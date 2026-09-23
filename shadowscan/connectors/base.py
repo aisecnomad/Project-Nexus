@@ -20,6 +20,7 @@ import importlib
 import json
 import logging
 import os
+import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -29,6 +30,7 @@ import yaml
 
 from shadowscan.models import Finding, ScanStats, Surface, now_iso
 from shadowscan.signatures import SignatureIndex, get_index
+from shadowscan.utils.redaction import sanitize
 
 
 class ConnectorError(RuntimeError):
@@ -52,6 +54,7 @@ class ConnectorContext:
         self.input_path = input_path or self.config.get("input")
         self.workdir = workdir
         self.stats: ScanStats | None = None
+        self._resolved_config: dict[str, Any] = {}
 
     # ---------------------------------------------------------------- config
     def get(self, key: str, default: Any = None, env: str | None = None) -> Any:
@@ -59,7 +62,9 @@ class ConnectorContext:
         val = self.config.get(key)
         if val is None and env:
             val = os.environ.get(env)
-        return default if val is None else val
+        resolved = default if val is None else val
+        self._resolved_config[key] = resolved
+        return resolved
 
     def require(self, key: str, env: str | None = None) -> Any:
         val = self.get(key, env=env)
@@ -68,15 +73,23 @@ class ConnectorContext:
             raise ConnectorError(f"missing required config '{key}'{hint}")
         return val
 
-    def warn(self, msg: str) -> None:
+    def sanitize_message(self, msg: str) -> str:
+        """Remove configured credentials even when an upstream error echoes them."""
+        return sanitize({"config": {**self.config, **self._resolved_config}, "message": msg})["message"]
+
+    def warn(self, msg: str, incomplete: bool = True) -> None:
+        msg = self.sanitize_message(msg)
         self.log.warning(msg)
         if self.stats is not None:
             self.stats.warnings.append(msg)
+            self.stats.incomplete = self.stats.incomplete or incomplete
 
     def error(self, msg: str) -> None:
+        msg = self.sanitize_message(msg)
         self.log.error(msg)
         if self.stats is not None:
             self.stats.errors.append(msg)
+            self.stats.incomplete = True
 
     def examined(self, n: int = 1) -> None:
         if self.stats is not None:
@@ -177,14 +190,21 @@ class BaseConnector(ABC):
 
     # ------------------------------------------------------------------- run
     def _tee(self, records: Iterable[dict[str, Any]], path: str) -> Iterator[dict[str, Any]]:
-        """Write every raw record to a JSONL file (for offline re-analysis / evidence retention)."""
-        with open(path, "w", encoding="utf-8") as fh:
-            for rec in records:
-                try:
-                    fh.write(json.dumps(rec, default=str) + "\n")
-                except (TypeError, ValueError):
-                    pass
-                yield rec
+        """Export sanitized records atomically, with owner-only permissions.
+
+        The original records are used for analysis but are never written to disk.
+        JWT inputs are excluded entirely via the ``_NoDump`` marker.
+        """
+        target = Path(path)
+        fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                for rec in records:
+                    fh.write(json.dumps(sanitize(rec), default=str) + "\n")
+                    yield rec
+            os.replace(temporary, target)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
 
     def run(self) -> list[Finding]:
         stats = ScanStats(connector=self.name, started_at=now_iso())
@@ -203,18 +223,19 @@ class BaseConnector(ABC):
                 f.connector = self.name
                 if f.provider is None:
                     f.provider = self.provider
+                f.sanitize()
                 findings.append(f)
         except ConnectorError as exc:
             stats.skipped = True
-            stats.skip_reason = str(exc)
+            stats.skip_reason = self.ctx.sanitize_message(str(exc))
             self.ctx.error(str(exc))
         except Exception as exc:  # noqa: BLE001 - connectors must never abort the whole scan
             self.ctx.error(f"{self.name}: {type(exc).__name__}: {exc}")
-            self.log.debug("connector failure", exc_info=True)
+            self.log.debug("connector failure (%s)", type(exc).__name__)
         stats.finished_at = now_iso()
         stats.findings = len(findings)
         return findings
 
 
 class _NoDump:
-    """Mixin marker for connectors whose records are not worth dumping (e.g. filesystem walks)."""
+    """Exclude input records from exports (filesystem walks or sensitive token streams)."""

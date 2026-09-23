@@ -19,9 +19,9 @@ The inventory can be supplied as:
 * a simple inventory list ``agents: [{id, name, owner, resources, names}]`` (YAML/JSON)
 * a CSV with columns ``agent_id, name, owner, resources`` (resources separated by ``|``)
 
-Matching precedence: explicit resource pattern > agent id contained in the
-resource id > name / alias equality against the finding's title, resource tail
-or ``metadata`` name fields.
+Automatic approval requires an explicit, case-sensitive resource pattern and
+all configured ``surfaces``, ``providers`` and ``accounts`` constraints. Names
+and aliases are review suggestions only; they never confer sanctioned status.
 """
 
 from __future__ import annotations
@@ -67,6 +67,8 @@ class InventoryEntry:
     names: list[str] = field(default_factory=list)
     frameworks: list[str] = field(default_factory=list)
     surfaces: list[str] = field(default_factory=list)
+    providers: list[str] = field(default_factory=list)
+    accounts: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     source: str | None = None
     card: dict[str, Any] = field(default_factory=dict)
@@ -123,6 +125,9 @@ class Inventory:
                         owner=row.get("owner") or row.get("owner_team"),
                         resources=[r.strip() for r in str(row.get("resources") or "").split("|") if r.strip()],
                         names=[n.strip() for n in str(row.get("names") or row.get("aliases") or "").split("|") if n.strip()],
+                        surfaces=_list(row.get("surfaces")),
+                        providers=_list(row.get("providers")),
+                        accounts=_list(row.get("accounts")),
                         source=str(path),
                         card=dict(row),
                     )
@@ -168,7 +173,9 @@ class Inventory:
             resources=[str(r) for r in disc.get("resources") or []],
             names=[str(n) for n in disc.get("names") or disc.get("aliases") or []],
             frameworks=frameworks,
-            surfaces=[str(s) for s in disc.get("surfaces") or []],
+            surfaces=_list(disc.get("surfaces")),
+            providers=_list(disc.get("providers")),
+            accounts=_list(disc.get("accounts")),
             tags=[str(t) for t in (meta.get("tags") or []) + ([meta["classification"]] if meta.get("classification") else [])],
             source=str(path),
             card=doc,
@@ -186,7 +193,9 @@ class Inventory:
             resources=[str(r) for r in item.get("resources") or []],
             names=[str(n) for n in item.get("names") or item.get("aliases") or []],
             frameworks=[str(f) for f in item.get("frameworks") or []],
-            surfaces=[str(s) for s in item.get("surfaces") or []],
+            surfaces=_list(item.get("surfaces")),
+            providers=_list(item.get("providers")),
+            accounts=_list(item.get("accounts")),
             tags=[str(t) for t in item.get("tags") or []],
             source=str(path),
             card=item,
@@ -194,28 +203,60 @@ class Inventory:
 
     # --------------------------------------------------------------- match
     def match(self, finding: Finding) -> InventoryEntry | None:
+        """Return one unambiguous, explicitly scoped resource approval.
+
+        Case folding resource IDs can approve a different object (for example,
+        a case-sensitive cloud ARN or repository path). Unknown scopes and
+        conflicting inventory identities fail closed.
+        """
+        finding.metadata.pop("registry_suggestions", None)
+        finding.metadata.pop("registry_match_reason", None)
+        matches = [
+            entry for entry in self.entries
+            if self._scope_matches(entry, finding)
+            and any(fnmatch.fnmatchcase(finding.resource or "", pattern) for pattern in entry.resources)
+        ]
+        if len(matches) == 1:
+            finding.metadata.pop("registry_suggestions", None)
+            return matches[0]
+        if len(matches) > 1:
+            finding.metadata["registry_suggestions"] = sorted({e.agent_id for e in matches})
+            finding.metadata["registry_match_reason"] = "ambiguous-resource-approval"
+            return None
+        suggestions = self.suggest(finding)
+        if suggestions:
+            finding.metadata["registry_suggestions"] = [entry.agent_id for entry in suggestions]
+            finding.metadata["registry_match_reason"] = "name-only-review-required"
+        return None
+
+    @staticmethod
+    def _scope_matches(entry: InventoryEntry, finding: Finding) -> bool:
+        return (
+            (not entry.surfaces or finding.surface.value in entry.surfaces)
+            and (not entry.providers or finding.provider in entry.providers)
+            and (not entry.accounts or finding.account in entry.accounts)
+        )
+
+    def suggest(self, finding: Finding) -> list[InventoryEntry]:
+        """Return name hints for human review; never use them for approval."""
         res = (finding.resource or "").lower()
         title = (finding.title or "").lower()
         names = _meta_names(finding)
-        tail = res.rsplit("/", 1)[-1].rsplit(":", 1)[-1]
-        # 1. explicit resource patterns
-        for e in self.entries:
-            for pat in e.resources:
-                if fnmatch.fnmatchcase(res, pat.lower()) or fnmatch.fnmatchcase(finding.resource or "", pat):
-                    return e
-        # 2. agent id contained in the resource id
-        for e in self.entries:
-            aid = e.agent_id.lower()
-            if len(aid) >= 4 and (aid == tail or f"/{aid}" in res or f":{aid}" in res or res.endswith(aid) or aid in names):
-                return e
-        # 3. name / alias equality (whole word) against title and name fields
+        out = []
         for e in self.entries:
             for n in e.all_names():
                 if len(n) < 4:
                     continue
                 if n in names or re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", title) or re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", res):
-                    return e
-        return None
+                    out.append(e)
+                    break
+        return out
+
+
+def _list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [item.strip() for item in value.split("|") if item.strip()]
+    return [str(item) for item in value or []]
 
 
 _CITE = re.compile(r"\[cite(?:_start)?(?::[^\]]*)?\]")
@@ -254,6 +295,8 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
             "names": [n for n in {str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}],
             "frameworks": finding.frameworks,
             "surfaces": [finding.surface.value],
+            "providers": [finding.provider] if finding.provider else [],
+            "accounts": [finding.account] if finding.account else [],
         },
     }
 

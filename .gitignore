@@ -17,3 +17,5 @@ shadowscan-report*
 exports/
 .env
 .DS_Store
+
+.shadowscan-state/

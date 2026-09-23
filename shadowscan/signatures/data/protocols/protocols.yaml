@@ -43,7 +43,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+(?:mcp|fastmcp)\b', '^\s*from\s+mcp\.server\b', '^\s*from\s+mcp\.client\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+(?:mcp|fastmcp)\b', '^[^\S\r\n]*from\s+mcp\.server\b', '^[^\S\r\n]*from\s+mcp\.client\b']
         weight: 0.9
       - type: import
         languages: [javascript]
@@ -55,21 +55,21 @@ signatures:
         weight: 0.9
       - type: import
         languages: [rust]
-        patterns: ['^\s*use\s+rmcp::']
+        patterns: ['^[^\S\r\n]*use\s+rmcp::']
         weight: 0.9
       - type: import
         languages: [java]
-        patterns: ['^\s*import\s+io\.modelcontextprotocol\.']
+        patterns: ['^[^\S\r\n]*import\s+io\.modelcontextprotocol\.']
         weight: 0.9
       - type: import
         languages: [dotnet]
-        patterns: ['^\s*using\s+ModelContextProtocol\b']
+        patterns: ['^[^\S\r\n]*using\s+ModelContextProtocol\b']
         weight: 0.9
       - type: code
         patterns: ['\bFastMCP\s*\(', '@mcp\.tool\b', '@server\.(?:tool|list_tools|call_tool)\b', '\bnew\s+McpServer\s*\(', '\bserver\.(?:tool|registerTool)\s*\(', '\bStdioServerTransport\s*\(', '\bStreamableHTTPServerTransport\s*\(', '\bSSEServerTransport\s*\(', '\bstdio_server\s*\(', '\bSseServerTransport\s*\(', '\bStreamableHTTPSessionManager\s*\(', '\bMcpServer\.Create\s*\(', '\bserver\.NewMCPServer\s*\(', '\[McpServerTool', '\bMultiServerMCPClient\s*\(', '\bClientSession\s*\(', '\bstdio_client\s*\(', '\bstreamablehttp_client\s*\(', '\bsse_client\s*\(', '\bMCPServerStdio\s*\(', '\bMCPServerStreamableHttp\s*\(', '\bMcpToolset\s*\(', '\bMCPClient\s*\(', '\bmcp\.run\s*\(']
         weight: 0.9
       - type: code
-        patterns: ['"mcpServers"\s*:', '"mcp"\s*:\s*\{\s*"servers"', '^\s*mcpServers\s*:', '\[mcp_servers\.[A-Za-z0-9_-]+\]', '\[mcp\.servers\.[A-Za-z0-9_-]+\]']
+        patterns: ['"mcpServers"\s*:', '"mcp"\s*:\s*\{\s*"servers"', '^[^\S\r\n]*mcpServers\s*:', '\[mcp_servers\.[A-Za-z0-9_-]+\]', '\[mcp\.servers\.[A-Za-z0-9_-]+\]']
         weight: 0.95
         description: MCP client configuration block
       - type: file
@@ -123,7 +123,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+a2a\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+a2a\b']
         weight: 0.95
       - type: import
         languages: [javascript]
@@ -157,7 +157,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+acp_sdk\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+acp_sdk\b']
         weight: 0.95
 
   - id: protocol.openai-function-calling

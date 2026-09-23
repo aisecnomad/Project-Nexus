@@ -1,10 +1,16 @@
 # Connectors
 
 Every connector has a **live** mode (API credentials) and an **offline** mode
-(`input:` pointing at an export). Live runs can persist their raw records with
-`--dump-records DIR` / `options.dump_records`, producing exactly the JSONL that
-offline mode consumes — useful for evidence retention and for re-scoring after
-signature updates without touching the APIs again.
+(`input:` pointing at an export). Live runs can persist sanitized records with
+`--dump-records DIR` / `options.dump_records` for offline re-analysis. Exports are
+written atomically with mode 0600 and JWT inputs are never exported. Redaction
+removes sensitive values, so an export is not a lossless copy of the API response.
+Live HTTP endpoints require HTTPS; redirects and pagination cannot send credentials
+to another origin. Denied access, collection failures and pagination limits make
+the scan incomplete rather than producing a clean result.
+
+See [scan state and runtime correlation](scanning.md) for incremental scans,
+gateway workload bindings and completion semantics.
 
 `shadowscan connectors` prints the up-to-date option list for every connector.
 
@@ -155,6 +161,11 @@ definitions, SageMaker endpoints (LLM containers), Step Functions with Bedrock
 states, Q Business, Lex, Secrets Manager / SSM names, IAM principals with LLM
 actions (via `get_account_authorization_details`), CloudTrail LLM callers.
 Options: `profile`, `role_arn`, `regions` (`all`), `services`, `cloudtrail_days`.
+IAM analysis includes both local and AWS-managed attached policies. Unresolved
+attachments make collection incomplete. CloudTrail LookupEvents only supplies
+management events: `InvokeAgent` / `InvokeInlineAgent` data events require a
+separately configured trail or event data store and an export to `gateway.logs`.
+The collector reports this coverage gap when CloudTrail collection is enabled.
 
 ### `cloud.gcp`
 Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)
@@ -171,6 +182,9 @@ accounts + deployments + diagnostic settings, AI Foundry accounts/projects
 Logic Apps (AI connectors / agent loops), Web & Function app settings,
 Container Apps, user-assigned identities, role assignments with AI roles.
 Auth: `DefaultAzureCredential` or `access_token` (+ `foundry_token`).
+Resource Graph, ARM and Foundry collections follow pagination. A denied or failed
+diagnostic-settings request is reported as unknown; only a successful empty
+response supports a missing-diagnostics finding.
 
 ### `cloud.oci`
 Generative AI Agents (agents, endpoints, tools, knowledge bases), Digital

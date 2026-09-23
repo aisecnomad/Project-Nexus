@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorError
+from shadowscan.connectors.base import BaseConnector, ConnectorError, _NoDump
 from shadowscan.connectors.common import (
     apply_matches,
     classify_permissions,
@@ -46,7 +46,7 @@ USER_CLAIMS = ("upn", "preferred_username", "email", "unique_name", "name", "giv
 AGENT_CLAIM_KEYS = ("agent_id", "agent", "agent_name", "agentid", "x-agent-id", "bot", "bot_id", "client_name", "app_displayname", "azp_name", "workload", "spiffe_id", "delegation", "on_behalf_of", "obo", "actor", "act", "may_act", "purpose", "tool", "tools")
 
 
-class JwtConnector(BaseConnector):
+class JwtConnector(BaseConnector, _NoDump):
     name: ClassVar[str] = "identity.jwt"
     surface: ClassVar[Surface] = Surface.IDENTITY
     provider: ClassVar[str | None] = "jwt"
@@ -251,6 +251,7 @@ class JwtConnector(BaseConnector):
         )
         finalize(f, self.index)
         f.kind = Kind.TOKEN
+        f.sanitize()
         return f
 
 

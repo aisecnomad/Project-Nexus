@@ -27,6 +27,7 @@ dependencies = [
   "PyYAML>=6.0",
   "requests>=2.31",
   "PyJWT>=2.7",
+  "regex>=2024.5.15",
 ]
 
 [project.optional-dependencies]

@@ -43,7 +43,7 @@ signatures:
         weight: 0.6
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+langfuse\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+langfuse\b']
         weight: 0.6
       - type: env
         names: [LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST, LANGFUSE_BASE_URL]
@@ -95,7 +95,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+agentops\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+agentops\b']
         weight: 0.8
       - type: env
         names: [AGENTOPS_API_KEY]
@@ -186,7 +186,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+mem0\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+mem0\b']
         weight: 0.8
       - type: env
         names: [MEM0_API_KEY]
@@ -264,7 +264,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+e2b(?:_code_interpreter|_desktop)?\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+e2b(?:_code_interpreter|_desktop)?\b']
         weight: 0.9
       - type: env
         names: [E2B_API_KEY, E2B_TEMPLATE]

@@ -32,7 +32,7 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]           # python | javascript | go | rust | java | dotnet | ruby | php
-        patterns: ['^\s*(?:from|import)\s+crewai\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+crewai\b']
         weight: 0.97
       - type: code
         patterns: ['\bCrew\s*\(', '\.kickoff\s*\(']
@@ -107,12 +107,36 @@ entirely, so you can:
 * add your organisation's internal AI SaaS vendors to `identity-app.*`;
 * tune `heuristic.*` patterns for your code base.
 
-Validate with `shadowscan signatures list -s DIR` (bad regexes and unknown
-categories fail fast) and `shadowscan signatures test`.
+Validate with `python -m shadowscan.signatures.validate DIR` before committing.
+This checks built-ins plus the supplied directory; use `--no-builtin DIR` to
+validate an isolated custom pack. CI runs the same validator on every push and
+pull request. `shadowscan signatures test` exercises representative inputs.
+
+The schema requires a signature `id`, `category`, and nonempty `signals` list.
+Each signal has a supported `type` and that type's matcher fields. Unknown
+fields, incorrect types, duplicate YAML keys or IDs within a pack directory,
+empty packs, invalid categories, and malformed regexes (including `re:` domain
+values) fail loading. Lists must contain strings; booleans cannot be strings.
+Weights must be finite numbers in `[0, 1]`. Overrides are allowed only between
+separate pack directories, in the order configured.
+
+Signature packs do **not** support a `severity` field: severity is calculated
+centrally by the risk engine from the finding. Every `severity` field is rejected,
+including apparently valid values such as `high`, so it cannot silently bypass
+risk scoring. `weight` controls confidence in the evidence, not finding severity.
 
 ## Conventions
 
-* Regexes are Python `re`, compiled with `MULTILINE`; use `(?i)` for case-insensitivity.
+* Regexes must compile as Python `re` expressions with `MULTILINE`; execution uses
+  the timeout-capable `regex` engine in compatibility mode. Use `(?i)` for
+  case-insensitivity. Write line-leading whitespace as `[^\S\r\n]*`, not `\s*`,
+  so blank lines cannot trigger repeated scans of the rest of a file.
+* Each signature regex execution is limited to 100 ms. Fixed linear hostname
+  and environment tokenizers use the shared input deadline instead. Filesystem scans share a configurable
+  execution budget across the file's matching operations (2 seconds by default).
+  Exceeding either limit raises an error and makes the scan incomplete; timeout
+  is never treated as a clean non-match. A costly custom pattern should be
+  rewritten rather than relying on a larger budget.
 * `domain` values: exact host, `*.suffix`, or `re:` regex (regexes may include a port, e.g. `re:.*:11434$`).
 * `file` globs use `fnmatch` on the repository-relative POSIX path; `**/` prefixes match at any depth.
 * Dependency names are normalised PEP 503-style (`Foo_Bar` == `foo-bar`) for every ecosystem.

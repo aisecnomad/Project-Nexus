@@ -42,3 +42,11 @@ security_controls:
 risk_scoring:
   [cite_start]AARS_initial_score: 42 # Calculated Agentic AI Risk Score [cite: 234, 456]
   [cite_start]blast_radius: "Medium" # Potential impact if compromised [cite: 48, 215]
+
+# Explicit example bindings for the bundled offline AWS fixtures.
+# Replace these resources and scopes with approved identities for your estate.
+discovery:
+  resources:
+    - "arn:aws:bedrock:us-east-1:123456789012:agent/AGENT1"
+    - "arn:aws:iam::123456789012:role/AmazonBedrockExecutionRoleForAgents_ops"
+  surfaces: [cloud, identity]

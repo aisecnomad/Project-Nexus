@@ -10,9 +10,9 @@ recorded on their card.
 
 ### Agent Capability Cards (one YAML per agent)
 
-The format used by this repository (`Agent Capability Card`). ShadowScan reads
+The format used by this repository (`Agent Card`). ShadowScan reads
 `metadata.agent_id`, `metadata.name`, `metadata.owner_team` / `owner`,
-`metadata.classification`, and an optional `discovery:` block:
+`metadata.classification`, and an `discovery:` block required for automatic registration:
 
 ```yaml
 metadata:
@@ -27,9 +27,11 @@ discovery:
     - "arn:aws:iam::123456789012:role/AmazonBedrockExecutionRoleForAgents_ops"
     - "github:acme/infra-agents/*"
     - "cloudtrail:arn:aws:sts::123456789012:assumed-role/ops-agent-role/*"
-  names: ["ops provisioning agent", "ops-agent"] # aliases matched as whole words in titles / name fields
+  names: ["ops provisioning agent", "ops-agent"] # suggestions only; never automatic approval
   frameworks: [cloud.aws-bedrock-agents]        # informational
-  surfaces: [cloud, code, gateway]              # informational
+  surfaces: [cloud, code, gateway]              # enforced if supplied
+  # providers: [aws]                          # optional exact provider constraint
+  # accounts: ["123456789012"]                 # optional exact tenant/account constraint
 ```
 
 `[cite_start]` / `[cite: n]` markers left by document exports are ignored.
@@ -55,22 +57,22 @@ hr-helper,HR Helper,erin@acme.com,power-platform:bot:bot-1|okta:app:0oa9x,HR bot
 Pass any mix with `--inventory` (repeatable) or `inventory:` in the config;
 directories are searched recursively.
 
-## Matching rules (in order)
+## Matching and approval
 
-1. **Resource pattern** — `discovery.resources` globs against `finding.resource`
-   (case-insensitive). Resource ids are stable and documented per connector:
-   ARNs, `projects/…/reasoningEngines/…`, ARM ids, OCIDs, `okta:app:<id>`,
-   `entra:sp:<objectId>`, `github:<org>/<repo>/<path>`, `slack:app:<id>`,
-   `power-platform:bot:<botid>`, `salesforce:genai-planner:<id>`,
-   `servicenow:sn_aia_agent:<sys_id>`, `n8n:workflow:<id>`, `cloudtrail:<principal arn>`, `jwt:<hash>`…
-2. **Agent id** — `metadata.agent_id` appears as the tail of the resource id
-   (`…/ops-provisioning-04`, `…:ops-provisioning-04`) or in a name field of the
-   finding's metadata (`agent_name`, `name`, `names`, `display_name`,
-   `agent_definitions[].name`, …). This is how a Bedrock agent, the Terraform
-   that creates it and the IAM role named after it all resolve to one card
-   without listing every ARN.
-3. **Name / alias** — the card's `name` and `discovery.names` matched as whole
-   words against the finding title, resource and name fields.
+Automatic registration requires exactly one matching `discovery.resources`
+pattern (or `resources` in the simple format). Resource matching is case-sensitive.
+Optional `surfaces`, `providers`, and `accounts` lists are enforced; a finding
+without a required scope cannot match. Prefer exact immutable IDs and narrowly
+scoped patterns; a broad glob is an explicit broad approval.
+
+Names, aliases, and agent-ID similarities produce `registry_suggestions` only.
+They never confer registered status, inherit an owner, or reduce risk. An
+explicit resource mismatch cannot fall through to name-based approval. Multiple
+matching inventory entries require review and leave the resource unregistered.
+
+**Migration:** cards that previously matched by name need explicit resource
+bindings. The bundled `Agent Card` contains example bindings for offline AWS
+fixtures; replace them with your reviewed identities before production use.
 
 `shadowscan inventory check inventory/` lists what was loaded and how each
 entry can match.

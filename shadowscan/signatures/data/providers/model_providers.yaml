@@ -46,7 +46,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+openai\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+openai\b']
         weight: 0.8
       - type: import
         languages: [javascript]
@@ -58,7 +58,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [dotnet]
-        patterns: ['^\s*using\s+OpenAI\b']
+        patterns: ['^[^\S\r\n]*using\s+OpenAI\b']
         weight: 0.7
       - type: code
         patterns: ['\bchat\.completions\.create\s*\(', '\bresponses\.create\s*\(', '\bclient\.beta\.assistants\.create\s*\(', '\bbeta\.threads\.runs\.create\s*\(']
@@ -119,7 +119,7 @@ signatures:
         weight: 0.7
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+anthropic\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+anthropic\b']
         weight: 0.8
       - type: import
         languages: [javascript]
@@ -176,7 +176,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+google\.genai\b', '^\s*(?:from|import)\s+google\.generativeai\b', '^\s*from\s+google\s+import\s+genai\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+google\.genai\b', '^[^\S\r\n]*(?:from|import)\s+google\.generativeai\b', '^[^\S\r\n]*from\s+google\s+import\s+genai\b']
         weight: 0.8
       - type: import
         languages: [javascript]
@@ -226,7 +226,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+vertexai\b', '^\s*(?:from|import)\s+google\.cloud\.aiplatform\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+vertexai\b', '^[^\S\r\n]*(?:from|import)\s+google\.cloud\.aiplatform\b']
         weight: 0.8
       - type: import
         languages: [javascript]
@@ -358,7 +358,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+mistralai\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+mistralai\b']
         weight: 0.8
       - type: env
         names: [MISTRAL_API_KEY]
@@ -385,7 +385,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+cohere\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+cohere\b']
         weight: 0.8
       - type: env
         names: [COHERE_API_KEY, CO_API_KEY]
@@ -412,7 +412,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+groq\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+groq\b']
         weight: 0.8
       - type: env
         names: [GROQ_API_KEY]
@@ -504,7 +504,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+ollama\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+ollama\b']
         weight: 0.8
       - type: code
         patterns: ['\bollama\.(?:chat|generate)\s*\(', '\bChatOllama\s*\(', '\bOllamaLLM\s*\(', 'localhost:11434', '127\.0\.0\.1:11434']
@@ -534,7 +534,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+vllm\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+vllm\b']
         weight: 0.8
       - type: image
         patterns: ['vllm/vllm-openai', 'vllm-openai']
@@ -566,7 +566,7 @@ signatures:
         weight: 0.6
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+huggingface_hub\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+huggingface_hub\b']
         weight: 0.6
       - type: code
         patterns: ['\bInferenceClient\s*\(', '\bHfInference\s*\(', '\bHuggingFaceEndpoint\s*\(']
