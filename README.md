@@ -70,13 +70,14 @@ tells you what a package, host, user agent, model id, scope or file path maps to
 ## Install
 
 ```bash
-pip install "git+https://github.com/aisecnomad/Project-Nexus.git"           # core (code, identity, gateway, low-code, SaaS via REST)
-pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git"   # + boto3, google-auth, azure-identity, oci
+pip install "git+https://github.com/aisecnomad/Project-Nexus.git@e8d14a91f9b2ba02c6315f71a82b8f8a127f3a00"           # core (code, identity, gateway, low-code, SaaS via REST)
+pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@e8d14a91f9b2ba02c6315f71a82b8f8a127f3a00"   # + boto3, google-auth, azure-identity, oci
 ```
 
-Python 3.11+. Dependencies are deliberately small: `click`, `rich`, `PyYAML`,
-`requests`, `PyJWT`, `regex`. Cloud SDKs are optional extras; every cloud connector also
-accepts an offline record dump.
+These examples pin the reviewed implementation. Python 3.11+ is required. Core
+dependencies include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
+`PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
+also accepts an offline record dump.
 
 ## Quick start
 
