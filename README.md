@@ -70,8 +70,8 @@ tells you what a package, host, user agent, model id, scope or file path maps to
 ## Install
 
 ```bash
-pip install "git+https://github.com/aisecnomad/Project-Nexus.git@8165e0d3c7dd26a4b912534533b7ca578cab26da"           # core (code, identity, gateway, low-code, SaaS via REST)
-pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@8165e0d3c7dd26a4b912534533b7ca578cab26da"   # + boto3, google-auth, azure-identity, oci
+pip install "git+https://github.com/aisecnomad/Project-Nexus.git@1a0114f86239dbfea060fc839aae188983c3d7fa"           # core (code, identity, gateway, low-code, SaaS via REST)
+pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@1a0114f86239dbfea060fc839aae188983c3d7fa"   # + boto3, google-auth, azure-identity, oci
 ```
 
 These examples pin the reviewed implementation. Python 3.11+ is required. Core
