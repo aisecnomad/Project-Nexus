@@ -30,9 +30,9 @@ Agents are no longer only Python scripts. They are Copilot Studio bots built by
 HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
 Bedrock Agents provisioned by Terraform, MCP servers wired into every
 developer's editor, service principals with `Mail.ReadWrite` acting on behalf
-of nobody, and JWTs carrying an `act` claim. Each surface has its own
-discovery API and its own vocabulary. ShadowScan normalises all of them into
-one finding model with evidence, so you can answer three questions for every
+of nobody, and JWTs carrying an `act` claim. 
+Each surface has its own discovery API and its own vocabulary. 
+ShadowScan normalizes all of them into one finding model with evidence, so you can answer three questions for every
 agent in the estate: *who owns it, what can it do, and did anyone approve it?*
 
 ## Surfaces & connectors
@@ -56,10 +56,10 @@ logic works in a CI job, on an analyst laptop, or from a SIEM export.
 
 * **Orchestrators** – LangChain, LangGraph, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
-* **Coding agents** – Claude Code, GitHub Copilot coding agent, Cursor, Windsurf, Cline, Roo, OpenAI Codex, Gemini CLI/Jules, Amazon Q/Kiro, Goose, Aider, Continue, Cody/Amp, Junie, AGENTS.md, PR review bots (CodeRabbit, Sweep, Ellipsis, Greptile, Qodo…)
-* **Platforms / gateways** – LiteLLM, Portkey, Kong AI Gateway, Helicone, OpenAI AgentKit, Dify, Flowise, Langflow, n8n, Make, Zapier, Workato, Copilot Studio, Power Platform AI connectors, M365 declarative agents, Agentforce, Now Assist, Retool, Open WebUI/LibreChat/AnythingLLM, Coze/Relevance/Lindy/Vellum…
-* **Model providers** – OpenAI, Anthropic, Gemini API, Vertex AI, Bedrock, Azure OpenAI, Mistral, Cohere, Groq, Together, Fireworks, OpenRouter, Ollama, vLLM, Hugging Face, xAI, DeepSeek, Perplexity, Replicate, Cerebras, SambaNova, NVIDIA NIM, OCI Generative AI, watsonx, Databricks, Cloudflare Workers AI, Snowflake Cortex (deps, imports, endpoints, env vars, user agents, model ids, **key formats**)
-* **Observability / memory / sandboxes** – LangSmith, Langfuse, Phoenix, AgentOps, Traceloop, Weave, Braintrust…, Mem0, Zep, vector stores, E2B, Daytona, web search/scrape tool providers
+* **Coding agents** – Claude Code, GitHub Copilot coding agent, Cursor, Windsurf, Cline, Roo, OpenAI Codex, Gemini CLI/Jules, Amazon Q/Kiro, Goose, Aider, Continue, Cody/Amp, Junie, AGENTS. md, PR review bots (CodeRabbit, Sweep, Ellipsis, Greptile, Qodo…)md, PR review bots (CodeRabbit, Sweep, Ellipsis, Greptile, Qodo…)
+* **Platforms/gateways** – LiteLLM, Portkey, Kong AI Gateway, Helicone, OpenAI AgentKit, Dify, Flowise, Langflow, n8n, Make, Zapier, Workato, Copilot Studio, Power Platform AI connectors, M365 declarative agents, Agentforce, Now Assist, Retool, Open WebUI/LibreChat/AnythingLLM, Coze/Relevance/Lindy/Vellum…
+* **Model providers** – OpenAI, Anthropic, Gemini API, Vertex AI, Bedrock, Azure OpenAI, Mistral, Cohere, Groq, Together, Fireworks, OpenRouter, Ollama, vLLM, Hugging Face, xAI, DeepSeek, Perplexity, Replicate, Cerebras, SambaNova, NVIDIA NIM, OCI Generative AI, watsonx, Databricks, Cloudflare Workers AI, Snowflake Cortex (deps, imports, endpoints, env vars, user agents, model IDs, **key formats**)
+* **Observability/memory/sandboxes** – LangSmith, Langfuse, Phoenix, AgentOps, Traceloop, Weave, Braintrust…, Mem0, Zep, vector stores, E2B, Daytona, web search/scrape tool providers
 * **AI SaaS as OAuth apps** – ChatGPT, Claude, Gemini, Copilot, Perplexity, Glean, meeting note-takers (Otter, Fireflies, Read.ai, Fathom, tl;dv, Gong…), writing/coding/automation/research/media products, browser AI extensions
 * **Permission policies** – privileged, data-access and LLM-access scope classes across Graph, Google, Okta, Slack, GitHub, GitLab, Salesforce, Atlassian, Zoom, Notion, HubSpot, AWS IAM, Azure RBAC, GCP IAM, OCI
 
@@ -81,7 +81,7 @@ accepts an offline record dump.
 
 ```bash
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
-shadowscan code . --inventory inventory/
+shadowscan code. --inventory inventory/
 
 # 2. Try every connector against the bundled fixtures (offline demo)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
@@ -90,7 +90,7 @@ shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif --fail-on high
 
 # 4. Single connector, ad-hoc
-shadowscan run identity.entra --set tenant_id=$AZURE_TENANT_ID
+shadowscan run identity. entra --set tenant_id=$AZURE_TENANT_ID
 shadowscan run cloud.aws --set regions=us-east-1,eu-west-1 --dump-records ./exports
 shadowscan run cloud.aws --input ./exports/cloud_aws.jsonl        # re-analyse later, offline
 
@@ -100,7 +100,7 @@ shadowscan jwt "$TOKEN" --jwks-url https://acme.okta.com/oauth2/default/v1/keys
 
 # 6. Register what you found
 shadowscan inventory stubs report.json -o inventory/pending/    # capability-card stubs for shadow agents
-shadowscan diff last-week.json today.json                        # what is new / resolved / changed
+shadowscan diff last-week.json today.json                        # what is new / resolved/changed
 ```
 
 ### Configuration
@@ -138,7 +138,7 @@ connectors:
 ```
 
 `shadowscan connectors` lists every connector with its configuration keys,
-required extras and offline format. See [docs/connectors.md](docs/connectors.md)
+required extras, and offline format. See [docs/connectors.md](docs/connectors.md)
 for credentials and least-privilege scopes per connector.
 
 Use `--incremental` to reuse completed scans of unchanged local checkouts and
@@ -168,11 +168,11 @@ scans as unsuccessful, while preserving findings from successfully assessed inpu
   "shadow": true, "registry_match": null,
   "risk": {"score": 90, "level": "critical", "factors": [
       {"id": "shadow", "description": "not present in the sanctioned agent inventory", "weight": 25},
-      {"id": "tag:plaintext-credential", "description": "plaintext credential in environment / configuration", "weight": 25},
+      {"id": "tag:plaintext-credential", "description": "plaintext credential in environment/configuration", "weight": 25},
       {"id": "no-owner", "description": "no identifiable owner", "weight": 10}, "..."]},
   "evidence": [
       {"signal": "aws:agentcore-runtime", "description": "AgentCore runtime 'strands_support_agent' (READY) role arn:aws:iam::…", "weight": 0.97},
-      {"signal": "secret:provider.openai", "description": "Plaintext OpenAI API key in environment variable OPENAI_API_KEY: sk-p…KLMN", "weight": 0.6}],
+      {"signal": "secret: provider.openai", "description": "Plaintext OpenAI API key in environment variable OPENAI_API_KEY: sk-p…KLMN", "weight": 0.6}],
   "metadata": {"status": "READY", "protocol": "HTTP", "network": "PUBLIC", "related": ["ss-…"]}
 }
 ```
@@ -188,7 +188,7 @@ filterable, with evidence drill-down).
 
 ## Sanctioned inventory
 
-Drop your Agent Capability Cards in a directory. The card's `metadata.agent_id`
+Drop your Agent Cards in a directory. The card's `metadata.agent_id`
 identifies the registration; explicit `discovery.resources` bind it to concrete resources:
 
 ```yaml
@@ -227,7 +227,7 @@ shadowscan scan -c examples/shadowscan.offline.yaml
 
 ## Safety notes
 
-* Known credential formats, sensitive configuration fields and credential-bearing URLs are **redacted** before findings or sanitized record exports are persisted. Redaction cannot identify every arbitrary secret; reports still contain security-sensitive inventory data.
+* Known credential formats, sensitive configuration fields, and credential-bearing URLs are **redacted** before findings or sanitized record exports are persisted. Redaction cannot identify every arbitrary secret; reports still contain security-sensitive inventory data.
 * Secret stores (Secrets Manager, Key Vault, Secret Manager, OCI Vault) are read for **names only**.
 * JWTs are never persisted; findings reference a truncated hash.
 * Connectors never modify anything; every API call is read-only.
