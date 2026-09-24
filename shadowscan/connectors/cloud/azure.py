@@ -189,7 +189,10 @@ class AzureConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        subs = self.subscriptions or [s["subscriptionId"] for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or [] if isinstance(s.get("subscriptionId"), str)]
+        subs = self.subscriptions or [
+            s["subscriptionId"] for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or []
+            if isinstance(s.get("subscriptionId"), str)
+        ]
         if not subs:
             raise ConnectorError("cloud.azure: no subscriptions visible")
         rows: list[dict[str, Any]] = []
@@ -242,6 +245,9 @@ class AzureConnector(BaseConnector):
                 diag = self._list(f"{rid}/providers/Microsoft.Insights/diagnosticSettings", "2021-05-01-preview", allow_partial=False)
                 yield {"_kind": "diagnostics", "_account": rid, "settings": diag, "coverage": "unknown" if diag is None else "observed"}
                 for p in self._list(f"{rid}/projects", "2025-04-01-preview", allow_partial=True) or []:
+                    if not isinstance(p, dict):
+                        self.ctx.warn("cloud.azure: invalid Foundry project record; coverage unknown", incomplete=True)
+                        continue
                     p["_kind"] = "resource"
                     p["type"] = "microsoft.cognitiveservices/accounts/projects"
                     p["_account"] = rid

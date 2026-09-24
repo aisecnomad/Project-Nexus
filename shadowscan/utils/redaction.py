@@ -454,8 +454,8 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
     Environment variable values are omitted regardless of name. Lists additionally
     recognize argv pairs, so ``["--token", "opaque-value"]`` is safe to retain.
     Known credential values are also removed from other fields in the same object.
-    Diagnostics can opt into replacing even short configured credentials; the
-    default avoids obscuring unrelated evidence with tiny substring matches.
+    Short credentials withhold a matching field by default. Diagnostics can opt
+    into bounded substring replacement to retain surrounding diagnostic context.
     """
     _check_sanitization_structure(value)
     known: set[str] = set()
@@ -465,7 +465,7 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
         return isinstance(name, str) and _sensitive_key(name)
 
     def remember(child: Any) -> None:
-        if isinstance(child, str) and child and (redact_short_secrets or len(child) >= 8):
+        if isinstance(child, str) and child:
             if child != REDACTED and not _FINGERPRINT.fullmatch(child):
                 known.add(child)
                 # Library diagnostics often use repr(), which escapes secret
@@ -548,6 +548,10 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
                     raise SanitizationLimitError("credential replacement size limit exceeded")
                 item = REDACTED.join(part.replace(secret, REDACTED) for part in parts)
             else:
+                # Default report sanitization withholds the entire field for
+                # short secrets; this avoids both expansion and partial leaks.
+                if len(secret) < 8 and secret in item:
+                    return REDACTED
                 item = item.replace(secret, REDACTED)
         return sanitize_text(item)
 

@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from shadowscan.utils.redaction import sanitize
+from shadowscan.utils.redaction import SanitizationLimitError, sanitize
 
 FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v2"
 LEGACY_FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v1"
@@ -116,8 +116,14 @@ class Evidence:
         self.sanitize()
 
     def sanitize(self) -> None:
-        values = sanitize({attr.name: getattr(self, attr.name) for attr in fields(self)})
-        for name, value in values.items():
+        names = [attr.name for attr in fields(self)]
+        # The schema keys are trusted code, while attributes can contain
+        # attacker-controlled keys. Keep the former outside the sanitizer.
+        # A field that resembles an argv flag must not reinterpret the next
+        # dataclass field as its value. Real argv lists inside a field retain
+        # their normal pair-aware redaction.
+        values = sanitize([(getattr(self, name),) for name in names])
+        for name, (value,) in zip(names, values, strict=True):
             setattr(self, name, value)
 
 
@@ -191,22 +197,44 @@ class Finding:
 
     def sanitize(self) -> None:
         """Remove credentials from every persisted/reportable field in place."""
-        values = {
-            attr.name: getattr(self, attr.name) for attr in fields(self)
-            if attr.name not in {"surface", "kind", "likelihood", "risk", "evidence"}
-        }
-        values["evidence"] = [{attr.name: getattr(ev, attr.name) for attr in fields(ev)} for ev in self.evidence]
-        values["risk_factors"] = [asdict(factor) for factor in self.risk.factors]
-        values = sanitize(values)
-        for name, value in values.items():
-            if name not in {"evidence", "risk_factors"}:
-                setattr(self, name, value)
-        for ev, clean in zip(self.evidence, values["evidence"], strict=True):
-            for name, value in clean.items():
+        identity_names = (
+            "connector", "resource", "resource_type", "provider", "account", "region",
+            "identity_discriminator", "identity_schema",
+        )
+        identity_before = tuple(getattr(self, name) for name in identity_names)
+        # A generated digest is an opaque identifier, even if a one-character
+        # credential happens to occur among its hexadecimal digits. Imported
+        # arbitrary IDs must still pass through the sanitizer.
+        generated_id = self.id == self.compute_id()
+        trusted_schema = self.identity_schema in {FINDING_IDENTITY_SCHEMA, LEGACY_FINDING_IDENTITY_SCHEMA}
+        names = [attr.name for attr in fields(self)
+                 if attr.name not in {"surface", "kind", "likelihood", "risk", "evidence"}
+                 and not (generated_id and attr.name == "id")
+                 and not (trusted_schema and attr.name == "identity_schema")]
+        evidence_names = [attr.name for attr in fields(Evidence)]
+        values, evidence_values, risk_values = sanitize((
+            [(getattr(self, name),) for name in names],
+            [[(getattr(ev, name),) for name in evidence_names] for ev in self.evidence],
+            [[(factor.id,), (factor.description,)] for factor in self.risk.factors],
+        ))
+        for name, (value,) in zip(names, values, strict=True):
+            setattr(self, name, value)
+        changed = {name for name, original in zip(identity_names, identity_before, strict=True)
+                   if getattr(self, name) != original}
+        # A verified raw-identity digest distinguishes redacted resources and
+        # scopes; registry matching already rejects their placeholders. Never
+        # allow a changed connector/type/discriminator or an arbitrary ID to
+        # yield a misleading or colliding finding.
+        if self.id == "[REDACTED]" or changed & {
+            "connector", "resource_type", "identity_discriminator", "identity_schema",
+        } or (changed and not generated_id):
+            raise SanitizationLimitError("finding identity includes a credential; finding omitted")
+        for ev, clean in zip(self.evidence, evidence_values, strict=True):
+            for name, (value,) in zip(evidence_names, clean, strict=True):
                 setattr(ev, name, value)
-        for factor, clean in zip(self.risk.factors, values["risk_factors"], strict=True):
-            factor.id = clean["id"]
-            factor.description = clean["description"]
+        for factor, ((identifier,), (description,)) in zip(self.risk.factors, risk_values, strict=True):
+            factor.id = identifier
+            factor.description = description
 
     def add_evidence(self, ev: Evidence) -> None:
         ev.sanitize()

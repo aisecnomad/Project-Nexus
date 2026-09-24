@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event, Lock
+from time import monotonic
+from types import SimpleNamespace
 
 import pytest
 
 from shadowscan.connectors import ConnectorContext
+from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.code import manifests
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import GitHubConnector
@@ -154,3 +158,51 @@ def test_live_download_under_symlinked_temp_parent_is_scanned(tmp_path, index, m
     assert not context.stats.errors
     assert downloaded and downloaded[0].parent == actual
     assert not downloaded[0].exists()  # temporary source remains cleaned up
+
+
+@pytest.mark.parametrize("cls", [GitHubConnector, GitLabConnector])
+def test_nested_repository_scan_inherits_cancellation_and_publication_fence(tmp_path, index, monkeypatch, cls):
+    cancelled, publication_lock = Event(), Lock()
+    parent = ConnectorContext(
+        config={"use_git": False}, index=index, workdir=str(tmp_path),
+        deadline=monotonic() + 30, cancelled=cancelled, publication_lock=publication_lock,
+    )
+    child_contexts = []
+
+    class CaptureFilesystem:
+        def __init__(self, ctx):
+            self.ctx = ctx
+            child_contexts.append(ctx)
+
+        def analyze(self, records):
+            self.ctx.check_deadline()
+            return []
+
+    monkeypatch.setattr(f"{cls.__module__}.FilesystemConnector", CaptureFilesystem)
+    connector = cls(parent)
+    record = {"full_name": "org/repo", "path_with_namespace": "org/repo"}
+    assert list(connector._scan_local(record, str(tmp_path))) == []
+    child = child_contexts[0]
+    assert child.deadline == parent.deadline
+    assert child.cancelled is cancelled and child.publication_lock is publication_lock
+    assert child.workdir == str(tmp_path)
+    cancelled.set()
+    with pytest.raises(ConnectorError, match="deadline"):
+        child.check_deadline()
+
+
+@pytest.mark.parametrize("cls, record", [
+    (GitHubConnector, {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"}),
+    (GitLabConnector, {"http_url_to_repo": "https://gitlab.com/org/repo.git"}),
+])
+def test_clone_process_is_bounded_by_connector_deadline(tmp_path, index, monkeypatch, cls, record):
+    timeouts = []
+
+    def fake_clone(*args, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(f"{cls.__module__}.subprocess.run", fake_clone)
+    context = ConnectorContext(index=index, deadline=monotonic() + 2)
+    assert cls(context)._clone(record, str(tmp_path / "repo"))
+    assert len(timeouts) == 1 and 0 < timeouts[0] <= 2

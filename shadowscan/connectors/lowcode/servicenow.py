@@ -53,6 +53,10 @@ def _reference(v: Any) -> Any:
     return v
 
 
+_PAGE_SIZE = 500
+_MAX_TABLE_PAGES = 1000  # 500,000 rows per table before coverage is reported incomplete
+
+
 class ServiceNowConnector(BaseConnector):
     name: ClassVar[str] = "lowcode.servicenow"
     surface: ClassVar[Surface] = Surface.LOWCODE
@@ -95,7 +99,7 @@ class ServiceNowConnector(BaseConnector):
             seen: set[str] = set()
             for page in range(max_pages):
                 try:
-                    data = self.http.get_json(f"/api/now/table/{table}", params={"sysparm_fields": fields, "sysparm_limit": 500, "sysparm_offset": page * 500, "sysparm_display_value": "all"})
+                    data = self.http.get_json(f"/api/now/table/{table}", params={"sysparm_fields": fields, "sysparm_limit": _PAGE_SIZE, "sysparm_offset": page * _PAGE_SIZE, "sysparm_display_value": "all"})
                 except (HttpError, RequestException, ValueError, RuntimeError) as exc:
                     status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
                     self.ctx.warn(f"lowcode.servicenow: table {table} collection incomplete ({status})")
@@ -116,7 +120,7 @@ class ServiceNowConnector(BaseConnector):
                         self.ctx.warn(f"lowcode.servicenow: invalid record in {table} page")
                         continue
                     yield {**r, "_table": table}
-                if len(rows) < 500:
+                if len(rows) < _PAGE_SIZE:
                     break
             else:
                 self.ctx.warn(f"lowcode.servicenow: pagination limit reached for {table}")

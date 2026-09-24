@@ -67,9 +67,12 @@ unrecognized claims. No alert suppression or security-gate bypass was introduced
 - Accepted PR #31's `connector_timeout` / `--connector-timeout` names as
   compatibility aliases for canonical `connector_timeout_seconds` /
   `--connector-timeout-seconds`. Legacy YAML null uses the 120-second default.
-  Retained bounded worker capacity without replacement-worker pools or
-  `os._exit()` from the CLI/library scan path. Blocked calls still require an
-  externally supervised disposable process.
+  Retained bounded worker capacity without replacement-worker pools. PR #36
+  subsequently adds a CLI-only process exit after reporting abandoned workers;
+  the embedded Engine returns an incomplete result and refuses reuse while an
+  abandoned worker remains active. Diagnostic/flush errors must not prevent
+  that CLI exit. Blocking publication or output still requires an externally
+  supervised disposable process.
 - Did not introduce digest-gated finding sanitization or a process-wide text
   sanitization cache. Digesting nested objects before the sanitizer's resource
   checks can amplify alias graphs; caching also needs explicit redaction-policy
@@ -100,10 +103,13 @@ performed in this review.
 
 ## Merge and deployment gates
 
-The live `Require CI and CodeQL` ruleset was inspected during this review. It
-requires `test (3.11)`, `test (3.12)`, `analyze`, an up-to-date branch and one
-approving review. It has no bypass actors. Preserve that gate and obtain an
-independent eligible review of the final candidate; no rules were weakened.
+The live `Require CI and CodeQL` ruleset was active at the start of this review,
+requiring `test (3.11)`, `test (3.12)`, `analyze`, an up-to-date branch and one
+approving review. Both it and `Protect main` were disabled externally before the
+final merge-verification request. This review did not change their enforcement.
+The user subsequently authorized merging verified open PRs. Restore the intended
+repository protections before production release; verification results are tied
+to the exact merged source in the PR.
 
 Before production deployment, complete tenant canaries, held-out detection
 evaluation, approved image-digest selection and an enforced host/job deadline.

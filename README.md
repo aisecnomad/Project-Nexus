@@ -155,6 +155,7 @@ options:
   allow_credential_mixing: false     # separate repository scans from live tenant access
   allow_instance_credentials: false # cloud metadata credentials require explicit opt-in
   connector_timeout_seconds: 120    # soft deadline; also enforce a host job timeout
+  parallel: 4                        # worker threads; use 1-2 for CPU-bound offline scans
   min_confidence: 0.3
   fail_on: high
   dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs
@@ -200,6 +201,9 @@ for configuration, limitations, and migration guidance.
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
 scans as unsuccessful, while preserving findings from successfully assessed inputs.
+The CLI normally exits promptly after a connector deadline even when a blocked
+worker cannot be joined. A filesystem publication already in progress can still
+delay timeout handling; enforce a host job timeout for hard limits.
 Confidence thresholds must be finite numbers from 0 to 1; invalid CLI or YAML
 values stop the scan before the risk gate runs.
 

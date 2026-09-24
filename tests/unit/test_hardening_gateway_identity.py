@@ -49,7 +49,7 @@ def test_text_line_parsers_are_linear_on_hostile_input():
     assert parse_text_line(without_protocol)["request_uri"] == "/v1/models"
 
 
-def test_gateway_memoizes_user_agents_and_strips_query_strings(index, tmp_path):
+def test_gateway_memoizes_user_agents_and_strips_query_strings(index, tmp_path, monkeypatch):
     export = tmp_path / "gateway.jsonl"
     with export.open("w") as stream:
         for i in range(60):
@@ -57,6 +57,14 @@ def test_gateway_memoizes_user_agents_and_strips_query_strings(index, tmp_path):
                 "api_key": "key-one", "model": "gpt-4o", "metadata": {"user_agent": "langchain/0.3"}, "spend": 0.01,
                 "call_type": f"/v1/chat/completions?session={i}", "startTime": f"2026-01-01T10:{i % 60:02d}:00Z",
             }) + "\n")
+    original = index.match_user_agent
+    calls = []
+
+    def count_user_agent_matches(user_agent):
+        calls.append(user_agent)
+        return original(user_agent)
+
+    monkeypatch.setattr(index, "match_user_agent", count_user_agent_matches)
     connector = GatewayLogConnector(_ctx(index, input=str(export), format="litellm"))
     findings = connector.run()
     assert len(findings) == 1

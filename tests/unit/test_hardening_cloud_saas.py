@@ -117,7 +117,7 @@ def test_azure_foundry_projects_inherit_subscription_and_location(index, monkeyp
         "location": "eastus", "subscriptionId": "s1", "properties": {},
     }]}
 
-    def fake_list(path, api, **kwargs):
+    def fake_list(path, api, *, allow_partial=False):
         return [{"id": f"{account_id}/projects/p1", "name": "p1", "properties": {}}] if path.endswith("/projects") else []
 
     monkeypatch.setattr(connector, "_auth", lambda: setattr(connector, "http", http))
@@ -143,6 +143,7 @@ def test_oci_clients_are_cached_per_region_with_timeouts(index):
     other = connector._client(Client, "r2")
     assert other is not first and other.config["region"] == "r2"
     assert first.kwargs["timeout"] == (10, 30)
+    assert first.kwargs["retry_strategy"] is not None
 
 
 def test_oci_function_reads_environment_and_legacy_config_keys(index):

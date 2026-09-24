@@ -74,4 +74,3 @@ def test_large_gateway_observation_merge_is_idempotent_and_preserves_sources():
     assert len(merged) == 3000
     assert sum(item["source"]["input"] == "a.jsonl" for item in merged) == 1500
     assert sum(item["source"]["input"] == "b.jsonl" for item in merged) == 1500
-

@@ -566,7 +566,11 @@ def parse_compose_or_k8s(text: str) -> ManifestResult:
         res.artifacts.append(Artifact("env", m.group(1), lines.at(m.start())))
     for m in _yaml_line_matches(_YAML_USES, text, deadline):
         res.artifacts.append(Artifact("action", m.group(1), lines.at(m.start())))
-    for m in _SECRETS_REF.finditer(text, timeout=_pattern_timeout(), concurrent=False):
+    remaining = deadline - monotonic()
+    if remaining <= 0:
+        raise TimeoutError("YAML manifest matching exceeded its time budget")
+    # Secret references can span lines; scan these with the same shared budget.
+    for m in _SECRETS_REF.finditer(text, timeout=min(0.1, remaining, _pattern_timeout()), concurrent=False):
         res.artifacts.append(Artifact("secret_ref", m.group(1), lines.at(m.start())))
     return res
 

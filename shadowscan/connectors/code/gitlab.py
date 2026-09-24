@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, ClassVar
@@ -220,7 +221,11 @@ class GitLabConnector(BaseConnector):
                 "topics": proj.get("topics"),
             },
         }
-        fs = FilesystemConnector(ConnectorContext(config=cfg, index=self.index, logger=self.log))
+        fs = FilesystemConnector(ConnectorContext(
+            config=cfg, index=self.index, logger=self.log, workdir=self.ctx.workdir,
+            deadline=self.ctx.deadline, cancelled=self.ctx.cancelled,
+            publication_lock=self.ctx.publication_lock,
+        ))
         fs.ctx.stats = self.ctx.stats
         for f in fs.analyze([{"path": local}]):
             f.connector = self.name
@@ -240,6 +245,7 @@ class GitLabConnector(BaseConnector):
             if self._clone(proj, dest):
                 return dest
             self.ctx.warn(f"code.gitlab: clone failed for {proj.get('path_with_namespace')}; falling back to API mode")
+        self.ctx.check_deadline()
         return self._fetch_via_api(proj, tmp)
 
     def _clone(self, proj: dict[str, Any], dest: str) -> bool:
@@ -258,7 +264,10 @@ class GitLabConnector(BaseConnector):
             self.ctx.warn("code.gitlab: unsupported default branch; cloned remote HEAD, requested branch coverage unknown", incomplete=True)
         cmd += ["--", url, dest]
         try:
-            res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600, check=False)
+            self.ctx.check_deadline()
+            timeout = min(600.0, max(0.001, self.ctx.deadline - time.monotonic())) if self.ctx.deadline else 600.0
+            res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout, check=False)
+            self.ctx.check_deadline()
         except (OSError, subprocess.SubprocessError):
             return False
         return res.returncode == 0

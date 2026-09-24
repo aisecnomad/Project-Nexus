@@ -405,16 +405,25 @@ class IncrementalCache:
         except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
             return None
 
-    def save(self, snapshot: Snapshot, findings: list[Finding], stats: ScanStats, *, check_deadline: Callable[[], None] | None = None) -> None:
+    def save(
+        self, snapshot: Snapshot, findings: list[Finding], stats: ScanStats, *,
+        check_deadline: Callable[[], None] | None = None,
+        publish_replace: Callable[[str | Path, str | Path], None] | None = None,
+    ) -> None:
         if stats.incomplete or stats.errors or stats.skipped:
             return
         try:
             with self._slot_lock(snapshot, exclusive=True):
-                self._save_unlocked(snapshot, findings, stats, check_deadline=check_deadline)
+                self._save_unlocked(snapshot, findings, stats, check_deadline=check_deadline,
+                                    publish_replace=publish_replace)
         except (OSError, ValueError):
             log.warning("incremental state is locked or unavailable; next scan will run in full")
 
-    def _save_unlocked(self, snapshot: Snapshot, findings: list[Finding], stats: ScanStats, *, check_deadline: Callable[[], None] | None = None) -> None:
+    def _save_unlocked(
+        self, snapshot: Snapshot, findings: list[Finding], stats: ScanStats, *,
+        check_deadline: Callable[[], None] | None = None,
+        publish_replace: Callable[[str | Path, str | Path], None] | None = None,
+    ) -> None:
         if stats.incomplete or stats.errors or stats.skipped:
             return
         temp: str | None = None
@@ -436,9 +445,13 @@ class IncrementalCache:
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
-            if check_deadline is not None:
-                check_deadline()
-            os.replace(temp, self.directory / f"{snapshot.slot}.json")
+            target = self.directory / f"{snapshot.slot}.json"
+            if publish_replace is not None:
+                publish_replace(temp, target)
+            else:
+                if check_deadline is not None:
+                    check_deadline()
+                os.replace(temp, target)
             temp = None
         except (OSError, ValueError, TypeError):
             log.warning("could not save incremental state; next scan will run in full")

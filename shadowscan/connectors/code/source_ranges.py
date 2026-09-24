@@ -530,6 +530,8 @@ class _Expression:
 _RUST_RAW = re.compile(r'(?:br|rb|r)(#{0,255})"')
 _RUBY_HEREDOC = re.compile(r"<<[-~]?(['\"]?)([A-Za-z_]\w*)\1")
 _PHP_HEREDOC = re.compile(r"<<<[ \t]*(['\"]?)([A-Za-z_]\w*)\1")
+_GO_IMPORT_BLOCK = re.compile(r"import\s*\(")
+_MAX_GO_IMPORT_PREFIX = 4096
 
 
 def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple[list[tuple[int, int]], bool]:
@@ -547,12 +549,26 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
     incomplete = False
     go_import_block = False
     heredocs: list[str] = []
+    line_start = 0
+    line_checked_through = 0
     # A PHP source file can be an HTML-only template. Enter code mode only at
     # an opening tag, including the short echo form (<?=).
     php_code = language != "php"
 
-    def line_before(index: int) -> str:
-        return text[text.rfind("\n", 0, index) + 1:index]
+    def line_before(index: int) -> str | None:
+        nonlocal line_start, line_checked_through, incomplete
+        # Check only source not visited by the preceding Go quote. Repeated
+        # quotes on a very long line must not repeatedly scan/copy its prefix.
+        newline = text.rfind("\n", line_checked_through, index)
+        if newline >= 0:
+            line_start = newline + 1
+        line_checked_through = index
+        if index - line_start > _MAX_GO_IMPORT_PREFIX:
+            prefix = text[line_start:line_start + _MAX_GO_IMPORT_PREFIX]
+            if prefix.isspace() or re.match(r"\s*import\b", prefix):
+                incomplete = True  # Too long to classify as a Go import safely.
+            return None
+        return text[line_start:index]
 
     while i < size:
         mode = modes[-1] if modes else None
@@ -659,10 +675,10 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
                 continue
 
         if language == "go" and text.startswith("import", i) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
-            match = re.match(r"import\s*\(", text[i:])
+            match = _GO_IMPORT_BLOCK.match(text, i)
             if match:
                 go_import_block = True
-                i += match.end()
+                i = match.end()
                 continue
         if language == "go" and go_import_block and text[i] == ")":
             go_import_block = False
@@ -755,9 +771,9 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
                     continue
             if quote == '"' and language == "go":
                 before = line_before(i)
-                if re.fullmatch(r"\s*import\s+(?:[\w.]+\s+)?", before) or (
+                if before is not None and (re.fullmatch(r"\s*import\s+(?:[\w.]+\s+)?", before) or (
                     go_import_block and re.fullmatch(r"\s*(?:[\w.]+\s*)?", before)
-                ):
+                )):
                     i = q + 1
                     while i < size and text[i] != '"' and text[i] not in "\r\n":
                         i += 2 if text[i] == "\\" else 1

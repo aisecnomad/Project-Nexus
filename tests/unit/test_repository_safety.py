@@ -44,7 +44,7 @@ def test_codeowners_work_limit_stops_polynomial_worst_case():
 def test_codeowners_exhaustion_keeps_findings_and_marks_ownership_incomplete(tmp_path, run_connector, monkeypatch):
     (tmp_path / "CODEOWNERS").write_text("*.py @owner\n")
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
-    monkeypatch.setattr(filesystem, "OwnershipBudget", lambda: OwnershipBudget(1))
+    monkeypatch.setattr(filesystem, "OwnershipBudget", lambda _remaining: OwnershipBudget(1))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert any("framework.crewai" in finding.frameworks for finding in findings)
     assert all(finding.owner is None for finding in findings)

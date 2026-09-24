@@ -194,7 +194,10 @@ finite number. It starts when the connector worker begins, and split filesystem
 roots share that connector's deadline. The engine stops accepting a connector's
 results after the deadline and records incomplete coverage. Python
 worker threads cannot safely be killed: a blocked SDK call can continue after
-that soft deadline and can delay process shutdown. Also enforce a host/job
+that soft deadline. The CLI normally exits after emitting an incomplete report,
+but timeout handling may wait for an in-progress filesystem replacement of a
+cache or record artifact. Embedded callers must supervise their process and
+cannot reuse an Engine with an active abandoned worker. Also enforce a host/job
 wall-clock deadline and terminate the disposable worker when it expires.
 SDK connect/read limits and bounded retries reduce blocking; none guarantees a
 universal hard deadline for the whole scan.
@@ -361,16 +364,17 @@ lost user attribution before using their counts as governance evidence.
 
 ### Protect the merge gate
 
-On 2026-09-24, active ruleset
+On 2026-09-24, ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
-requires `test (3.11)`, `test (3.12)` and `analyze`, a branch up to date with its
-base, and one approving review. New pushes dismiss stale reviews and no bypass
-actor is configured. Keep the CodeQL job's displayed name `analyze`; changing it
-without updating the rule leaves the required check pending.
+is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an up-to-date
+branch, and one approving review, but its live enforcement is **disabled**.
+Restore enforcement before relying on GitHub to block unsafe merges; until then,
+verify these checks and an independent review manually. Keep the CodeQL job's
+displayed name `analyze` when restoring the required check.
 
-A successful workflow is necessary but does not supply the required independent
-approval. Obtain an eligible review on the final changes and let GitHub enforce
-the merge gate; do not weaken rules to complete a merge. Recheck live ruleset and
+A successful workflow is necessary but does not supply independent approval.
+Obtain an eligible review on the final changes; do not treat disabled rules as
+evidence of a protected merge gate. Recheck live ruleset and
 PR status at release time because repository settings can change.
 
 The CI workflow installs the hash-locked core/cloud runtime dependency set and validates signatures, lint, typing, dependency advisories, tests
@@ -443,8 +447,9 @@ and `--connector-timeout` remain deprecated compatibility aliases. Configure onl
 one YAML key; supplying both is rejected. Legacy YAML `connector_timeout: null`
 uses the 120-second default rather than disabling it.
 Workers are not replaced after all capacity is occupied by blocked calls; the
-remaining queue is reported incomplete. The CLI does not forcibly exit from a
-library call. Continue to enforce the disposable worker's external job deadline.
+remaining queue is reported incomplete. `Engine.run()` returns control to library
+callers; the CLI exits after reporting abandoned workers. Continue to enforce
+the disposable worker's external job deadline for blocked publication or output.
 
 New Azure App Service settings and OCI Function exports store configuration under
 `environment`, which redacts every value even when a credential has an unusual
