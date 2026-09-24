@@ -27,6 +27,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import (
     GitHubConnector,
+    UnusualRepositoryPath,
     _OfflineRepository,
     _remote_record,
     repository_blob_id,
@@ -343,8 +344,8 @@ class GitLabConnector(BaseConnector):
         for p in selected:
             try:
                 target = repository_target(dest, p)
-            except ConnectorError:
-                self.ctx.warn("code.gitlab: unsafe repository tree path skipped; source coverage partial", incomplete=True)
+            except UnusualRepositoryPath:
+                self.ctx.warn("code.gitlab: unusual repository tree path skipped; source coverage partial", incomplete=True)
                 continue
             try:
                 blob_id = repository_blob_id(blobs[p].get("id"))

@@ -191,7 +191,10 @@ def test_api_mode_skips_an_unsafe_tree_path_instead_of_the_repository(tmp_path, 
     repo = {"full_name": "acme/demo", "default_branch": "main", "owner": {"login": "acme"}, "html_url": "https://github.com/acme/demo"}
     findings = list(connector.analyze([repo]))
     assert [f.resource for f in findings] == ["github:acme/demo"] and not ctx.stats.errors
-    assert any("unsafe repository tree path skipped" in w for w in ctx.stats.warnings) and ctx.stats.incomplete
+    tree["tree"][1]["path"] = "../escape.py"
+    with pytest.raises(RuntimeError):
+        connector._fetch_via_api(repo, str(tmp_path / "again"))
+    assert any("unusual repository tree path skipped" in w for w in ctx.stats.warnings) and ctx.stats.incomplete
 
 
 def test_per_repository_contexts_share_the_diagnostic_cap(tmp_path, index):

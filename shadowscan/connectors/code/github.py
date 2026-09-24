@@ -57,11 +57,23 @@ def _remote_record(data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if not key.startswith("_")}
 
 
+class UnusualRepositoryPath(ConnectorError):
+    """A legal Git path this scanner does not materialise (backslash, drive-like prefix)."""
+
+
 def repository_target(root: str, path: str) -> Path:
-    """Validate API tree paths before fetching or writing outside the checkout."""
+    """Validate API tree paths before fetching or writing outside the checkout.
+
+    Traversal and absolute paths are hostile and abort the repository fetch
+    before any request. Paths that Git permits but that are ambiguous on a
+    local filesystem raise :class:`UnusualRepositoryPath` so callers can skip
+    that one file with partial-coverage reporting.
+    """
     rel = PurePosixPath(path)
-    if not rel.parts or rel.is_absolute() or ".." in rel.parts or "\\" in path or "\x00" in path or ":" in rel.parts[0]:
+    if not rel.parts or rel.is_absolute() or ".." in rel.parts or "\x00" in path:
         raise ConnectorError("Refusing unsafe repository tree path")
+    if "\\" in path or ":" in rel.parts[0]:
+        raise UnusualRepositoryPath("Refusing unsafe repository tree path")
     target = (Path(root) / path).resolve()
     if not target.is_relative_to(Path(root).resolve()) or target == Path(root).resolve():
         raise ConnectorError("Repository tree path escapes checkout")
@@ -374,8 +386,10 @@ class GitHubConnector(BaseConnector):
         for p in selected:
             try:
                 target = repository_target(dest, p)
-            except ConnectorError:
-                self.ctx.warn("code.github: unsafe repository tree path skipped; source coverage partial", incomplete=True)
+            except UnusualRepositoryPath:
+                # Traversal still aborts the repository; an unusual but legal
+                # path only costs that file.
+                self.ctx.warn("code.github: unusual repository tree path skipped; source coverage partial", incomplete=True)
                 continue
             try:
                 blob_id = repository_blob_id(blobs[p].get("sha"))
