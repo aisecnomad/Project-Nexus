@@ -7,11 +7,14 @@ signature settings; disabling secret discovery must never disable redaction.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import io
 import re
+import threading
 import token
 import tokenize
+from collections import OrderedDict
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import unquote
@@ -26,16 +29,23 @@ _SENSITIVE_SUFFIXES = (
     "secretstring", "secretbinary", "connectionstring", "connstr",
 )
 _SENSITIVE_NAMES = {"token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie"}
+# Keep this aligned with the ``secret`` signal patterns in the signature packs
+# so Evidence/Finding sanitization is a real backstop for every format the
+# scanner can detect, not only the most common ones.
 _SECRET_TOKEN = re.compile(
-    r"\b(?:sk-(?:proj-|ant-|live-|or-v1-)?[A-Za-z0-9_-]{8,}"
+    r"\b(?:sk-(?:proj-|ant-|live-|or-v1-|lf-|litellm-|svcacct-|admin-)?[A-Za-z0-9_-]{8,}"
     r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
     r"|glpat-[A-Za-z0-9_-]{8,}"
     r"|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{16,}"
-    r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,})\b"
+    r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,}"
+    r"|gsk_[A-Za-z0-9]{40,}|pcsk_[A-Za-z0-9_]{20,}|e2b_[a-f0-9]{40}|tgp_v1_[A-Za-z0-9_-]{30,}"
+    r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}"
+    r"|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}"
+    r"|r8_[A-Za-z0-9]{30,}|fc-[a-f0-9]{32}|app-[A-Za-z0-9]{24})\b"
 )
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
 _PEM = re.compile(r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)", re.DOTALL)
-_AUTH = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9+/_.=-]+")
+_AUTH = re.compile(r"(?i)\b(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 # Bounded identifiers keep scanning linear on long lines of non-matching text.
 _ASSIGNMENT = re.compile(
@@ -50,6 +60,14 @@ _PYTHON_ASSIGNMENT_KEY = re.compile(
 _MAX_SANITIZATION_NODES = 100_000
 _MAX_SANITIZATION_CHARS = 64 * 1024 * 1024
 _MAX_REDACTION_WORK = 128 * 1024 * 1024
+_KEY_NORMALISE = re.compile(r"[^a-z0-9]")
+# Report values repeat heavily (signal ids, descriptions, field names). Cache
+# sanitized results for short strings keyed by a digest of the input so the
+# cache never retains raw, possibly credential-bearing, input text.
+_TEXT_CACHE_MAX_CHARS = 512
+_TEXT_CACHE_ENTRIES = 4096
+_text_cache: OrderedDict[bytes, str] = OrderedDict()
+_text_cache_lock = threading.Lock()
 
 
 class SanitizationLimitError(ValueError):
@@ -165,8 +183,9 @@ def _redact_python_assignments(text: str) -> str:
     return "".join(pieces)
 
 
+@functools.lru_cache(maxsize=4096)
 def _sensitive_key(key: str) -> bool:
-    normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+    normalized = _KEY_NORMALISE.sub("", key.lower())
     return normalized in _SENSITIVE_NAMES or normalized.endswith(_SENSITIVE_SUFFIXES)
 
 
@@ -226,6 +245,24 @@ def sanitize_text(text: str) -> str:
     """Redact recognizable credentials, assignments, auth headers and URL secrets."""
     if not isinstance(text, str):
         text = str(text)
+    if len(text) > _TEXT_CACHE_MAX_CHARS:
+        return _sanitize_text_uncached(text)
+    key = hashlib.blake2b(text.encode("utf-8", "surrogatepass"), digest_size=16).digest()
+    with _text_cache_lock:
+        cached = _text_cache.get(key)
+        if cached is not None:
+            _text_cache.move_to_end(key)
+            return cached
+    clean = _sanitize_text_uncached(text)
+    with _text_cache_lock:
+        _text_cache[key] = clean
+        _text_cache.move_to_end(key)
+        while len(_text_cache) > _TEXT_CACHE_ENTRIES:
+            _text_cache.popitem(last=False)
+    return clean
+
+
+def _sanitize_text_uncached(text: str) -> str:
     if len(text) > _MAX_SANITIZATION_CHARS:
         raise SanitizationLimitError("text sanitization size limit exceeded")
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
@@ -275,6 +312,11 @@ def sanitize(value: Any) -> Any:
         if isinstance(child, str) and len(child) >= 8:
             if child != REDACTED and not _FINGERPRINT.fullmatch(child):
                 known.add(child)
+                # Library errors often quote the offending value with repr(),
+                # which escapes control characters; redact that spelling too.
+                escaped = repr(child)[1:-1]
+                if escaped != child:
+                    known.add(escaped)
 
     discovered: set[int] = set()
 

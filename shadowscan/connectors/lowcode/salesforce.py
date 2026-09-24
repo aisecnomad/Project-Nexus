@@ -38,7 +38,8 @@ QUERIES: dict[str, tuple[str, str]] = {
     "GenAiFunctionDefinition": ("tooling", "SELECT Id, DeveloperName, MasterLabel, Description, InvocationTarget, InvocationTargetType, CreatedDate FROM GenAiFunctionDefinition"),
     "GenAiPromptTemplate": ("tooling", "SELECT Id, DeveloperName, MasterLabel, Description, Type, CreatedDate, LastModifiedDate, CreatedBy.Name FROM GenAiPromptTemplate"),
     "ConnectedApplication": ("data", "SELECT Id, Name, CreatedDate, LastModifiedDate, CreatedBy.Name, OptionsAllowAdminApprovedUsersOnly, OptionsRefreshTokenValidityMetric, MobileSessionTimeout FROM ConnectedApplication"),
-    "OauthToken": ("data", "SELECT Id, AppName, UserId, User.Username, LastUsedDate, UseCount, CreatedDate, DeleteToken, AccessToken FROM OauthToken"),
+    # Token values are never read by the analysis; do not request them.
+    "OauthToken": ("data", "SELECT Id, AppName, UserId, User.Username, LastUsedDate, UseCount, CreatedDate FROM OauthToken"),
     "FlowDefinitionView": ("data", "SELECT Id, ApiName, Label, Description, ProcessType, TriggerType, IsActive, ActiveVersionId, LastModifiedDate, LastModifiedBy FROM FlowDefinitionView WHERE IsActive = true"),
 }
 
@@ -88,12 +89,25 @@ class SalesforceConnector(BaseConnector):
                 self.log.debug("salesforce %s: %s", kind, exc)
                 self.ctx.warn(f"lowcode.salesforce: {kind} not queryable ({exc.status})")
                 continue
+            seen: set[str] = set()
             while data:
                 for rec in data.get("records", []):
                     rec["_kind"] = kind
                     yield rec
                 nxt = data.get("nextRecordsUrl")
-                data = self.http.get_json(nxt) if nxt else None
+                if not nxt:
+                    break
+                if not isinstance(nxt, str) or nxt in seen or len(seen) >= 1000:
+                    self.ctx.warn(f"lowcode.salesforce: {kind} pagination invalid or exceeded; coverage incomplete")
+                    break
+                seen.add(nxt)
+                try:
+                    # Query locators expire; a failed continuation loses only
+                    # the remaining pages of this object, not the whole org.
+                    data = self.http.get_json(nxt)
+                except HttpError as exc:
+                    self.ctx.warn(f"lowcode.salesforce: {kind} pagination incomplete ({exc.status})")
+                    break
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:

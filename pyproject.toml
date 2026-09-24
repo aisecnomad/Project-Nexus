@@ -54,7 +54,7 @@ Repository = "https://github.com/aisecnomad/Project-Nexus"
 include = ["shadowscan*"]
 
 [tool.setuptools.package-data]
-shadowscan = ["signatures/data/**/*.yaml", "reporters/templates/*.html", "py.typed"]
+shadowscan = ["signatures/data/**/*.yaml", "py.typed"]
 
 [tool.ruff]
 line-length = 110

@@ -38,6 +38,21 @@ def _remaining_timeout() -> float:
     return remaining
 
 
+def pattern_timeout(default: float = REGEX_TIMEOUT_SECONDS) -> float:
+    """Per-pattern timeout for regex calls made outside the matcher.
+
+    Callers such as manifest parsers pass their own ceiling; an open per-input
+    deadline (``scan_budget``) always caps it, and an elapsed deadline raises.
+    """
+    deadline = _SCAN_DEADLINE.get()
+    if deadline is None:
+        return default
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise MatchTimeoutError("signature matching exceeded the input execution budget")
+    return min(default, remaining)
+
+
 def _finditer(rx: Any, text: str, context: str, limit: int) -> list[Any]:
     try:
         # Tiny patterns dominate this workload. Releasing/reacquiring the GIL
@@ -264,24 +279,44 @@ class SignatureIndex:
                     out.append(Match(sig, s, name, s.weight))
         return out
 
+    @contextmanager
+    def _input_budget(self):
+        """Use the caller's deadline when one is open; otherwise open the default.
+
+        Nesting the default budget under an explicit one previously capped
+        every file at the default two seconds, whatever ``scan_timeout`` said.
+        """
+        if _SCAN_DEADLINE.get() is not None:
+            _remaining_timeout()
+            yield
+            _remaining_timeout()
+            return
+        with self.scan_budget():
+            yield
+
     def _match_regex_signals(
         self, signal_type: str, text: str, language: str | None = None, max_per_signal: int = 3
     ) -> list[Match]:
         # One deadline covers the whole signal class even outside filesystem scans.
-        with self.scan_budget():
+        with self._input_budget():
             return self._match_regex_signals_with_budget(signal_type, text, language, max_per_signal)
 
     def _match_regex_signals_with_budget(
         self, signal_type: str, text: str, language: str | None, max_per_signal: int
     ) -> list[Match]:
         out: list[Match] = []
+        # Counting newlines from the start of the text for every hit is
+        # quadratic on large inputs with many signals; index them once.
+        newlines: list[int] | None = None
         for sig, s in self._by_type.get(signal_type, []):
             if language and s.languages and language not in s.languages:
                 continue
             hits = 0
             for rx in s.bounded_compiled:
                 for m in _finditer(rx, text, sig.id, max_per_signal - hits):
-                    line = text.count("\n", 0, m.start()) + 1
+                    if newlines is None:
+                        newlines = [newline.start() for newline in re.finditer("\n", text)]
+                    line = bisect_right(newlines, m.start()) + 1
                     excerpt = m.group(0)
                     # Never cut away a credential's recognizable context before
                     # redaction. Dedicated secret detectors need the raw match
@@ -371,7 +406,7 @@ class SignatureIndex:
         return out
 
     def match_domains_in_text(self, text: str) -> list[Match]:
-        with self.scan_budget():
+        with self._input_budget():
             return self._match_domains_in_text_with_budget(text)
 
     def _match_domains_in_text_with_budget(self, text: str) -> list[Match]:
@@ -415,7 +450,7 @@ class SignatureIndex:
 
     def match_envs_in_text(self, text: str) -> list[Match]:
         """Find environment variable style identifiers inside arbitrary text."""
-        with self.scan_budget():
+        with self._input_budget():
             return self._match_envs_in_text_with_budget(text)
 
     def _match_envs_in_text_with_budget(self, text: str) -> list[Match]:

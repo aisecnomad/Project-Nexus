@@ -18,8 +18,8 @@ import re
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext
-from shadowscan.connectors.cloud.common import cloud_finding, done, name_hint, scan_env
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.cloud.common import cloud_finding, done, name_hint, scan_env, string_list
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.text import truncate
@@ -54,6 +54,7 @@ class OciConnector(BaseConnector):
         self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
         self._config: dict[str, Any] = {}
         self._signer: Any = None
+        self._clients: dict[tuple[Any, str | None], Any] = {}
         self.tenancy: str | None = ctx.get("tenancy")
 
     # ------------------------------------------------------------- session
@@ -74,10 +75,20 @@ class OciConnector(BaseConnector):
             self.tenancy = self.tenancy or self._config.get("tenancy")
 
     def _client(self, cls: Any, region: str | None = None) -> Any:
-        cfg = dict(self._config)
-        if region:
-            cfg["region"] = region
-        return cls(cfg, signer=self._signer) if self._signer else cls(cfg)
+        """One SDK client per (service, region); construction parses the signing key each time."""
+        key = (cls, region)
+        client = self._clients.get(key)
+        if client is None:
+            cfg = dict(self._config)
+            if region:
+                cfg["region"] = region
+            # (connect, read) seconds; the SDK default read timeout is 60 s but
+            # explicit values keep the policy visible and independent of SDK changes.
+            kwargs: dict[str, Any] = {"timeout": (10, 60)}
+            if self._signer:
+                kwargs["signer"] = self._signer
+            client = self._clients[key] = cls(cfg, **kwargs)
+        return client
 
     def _all(self, fn: Any, *args: Any, **kwargs: Any) -> list[Any]:
         """Keep successful pages when a later OCI request fails or pagination stalls."""
@@ -131,10 +142,15 @@ class OciConnector(BaseConnector):
 
         self._init()
         identity = self._client(oci.identity.IdentityClient)
-        compartments = list(self.ctx.get("compartments") or [])
+        try:
+            compartments = string_list(self.ctx.get("compartments"), "compartments") or []
+            regions = string_list(self.ctx.get("regions"), "regions", pattern=r"[a-z0-9-]+") or []
+        except ValueError as exc:
+            raise ConnectorError(f"cloud.oci: {exc}") from None
         if not compartments:
-            compartments = [self.tenancy] + [c.id for c in self._all(identity.list_compartments, self.tenancy, compartment_id_in_subtree=True, lifecycle_state="ACTIVE")]
-        regions = list(self.ctx.get("regions") or [r.region_name for r in self._all(identity.list_region_subscriptions, self.tenancy)])
+            compartments = [c for c in [self.tenancy] if c] + [c.id for c in self._all(identity.list_compartments, self.tenancy, compartment_id_in_subtree=True, lifecycle_state="ACTIVE")]
+        if not regions:
+            regions = [r.region_name for r in self._all(identity.list_region_subscriptions, self.tenancy)]
         yield {"_kind": "tenancy", "tenancy": self.tenancy, "compartments": len(compartments), "regions": regions}
         for pol in self._iter_policies(identity, compartments):
             yield pol
@@ -263,7 +279,8 @@ class OciConnector(BaseConnector):
                     continue
                 detail, overrides, function_complete = self._function_detail(client, "function", summary)
                 # OCI passes application settings to every function; function settings win.
-                yield {**detail, "config": {**inherited, **overrides}, "_kind": "function", "_region": region,
+                # The env-style key makes record dumps redact every value.
+                yield {**{k: v for k, v in detail.items() if k != "config"}, "environment": {**inherited, **overrides}, "_kind": "function", "_region": region,
                        "_compartment": comp, "_application": application.get("display_name"),
                        "_application_id": app_summary["id"],
                        "_config_coverage": {"application": "observed" if application_complete else "unknown",
@@ -386,7 +403,9 @@ class OciConnector(BaseConnector):
 
     def _h_function(self, rec: dict[str, Any]) -> Finding | None:
         f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI Function: {rec.get('_application')}/{rec.get('display_name')}", resource=_resource_id(rec.get("id") or rec.get("display_name")), resource_type="function", **self._base(rec))
-        scan_env(self.index, f, rec.get("config"), location=rec.get("id"))
+        # Older exports used "config"; live records now use the env-style key.
+        config = rec.get("environment") if isinstance(rec.get("environment"), dict) else rec.get("config")
+        scan_env(self.index, f, config, location=rec.get("id"))
         # New SDKs expose source_details.image; older SDKs / exports use image.
         source = rec.get("source_details")
         image = source.get("image") if isinstance(source, dict) else None
@@ -397,7 +416,7 @@ class OciConnector(BaseConnector):
         if not f.frameworks and not f.model_providers:
             return None
         f.add_evidence(Evidence(signal="oci:function", description=f"Function '{rec.get('display_name')}' image {image}", weight=0.25))
-        f.metadata.update({"image": image, "application": rec.get("_application"), "config_keys": sorted((rec.get("config") or {}).keys())[:40]})
+        f.metadata.update({"image": image, "application": rec.get("_application"), "config_keys": sorted((config or {}).keys())[:40]})
         if "_config_coverage" in rec:
             f.metadata["config_coverage"] = rec["_config_coverage"]
         return done(f, self.index, Kind.CLOUD_RESOURCE)

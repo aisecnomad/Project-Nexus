@@ -187,7 +187,9 @@ class GitHubConnector(BaseConnector):
             tmp: str | None = None
             try:
                 if not local:
-                    tmp = tempfile.mkdtemp(prefix="shadowscan-gh-", dir=self.ctx.workdir)
+                    # The scan root check rejects symlinked ancestors; the
+                    # default temp directory has one on macOS (/var -> /private/var).
+                    tmp = os.path.realpath(tempfile.mkdtemp(prefix="shadowscan-gh-", dir=self.ctx.workdir))
                     local = self._fetch_repo(repo, tmp)
                     if not local:
                         continue

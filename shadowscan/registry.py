@@ -115,6 +115,9 @@ class Inventory:
     def __init__(self, entries: list[InventoryEntry] | None = None):
         self.entries: list[InventoryEntry] = entries or []
         self.sources: list[str] = []
+        # Name patterns are rebuilt per finding otherwise; large inventories
+        # would exhaust the ``re`` module cache and recompile on every match.
+        self._name_patterns: dict[str, re.Pattern[str]] = {}
 
     def __len__(self) -> int:
         return len(self.entries)
@@ -323,6 +326,12 @@ class Inventory:
             and (not entry.regions or finding.region in entry.regions)
         )
 
+    def _name_pattern(self, name: str) -> re.Pattern[str]:
+        pattern = self._name_patterns.get(name)
+        if pattern is None:
+            pattern = self._name_patterns[name] = re.compile(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])")
+        return pattern
+
     def suggest(self, finding: Finding) -> list[InventoryEntry]:
         """Return name hints for human review; never use them for approval."""
         res = (finding.resource or "").lower()
@@ -333,7 +342,8 @@ class Inventory:
             for n in e.all_names():
                 if len(n) < 4:
                     continue
-                if n in names or re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", title) or re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", res):
+                pattern = self._name_pattern(n)
+                if n in names or pattern.search(title) or pattern.search(res):
                     out.append(e)
                     break
         return out

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import stat
@@ -13,6 +14,8 @@ from typing import Any
 from shadowscan.utils.redaction import credential_id, sanitize, sanitize_text
 
 _BINARY_SNIFF = 8192
+# Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
+_EPOCH_RX = re.compile(r"\d{1,19}(?:\.\d{1,9})?")
 
 def redact(value: str, keep: int = 4) -> str:
     """Return a stable opaque credential identity without retaining raw fragments.
@@ -188,8 +191,15 @@ def parse_timestamp(value: Any) -> datetime | None:
         return None
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if isinstance(value, bool):
+        return None
     if isinstance(value, (int, float)):
-        v = float(value)
+        try:
+            v = float(value)
+        except OverflowError:
+            return None
+        if not math.isfinite(v):
+            return None
         if v > 1e12:
             v /= 1000.0
         try:
@@ -197,8 +207,12 @@ def parse_timestamp(value: Any) -> datetime | None:
         except (OverflowError, OSError, ValueError):
             return None
     s = str(value).strip()
-    if s.isdigit():
-        return parse_timestamp(int(s))
+    if len(s) > 64:
+        # No supported timestamp representation is this long; hostile claims
+        # (thousands of digits) must not reach int()/float() conversion.
+        return None
+    if _EPOCH_RX.fullmatch(s):
+        return parse_timestamp(float(s))
     s = s.replace("Z", "+00:00")
     for fmt in (None, "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%d/%b/%Y:%H:%M:%S %z", "%Y-%m-%d"):
         try:

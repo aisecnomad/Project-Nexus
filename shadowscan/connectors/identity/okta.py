@@ -18,6 +18,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient
 
 
@@ -44,7 +45,11 @@ class OktaConnector(BaseConnector):
             headers["Authorization"] = f"Bearer {bearer}"
         elif token:
             headers["Authorization"] = f"SSWS {token}"
-        self.http = HttpClient(self.org_url, headers=headers) if self.org_url else None
+        # Denied optional lookups (grants/tokens) are incomplete coverage for
+        # one app, not a reason to abandon the whole application inventory.
+        self.http = HttpClient(
+            self.org_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True),
+        ) if self.org_url else None
         self.include_inactive = bool(ctx.get("include_inactive", False))
         self.fetch_tokens = bool(ctx.get("fetch_tokens", True))
 
@@ -64,7 +69,12 @@ class OktaConnector(BaseConnector):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for app in records:
             self.ctx.examined()
-            f = self._app_finding(app)
+            try:
+                f = self._app_finding(app)
+            except (AttributeError, TypeError, ValueError, KeyError, MatchTimeoutError) as exc:
+                # One malformed export record must not discard every later app.
+                self.ctx.warn(f"identity.okta: skipped a malformed application record ({type(exc).__name__})")
+                continue
             if f:
                 yield f
 

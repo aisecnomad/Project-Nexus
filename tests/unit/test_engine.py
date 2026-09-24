@@ -73,10 +73,18 @@ def test_parallel_connector_completion_cannot_change_merge_attribution(monkeypat
                        title="Same resource", resource="repo", resource_type="project",
                        owner=label, metadata={"first_source": label})]
 
-    # Force the completed-future iterator to hand the second configured
-    # connector to the engine first, independent of scheduler timing.
+    # Hand every future back to the engine at once, in reverse submission
+    # order, independent of scheduler timing: attribution must still follow
+    # the configured connector order.
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
-    monkeypatch.setattr("shadowscan.engine.as_completed", lambda futures: reversed(list(futures)))
+
+    def reversed_wait(futures, timeout=None, return_when=None):
+        ordered = sorted(futures, key=id, reverse=True)
+        for future in ordered:
+            future.result()
+        return set(ordered), set()
+
+    monkeypatch.setattr("shadowscan.engine.wait", reversed_wait)
     cfg = ScanConfig(connectors=[
         ConnectorSpec("code.filesystem", label="first"),
         ConnectorSpec("code.filesystem", label="second"),

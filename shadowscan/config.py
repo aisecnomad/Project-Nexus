@@ -48,7 +48,7 @@ PATH_KEYS = ("input", "path", "paths", "service_account_file", "config_file", "t
 _CONFIG_FIELDS = {"connectors", "inventory", "signatures", "options"}
 _OPTION_FIELDS = {
     "min_confidence", "fail_on", "dump_records", "workdir", "parallel", "incremental",
-    "state_dir", "plugins", "allow_signature_override", "allow_private_origin",
+    "state_dir", "plugins", "allow_signature_override", "allow_private_origin", "connector_timeout",
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 
@@ -106,6 +106,9 @@ class ScanConfig:
     plugins: list[str] = field(default_factory=list)
     allow_signature_override: bool = False
     allow_private_origin: bool = False
+    # Seconds a single connector may run before the engine abandons it and
+    # reports the scan incomplete. None keeps waiting for every connector.
+    connector_timeout: float | None = None
     source: str | None = None
 
     def __post_init__(self) -> None:
@@ -119,6 +122,7 @@ class ScanConfig:
         if self.fail_on is not None and (not isinstance(self.fail_on, str) or self.fail_on not in _RISK_LEVELS):
             raise ConfigValidationError("options.fail_on must be critical, high, medium, low, info, or null")
         self.parallel = _positive_integer(self.parallel, "options.parallel")
+        self.connector_timeout = validate_connector_timeout(self.connector_timeout)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], source: str | None = None) -> ScanConfig:
@@ -174,6 +178,7 @@ class ScanConfig:
             plugins=validate_plugins(opts.get("plugins", [])),
             allow_signature_override=_boolean_option(opts.get("allow_signature_override", False), "allow_signature_override"),
             allow_private_origin=_boolean_option(opts.get("allow_private_origin", False), "allow_private_origin"),
+            connector_timeout=validate_connector_timeout(opts.get("connector_timeout")),
             source=source,
         )
 
@@ -280,6 +285,15 @@ def _connector_enabled(value: Any) -> bool:
         if normalized in {"false", "no", "off", "0"}:
             return False
     raise ValueError("connector enabled must be a boolean (true or false)")
+
+
+def validate_connector_timeout(value: Any) -> float | None:
+    """A connector deadline is a positive, finite number of seconds or null."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ConfigValidationError("options.connector_timeout must be a positive number of seconds or null")
+    return float(value)
 
 
 def validate_min_confidence(value: Any) -> float:

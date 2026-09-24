@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections import Counter
 
 from shadowscan.signatures import SignatureIndex, load_signatures
@@ -17,8 +16,11 @@ def test_all_signatures_load_and_validate():
         assert s.signals, f"{s.id} has no signals"
         for sig in s.signals:
             assert sig.type in VALID_SIGNAL_TYPES
-            for rx in sig.compiled:
-                assert isinstance(rx, re.Pattern)
+            # Matching runs on the timeout-capable ``regex`` engine only; every
+            # declared pattern must have been compiled for it.
+            assert len(sig.bounded_compiled) == len(sig.patterns)
+            assert all(isinstance(rx.pattern, str) for rx in sig.bounded_compiled)
+            assert sig.compiled == []  # legacy attribute, no longer populated
 
 
 def test_required_frameworks_present(index: SignatureIndex):

@@ -71,6 +71,8 @@ class Signal:
     capabilities: list[str] = field(default_factory=list)  # capabilities implied when matched
     agent_indicator: bool = False  # this signal by itself indicates an *agent* (not just LLM use)
     description: str | None = None
+    # Matching uses the ``regex`` engine only (it supports per-call timeouts).
+    # ``compiled`` is retained for API compatibility and is no longer populated.
     compiled: list[re.Pattern[str]] = field(default_factory=list, repr=False)
     bounded_compiled: list[Any] = field(default_factory=list, repr=False)
 
@@ -79,17 +81,15 @@ class Signal:
         self.bounded_compiled = []
         for p in self.patterns:
             try:
-                self.compiled.append(re.compile(p, re.MULTILINE))
                 self.bounded_compiled.append(regex.compile(p, regex.MULTILINE | regex.VERSION0))
-            except (re.error, regex.error) as exc:
+            except regex.error as exc:
                 raise ValueError(f"invalid regex {p!r}: {exc}") from exc
         if self.type == "domain":
             for value in self.values:
                 if value.startswith("re:"):
                     try:
-                        re.compile(value[3:], re.IGNORECASE)
                         regex.compile(value[3:], regex.IGNORECASE | regex.VERSION0)
-                    except (re.error, regex.error) as exc:
+                    except regex.error as exc:
                         raise ValueError(f"invalid domain regex {value!r}: {exc}") from exc
 
 

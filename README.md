@@ -1,12 +1,12 @@
 # Project Nexus · ShadowScan
 
-**ShadowScan finds unregistered AI agents running in your non-production and production environments. ****
+**ShadowScan finds unregistered AI agents running in your non-production and production environments.**
 
 It sweeps the six places agents hide — code repositories, identity providers,
 LLM gateway logs, low-code platforms, SaaS apps, and cloud accounts. 
 Fingerprints the frameworks and model providers they use, scores their risk, and reconciles
 every discovery against your sanctioned inventory of
-[Agent Cards](agent-card.yaml).*.
+[Agent Cards](agent-card.yaml).
 
 Example findings (totals vary as signatures evolve):
 
@@ -68,11 +68,13 @@ tells you what a package, host, user agent, model id, scope or file path maps to
 ## Install
 
 ```bash
-pip install "git+https://github.com/aisecnomad/Project-Nexus.git@31fbf62c1ea9e8df64ced753cf237a3dcff65ef0"           # core (code, identity, gateway, low-code, SaaS via REST)
-pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@31fbf62c1ea9e8df64ced753cf237a3dcff65ef0"   # + boto3, google-auth, azure-identity, oci
+pip install "git+https://github.com/aisecnomad/Project-Nexus.git@78414f4795e0c7fc5f0fb3101f901c1f310c16fa"           # core (code, identity, gateway, low-code, SaaS via REST)
+pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@78414f4795e0c7fc5f0fb3101f901c1f310c16fa"   # + boto3, google-auth, azure-identity, oci
 ```
 
-These examples pin the reviewed implementation. Python 3.11+ is required. Core
+These examples pin the reviewed implementation. Replace the SHA with the commit
+you reviewed; use one reachable from `main` (a squashed pull-request commit can
+disappear from the remote). Python 3.11+ is required. Core
 dependencies include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
@@ -116,6 +118,8 @@ options:
   allow_private_origin: false        # opt in only for trusted private HTTPS APIs
   min_confidence: 0.3
   fail_on: high
+  connector_timeout: 900             # abandon a connector after 15 minutes; the scan is then incomplete
+  parallel: 4                        # worker threads; use 1-2 for CPU-bound offline scans
   dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs
 connectors:
   - name: code.github
@@ -154,6 +158,13 @@ and any production label claimed in the logs. Treat caller and environment
 fields according to the export's provenance; ShadowScan does not authenticate
 the source of an imported log. See [scan state and runtime correlation](docs/scanning.md)
 for configuration, limitations, and migration guidance.
+
+`--connector-timeout` / `options.connector_timeout` abandons any connector that
+runs longer than the given number of seconds and reports the scan incomplete.
+A blocked thread cannot be interrupted, so the CLI then exits without waiting
+for it. `options.parallel` only helps connectors that wait on network APIs;
+offline exports and repository scans are CPU-bound under the interpreter lock,
+so keep it at 1-2 for those.
 
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
@@ -221,8 +232,8 @@ discovery:
   names: ["ops provisioning agent"]
 ```
 
-Simple `agents.yaml` lists and CSV work too. `shadowscan inventory stubs.`
-Turns shadow findings into card skeletons for review. See
+Simple `agents.yaml` lists and CSV work too. `shadowscan inventory stubs`
+turns shadow findings into card skeletons for review. See
 [docs/inventory.md](docs/inventory.md).
 
 ## Extending
@@ -239,7 +250,7 @@ Turns shadow findings into card skeletons for review. See
 
 ```bash
 pip install -e ".[dev]"
-python -m shadowscan. signatures.validate
+python -m shadowscan.signatures.validate
 ruff check shadowscan tests
 mypy shadowscan
 pip-audit --progress-spinner off

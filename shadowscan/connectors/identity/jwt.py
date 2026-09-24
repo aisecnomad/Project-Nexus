@@ -38,7 +38,8 @@ from shadowscan.connectors.common import (
     name_matches,
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.jwks import verification_algorithms, verify_against_jwks
+from shadowscan.signatures.matcher import MatchTimeoutError
+from shadowscan.utils.jwks import fetch_jwks, verification_algorithms, verify_against_jwks
 from shadowscan.utils.text import parse_timestamp, to_iso
 
 _JWT_RX = re.compile(r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*$")
@@ -125,15 +126,35 @@ class JwtConnector(BaseConnector, _NoDump):
                 raise ValueError("expected_issuer must be a nonempty string")
         except ValueError as exc:
             raise ConnectorError(f"identity.jwt: {exc}") from exc
+        self._jwks_cache: dict[str, Any] = {}
         for rec in records:
             token = rec.get("token") or rec.get("jwt") or rec.get("access_token") or rec.get("id_token")
             if not isinstance(token, str) or not _JWT_RX.fullmatch(token.strip()):
                 self.ctx.error("identity.jwt: record is missing a valid JWT token")
                 continue
             self.ctx.examined()
-            f = self.analyze_token(str(token).strip(), jwks_url=jwks_url, context=rec.get("context") or rec.get("source"))
+            try:
+                f = self.analyze_token(str(token).strip(), jwks_url=jwks_url, context=rec.get("context") or rec.get("source"))
+            except (ValueError, TypeError, OverflowError, RecursionError, KeyError, MatchTimeoutError) as exc:
+                # Hostile claims (huge numbers, odd types) must not stop the
+                # analysis of every later token in the input.
+                self.ctx.warn(f"identity.jwt: token analysis failed ({type(exc).__name__})")
+                continue
             if f:
                 yield f
+
+    def _jwks_document(self, jwks_url: str) -> dict[str, Any]:
+        """Fetch each configured key set once per run, including its failure."""
+        cached = self._jwks_cache.get(jwks_url)
+        if cached is None:
+            try:
+                cached = fetch_jwks(jwks_url)
+            except Exception as exc:  # noqa: BLE001 - remembered so every token reports the same outcome
+                cached = exc
+            self._jwks_cache[jwks_url] = cached
+        if isinstance(cached, BaseException):
+            raise cached
+        return cached
 
     # -------------------------------------------------------------- analysis
     def analyze_token(self, token: str, jwks_url: str | None = None, context: str | None = None) -> Finding | None:
@@ -157,6 +178,7 @@ class JwtConnector(BaseConnector, _NoDump):
                     header,
                     expected_issuer=self.ctx.get("expected_issuer"),
                     allowed_algorithms=self.ctx.get("allowed_algorithms"),
+                    document=self._jwks_document(jwks_url),
                 )
             except Exception as exc:  # noqa: BLE001
                 verified = False

@@ -46,7 +46,16 @@ def render_html(result: ScanResult) -> str:
         finding.sanitize()
     s = result.summary()
     parts: list[str] = []
-    parts.append("<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>ShadowScan report</title><style>" + _CSS + "</style></head><body>")
+    # The report is self-contained: no network access, navigation or form
+    # submission is ever legitimate, so forbid them even if an escape slipped.
+    parts.append(
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; style-src 'unsafe-inline'; "
+        "script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">"
+        "<meta name='referrer' content='no-referrer'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'><title>ShadowScan report</title><style>"
+        + _CSS + "</style></head><body>"
+    )
     parts.append(f"<header><h1>ShadowScan report <span>v{_e(result.version)} · {_e(result.finished_at or result.started_at)}</span></h1><div class='muted'>Shadow AI agent discovery across code, identity, gateways, low-code, SaaS and cloud.</div></header>")
     if not result.complete:
         parts.append("<div class='controls'><strong class='shadow'>INCOMPLETE SCAN — some required inputs could not be assessed. Review connector statistics.</strong></div>")

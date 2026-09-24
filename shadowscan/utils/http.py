@@ -17,6 +17,8 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
 from requests.adapters import HTTPAdapter
+from requests.exceptions import InvalidHeader
+from requests.utils import check_header_validity
 from urllib3.connection import HTTPSConnection
 from urllib3.connectionpool import HTTPSConnectionPool
 from urllib3.exceptions import ConnectTimeoutError, NameResolutionError, NewConnectionError
@@ -267,6 +269,15 @@ class HttpClient:
         self.session.mount("https://", self._policy_adapter)
         self.session.headers.update({"User-Agent": f"shadowscan/{__version__}", "Accept": "application/json"})
         if headers:
+            for name, value in headers.items():
+                # requests rejects control characters later, quoting the whole
+                # header (credential included) in the exception. Fail here
+                # without echoing the value; a trailing newline from a secret
+                # file is the usual cause.
+                try:
+                    check_header_validity((name, value))
+                except InvalidHeader:
+                    raise ValueError(f"HTTP header {name!r} contains invalid characters") from None
             self.session.headers.update(headers)
         if auth is not None:
             self.session.auth = auth

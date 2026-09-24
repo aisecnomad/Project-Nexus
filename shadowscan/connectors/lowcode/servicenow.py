@@ -15,6 +15,8 @@ Offline export: records carrying ``_table`` / ``sys_class_name`` or wrapped as
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
 
@@ -40,6 +42,10 @@ def _val(v: Any) -> Any:
     if isinstance(v, dict) and "value" in v:
         return v.get("display_value") or v.get("value")
     return v
+
+
+_PAGE_SIZE = 500
+_MAX_TABLE_PAGES = 1000  # 500,000 rows per table before coverage is reported incomplete
 
 
 class ServiceNowConnector(BaseConnector):
@@ -80,21 +86,35 @@ class ServiceNowConnector(BaseConnector):
         assert self.http
         for table, fields in TABLES.items():
             offset = 0
-            while True:
+            seen_pages: set[str] = set()
+            for _ in range(_MAX_TABLE_PAGES):
                 try:
-                    data = self.http.get_json(f"/api/now/table/{table}", params={"sysparm_fields": fields, "sysparm_limit": 500, "sysparm_offset": offset, "sysparm_display_value": "all"})
+                    data = self.http.get_json(f"/api/now/table/{table}", params={"sysparm_fields": fields, "sysparm_limit": _PAGE_SIZE, "sysparm_offset": offset, "sysparm_display_value": "all"})
                 except HttpError as exc:
                     if exc.status in (400, 403, 404):
                         self.ctx.warn(f"lowcode.servicenow: table {table} not readable ({exc.status})")
                         break
                     raise
                 rows = (data or {}).get("result", []) or []
-                for r in rows:
-                    r["_table"] = table
-                    yield r
-                if len(rows) < 500:
+                if not isinstance(rows, list):
+                    self.ctx.warn(f"lowcode.servicenow: table {table} returned an invalid page; coverage incomplete")
                     break
-                offset += 500
+                # An instance or proxy that ignores sysparm_offset returns the
+                # same full page forever; detect it instead of looping.
+                digest = hashlib.sha256(json.dumps(rows, sort_keys=True, default=str).encode()).hexdigest()
+                if rows and digest in seen_pages:
+                    self.ctx.warn(f"lowcode.servicenow: table {table} repeated a page; coverage incomplete")
+                    break
+                seen_pages.add(digest)
+                for r in rows:
+                    if isinstance(r, dict):
+                        r["_table"] = table
+                        yield r
+                if len(rows) < _PAGE_SIZE:
+                    break
+                offset += _PAGE_SIZE
+            else:
+                self.ctx.warn(f"lowcode.servicenow: table {table} page limit reached; coverage incomplete")
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
         for rec in super().load_offline(path):
