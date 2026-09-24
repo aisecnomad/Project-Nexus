@@ -351,8 +351,10 @@ def _unique_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             return (type(value).__name__, tuple(key_for(item) for item in value))
         if isinstance(value, (set, frozenset)):
             return ("set", frozenset(key_for(item) for item in value))
-        # Python considers True == 1 and False == 0. JSON evidence preserves
-        # those distinctions, so its deduplication key must do the same.
+        # JSON numbers remain equivalent when exporters vary number syntax,
+        # but booleans must not collide with Python's equal numeric values.
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return ("number", value)
         return (type(value).__name__, value)
 
     unique: list[dict[str, Any]] = []

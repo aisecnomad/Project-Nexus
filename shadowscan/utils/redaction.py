@@ -52,6 +52,13 @@ _MAPPING_VALUE = re.compile(
     r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]{0,100}))[ \t]*:[ \t]*"
     r"(?P<value>[\"'`\[\{(])"
 )
+_YAML_MAPPING_LINE = re.compile(
+    r"^(?P<prefix>[ \t]*(?:-[ \t]+)*)(?:(?P<quote>[\"'])"
+    r"(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]{0,100})(?P=quote)"
+    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]{0,100}))[ \t]*:[ \t]*"
+    r"(?P<value>[^\r\n]*)", re.MULTILINE,
+)
+_YAML_CONTINUATION_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n|\Z)")
 _MAX_SANITIZATION_NODES = 100_000
 _MAX_SANITIZATION_CHARS = 64 * 1024 * 1024
 _MAX_REDACTION_WORK = 128 * 1024 * 1024
@@ -59,6 +66,56 @@ _MAX_REDACTION_WORK = 128 * 1024 * 1024
 
 class SanitizationLimitError(ValueError):
     """Evidence cannot be safely sanitized within the work/output budget."""
+
+
+def _redact_yaml_multiline_values(text: str) -> str:
+    """Withhold indented sensitive YAML values before line-based excerpting.
+
+    Literal/folded blocks and continued plain scalars can contain opaque
+    credentials with no recognizable token prefix. Consume their indentation
+    boundary once, without loading or executing the untrusted source. Preserve
+    newline counts for evidence locations and the following peer mapping.
+    """
+    pieces: list[str] = []
+    cursor = 0
+    for match in _YAML_MAPPING_LINE.finditer(text):
+        if match.start() < cursor or not _sensitive_key(match.group("quoted") or match.group("plain")):
+            continue
+        value = match.group("value").strip()
+        # Quoted and flow-style values are consumed by the mapping lexer.
+        if value.startswith(('"', "'", "`", "[", "{", "(")):
+            continue
+        start = match.start("value")
+        end = match.end()
+        position = end
+        if text.startswith("\r\n", position):
+            position += 2
+        elif text.startswith(("\n", "\r"), position):
+            position += 1
+        else:
+            continue
+        indent = len(match.group("prefix").expandtabs(8))
+        has_continuation = False
+        while position < len(text):
+            line = _YAML_CONTINUATION_LINE.match(text, position)
+            assert line is not None
+            raw = line.group(0)
+            content = raw.rstrip("\r\n")
+            whitespace = len(content) - len(content.lstrip(" \t"))
+            if content.strip() and len(content[:whitespace].expandtabs(8)) <= indent:
+                break
+            has_continuation = has_continuation or bool(content.strip())
+            end = line.end()
+            position = end
+        if not has_continuation:
+            continue
+        pieces.append(text[cursor:start])
+        pieces.append('"' + REDACTED + '"' + "\n" * text[start:end].count("\n"))
+        cursor = end
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def _mapping_expression_end(text: str, start: int) -> int:
@@ -306,6 +363,7 @@ def sanitize_text(text: str) -> str:
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
     text = _redact_python_assignments(text)
+    text = _redact_yaml_multiline_values(text)
     text = _redact_mapping_values(text)
     text = _JWT.sub(REDACTED, text)
     text = _SECRET_TOKEN.sub(REDACTED, text)

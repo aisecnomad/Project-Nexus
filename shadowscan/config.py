@@ -202,20 +202,20 @@ def _resolve(base: Path, p: str) -> str:
 
 def _boolean_option(value: Any, name: str) -> bool:
     if not isinstance(value, bool):
-        raise ValueError(f"options.{name} must be a YAML boolean")
+        raise ConfigValidationError(f"options.{name} must be a YAML boolean")
     return value
 
 
 def validate_plugins(value: Any) -> list[str]:
     """Loading a connector imports arbitrary code, so approvals must be explicit names."""
     if not isinstance(value, list) or any(not isinstance(name, str) or not name.strip() for name in value):
-        raise ValueError("options.plugins must be a list of nonempty connector names")
+        raise ConfigValidationError("options.plugins must be a list of nonempty connector names")
     return list(dict.fromkeys(name.strip() for name in value))
 
 
 def _check_fields(value: dict[Any, Any], allowed: set[str], location: str) -> None:
     if any(not isinstance(key, str) or key not in allowed for key in value):
-        raise ConfigValidationError(f"{location} contains an unsupported field")
+        raise ConfigValidationError(f"{location} contains an unsupported field; allowed fields: " + ", ".join(sorted(allowed)))
 
 
 def _nonempty_string(value: Any, location: str) -> str:
@@ -275,7 +275,7 @@ def _connector_enabled(value: Any) -> bool:
             return True
         if normalized in {"false", "no", "off", "0"}:
             return False
-    raise ValueError("connector enabled must be a boolean (true or false)")
+    raise ConfigValidationError("connector enabled must be a boolean (true or false)")
 
 
 def validate_min_confidence(value: Any) -> float:

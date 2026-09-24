@@ -13,6 +13,8 @@ from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
 from shadowscan.models import ScanStats
 
+COMMIT = "a" * 40
+
 
 def _sha(content: bytes) -> str:
     return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
@@ -47,6 +49,7 @@ def test_gitlab_uses_enumerated_blob_instead_of_moving_branch(tmp_path, index):
     digest = _sha(original)
     connector = _connector(index, GitLabConnector)
     connector.http = Mock()
+    connector.http.try_get_json.return_value = {"id": COMMIT}
     connector.http.paginate_link.return_value = [{"path": "agent.py", "type": "blob", "mode": "100644", "id": digest}]
     connector.http.get.side_effect = lambda path, **kwargs: original if path.endswith("/repository/blobs/" + digest + "/raw") else b"# changed after enumeration\n"
     connector.http.read_response_bytes.side_effect = lambda response, **kwargs: response
@@ -62,6 +65,9 @@ def test_api_links_are_not_scanned_as_regular_source(tmp_path, index, cls, kind,
     connector.http = Mock()
     item = {"path": "agent.py", "type": kind, "mode": mode, "size": 0, "sha": _sha(b""), "id": _sha(b"")}
     connector.http.try_get_json.side_effect = [{"tree": [item]}, {"encoding": "base64", "content": ""}]
+    if cls is GitLabConnector:
+        connector.http.try_get_json.side_effect = None
+        connector.http.try_get_json.return_value = {"id": COMMIT}
     connector.http.paginate_link.return_value = [item]
     connector.http.read_response_bytes.return_value = b""
     dest = connector._fetch_via_api({"full_name": "org/repo", "id": 1}, str(tmp_path))
@@ -111,6 +117,9 @@ def test_invalid_blob_identity_is_not_a_request_path_and_keeps_neighbors(tmp_pat
     connector.http.try_get_json.side_effect = [
         {"tree": entries}, {"encoding": "base64", "content": base64.b64encode(content).decode()},
     ]
+    if cls is GitLabConnector:
+        connector.http.try_get_json.side_effect = None
+        connector.http.try_get_json.return_value = {"id": COMMIT}
     connector.http.paginate_link.return_value = entries
     connector.http.read_response_bytes.return_value = content
     dest = connector._fetch_via_api({"full_name": "org/repo", "id": 1}, str(tmp_path))
@@ -140,3 +149,41 @@ def test_bad_encoded_blob_does_not_discard_valid_neighbor(tmp_path, index):
     assert not (Path(dest) / "bad.py").exists()
     assert (Path(dest) / "good.py").read_bytes() == content
     assert connector.ctx.stats.incomplete
+
+
+def test_gitlab_pins_commit_before_pagination_when_default_branch_moves(tmp_path, index):
+    connector = _connector(index, GitLabConnector)
+    connector.http = Mock()
+    connector.http.try_get_json.return_value = {"id": COMMIT}
+    original = b"from crewai import Agent\n"
+
+    def tree_pages(path, *, params):
+        # Page 1 comes from the initial branch tip; by page 2 the branch has
+        # advanced and its directory entries differ unless the ref was pinned.
+        yield {"path": "first.py", "type": "blob", "mode": "100644", "id": _sha(original)}
+        if params["ref"] == COMMIT:
+            yield {"path": "second.py", "type": "blob", "mode": "100644", "id": _sha(original)}
+
+    connector.http.paginate_link.side_effect = tree_pages
+    connector.http.read_response_bytes.return_value = original
+    dest = connector._fetch_via_api({"id": 1, "default_branch": "release/stable"}, str(tmp_path))
+    assert (Path(dest) / "first.py").read_bytes() == original
+    assert (Path(dest) / "second.py").read_bytes() == original
+    connector.http.try_get_json.assert_called_once_with(
+        "/projects/1/repository/commits/release%2Fstable", params={"stats": "false"},
+    )
+    connector.http.paginate_link.assert_called_once_with(
+        "/projects/1/repository/tree", params={"recursive": "true", "per_page": 100, "ref": COMMIT},
+    )
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("commit", [None, [], {}, {"id": 12}, {"id": "main"}, {"id": "../outside"}, {"id": COMMIT, "error": "unavailable"}])
+def test_gitlab_invalid_commit_lookup_never_scans_a_moving_branch(tmp_path, index, commit):
+    connector = _connector(index, GitLabConnector)
+    connector.http = Mock()
+    connector.http.try_get_json.return_value = commit
+    assert connector._fetch_via_api({"id": 1, "default_branch": "main"}, str(tmp_path)) is None
+    assert connector.ctx.stats.incomplete
+    connector.http.paginate_link.assert_not_called()
+    connector.http.get.assert_not_called()

@@ -264,9 +264,21 @@ class GitLabConnector(BaseConnector):
         if ref is None:
             self.ctx.warn("code.gitlab: unsupported default branch; repository content skipped", incomplete=True)
             return None
+        # Tree pages must describe one snapshot. Pin the branch before the
+        # first page; pinning only blobs cannot prevent drift between pages.
+        commit = self.http.try_get_json(
+            f"/projects/{pid}/repository/commits/{quote(ref, safe='')}", params={"stats": "false"},
+        )
+        try:
+            if not isinstance(commit, dict) or self._is_error_record(commit):
+                raise ConnectorError("invalid commit response")
+            snapshot = repository_blob_id(commit.get("id"))
+        except ConnectorError:
+            self.ctx.warn("code.gitlab: cannot resolve immutable commit; repository content skipped", incomplete=True)
+            return None
         blobs: dict[str, dict[str, Any]] = {}
         skipped_links = False
-        for item in self.http.paginate_link(f"/projects/{pid}/repository/tree", params={"recursive": "true", "per_page": 100, "ref": ref}):
+        for item in self.http.paginate_link(f"/projects/{pid}/repository/tree", params={"recursive": "true", "per_page": 100, "ref": snapshot}):
             if item.get("type") == "commit" or item.get("mode") in {"120000", "160000"}:
                 if not skipped_links:
                     self.ctx.warn("code.gitlab: symbolic links or submodules skipped; source coverage partial", incomplete=True)

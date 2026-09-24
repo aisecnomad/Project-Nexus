@@ -238,8 +238,8 @@ class GcpConnector(BaseConnector):
                     for field in ("principal", "method", "resource", "userAgent", "timestamp", "_project"):
                         if rec.get(field) is not None and not isinstance(rec[field], str):
                             raise ValueError("event field")
-                    # A principal may call resources in several projects. A
-                    # shared bucket would attribute all events to the first.
+                    # One principal may call multiple projects. Preserve the
+                    # resource project as part of each observation's identity.
                     key = (rec.get("_project"), rec.get("principal") or "unknown")
                     agg = callers.setdefault(key, {"events": 0, "methods": {}, "resources": {}, "agents": {}, "first": None, "last": None, "project": rec.get("_project"), "delegated": False})
                     agg["events"] += 1
