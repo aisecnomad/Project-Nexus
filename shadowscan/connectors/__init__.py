@@ -13,6 +13,7 @@ from importlib.metadata import entry_points
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.models import Surface
+from shadowscan.utils.redaction import sanitize_text
 
 _BUILTIN: dict[str, str] = {
     # code
@@ -51,6 +52,7 @@ _BUILTIN: dict[str, str] = {
 }
 
 _cache: dict[str, type[BaseConnector]] = {}
+_plugin_errors: list[str] = []
 
 
 def _load(path: str) -> type[BaseConnector]:
@@ -67,20 +69,47 @@ def builtin_connector_names() -> frozenset[str]:
     return frozenset(_BUILTIN)
 
 
+def plugin_registry_errors() -> tuple[str, ...]:
+    """Per-entry plugin metadata errors from the last registry scan."""
+    return tuple(_plugin_errors)
+
+
 def available_connectors() -> dict[str, str]:
     """Return name -> import path for built-in and plugin connectors.
 
     Third-party ``shadowscan.connectors`` entry points may *add* names. They
     cannot replace a built-in name: a colliding plugin is ignored.
+    Each plugin entry is isolated: a broken entry does not hide the others.
     """
     out = dict(_BUILTIN)
+    errors: list[str] = []
     try:
-        for ep in entry_points(group="shadowscan.connectors"):
-            if ep.name in _BUILTIN:
-                continue
-            out[ep.name] = ep.value
-    except Exception:  # pragma: no cover - defensive against odd metadata
-        pass
+        discovered = list(entry_points(group="shadowscan.connectors"))
+    except Exception as exc:  # pragma: no cover - defensive against odd metadata
+        errors.append(f"plugin metadata listing failed: {type(exc).__name__}")
+        _plugin_errors[:] = errors
+        return out
+    for ep in discovered:
+        try:
+            name = ep.name
+            value = ep.value
+        except Exception as exc:  # pragma: no cover - broken metadata object
+            errors.append(f"plugin entry is unreadable: {type(exc).__name__}")
+            continue
+        if not isinstance(name, str) or not name.strip():
+            errors.append("plugin entry is missing a nonempty connector name")
+            continue
+        if name in _BUILTIN:
+            errors.append(f"plugin '{sanitize_text(name)}' cannot replace a built-in connector")
+            continue
+        if name in out and out[name] != value:
+            errors.append(f"plugin '{sanitize_text(name)}' is defined more than once")
+            continue
+        if not isinstance(value, str) or ":" not in value:
+            errors.append(f"plugin '{sanitize_text(name)}' has an invalid import path")
+            continue
+        out[name] = value
+    _plugin_errors[:] = errors
     return out
 
 
@@ -116,4 +145,5 @@ __all__ = [
     "builtin_connector_names",
     "get_connector_class",
     "connectors_for_surface",
+    "plugin_registry_errors",
 ]
