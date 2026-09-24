@@ -41,18 +41,55 @@ from shadowscan.utils.safe_yaml import bounded_safe_load
 
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 PATH_KEYS = ("input", "path", "paths", "service_account_file", "config_file", "token_file")
+_SECRET_KEY_NAMES = frozenset({
+    "token", "secret", "password", "passwd", "jwt", "bearer", "authorization",
+    "cookie", "credential", "credentials", "apikey", "api_key",
+})
+_SECRET_KEY_SUFFIXES = (
+    "token", "secret", "password", "passwd", "private_key", "privatekey",
+    "access_key", "accesskey", "secret_key", "secretkey", "api_key", "apikey",
+    "client_secret", "refresh_token", "session_token", "signing_key",
+    "connection_string", "connstr",
+)
+DEFAULT_CONNECTOR_TIMEOUT = 300
+MAX_CONNECTOR_TIMEOUT = 3600
 
 
-def expand_env(value: Any) -> Any:
+def _is_secret_key(key: str | None) -> bool:
+    if not key:
+        return False
+    name = key.strip().lower().replace("-", "_")
+    compact = name.replace("_", "")
+    if name in _SECRET_KEY_NAMES or compact in _SECRET_KEY_NAMES:
+        return True
+    return any(name.endswith(suffix) or compact.endswith(suffix.replace("_", "")) for suffix in _SECRET_KEY_SUFFIXES)
+
+
+def expand_env(value: Any, *, key: str | None = None) -> Any:
     if isinstance(value, str):
-        def repl(m: re.Match[str]) -> str:
-            return os.environ.get(m.group(1), m.group(2) if m.group(2) is not None else "")
+        secret = _is_secret_key(key)
 
-        return _ENV_RX.sub(repl, value)
+        def repl(m: re.Match[str]) -> str:
+            name = m.group(1)
+            default = m.group(2)
+            if name in os.environ:
+                raw = os.environ[name]
+            elif default is not None:
+                raw = default
+            else:
+                raw = None
+            if secret and (raw is None or raw == ""):
+                raise ValueError(f"missing required environment variable {name}")
+            return "" if raw is None else raw
+
+        expanded = _ENV_RX.sub(repl, value)
+        if secret and not str(expanded).strip():
+            raise ValueError(f"missing required secret '{key}'")
+        return expanded
     if isinstance(value, list):
-        return [expand_env(v) for v in value]
+        return [expand_env(v, key=key) for v in value]
     if isinstance(value, dict):
-        return {k: expand_env(v) for k, v in value.items()}
+        return {k: expand_env(v, key=k) for k, v in value.items()}
     return value
 
 
@@ -83,6 +120,7 @@ class ScanConfig:
     plugins: list[str] = field(default_factory=list)
     allow_signature_override: bool = False
     allow_private_origin: bool = False
+    connector_timeout: int = DEFAULT_CONNECTOR_TIMEOUT
     source: str | None = None
 
     def __post_init__(self) -> None:
@@ -92,6 +130,7 @@ class ScanConfig:
         self.plugins = validate_plugins(self.plugins)
         self.allow_signature_override = _boolean_option(self.allow_signature_override, "allow_signature_override")
         self.allow_private_origin = _boolean_option(self.allow_private_origin, "allow_private_origin")
+        self.connector_timeout = validate_connector_timeout(self.connector_timeout)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], source: str | None = None) -> ScanConfig:
@@ -138,6 +177,7 @@ class ScanConfig:
             plugins=validate_plugins(opts.get("plugins", [])),
             allow_signature_override=_boolean_option(opts.get("allow_signature_override", False), "allow_signature_override"),
             allow_private_origin=_boolean_option(opts.get("allow_private_origin", False), "allow_private_origin"),
+            connector_timeout=validate_connector_timeout(opts.get("connector_timeout", DEFAULT_CONNECTOR_TIMEOUT)),
             source=source,
         )
 
@@ -184,6 +224,20 @@ def _connector_enabled(value: Any) -> bool:
         if normalized in {"false", "no", "off", "0"}:
             return False
     raise ValueError("connector enabled must be a boolean (true or false)")
+
+
+def validate_connector_timeout(value: Any) -> int:
+    message = f"connector_timeout must be an integer between 1 and {MAX_CONNECTOR_TIMEOUT}"
+    if isinstance(value, bool) or not isinstance(value, int):
+        try:
+            if isinstance(value, bool) or isinstance(value, float):
+                raise ValueError(message)
+            value = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(message) from None
+    if value < 1 or value > MAX_CONNECTOR_TIMEOUT:
+        raise ValueError(message)
+    return value
 
 
 def validate_min_confidence(value: Any) -> float:

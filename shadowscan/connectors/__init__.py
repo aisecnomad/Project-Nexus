@@ -8,11 +8,14 @@ registered here; third parties can add more through the
 from __future__ import annotations
 
 import importlib
+import logging
 from collections.abc import Sequence
 from importlib.metadata import entry_points
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.models import Surface
+
+log = logging.getLogger("shadowscan.connectors")
 
 _BUILTIN: dict[str, str] = {
     # code
@@ -77,10 +80,11 @@ def available_connectors() -> dict[str, str]:
     try:
         for ep in entry_points(group="shadowscan.connectors"):
             if ep.name in _BUILTIN:
+                log.warning("ignoring plugin entry point that collides with built-in connector %s", ep.name)
                 continue
             out[ep.name] = ep.value
-    except Exception:  # pragma: no cover - defensive against odd metadata
-        pass
+    except Exception as exc:  # pragma: no cover - defensive against odd metadata
+        log.warning("plugin connector metadata could not be read: %s", exc)
     return out
 
 

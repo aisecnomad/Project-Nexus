@@ -9,6 +9,30 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip setuptools wheel
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m shadowscan.signatures.validate
+      - run: ruff check shadowscan tests
+      - run: mypy shadowscan
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip setuptools wheel
+      - run: python -m pip install -e ".[all]"
+      - run: pip-audit --progress-spinner off
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -20,18 +44,21 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-      - name: Update installer and install development checks
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -e ".[all]"
-      - name: Validate signature schemas and regular expressions
-        run: python -m shadowscan.signatures.validate
-      - run: ruff check shadowscan tests
-      - run: mypy shadowscan
-      - run: pip-audit --progress-spinner off
+      - run: python -m pip install --upgrade pip setuptools wheel
+      - run: python -m pip install -e ".[all]"
       - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
-      - name: Build distributable wheel
-        run: python -m pip wheel . --no-deps --wheel-dir dist
+  package:
+    needs: [lint, audit, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip setuptools wheel
+      - run: python -m pip install -e ".[all]"
+      - run: python -m pip wheel . --no-deps --wheel-dir dist
       - name: Validate installed wheel outside the checkout
         run: |
           python -m venv "$RUNNER_TEMP/shadowscan-wheel"
@@ -44,5 +71,5 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always() && hashFiles('shadowscan.sarif') != ''
         with:
-          name: shadowscan-sarif-${{ matrix.python }}
+          name: shadowscan-sarif
           path: shadowscan.sarif

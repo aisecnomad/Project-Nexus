@@ -17,6 +17,7 @@ import stat
 import subprocess
 import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -244,10 +245,11 @@ class IncrementalCache:
                         raise ValueError("state directory overlaps a scan input")
             self._secure_directory()
             package = Path(__file__).parent
-            self.scanner_digest = hashlib.sha256(_json([
-                [p.relative_to(package).as_posix(), _file_digest(p)]
-                for p in sorted(package.rglob("*.py"))
-            ])).hexdigest()
+            entries = []
+            for path in sorted(package.rglob("*.py")):
+                info = path.stat()
+                entries.append([path.relative_to(package).as_posix(), info.st_size, info.st_mtime_ns])
+            self.scanner_digest = hashlib.sha256(_json([__version__, entries])).hexdigest()
         except (OSError, ValueError):
             self.enabled = False
             log.warning("incremental state is unavailable or unsafe; running full scans")
@@ -261,6 +263,30 @@ class IncrementalCache:
             raise ValueError("state directory must be private (0700)")
         if hasattr(os, "getuid") and info.st_uid != os.getuid():
             raise ValueError("state directory must belong to the current user")
+
+    @contextmanager
+    def lock(self):
+        """Exclusive lock for load/save so concurrent scanners cannot clobber a slot."""
+        if not self.enabled:
+            yield
+            return
+        self._secure_directory()
+        path = self.directory / ".lock"
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            if os.name == "posix":
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            if os.name == "posix":
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
 
     @staticmethod
     def supports_connector(spec: ConnectorSpec, connector_class: type) -> bool:
@@ -350,6 +376,7 @@ class IncrementalCache:
             if len(data) > _MAX_CACHE_BYTES:
                 return
             fd, temp = tempfile.mkstemp(prefix=".pending-", dir=self.directory)
+            os.fchmod(fd, 0o600)
             with os.fdopen(fd, "wb") as stream:
                 stream.write(data)
                 stream.flush()

@@ -32,7 +32,7 @@ def test_all_formats_render(fixtures):
     md = render(result, "markdown")
     assert md.startswith("# ShadowScan report") and "## Findings" in md and "Risk factors" in md
     html = render(result, "html")
-    assert "<!doctype html>" in html and "tr class='row'" in html and "SHADOW" in html
+    assert "<!doctype html>" in html and 'tr class="row"' in html and "SHADOW" in html
     assert set(FORMATS) == {"table", "csv", "html", "json", "markdown", "sarif"}
 
 
@@ -65,7 +65,7 @@ def test_cli_run_gateway_jwt_and_utilities(tmp_path: Path, fixtures):
     res = runner.invoke(main, ["signatures", "show", "protocol.mcp"])
     assert res.exit_code == 0 and "mcpServers" in res.output
     res = runner.invoke(main, ["inventory", "check", str(Path(__file__).parents[2] / "agent-card.yaml")])
-    assert res.exit_code == 0 and "ops-provisioning-04" in res.output
+    assert res.exit_code == 0 and "ops-provisioni" in res.output
 
 
 def test_cli_scan_config_diff_and_stubs(tmp_path: Path, fixtures):

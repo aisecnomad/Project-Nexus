@@ -169,9 +169,24 @@ lost user attribution before using their counts as governance evidence.
 
 ## Release verification
 
-The CI workflow installs all cloud SDK extras and validates signatures, lint, typing, dependency advisories, tests
-with a minimum 80% statement coverage, wheel creation, installed-wheel validation
-outside the source checkout and offline SARIF output.
+The CI workflow is split into lint, audit, test and package jobs. It installs all
+cloud SDK extras and validates signatures, lint, typing, dependency advisories,
+tests with a minimum 80% statement coverage, wheel creation, installed-wheel
+validation outside the source checkout and offline SARIF output.
+
+Required secrets in configuration (`token`, `*_secret`, `*_key`, and similar)
+must resolve to a nonempty value. An unset `${ENV}` reference without an explicit
+nonempty `:-default` fails closed at load time.
+
+Each connector has a wall deadline (`options.connector_timeout`, default 300
+seconds). A timeout is incomplete coverage (exit 3). Threads that ignore the
+deadline still require a job/cgroup timeout on the worker.
+
+HTML and Markdown reports treat finding text as untrusted. Reports remain
+Restricted even after redaction.
+
+Prefer `code.github` / `code.gitlab` `mode: api` for large unattended estate
+scans. Clone mode is for nominated repositories; each clone is capped at 180s.
 Focused regressions cover the review findings, private-address enforcement,
 public-key verification, plugin policy, artifact permissions and replay integrity.
 Dependabot checks Python and GitHub Actions dependencies weekly.

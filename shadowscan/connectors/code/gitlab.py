@@ -248,7 +248,7 @@ class GitLabConnector(BaseConnector):
             self.ctx.warn("code.gitlab: unsupported default branch; cloned remote HEAD, requested branch coverage unknown", incomplete=True)
         cmd += ["--", url, dest]
         try:
-            res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600, check=False)
+            res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=180, check=False)
         except (OSError, subprocess.SubprocessError):
             return False
         return res.returncode == 0

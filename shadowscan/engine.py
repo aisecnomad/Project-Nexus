@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import logging
 import os
 import re
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -111,14 +112,32 @@ class Engine:
                 # Constructor validation still runs before a cached result is used.
                 connector = cls(ctx)
                 snapshot = cache.snapshot(spec) if cache.supports_connector(spec, cls) else None
-                cached = cache.load(spec, snapshot) if snapshot else None
+                with cache.lock():
+                    cached = cache.load(spec, snapshot) if snapshot else None
                 if cached is not None:
                     fs, st = cached
                     if cache.snapshot(spec) == snapshot:
                         self.progress(spec.id, f"{len(fs)} findings (unchanged input; cached)")
                         return spec, fs, st
                 fs = []
-                collected = connector.run()
+                timeout = self.config.connector_timeout
+                worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadowscan-deadline")
+                try:
+                    bound = contextvars.copy_context().run
+                    future = worker.submit(bound, connector.run)
+                    try:
+                        collected = future.result(timeout=timeout)
+                    except FuturesTimeout:
+                        st = ScanStats(
+                            connector=spec.id, started_at=started_at, finished_at=now_iso(),
+                            incomplete=True, skipped=True,
+                            skip_reason=f"connector exceeded {timeout}s deadline",
+                            errors=[f"connector exceeded {timeout}s deadline"],
+                        )
+                        self.progress(spec.id, f"timed out after {timeout}s")
+                        return spec, [], st
+                finally:
+                    worker.shutdown(wait=False, cancel_futures=True)
                 st = ctx.stats or ScanStats(
                     connector=spec.id, started_at=started_at, finished_at=now_iso(),
                     incomplete=True, errors=["connector did not report completion status"],
@@ -139,7 +158,8 @@ class Engine:
                     # scan incomplete and require a fresh scan for security gates.
                     if cache.snapshot(spec) == snapshot:
                         st.cache_key = snapshot.fingerprint
-                        cache.save(snapshot, fs, st)
+                        with cache.lock():
+                            cache.save(snapshot, fs, st)
                     else:
                         st.incomplete = True
                         st.errors.append("static input changed during the scan; rerun required")

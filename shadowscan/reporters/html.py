@@ -38,7 +38,12 @@ apply();
 
 
 def _e(s: object) -> str:
-    return html.escape("" if s is None else str(s))
+    return html.escape("" if s is None else str(s), quote=True)
+
+
+def _attr(s: object) -> str:
+    """Escape values used inside HTML attributes, including single quotes."""
+    return _e(s).replace("'", "&#x27;")
 
 
 def render_html(result: ScanResult) -> str:
@@ -46,37 +51,44 @@ def render_html(result: ScanResult) -> str:
         finding.sanitize()
     s = result.summary()
     parts: list[str] = []
-    parts.append("<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>ShadowScan report</title><style>" + _CSS + "</style></head><body>")
-    parts.append(f"<header><h1>ShadowScan report <span>v{_e(result.version)} · {_e(result.finished_at or result.started_at)}</span></h1><div class='muted'>Shadow AI agent discovery across code, identity, gateways, low-code, SaaS and cloud.</div></header>")
+    parts.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'\"><title>ShadowScan report</title><style>" + _CSS + "</style></head><body>")
+    parts.append(f"<header><h1>ShadowScan report <span>v{_e(result.version)} · {_e(result.finished_at or result.started_at)}</span></h1><div class=\"muted\">Shadow AI agent discovery across code, identity, gateways, low-code, SaaS and cloud.</div></header>")
     if not result.complete:
-        parts.append("<div class='controls'><strong class='shadow'>INCOMPLETE SCAN — some required inputs could not be assessed. Review connector statistics.</strong></div>")
-    parts.append("<div class='stats'>")
-    parts.append(f"<div class='stat'><b>{s['total']}</b>findings</div>")
+        parts.append("<div class=\"controls\"><strong class=\"shadow\">INCOMPLETE SCAN — some required inputs could not be assessed. Review connector statistics.</strong></div>")
+    parts.append("<div class=\"stats\">")
+    parts.append(f"<div class=\"stat\"><b>{s['total']}</b>findings</div>")
     if result.inventory_size:
-        parts.append(f"<div class='stat'><b class='shadow'>{s['shadow']}</b>shadow (unregistered)</div><div class='stat'><b>{result.inventory_size}</b>registered agents</div>")
+        parts.append(f"<div class=\"stat\"><b class=\"shadow\">{s['shadow']}</b>shadow (unregistered)</div><div class=\"stat\"><b>{result.inventory_size}</b>registered agents</div>")
     for lvl in ("critical", "high", "medium", "low"):
-        parts.append(f"<div class='stat'><b><span class='pill {lvl}'>{s['by_risk_level'].get(lvl, 0)}</span></b>{lvl}</div>")
+        parts.append(f"<div class=\"stat\"><b><span class=\"pill {lvl}\">{s['by_risk_level'].get(lvl, 0)}</span></b>{lvl}</div>")
     for k, v in sorted(s["by_surface"].items()):
-        parts.append(f"<div class='stat'><b>{v}</b>{_e(k)}</div>")
+        parts.append(f"<div class=\"stat\"><b>{v}</b>{_e(k)}</div>")
     parts.append("</div>")
     surfaces = sorted(s["by_surface"])
-    parts.append("<div class='controls'><input id='q' placeholder='filter…' size='40'>")
-    parts.append("<select id='lvl'><option value=''>all risk levels</option>" + "".join(f"<option value='{l}'>{l}</option>" for l in ("critical", "high", "medium", "low", "info")) + "</select>")
-    parts.append("<select id='sf'><option value=''>all surfaces</option>" + "".join(f"<option value='{_e(x)}'>{_e(x)}</option>" for x in surfaces) + "</select>")
-    parts.append("<select id='sh'><option value=''>shadow: any</option><option value='yes'>shadow only</option><option value='no'>registered only</option></select>")
-    parts.append("<span class='muted' style='align-self:center'>showing <span id='shown'></span></span></div>")
-    parts.append("<table><thead><tr><th data-k='score'>Risk</th><th data-k='shadow'>Shadow</th><th data-k='surface'>Surface</th><th data-k='kind'>Kind</th><th data-k='title'>Title</th><th data-k='owner'>Owner</th><th data-k='confidence'>Conf.</th><th>Technologies</th></tr></thead><tbody>")
+    parts.append("<div class=\"controls\"><input id=\"q\" placeholder=\"filter…\" size=\"40\">")
+    parts.append("<select id=\"lvl\"><option value=\"\">all risk levels</option>" + "".join(f"<option value=\"{l}\">{l}</option>" for l in ("critical", "high", "medium", "low", "info")) + "</select>")
+    parts.append("<select id=\"sf\"><option value=\"\">all surfaces</option>" + "".join(f"<option value=\"{_attr(x)}\">{_e(x)}</option>" for x in surfaces) + "</select>")
+    parts.append("<select id=\"sh\"><option value=\"\">shadow: any</option><option value=\"yes\">shadow only</option><option value=\"no\">registered only</option></select>")
+    parts.append("<span class=\"muted\" style=\"align-self:center\">showing <span id=\"shown\"></span></span></div>")
+    parts.append("<table><thead><tr><th data-k=\"score\">Risk</th><th data-k=\"shadow\">Shadow</th><th data-k=\"surface\">Surface</th><th data-k=\"kind\">Kind</th><th data-k=\"title\">Title</th><th data-k=\"owner\">Owner</th><th data-k=\"confidence\">Conf.</th><th>Technologies</th></tr></thead><tbody>")
     for f in result.findings:
         shadow = "" if f.shadow is None else ("yes" if f.shadow else "no")
         text = " ".join([f.title, f.resource, f.owner or "", " ".join(f.frameworks + f.model_providers + f.tags + f.capabilities), f.kind.value, f.surface.value, f.provider or ""]).lower()
-        parts.append(f"<tr class='row' data-score='{f.risk.score}' data-level='{f.risk.level.value}' data-shadow='{shadow}' data-surface='{_e(f.surface.value)}' data-kind='{_e(f.kind.value)}' data-title='{_e(f.title)}' data-owner='{_e(f.owner or '')}' data-confidence='{f.confidence}' data-text='{_e(text)}'>")
-        parts.append(f"<td><span class='pill {f.risk.level.value}'>{f.risk.level.value} {f.risk.score}</span></td><td>{'<span class=shadow>SHADOW</span>' if f.shadow else _e(f.registry_match or shadow)}</td><td>{_e(f.surface.value)}</td><td>{_e(f.kind.value)}</td><td>{_e(f.title)}<br><code>{_e(f.resource)}</code></td><td>{_e(f.owner or '—')}</td><td>{f.confidence:.2f}</td><td>{''.join(f'<span class=tag>{_e(t)}</span>' for t in (f.frameworks + f.model_providers)[:6])}</td></tr>")
-        parts.append("<tr class='detail'><td colspan='8'>")
+        parts.append(
+            f"<tr class=\"row\" data-score=\"{_attr(f.risk.score)}\" data-level=\"{_attr(f.risk.level.value)}\" "
+            f"data-shadow=\"{_attr(shadow)}\" data-surface=\"{_attr(f.surface.value)}\" data-kind=\"{_attr(f.kind.value)}\" "
+            f"data-title=\"{_attr(f.title)}\" data-owner=\"{_attr(f.owner or '')}\" data-confidence=\"{_attr(f.confidence)}\" "
+            f"data-text=\"{_attr(text)}\">"
+        )
+        shadow_cell = '<span class="shadow">SHADOW</span>' if f.shadow else _e(f.registry_match or shadow)
+        tech = "".join(f'<span class="tag">{_e(t)}</span>' for t in (f.frameworks + f.model_providers)[:6])
+        parts.append(f"<td><span class=\"pill {f.risk.level.value}\">{f.risk.level.value} {f.risk.score}</span></td><td>{shadow_cell}</td><td>{_e(f.surface.value)}</td><td>{_e(f.kind.value)}</td><td>{_e(f.title)}<br><code>{_e(f.resource)}</code></td><td>{_e(f.owner or '—')}</td><td>{f.confidence:.2f}</td><td>{tech}</td></tr>")
+        parts.append("<tr class=\"detail\"><td colspan=\"8\">")
         parts.append(f"<div><b>Id</b> <code>{_e(f.id)}</code> · <b>connector</b> <code>{_e(f.connector)}</code> · <b>type</b> {_e(f.resource_type)} · <b>where</b> {_e(f.provider or '')} {_e(f.account or '')} {_e(f.region or '')} · <b>seen</b> {_e(f.first_seen or '?')} → {_e(f.last_seen or '?')}</div>")
         if f.capabilities:
-            parts.append("<div><b>Capabilities</b> " + "".join(f"<span class=tag>{_e(c)}</span>" for c in f.capabilities) + "</div>")
+            parts.append("<div><b>Capabilities</b> " + "".join(f"<span class=\"tag\">{_e(c)}</span>" for c in f.capabilities) + "</div>")
         if f.tags:
-            parts.append("<div><b>Tags</b> " + "".join(f"<span class=tag>{_e(t)}</span>" for t in f.tags) + "</div>")
+            parts.append("<div><b>Tags</b> " + "".join(f"<span class=\"tag\">{_e(t)}</span>" for t in f.tags) + "</div>")
         if f.models:
             parts.append(f"<div><b>Models</b> {_e(', '.join(f.models[:8]))}</div>")
         if f.permissions:
@@ -86,19 +98,19 @@ def render_html(result: ScanResult) -> str:
         activity = f.metadata.get("runtime_activity")
         if isinstance(activity, dict):
             parts.append(f"<div><b>Gateway activity</b> {_e(activity.get('status'))}; matching events: {_e(activity.get('events', 0))}; production observed: {_e(activity.get('production_observed', False))}</div>")
-            parts.append(f"<div class='muted'>{_e(activity.get('limitations', ''))}</div>")
+            parts.append(f"<div class=\"muted\">{_e(activity.get('limitations', ''))}</div>")
         factors = [x for x in f.risk.factors if x.weight]
         if factors:
             parts.append("<div><b>Risk factors</b><ul>" + "".join(f"<li>{'+' if x.weight > 0 else ''}{x.weight} {_e(x.description)}</li>" for x in factors) + "</ul></div>")
         parts.append("<div><b>Evidence</b>")
         for e in sorted(f.evidence, key=lambda e: -e.weight)[:20]:
-            parts.append(f"<div class='ev'><span class='w'>{e.weight:.2f}</span>{_e(e.description)}{(' — <code>' + _e(e.location) + '</code>') if e.location else ''}{('<pre>' + _e(e.snippet) + '</pre>') if e.snippet else ''}</div>")
+            parts.append(f"<div class=\"ev\"><span class=\"w\">{e.weight:.2f}</span>{_e(e.description)}{(' — <code>' + _e(e.location) + '</code>') if e.location else ''}{('<pre>' + _e(e.snippet) + '</pre>') if e.snippet else ''}</div>")
         if len(f.evidence) > 20:
-            parts.append(f"<div class='muted'>… {len(f.evidence) - 20} more</div>")
+            parts.append(f"<div class=\"muted\">… {len(f.evidence) - 20} more</div>")
         parts.append("</div>")
         meta = {k: v for k, v in f.metadata.items() if k not in {"related", "technologies", "evidence_counts", "agent_indicators", "scan_root"}}
         if meta:
-            parts.append(f"<details><summary class='muted'>metadata</summary><pre>{_e(json.dumps(meta, indent=2, default=str)[:6000])}</pre></details>")
+            parts.append(f"<details><summary class=\"muted\">metadata</summary><pre>{_e(json.dumps(meta, indent=2, default=str)[:6000])}</pre></details>")
         parts.append("</td></tr>")
     parts.append("</tbody></table>")
     parts.append("<footer><b>Connector statistics</b><ul>")
