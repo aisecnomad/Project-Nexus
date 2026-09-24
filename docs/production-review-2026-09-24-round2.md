@@ -44,6 +44,17 @@ provider responses used for reproduction were synthetic or mocked.
 | Low | Directory exclusion names also skipped files of the same name whenever a glob exclude was configured; `Containerfile` was parsed but never dispatched; Git author fields were split on `|`, letting an author name forge the email and timestamp; Ruby `=begin` handling was quadratic; Python 3.12 tokenizer errors mid-file masked the remainder without marking the file ambiguous; a multi-line structured secret shifted excerpt line numbers. | Each corrected with a regression test. |
 | Low | A `bedrock-logging` export record without `loggingConfig` (including error bodies) became a "logging DISABLED" finding. | Such records are unknown coverage. |
 
+## Verification
+
+On the final revision of this branch: signature validation (178 signatures, 790
+signals), `ruff`, `mypy` (with `check_untyped_defs`), the full test suite (88%
+statement coverage, every built-in connector above the 75% floor; the two
+Git-2.45 tests skip on older Git), both detection evaluations (synthetic and
+public corpora, no misses), the wheel build and the offline demo scan (complete,
+101 findings) all pass. Report output for the offline demo is unchanged apart
+from the documented per-scan gateway source identities, and the Bedrock fixture
+callers now record their tool-call responses.
+
 ## Areas examined and found sound
 
 * HTTP transport: HTTPS-only, origin-pinned redirects and pagination, connection-time
