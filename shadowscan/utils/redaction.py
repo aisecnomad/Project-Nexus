@@ -63,25 +63,29 @@ _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
 _PEM = re.compile(r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)", re.DOTALL)
 _AUTH = re.compile(r"(?i)\b(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
-# Bounded identifiers keep scanning linear on long lines of non-matching text.
+# A key must be consumed in full: truncating it to a fixed number of characters
+# can leave an opaque credential in evidence when the sensitive suffix follows
+# that limit. The left boundary includes every character accepted by the key
+# lexer (including '.' and '-'), preventing retries at interior key segments.
+# Text size and redaction work are bounded separately below.
 _ASSIGNMENT = re.compile(
-    r"(?P<key>(?<![\w-])[A-Za-z_][A-Za-z0-9_.-]{0,100})"
+    r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
     r"(?P<sep>[\"']\s*:\s*|\s*=\s*|:\s+|:\s*(?=[\"']))"
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;\}\]\)\"']+)"
 )
 _QUERY_SEPARATOR = re.compile(r"[&#]")
 _PYTHON_ASSIGNMENT_KEY = re.compile(
-    r"(?<![\w-])(?P<key>[A-Za-z_][A-Za-z0-9_.]{0,100})[ \t]*(?P<separator>:|=(?!=))"
+    r"(?<![\w.-])(?P<key>[A-Za-z_][A-Za-z0-9_.]*)[ \t]*(?P<separator>:|=(?!=))"
 )
 _MAPPING_VALUE = re.compile(
-    r"(?<![\w-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]{0,100})(?P=quote)"
-    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]{0,100}))[ \t]*:[ \t]*"
+    r"(?<![\w.-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
+    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*:[ \t]*"
     r"(?P<value>[\"'`\[\{(])"
 )
 _YAML_MAPPING_LINE = re.compile(
     r"^(?P<prefix>[ \t]*(?:-[ \t]+)*)(?:(?P<quote>[\"'])"
-    r"(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]{0,100})(?P=quote)"
-    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]{0,100}))[ \t]*:[ \t]*"
+    r"(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
+    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*:[ \t]*"
     r"(?P<value>[^\r\n]*)", re.MULTILINE,
 )
 _YAML_CONTINUATION_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n|\Z)")

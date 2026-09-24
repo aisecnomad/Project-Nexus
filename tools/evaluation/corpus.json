@@ -332,6 +332,58 @@
       "files": {"README.md": "Our CI verifies source formatting.\n"},
       "target": {"kind": "agent-config", "signature": "coding-agent.claude-code"},
       "present": false
+    },
+    {
+      "id": "py-plain-poll-loop",
+      "family": "agent",
+      "description": "An ordinary queue consumer is not an autonomous AI agent",
+      "files": {"worker.py": "def worker():\n    while True:\n        poll_queue()\n"},
+      "target": {"kind": "agent"},
+      "present": false,
+      "assertions": {"max_agent_findings": 0}
+    },
+    {
+      "id": "py-generic-tool-decorator",
+      "family": "agent",
+      "description": "A bare tool decorator is neither LangChain attribution nor agent execution",
+      "files": {"helper.py": "@tool\ndef serialize(value):\n    return str(value)\n"},
+      "target": {"kind": "framework-usage", "signature": "framework.langchain"},
+      "present": false,
+      "assertions": {"max_agent_findings": 0}
+    },
+    {
+      "id": "py-responses-tool-dispatch",
+      "family": "agent",
+      "description": "An OpenAI Responses model call and active named tool dispatch identify an agent",
+      "files": {"worker.py": "from openai import OpenAI\nclient = OpenAI()\nTOOLS = {'lookup': lookup}\nresponse = client.responses.create(model='gpt-4o', tools=TOOLS, input='query')\nfor item in response.output:\n    if item.type == 'function_call':\n        result = TOOLS[item.name](item.arguments)\n        client.responses.create(input=[{'type': 'function_call_output', 'call_id': item.call_id, 'output': result}])\n"},
+      "target": {"kind": "agent", "signature": "provider.openai"},
+      "present": true
+    },
+    {
+      "id": "py-responses-direct-dispatch",
+      "family": "agent",
+      "description": "A model call with named tools, a function-call response and assigned handler result identifies an agent",
+      "files": {"worker.py": "from openai import OpenAI\nclient = OpenAI()\nresponse = client.responses.create(model='gpt-4o', tools=TOOLS, input='query')\ncalls = [item for item in response.output if item.type == 'function_call']\nfor item in calls:\n    answer = lookup(item.arguments)\n    conversation.append({'type': 'function_call_output', 'call_id': item.call_id, 'output': answer})\n"},
+      "target": {"kind": "agent", "signature": "provider.openai"},
+      "present": true
+    },
+    {
+      "id": "py-responses-no-tool-dispatch",
+      "family": "agent",
+      "description": "A model response branch without named tool dispatch is not sufficient",
+      "files": {"worker.py": "from openai import OpenAI\nclient = OpenAI()\nresponse = client.responses.create(model='gpt-4o', tools=TOOLS, input='query')\nfor item in response.output:\n    if item.type == 'function_call':\n        print(item.name)\n"},
+      "target": {"kind": "agent", "signature": "provider.openai"},
+      "present": false,
+      "assertions": {"max_agent_findings": 0}
+    },
+    {
+      "id": "py-responses-dispatch-other-file",
+      "family": "agent",
+      "description": "Independent model calls and tool lookup helpers in separate files are not joined into an agent",
+      "files": {"request.py": "from openai import OpenAI\nclient.responses.create(model='gpt-4o', tools=TOOLS)\n", "helper.py": "if item.type == 'function_call':\n    result = TOOLS[item.name](item.arguments)\n"},
+      "target": {"kind": "agent", "signature": "provider.openai"},
+      "present": false,
+      "assertions": {"max_agent_findings": 0}
     }
   ]
 }

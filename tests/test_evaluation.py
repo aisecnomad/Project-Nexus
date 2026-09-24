@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import importlib
 import json
 import stat
 from pathlib import Path
 
 import pytest
 
+from tools.evaluation.accept import accept, wilson_lower95
+from tools.evaluation.accept import main as acceptance_main
 from tools.evaluation.benchmark import benchmark
 from tools.evaluation.evaluate import (
     DEFAULT_CORPUS,
@@ -206,3 +210,168 @@ def test_benchmark_rejects_unbounded_work():
         benchmark(files=10_001)
     with pytest.raises(ValueError, match="runs"):
         benchmark(runs=11)
+
+
+def _acceptance_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
+    data = _corpus({"plain.py": "pass\n"}, assertions={"max_agent_findings": 0})
+    data["metadata"]["type"] = "adjudicated"
+    data["metadata"]["provenance"] = "held-out analyst labels; reviewed externally"
+    data["cases"].append(
+        {
+            "id": "plain-other",
+            "family": "agent",
+            "description": "Second negative control",
+            "files": {"other.py": "def ordinary():\n    return 1\n"},
+            "target": {"kind": "agent", "signature": "framework.langgraph"},
+            "present": False,
+            "assertions": {"max_agent_findings": 0},
+        }
+    )
+    data["cases"].append(
+        {
+            "id": "active-graph",
+            "family": "agent",
+            "description": "Active graph construction",
+            "files": {"agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n"},
+            "target": {"kind": "agent", "signature": "framework.langgraph"},
+            "present": True,
+        }
+    )
+    corpus = _write(tmp_path / "holdout.json", data)
+    group = {
+        "min_positive_cases": 1,
+        "min_negative_cases": 2,
+        "min_precision_lower95": 0.2,
+        "min_recall_lower95": 0.2,
+        "min_specificity_lower95": 0.2,
+    }
+    policy = _write(
+        tmp_path / "policy.json",
+        {
+            "schema": 1,
+            "corpus_sha256": hashlib.sha256(corpus.read_bytes()).hexdigest(),
+            "groups": {"all": group, "agent": group},
+        },
+    )
+    annotations = _write(
+        tmp_path / "holdout-annotations.json",
+        {
+            "schema": 1,
+            "corpus_sha256": hashlib.sha256(corpus.read_bytes()).hexdigest(),
+            "method": "independent-human-double-label-before-scan",
+            "selection": "Small source-reviewed unit fixture; not a benchmark.",
+            "reviewers": [
+                {
+                    "id": reviewer,
+                    "labels": [
+                        {"case_id": case["id"], "present": case["present"], "reason": "Reviewed the source fixture before scoring."}
+                        for case in data["cases"]
+                    ],
+                }
+                for reviewer in ("reviewer_one", "reviewer_two")
+            ],
+            "adjudications": [],
+        },
+    )
+    return corpus, policy, annotations
+
+
+def test_wilson_lower_bound_is_defined_only_for_observations():
+    assert wilson_lower95(0, 0) is None
+    assert wilson_lower95(1, 1) == pytest.approx(0.206549314, rel=1e-6)
+    assert wilson_lower95(0, 1) == pytest.approx(0)
+
+
+def test_external_adjudicated_acceptance_gate_and_private_summary(tmp_path: Path):
+    corpus, policy, annotations = _acceptance_inputs(tmp_path)
+    report = accept(corpus, policy, annotations)
+    assert report["passed"] is True
+    assert report["groups"]["agent"]["counts"]["tp"] == 1
+    assert report["groups"]["agent"]["counts"]["tn"] == 2
+    assert report["groups"]["all"]["lower95"]["recall"] > 0.2
+    output = tmp_path / "private.json"
+    args = ["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations), "--output", str(output)]
+    assert acceptance_main(args) == 0
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert acceptance_main(args) == 2  # refuse to overwrite an audit artifact
+
+
+def test_acceptance_rejects_mismatched_digest_synthetic_labels_and_missing_group(tmp_path: Path):
+    corpus, policy, annotations = _acceptance_inputs(tmp_path)
+    data = json.loads(policy.read_text())
+    data["corpus_sha256"] = "0" * 64
+    _write(policy, data)
+    assert acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)]) == 2
+    data["corpus_sha256"] = hashlib.sha256(corpus.read_bytes()).hexdigest()
+    del data["groups"]["agent"]
+    _write(policy, data)
+    assert acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)]) == 2
+    _write(policy, {**data, "groups": {"all": data["groups"]["all"], "agent": data["groups"]["all"]}})
+    labels = json.loads(corpus.read_text())
+    labels["metadata"]["type"] = "synthetic"
+    _write(corpus, labels)
+    assert acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)]) == 2
+
+
+def test_acceptance_fails_when_bound_or_case_floor_is_not_met(tmp_path: Path):
+    corpus, policy, annotations = _acceptance_inputs(tmp_path)
+    data = json.loads(policy.read_text())
+    data["groups"]["agent"]["min_recall_lower95"] = 0.9
+    data["groups"]["agent"]["min_positive_cases"] = 10
+    _write(policy, data)
+    report = accept(corpus, policy, annotations)
+    assert report["case_assertions_passed"] is True
+    assert report["passed"] is False
+    assert any("recall lower95" in item for item in report["groups"]["agent"]["failures"])
+    assert any("positive_cases" in item for item in report["groups"]["agent"]["failures"])
+    assert acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)]) == 1
+
+
+def test_acceptance_uses_predeclared_error_budget_instead_of_perfect_labels(tmp_path: Path, monkeypatch):
+    corpus, policy, annotations = _acceptance_inputs(tmp_path)
+    labels = json.loads(corpus.read_text())
+    labels["cases"].append(
+        {
+            "id": "missed-graph",
+            "family": "agent",
+            "description": "Active graph construction with simulated missed observation",
+            "files": {"missed.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n"},
+            "target": {"kind": "agent", "signature": "framework.langgraph"},
+            "present": True,
+        }
+    )
+    _write(corpus, labels)
+    ledger = json.loads(annotations.read_text())
+    ledger["corpus_sha256"] = hashlib.sha256(corpus.read_bytes()).hexdigest()
+    for reviewer in ledger["reviewers"]:
+        reviewer["labels"].append(
+            {"case_id": "missed-graph", "present": True, "reason": "Reviewed the source fixture before scoring."}
+        )
+    _write(annotations, ledger)
+    data = json.loads(policy.read_text())
+    data["corpus_sha256"] = hashlib.sha256(corpus.read_bytes()).hexdigest()
+    for group in data["groups"].values():
+        group["min_recall_lower95"] = 0.05
+    _write(policy, data)
+    evaluation_module = importlib.import_module("tools.evaluation.evaluate")
+    original_scan = evaluation_module._scan_case
+
+    def simulated_miss(case, root, index):
+        duration, findings = original_scan(case, root, index)
+        return duration, [] if case.id == "missed-graph" else findings
+
+    monkeypatch.setattr(evaluation_module, "_scan_case", simulated_miss)
+    report = accept(corpus, policy, annotations)
+    assert report["all_labels_matched"] is False
+    assert report["case_assertions_passed"] is True
+    assert report["groups"]["all"]["counts"]["fn"] == 1
+    assert report["passed"] is True
+
+
+@pytest.mark.parametrize("bad_value", [0, float("nan"), True, "0.95"])
+def test_acceptance_rejects_nonpositive_or_ambiguous_bounds(tmp_path: Path, bad_value):
+    corpus, policy, annotations = _acceptance_inputs(tmp_path)
+    data = json.loads(policy.read_text())
+    data["groups"]["all"]["min_precision_lower95"] = bad_value
+    _write(policy, data)
+    assert acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)]) == 2

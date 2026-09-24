@@ -34,7 +34,7 @@ def test_auth0_malformed_neighbor_preserves_valid_client(tmp_path, run_connector
     findings, ctx = run_connector("identity.auth0", input=str(source))
     assert [f.resource for f in findings] == ["auth0:client:good"]
     assert ctx.stats.incomplete
-    assert not ctx.stats.errors
+    assert bool(ctx.stats.errors) is ("error" in bad)
 
 
 @pytest.mark.parametrize("bad", [
@@ -49,7 +49,7 @@ def test_okta_malformed_neighbor_preserves_valid_app(tmp_path, run_connector, ba
     findings, ctx = run_connector("identity.okta", input=str(source))
     assert [f.resource for f in findings] == ["okta:app:good"]
     assert ctx.stats.incomplete
-    assert not ctx.stats.errors
+    assert bool(ctx.stats.errors) is ("error" in bad)
 
 
 def test_okta_empty_app_links_is_valid(tmp_path, run_connector):
@@ -80,14 +80,16 @@ def test_auth0_repeated_page_is_bounded_and_preserves_clients(monkeypatch, run_c
         self.http = HttpClient("https://tenant.auth0.com")
 
     monkeypatch.setattr(Auth0Connector, "_auth", auth)
-    batch = [_auth0_client(str(i)) for i in range(100)]
+    # Keep pagination independent of name-signature matching under coverage.
+    batch = [{**_auth0_client(str(i)), "name": f"Example {i}"} for i in range(100)]
     responses.get("https://tenant.auth0.com/api/v2/clients", json=batch)
     # End the regression run even before the fix instead of hanging forever.
     responses.get("https://tenant.auth0.com/api/v2/clients", json=batch)
     responses.get("https://tenant.auth0.com/api/v2/clients", json=[])
     responses.get("https://tenant.auth0.com/api/v2/client-grants", json=[])
     findings, ctx = run_connector("identity.auth0")
-    assert len(findings) == 100
+    missing = set(map(str, range(100))) - {f.metadata["client_id"] for f in findings}
+    assert len(findings) == 100, (sorted(missing), ctx.stats.warnings)
     assert ctx.stats.incomplete
     assert len(responses.calls) == 3
 
@@ -98,7 +100,9 @@ def test_auth0_page_cap_marks_inventory_incomplete(monkeypatch, run_connector):
         self.http = HttpClient("https://tenant.auth0.com")
 
     monkeypatch.setattr(Auth0Connector, "_auth", auth)
-    responses.get("https://tenant.auth0.com/api/v2/clients", json=[_auth0_client(str(i)) for i in range(100)])
+    responses.get("https://tenant.auth0.com/api/v2/clients", json=[
+        {**_auth0_client(str(i)), "name": f"Example {i}"} for i in range(100)
+    ])
     responses.get("https://tenant.auth0.com/api/v2/clients", json=[])
     responses.get("https://tenant.auth0.com/api/v2/client-grants", json=[])
     findings, ctx = run_connector("identity.auth0", max_pages=1)

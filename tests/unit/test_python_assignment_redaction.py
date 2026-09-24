@@ -97,6 +97,46 @@ assert 'opaque-credential' not in safe and REDACTED in safe
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("source", [
+    'KEY = "{}"',
+    '{"KEY": "{}", "model": "langchain"}',
+    "KEY: '{}'\nmodel: langchain",
+    'KEY: |\n  {}\nmodel: langchain\n',
+])
+def test_long_sensitive_key_redacts_opaque_source_value(source):
+    key = "X" * 115 + "_API_KEY"
+    original = source.replace("KEY", key).replace("{}", SECRET)
+    safe = sanitize_text(original)
+    assert SECRET not in safe and SECRET[:20] not in safe
+    assert REDACTED in safe
+    if "model: langchain" in original:
+        assert "model: langchain" in safe
+    assert safe.count("\n") == original.count("\n")
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize("scan_secrets", [False, True])
+def test_long_sensitive_key_never_reaches_json_or_sarif(tmp_path, scan_secrets):
+    key = "X" * 115 + "_API_KEY"
+    (tmp_path / "agent.py").write_text(
+        f'import langchain; {key} = "{SECRET}"\n', encoding="utf-8",
+    )
+    (tmp_path / "agent.json").write_text(
+        f'{{"{key}": "{SECRET}", "model": "langchain"}}\n', encoding="utf-8",
+    )
+    (tmp_path / "agent.yaml").write_text(
+        f'{key}: |\n  {SECRET}\nmodel: langchain\n', encoding="utf-8",
+    )
+    result = Engine(ScanConfig(connectors=[ConnectorSpec(name="code.filesystem", config={
+        "path": str(tmp_path), "use_git": False, "scan_secrets": scan_secrets,
+    })])).run()
+    assert result.complete and result.findings
+    for render in (render_json, render_sarif):
+        output = render(result)
+        assert SECRET not in output and SECRET[:20] not in output, render.__name__
+        assert REDACTED in output, render.__name__
+
+
 @pytest.mark.parametrize("scan_secrets", [False, True])
 def test_complete_engine_scan_never_exports_python_credentials(tmp_path, scan_secrets):
     # Each expression sits beside a framework signal, forcing its line into the

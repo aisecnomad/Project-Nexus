@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-from shadowscan.models import Evidence, Finding, Kind
+from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.utils.text import redact
 
@@ -21,6 +21,67 @@ TECH_CATEGORIES = {
     "sandbox",
     "identity-app",
 }
+
+_FUNCTION_CALL_BRANCH = re.compile(r"\b(?P<item>[A-Za-z_]\w*)\.type\s*(?:===|==)\s*['\"]function_call['\"]")
+_NAMED_TOOL_LOOKUP = re.compile(r"(?:\[\s*|\.get\(\s*)(?P<item>[A-Za-z_]\w*)\.name\s*(?:\]|\))\s*\(")
+_FUNCTION_CALL_RESULT = re.compile(r"\b[A-Za-z_]\w*\s*=\s*(?:await\s+)?[A-Za-z_]\w*\(\s*(?P<item>[A-Za-z_]\w*)\.arguments\s*\)")
+
+
+def _has_responses_tool_loop(finding: Finding) -> bool:
+    """Recognise a model call, response branch and named tool dispatch in one file.
+
+    An SDK import, a ``tools=...`` argument or a branch alone does not establish
+    an agent. Matching the same loop variable in the branch and tool lookup also
+    avoids joining unrelated examples in a large project. Source literals and
+    comments are filtered by the code scanner before evidence reaches here.
+    """
+    if finding.surface != Surface.CODE or finding.resource_type != "project":
+        return False
+
+    requests: dict[str, set[int]] = {}
+    branches: dict[str, set[str]] = {}
+    lookups: dict[str, set[str]] = {}
+    direct_results: dict[str, set[str]] = {}
+    tools_arguments: dict[str, set[int]] = {}
+    for evidence in finding.evidence:
+        if not evidence.signal.startswith("code:") or not evidence.location:
+            continue
+        path, sep, line = evidence.location.rpartition(":")
+        if not sep or not line.isdecimal():
+            continue
+        value = evidence.attributes.get("value")
+        if not isinstance(value, str):
+            continue
+        if evidence.signature == "provider.openai" and "responses.create(" in value:
+            requests.setdefault(path, set()).add(int(line))
+        elif evidence.signature == "heuristic.function-call-branch":
+            match = _FUNCTION_CALL_BRANCH.search(value)
+            if match:
+                branches.setdefault(path, set()).add(match["item"])
+        elif evidence.signature == "heuristic.named-tool-lookup":
+            match = _NAMED_TOOL_LOOKUP.search(value)
+            if match:
+                lookups.setdefault(path, set()).add(match["item"])
+        elif evidence.signature == "heuristic.function-call-result":
+            match = _FUNCTION_CALL_RESULT.search(value)
+            if match:
+                direct_results.setdefault(path, set()).add(match["item"])
+        elif evidence.signature == "heuristic.tool-use" and re.search(r"\btools\s*=", value):
+            tools_arguments.setdefault(path, set()).add(int(line))
+    for path, request_lines in requests.items():
+        branch_items = branches.get(path, set())
+        if branch_items & lookups.get(path, set()):
+            return True
+        # A direct named handler such as ``answer = lookup(item.arguments)``
+        # does not index a registry. Require tools on the nearby model request
+        # before treating this generic function call as model-directed dispatch.
+        if branch_items & direct_results.get(path, set()) and any(
+            0 <= tool_line - request_line <= 20
+            for request_line in request_lines
+            for tool_line in tools_arguments.get(path, set())
+        ):
+            return True
+    return False
 
 _SIGNAL_LABEL = {
     "dependency": "dependency",
@@ -109,6 +170,10 @@ def finalize(finding: Finding, index: SignatureIndex | None = None) -> Finding:
     if counts:
         finding.metadata["evidence_counts"] = counts
     indicators = finding.metadata.get("agent_indicators", 0)
+    if finding.kind == Kind.FRAMEWORK_USAGE and not indicators and _has_responses_tool_loop(finding):
+        indicators = 1
+        finding.metadata["agent_indicators"] = 1
+        finding.metadata["agent_classification"] = "openai-responses-tool-dispatch"
     if finding.kind == Kind.FRAMEWORK_USAGE and indicators > 0:
         finding.kind = Kind.AGENT
     if index is not None:

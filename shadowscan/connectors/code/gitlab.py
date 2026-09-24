@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import tempfile
 import time
 from collections.abc import Iterable, Iterator
@@ -35,7 +34,16 @@ from shadowscan.connectors.code.github import (
 )
 from shadowscan.connectors.common import apply_matches, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.git import clone_environment, git_argv_prefix, read_git_snapshot, validate_git_ref
+from shadowscan.utils.git import (
+    CloneTimeoutError,
+    clone_environment,
+    clone_limits,
+    exceeds_clone_size,
+    git_argv_prefix,
+    read_git_snapshot,
+    run_bounded_clone,
+    validate_git_ref,
+)
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 
 
@@ -59,6 +67,8 @@ class GitLabConnector(BaseConnector):
         "mode": "clone | api",
         "include_archived": "default false",
         "max_projects": "default 500",
+        "clone_max_bytes": "preflight repository size cap (default 268435456); requires a disk quota for hard limits",
+        "clone_timeout_seconds": "per-repository git clone deadline (default 120)",
         "scan_timeout": "matching budget in seconds per file (default 2)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "input": "offline: directory of cloned projects",
@@ -70,9 +80,14 @@ class GitLabConnector(BaseConnector):
         self.api_url = str(ctx.get("api_url", "https://gitlab.com/api/v4", env="GITLAB_API_URL")).rstrip("/")
         self.token = ctx.get("token", env="GITLAB_TOKEN")
         self.mode = str(ctx.get("mode", "clone" if shutil.which("git") else "api"))
+        if self.mode not in {"clone", "api"}:
+            raise ConnectorError("code.gitlab: mode must be 'clone' or 'api'")
         self.max_projects = int(ctx.get("max_projects", 500))
         if self.max_projects < 1:
             raise ConnectorError("code.gitlab: max_projects must be positive")
+        self.clone_max_bytes, self.clone_timeout_seconds = clone_limits(
+            ctx.get("clone_max_bytes", 256 * 1024 * 1024), ctx.get("clone_timeout_seconds", 120),
+        )
         self.include_archived = bool(ctx.get("include_archived", False))
         headers = {"PRIVATE-TOKEN": self.token} if self.token else {}
         self.http = HttpClient(self.api_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True))
@@ -247,10 +262,32 @@ class GitLabConnector(BaseConnector):
         proj.pop("source_snapshot", None)
         if self.mode == "clone" and shutil.which("git"):
             dest = os.path.join(tmp, "repo")
-            if self._clone(proj, dest):
-                self._set_clone_snapshot(proj, dest)
-                return dest
-            self.ctx.warn(f"code.gitlab: clone failed for {proj.get('path_with_namespace')}; falling back to API mode")
+            stats = proj.get("statistics")
+            size = stats.get("repository_size") if isinstance(stats, dict) else None
+            # GitLab group listings generally omit statistics. Request the
+            # project detail when the caller's token can see its size.
+            if (not isinstance(size, int) or isinstance(size, bool) or size <= 0) and proj.get("id") is not None:
+                detail = self.http.try_get_json(
+                    f"/projects/{quote(str(proj['id']), safe='')}", params={"statistics": "true"},
+                )
+                detail_stats = detail.get("statistics") if isinstance(detail, dict) else None
+                if isinstance(detail_stats, dict):
+                    size = detail_stats.get("repository_size")
+            if exceeds_clone_size(size, 1, self.clone_max_bytes):
+                self.ctx.warn(f"code.gitlab: repository {proj.get('path_with_namespace')} exceeds clone_max_bytes; using sampled API mode", incomplete=True)
+            else:
+                if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+                    self.ctx.warn(f"code.gitlab: size metadata unavailable for {proj.get('path_with_namespace')}; clone byte limit unverified", incomplete=True)
+                if self._clone(proj, dest):
+                    self._set_clone_snapshot(proj, dest)
+                    return dest
+                self.ctx.warn(f"code.gitlab: clone failed for {proj.get('path_with_namespace')}; using sampled API mode", incomplete=True)
+                if os.path.lexists(dest):
+                    if os.path.islink(dest):
+                        raise ConnectorError("code.gitlab: partial clone destination is a symlink")
+                    shutil.rmtree(dest)
+        elif self.mode == "clone":
+            self.ctx.warn(f"code.gitlab: git is unavailable for {proj.get('path_with_namespace')}; using sampled API mode", incomplete=True)
         self.ctx.check_deadline()
         return self._fetch_via_api(proj, tmp)
 
@@ -286,13 +323,9 @@ class GitLabConnector(BaseConnector):
             self.ctx.warn("code.gitlab: unsupported default branch; cloned remote HEAD, requested branch coverage unknown", incomplete=True)
         cmd += ["--", url, dest]
         try:
-            self.ctx.check_deadline()
-            timeout = min(600.0, max(0.001, self.ctx.deadline - time.monotonic())) if self.ctx.deadline else 600.0
-            res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout, check=False)
-            self.ctx.check_deadline()
-        except (OSError, subprocess.SubprocessError):
+            return run_bounded_clone(cmd, env, self.ctx, self.clone_timeout_seconds)
+        except (OSError, CloneTimeoutError):
             return False
-        return res.returncode == 0
 
     def _fetch_via_api(self, proj: dict[str, Any], tmp: str) -> str | None:
         pid = proj["id"]

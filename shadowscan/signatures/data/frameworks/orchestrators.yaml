@@ -47,7 +47,7 @@ signatures:
         weight: 0.4
         capabilities: [memory]
       - type: code
-        patterns: ['\b(?:StructuredTool|Tool)\s*\(\s*name\s*=', '\bStructuredTool\.from_function\s*\(', '@tool\s*(?:\(|\n)']
+        patterns: ['\b(?:StructuredTool|Tool)\s*\(\s*name\s*=', '\bStructuredTool\.from_function\s*\(']
         weight: 0.5
         capabilities: [tool-use]
       - type: env

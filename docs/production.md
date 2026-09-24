@@ -222,6 +222,14 @@ when another selector matches successfully.
 Use disposable, resource-limited workers for untrusted repository scans. Keep
 scanner state and output outside the repository under review. Avoid handing
 production credentials to a job that executes repository-controlled build steps.
+For GitHub/GitLab remote repository scans, preflight estimates and process-group
+cancellation reduce ordinary runaway clone cost but do not guarantee a hard
+aggregate byte, writable disk or time bound on every platform. Give each
+disposable worker an operating-system/container writable disk quota, memory and
+process limits, a separate job wall-clock deadline and a cleanup policy for
+abandoned workspaces. A worker's soft connector timeout is not a disk quota or
+a hard kill for every child process. A local checkout example, such as
+`examples/github-action-code-scan.yml`, does not exercise the remote clone path.
 
 ## Output and inventory migration
 
@@ -410,13 +418,29 @@ regressions. It does not measure field precision, recall or the calibration of
 the heuristic confidence score. Before turning on `--fail-on` for an estate,
 label a representative held-out set from that estate, include inactive configs,
 commented/string-only source, disabled integrations and genuinely executing
-agents, and review errors by connector and severity. Set a documented acceptable
-false-alert and miss rate for each high-impact workflow; keep human triage while
-those acceptance metrics are measured.
+agents, and review errors by connector and severity. For code-filesystem cases,
+run the acceptance command with a separately reviewed, SHA-256-frozen policy:
+
+```bash
+python -m tools.evaluation.accept \
+  --corpus /restricted/holdout.json \
+  --policy /restricted/acceptance-policy.json \
+  --annotations /restricted/holdout-annotations.json \
+  --output /restricted/acceptance-result.json
+```
+
+The gate rejects synthetic/public samples and requires a frozen, SHA-256-bound
+two-reviewer ledger plus predeclared sample floors and Wilson lower bounds per
+family. Ledger declarations do not authenticate reviewer independence or prove
+tenant completeness. Set a documented acceptable false-alert
+and miss rate for each high-impact workflow; keep human triage while those
+acceptance metrics are measured.
 
 ## Rollout acceptance
 
-Before broad deployment, retain evidence for each intended connector instance:
+Before broad deployment, retain evidence for each intended connector instance.
+The [canary proof packet](evaluation.md#read-only-tenant-canary-procedure) lists
+the concrete status, denominator, control and reviewer artifacts:
 
 1. Run a read-only canary with the actual audit identity. Record the expected
    tenant/account, regions and collection scope, then verify known agents and

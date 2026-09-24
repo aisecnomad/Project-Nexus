@@ -10,15 +10,20 @@ approved plugin runs with scanner privileges.
 ## Development
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
-ruff check shadowscan tests
-mypy shadowscan
+ruff check shadowscan tests tools
+mypy shadowscan tools/evaluation
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 ```
 
-Cloud extras (`pip install -e ".[cloud]"`) are optional. Offline fixtures cover
-the cloud connectors; do not commit live tenant exports.
+The full suite and CI exercise cloud connector paths; install both extras to run
+it locally. For code-only development, `pip install -e ".[dev]"` is enough for
+the relevant tests, but it does not verify cloud SDK integrations. CI uses the
+reviewed, hash-locked runtime dependencies plus pinned development constraints;
+the editable command above is a convenient local setup, not a reproducible
+release build. Offline fixtures cover cloud connectors without tenant access.
+Do not commit live tenant exports or private adjudicated evaluation corpora.
 
 ## Pull requests
 
