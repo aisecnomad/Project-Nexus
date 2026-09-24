@@ -99,18 +99,43 @@ def test_unknown_code_provider_mode_is_rejected(index):
 
 
 @pytest.mark.parametrize("cls,record", [
-    (GitHubConnector, {"full_name": "org/repo", "size": 0}),
-    (GitLabConnector, {"path_with_namespace": "org/repo"}),
+    (GitHubConnector, {"full_name": "org/repo"}),
+    (GitLabConnector, {"path_with_namespace": "org/repo", "id": 123}),
 ])
-def test_unknown_size_is_incomplete_even_when_clone_succeeds(tmp_path, monkeypatch, index, cls, record):
+def test_unknown_size_uses_api_without_cloning(tmp_path, monkeypatch, index, cls, record):
     ctx = ConnectorContext(index=index)
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
     connector = cls(ctx)
+    if cls is GitLabConnector:
+        connector.http.try_get_json = Mock(return_value={})
+    clone = Mock(side_effect=AssertionError("a repository without a size estimate must not be cloned"))
+    monkeypatch.setattr(connector, "_clone", clone)
+    monkeypatch.setattr(connector, "_fetch_via_api", lambda repo, tmp: tmp)
+    fetch = connector._fetch_repo if cls is GitHubConnector else connector._fetch
+    assert fetch(record, str(tmp_path)) == str(tmp_path)
+    assert ctx.stats.incomplete
+    assert any("size metadata unavailable" in message for message in ctx.stats.warnings)
+    clone.assert_not_called()
+
+
+@pytest.mark.parametrize("cls,record", [
+    (GitHubConnector, {"full_name": "org/repo", "size": 0}),
+    (GitLabConnector, {"path_with_namespace": "org/repo", "statistics": {"repository_size": 0}}),
+])
+def test_zero_size_is_a_valid_estimate(tmp_path, monkeypatch, index, cls, record):
+    ctx = ConnectorContext(index=index)
+    ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
+    connector = cls(ctx)
+    if cls is GitLabConnector:
+        connector.http.try_get_json = Mock(side_effect=AssertionError("valid zero size needs no detail lookup"))
     monkeypatch.setattr(connector, "_clone", lambda repo, dest: True)
+    monkeypatch.setattr(
+        f"{cls.__module__}.read_git_snapshot",
+        lambda path, timeout: {"commit_sha": "a" * 40, "tree_sha": "b" * 40},
+    )
     fetch = connector._fetch_repo if cls is GitHubConnector else connector._fetch
     assert fetch(record, str(tmp_path)) == str(tmp_path / "repo")
-    assert ctx.stats.incomplete
-    assert any("clone byte limit unverified" in message for message in ctx.stats.warnings)
+    assert not ctx.stats.incomplete
 
 
 @pytest.mark.parametrize("cls,record", [

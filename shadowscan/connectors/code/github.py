@@ -37,6 +37,7 @@ from shadowscan.utils.git import (
     clone_limits,
     exceeds_clone_size,
     git_argv_prefix,
+    has_clone_size_estimate,
     read_git_snapshot,
     run_bounded_clone,
     validate_git_ref,
@@ -293,9 +294,12 @@ class GitHubConnector(BaseConnector):
             size = repo.get("size")
             if exceeds_clone_size(size, 1024, self.clone_max_bytes):
                 self.ctx.warn(f"code.github: repository {full} exceeds clone_max_bytes; using sampled API mode", incomplete=True)
+            elif not has_clone_size_estimate(size):
+                self.ctx.warn(
+                    f"code.github: size metadata unavailable for {full}; using sampled API mode",
+                    incomplete=True,
+                )
             else:
-                if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
-                    self.ctx.warn(f"code.github: size metadata unavailable for {full}; clone byte limit unverified", incomplete=True)
                 if self._clone(repo, dest):
                     self._set_clone_snapshot(repo, dest)
                     return dest

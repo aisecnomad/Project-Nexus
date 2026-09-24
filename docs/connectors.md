@@ -77,11 +77,11 @@ Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) checks GitHub's reported repository size
 before cloning, and `clone_timeout_seconds` (default 120) bounds each clone.
-An oversized repository falls back to sampled API mode with incomplete coverage;
-missing size metadata, a failed clone, or Git being unavailable for explicit
-`mode: clone` also marks the scan incomplete. The provider's size is an
-estimate, not a download or disk quota. Run remote scans with a host/container
-wall-clock limit and a writable disk quota.
+An oversized repository or missing/malformed size estimate falls back to sampled
+API mode without launching Git and marks coverage incomplete. A failed clone or
+Git being unavailable for explicit `mode: clone` also marks the scan incomplete.
+The provider's size is an estimate, not a download or disk quota. Run remote
+scans with a host/container wall-clock limit and a writable disk quota.
 
 ### `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
@@ -94,8 +94,10 @@ findings retain the scanned Git tree/commit identity in
 commit before downloading files.
 `clone_max_bytes` and `clone_timeout_seconds` have the same defaults and
 incomplete-scan semantics as `code.github`. GitLab project details are queried
-for size statistics when the listing omits them. A size estimate cannot bound
-actual checkout bytes; enforce a writable disk quota on the worker.
+for size statistics when the listing omits them. If no usable estimate is
+available, the connector falls back to sampled API mode without launching Git.
+A size estimate cannot bound actual checkout bytes; enforce a writable disk
+quota on the worker.
 
 ## Identity
 

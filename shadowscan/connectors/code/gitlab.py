@@ -40,6 +40,7 @@ from shadowscan.utils.git import (
     clone_limits,
     exceeds_clone_size,
     git_argv_prefix,
+    has_clone_size_estimate,
     read_git_snapshot,
     run_bounded_clone,
     validate_git_ref,
@@ -266,7 +267,7 @@ class GitLabConnector(BaseConnector):
             size = stats.get("repository_size") if isinstance(stats, dict) else None
             # GitLab group listings generally omit statistics. Request the
             # project detail when the caller's token can see its size.
-            if (not isinstance(size, int) or isinstance(size, bool) or size <= 0) and proj.get("id") is not None:
+            if not has_clone_size_estimate(size) and proj.get("id") is not None:
                 detail = self.http.try_get_json(
                     f"/projects/{quote(str(proj['id']), safe='')}", params={"statistics": "true"},
                 )
@@ -275,9 +276,12 @@ class GitLabConnector(BaseConnector):
                     size = detail_stats.get("repository_size")
             if exceeds_clone_size(size, 1, self.clone_max_bytes):
                 self.ctx.warn(f"code.gitlab: repository {proj.get('path_with_namespace')} exceeds clone_max_bytes; using sampled API mode", incomplete=True)
+            elif not has_clone_size_estimate(size):
+                self.ctx.warn(
+                    f"code.gitlab: size metadata unavailable for {proj.get('path_with_namespace')}; using sampled API mode",
+                    incomplete=True,
+                )
             else:
-                if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
-                    self.ctx.warn(f"code.gitlab: size metadata unavailable for {proj.get('path_with_namespace')}; clone byte limit unverified", incomplete=True)
                 if self._clone(proj, dest):
                     self._set_clone_snapshot(proj, dest)
                     return dest

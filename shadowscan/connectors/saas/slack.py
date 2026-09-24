@@ -126,7 +126,7 @@ class SlackConnector(BaseConnector):
             self.ctx.warn(f"saas.slack: {path}: {error}; coverage unknown", incomplete=True)
             return None
         if "error" in data or data.get("errors"):
-            self.ctx.warn(f"saas.slack: {path}: contradictory success response; coverage unknown")
+            self.ctx.warn(f"saas.slack: {path}: contradictory success response; coverage unknown", incomplete=True)
         return data
 
     def _cursor(self, http: HttpClient, path: str, params: dict[str, Any], key: str) -> Iterable[dict[str, Any]]:

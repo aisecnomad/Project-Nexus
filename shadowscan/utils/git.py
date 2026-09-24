@@ -127,6 +127,11 @@ def exceeds_clone_size(size: object, unit: int, max_bytes: int) -> bool:
     return isinstance(size, int) and not isinstance(size, bool) and size >= 0 and size * unit > max_bytes
 
 
+def has_clone_size_estimate(size: object) -> bool:
+    """Return whether a provider supplied a usable nonnegative size estimate."""
+    return isinstance(size, int) and not isinstance(size, bool) and size >= 0
+
+
 def validate_git_ref(name: str | None) -> str | None:
     """Return *name* if it is a conservative branch/tag, otherwise None."""
     if not isinstance(name, str):
