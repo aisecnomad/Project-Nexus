@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.markup import escape
 from rich.table import Table
+from rich.text import Text
 
 from shadowscan import __version__
 from shadowscan.comparison import compare_reports, load_report
@@ -87,7 +88,7 @@ def _exit_code(result: ScanResult, fail_on: str | None) -> int:
 
 def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, max_rows: int | None, only: list[str] | None = None) -> None:
     def progress(cid: str, msg: str) -> None:
-        err_console.print(f"[dim]{cid}: {msg}[/dim]")
+        err_console.print(f"[dim]{escape(cid)}: {escape(msg)}[/dim]")
 
     try:
         engine = Engine(cfg, progress=progress if verbose else None)
@@ -342,11 +343,11 @@ def list_connectors(surface: str | None, as_json: bool) -> None:
     table.add_column("Config keys", ratio=2)
     for r in rows:
         if "error" in r:
-            table.add_row(r["name"], "?", f"[red]{r['error']}[/red]", "")
+            table.add_row(Text(r["name"]), "?", Text(r["error"], style="red"), "")
             continue
         keys = "\n".join(f"[bold]{k}[/bold]: {v}" for k, v in r["config"].items())
         extra = f"\n[dim]requires: {', '.join(r['requires'])}[/dim]" if r["requires"] else ""
-        table.add_row(r["name"], r["surface"], r["description"] + extra, keys)
+        table.add_row(Text(r["name"]), Text(str(r["surface"])), Text(r["description"] + extra), Text(keys))
     console.print(table)
 
 
@@ -378,7 +379,7 @@ def signatures_list(category: str | None, signature_dirs: tuple[str, ...], as_js
     table.add_column("Signals", justify="right")
     table.add_column("Agent?", justify="center")
     for s in sigs:
-        table.add_row(s.id, s.name, s.category, s.vendor or "", str(len(s.signals)), "✓" if s.agent_indicator else "")
+        table.add_row(Text(s.id), Text(s.name), Text(s.category), Text(s.vendor or ""), str(len(s.signals)), "✓" if s.agent_indicator else "")
     console.print(table)
 
 
@@ -456,7 +457,8 @@ def inventory_check(paths: tuple[str, ...]) -> None:
     table.add_column("Resources")
     table.add_column("Source")
     for e in inv.entries:
-        table.add_row(e.agent_id, e.name or "", e.owner or "", "\n".join(e.resources) or "[dim]none (suggestions only)[/dim]", e.source or "")
+        resources = Text("\n".join(e.resources)) if e.resources else Text("none (suggestions only)", style="dim")
+        table.add_row(Text(e.agent_id), Text(e.name or ""), Text(e.owner or ""), resources, Text(e.source or ""))
     console.print(table)
 
 

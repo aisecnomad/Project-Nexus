@@ -122,17 +122,20 @@ def test_raw_response_retains_bounded_content_after_closing_transport():
     result.close.assert_called_once()
 
 
-@pytest.mark.parametrize("headers,expected_delay", [
-    ({"Retry-After": "²"}, 2),
-    ({"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "9" * 5000}, 120),
+@pytest.mark.parametrize("headers,expected_range", [
+    # A malformed hint falls back to the jittered exponential step for attempt 1.
+    ({"Retry-After": "²"}, (1, 2)),
+    ({"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "9" * 5000}, (120, 120)),
 ])
-def test_malformed_or_extreme_retry_headers_remain_bounded_and_close_response(headers, expected_delay, monkeypatch):
+def test_malformed_or_extreme_retry_headers_remain_bounded_and_close_response(headers, expected_range, monkeypatch):
     first = response(status=429, headers=headers)
     http, _ = client(first, response({"ok": True}))
     sleep = Mock()
     monkeypatch.setattr("shadowscan.utils.http.time.sleep", sleep)
     assert http.get_json("/items") == {"ok": True}
-    sleep.assert_called_once_with(expected_delay)
+    sleep.assert_called_once()
+    (delay,), _ = sleep.call_args
+    assert expected_range[0] <= delay <= expected_range[1]
     first.close.assert_called_once()
 
 

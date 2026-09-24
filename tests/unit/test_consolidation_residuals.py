@@ -10,11 +10,14 @@ import base64
 import json
 import time
 from pathlib import Path
+from textwrap import dedent
 from unittest.mock import Mock
 
 import pytest
 import requests
+from click.testing import CliRunner
 
+from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.identity.jwt import JwtConnector
@@ -237,3 +240,22 @@ def test_service_account_username_only_marks_keycloak_issuers(index):
     other, kc = (JwtConnector(_ctx(index, tokens=[_unsigned(c)])).run()[0] for c in (claims, keycloak))
     assert other.metadata["identity_type"] == "human"
     assert kc.metadata["identity_type"] == "service" and "Keycloak service account" in str(kc.metadata)
+
+
+# --------------------------------------------------------------- CLI rendering
+
+
+def test_inventory_check_renders_card_fields_literally(tmp_path: Path):
+    """Regression: Rich markup in an inventory card crashed ``inventory check``."""
+    cards = tmp_path / "agents.yaml"
+    cards.write_text(dedent("""\
+        agents:
+          - id: bot-one
+            name: "[/]"
+            owner: "[bold red]owner[/]"
+            resources: ["arn:aws:iam::123456789012:role/[link=https://evil.example]x[/link]"]
+    """))
+    result = CliRunner().invoke(main, ["inventory", "check", str(cards)])
+    assert result.exit_code == 0, result.output
+    assert "[bold red]owner[/]" in result.output and "[/]" in result.output
+    assert "Traceback" not in result.output
