@@ -265,6 +265,62 @@ def test_heuristics_with_only_a_secret_are_dropped(tmp_path: Path, run_connector
     assert [f.kind for f in findings] == [Kind.SECRET]
 
 
+def test_heuristics_next_to_env_names_only_do_not_make_an_agent(tmp_path: Path, run_connector, index):
+    (tmp_path / ".env.example").write_text("OPENAI_API_KEY=\n")
+    (tmp_path / "deploy.py").write_text(HEURISTIC_ONLY_SOURCE)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    assert not any(f.kind == Kind.AGENT for f in findings)
+    project = _project(findings)
+    assert project is not None and project.kind == Kind.FRAMEWORK_USAGE
+    assert "env-names-only" in project.tags
+    assert project.metadata["confidence_cap"] == {"reason": "env-names-only", "maximum": 0.8}
+    assert project.confidence <= 0.8 and project.likelihood != Likelihood.CONFIRMED
+    assert not {"autonomous", "code-exec"} & set(project.capabilities)
+    assert project.metadata["agent_indicators"] == 0
+    # The finding is built from the name references alone: no heuristic evidence, no deploy.py.
+    assert {e.signal for e in project.evidence} == {"env:provider.openai"}
+    assert all(e.weight == pytest.approx(0.3) and e.location.startswith(".env.example:") for e in project.evidence)
+    assert project.title == "LLM usage in repository root: OpenAI"
+    assert assess(project, index).score < 50
+
+    # An import anchors the provider, so the same idioms count again.
+    (tmp_path / "app.py").write_text("from openai import OpenAI\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    project = _project(findings)
+    assert project is not None and project.kind == Kind.AGENT
+    assert "env-names-only" not in project.tags and "confidence_cap" not in project.metadata
+    assert {"autonomous", "code-exec"} <= set(project.capabilities)
+    assert project.likelihood == Likelihood.CONFIRMED
+    assert any(e.signal == "import:provider.openai" and e.location.startswith("app.py:") for e in project.evidence)
+    assert any(e.signal == "code:heuristic.code-execution" and e.location.startswith("deploy.py:") for e in project.evidence)
+
+
+def test_env_names_only_keeps_generic_llm_env_names(tmp_path: Path, run_connector):
+    (tmp_path / ".env.example").write_text("OPENAI_API_KEY=\nLLM_MODEL=\n")
+    (tmp_path / "deploy.py").write_text(HEURISTIC_ONLY_SOURCE)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    project = _project(findings)
+    assert project is not None and project.kind == Kind.FRAMEWORK_USAGE and "env-names-only" in project.tags
+    # A generic LLM_* name is itself a name reference; only the heuristic code idioms are dropped.
+    assert {e.signal for e in project.evidence} == {"env:provider.openai", "env:heuristic.llm-env-names"}
+    assert not project.capabilities and project.metadata["agent_indicators"] == 0
+
+
+def test_live_credential_is_not_an_env_name_only_anchor(tmp_path: Path, run_connector):
+    (tmp_path / ".env").write_text(f"OPENAI_API_KEY={SYNTHETIC_OPENAI_KEY}\n")
+    (tmp_path / "deploy.py").write_text(HEURISTIC_ONLY_SOURCE)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    assert any(f.kind == Kind.SECRET for f in findings)
+    project = _project(findings)
+    assert project is not None and "env-names-only" not in project.tags and "confidence_cap" not in project.metadata
+    assert any(e.signal == "secret:provider.openai" for e in project.evidence)
+    assert project.kind == Kind.AGENT and {"autonomous", "code-exec"} <= set(project.capabilities)
+
+
 # ------------------------------------------------------ MCP capabilities
 def test_mcp_servers_map_to_data_access_browsing_and_code_exec(tmp_path: Path, run_connector, index):
     (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {
@@ -348,9 +404,12 @@ def test_bundled_corpus_covers_precision_regressions():
         "devops-heuristics-only-agent": False,
         "devops-heuristics-only-usage": False,
         "py-langgraph-agent-with-heuristics": True,
+        "env-names-with-heuristics-agent": False,
+        "env-names-import-with-heuristics-agent": True,
     }
     for case_id, present in expected.items():
         assert rows[case_id]["present"] is present and rows[case_id]["predicted"] is present, case_id
         assert rows[case_id]["correct"], rows[case_id]["assertion_failures"]
     assert 0.6 <= rows["env-names-only-usage"]["score"] < 0.85
+    assert max(f["confidence"] for f in rows["env-names-with-heuristics-agent"]["findings"]) <= 0.8
     assert report["passed"]

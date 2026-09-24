@@ -392,6 +392,23 @@
       "files": {"agent.py": "import subprocess\nfrom langgraph.graph import StateGraph\n\ngraph = StateGraph(dict)\nwhile True:\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
       "target": {"kind": "agent", "signature": "framework.langgraph"},
       "present": true
+    },
+    {
+      "id": "env-names-with-heuristics-agent",
+      "family": "agent",
+      "description": "Provider environment variable names next to vendor-neutral automation idioms are not an agent",
+      "files": {".env.example": "OPENAI_API_KEY=\n", "deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
+      "target": {"kind": "agent"},
+      "present": false,
+      "assertions": {"max_agent_findings": 0}
+    },
+    {
+      "id": "env-names-import-with-heuristics-agent",
+      "family": "agent",
+      "description": "The same idioms next to an OpenAI import and the environment variable name describe a real agent",
+      "files": {".env.example": "OPENAI_API_KEY=\n", "app.py": "from openai import OpenAI\n", "deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
+      "target": {"kind": "agent", "signature": "provider.openai"},
+      "present": true
     }
   ]
 }

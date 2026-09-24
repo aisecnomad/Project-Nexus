@@ -25,9 +25,11 @@ Precision safeguards
   only count when the project also matches a framework, provider, platform,
   protocol or cloud-service signature; on their own they describe ordinary
   automation code and are dropped.
-* When every technology observation is an environment-variable or display-name
-  reference, evidence weights are halved, the finding is tagged
-  ``env-names-only`` and confidence is capped below the ``confirmed`` band.
+* When every technology observation other than those heuristics is an
+  environment-variable or display-name reference, the heuristics are dropped
+  and the finding is built from the name references alone: evidence weights
+  are halved, the finding is tagged ``env-names-only`` and confidence is
+  capped below the ``confirmed`` band.
 """
 
 from __future__ import annotations
@@ -967,7 +969,20 @@ class FilesystemConnector(BaseConnector):
         anchors = [t for t in observations if t[0].signature.category != "heuristic" and t[0].signal.type != "secret"]
         tech_matches = observations if anchors else []
         if tech_matches:
-            env_only = all(m.signal.type in {"env", "name"} for m, _, _ in tech_matches)
+            # Environment-variable and display-name references are weak
+            # anchors, so they are judged before heuristics join: an agent
+            # loop or subprocess.run next to a .env.example must not promote
+            # the project to a confirmed agent with autonomous or code-exec
+            # capabilities. Such a finding is built from the name references
+            # alone. A live credential is not a name: it keeps full weights
+            # and lets the heuristics count. Every anchor is non-heuristic,
+            # so the judgement below is never vacuous.
+            env_only = all(
+                m.signal.type in {"env", "name"}
+                for m, _, _ in tech_matches if m.signature.category != "heuristic"
+            )
+            if env_only:
+                tech_matches = [t for t in tech_matches if t[0].signal.type in {"env", "name"}]
             f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
             for m, rel, snip in tech_matches:
                 apply_matches(f, [m], location=rel, snippet=snip, weight_scale=ENV_ONLY_WEIGHT_SCALE if env_only else 1.0)

@@ -243,9 +243,11 @@ on the project finding as low-weight `example-credential` evidence. A key alone
 does not establish LLM usage, and vendor-neutral heuristics (agent loops,
 `subprocess.run`, auto-approve flags) only count in a project that also matches
 a framework, provider, platform, protocol or cloud-service signature. When every
-observation for a project is an environment-variable or display-name reference,
-the finding is tagged `env-names-only`, its evidence weights are halved and its
-confidence is capped at 0.8 (`likely`), however many names appear. MCP servers
+observation for a project other than those heuristics is an environment-variable
+or display-name reference, the heuristics are dropped and the finding is built
+from the name references alone: it is tagged `env-names-only`, its evidence
+weights are halved and its confidence is capped at 0.8 (`likely`), however many
+names appear. MCP servers
 for files and databases carry the `data-access` capability, browser servers
 `browsing`, and shells `code-exec`. In gateway logs, round-the-clock activity
 keeps the informational `always-on` tag but only marks a caller as agentic,
