@@ -255,12 +255,15 @@ class HttpClient:
         # Explicit proxies are refused by the adapter as well.
         self.session.trust_env = False
         if isinstance(self.session, requests.Session):
-            # requests chooses the longest matching adapter prefix. Merely
-            # mounting https:// leaves injected host/path adapters in control.
-            for adapter in set(self.session.adapters.values()):
-                adapter.close()
+            # requests picks the longest matching adapter prefix. An injected
+            # session may already have an origin-specific adapter that would
+            # bypass connection-time DNS checks even after mounting https://.
+            old_adapters = set(self.session.adapters.values())
             self.session.adapters.clear()
-        self.session.mount("https://", _DestinationPolicyAdapter(allow_private=self.allow_private_origin))
+            for adapter in old_adapters:
+                adapter.close()
+        self._policy_adapter = _DestinationPolicyAdapter(allow_private=self.allow_private_origin)
+        self.session.mount("https://", self._policy_adapter)
         self.session.headers.update({"User-Agent": f"shadowscan/{__version__}", "Accept": "application/json"})
         if headers:
             self.session.headers.update(headers)
@@ -299,6 +302,8 @@ class HttpClient:
         redirects = 0
         origin = url
         while True:
+            if isinstance(self.session, requests.Session) and self.session.get_adapter(url) is not self._policy_adapter:
+                raise ValueError("HTTP destination policy adapter was replaced")
             attempt += 1
             self.requests_made += 1
             resp = self.session.request(method, url, **kwargs)
@@ -332,6 +337,9 @@ class HttpClient:
                 resp.close()
                 raise HttpError(resp.status_code, url)
             if not stream:
+                # A caller of get()/post() may access resp.content directly.
+                # Buffer only within the decoded-byte limit and keep the
+                # familiar Response API after the transport is closed.
                 resp._content = self.read_response_bytes(resp)
                 resp._content_consumed = True  # type: ignore[attr-defined]
             return resp

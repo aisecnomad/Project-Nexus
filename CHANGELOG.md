@@ -1,12 +1,17 @@
 # Changelog
 
-## Unreleased
+## Unreleased — 2026-09-24
 
 Hardening changes following the 0.1.0 review. Package metadata remains at 0.1.0;
 this entry does not announce a 0.1.1 release or completed production acceptance.
 
 ### Security
 
+- Accountless short AWS IDs cannot approve registry entries; missing account
+  scope makes the scan incomplete.
+- Filesystem roots and in-scope source links cannot bypass symlink confinement;
+  rejected or skipped links make coverage incomplete.
+- Origin-specific injected HTTP adapters cannot bypass destination enforcement.
 - Finding identity separates stable resource identity from inferred classification;
   promotion from framework usage to agent preserves merge and comparison identity.
 - Shared HTTP responses and JSON/pagination helpers default to a 16 MiB decoded
@@ -26,6 +31,9 @@ this entry does not announce a 0.1.1 release or completed production acceptance.
   configured `--fail-on` threshold exit 2.
 - Parallel connector results merge in configuration order. Evidence deduplication
   is idempotent, and gateway observation deduplication uses structural hashing.
+- Later Azure Resource Graph page failures retain observed resources. GCP caller
+  attribution remains scoped by project. Boolean and integer metadata remain
+  distinct during deterministic aggregation.
 - AWS Lambda and GCP project limits stop discovery without loading the entire
   inventory first. Truncation continues to mark coverage incomplete.
 - Gateway analysis reuses bounded successful user-agent classifications. Regex
@@ -36,6 +44,8 @@ this entry does not announce a 0.1.1 release or completed production acceptance.
 
 ### Operations
 
+- Incremental fingerprints skip literal excluded source directories while
+  retaining CODEOWNERS inputs; project attribution scales with active ancestors.
 - A disposable non-root Docker worker is available for core and offline scanning.
   Its build checks installed signatures and the CLI outside the source directory.
   Live cloud SDK extras require a separately prepared image.

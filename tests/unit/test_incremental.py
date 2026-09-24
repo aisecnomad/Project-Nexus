@@ -455,6 +455,35 @@ def test_irrelevant_oversized_file_skips_cache_without_hashing_entire_file(tmp_p
     assert not list((tmp_path / "state").glob("*.json"))
 
 
+def test_literal_excluded_directory_reuses_cache_but_direct_codeowners_remains_tracked(tmp_path, index):
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["exclude"] = ["assets", "docs"]
+    root = tmp_path / "repo"
+    assets = root / "assets"
+    assets.mkdir()
+    ignored = assets / "agent.py"
+    ignored.write_text("import crewai\n")
+    docs = root / "docs"
+    docs.mkdir()
+    owners = docs / "CODEOWNERS"
+    owners.write_text("* @first-team\n")
+
+    first = Engine(cfg, index).run()
+    cached = Engine(cfg, index).run()
+    assert first.complete and cached.complete and cached.stats[0].cached
+    assert first.findings[0].owner == "@first-team"
+
+    ignored.write_text("import langgraph\n")
+    unchanged = Engine(cfg, index).run()
+    assert unchanged.complete and unchanged.stats[0].cached
+    assert [f.to_dict() for f in unchanged.findings] == [f.to_dict() for f in cached.findings]
+
+    owners.write_text("* @second-team\n")
+    updated = Engine(cfg, index).run()
+    assert updated.complete and not updated.stats[0].cached
+    assert updated.findings[0].owner == "@second-team"
+
+
 @pytest.mark.parametrize("limit", ["_MAX_HASH_BYTES", "_MAX_HASH_ENTRIES", "_MAX_HASH_SECONDS"])
 def test_fingerprint_work_limits_fall_back_to_full_scan(tmp_path, index, monkeypatch, limit):
     cfg = config(tmp_path)

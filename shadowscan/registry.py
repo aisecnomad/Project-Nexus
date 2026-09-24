@@ -39,6 +39,7 @@ import yaml
 
 from shadowscan.models import Finding, Surface
 from shadowscan.utils.files import policy_files, policy_glob, read_policy_text, require_no_symlinks
+from shadowscan.utils.identity import has_aws_account_scope
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
@@ -292,6 +293,9 @@ class Inventory:
         if not _has_usable_scope_identity(finding):
             finding.metadata["registry_match_reason"] = "redacted-scope-identity"
             return None
+        if not has_aws_account_scope(finding.provider, finding.account, finding.resource):
+            finding.metadata["registry_match_reason"] = "missing-aws-account-scope"
+            return None
         matches = [
             entry for entry in self.entries
             if self._scope_matches(entry, finding)
@@ -455,7 +459,11 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
             # still deliberately use wildcards; generated approvals never do.
             # Redacted resource or scope values can collide across objects.
             # Leave this approval unbound pending an exact, reviewed identity.
-            "resources": [] if not (_has_usable_resource_identity(finding) and _has_usable_scope_identity(finding)) else [
+            "resources": [] if not (
+                _has_usable_resource_identity(finding)
+                and _has_usable_scope_identity(finding)
+                and has_aws_account_scope(finding.provider, finding.account, finding.resource)
+            ) else [
                 finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})
             ],
             "names": sorted({str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}),

@@ -244,12 +244,11 @@ class Engine:
         else:
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="shadowscan") as pool:
                 futures = {pool.submit(_run, number, spec): number for number, spec in jobs}
-                completed = {}
+                completed: dict[int, tuple[ConnectorSpec, list[Finding], ScanStats]] = {}
                 for fut in as_completed(futures):
                     completed[futures[fut]] = fut.result()
-                # Merge keeps the first observation's owner and metadata when
-                # sources disagree. Apply configured precedence consistently;
-                # network latency must not decide the report's attribution.
+                # Merge uses first-observed owner and metadata as precedence.
+                # Preserve configured order regardless of request completion.
                 for number, _ in jobs:
                     _, fs, st = completed[number]
                     findings.extend(fs)
@@ -344,7 +343,7 @@ def _gateway_sources(finding: Finding) -> list[dict[str, Any]]:
 
 
 def _unique_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Preserve exact JSON observation provenance with linear deduplication."""
+    """Deduplicate nested observations while retaining their first provenance."""
     def key_for(value: Any) -> Any:
         if isinstance(value, dict):
             return ("dict", frozenset((key, key_for(item)) for key, item in value.items()))
@@ -352,10 +351,14 @@ def _unique_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             return (type(value).__name__, tuple(key_for(item) for item in value))
         if isinstance(value, (set, frozenset)):
             return ("set", frozenset(key_for(item) for item in value))
-        return value
+        # JSON numbers remain equivalent when exporters vary number syntax,
+        # but booleans must not collide with Python's equal numeric values.
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return ("number", value)
+        return (type(value).__name__, value)
 
-    unique = []
-    seen = set()
+    unique: list[dict[str, Any]] = []
+    seen: set[Any] = set()
     for record in records:
         if not isinstance(record, dict):
             continue

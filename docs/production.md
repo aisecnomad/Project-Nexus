@@ -93,6 +93,12 @@ requires explicit `allow_signature_override` approval. Enable private origins
 only when the selected scan requires a trusted private HTTPS endpoint; keep
 network-layer restrictions appropriate for that scan. Separate private-endpoint
 scans from public collection when they need different trust policy.
+Configuration rejects duplicate authored YAML keys and unknown top-level or
+`options` fields. `${VAR}` must resolve to a nonempty value; use
+`${VAR:-fallback}` only where an explicit fallback is appropriate. Invalid
+`fail_on` thresholds or `parallel` values stop the scan before collection.
+Environment references are validated in disabled connector declarations too;
+remove unused placeholders or give intentionally optional values a fallback.
 
 All scan commands also expose `--allow-plugin`,
 `--allow-signature-override/--deny-signature-override` and
@@ -105,6 +111,9 @@ The shared HTTP transport enforces destination policy at connection time and
 retains TLS hostname checks. HTTP proxies are unsupported; environment proxies
 are ignored. Cloud SDK and Git transport behavior remains separate. Do not assume
 that the shared client's policy controls every network connection in the process.
+Inject only trusted `requests.Session` implementations. Calls to the shared
+client that explicitly request `stream=True` must read within a size limit and
+close the response; the default buffered response path enforces a 16 MiB limit.
 
 JWT verification is for analysis. The default scope is signature evidence;
 configuring `expected_issuer` also binds the issuer. Neither mode authorizes a
@@ -175,6 +184,11 @@ an exact approval: assign a stable nonsecret resource, provider, account and
 region identity before registering them. A report display value containing
 `[REDACTED]` is not an authority to approve every object that renders to the
 same value.
+AWS findings with only a short resource ID also require an account ID from
+the connector configuration or a trusted account export record. Without one,
+the scan is incomplete and a registry card cannot approve the finding. Check
+that distinct offline exports carry their own account scope before combining
+them into an inventory baseline.
 Generated cards now include `discovery.regions` when a region is known; review
 older cards with short resource IDs (for example a Bedrock agent ID without its
 ARN) and add explicit region constraints to avoid approving another region.
@@ -211,9 +225,14 @@ including changes within the same risk band. `changed_fields` identifies the
 changed attributes. Timestamp and evidence ordering alone do not create changes.
 
 Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
+Filesystem scans reject selected roots whose paths traverse a symbolic link.
+Source links encountered during a walk are skipped and mark coverage incomplete;
+review or explicitly exclude them before accepting a completeness gate.
 Pre/post content hashes can detect ordinary concurrent edits but do not form an
 atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
 and revert between those reads.
+Concurrent scanner processes do not lock the incremental cache; cache entries
+are written atomically and checked against the current input fingerprint.
 
 ## Cloud collection changes
 
@@ -231,6 +250,8 @@ including referenced inactive revisions, and retains the latest active registere
 revision of each family as a separate evidence category. Stopped tasks and unused
 historical revisions are outside this collection scope. A registered-only label
 does not prove a definition is undeployed when discovery is incomplete.
+Late AWS list-page failures retain earlier observations, mark coverage incomplete,
+and cap pagination; a missing collection field is not an empty inventory.
 The per-region `max_ecs_api_calls` limit defaults
 to 2000; exceeding it or encountering denied/partial calls marks coverage
 incomplete. Add the read permissions listed in [connectors.md](connectors.md).
@@ -238,6 +259,9 @@ incomplete. Add the read permissions listed in [connectors.md](connectors.md).
 GCP Owner/Editor-only principals remain visible as privileged access findings.
 Neither broad role grants nor ECS deployment references establish that AI code
 actually executed. Use trusted runtime telemetry for additional attribution.
+GCP audit caller findings keep events from separate projects distinct, including
+when the service account principal is the same. Azure Resource Graph failures on
+later pages preserve earlier observations and mark collection incomplete.
 
 Foundry collection uses the verified classic Agent Service `/assistants` route
 with `api-version=v1` and validates its pagination envelope. Newer `/agents`

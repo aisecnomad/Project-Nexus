@@ -38,6 +38,7 @@ from shadowscan.connectors.cloud.common import (
 )
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.utils.identity import has_aws_account_scope
 from shadowscan.utils.text import truncate
 
 DEFAULT_REGIONS = ["us-east-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"]
@@ -172,7 +173,10 @@ class AwsConnector(BaseConnector):
 
     def _paginate(self, client: Any, op: str, key: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
         for page in self._pages(client, op, **kwargs):
-            items = page.get(key, [])
+            if key not in page or "error" in page or "Error" in page:
+                self.ctx.warn(f"cloud.aws: missing or failed {key} page for {op}")
+                continue
+            items = page[key]
             if not isinstance(items, list):
                 self.ctx.warn(f"cloud.aws: invalid {key} page for {op}")
                 continue
@@ -641,6 +645,11 @@ class AwsConnector(BaseConnector):
                 else:
                     f = handlers[kind](rec)
                     if f:
+                        if not has_aws_account_scope(f.provider, f.account, f.resource):
+                            self.ctx.warn(
+                                "cloud.aws: resource lacks account scope; supply account_id or an account export record",
+                                incomplete=True,
+                            )
                         yield f
             except (ValueError, TypeError, KeyError, AttributeError):
                 self.ctx.warn("cloud.aws: record has invalid fields for its _kind")

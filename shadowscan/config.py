@@ -25,7 +25,7 @@ Example ``shadowscan.yaml``::
         cloudtrail_days: 7
 
 ``${VAR}`` requires a nonempty environment value. ``${VAR:-default}`` uses its
-explicit default when the variable is missing or empty.
+explicit fallback when the variable is missing or empty.
 """
 
 from __future__ import annotations
@@ -54,20 +54,21 @@ _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 
 
 class ConfigValidationError(ValueError):
-    """An actionable configuration error whose message contains no config values."""
+    """Configuration error whose message never includes user-supplied values."""
 
 
 def expand_env(value: Any) -> Any:
     if isinstance(value, str):
         def repl(m: re.Match[str]) -> str:
-            name, default = m.group(1), m.group(2)
+            name, fallback = m.group(1), m.group(2)
             resolved = os.environ.get(name)
             if resolved:
                 return resolved
-            if default is not None:
-                return default
+            if fallback is not None:
+                return fallback
             raise ConfigValidationError(
-                sanitize_text(f"environment variable {name} is missing or empty; set it or use an explicit ${{VAR:-default}}")
+                f"environment variable {sanitize_text(name)} is missing or empty; "
+                "set it or use an explicit ${VAR:-default} fallback"
             )
 
         return _ENV_RX.sub(repl, value)
@@ -182,7 +183,7 @@ class ScanConfig:
         try:
             data = yaml.load(read_policy_text(p), Loader=_ConfigLoader)
         except yaml.YAMLError:
-            # YAML exception text can contain literal credentials from the file.
+            # PyYAML diagnostics may echo source snippets containing credentials.
             raise ConfigValidationError("invalid YAML syntax or structural limits exceeded") from None
         if data is None:
             data = {}
@@ -212,20 +213,7 @@ def validate_plugins(value: Any) -> list[str]:
     return list(dict.fromkeys(name.strip() for name in value))
 
 
-def _connector_enabled(value: Any) -> bool:
-    """Expand environment-backed connector flags without relying on string truthiness."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "yes", "on", "1"}:
-            return True
-        if normalized in {"false", "no", "off", "0"}:
-            return False
-    raise ConfigValidationError("connector enabled must be a boolean (true or false)")
-
-
-def _check_fields(value: dict, allowed: set[str], location: str) -> None:
+def _check_fields(value: dict[Any, Any], allowed: set[str], location: str) -> None:
     if any(not isinstance(key, str) or key not in allowed for key in value):
         raise ConfigValidationError(f"{location} contains an unsupported field; allowed fields: " + ", ".join(sorted(allowed)))
 
@@ -259,8 +247,8 @@ def _positive_integer(value: Any, location: str) -> int:
 
 class _ConfigLoader(BoundedSafeLoader):
     def flatten_mapping(self, node: yaml.MappingNode) -> None:
-        # Check authored keys before flattening merges: intentional YAML merge
-        # overrides remain supported, repeated keys in one mapping do not.
+        # Check authored keys before flattening: YAML merge overrides are valid,
+        # while a repeated key in one authored mapping silently changes policy.
         if node in self._flattened:
             return
         seen: set[str] = set()
@@ -275,6 +263,19 @@ class _ConfigLoader(BoundedSafeLoader):
                 raise ConfigValidationError("duplicate configuration mapping key")
             seen.add(key)
         super().flatten_mapping(node)
+
+
+def _connector_enabled(value: Any) -> bool:
+    """Expand environment-backed connector flags without relying on string truthiness."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "on", "1"}:
+            return True
+        if normalized in {"false", "no", "off", "0"}:
+            return False
+    raise ConfigValidationError("connector enabled must be a boolean (true or false)")
 
 
 def validate_min_confidence(value: Any) -> float:

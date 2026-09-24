@@ -17,6 +17,7 @@ from shadowscan.registry import (
     _strip_cite_markers,
     card_stub_for,
 )
+from shadowscan.utils.identity import has_aws_account_scope
 from shadowscan.utils.redaction import REDACTED
 
 
@@ -134,6 +135,70 @@ def test_bedrock_fallback_agent_id_card_registers_only_its_region(tmp_path, inde
     assert by_region["us-east-1"].shadow is False
     assert by_region["eu-west-1"].shadow is True
     assert by_region["eu-west-1"].registry_match is None
+
+
+def test_short_aws_id_without_account_cannot_approve_or_claim_complete(tmp_path, index):
+    specs = []
+    for name in ("first", "second"):
+        source = tmp_path / f"{name}.json"
+        source.write_text(json.dumps([{
+            "_kind": "bedrock-agent", "agentId": "ABC123DEF0", "agentName": name,
+            "_region": "us-east-1", "agentStatus": "PREPARED",
+        }]))
+        specs.append(ConnectorSpec("cloud.aws", {"input": str(source)}))
+
+    first, second = (
+        Engine(ScanConfig(connectors=[spec]), index).run() for spec in specs
+    )
+    for result in (first, second):
+        assert not result.complete
+        assert any("resource lacks account scope" in warning for stat in result.stats for warning in stat.warnings)
+        assert len(result.findings) == 1
+        assert result.findings[0].account is None
+        assert card_stub_for(result.findings[0])["discovery"]["resources"] == []
+
+    candidate = second.findings[0]
+    for resource_pattern in ("ABC123DEF0", "*"):
+        inventory = Inventory([InventoryEntry(agent_id="approved", resources=[resource_pattern])])
+        assert inventory.match(candidate) is None
+        assert candidate.metadata["registry_match_reason"] == "missing-aws-account-scope"
+
+    # Both accountless IDs collide, so this aggregation must never be a valid
+    # baseline or make an absence claim about either source.
+    combined = Engine(ScanConfig(connectors=specs), index).run()
+    assert not combined.complete
+    assert all(stat.incomplete for stat in combined.stats)
+
+    scoped = Engine(ScanConfig(connectors=[ConnectorSpec(
+        "cloud.aws", {**specs[0].config, "account_id": "123456789012"},
+    )]), index).run()
+    assert scoped.complete
+    assert card_stub_for(scoped.findings[0])["discovery"]["accounts"] == ["123456789012"]
+
+
+@pytest.mark.parametrize("account,resource,expected", [
+    (None, "ABC123DEF0", False),
+    ("unknown", "ABC123DEF0", False),
+    (REDACTED, "ABC123DEF0", False),
+    ("123", "ABC123DEF0", False),
+    ("123456789012", "ABC123DEF0", True),
+    (None, "arn:aws:bedrock:us-east-1:123456789012:agent/ABC123DEF0", True),
+    (None, "cloudtrail:arn:aws:sts::123456789012:assumed-role/agent/session", True),
+    (None, "evil:arn:aws:bedrock:us-east-1:123456789012:agent/ABC123DEF0", False),
+    (None, "arn:aws:bedrock:us-east-1:123:agent/ABC123DEF0", False),
+    ("unknown", "arn:aws:bedrock:us-east-1:123456789012:agent/ABC123DEF0", False),
+    ("999999999999", "arn:aws:bedrock:us-east-1:123456789012:agent/ABC123DEF0", False),
+    ("123456789012", "arn:aws:bedrock:us-east-1:123456789012:agent/ABC123DEF0", True),
+])
+def test_aws_account_scope_requires_valid_consistent_identity(account, resource, expected):
+    assert has_aws_account_scope("aws", account, resource) is expected
+    finding = Finding(
+        Surface.CLOUD, "cloud.aws", Kind.AGENT, "Bedrock agent", resource,
+        "bedrock-agent", provider="aws", account=account,
+    )
+    inventory = Inventory([InventoryEntry(agent_id="approved", resources=["*"])])
+    assert (inventory.match(finding) is not None) is expected
+    assert bool(card_stub_for(finding)["discovery"]["resources"]) is expected
 
 
 @pytest.mark.parametrize("suffix", ["yaml", "json", "csv"])

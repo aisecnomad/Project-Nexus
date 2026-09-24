@@ -71,8 +71,8 @@ def _finditer(rx: Any, text: str, context: str, limit: int) -> list[Any]:
     def collect(timeout: float) -> list[Any]:
         # Tiny patterns dominate this workload. Releasing/reacquiring the GIL
         # for every token under parallel connectors can spend the entire wall
-        # deadline waiting for another thread. Engine timeouts remain preemptive
-        # with concurrent=False and also bound any period holding the GIL.
+        # deadline waiting for another thread. Regex timeouts with
+        # concurrent=False still bound individual operations holding the GIL.
         # The regex engine's iterator timeout also charges CPU work performed
         # between next() calls. Consume only the caller's remaining match quota
         # before redaction or other connector threads can process yielded hits.

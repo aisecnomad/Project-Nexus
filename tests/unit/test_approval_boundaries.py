@@ -21,7 +21,8 @@ from shadowscan.signatures.loader import load_signature_file, load_signatures
 
 
 def _finding(resource: str) -> Finding:
-    return Finding(Surface.CLOUD, "cloud.aws", Kind.AGENT, "Agent", resource, "agent", provider="aws")
+    return Finding(Surface.CLOUD, "cloud.aws", Kind.AGENT, "Agent", resource, "agent",
+                   provider="aws", account="123456789012")
 
 
 @pytest.mark.parametrize("resource,other", [

@@ -214,11 +214,33 @@ class _Project:
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 
 
+def _checked_scan_root(path: str | Path) -> Path:
+    """Reject symlinked roots and ancestors before resolving a scan input.
+
+    Keep ``..`` components while checking so ``link/..`` cannot conceal a
+    symlink in the path supplied by the caller. The scan itself assumes an
+    immutable checkout; an adversary concurrently replacing directories still
+    needs isolation at the filesystem/container boundary.
+    """
+    try:
+        raw = Path(path).expanduser().absolute()
+        if any(part.is_symlink() for part in (raw, *raw.parents)):
+            raise ConnectorError("code.filesystem: scan root must not traverse a symbolic link")
+        root = raw.resolve()
+        if root != Path(os.path.abspath(raw)):
+            raise ConnectorError("code.filesystem: scan root changed while being validated")
+        return root
+    except ConnectorError:
+        raise
+    except (OSError, RuntimeError) as exc:
+        raise ConnectorError("code.filesystem: scan root could not be safely resolved") from exc
+
+
 def validate_distinct_paths(paths: Any) -> list[Path]:
     """Reject aliases that resolve to the same repository under one label."""
     if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
         raise ConnectorError("code.filesystem: paths must be a nonempty list of paths")
-    canonical = [Path(path).expanduser().resolve() for path in paths]
+    canonical = [_checked_scan_root(path) for path in paths]
     if len(set(canonical)) != len(canonical):
         raise ConnectorError("code.filesystem: labeled paths must resolve to distinct scan roots")
     return canonical
@@ -299,6 +321,7 @@ class FilesystemConnector(BaseConnector):
         self._ownership_budgets: dict[Path, OwnershipBudget] = {}
         self._ownership_exhausted: set[Path] = set()
         self._owner_cache: dict[tuple[Path, str], str | None] = {}
+        self._symlink_warnings: set[Path] = set()
 
     # ----------------------------------------------------------------- input
     def _paths(self) -> list[Path]:
@@ -309,7 +332,7 @@ class FilesystemConnector(BaseConnector):
             raise ConnectorError("code.filesystem: 'path' is required")
         out = []
         for p in paths:
-            pp = Path(p).expanduser()
+            pp = _checked_scan_root(p)
             if not pp.exists():
                 raise ConnectorError(f"code.filesystem: path not found: {p}")
             out.append(pp)
@@ -324,7 +347,11 @@ class FilesystemConnector(BaseConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:
-            root = Path(rec["path"]).expanduser().resolve()
+            try:
+                root = _checked_scan_root(rec["path"])
+            except ConnectorError as exc:
+                self.ctx.error(str(exc))
+                continue
             if not root.exists():
                 self.ctx.error(f"code.filesystem: path not found: {root}")
                 continue
@@ -341,8 +368,19 @@ class FilesystemConnector(BaseConnector):
 
     def _iter_files(self, root: Path) -> Iterator[tuple[str, Path, str]]:
         """Yield (relpath, path, project_root_rel) top-down with project root tracking."""
+        # os.walk visits descendants before siblings. Keep only active project
+        # ancestors, so assigning a project is amortized constant time even in
+        # monorepos with thousands of sibling projects.
         roots: list[str] = ["."]
         count = 0
+
+        def skipped_link(rel: str) -> None:
+            # A single representative diagnostic per root keeps hostile trees
+            # from filling the report with thousands of link names.
+            if root not in self._symlink_warnings:
+                self._symlink_warnings.add(root)
+                self.ctx.error(f"code.filesystem: skipped symbolic link {rel}; coverage incomplete")
+
         if root.is_file():
             yield root.name, root, "."
             return
@@ -352,19 +390,41 @@ class FilesystemConnector(BaseConnector):
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=walk_error):
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else rel_dir
-            dirnames[:] = sorted(d for d in dirnames if not self._excluded(f"{rel_dir}/{d}".lstrip("./"), d))
+            kept = []
+            for name in sorted(dirnames):
+                rel = name if rel_dir == "." else f"{rel_dir}/{name}"
+                if self._excluded(rel, name):
+                    continue
+                path = Path(dirpath) / name
+                try:
+                    if path.is_symlink():
+                        skipped_link(rel)
+                        continue
+                except OSError:
+                    self.ctx.error(f"code.filesystem: could not inspect {rel}")
+                    continue
+                kept.append(name)
+            dirnames[:] = kept
+            proj = _nearest_root(rel_dir, roots)
             if rel_dir != "." and any(f in PROJECT_ROOT_MARKERS for f in filenames):
                 roots.append(rel_dir)
-            proj = _nearest_root(rel_dir, roots)
+                proj = rel_dir
             for fn in sorted(filenames):
-                if fn in LOCK_FILES or fn.endswith((".min.js", ".min.css", ".map", ".pyc", ".lock")):
-                    continue
                 rel = fn if rel_dir == "." else f"{rel_dir}/{fn}"
                 if self.exclude_globs and self._excluded(rel, fn):
                     continue
                 p = Path(dirpath) / fn
                 try:
-                    if p.is_symlink() or not p.is_file():
+                    if p.is_symlink():
+                        skipped_link(rel)
+                        continue
+                except OSError:
+                    self.ctx.error(f"code.filesystem: could not inspect {rel}")
+                    continue
+                if fn in LOCK_FILES or fn.endswith((".min.js", ".min.css", ".map", ".pyc", ".lock")):
+                    continue
+                try:
+                    if not p.is_file():
                         continue
                 except OSError:
                     self.ctx.error(f"code.filesystem: could not inspect {rel}")
@@ -982,14 +1042,10 @@ class FilesystemConnector(BaseConnector):
 
 
 def _nearest_root(rel_dir: str, roots: list[str]) -> str:
-    if rel_dir == ".":
-        return "."
-    best = "."
-    for r in roots:
-        if r == "." or rel_dir == r or rel_dir.startswith(r + "/"):
-            if len(r) > len(best) or best == ".":
-                best = r if r != "." else best
-    return best
+    """Discard completed branches from the active root stack during the walk."""
+    while len(roots) > 1 and rel_dir != roots[-1] and not rel_dir.startswith(roots[-1] + "/"):
+        roots.pop()
+    return roots[-1]
 
 
 def _mcp_client_for(rel: str) -> str:
