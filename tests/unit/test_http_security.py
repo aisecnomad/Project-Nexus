@@ -359,4 +359,3 @@ def test_paginators_fail_closed_on_missing_or_invalid_collection(paginator, data
 
     with pytest.raises(RuntimeError, match="collection"):
         list(getattr(http, paginator)("/items", **kwargs))
-

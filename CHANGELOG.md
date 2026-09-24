@@ -1,28 +1,59 @@
 # Changelog
 
-## 0.1.1 — 2026-09-24
+## Unreleased
 
-Production-hardening release addressing the 0.1.0 review.
+Hardening changes following the 0.1.0 review. Package metadata remains at 0.1.0;
+this entry does not announce a 0.1.1 release or completed production acceptance.
 
 ### Security
-- Finding identity no longer includes `kind`; promotion from framework-usage to agent preserves merge/diff/incremental identity.
-- Shared HTTP client bounds JSON response bodies by default.
-- Injected `requests.Session` objects still receive the destination-policy adapter.
-- Missing `${ENV}` expansions for required secrets fail closed instead of becoming empty strings.
-- Incremental cache takes an exclusive lock so concurrent scanners cannot clobber state.
-- Full Apache-2.0 LICENSE text and NOTICE.
+
+- Finding identity separates stable resource identity from inferred classification;
+  promotion from framework usage to agent preserves merge and comparison identity.
+- Shared HTTP responses and JSON/pagination helpers default to a 16 MiB decoded
+  body limit. Injected Requests sessions receive the destination-policy adapter.
+- Required `${ENV}` substitutions reject missing or empty values. Configuration
+  rejects duplicate authored YAML keys and invalid security-gate options.
+- Live AWS account labels must match verified STS identity before collection.
+- Full Apache-2.0 license text and project notice are included.
 
 ### Reliability
-- Engine enforces a per-connector deadline; timeout is incomplete coverage (exit 3), not a hang.
-- Cloud SDK clients set explicit connect/read timeouts where the vendor SDK allows it.
-- CLI documents exit 3 (incomplete), exit 2 (`--fail-on` on a complete scan), and Click's separate usage-error path.
+
+- Successful AWS inventory pages survive later collection failures, which mark
+  coverage incomplete. AWS and OCI clients have explicit socket timeouts and
+  bounded retries. These are not total connector deadlines; use worker deadlines.
+- Shared HTTP pagination rejects invalid collection envelopes and continuation
+  values. Incomplete scans exit 3; complete scans that exceed the
+  configured `--fail-on` threshold exit 2.
+- Parallel connector results merge in configuration order. Evidence deduplication
+  is idempotent, and gateway observation deduplication uses structural hashing.
+- AWS Lambda and GCP project limits stop discovery without loading the entire
+  inventory first. Truncation continues to mark coverage incomplete.
+- Gateway analysis reuses bounded successful user-agent classifications. Regex
+  contention retries share the original CPU and input wall-clock budgets.
+- Malformed incremental state triggers a full scan. Cache writes use atomic
+  replacement and fingerprint validation; concurrent writers can duplicate work
+  or evict cache hits. There is no exclusive cache lock.
 
 ### Operations
-- Disposable non-root worker image (`Dockerfile`).
-- CI split into lint, audit, test, and package jobs with a concurrency group.
-- Example GitHub Action and README pin a reviewed SHA and forbid `continue-on-error` on incomplete scans.
-- `docs/production.md` rollout checklist: split credentials, egress controls, tenant canaries, reports-as-secret.
+
+- A disposable non-root Docker worker is available for core and offline scanning.
+  Its build checks installed signatures and the CLI outside the source directory.
+  Live cloud SDK extras require a separately prepared image.
+- CI checks signatures, lint, typing, dependencies, coverage, wheel installation
+  and offline scanning in a Python 3.11/3.12 matrix. These remain steps within one
+  job, with a concurrency group and a job timeout. CodeQL runs separately.
+- Both Python matrix jobs finish independently, and checkout credentials are
+  removed after checkout.
+- Example installation commands pin a reviewed commit; update the pin only after
+  reviewing a replacement. Incomplete scans must remain failed CI gates.
+- Production guidance covers credential separation, egress controls, tenant
+  canaries, private reports and rollback. Tenant acceptance remains required.
 
 ### Migration
-- Finding IDs for promoted resources change. Re-run scans rather than comparing 0.1.0 incremental state against 0.1.1.
-- Install from a reviewed tag/SHA. Do not follow `main`.
+
+- Rebuild baselines when the `shadowscan.finding-identity/v2` schema differs from
+  an earlier report. Package version alone does not establish schema compatibility.
+- Review configuration for the stricter validation before rollout. Explicit
+  `${VAR:-default}` fallbacks remain supported, including empty optional defaults.
+- Deploy an approved commit and dependency set, retaining the previous version
+  for rollback.

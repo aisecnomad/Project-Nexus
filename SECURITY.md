@@ -28,12 +28,12 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   to the checked address, retaining hostname TLS verification. A trusted private
   API requires `options.allow_private_origin: true` or `--allow-private-origin`.
   This exception does not relax origin or TLS checks. HTTP proxies, including
-  environment proxy settings, are unsupported by this transport. JSON and
-  buffered HTTP responses are streamed and capped at 16 MiB of decoded bytes;
-  malformed successful pagination envelopes make collection incomplete.
-  GitLab source-file downloads have a stricter 512 KiB per-file cap. Explicit
-  raw streaming callers must bound reads and close responses. Injected
-  `requests.Session` adapters are replaced by the destination-policy adapter.
+  environment proxy settings, are unsupported by this transport.
+* Default shared HTTP responses and JSON/pagination helpers are limited to 16 MiB
+  of decoded bytes; oversized and malformed collection responses fail collection.
+  Explicit raw streaming callers are responsible for bounded reads and closure.
+  Injected Requests sessions have their adapters replaced by destination policy.
+  GitLab source-file downloads have a stricter 512 KiB per-file cap.
 * Cloud SDKs and Git use separate transports. Network egress rules remain needed
   for those paths. URL preflight checks alone do not pin Git's later DNS lookup.
   Custom non-Requests transport doubles remain trusted extension/test mechanisms.

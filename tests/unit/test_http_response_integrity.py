@@ -37,6 +37,14 @@ def client(*responses, **kwargs):
     return HttpClient("https://8.8.8.8", session=session, **kwargs), session
 
 
+@pytest.mark.parametrize("value", [None, 0, 1, "false", []])
+def test_invalid_stream_flag_cannot_change_response_policy(value):
+    http, session = client(response([]))
+    with pytest.raises(TypeError, match="stream must be a boolean"):
+        http.get("/items", stream=value)
+    session.request.assert_not_called()
+
+
 @pytest.mark.parametrize("operation", ["get", "post", "get_json", "post_json", "paginate_link"])
 def test_all_default_response_paths_reject_oversized_body_before_reading(operation):
     result = response([], headers={"Content-Length": str(DEFAULT_MAX_RESPONSE_BYTES + 1)})
@@ -243,3 +251,95 @@ def test_token_post_pagination_is_bounded_and_preserves_request_body():
     assert original == {"filter": "agents"}
     assert session.request.call_args.kwargs["json"] == {"filter": "agents", "pageToken": "next"}
     assert all(call.kwargs["stream"] is True for call in session.request.call_args_list)
+
+
+@pytest.mark.parametrize("operation", ["get", "post"])
+def test_explicit_buffered_calls_cannot_disable_the_transport_body_limit(operation):
+    result = response(headers={"Content-Length": "17"})
+    result.iter_content = Mock()
+    http, session = client(result, max_response_bytes=16)
+    with pytest.raises(ValueError, match="byte limit"):
+        getattr(http, operation)("/items", stream=False)
+    assert session.request.call_args.kwargs["stream"] is True
+    result.iter_content.assert_not_called()
+    result.close.assert_called_once()
+
+
+@pytest.mark.parametrize("helper", ["read_response_bytes", "read_json_response"])
+def test_public_stream_read_helpers_enforce_the_client_default_limit(helper):
+    result = response(headers={"Content-Length": "17"})
+    result.iter_content = Mock()
+    http, _ = client(max_response_bytes=16)
+    with pytest.raises(ValueError, match="byte limit"):
+        getattr(http, helper)(result)
+    result.iter_content.assert_not_called()
+    result.close.assert_called_once()
+
+
+def test_public_json_reader_supports_documented_explicit_limit_for_streamed_oauth_response():
+    result = response({"access_token": "synthetic-token"})
+    http, session = client(result, max_response_bytes=8)
+    stream = http.post("/oauth/token", stream=True, data={"grant_type": "client_credentials"})
+    assert http.read_json_response(stream, max_bytes=64) == {"access_token": "synthetic-token"}
+    assert session.request.call_args.kwargs["stream"] is True
+    result.close.assert_called_once()
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_retry_opt_out_does_not_repeat_oauth_posts(status, monkeypatch):
+    result = response(status=status)
+    http, session = client(result, max_retries=0)
+    sleep = Mock()
+    monkeypatch.setattr("shadowscan.utils.http.time.sleep", sleep)
+    with pytest.raises(HttpError):
+        http.post_json("/oauth/token", data={"grant_type": "client_credentials"})
+    assert session.request.call_count == 1
+    sleep.assert_not_called()
+    result.close.assert_called_once()
+
+
+@pytest.mark.parametrize("length", ["²", "-1", "1.0", "", "9" * 5000])
+def test_public_reader_rejects_malformed_or_extreme_content_length_without_reading(length):
+    result = response(headers={"Content-Length": length})
+    result.iter_content = Mock()
+    http, _ = client(max_response_bytes=16)
+    with pytest.raises(ValueError):
+        http.read_response_bytes(result)
+    result.iter_content.assert_not_called()
+    result.close.assert_called_once()
+
+
+def test_public_reader_accepts_padded_content_length():
+    result = response([], headers={"Content-Length": "0" * 5000 + "2"})
+    http, _ = client(max_response_bytes=16)
+    assert http.read_response_bytes(result) == b"[]"
+    result.close.assert_called_once()
+
+
+@pytest.mark.parametrize("invalid_chunk", ["text", None, False])
+def test_public_reader_rejects_nonbyte_chunks(invalid_chunk):
+    result = response()
+    result.iter_content = Mock(return_value=iter([invalid_chunk]))
+    http, _ = client()
+    with pytest.raises(ValueError, match="Invalid HTTP response chunk"):
+        http.read_response_bytes(result)
+    result.close.assert_called_once()
+
+
+def test_public_reader_closes_response_if_per_call_limit_is_invalid():
+    result = response()
+    http, _ = client()
+    with pytest.raises(ValueError, match="positive integer"):
+        http.read_response_bytes(result, max_bytes=0)
+    result.close.assert_called_once()
+
+
+@pytest.mark.parametrize("cursor_path", [
+    lambda data: data["missing"]["cursor"],
+    lambda data: data["nested"].get("cursor"),
+    lambda data: data["nested"]["cursor"],
+])
+def test_malformed_custom_cursor_metadata_becomes_collection_incomplete(cursor_path):
+    http, _ = client(response({"results": [], "nested": None}))
+    with pytest.raises(RuntimeError, match="collection incomplete"):
+        list(http.paginate_cursor("/items", cursor_path=cursor_path))

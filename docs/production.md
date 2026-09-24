@@ -217,7 +217,15 @@ and revert between those reads.
 
 ## Cloud collection changes
 
-AWS resolves its account before emitting account metadata. ECS discovery follows
+Live AWS scans always verify the caller through STS before emitting account
+metadata. A configured `account_id` is an expected account and must match the
+authenticated account; it no longer bypasses identity verification. Offline
+exports retain their configured account labels. AWS `max_lambda` and GCP
+`max_projects` must be positive. Discovery stops after one record of lookahead
+beyond those limits and marks limited coverage incomplete; the limits do not
+establish a total connector deadline.
+
+ECS discovery follows
 exact definition ARNs referenced by running tasks and service deployments,
 including referenced inactive revisions, and retains the latest active registered
 revision of each family as a separate evidence category. Stopped tasks and unused

@@ -56,6 +56,8 @@ class GcpConnector(BaseConnector):
         self.locations = ctx.get("locations") or DEFAULT_LOCATIONS
         self.audit_days = int(ctx.get("audit_days", 0))
         self.max_projects = int(ctx.get("max_projects", 200))
+        if self.max_projects < 1:
+            raise ConnectorError("cloud.gcp: max_projects must be positive")
         self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
         self.http: HttpClient | None = None
 
@@ -114,9 +116,9 @@ class GcpConnector(BaseConnector):
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
-        projects = self.ctx.get("projects") or []
+        projects: Iterable[str] = self.ctx.get("projects") or []
         if not projects:
-            projects = [p["projectId"] for p in self._pages("https://cloudresourcemanager.googleapis.com/v1/projects", "projects", filter="lifecycleState:ACTIVE") if p.get("projectId")]
+            projects = (p["projectId"] for p in self._pages("https://cloudresourcemanager.googleapis.com/v1/projects", "projects", filter="lifecycleState:ACTIVE") if p.get("projectId"))
         for i, project in enumerate(projects):
             if i >= self.max_projects:
                 self.ctx.warn("cloud.gcp: max_projects reached")

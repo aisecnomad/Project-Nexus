@@ -1,7 +1,34 @@
 # Project Nexus: software and security review
 
-Review date: 24 September 2026. Baseline: `f2c667fba4f09a070acb5d76a4e7eca63961a6f7`
-on `main`, including PR #18's production fixes and PR #20's README changes.
+Review date: 24 September 2026. Initial baseline:
+`f2c667fba4f09a070acb5d76a4e7eca63961a6f7`. Follow-up baseline:
+`c4f03cc2e4d99a39f1b8188b02ef220bc4011901`, including merged PRs #19, #21 and #22.
+
+## Follow-up findings
+
+PR #23's initial hosted Python 3.11 checks passed tests, coverage, lint, typing,
+dependency audit and wheel validation. The subsequent offline scan exited 3
+after two gateway records encountered `MatchTimeoutError`; Python 3.12 was
+cancelled by the matrix's fail-fast behavior. The independent AI code-scanning
+service failed before analysis with `The requested model is not supported`.
+That service failure is not a reported code vulnerability or a successful scan.
+
+The updated branch integrates current `main` and its bounded public HTTP readers
+with PR #23's strict envelopes, bounded ordinary response reads, session policy
+and explicit Google empty-list handling. Merge regressions check both interfaces.
+
+New verified issues and changes:
+
+| Issue | Impact | Change |
+| --- | --- | --- |
+| Repeated gateway user-agent matching and regex timeout accounting under thread contention | Normal exported records can be marked incomplete even when the expression itself is cheap. | Cache bounded successful framework classifications and retry only qualifying contention timeouts within the original CPU and wall-clock budgets. |
+| Cloud limits applied after enumeration | `max_lambda` and `max_projects` still allow unnecessary upstream enumeration and memory use. | Stream collection and stop at the configured cap; preserve incomplete status when coverage is limited. |
+| Live AWS configured account bypasses STS resolution | Actual caller credentials can be attributed to a different configured account. | Verify live STS identity and reject a mismatching configured account before collection. Offline labels retain their existing role. |
+| Release documentation asserts absent controls | Operators could rely on nonexistent total deadlines, cache locks, split CI or a released 0.1.1. | Correct the changelog to an accurate Unreleased entry and document actual worker/runtime limits. |
+
+CI now retains both Python matrix results after one fails and does not persist
+checkout credentials. Docker build-context and quick-start changes are reviewed
+as source; container execution is not claimed where no Docker daemon is available.
 
 ## Assessment
 
@@ -60,6 +87,18 @@ searches through nested records. A local illustrative helper benchmark with
 0.032 seconds versus 0.639 seconds previously. This measures that operation,
 not end-to-end scan performance; workload and hardware affect results.
 
+The follow-up gateway optimization caches only successful, immutable framework
+classifications within one analysis: at most 256 user agents, each at most 1,024
+characters. A local 1,000-event illustrative workload reduced full user-agent
+classification calls from 1,001 to 2, retained all 1,000 events, and ran in
+0.532 seconds versus 0.670 seconds with this cache disabled. The call counts are
+the repeatable optimization; those timings are not a throughput guarantee.
+
+Regex contention retries share the original pattern CPU budget and input wall
+deadline, with at most two retries. A real pathological expression is still
+preempted without a retry. Successful matching is checked against both budgets;
+failed or partial user-agent classifications are never cached.
+
 Cache storage already uses unique temporary files, atomic replacement and
 content fingerprints. A six-writer concurrency regression verified that readers
 receive complete matching payloads. No exclusive lock was added: it would not
@@ -70,7 +109,7 @@ Hand-authored inventory wildcard approvals remain supported because they are
 documented operator policy. Generated literal bindings remain escaped. Blanket
 approval is an operational choice requiring review, not a newly forbidden syntax.
 
-## Validation
+## Initial validation
 
 Local validation used Python 3.12.14 in a fresh virtual environment with all
 cloud/development extras and upgraded packaging tools, matching the CI install
@@ -99,22 +138,59 @@ empty-list contracts, merge idempotence, deterministic ordering and cache
 concurrency. Provider calls use test doubles, real SDK objects where useful,
 and local HTTP/TLS test fixtures; they do not contact production tenants.
 
-## Open pull requests
+## Follow-up validation
 
-At the reviewed remote refs, PR #17 (`c6e536f`) and PR #19 (`1ccb494`) merge cleanly
-with the reviewed `main`. PR #19 contains six additive operational files; it is
-not a complete implementation of its changelog. In particular, its 0.1.1,
-universal connector-deadline, cache-locking and split-CI claims must be reconciled
-with code before release. This review retains package version 0.1.0.
+The combined changes and `main` baseline `c4f03cc` were validated locally with
+Python 3.12.14 and all development/cloud extras:
 
-PR #8 (`99ae381`) has conflicts in identity JWT, Git, HTTP, JWKS and their tests.
-Current `main` already contains stronger overlapping changes. Audit unique work
-before treating it as superseded; do not choose the older branch wholesale when
-resolving conflicts. No existing PR was merged or closed by this review.
+| Check | Result |
+| --- | --- |
+| Full pytest suite | 1,347 passed, no skips or failures |
+| Statement coverage | 89.83%, above the 80% gate |
+| Ruff and mypy | Passed; 69 source files checked by mypy |
+| Signature validation | 178 signatures / 790 signals passed |
+| Dependency audit | No known vulnerabilities in the resolved environment |
+| Wheel build and installed-wheel checks outside checkout | Passed |
+| Three offline scans, six parallel connectors | Each complete with 101 findings and zero errors |
+| Independent integration review | No blocking HTTP, identity, aggregation or cloud regression identified |
+| Docker image execution | Not run; Docker/Podman unavailable |
 
-GitHub reports `main` as protected. Specific required-check and reviewer rules
-were not independently inspected. Installation examples pin an older commit;
-refresh release pins only to the final reviewed and accepted implementation.
+Regressions reproduce scheduler contention using real regex execution and verify
+that expensive expressions, cumulative CPU exhaustion and wall deadlines still
+fail closed. Additional coverage checks cache bounds/isolation, AWS account
+mismatch, lazy cloud enumeration, and both public HTTP reader interfaces.
+Hosted Python 3.11/3.12 and CodeQL results remain separate checks on the published
+commit; see the PR checks for their current state.
+
+Before publication, a concurrent update merged the same `main` baseline into the
+draft branch (`02616c5`). That history was preserved. Its additional two-line
+HTTP `stream` type guard was retained, with five invalid-input regressions;
+245 HTTP, pagination and JWT tests passed afterward, as did Ruff and mypy.
+This final reconciliation changed no other production code from the full-suite
+run above.
+
+## Open pull requests and release controls
+
+PR #19 has merged into `main`; its public response-reader changes are preserved.
+This branch corrects its unsupported release claims and retains package version
+0.1.0. PR #21 merged into `main` during this review as `c4f03cc`; its identity,
+inventory, provider coverage, source parsing and Markdown rendering changes are
+included through the updated baseline and tested together with this patch.
+PR #17 updates the Ruff minimum. No existing PR was merged or closed by this
+review.
+
+The active [Protect main ruleset](https://github.com/aisecnomad/Project-Nexus/rules/23892853)
+was independently inspected. It requires pull requests and blocks deletion and
+non-fast-forward updates, but has no required status-check rule and requires
+zero approving reviews. A protected-branch label therefore does not establish
+that failed CI cannot be merged. Require both Python test jobs and an approving
+review before using `main` as a release gate. This review does not change
+repository administration settings.
+
+Installation examples pin an older commit; refresh release pins only to the
+final reviewed and accepted implementation. Live tenant acceptance, reviewed
+dependency constraints and worker egress/deadline policies remain deployment
+requirements.
 
 ## Deployment limits and migration
 

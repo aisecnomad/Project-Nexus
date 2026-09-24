@@ -332,7 +332,7 @@ class HttpClient:
                 resp.close()
                 raise HttpError(resp.status_code, url)
             if not stream:
-                resp._content = self._read_response(resp, self.max_response_bytes)
+                resp._content = self.read_response_bytes(resp)
                 resp._content_consumed = True  # type: ignore[attr-defined]
             return resp
 
@@ -348,31 +348,39 @@ class HttpClient:
             raise ValueError("max_bytes must be a positive integer")
         return max_bytes
 
-    @staticmethod
-    def _read_response(resp: requests.Response, max_bytes: int) -> bytes:
-        """Bound decoded bytes, including compressed and chunked responses."""
+    def read_response_bytes(self, resp: requests.Response, *, max_bytes: int | None = None) -> bytes:
+        """Read a streamed response within the configured decoded-byte limit.
+
+        Iteration counts bytes after HTTP content decoding, so compressed
+        responses cannot expand past the limit unnoticed. The response is closed
+        on success and on every parse, transport, or size error.
+        """
         try:
+            limit = self._byte_limit(self.max_response_bytes if max_bytes is None else max_bytes)
             length = resp.headers.get("Content-Length")
             if length is not None:
                 if not isinstance(length, str) or not length.isascii() or not length.isdecimal():
                     raise ValueError("Invalid Content-Length on HTTP response")
-                if int(length) > max_bytes:
+                # Compare decimal strings before conversion: a hostile header
+                # must not trigger Python's arbitrary-length integer parser.
+                digits = length.lstrip("0") or "0"
+                maximum = str(limit)
+                if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
                     raise ValueError("HTTP response exceeds the byte limit")
             body = bytearray()
-            for chunk in resp.iter_content(chunk_size=min(65536, max_bytes + 1)):
-                if not chunk:
-                    continue
+            for chunk in resp.iter_content(chunk_size=min(65536, limit + 1)):
                 if not isinstance(chunk, bytes):
                     raise ValueError("Invalid HTTP response chunk")
-                if len(body) + len(chunk) > max_bytes:
+                if len(body) + len(chunk) > limit:
                     raise ValueError("HTTP response exceeds the byte limit")
                 body.extend(chunk)
             return bytes(body)
         finally:
             resp.close()
 
-    def _json_response(self, resp: requests.Response, max_bytes: int) -> Any:
-        body = self._read_response(resp, max_bytes)
+    def read_json_response(self, resp: requests.Response, *, max_bytes: int | None = None) -> Any:
+        """Decode one JSON response while enforcing the configured body limit."""
+        body = self.read_response_bytes(resp, max_bytes=max_bytes)
         if not body:
             return None
         try:
@@ -380,25 +388,15 @@ class HttpClient:
         except (ValueError, RecursionError) as exc:
             raise ValueError("Invalid JSON response") from exc
 
-    def read_response_bytes(self, resp: requests.Response, *, max_bytes: int | None = None) -> bytes:
-        """Read a streamed response within the configured decoded-byte limit."""
-        limit = self.max_response_bytes if max_bytes is None else self._byte_limit(max_bytes)
-        return self._read_response(resp, limit)
-
-    def read_json_response(self, resp: requests.Response, *, max_bytes: int | None = None) -> Any:
-        """Decode one response using the configured decoded-byte limit."""
-        limit = self.max_response_bytes if max_bytes is None else self._byte_limit(max_bytes)
-        return self._json_response(resp, limit)
-
     def get_json(self, path: str, *, max_bytes: int | None = None, **kwargs: Any) -> Any:
         limit = self.max_response_bytes if max_bytes is None else self._byte_limit(max_bytes)
         kwargs["stream"] = True
-        return self._json_response(self.get(path, **kwargs), limit)
+        return self.read_json_response(self.get(path, **kwargs), max_bytes=limit)
 
     def post_json(self, path: str, *, max_bytes: int | None = None, **kwargs: Any) -> Any:
         limit = self.max_response_bytes if max_bytes is None else self._byte_limit(max_bytes)
         kwargs["stream"] = True
-        return self._json_response(self.post(path, **kwargs), limit)
+        return self.read_json_response(self.post(path, **kwargs), max_bytes=limit)
 
     def try_get_json(self, path: str, default: Any = None, ok_statuses: set[int] | None = None, **kwargs: Any) -> Any:
         """Optional GET; denied or unknown coverage is never silently discarded.
@@ -448,7 +446,7 @@ class HttpClient:
                 raise RuntimeError("Repeated pagination link; collection incomplete")
             seen.add(url)
             resp = self.get(url, params=params if pages == 0 else None, stream=True)
-            data = self._json_response(resp, self.max_response_bytes)
+            data = self.read_json_response(resp)
             items = self._page_items(data, item_key)
             url = self._continuation(resp.links.get("next", {}).get("url"))
             yield from items
@@ -547,7 +545,10 @@ class HttpClient:
                     raise RuntimeError("Invalid pagination metadata; collection incomplete")
                 cursor = self._continuation(metadata.get("next_cursor"))
             else:
-                cursor = self._continuation(cursor_path(data))
+                try:
+                    cursor = self._continuation(cursor_path(data))
+                except (AttributeError, KeyError, TypeError) as exc:
+                    raise RuntimeError("Invalid pagination cursor; collection incomplete") from exc
             yield from items
             if not cursor:
                 return

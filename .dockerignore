@@ -1,21 +1,22 @@
-.git
-.github
-.venv
-venv
-__pycache__
-*.pyc
-*.egg-info
-.pytest_cache
-.ruff_cache
-.mypy_cache
-.coverage
-htmlcov
-tests
-exports
-.shadowscan-state
-*.sarif
-report.*
-.env
-.DS_Store
-dist
-build
+# Send only the Dockerfile's explicit build inputs to the builder. In particular,
+# local exports, reports, credentials and virtual environments stay outside it.
+**
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!README.md
+!LICENSE
+!NOTICE
+!agent-card.yaml
+!shadowscan/
+!shadowscan/**
+# Keep repository metadata and bytecode excluded even inside package directories.
+**/.git
+**/.git/**
+**/__pycache__
+**/__pycache__/**
+**/*.pyc
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
