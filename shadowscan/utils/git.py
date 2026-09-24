@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import time
+
+_OBJECT_ID_RX = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 
 # Git refname rules we accept from untrusted API JSON. Hierarchical names
 # (release/1.2) are allowed; option-like and traversal forms are not.
@@ -113,3 +117,45 @@ def metadata_git_argv_prefix() -> list[str]:
     fail closed rather than silently ignore an unknown environment setting.
     """
     return [*git_argv_prefix(), "--no-lazy-fetch", "--no-pager", "--literal-pathspecs"]
+
+
+def read_git_snapshot(path: str | os.PathLike[str], *, timeout: float = 10.0) -> dict[str, str] | None:
+    """Read the checked-out commit and tree without invoking repo code or network.
+
+    This deliberately uses the conservative metadata environment rather than
+    clone credentials or inherited Git configuration. It is used to attach a
+    stable source identity to remote-clone scans; failure is reported by the
+    caller as incomplete provenance while preserving scan findings.
+    """
+    if timeout <= 0:
+        return None
+    root = os.fspath(path)
+    if not root or "\x00" in root:
+        return None
+
+    env = metadata_git_env()
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    deadline = time.monotonic() + min(timeout, 10.0)
+    values: list[str] = []
+    for revision in ("HEAD^{commit}", "HEAD^{tree}"):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        try:
+            result = subprocess.run(
+                [*git_argv_prefix(), "-C", root, "rev-parse", "--verify", revision],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=remaining,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
+        if result.returncode != 0:
+            return None
+        value = result.stdout.strip()
+        if not _OBJECT_ID_RX.fullmatch(value):
+            return None
+        values.append(value)
+    return {"commit_sha": values[0], "tree_sha": values[1]}

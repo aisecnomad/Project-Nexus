@@ -9,6 +9,7 @@
 - Keep untrusted SDK diagnostics out of application logs, redact opaque API/Foundry/GitHub token fields and the `GH_TOKEN` fallback, and restrict Kubernetes JWT classification to documented claim shapes.
 - Preserve the newer webhook, HTTP header, imported finding, CSP, SARIF, GCP and Azure safeguards from the consolidated candidate.
 - Fix the example code-scanning workflow for repositories without an inventory directory and for fork pull requests.
+- Record immutable commit/tree identities on GitHub and GitLab code findings, and reject downloaded blob bytes that do not match the enumerated Git object ID.
 
 Package version: 0.1.1. No release tag or published artifact is implied by this
 entry. Tenant canaries and container runtime acceptance are still required.
