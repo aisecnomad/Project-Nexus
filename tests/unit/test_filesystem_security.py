@@ -165,6 +165,59 @@ def test_codeowners_parent_symlink_is_not_followed(tmp_path, run_connector):
     assert ctx.stats.errors
 
 
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_source_symlink_is_skipped_and_marks_scan_incomplete(tmp_path, run_connector, kind):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    private = tmp_path / "private"
+    private.mkdir()
+    (private / "agent.py").write_text("from crewai import Agent  # private business notes\n")
+    (repo / "good.py").write_text("from langgraph.graph import StateGraph\n")
+    if kind == "file":
+        (repo / "agent.py").symlink_to(private / "agent.py")
+    else:
+        (repo / "agent").symlink_to(private, target_is_directory=True)
+
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert any("framework.langgraph" in finding.frameworks for finding in findings)
+    assert not any("private business notes" in str(finding.to_dict()) for finding in findings)
+    assert ctx.stats.incomplete
+    assert any("symbolic link" in issue for issue in ctx.stats.errors)
+
+
+def test_explicitly_excluded_symlink_is_outside_scan_scope(tmp_path, run_connector):
+    private = tmp_path / "private"
+    private.mkdir()
+    (private / "agent.py").write_text("from crewai import Agent\n")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "excluded.py").symlink_to(private / "agent.py")
+    (repo / "good.py").write_text("from langgraph.graph import StateGraph\n")
+
+    findings, ctx = run_connector("code.filesystem", path=str(repo), exclude=["*excluded.py"], use_git=False)
+    assert any("framework.langgraph" in finding.frameworks for finding in findings)
+    assert not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("kind", ["root", "ancestor", "dotdot"])
+def test_symlink_in_selected_root_cannot_read_outside(tmp_path, run_connector, kind):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    private = tmp_path / "private"
+    private.mkdir()
+    (private / "agent.py").write_text("from crewai import Agent  # private business notes\n")
+    (repo / "linked").symlink_to(private, target_is_directory=True)
+    selected = {
+        "root": repo / "linked",
+        "ancestor": repo / "linked" / "agent.py",
+        "dotdot": repo / "linked" / ".." / "agent.py",
+    }[kind]
+    findings, ctx = run_connector("code.filesystem", path=str(selected), use_git=False)
+    assert findings == []
+    assert ctx.stats.incomplete
+    assert any("symbolic link" in issue for issue in ctx.stats.errors)
+
+
 def test_codeowners_cache_scoped_to_each_scan_root(tmp_path, run_connector):
     roots = []
     for name in ("one", "two"):
@@ -227,11 +280,25 @@ def test_regex_timeout_isolates_file_and_preserves_neighbor(tmp_path, index, mon
 
 def test_manifest_regex_execution_has_timeout(monkeypatch):
     # Substitute a deliberately expensive expression to verify execution bounds
-    # cover manifest parsers as well as the signature matcher.
-    monkeypatch.setattr(manifests, "_POM_DEP", regex.compile(r"(a+)+$"))
+    # still cover regex-based manifests, such as Gradle dependency declarations.
+    # POM dependencies now use an XML parser rather than a regex.
+    monkeypatch.setattr(manifests, "_GRADLE_DEP", regex.compile(r"(a+)+$"))
     started = time.monotonic()
     with pytest.raises(TimeoutError):
-        manifests.parse_manifest("pom.xml", "a" * 100_000 + "!")
+        manifests.parse_manifest("build.gradle", "a" * 100_000 + "!")
+    assert time.monotonic() - started < 2
+
+
+def test_pom_entity_expansion_is_rejected_without_parsing():
+    pom = (
+        '<!DOCTYPE project [<!ENTITY large "' + "a" * 100_000 + '">]>'
+        '<project><dependencies><dependency><groupId>&large;</groupId>'
+        '<artifactId>langchain4j</artifactId></dependency></dependencies></project>'
+    )
+    started = time.monotonic()
+    result = manifests.parse_manifest("pom.xml", pom)
+    assert result is not None and not result.deps
+    assert any("DTD/entity declarations are unsupported" in issue for issue in result.errors)
     assert time.monotonic() - started < 2
 
 

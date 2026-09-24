@@ -54,8 +54,9 @@ class TeamsConnector(BaseConnector):
             secret = self.ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
             if not (self.tenant and cid and secret):
                 raise ConnectorError("saas.microsoft-teams: tenant_id, client_id, client_secret (or access_token) required")
-            resp = HttpClient().post(f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token", data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret, "scope": "https://graph.microsoft.com/.default"})
-            token = resp.json()["access_token"]
+            client = HttpClient()
+            resp = client.post(f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token", data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret, "scope": "https://graph.microsoft.com/.default"})
+            token = client.read_json_response(resp)["access_token"]
         return HttpClient(GRAPH, headers={"Authorization": f"Bearer {token}"})
 
     def _pages(self, http: HttpClient, path: str, **kwargs: Any) -> Iterator[dict[str, Any]]:

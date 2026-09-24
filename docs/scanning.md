@@ -33,6 +33,12 @@ logs, identity, SaaS inputs and third-party connectors are collected anew: uncha
 establish that remote state is unchanged. Hashing still reads eligible inputs;
 the saving is avoiding repeated parsing and signature evaluation.
 
+When a shared `label` is set for multiple `code.filesystem.paths`, add
+`root_ids: [repo-a, repo-b]` in the same order as `paths`. This keeps each root's
+finding identity stable when the checkout location or list length changes.
+Without `root_ids`, the canonical local path determines a distinct root suffix.
+Using a scalar `path` with its own connector `label` preserves the older ID.
+
 The default state location is `$XDG_STATE_HOME/shadowscan`, or
 `~/.local/state/shadowscan`. `--state-dir` overrides it; YAML relative paths are
 resolved against the configuration file. Keep the directory outside every scan
@@ -47,10 +53,13 @@ symlink-bearing eligible inputs cause a full scan. Hashing has conservative limi
 files are further capped by `max_file_size`, default 1,000,000 bytes). Exceeding a
 limit falls back to normal scanning. Git replacement refs, grafts or externally
 overridden history also disable reuse; HEAD and shallow boundaries are tracked.
+Symlinked roots and ancestor path components are also ineligible for reuse.
 Input changes detected between hashing and collection make the result
 incomplete and require a rerun. `--dump-records` disables cache reuse to ensure the
 requested export is actually collected. JSON connector statistics expose `cached`
 and `cache_key`; cached connectors examine zero objects during analysis.
+Pre/post hashes do not form an atomic snapshot: inputs must remain immutable
+throughout the scan to exclude changes that occur and revert between reads.
 
 ## Offline input limits
 
@@ -165,9 +174,12 @@ timestamped framework execution for runtime correlation.
 
 ## Comparing reports
 
-`shadowscan diff baseline.json current.json` reports new findings and risk-level
-changes. Missing findings count as resolved only when both reports completed
-and have the same `collection_scope` fingerprint. This opaque digest covers
+`shadowscan diff baseline.json current.json` reports new findings and substantive
+changes, including permissions, classification, ownership, registration and risk
+score/factors within the same risk band. Each changed item includes
+`changed_fields`. Missing findings count as resolved only when both reports
+completed, declare the same supported finding-identity schema and have the same
+`collection_scope` fingerprint. This opaque digest covers
 selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared.
@@ -179,13 +191,19 @@ changed findings remain visible. Currently only local repositories and offline
 exports from built-in connectors can attest comparable scope; live account and
 permission coverage require additional provider-specific provenance.
 
+Finding IDs do not depend on inferred kind. Stable resource-type families (or an
+explicit plugin `identity_discriminator`) separate distinct observations on a
+resource. Regenerate comparison baselines after upgrading from legacy IDs;
+cross-schema comparisons retain missing findings as unknown. Incompatible cache
+entries cause a full rescan.
+
 ## Completion and migration
 
 | CLI exit | Meaning |
 |---|---|
 | `0` | Scan completed and the configured risk threshold was not reached. |
 | `2` | Completed scan reached `--fail-on` (Click also uses 2 for invocation errors). |
-| `3` | Collection or analysis was incomplete, including empty connector selection. |
+| `3` | Collection or analysis was incomplete, including empty or partly invalid connector selection. |
 
 `--min-confidence` and YAML `options.min_confidence` accept finite values in
 `[0, 1]`; invalid thresholds stop the scan instead of silently clearing the gate.

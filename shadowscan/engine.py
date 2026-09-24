@@ -16,6 +16,8 @@ from shadowscan import __version__
 from shadowscan.comparison import build_collection_scope
 from shadowscan.config import ConnectorSpec, ScanConfig, validate_min_confidence
 from shadowscan.connectors import ConnectorContext, get_connector_class
+from shadowscan.connectors.base import ConnectorError
+from shadowscan.connectors.code.filesystem import validate_distinct_paths, validate_root_ids
 from shadowscan.correlation import correlate_runtime
 from shadowscan.incremental import IncrementalCache
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface, now_iso
@@ -56,6 +58,21 @@ class Engine:
         # instance's lifetime. It is never persisted in connector cache entries.
         self.inventory = Inventory.load(self.config.inventory) if self.config.inventory else None
         result = ScanResult(version=__version__, inventory_size=len(self.inventory) if self.inventory else 0)
+        if only:
+            selectable = {value for spec in self.config.connectors if spec.enabled for value in (spec.id, spec.name)}
+            invalid = [selector for selector in only if selector not in selectable]
+            if invalid:
+                result.collection_scope = {
+                    "schema": "shadowscan.collection-scope/v1", "comparable": False,
+                    "reason": "requested connectors are unknown or disabled",
+                }
+                result.stats = [ScanStats(
+                    connector="engine.selection", started_at=result.started_at, finished_at=now_iso(),
+                    skipped=True, incomplete=True, skip_reason="invalid connector selection",
+                    errors=[sanitize(f"unknown or disabled connector selector: {selector}") for selector in invalid],
+                )]
+                result.finished_at = now_iso()
+                return result
         jobs = [(number, spec) for number, spec in enumerate(self.config.connectors, 1)
                 if spec.enabled and (not only or spec.id in only or spec.name in only)]
         specs = [spec for _, spec in jobs]
@@ -162,10 +179,21 @@ class Engine:
 
         def _run(number: int, spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
             roots = spec.config.get("paths")
+            root_ids = spec.config.get("root_ids")
             split_roots = (
                 self.config.incremental and spec.name == "code.filesystem"
                 and not spec.config.get("input") and isinstance(roots, list) and len(roots) > 1
             )
+            if split_roots:
+                try:
+                    if spec.label or spec.config.get("label"):
+                        validate_distinct_paths(roots)
+                    if root_ids is not None:
+                        validate_root_ids(roots, root_ids)
+                except ConnectorError:
+                    # Run once so constructor validation reports an incomplete
+                    # scan, rather than partially scanning the valid children.
+                    split_roots = False
             if split_roots:
                 try:
                     split_roots = cache.supports_connector(spec, _lookup(spec.name))
@@ -178,8 +206,13 @@ class Engine:
             combined: list[Finding] = []
             parts: list[ScanStats] = []
             for root_number, root in enumerate(roots, 1):
-                child_config = {k: v for k, v in spec.config.items() if k != "paths"}
+                child_config = {k: v for k, v in spec.config.items() if k not in {"paths", "root_ids"}}
                 child_config["path"] = root
+                # A cache split retains both the `paths` identity and its
+                # optional stable root ID from the original configuration.
+                child_config["_shared_label_roots"] = True
+                if root_ids is not None:
+                    child_config["_root_id"] = root_ids[root_number - 1]
                 _, child_findings, child_stats = _run_one(ConnectorSpec(
                     name=spec.name, config=child_config, label=spec.label,
                 ), f"{number:04d}-{root_number:04d}")
@@ -210,9 +243,14 @@ class Engine:
                     stats.append(st)
         else:
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="shadowscan") as pool:
-                futures = {pool.submit(_run, number, spec): spec for number, spec in jobs}
+                futures = {pool.submit(_run, number, spec): number for number, spec in jobs}
+                completed: dict[int, tuple[ConnectorSpec, list[Finding], ScanStats]] = {}
                 for fut in as_completed(futures):
-                    _, fs, st = fut.result()
+                    completed[futures[fut]] = fut.result()
+                # Merge uses first-observed owner and metadata as precedence.
+                # Preserve configured order regardless of request completion.
+                for number, _ in jobs:
+                    _, fs, st = completed[number]
                     findings.extend(fs)
                     if st:
                         stats.append(st)
@@ -304,11 +342,33 @@ def _gateway_sources(finding: Finding) -> list[dict[str, Any]]:
     return existing if isinstance(existing, list) else [_gateway_source_snapshot(finding)]
 
 
-def _merge_gateway_sources(cur: Finding, sources: list[dict[str, Any]]) -> None:
+def _unique_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate nested observations while retaining their first provenance."""
+    def key_for(value: Any) -> Any:
+        if isinstance(value, dict):
+            return ("dict", frozenset((key, key_for(item)) for key, item in value.items()))
+        if isinstance(value, (list, tuple)):
+            return (type(value).__name__, tuple(key_for(item) for item in value))
+        if isinstance(value, (set, frozenset)):
+            return ("set", frozenset(key_for(item) for item in value))
+        # Python considers True == 1 and False == 0. JSON evidence preserves
+        # those distinctions, so its deduplication key must do the same.
+        return (type(value).__name__, value)
+
     unique: list[dict[str, Any]] = []
-    for source in sources:
-        if isinstance(source, dict) and source not in unique:
-            unique.append(source)
+    seen: set[Any] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        key = key_for(record)
+        if key not in seen:
+            seen.add(key)
+            unique.append(record)
+    return unique
+
+
+def _merge_gateway_sources(cur: Finding, sources: list[dict[str, Any]]) -> None:
+    unique = _unique_records(sources)
     cur.metadata["runtime_sources"] = unique
     for key in _GATEWAY_TOTALS:
         values = [source.get("metrics", {}).get(key) for source in unique]
@@ -353,10 +413,29 @@ def merge(findings: list[Finding]) -> list[Finding]:
         if cur is None:
             by_id[f.id] = f
             continue
+        # Select the classification and its resource subtype as one pair. A
+        # lexical subtype tie-break keeps repeated/grouped merges associative
+        # without attaching the first record's subtype to another record's kind.
+        priority = {Kind.AGENT: 3, Kind.SERVICE_IDENTITY: 2, Kind.OAUTH_GRANT: 1}
+        classifications = [(finding.kind, finding.resource_type) for finding in (cur, f)]
+        classification = max(classifications, key=lambda value: (priority.get(value[0], 0), value[0].value, value[1]))
+        for key, current_values in (
+            ("observed_kinds", {kind.value for kind, _ in classifications}),
+            ("observed_resource_types", {resource_type for _, resource_type in classifications}),
+        ):
+            for finding in (cur, f):
+                previous = finding.metadata.get(key)
+                if isinstance(previous, list):
+                    current_values.update(value for value in previous if isinstance(value, str))
+            if len(current_values) > 1:
+                cur.metadata[key] = sorted(current_values)
+        cur.kind, cur.resource_type = classification
         gateway_sources = _gateway_sources(cur) + _gateway_sources(f) if cur.surface == f.surface == Surface.GATEWAY else []
         seen = {(e.signal, e.location, e.description) for e in cur.evidence}
         for e in f.evidence:
-            if (e.signal, e.location, e.description) not in seen:
+            evidence_key = (e.signal, e.location, e.description)
+            if evidence_key not in seen:
+                seen.add(evidence_key)
                 cur.evidence.append(e)
         for fw in f.frameworks:
             cur.add_framework(fw)
@@ -393,15 +472,12 @@ def merge(findings: list[Finding]) -> list[Finding]:
                         if isinstance(observation, dict):
                             entry = dict(observation)
                             entry.setdefault("source", finding.metadata.get("runtime_source", {}))
-                            if entry not in observations:
-                                observations.append(entry)
-                cur.metadata[k] = observations
+                            observations.append(entry)
+                cur.metadata[k] = _unique_records(observations)
             else:
                 cur.metadata.setdefault(k, v)
         if gateway_sources:
             _merge_gateway_sources(cur, gateway_sources)
-        if f.kind == Kind.AGENT and cur.kind == Kind.FRAMEWORK_USAGE:
-            cur.kind = Kind.AGENT
         cur.recompute_confidence()
     return list(by_id.values())
 

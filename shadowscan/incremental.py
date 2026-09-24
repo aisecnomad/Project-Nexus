@@ -27,11 +27,11 @@ from shadowscan.connectors import _BUILTIN
 from shadowscan.connectors.code.filesystem import DEFAULT_EXCLUDES
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
-from shadowscan.utils.git import git_argv_prefix, safe_git_env
+from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.redaction import sanitize
 
 log = logging.getLogger("shadowscan.incremental")
-_FORMAT = 2
+_FORMAT = 3  # v2 finding identities: older entries require a full rescan
 _MAX_CACHE_BYTES = 64 * 1024 * 1024
 _MAX_HASH_FILE_BYTES = 64 * 1024 * 1024
 _MAX_HASH_BYTES = 512 * 1024 * 1024
@@ -39,6 +39,9 @@ _MAX_HASH_ENTRIES = 200_000
 _MAX_HASH_SECONDS = 30.0
 _CLOUD_EXPORTS = {"cloud.aws", "cloud.azure", "cloud.gcp", "cloud.oci"}
 _CODE = {"code.filesystem", "code.github", "code.gitlab"}
+# These directories can be read by the filesystem connector's ownership lookup
+# even when the ordinary source walk excludes them.
+_OWNERSHIP_DIRECTORIES = {".github", ".gitlab", "docs"}
 
 
 def _json(value: Any) -> bytes:
@@ -55,7 +58,28 @@ def _paths(spec: ConnectorSpec) -> list[Path]:
         return []
     if not isinstance(raw, list) or not all(isinstance(p, str) and p for p in raw):
         return []
-    return [Path(p).expanduser().resolve() for p in raw]
+    roots = [Path(p).expanduser().absolute() for p in raw]
+    if any(part.is_symlink() for root in roots for part in (root, *root.parents)):
+        raise ValueError("symlink in static input root path")
+    return [root.resolve() for root in roots]
+
+
+def _literal_excluded_directories(spec: ConnectorSpec) -> frozenset[str]:
+    """Use only directory exclusions with exactly the walker's literal semantics.
+
+    Glob patterns and other connector types retain the conservative full-tree
+    fingerprint. CODEOWNERS in the three special directories must remain part
+    of the fingerprint because ownership lookup reads those files directly.
+    """
+    if spec.name != "code.filesystem":
+        return frozenset()
+    raw = spec.config.get("exclude", []) or []
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        return frozenset()
+    return frozenset(
+        name for name in raw
+        if name not in _OWNERSHIP_DIRECTORIES and "*" not in name and "/" not in name
+    )
 
 
 def _eligible(spec: ConnectorSpec) -> bool:
@@ -100,9 +124,9 @@ def _file_digest(path: Path, *, max_bytes: int = _MAX_HASH_FILE_BYTES, budget: _
     attrs = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
     if any(getattr(before, a) != getattr(after, a) or getattr(after, a) != getattr(current, a) for a in attrs):
         raise ValueError("input changed while hashing")
-    # Include change time and identity alongside content: a file that changes
-    # A -> B -> A during collection must not make the before/after snapshots
-    # appear equal and permit caching findings derived from B as A.
+    # Change time and inode identity catch ordinary replace/restore changes.
+    # These checks are not an atomic snapshot or a defense against an adversary
+    # concurrently changing inputs. Incremental scans require immutable inputs.
     digest.update(_json([getattr(after, attr) for attr in attrs]))
     return digest.hexdigest()
 
@@ -119,8 +143,8 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     def git(*args: str) -> bytes:
         budget.check()
         result = subprocess.run(
-            [*git_argv_prefix(), "-C", str(root), *args], check=False, capture_output=True, timeout=10,
-            env=safe_git_env(),
+            [*metadata_git_argv_prefix(), "-C", str(root), *args], check=False, capture_output=True, timeout=10,
+            env=metadata_git_env(),
         )
         budget.check(size=len(result.stdout))
         if result.returncode:
@@ -142,7 +166,10 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     return hashlib.sha256(_json([head.decode(), shallow_digest])).hexdigest()
 
 
-def _tree_digest(root: Path, *, code: bool, use_git: bool, budget: _HashBudget, max_file_bytes: int) -> str:
+def _tree_digest(
+    root: Path, *, code: bool, use_git: bool, budget: _HashBudget, max_file_bytes: int,
+    excluded_dir_names: frozenset[str] = frozenset(),
+) -> str:
     digest = hashlib.sha256()
     budget.check(entries=1)
     if root.is_file():
@@ -167,7 +194,7 @@ def _tree_digest(root: Path, *, code: bool, use_git: bool, budget: _HashBudget, 
         for name in sorted(dirs):
             budget.check(entries=1)
             path = basepath / name
-            if code and name in DEFAULT_EXCLUDES:
+            if code and (name in DEFAULT_EXCLUDES or name in excluded_dir_names):
                 continue
             if path.is_symlink():
                 # Ancillary readers such as CODEOWNERS can inspect descendants
@@ -275,15 +302,19 @@ class IncrementalCache:
             if not roots:
                 return None
             code = spec.name in _CODE
-            use_git = bool(spec.config.get("use_git", True))
+            use_git = bool(spec.config.get("use_git", False))
             budget = _HashBudget()
+            excluded_dir_names = _literal_excluded_directories(spec)
             max_bytes = min(int(spec.config.get("max_file_size", 1_000_000)), _MAX_HASH_FILE_BYTES) if code else _MAX_HASH_FILE_BYTES
             inputs = []
             for root in roots:
                 if spec.name in {"code.github", "code.gitlab"}:
                     digest = _checkout_container_digest(root, use_git=use_git, budget=budget, max_file_bytes=max_bytes)
                 else:
-                    digest = _tree_digest(root, code=code, use_git=use_git, budget=budget, max_file_bytes=max_bytes)
+                    digest = _tree_digest(
+                        root, code=code, use_git=use_git, budget=budget,
+                        max_file_bytes=max_bytes, excluded_dir_names=excluded_dir_names,
+                    )
                 inputs.append([str(root), digest])
             fingerprint = hashlib.sha256(_json({
                 "format": _FORMAT,

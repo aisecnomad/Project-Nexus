@@ -1,15 +1,14 @@
 # Project Nexus · ShadowScan
 
-**ShadowScan finds the AI agents nobody registered.**
+**ShadowScan finds unregistered AI agents running in your non-production and production environments. ****
 
 It sweeps the six places agents hide — code repositories, identity providers,
-LLM gateway logs, low-code platforms, SaaS apps and cloud accounts — fingerprints
-the frameworks and model providers they use, scores their risk, and reconciles
+LLM gateway logs, low-code platforms, SaaS apps, and cloud accounts. 
+Fingerprints the frameworks and model providers they use, scores their risk, and reconciles
 every discovery against your sanctioned inventory of
-[Agent Cards](agent-card.yaml). What is left over is
-*shadow*.
+[Agent Cards](agent-card.yaml).*.
 
-Example findings from the bundled offline fixtures (totals vary as signatures evolve):
+Example findings (totals vary as signatures evolve):
 
 ```
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
@@ -27,11 +26,10 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ## Why
 
-Agents are no longer only Python scripts. They are Copilot Studio bots built by
-HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
-Bedrock Agents provisioned by Terraform, MCP servers wired into every
-developer's editor, service principals with `Mail.ReadWrite` acting on behalf
-of nobody, and JWTs carrying an `act` claim. 
+Agents are no longer only Python scripts. 
+They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
+Bedrock Agents provisioned by Terraform, MCP servers wired into every 
+developer's editor, service principals with `Mail.ReadWrite` acting on behalf of nobody, and JWTs carrying an `act` claim. 
 Each surface has its own discovery API and its own vocabulary. 
 ShadowScan normalizes all of them into one finding model with evidence, so you can answer three questions for every
 agent in the estate: *who owns it, what can it do, and did anyone approve it?*
@@ -70,8 +68,8 @@ tells you what a package, host, user agent, model id, scope or file path maps to
 ## Install
 
 ```bash
-pip install "git+https://github.com/aisecnomad/Project-Nexus.git@1a0114f86239dbfea060fc839aae188983c3d7fa"           # core (code, identity, gateway, low-code, SaaS via REST)
-pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@1a0114f86239dbfea060fc839aae188983c3d7fa"   # + boto3, google-auth, azure-identity, oci
+pip install "git+https://github.com/aisecnomad/Project-Nexus.git@31fbf62c1ea9e8df64ced753cf237a3dcff65ef0"           # core (code, identity, gateway, low-code, SaaS via REST)
+pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@31fbf62c1ea9e8df64ced753cf237a3dcff65ef0"   # + boto3, google-auth, azure-identity, oci
 ```
 
 These examples pin the reviewed implementation. Python 3.11+ is required. Core
@@ -94,7 +92,8 @@ shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif --fail-on 
 # 4. Single connector, ad-hoc
 shadowscan run identity.entra --set tenant_id=$AZURE_TENANT_ID
 shadowscan run cloud.aws --set regions=us-east-1,eu-west-1 --dump-records ./exports
-shadowscan run cloud.aws --input ./exports/cloud_aws.jsonl        # re-analyse later, offline
+# Read exports/manifest.json and use the exported filename for this instance:
+shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # re-analyse later, offline
 
 # 5. Logs and tokens
 shadowscan gateway litellm-spend.jsonl bedrock-invocations/ egress-proxy.log
@@ -162,6 +161,17 @@ scans as unsuccessful, while preserving findings from successfully assessed inpu
 Confidence thresholds must be finite numbers from 0 to 1; invalid CLI or YAML
 values stop the scan before the risk gate runs.
 
+Git history enrichment is disabled by default. Set connector `use_git: true`
+only for a reviewed local checkout when author/history metadata is needed;
+metadata commands cannot fetch missing objects. Every explicit `--only` selector
+must match an enabled connector name or label. Unsupported records and saved API
+error responses cannot establish an empty, successful inventory.
+
+After upgrading from reports without the v2 finding-identity schema, regenerate
+your comparison baseline. Findings now keep their identity when inferred classification changes;
+legacy baselines cannot establish resolution under the new identity schema.
+See [deployment and migration](docs/production.md) for the rollout checks.
+
 ## What a finding looks like
 
 ```json
@@ -192,7 +202,7 @@ values stop the scan before the risk gate runs.
 * **related** links findings across surfaces (the Terraform that provisions an agent ↔ the agent in the account ↔ the role calling Bedrock ↔ the CloudTrail caller).
 
 Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
-findings carry file:line locations), `csv`, `markdown`, `html` (self-contained,
+findings carry file: line locations), `csv`, `markdown`, `html` (self-contained,
 filterable, with evidence drill-down).
 
 ## Sanctioned inventory
@@ -207,12 +217,12 @@ metadata:
 discovery:
   resources:
     - "arn:aws:bedrock:*:123456789012:agent/AGENT1"
-    - "github:acme/infra-agents"
+    - "github: acme/infra-agents"
   names: ["ops provisioning agent"]
 ```
 
-Simple `agents.yaml` lists and CSV work too. `shadowscan inventory stubs`
-turns shadow findings into card skeletons for review. See
+Simple `agents.yaml` lists and CSV work too. `shadowscan inventory stubs.`
+Turns shadow findings into card skeletons for review. See
 [docs/inventory.md](docs/inventory.md).
 
 ## Extending
@@ -229,7 +239,7 @@ turns shadow findings into card skeletons for review. See
 
 ```bash
 pip install -e ".[dev]"
-python -m shadowscan.signatures.validate
+python -m shadowscan. signatures.validate
 ruff check shadowscan tests
 mypy shadowscan
 pip-audit --progress-spinner off
@@ -244,7 +254,7 @@ shadowscan scan -c examples/shadowscan.offline.yaml
 * JWTs are never persisted; findings reference a truncated hash.
 * Connectors never modify anything; every API call is read-only.
 
-Deployment behavior, migration options and limits are documented in
+Deployment behavior, migration options, and limits are documented in
 [SECURITY.md](SECURITY.md) and [docs/production.md](docs/production.md).
 
 License: Apache-2.0.

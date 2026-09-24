@@ -38,10 +38,15 @@ Continue, Kiro, Amazon Q…), coding-agent configs (`CLAUDE.md`, `.claude/agents
 A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
-Owner comes from `CODEOWNERS`, then the last git author.
+Owner comes from `CODEOWNERS` and configured inventory. Git author/history
+enrichment is disabled by default; `use_git: true` explicitly enables it for
+reviewed local metadata. The metadata command must support `--no-lazy-fetch`;
+unsupported Git versions or failed history reads mark the scan incomplete.
+Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 
-Options: `path`/`paths`, `exclude`, `max_file_size`, `max_files`, `scan_secrets`,
-`use_git`, `label`.
+Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
+`scan_secrets`, `use_git`, `label`. When using labeled `paths`, supply unique
+`root_ids` aligned with those paths for IDs that survive moving checkouts.
 
 ### `code.github`
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
@@ -50,12 +55,15 @@ file sample) and runs the filesystem scanner. Adds CI secret/variable *names*
 matching LLM providers. Token: fine-grained PAT or GitHub App token with
 `contents:read`, `metadata:read`; `secrets:read` for secret names. Offline
 input: a directory of clones.
+Live API records cannot choose local scan paths. `use_git` has the same explicit
+opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 
 ### `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
 clone or API mode; also CI/CD variable names (masked flag), group service
 accounts, group/project access tokens, project bots and GitLab Duo enablement.
 Token: PAT with `read_api` + `read_repository`.
+Live API records cannot choose internal offline paths or dispatch fields.
 
 ## Identity
 
@@ -79,6 +87,9 @@ Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
 domain-wide delegation impersonating an admin (`service_account_file` +
 `admin_email`; scopes `admin.directory.user.readonly`,
 `admin.directory.user.security`) or `access_token`.
+Offline exports may contain individual token records or per-user objects such
+as `{"user":"user@example.com","tokens":[...]}`. The latter retains user
+attribution whether supplied as one object or inside an array.
 
 ### `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their
@@ -130,7 +141,13 @@ apps (AI connector references: `shared_openai`, `shared_azureopenai`,
 `shared_aibuilder`, `shared_microsoftcopilotstudio`…), Dataverse `bots` +
 `botcomponents` (Copilot Studio agents: generative answers, actions, knowledge,
 authentication mode, publish state). Auth: Entra app registered as a Power
-Platform application user / tenant admin.
+Platform application user / tenant admin. Environment enumeration follows
+`nextLink`; app enumeration uses the documented AdminApps 2024-10-01 API at
+`api.powerplatform.com` with a separate `https://api.powerplatform.com/.default`
+token audience. A denied child request or failed continuation marks coverage
+incomplete while retaining findings from other environments. Before relying on
+live coverage, verify the application's Power Platform roles and known apps
+in a read-only tenant canary.
 
 ### `lowcode.salesforce`
 SOQL/Tooling: `BotDefinition`/`BotVersion` (Einstein bots & Agentforce
@@ -166,7 +183,9 @@ the org.
 
 ### `saas.atlassian` · `saas.notion` · `saas.zoom`
 UPM user-installed apps (Jira/Confluence), Notion bot users, Zoom Marketplace
-apps with scopes and install counts.
+apps with scopes and install counts. Notion rejects a missing/repeated pagination
+cursor and caps live pages (`max_pages`, at most 1000); either condition makes
+the scan incomplete.
 
 ### `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
@@ -221,6 +240,11 @@ Auth: `DefaultAzureCredential` or `access_token` (+ `foundry_token`).
 Resource Graph, ARM and Foundry collections follow pagination. A denied or failed
 diagnostic-settings request is reported as unknown; only a successful empty
 response supports a missing-diagnostics finding.
+Foundry agent discovery targets the classic Agent Service contract:
+`GET <project-endpoint>/assistants?api-version=v1`. Newer `/agents` API families
+require their own contract and are not implied by this support. Missing, denied
+or malformed collections remain incomplete; pagination must finish before
+absence can be inferred.
 
 ### `cloud.oci`
 Generative AI Agents (agents, endpoints, tools, knowledge bases), Digital
@@ -228,6 +252,12 @@ Assistant, GenAI endpoints/clusters/custom models, Data Science model
 deployments, Functions, Container Instances, Vault secret names, IAM policies
 granting `generative-ai*`, dynamic groups. Auth: `~/.oci/config` profile,
 instance or resource principal.
+Function inspection retrieves application and function details, combines
+inherited configuration with function overrides, and supports both legacy image
+fields and `source_details.image`. Denied or invalid detail reads mark coverage
+incomplete while preserving available resource evidence. Audit credentials need
+the corresponding application/function read permissions; list-only access is
+insufficient to inspect configuration.
 
 ## Least privilege
 

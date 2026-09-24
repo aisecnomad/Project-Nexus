@@ -73,7 +73,7 @@ signatures:
         weight: 0.95
         description: MCP client configuration block
       - type: file
-        globs: [".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json", ".cursor/mcp.json", ".vscode/mcp.json", "claude_desktop_config.json", ".roo/mcp.json", ".windsurf/mcp_config.json", "cline_mcp_settings.json", ".kiro/settings/mcp.json", ".amazonq/mcp.json", ".codeium/windsurf/mcp_config.json", "**/.mcp.json", "**/mcp.json", "**/mcp-config.json", "**/mcp_config.json", "**/mcp-servers.json", "**/claude_desktop_config.json", "**/cline_mcp_settings.json", "**/.cursor/mcp.json", "**/.vscode/mcp.json", "**/.roo/mcp.json", "**/.windsurf/mcp_config.json", "**/.kiro/settings/mcp.json", "**/.amazonq/mcp.json", "smithery.yaml", "**/smithery.yaml", "server.json", "**/.well-known/mcp.json"]
+        globs: [".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json", ".cursor/mcp.json", ".vscode/mcp.json", "claude_desktop_config.json", ".roo/mcp.json", ".windsurf/mcp_config.json", "cline_mcp_settings.json", ".kiro/settings/mcp.json", ".amazonq/mcp.json", ".codeium/windsurf/mcp_config.json", "**/.mcp.json", "**/mcp.json", "**/mcp-config.json", "**/mcp_config.json", "**/mcp-servers.json", "**/claude_desktop_config.json", "**/cline_mcp_settings.json", "**/.cursor/mcp.json", "**/.vscode/mcp.json", "**/.roo/mcp.json", "**/.windsurf/mcp_config.json", "**/.kiro/settings/mcp.json", "**/.amazonq/mcp.json", "smithery.yaml", "**/smithery.yaml", "**/.well-known/mcp.json"]
         weight: 0.9
       - type: image
         patterns: ['mcp/[a-z0-9-]+', 'ghcr\.io/github/github-mcp-server', 'modelcontextprotocol/', 'mcp-server']

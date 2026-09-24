@@ -44,7 +44,9 @@ _ASSIGNMENT = re.compile(
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;\}\]\)\"']+)"
 )
 _QUERY_SEPARATOR = re.compile(r"[&#]")
-_ANNOTATED_KEY = re.compile(r"(?<![\w-])(?P<key>[A-Za-z_][A-Za-z0-9_.]{0,100})[ \t]*:")
+_PYTHON_ASSIGNMENT_KEY = re.compile(
+    r"(?<![\w-])(?P<key>[A-Za-z_][A-Za-z0-9_.]{0,100})[ \t]*(?P<separator>:|=(?!=))"
+)
 _MAX_SANITIZATION_NODES = 100_000
 _MAX_SANITIZATION_CHARS = 64 * 1024 * 1024
 _MAX_REDACTION_WORK = 128 * 1024 * 1024
@@ -54,27 +56,47 @@ class SanitizationLimitError(ValueError):
     """Evidence cannot be safely sanitized within the work/output budget."""
 
 
-def _redact_annotated_assignments(text: str) -> str:
-    """Redact the entire RHS of sensitive Python annotated assignments.
+def _redact_python_assignments(text: str) -> str:
+    """Redact complete sensitive Python assignment expressions without evaluation.
 
-    Tokenization handles escaped/triple-quoted strings, compound annotations,
-    multiline expressions, and multiple statements without evaluating source.
-    Incomplete RHS syntax is redacted through EOF. Tokenization is attempted
-    only at sensitive ``name:`` candidates, so ordinary evidence stays cheap.
+    Tokenize only sensitive candidates, including ordinary assignments and call
+    arguments. String delimiters, escapes, concatenation and continued lines are
+    handled lexically. Malformed or unfinished RHS syntax is withheld through
+    EOF; the explicit work budget prevents hostile candidates from repeatedly
+    tokenizing an unlimited amount of source.
     """
     stream: io.StringIO | None = None
     pieces: list[str] = []
     cursor = 0
     work = 0
-    for match in _ANNOTATED_KEY.finditer(text):
+    urls = _URL.finditer(text)
+    url = next(urls, None)
+    for match in _PYTHON_ASSIGNMENT_KEY.finditer(text):
         if match.start() < cursor or not _sensitive_key(match.group("key")):
             continue
+        annotated = match.group("separator") == ":"
+        assigned_at: int | None = None if annotated else match.end()
+        # URL fields use URL boundaries, not Python statement boundaries,
+        # and have already been sanitized by the URL pass. Check actual spans:
+        # a '#' before a source assignment can also introduce a comment.
+        while url is not None and url.end() <= match.start():
+            url = next(urls, None)
+        if url is not None and url.start() <= match.start():
+            continue
+        value_start = match.end()
+        if not annotated:
+            while value_start < len(text) and text[value_start] in " \t":
+                value_start += 1
         if stream is None:
             stream = io.StringIO(text)
         stream.seek(match.end())
         offsets = [match.end()]
-        assigned_at: int | None = None
         end = len(text)
+        brackets: list[str] = []
+        previous = match.start() - 1
+        while previous >= 0 and text[previous] in " \t\r\n":
+            previous -= 1
+        argument = not annotated and previous >= 0 and text[previous] in "(,"
 
         def readline() -> str:
             nonlocal work
@@ -82,26 +104,60 @@ def _redact_annotated_assignments(text: str) -> str:
             line = stream.readline()
             work += len(line)
             if work > _MAX_REDACTION_WORK:
-                raise SanitizationLimitError("annotated assignment work limit exceeded")
+                raise SanitizationLimitError("Python assignment work limit exceeded")
             offsets.append(stream.tell())
             return line
 
         try:
             for item in tokenize.generate_tokens(readline):
-                if item.type == token.OP and item.string == "=" and assigned_at is None:
-                    assigned_at = offsets[item.end[0] - 1] + item.end[1]
-                elif item.type in {token.NEWLINE, token.ENDMARKER} or (
-                    assigned_at is not None and item.type == token.OP and item.string == ";"
-                ):
-                    end = offsets[item.start[0] - 1] + item.start[1]
+                position = offsets[item.start[0] - 1] + item.start[1]
+                if item.type == token.ERRORTOKEN and not item.string.isspace():
+                    # Incomplete single-quoted strings generate error tokens,
+                    # not TokenError. A semicolon inside one is not a boundary.
+                    break
+                if item.type == token.OP:
+                    if item.string == "=" and assigned_at is None and not brackets:
+                        assigned_at = offsets[item.end[0] - 1] + item.end[1]
+                    elif item.string in "([{":
+                        brackets.append(item.string)
+                    elif item.string in ")]}":
+                        if not brackets:
+                            if argument:
+                                end = position
+                            break
+                        if brackets.pop() != {")": "(", "]": "[", "}": "{"}[item.string]:
+                            break
+                    elif assigned_at is not None and not brackets and (
+                        item.string == ";" or (argument and item.string == ",")
+                    ):
+                        end = position
+                        break
+                elif item.type in {token.NEWLINE, token.ENDMARKER}:
+                    end = position
                     break
         except (tokenize.TokenError, IndentationError, SyntaxError):
-            # Once '=' is seen, malformed/unfinished source must not expose any
-            # of the RHS, including multiline credential fragments.
+            # Once '=' is seen, incomplete source must not expose any RHS,
+            # including credential fragments on subsequent physical lines.
             pass
         if assigned_at is not None:
+            raw = text[assigned_at:end]
+            bare = raw.strip()
+            fingerprint = bare
+            if bare.startswith(('"', "'")) and bare.endswith(bare[0]):
+                fingerprint = bare[1:-1]
+            if _FINGERPRINT.fullmatch(fingerprint):
+                continue
             pieces.append(text[cursor:assigned_at])
-            pieces.append(' "' + REDACTED + '"' + "\n" * text[assigned_at:end].count("\n"))
+            if annotated:
+                pieces.append(' "' + REDACTED + '"')
+            else:
+                # Quoted replacements retain expression boundaries inside
+                # enclosing calls and text wrappers. Plain diagnostic values
+                # keep their established name=[REDACTED] representation.
+                simple = bool(re.fullmatch(r"[^\s\"'(){}\[\],;]+", bare)) or bare == REDACTED
+                replacement = '"' + REDACTED + '"' if argument or not simple else REDACTED
+                pieces.append(text[assigned_at:value_start] + replacement)
+            pieces.append("\n" * raw.count("\n"))
             cursor = end
     if not pieces:
         return text
@@ -172,9 +228,9 @@ def sanitize_text(text: str) -> str:
         text = str(text)
     if len(text) > _MAX_SANITIZATION_CHARS:
         raise SanitizationLimitError("text sanitization size limit exceeded")
-    text = _redact_annotated_assignments(text)
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
+    text = _redact_python_assignments(text)
     text = _JWT.sub(REDACTED, text)
     text = _SECRET_TOKEN.sub(REDACTED, text)
     text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED, text)

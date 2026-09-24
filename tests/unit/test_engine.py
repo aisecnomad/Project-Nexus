@@ -6,10 +6,11 @@ from pathlib import Path
 import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
-from shadowscan.engine import Engine, correlate, merge
-from shadowscan.models import Evidence, Finding, Kind, RiskLevel, Surface
+from shadowscan.engine import Engine, _unique_records, correlate, merge
+from shadowscan.models import Evidence, Finding, Kind, RiskLevel, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.risk import assess
+from shadowscan.signatures import SignatureIndex
 
 
 def _f(**kw) -> Finding:
@@ -58,6 +59,59 @@ def test_merge_and_correlate():
     iac = _f(surface=Surface.CODE, connector="code.filesystem", kind=Kind.INFRA, resource="github:acme/infra/bedrock.tf", resource_type="iac", metadata={"names": ["ops-provisioning-04"], "name": "ops-provisioning-04"})
     correlate([cloud, iac])
     assert cloud.metadata["related"] == [iac.id] and iac.metadata["related"] == [cloud.id]
+
+
+def test_parallel_connector_completion_cannot_change_merge_attribution(monkeypatch):
+    class Connector:
+        def __init__(self, ctx):
+            self.ctx = ctx
+
+        def run(self):
+            label = self.ctx.config["label"]
+            self.ctx.stats = ScanStats(connector="code.filesystem", started_at=now_iso(), finished_at=now_iso())
+            return [_f(surface=Surface.CODE, connector="code.filesystem", kind=Kind.FRAMEWORK_USAGE,
+                       title="Same resource", resource="repo", resource_type="project",
+                       owner=label, metadata={"first_source": label})]
+
+    # Force the completed-future iterator to hand the second configured
+    # connector to the engine first, independent of scheduler timing.
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
+    monkeypatch.setattr("shadowscan.engine.as_completed", lambda futures: reversed(list(futures)))
+    cfg = ScanConfig(connectors=[
+        ConnectorSpec("code.filesystem", label="first"),
+        ConnectorSpec("code.filesystem", label="second"),
+    ], parallel=2)
+    result = Engine(cfg, SignatureIndex([])).run()
+    assert result.complete and len(result.findings) == 1
+    assert result.findings[0].owner == "first"
+    assert result.findings[0].metadata["first_source"] == "first"
+
+
+def test_merge_deduplicates_all_evidence_and_nested_gateway_observations():
+    def evidence():
+        return Evidence("signal", "same observation", location="source")
+    first = _f(evidence=[evidence()])
+    repeated = _f(evidence=[evidence(), evidence()])
+    assert len(merge([first, repeated])[0].evidence) == 1
+
+    first_observation = {"code_resources": ["repo"], "scope": {"tenant": "one", "project": "two"}}
+    reordered_observation = {"scope": {"project": "two", "tenant": "one"}, "code_resources": ["repo"]}
+    common = dict(surface=Surface.GATEWAY, connector="gateway.logs", kind=Kind.GATEWAY_CALLER,
+                  resource="caller:one", resource_type="caller/service")
+    gateway = _f(**common, metadata={"runtime_source": {"input": "one.jsonl"},
+                                    "runtime_observations": [first_observation], "events": 1})
+    duplicate = _f(**common, metadata={"runtime_source": {"input": "one.jsonl"},
+                                      "runtime_observations": [reordered_observation], "events": 1})
+    combined = merge([gateway, duplicate])[0]
+    assert len(combined.metadata["runtime_observations"]) == 1
+    assert len(combined.metadata["runtime_sources"]) == 1
+    assert combined.metadata["events"] == 1
+
+
+def test_nested_observations_preserve_boolean_and_numeric_values():
+    assert _unique_records([{"trusted": True}, {"trusted": 1}, {"trusted": False}, {"trusted": 0}]) == [
+        {"trusted": True}, {"trusted": 1}, {"trusted": False}, {"trusted": 0},
+    ]
 
 
 def test_merge_preserves_runtime_observations_and_variable_names():

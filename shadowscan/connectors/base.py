@@ -154,6 +154,7 @@ class BaseConnector(ABC):
     requires: ClassVar[list[str]] = []  # optional python packages for live mode
     config_keys: ClassVar[dict[str, str]] = {}  # documentation: key -> description
     offline_formats: ClassVar[str] = "JSON / JSONL / YAML / CSV export"
+    _OFFLINE_COLLECTION_KINDS: ClassVar[dict[str, str]] = {}
 
     def __init__(self, ctx: ConnectorContext):
         self.ctx = ctx
@@ -486,8 +487,8 @@ class BaseConnector(ABC):
         else:
             yield from self._unwrap(data, report)
 
-    @staticmethod
-    def _json_lines(text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:
+    @classmethod
+    def _json_lines(cls, text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:
         for number, line in enumerate(text.splitlines(), 1):
             if not line.strip():
                 continue
@@ -499,7 +500,7 @@ class BaseConnector(ABC):
             if not isinstance(data, dict):
                 report(f"line {number}: JSONL records must be objects")
                 continue
-            yield from BaseConnector._unwrap(data, lambda message: report(f"line {number}: {message}"))
+            yield from cls._unwrap(data, lambda message: report(f"line {number}: {message}"))
 
     @staticmethod
     def _csv_records(text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:
@@ -548,7 +549,31 @@ class BaseConnector(ABC):
         return check(data)
 
     @staticmethod
-    def _unwrap(data: Any, on_error: Callable[[str], None] | None = None) -> Iterator[dict[str, Any]]:
+    def _is_native_offline_record(data: dict[str, Any]) -> bool:
+        identity_keys = {"id", "_id", "_kind", "name", "arn", "type", "kind", "resource", "resourceId"}
+        return bool(identity_keys.intersection(data)) or data.get("object") not in (None, "list", "page")
+
+    @staticmethod
+    def _is_error_record(data: dict[str, Any]) -> bool:
+        return "error" in data or bool(data.get("errors")) or data.get("ok") is False
+
+    @staticmethod
+    def _record_fields_valid(
+        data: Any, *, strings: tuple[str, ...] = (), mappings: tuple[str, ...] = (),
+        arrays: tuple[str, ...] = (), required: tuple[str, ...] = (),
+    ) -> bool:
+        """Check fields consumed by a provider without disclosing rejected values."""
+        if not isinstance(data, dict) or BaseConnector._is_error_record(data):
+            return False
+        if any(not isinstance(data.get(key), str) or not data[key].strip() for key in required):
+            return False
+        for fields, expected in ((strings, str), (mappings, dict), (arrays, list)):
+            if any(data.get(key) is not None and not isinstance(data[key], expected) for key in fields):
+                return False
+        return True
+
+    @classmethod
+    def _unwrap(cls, data: Any, on_error: Callable[[str], None] | None = None) -> Iterator[dict[str, Any]]:
         """Accept records or a common envelope, rejecting invalid shapes explicitly.
 
         Identified native records keep nested fields such as data/results intact.
@@ -565,11 +590,16 @@ class BaseConnector(ABC):
             "aiAgents", "teamsApps", "servicePrincipals", "clients", "tokens", "agents", "bots",
             "flows", "Records", "logEvents", "hits",
         }
+        wrappers.update(cls._OFFLINE_COLLECTION_KINDS)
+        record_kind: str | None = None
         if isinstance(data, dict):
             # Lists supplied as records are never recursively unwrapped. Direct
             # single-record exports require the same protection from field collisions.
-            identity_keys = {"id", "_id", "_kind", "name", "arn", "type", "kind", "resource", "resourceId"}
-            native = bool(identity_keys.intersection(data)) or data.get("object") not in (None, "list", "page")
+            native = cls._is_native_offline_record(data)
+            if not native and cls._is_error_record(data):
+                failed("provider error response in offline export; coverage is incomplete")
+                if not wrappers.intersection(data):
+                    return
             keys = wrappers.intersection(data) if not native else set()
             if len(keys) > 1:
                 failed("ambiguous export envelope contains multiple record collections")
@@ -581,7 +611,9 @@ class BaseConnector(ABC):
                 )
                 if any(data.get(key) for key in pagination_keys):
                     failed("offline export contains an uncollected next page")
-                collection = data[next(iter(keys))]
+                key = next(iter(keys))
+                record_kind = cls._OFFLINE_COLLECTION_KINDS.get(key)
+                collection = data[key]
                 if not isinstance(collection, list):
                     failed("export envelope record collection must be an array")
                     return
@@ -595,7 +627,7 @@ class BaseConnector(ABC):
             if not BaseConnector._valid_record(item):
                 failed(f"invalid export record {number}; expected a nonempty object with string keys")
                 continue
-            yield item
+            yield {**item, "_kind": record_kind} if record_kind else item
 
     # ------------------------------------------------------------------- run
     def _tee(self, records: Iterable[dict[str, Any]], path: str) -> Iterator[dict[str, Any]]:

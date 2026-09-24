@@ -18,6 +18,9 @@ from typing import Any
 
 from shadowscan.utils.redaction import sanitize
 
+FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v2"
+LEGACY_FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v1"
+
 
 class Surface(str, Enum):
     """Where an agent (or agent enabler) was discovered."""
@@ -149,8 +152,16 @@ class Finding:
     last_seen: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     id: str = ""
+    # Stable observation type, independent of inferred kind. Connectors emitting
+    # several observations of one resource/type must supply distinct values.
+    identity_discriminator: str = ""
+    identity_schema: str = FINDING_IDENTITY_SCHEMA
 
     def __post_init__(self) -> None:
+        if not self.identity_discriminator:
+            # Suffixes describe mutable platform classifications (for example
+            # service-principal/ManagedIdentity and auth0-client/non_interactive).
+            self.identity_discriminator = self.resource_type.split("/", 1)[0]
         if not self.id:
             self.id = self.compute_id()
         self.likelihood = Likelihood.from_confidence(self.confidence)
@@ -158,7 +169,13 @@ class Finding:
 
     # ------------------------------------------------------------------ helpers
     def compute_id(self) -> str:
-        raw = f"{self.surface.value}|{self.connector}|{self.kind.value}|{self.provider}|{self.account}|{self.resource}"
+        if self.identity_schema == LEGACY_FINDING_IDENTITY_SCHEMA:
+            raw = f"{self.surface.value}|{self.connector}|{self.kind.value}|{self.provider}|{self.account}|{self.resource}"
+        else:
+            raw = json.dumps([
+                self.identity_schema, self.surface.value, self.connector, self.provider,
+                self.account, self.region, self.resource, self.identity_discriminator,
+            ], separators=(",", ":"), ensure_ascii=True)
         return "ss-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def sanitize(self) -> None:
@@ -224,6 +241,9 @@ class Finding:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Finding:
         d = dict(d)
+        # Reading an old report preserves its identity rather than silently
+        # relabeling old ids as v2. Upgrades require a freshly collected baseline.
+        d.setdefault("identity_schema", LEGACY_FINDING_IDENTITY_SCHEMA)
         d["surface"] = Surface(d["surface"])
         d["kind"] = Kind(d["kind"])
         d["likelihood"] = Likelihood(d.get("likelihood", "weak"))
@@ -306,6 +326,7 @@ class ScanResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": self.version,
+            "finding_identity_schema": FINDING_IDENTITY_SCHEMA,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "inventory_size": self.inventory_size,

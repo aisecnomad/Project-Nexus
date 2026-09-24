@@ -47,12 +47,20 @@
    may add frameworks, model providers, capabilities, tags and policy classes.
 3. `finalize()` computes confidence and promotes `framework-usage` to `agent`
    when an agent indicator matched.
-4. The engine **merges** findings with the same id (same connector + resource),
+4. The engine **merges** findings with the same stable source identity (surface,
+   connector, provider, account, region, resource and observation discriminator),
    **correlates** across surfaces by resource ids and normalised names
    (`metadata.related`), **reconciles** with the inventory (`shadow`,
    `registry_match`, inherited owner) and **scores** risk.
 5. Reporters render. SARIF carries `file:line` for code findings and logical
    locations elsewhere; HTML is self-contained.
+
+Reports declare `shadowscan.finding-identity/v2`. Inferred classification and
+current permissions do not enter the ID. The default observation discriminator
+is the resource-type family before `/`; connectors emitting distinct observations
+of one resource within the same family must supply different stable
+`identity_discriminator` values. Schema upgrades require fresh comparison
+baselines and invalidate older incremental caches.
 
 ## Design principles
 
@@ -61,6 +69,10 @@
 * **Read-only and redacting.** No connector mutates state; secrets are redacted at capture; secret stores are enumerated by name only; JWTs are hashed.
 * **Explainable scores.** Confidence lists its evidence; risk lists its factors.
 * **Bounded work.** Caps on files, repos, teams, lambdas, records and pages; retries with back-off on rate limits.
+* **Explicit coverage.** Unsupported records, provider errors, truncation and
+  invalid selections make scans incomplete. An empty finding list is not proof
+  of successful collection. Connectors must warn on skipped coverage and retain
+  valid neighboring observations.
 
 ## Writing a connector
 
