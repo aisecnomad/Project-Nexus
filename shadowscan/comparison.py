@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +20,11 @@ from shadowscan.connectors import _BUILTIN
 from shadowscan.models import FINDING_IDENTITY_SCHEMA
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.files import read_policy_text
+from shadowscan.utils.redaction import _sensitive_key, sanitize
 
 _SCHEMA = "shadowscan.collection-scope/v1"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+_EMBEDDED_CREDENTIAL_FINGERPRINT = re.compile(r"credential:sha256:[a-f0-9]{64}")
 MAX_REPORT_BYTES = 64 * 1024 * 1024
 
 
@@ -55,6 +58,33 @@ def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
+def _has_private_scope_values(value: Any) -> bool:
+    """Reject sensitive keys and enumerable credential digests in public hashes.
+
+    Sanitization preserves credential fingerprints intentionally for finding
+    identity, so comparing a sanitized config with its source cannot detect
+    these potentially low-entropy values on its own.
+    """
+    remaining = [value]
+    seen: set[int] = set()
+    while remaining:
+        item = remaining.pop()
+        if isinstance(item, str) and _EMBEDDED_CREDENTIAL_FINGERPRINT.search(item):
+            return True
+        if isinstance(item, (Mapping, list, tuple)):
+            if id(item) in seen:
+                continue
+            seen.add(id(item))
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                if _sensitive_key(str(key)):
+                    return True
+                remaining.append(child)
+        elif isinstance(item, (list, tuple)):
+            remaining.extend(item)
+    return False
+
+
 def _scanner_digest() -> str:
     package = Path(__file__).parent
     return hashlib.sha256(_canonical([
@@ -70,8 +100,9 @@ def build_collection_scope(
 
     Live provider identity/coverage and third-party implementations are not
     attested here, so those scans cannot automatically resolve earlier findings.
-    Credentials, when configured, only participate inside the overall digest;
-    changing them conservatively invalidates comparability.
+    A public digest of low-entropy credentials or binding labels would permit
+    offline guessing. Such configurations have no exported fingerprint and
+    cannot automatically resolve findings in a comparison.
     """
     unavailable = {"schema": _SCHEMA, "comparable": False}
     if not specs:
@@ -91,6 +122,15 @@ def build_collection_scope(
                 options[key] = str(Path(val).expanduser().resolve())
             elif isinstance(val, list):
                 options[key] = [str(Path(v).expanduser().resolve()) if isinstance(v, str) else v for v in val]
+        # Scope and caller pseudonyms can be keyed to each gateway scan. Even
+        # a presently unscoped export can change this property as rows change.
+        if spec.name == "gateway.logs":
+            return {**unavailable, "reason": "configuration contains private comparison values"}
+        try:
+            if sanitize((options, spec.label)) != (options, spec.label) or _has_private_scope_values((options, spec.label)):
+                return {**unavailable, "reason": "configuration contains private comparison values"}
+        except (RecursionError, TypeError, ValueError):
+            return {**unavailable, "reason": "configuration contains private comparison values"}
         inputs.append({"name": spec.name, "label": spec.label, "config": options})
     try:
         fingerprint = hashlib.sha256(_canonical({

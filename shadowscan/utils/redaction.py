@@ -19,7 +19,7 @@ from urllib.parse import unquote
 REDACTED = "[REDACTED]"
 _FINGERPRINT = re.compile(r"^credential:sha256:[a-f0-9]{64}$")
 _SENSITIVE_SUFFIXES = (
-    "apikey", "accesskey", "secretkey", "accesskeyid", "secretaccesskey",
+    "apikey", "accesskey", "secretkey", "keystring", "privatekeydata", "accesskeyid", "secretaccesskey",
     "accesstoken", "refreshtoken", "idtoken", "authtoken", "apitoken", "foundrytoken", "githubtoken", "clientsecret",
     "authorization", "proxyauthorization", "password", "passwd", "privatekey",
     "credential", "credentials", "bearertoken", "sessiontoken", "signingkey",

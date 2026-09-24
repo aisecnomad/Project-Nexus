@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 from copy import deepcopy
 
@@ -84,10 +85,10 @@ def event(environment="production"):
             "environment": environment, "timestamp": "2026-01-01T00:00:00Z", "tenant_id": "tenant-a"}
 
 
-def source(index, path, environment="production", **config):
+def source(index, path, environment="production", *, gateway_identity_key=None, **config):
     ctx = ConnectorContext(config={"input": str(path), "correlation_bindings": [
         {"code_resource": "github:acme/agent", "caller": "principal:agent", "scope": {"tenant": "tenant-a"}}
-    ], **config}, index=index)
+    ], **config}, index=index, gateway_identity_key=gateway_identity_key)
     return list(GatewayLogConnector(ctx).analyze([event(environment)]))[0]
 
 
@@ -110,9 +111,10 @@ def test_same_caller_in_two_unlabelled_exports_preserves_production_and_provenan
 
 
 def test_identical_source_configuration_deduplicates_but_not_overlapping_distinct_exports(tmp_path, index):
-    first = source(index, tmp_path / "one.jsonl")
-    duplicate = source(index, tmp_path / "." / "one.jsonl")
-    second = source(index, tmp_path / "two.jsonl")
+    shared_key = b"one-private-key-per-scan-test-only"
+    first = source(index, tmp_path / "one.jsonl", gateway_identity_key=shared_key)
+    duplicate = source(index, tmp_path / "." / "one.jsonl", gateway_identity_key=shared_key)
+    second = source(index, tmp_path / "two.jsonl", gateway_identity_key=shared_key)
     code = static()
     findings = merge([first, duplicate, second, code])
     assert len(findings) == 3
@@ -121,9 +123,27 @@ def test_identical_source_configuration_deduplicates_but_not_overlapping_distinc
     assert "not deduplicated" in code.metadata["runtime_activity"]["event_counting"]
 
 
+def test_engine_shares_gateway_identity_within_run_and_rotates_between_runs(tmp_path, index):
+    path = tmp_path / "key.jsonl"
+    path.write_text(json.dumps({"api_key": "t1", "tenant_id": "other", "model": "gpt-4o"}) + "\n")
+    spec = ConnectorSpec(name="gateway.logs", config={"input": str(path), "format": "generic", "label": "t1"})
+    engine = Engine(ScanConfig(connectors=[spec, spec], parallel=2), index=index)
+    first = engine.run()
+    second = engine.run()
+    assert first.complete and second.complete
+    assert len(first.findings) == len(second.findings) == 1
+    assert first.findings[0].metadata["events"] == second.findings[0].metadata["events"] == 1
+    assert first.findings[0].id != second.findings[0].id
+    assert first.findings[0].resource != second.findings[0].resource
+    assert first.findings[0].metadata["runtime_source"]["id"] != second.findings[0].metadata["runtime_source"]["id"]
+    guessable_source = json.dumps([str(path.resolve()), "t1", "generic", 1, True, 5_000_000, []], sort_keys=True)
+    assert first.findings[0].metadata["runtime_source"]["id"] != hashlib.sha256(guessable_source.encode()).hexdigest()
+
+
 def test_same_source_different_bindings_do_not_drop_workload_provenance(tmp_path, index):
-    first = source(index, tmp_path / "one.jsonl")
-    other = source(index, tmp_path / "one.jsonl", correlation_bindings=[
+    shared_key = b"one-private-key-per-scan-test-only"
+    first = source(index, tmp_path / "one.jsonl", gateway_identity_key=shared_key)
+    other = source(index, tmp_path / "one.jsonl", gateway_identity_key=shared_key, correlation_bindings=[
         {"code_resource": "github:acme/other", "caller": "principal:agent", "scope": {"tenant": "tenant-a"}}])
     assert first.id != other.id
     assert len(merge([first, other])) == 2

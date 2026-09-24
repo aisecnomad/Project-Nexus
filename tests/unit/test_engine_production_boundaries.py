@@ -213,11 +213,19 @@ def test_queued_siblings_are_incomplete_if_all_workers_remain_stuck(monkeypatch)
 def test_record_checkpoint_stops_after_cancellation():
     cancelled = threading.Event()
     ctx = ConnectorContext(index=SignatureIndex([]), cancelled=cancelled)
-    records = ctx.checked_records([{"id": 1}, {"id": 2}])
+    fetched = []
+
+    def source():
+        for identity in (1, 2):
+            fetched.append(identity)
+            yield {"id": identity}
+
+    records = ctx.checked_records(source())
     assert next(records) == {"id": 1}
     cancelled.set()
     with pytest.raises(ConnectorError, match="deadline"):
         next(records)
+    assert fetched == [1]  # no post-timeout SDK/page fetch
 
 
 def test_broken_plugin_metadata_does_not_hide_later_plugins(monkeypatch):

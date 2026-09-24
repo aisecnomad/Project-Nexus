@@ -98,6 +98,27 @@ def test_unchanged_code_reuses_findings_without_leaking_mutations(tmp_path, inde
     assert first.findings[0].risk.score == second.findings[0].risk.score
 
 
+def test_config_credential_cache_fingerprint_stays_private_on_miss_and_hit(tmp_path, index, monkeypatch):
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["token"] = "t1"
+    calls = count_runs(monkeypatch)
+    cache = IncrementalCache(cfg, index)
+    snapshot = cache.snapshot(cfg.connectors[0])
+    assert snapshot is not None
+
+    first = Engine(cfg, index).run()
+    second = Engine(cfg, index).run()
+    assert first.complete and second.complete
+    assert not first.stats[0].cached and second.stats[0].cached
+    assert calls == [str(tmp_path / "repo")]
+    for result in (first, second):
+        report = result.to_dict()
+        assert "cache_key" not in report["stats"][0]
+        assert report["collection_scope"]["comparable"] is False
+        assert "fingerprint" not in report["collection_scope"]
+        assert snapshot.fingerprint not in json.dumps(report)
+
+
 def test_content_change_ignores_preserved_size_and_mtime_then_deletion(tmp_path, index, monkeypatch):
     cfg = config(tmp_path)
     calls = count_runs(monkeypatch)

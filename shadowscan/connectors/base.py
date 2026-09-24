@@ -97,6 +97,7 @@ class ConnectorContext:
         deadline: float | None = None,
         cancelled: Event | None = None,
         publication_lock: LockType | None = None,
+        gateway_identity_key: bytes | None = None,
     ):
         self.config: dict[str, Any] = dict(config or {})
         self.index: SignatureIndex = index or get_index()
@@ -106,6 +107,8 @@ class ConnectorContext:
         self.deadline = deadline
         self.cancelled = cancelled
         self.publication_lock = publication_lock
+        # Private scan context, separate from user configuration and reports.
+        self.gateway_identity_key = gateway_identity_key
         self.stats: ScanStats | None = None
         self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
@@ -135,10 +138,17 @@ class ConnectorContext:
 
     def checked_records(self, records: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
         self.check_deadline()
-        for record in records:
+        iterator = iter(records)
+        while True:
+            # A for-loop fetches the next record before entering its body.
+            # Fetching may issue another SDK request, so check first as well.
+            self.check_deadline()
+            try:
+                record = next(iterator)
+            except StopIteration:
+                return
             self.check_deadline()
             yield record
-        self.check_deadline()
 
     # ---------------------------------------------------------------- config
     def get(self, key: str, default: Any = None, env: str | None = None) -> Any:

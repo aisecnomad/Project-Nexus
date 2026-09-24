@@ -399,7 +399,7 @@ class IncrementalCache:
             stats = ScanStats(
                 connector=spec.id, started_at=now_iso(), finished_at=now_iso(),
                 findings=len(findings), objects_examined=0,
-                warnings=sanitize(payload["warnings"]), cached=True, cache_key=snapshot.fingerprint,
+                warnings=sanitize(payload["warnings"]), cached=True,
             )
             return findings, stats
         except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
