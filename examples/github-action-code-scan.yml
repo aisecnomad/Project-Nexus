@@ -2,9 +2,10 @@
 # agent frameworks, MCP configs, coding-agent configs, IaC and LLM credentials
 # and uploads the results to GitHub code scanning as SARIF.
 #
-# Pin ShadowScan itself to a commit SHA you have reviewed. Floating `main`
-# runs unreviewed scanner code in every consumer workflow. There is no
-# v0.1.0 tag as of this file; replace the SHA after you review a release.
+# Pin ShadowScan itself to a reviewed tag or full commit SHA. Floating `main`
+# runs unreviewed scanner code in every consumer workflow.
+# After this 0.1.1 release is tagged, prefer:
+#   pip install "git+https://github.com/aisecnomad/Project-Nexus.git@v0.1.1"
 name: ShadowScan
 on:
   pull_request:
@@ -20,11 +21,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install "git+https://github.com/aisecnomad/Project-Nexus.git@31fbf62c1ea9e8df64ced753cf237a3dcff65ef0"
+      - run: pip install "git+https://github.com/aisecnomad/Project-Nexus.git@v0.1.1"
       - run: shadowscan code . --inventory inventory/ --format sarif -o shadowscan.sarif --fail-on critical
       - uses: github/codeql-action/upload-sarif@e429ea58a9912cadc53f8132ad35562b54de1b30 # v3.38.1
         if: always() && hashFiles('shadowscan.sarif') != ''

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shadowscan"
-version = "0.1.0"
+version = "0.1.1"
 description = "ShadowScan: discover shadow AI agents across code, identity providers, LLM gateways, low-code platforms, SaaS, and cloud accounts."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -49,6 +49,8 @@ shadowscan = "shadowscan.cli:main"
 [project.urls]
 Homepage = "https://github.com/aisecnomad/Project-Nexus"
 Repository = "https://github.com/aisecnomad/Project-Nexus"
+Changelog = "https://github.com/aisecnomad/Project-Nexus/blob/main/CHANGELOG.md"
+Issues = "https://github.com/aisecnomad/Project-Nexus/issues"
 
 [tool.setuptools.packages.find]
 include = ["shadowscan*"]
