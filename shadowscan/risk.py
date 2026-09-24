@@ -10,6 +10,7 @@ Scores map to levels: >=75 critical, >=50 high, >=25 medium, >0 low.
 
 from __future__ import annotations
 
+from shadowscan.evidence import annotate_finding
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel
 from shadowscan.signatures import SignatureIndex
 
@@ -117,13 +118,16 @@ PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
 
 
 def assess(finding: Finding, index: SignatureIndex | None = None, inventory_present: bool = False) -> Risk:
+    annotate_finding(finding)
     factors: list[RiskFactor] = []
     raw = KIND_BASE.get(finding.kind, 5)
     factors.append(RiskFactor("kind", f"{finding.kind.value} finding", raw))
 
     if inventory_present:
         if finding.shadow:
-            factors.append(RiskFactor("shadow", "not present in the sanctioned agent inventory", 25))
+            tier = getattr(getattr(finding, "evidence_tier", None), "value", None) or "static_candidate"
+            shadow_weight = {"static_candidate": 5, "configured_resource": 15, "runtime_observed": 25, "corroborated": 25}.get(tier, 5)
+            factors.append(RiskFactor("shadow", "not present in the inventory supplied for this scan", shadow_weight))
         elif finding.shadow is False:
             factors.append(RiskFactor("registered", f"registered as {finding.registry_match}", -10))
     if not finding.owner:
@@ -187,9 +191,18 @@ def assess(finding: Finding, index: SignatureIndex | None = None, inventory_pres
             factors.append(RiskFactor("blast-radius", f"{users} users / installations", 5))
 
     total = sum(f.weight for f in factors)
-    # scale by confidence that this is really an agent / agent enabler
     scale = 0.6 + 0.4 * max(0.0, min(1.0, finding.confidence))
     score = int(round(max(0, min(100, total * scale))))
+    tier = getattr(getattr(finding, "evidence_tier", None), "value", None) or "static_candidate"
+    credential_tags = {"hardcoded-credential", "plaintext-credential", "inline-secrets"}
+    if (
+        finding.kind != Kind.SECRET
+        and tier == "static_candidate"
+        and not credential_tags.intersection(finding.tags)
+    ):
+        if score >= 50:
+            factors.append(RiskFactor("static-cap", "static evidence without runtime or credentials cannot reach high", 50 - score - 1))
+            score = 49
     if scale < 1.0:
         factors.append(RiskFactor("confidence-scaling", f"scaled by confidence {finding.confidence:.2f}", int(round(total * scale - total))))
     return Risk(score=score, level=RiskLevel.from_score(score), factors=factors)
