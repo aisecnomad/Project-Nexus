@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import csv
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -11,6 +13,7 @@ from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.reporters import FORMATS, render
+from shadowscan.reporters.html import _JS
 
 
 def _result(fixtures):
@@ -33,6 +36,9 @@ def test_all_formats_render(fixtures):
     assert md.startswith("# ShadowScan report") and "## Findings" in md and "Risk factors" in md
     html = render(result, "html")
     assert "<!doctype html>" in html and "tr class='row'" in html and "SHADOW" in html
+    script_hash = base64.b64encode(hashlib.sha256(_JS.encode("utf-8")).digest()).decode("ascii")
+    assert f"script-src 'sha256-{script_hash}'" in html
+    assert "default-src 'none'" in html and "name='referrer' content='no-referrer'" in html
     assert set(FORMATS) == {"table", "csv", "html", "json", "markdown", "sarif"}
 
 

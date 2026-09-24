@@ -29,6 +29,14 @@ def client(*responses, **kwargs):
     return HttpClient("https://api.example.com/v1", session=session, **kwargs), session
 
 
+def test_invalid_custom_header_does_not_echo_credential():
+    credential = "synthetic-header-credential"
+    with pytest.raises(ValueError) as exc:
+        HttpClient("https://api.example.com/v1", headers={"Authorization": f"Bearer {credential}\nInjected: yes"})
+    assert credential not in str(exc.value)
+    assert "invalid characters" in str(exc.value)
+
+
 @pytest.mark.parametrize("target", ["https://evil.example/items", "http://api.example.com/items", "https://api.example.com:444/items", "https://api.example.com@evil.example/items", "//evil.example/items"])
 def test_untrusted_origin_rejected_before_credentials_are_sent(target):
     http, session = client()
