@@ -432,3 +432,39 @@ Before broad deployment, retain evidence for each intended connector instance:
 
 These checks require operator-specific tenant access and operational decisions.
 Until completed, describe deployment status as pending tenant and container acceptance.
+
+## Consolidated candidate compatibility
+
+The consolidated review preserves the PR #30 runtime policies and incorporates
+verified additional fixes from PR #31. The supported deadline setting remains
+`options.connector_timeout_seconds` / `--connector-timeout-seconds` (default 120).
+Workers are not replaced after all capacity is occupied by blocked calls; the
+remaining queue is reported incomplete. The CLI does not forcibly exit from a
+library call. Continue to enforce the disposable worker's external job deadline.
+
+New Azure App Service settings and OCI Function exports store configuration under
+`environment`, which redacts every value even when a credential has an unusual
+name. Analyzers still accept older `settings` / `config` exports. GCP service-account
+exports include `key_coverage`; denied or malformed key listings carry an unknown
+count rather than an observed zero. Consumers must preserve that distinction.
+
+Corrected SSM parameter ARNs and nested GitLab group account paths can change the
+identity of affected findings. Duplicate source observations no longer inflate
+confidence. Review changed classifications and rebuild comparison baselines when
+adopting this candidate; the collection-scope digest already prevents automatic
+resolution across different scanner implementations.
+
+Offline export diagnostics are capped at 20 detailed messages plus a suppression
+message per file; context-generated errors and warnings are separately capped at
+1,000 plus a suppression message per connector. Suppression never clears incomplete
+coverage, and later valid records continue to be analyzed. Gateway detail caps
+also mark missing detail incomplete while preserving supported aggregate totals.
+
+JWKS documents are fetched lazily and cached only within a JWT analysis. Tokens
+with rejected algorithms do not trigger a lookup, and each token is still checked
+against its expected issuer and allowed keys. This is signature evidence, not an
+authorization or token-acceptance decision. Key rotation during the same analysis
+requires a new scan.
+
+See [the consolidated review](consolidated-review-2026-09-24.md) for verification
+evidence and implementation choices.

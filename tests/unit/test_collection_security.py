@@ -128,6 +128,6 @@ def test_foundry_rejects_untrusted_metadata_endpoint(index, monkeypatch):
     connector = AzureConnector(context(index, foundry_token="synthetic"))
     http = Mock()
     monkeypatch.setattr("shadowscan.connectors.cloud.azure.HttpClient", http)
-    with pytest.raises(RuntimeError):
-        list(connector._collect_agents({}, {"properties": {"endpoints": {"AI Foundry API": "https://evil.example"}}}))
+    assert list(connector._collect_agents({}, {"properties": {"endpoints": {"AI Foundry API": "https://evil.example"}}})) == []
+    assert connector.ctx.stats.incomplete
     http.assert_not_called()

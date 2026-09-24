@@ -17,6 +17,7 @@ def test_all_signatures_load_and_validate():
         assert s.signals, f"{s.id} has no signals"
         for sig in s.signals:
             assert sig.type in VALID_SIGNAL_TYPES
+            assert len(sig.compiled) == len(sig.bounded_compiled) == len(sig.patterns)
             for rx in sig.compiled:
                 assert isinstance(rx, re.Pattern)
 

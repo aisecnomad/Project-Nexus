@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from enum import Enum
@@ -20,6 +21,16 @@ from shadowscan.utils.redaction import sanitize
 
 FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v2"
 LEGACY_FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v1"
+
+
+def _validate_number(value: Any, name: str, *, minimum: float | None = None, maximum: float | None = None) -> None:
+    """Validate imported numeric fields without reflecting untrusted values."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"finding {name} must be a finite number")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"finding {name} must be a finite number")
+    if (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
+        raise ValueError(f"finding {name} is outside its allowed range")
 
 
 class Surface(str, Enum):
@@ -254,12 +265,18 @@ class Finding:
         d["surface"] = Surface(d["surface"])
         d["kind"] = Kind(d["kind"])
         d["likelihood"] = Likelihood(d.get("likelihood", "weak"))
-        risk = d.get("risk") or {}
+        _validate_number(d.get("confidence", 0.0), "confidence", minimum=0, maximum=1)
+        risk = d.get("risk")
+        if risk is None:
+            risk = {}
         if not isinstance(risk, dict):
             raise ValueError("finding risk must be an object")
+        _validate_number(risk.get("score", 0), "risk score", minimum=0, maximum=100)
         factors = risk.get("factors", [])
         if not isinstance(factors, list) or any(not isinstance(factor, dict) for factor in factors):
             raise ValueError("finding risk factors must be objects")
+        for factor in factors:
+            _validate_number(factor.get("weight"), "risk factor weight")
         d["risk"] = Risk(
             score=risk.get("score", 0),
             level=RiskLevel(risk.get("level", "info")),
@@ -269,6 +286,8 @@ class Finding:
         evidence = d.get("evidence", [])
         if not isinstance(evidence, list) or any(not isinstance(item, dict) for item in evidence):
             raise ValueError("finding evidence must be objects")
+        for item in evidence:
+            _validate_number(item.get("weight", 0.5), "evidence weight", minimum=0, maximum=1)
         evidence_fields = {attr.name for attr in fields(Evidence)}
         d["evidence"] = [Evidence(**{name: value for name, value in item.items() if name in evidence_fields})
                          for item in evidence]

@@ -8,7 +8,7 @@ acceptance service.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 ALLOWED_JWT_ALGS = ("RS256", "ES256", "EdDSA", "PS256")
@@ -56,6 +56,23 @@ def _signature_candidate(item: Any, *, alg: str, kid: str | None) -> bool:
     return True
 
 
+def fetch_jwks(jwks_url: str) -> dict[str, Any]:
+    """Fetch and shape-check a JWKS document over the shared, bounded transport."""
+    from shadowscan.utils.http import HttpClient, validate_url
+
+    url = validate_url(jwks_url)
+    client = HttpClient()
+    try:
+        document = client.get_json(url, max_bytes=MAX_JWKS_BYTES)
+    finally:
+        client.session.close()
+    if not isinstance(document, dict) or not isinstance(document.get("keys"), list):
+        raise ValueError("JWKS document is not a key set")
+    if len(document["keys"]) > _MAX_JWKS_KEYS:
+        raise ValueError("JWKS document has too many keys")
+    return document
+
+
 def verify_against_jwks(
     token: str,
     jwks_url: str,
@@ -63,17 +80,18 @@ def verify_against_jwks(
     *,
     expected_issuer: str | None = None,
     allowed_algorithms: Sequence[str] | None = None,
+    document_loader: Callable[[str], dict[str, Any]] | None = None,
 ) -> bool:
     """Verify a signature with exactly one eligible public key.
 
     ``expected_issuer`` is an explicit operator-supplied claim value. It need
     not share a host with the configured JWKS endpoint (CDN and central IdP key
     endpoints are valid). Without it, success establishes a signature only.
+    ``document_loader`` may provide a per-analysis cache. It is invoked only
+    after header validation, so rejected algorithms never trigger network IO.
     """
     import jwt as pyjwt
     from jwt import PyJWK
-
-    from shadowscan.utils.http import HttpClient, validate_url
 
     allowed = verification_algorithms(allowed_algorithms)
     alg = header.get("alg")
@@ -86,12 +104,7 @@ def verify_against_jwks(
         raise ValueError("JWT key ID must be a nonempty string")
     if expected_issuer is not None and (not isinstance(expected_issuer, str) or not expected_issuer):
         raise ValueError("JWT expected_issuer must be a nonempty string")
-    url = validate_url(jwks_url)
-    client = HttpClient()
-    try:
-        document = client.get_json(url, max_bytes=MAX_JWKS_BYTES)
-    finally:
-        client.session.close()
+    document = (document_loader or fetch_jwks)(jwks_url)
     if not isinstance(document, dict) or not isinstance(document.get("keys"), list):
         raise ValueError("JWKS document is not a key set")
     keys = document["keys"]

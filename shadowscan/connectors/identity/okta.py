@@ -21,6 +21,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
 
 
@@ -102,7 +103,12 @@ class OktaConnector(BaseConnector):
                 self.ctx.warn("identity.okta: malformed application record; coverage incomplete")
                 continue
             self.ctx.examined()
-            f = self._app_finding(app)
+            try:
+                f = self._app_finding(app)
+            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"identity.okta: skipped a malformed application record ({type(exc).__name__}){detail}")
+                continue
             if f:
                 yield f
 

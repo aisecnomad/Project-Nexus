@@ -17,6 +17,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
 
 
@@ -120,7 +121,12 @@ class Auth0Connector(BaseConnector):
                 clients.append(rec)
         for c in clients:
             self.ctx.examined()
-            f = self._client_finding(c, grants.get(c.get("client_id", ""), []))
+            try:
+                f = self._client_finding(c, grants.get(c.get("client_id", ""), []))
+            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"identity.auth0: skipped a malformed client record ({type(exc).__name__}){detail}")
+                continue
             if f:
                 yield f
 

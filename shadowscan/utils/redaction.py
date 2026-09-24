@@ -26,16 +26,22 @@ _SENSITIVE_SUFFIXES = (
     "secretstring", "secretbinary", "connectionstring", "connstr",
 )
 _SENSITIVE_NAMES = {"token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie"}
+# Keep this backstop aligned with detectable credential formats regardless of
+# which signature packs the operator enables for discovery.
 _SECRET_TOKEN = re.compile(
-    r"\b(?:sk-(?:proj-|ant-|live-|or-v1-)?[A-Za-z0-9_-]{8,}"
+    r"\b(?:sk-(?:proj-|ant-|live-|or-v1-|lf-|litellm-|svcacct-|admin-)?[A-Za-z0-9_-]{8,}"
     r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
     r"|glpat-[A-Za-z0-9_-]{8,}"
     r"|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{16,}"
-    r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,})\b"
+    r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,}"
+    r"|gsk_[A-Za-z0-9]{40,}|pcsk_[A-Za-z0-9_]{20,}|e2b_[a-f0-9]{40}|tgp_v1_[A-Za-z0-9_-]{30,}"
+    r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}"
+    r"|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}"
+    r"|r8_[A-Za-z0-9]{30,}|fc-[a-f0-9]{32}|app-[A-Za-z0-9]{24})\b"
 )
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
 _PEM = re.compile(r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)", re.DOTALL)
-_AUTH = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9+/_.=-]+")
+_AUTH = re.compile(r"(?i)\b(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 # Bounded identifiers keep scanning linear on long lines of non-matching text.
 _ASSIGNMENT = re.compile(
@@ -62,6 +68,7 @@ _YAML_CONTINUATION_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n|\Z)")
 _MAX_SANITIZATION_NODES = 100_000
 _MAX_SANITIZATION_CHARS = 64 * 1024 * 1024
 _MAX_REDACTION_WORK = 128 * 1024 * 1024
+_KEY_NORMALISE = re.compile(r"[^a-z0-9]")
 
 
 class SanitizationLimitError(ValueError):
@@ -298,7 +305,7 @@ def _redact_python_assignments(text: str) -> str:
 
 
 def _sensitive_key(key: str) -> bool:
-    normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+    normalized = _KEY_NORMALISE.sub("", key.lower())
     return normalized in _SENSITIVE_NAMES or normalized.endswith(_SENSITIVE_SUFFIXES)
 
 
@@ -412,6 +419,11 @@ def sanitize(value: Any) -> Any:
         if isinstance(child, str) and len(child) >= 8:
             if child != REDACTED and not _FINGERPRINT.fullmatch(child):
                 known.add(child)
+                # Library diagnostics often use repr(), which escapes secret
+                # control characters. Remove both spellings in sibling fields.
+                escaped = repr(child)[1:-1]
+                if escaped != child:
+                    known.add(escaped)
 
     discovered: set[int] = set()
 

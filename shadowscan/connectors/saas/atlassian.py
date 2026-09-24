@@ -66,12 +66,30 @@ class AtlassianConnector(BaseConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for p in records:
+            if not self._valid_provider_record(p):
+                self.ctx.warn("saas.atlassian: unsupported or malformed app record; coverage incomplete")
+                continue
             if not p.get("userInstalled", True) and not p.get("_force"):
                 continue
             self.ctx.examined()
             f = self._app_finding(p)
             if f:
                 yield f
+
+    def _valid_provider_record(self, p: Any) -> bool:
+        if not self._record_fields_valid(
+            p, strings=("name", "key", "description", "version", "_product"),
+            mappings=("links",), arrays=("scopes",),
+        ):
+            return False
+        vendor = p.get("vendor")
+        return (
+            bool((p.get("key") or p.get("name") or "").strip())
+            and (vendor is None or isinstance(vendor, str) or self._record_fields_valid(vendor, strings=("name", "link")))
+            and self._record_fields_valid(p.get("links") or {}, strings=("self",))
+            and all(isinstance(scope, str) for scope in (p.get("scopes") or []))
+            and all(p.get(key) is None or isinstance(p[key], bool) for key in ("userInstalled", "enabled", "_force"))
+        )
 
     def _app_finding(self, p: dict[str, Any]) -> Finding | None:
         name = p.get("name") or p.get("key")

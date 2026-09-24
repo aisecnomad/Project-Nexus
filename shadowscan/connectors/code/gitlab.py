@@ -95,7 +95,7 @@ class GitLabConnector(BaseConnector):
                 yield _remote_record(data)
         if group:
             gid = quote(str(group), safe="")
-            yield from self._group_identities(gid)
+            yield from self._group_identities(str(group), gid)
             params = {"per_page": 100, "include_subgroups": "true", "archived": "false" if not self.include_archived else None, "order_by": "last_activity_at", "simple": "false"}
             params = {k: v for k, v in params.items() if v is not None}
             for p in self.http.paginate_link(f"/groups/{gid}/projects", params=params):
@@ -107,14 +107,17 @@ class GitLabConnector(BaseConnector):
                 seen.add(p["id"])
                 yield _remote_record(p)
 
-    def _group_identities(self, gid: str) -> Iterator[dict[str, Any]]:
+    def _group_identities(self, group: str, gid: str | None = None) -> Iterator[dict[str, Any]]:
+        # ``gid`` is the URL-encoded path used in requests; records and the
+        # finding identities derived from them carry the plain group path.
+        gid = gid if gid is not None else quote(group, safe="")
         for sa in self._optional_list(f"/groups/{gid}/service_accounts"):
-            yield _GitLabMetadata("service_account", {**sa, "group": gid})
+            yield _GitLabMetadata("service_account", {**sa, "group": group})
         for tok in self._optional_list(f"/groups/{gid}/access_tokens"):
-            yield _GitLabMetadata("group_access_token", {**tok, "group": gid})
+            yield _GitLabMetadata("group_access_token", {**tok, "group": group})
         variables = [{k: v for k, v in var.items() if k != "value"} for var in self._optional_list(f"/groups/{gid}/variables")]
         if variables:
-            yield _GitLabMetadata("group_variables", {"group": gid, "variables": variables})
+            yield _GitLabMetadata("group_variables", {"group": group, "variables": variables})
         group = self.http.try_get_json(f"/groups/{gid}")
         if isinstance(group, dict) and (group.get("duo_features_enabled") is not None):
             yield _GitLabMetadata("duo", {"group": group.get("full_path"), "duo_features_enabled": group.get("duo_features_enabled"), "lock_duo_features_enabled": group.get("lock_duo_features_enabled")})
@@ -176,7 +179,9 @@ class GitLabConnector(BaseConnector):
             tmp: str | None = None
             try:
                 if not local:
-                    tmp = tempfile.mkdtemp(prefix="shadowscan-gl-", dir=self.ctx.workdir)
+                    # The scan root check rejects symlinked ancestors; the
+                    # default temp directory has one on macOS (/var -> /private/var).
+                    tmp = os.path.realpath(tempfile.mkdtemp(prefix="shadowscan-gl-", dir=self.ctx.workdir))
                     local = self._fetch(rec, tmp)
                     if not local:
                         continue

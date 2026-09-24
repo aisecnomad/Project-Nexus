@@ -9,14 +9,17 @@ import contextvars
 import ipaddress
 import json
 import logging
+import re
 import socket
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
 from requests.adapters import HTTPAdapter
+from requests.exceptions import InvalidHeader
+from requests.utils import check_header_validity
 from urllib3.connection import HTTPSConnection
 from urllib3.connectionpool import HTTPSConnectionPool
 from urllib3.exceptions import ConnectTimeoutError, NameResolutionError, NewConnectionError
@@ -30,10 +33,37 @@ DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_RETRY_DELAY = 120
 RETRY_STATUSES = {429, 500, 502, 503, 504}
+_HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
 
 _allow_private_origin: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "shadowscan_allow_private_origin", default=False
 )
+
+
+def _validate_headers(headers: Any, *, allow_removal: bool = False) -> None:
+    """Reject malformed headers without putting their names or values in errors.
+
+    requests and the underlying HTTP transport quote invalid input in errors.
+    Header names can contain credentials too, so diagnostics are deliberately
+    independent of both. Per-request None retains requests' removal semantics.
+    """
+    if headers is None:
+        return
+    if not isinstance(headers, Mapping):
+        raise ValueError("HTTP headers must be a mapping")
+    for name, value in headers.items():
+        try:
+            encoded_name = name.encode("ascii") if isinstance(name, str) else name
+            if not isinstance(encoded_name, bytes) or not _HEADER_NAME.fullmatch(encoded_name):
+                raise ValueError
+            if allow_removal and value is None:
+                continue
+            check_header_validity((name, value))
+            encoded_value = value.encode("latin-1") if isinstance(value, str) else value
+            if any(byte < 32 and byte != 9 or byte == 127 for byte in encoded_value):
+                raise ValueError
+        except (InvalidHeader, TypeError, ValueError, UnicodeError):
+            raise ValueError("HTTP header contains invalid characters or types") from None
 
 
 def _positive_byte_limit(value: int | None, default: int) -> int:
@@ -252,6 +282,8 @@ class HttpClient:
         if not isinstance(self.allow_private_origin, bool):
             raise TypeError("allow_private_origin must be a boolean")
         self.session = session or requests.Session()
+        _validate_headers(self.session.headers)
+        _validate_headers(headers)
         # Environment proxies can resolve destinations outside our socket policy.
         # Explicit proxies are refused by the adapter as well.
         self.session.trust_env = False
@@ -286,6 +318,8 @@ class HttpClient:
     def request(self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any) -> requests.Response:
         if not isinstance(raise_for_status, bool):
             raise TypeError("raise_for_status must be a boolean")
+        _validate_headers(self.session.headers)
+        _validate_headers(kwargs.get("headers"), allow_removal=True)
         url = self._url(path)
         # requests treats any falsy effective setting as CERT_NONE, including
         # 0, an empty CA path and a session-level None. Per-request None inherits
@@ -314,7 +348,11 @@ class HttpClient:
                 raise ValueError("HTTP destination policy adapter was replaced")
             attempt += 1
             self.requests_made += 1
-            resp = self.session.request(method, url, **kwargs)
+            try:
+                resp = self.session.request(method, url, **kwargs)
+            except InvalidHeader:
+                # Auth handlers can add headers after our preflight validation.
+                raise ValueError("HTTP header contains invalid characters or types") from None
             if resp.status_code in {301, 302, 303, 307, 308}:
                 location = resp.headers.get("Location")
                 resp.close()

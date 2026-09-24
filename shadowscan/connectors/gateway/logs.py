@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections import Counter, OrderedDict
 from collections.abc import Iterable, Iterator
@@ -107,16 +108,19 @@ def _b(v: Any) -> bool | None:
 
 def _i(v: Any) -> int:
     try:
-        return int(float(v))
-    except (TypeError, ValueError):
+        number = float(v)
+    except (TypeError, ValueError, OverflowError):
         return 0
+    return int(number) if math.isfinite(number) else 0
 
 
 def _f(v: Any) -> float:
+    """Finite floats only: NaN/Infinity would poison caller totals and the JSON report."""
     try:
-        return float(v)
-    except (TypeError, ValueError):
+        number = float(v)
+    except (TypeError, ValueError, OverflowError):
         return 0.0
+    return number if math.isfinite(number) else 0.0
 
 
 def _has_tools(obj: Any) -> bool | None:
@@ -254,9 +258,18 @@ def detect_schema(rec: dict[str, Any]) -> str:
 
 def normalise(rec: dict[str, Any], schema: str) -> Event | None:
     """Normalize without retaining credentials, including in nested metadata."""
+    return normalise_with_record(rec, schema)[0]
+
+
+def normalise_with_record(rec: dict[str, Any], schema: str) -> tuple[Event | None, dict[str, Any] | None]:
+    """Normalize and also return the sanitized source record.
+
+    Sanitizing a record is the dominant per-record cost; callers that need the
+    clean record for scope attribution must not sanitize it a second time.
+    """
     ev = _normalise(rec, schema)
     if ev is None:
-        return None
+        return None, None
     # Validate scalar fields before attribution or counters are updated. JSON
     # containers in headers/identity fields otherwise fail partway through
     # accumulation and can discard all callers collected before that record.
@@ -277,8 +290,8 @@ def normalise(rec: dict[str, Any], schema: str) -> Event | None:
             ev.caller_label = opaque_id
     # Include original credential-bearing fields so duplicated opaque secrets in
     # unrelated metadata are scrubbed before samples are truncated.
-    clean = sanitize({"record": rec, "event": asdict(ev)})["event"]
-    return Event(**clean)
+    clean = sanitize({"record": rec, "event": asdict(ev)})
+    return Event(**clean["event"]), clean["record"]
 
 
 def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
@@ -632,9 +645,13 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
 
 # --------------------------------------------------------------- text logs
 
+# These stdlib patterns run outside the signature engine's regex timeouts, so
+# they must be linear: possessive tokens (Python 3.11+) never backtrack into a
+# long unterminated request or a bare token blob to retry a failed match.
 _COMBINED = re.compile(
-    r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>\S+)[^"]*" (?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
+    r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>[^\s"]++)[^"]*" (?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
 )
+_LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=("[^"]*"|\S+)')
 _HOST_IN_LINE = re.compile(r"\b(?:host|authority|upstream_host|server_name)[=:]\s*\"?([A-Za-z0-9.-]+\.[a-z]{2,})", re.I)
 
 
@@ -655,7 +672,7 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
         return rec
     # key=value logfmt
     if "=" in line and " " in line:
-        kv = dict(re.findall(r'(\w[\w.-]*)=("[^"]*"|\S+)', line))
+        kv = dict(_LOGFMT_PAIR.findall(line))
         if kv:
             return {k: v.strip('"') for k, v in kv.items()}
     return None
@@ -699,6 +716,7 @@ class _Caller:
     records: int = 0
     aggregate_records: int = 0
     usage_intervals: list[dict[str, Any]] = field(default_factory=list)
+    usage_intervals_dropped: int = 0
     first: datetime | None = None
     last: datetime | None = None
     models: Counter = field(default_factory=Counter)
@@ -722,6 +740,30 @@ class _Caller:
     metadata_samples: dict[str, Any] = field(default_factory=dict)
     scope: dict[str, str] = field(default_factory=dict)
     observations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    observations_dropped: int = 0
+    distribution_events_dropped: Counter = field(default_factory=Counter)
+
+
+# Per-caller distributions keep this many distinct keys. Counts for omitted
+# labels are tracked separately so no synthetic label can become a model,
+# provider, or owner. Memory remains bounded as record cardinality increases.
+_MAX_DISTINCT_KEYS = 2000
+_MAX_INVALID_LINE_ERRORS = 20
+
+
+def _count(counter: Counter, key: str, amount: int, dropped: Counter, dimension: str) -> None:
+    if key not in counter and len(counter) >= _MAX_DISTINCT_KEYS:
+        # These are request counts, not counts of distinct omitted labels:
+        # tracking distinct labels would defeat the cardinality limit.
+        dropped[dimension] += amount
+        return
+    counter[key] += amount
+
+
+def _json_lines_fallback(lines: list[str]) -> bool:
+    """Reject obvious pretty-printed documents; retain later valid JSONL rows."""
+    first = next((line.strip() for line in lines if line.strip()), "")
+    return bool(first) and first != "{" and not first.startswith("[")
 
 
 class GatewayLogConnector(BaseConnector):
@@ -896,8 +938,14 @@ class GatewayLogConnector(BaseConnector):
                 try:
                     data = json.loads(text)
                 except json.JSONDecodeError:
-                    # A .json export may contain one JSON object per line.
-                    yield from self._json_gateway_lines(text.splitlines())
+                    # A .json export may contain one JSON object per line. A
+                    # corrupted pretty-printed document is not one: reporting
+                    # every line of it individually would flood the report.
+                    lines = text.splitlines()
+                    if _json_lines_fallback(lines):
+                        yield from self._json_gateway_lines(lines)
+                    else:
+                        self.ctx.error("gateway.logs: invalid JSON export")
                 except (RecursionError, ValueError):
                     self.ctx.error("gateway.logs: invalid JSON export")
                 else:
@@ -936,6 +984,7 @@ class GatewayLogConnector(BaseConnector):
             yield from self._unwrap(data, lambda message: self.ctx.error(f"gateway.logs: {message}"))
 
     def _json_gateway_lines(self, lines: Iterable[str]) -> Iterator[dict[str, Any]]:
+        invalid = 0
         for number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
@@ -944,11 +993,15 @@ class GatewayLogConnector(BaseConnector):
                 return
             try:
                 data = json.loads(line)
-            except (json.JSONDecodeError, RecursionError, ValueError):
-                self.ctx.error(f"gateway.logs: invalid JSON record at line {number}")
-                continue
-            if not isinstance(data, dict):
-                self.ctx.error(f"gateway.logs: line {number}: JSONL records must be objects")
+                if not isinstance(data, dict):
+                    raise ValueError("JSONL records must be objects")
+            except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+                invalid += 1
+                if invalid <= _MAX_INVALID_LINE_ERRORS:
+                    detail = "JSONL records must be objects" if isinstance(exc, ValueError) and not isinstance(exc, json.JSONDecodeError) else "invalid JSON record"
+                    self.ctx.error(f"gateway.logs: line {number}: {detail}")
+                elif invalid == _MAX_INVALID_LINE_ERRORS + 1:
+                    self.ctx.error("gateway.logs: further invalid records in this export are not listed individually")
                 continue
             for rec in self._gateway_records(data):
                 yield from self._expand_record(rec)
@@ -956,8 +1009,7 @@ class GatewayLogConnector(BaseConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         callers: dict[str, _Caller] = {}
-        # Headers repeat across exported requests. Keep only successful immutable
-        # framework summaries for this analysis, with bounded keys and entries.
+        # Cache successful immutable framework summaries for this analysis only.
         framework_cache: OrderedDict[str, tuple[str, ...]] = OrderedDict()
         n = 0
         skipped = 0
@@ -968,7 +1020,7 @@ class GatewayLogConnector(BaseConnector):
             n += 1
             try:
                 schema = self.format or detect_schema(rec)
-                ev = normalise(rec, schema)
+                ev, clean = normalise_with_record(rec, schema)
                 if ev is None:
                     self.ctx.warn(f"gateway.logs: unrecognized record {n}; could not identify a caller")
                     skipped += 1
@@ -978,7 +1030,7 @@ class GatewayLogConnector(BaseConnector):
                 if schema in {"access-log", "generic"} and self.llm_hosts_only and not self._is_llm_traffic(ev):
                     skipped += 1
                     continue
-                self._runtime_context(ev, rec, framework_cache)
+                self._runtime_context(ev, rec, framework_cache, clean)
                 self._accumulate(callers, ev)
             except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
                     RecursionError, ConnectorError, MatchTimeoutError) as exc:
@@ -991,14 +1043,29 @@ class GatewayLogConnector(BaseConnector):
         for c in callers.values():
             if c.events < self.min_events:
                 continue
-            yield self._finding(c)
+            if c.observations_dropped or c.usage_intervals_dropped:
+                self.ctx.warn("gateway.logs: per-caller runtime detail limit reached; request totals retained")
+            if c.distribution_events_dropped:
+                self.ctx.warn("gateway.logs: per-caller distribution limit reached; classification and attribution may be incomplete; request totals retained")
+            try:
+                yield self._finding(c)
+            except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
+                    RecursionError, ConnectorError, MatchTimeoutError) as exc:
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"gateway.logs: caller analysis failed ({type(exc).__name__}){detail}")
 
     def _runtime_context(
         self, ev: Event, rec: dict[str, Any], framework_cache: OrderedDict[str, tuple[str, ...]],
+        clean: dict[str, Any] | None = None,
     ) -> None:
-        """Operator bindings identify workloads; log names alone never do."""
+        """Operator bindings identify workloads; log names alone never do.
+
+        ``rec`` is the raw record (its credential field decides binding
+        assurance); ``clean`` is its sanitized copy when the caller already
+        has one, so the record is not sanitized twice.
+        """
         identity_assurance = self._binding_identity_assurance(ev, rec)
-        rec = sanitize(rec)
+        rec = sanitize(rec) if clean is None else clean
         aliases = {
             "tenant": ("tenant_id", "tenant", "organization_id", "org_id", "metadata.tenant_id", "metadata.tenant", "identity.claims.tid", "properties.identity.claims.tid"),
             "account": ("account_id", "accountId", "account", "subscription_id", "subscriptionId", "metadata.account_id", "metadata.account"),
@@ -1088,6 +1155,11 @@ class GatewayLogConnector(BaseConnector):
     def _accumulate(callers: dict[str, _Caller], ev: Event) -> None:
         identity = json.dumps([ev.caller, ev.scope], sort_keys=True)
         c = callers.get(identity)
+        total_cost = (c.cost if c is not None else 0.0) + ev.cost
+        if not math.isfinite(total_cost):
+            # Validate before changing any caller counts, preserving atomic
+            # accumulation when individually finite costs overflow in aggregate.
+            raise ValueError("gateway cost total exceeds finite numeric range")
         if c is None:
             c = callers[identity] = _Caller(ev.caller, ev.caller_kind, ev.caller_label, scope=dict(ev.scope))
         c.events += ev.request_count
@@ -1103,24 +1175,28 @@ class GatewayLogConnector(BaseConnector):
                 c.hours[ev.timestamp.hour] += 1
                 c.weekdays[ev.timestamp.weekday()] += 1
         if ev.aggregated:
-            c.usage_intervals.append({"start": to_iso(ev.timestamp), "end": to_iso(ev.interval_end),
-                                      "requests": ev.request_count, "model": ev.model})
+            if len(c.usage_intervals) < _MAX_DISTINCT_KEYS:
+                c.usage_intervals.append({"start": to_iso(ev.timestamp), "end": to_iso(ev.interval_end),
+                                          "requests": ev.request_count, "model": ev.model})
+            else:
+                c.usage_intervals_dropped += 1
         if ev.model:
-            c.models[str(ev.model)] += ev.request_count
+            _count(c.models, str(ev.model), ev.request_count, c.distribution_events_dropped, "models")
         if ev.provider:
-            c.providers[str(ev.provider)] += ev.request_count
+            _count(c.providers, str(ev.provider), ev.request_count, c.distribution_events_dropped, "providers")
         if ev.host:
-            c.hosts[ev.host] += ev.request_count
+            _count(c.hosts, ev.host, ev.request_count, c.distribution_events_dropped, "hosts")
         if ev.user_agent:
-            c.user_agents[str(ev.user_agent)[:160]] += ev.request_count
+            _count(c.user_agents, str(ev.user_agent)[:160], ev.request_count, c.distribution_events_dropped, "user_agents")
         if ev.ip:
-            c.ips[ev.ip] += ev.request_count
+            _count(c.ips, ev.ip, ev.request_count, c.distribution_events_dropped, "source_ips")
         if ev.user:
-            c.users[ev.user] += ev.request_count
+            _count(c.users, ev.user, ev.request_count, c.distribution_events_dropped, "end_users")
         if ev.team:
-            c.teams[str(ev.team)] += ev.request_count
+            _count(c.teams, str(ev.team), ev.request_count, c.distribution_events_dropped, "teams")
         if ev.path:
-            c.paths[str(ev.path)[:120]] += ev.request_count
+            # Query strings carry per-request identifiers; the operation is the path.
+            _count(c.paths, str(ev.path).split("?", 1)[0][:120], ev.request_count, c.distribution_events_dropped, "operations")
         if ev.tools is not None:
             c.tool_known += ev.request_count
             if ev.tools:
@@ -1129,13 +1205,17 @@ class GatewayLogConnector(BaseConnector):
             c.tool_call_responses += ev.request_count
         c.tokens_in += ev.tokens_in
         c.tokens_out += ev.tokens_out
-        c.cost += ev.cost
+        c.cost = total_cost
         if ev.status and (ev.status.startswith(("4", "5")) or ev.status.lower() in {"error", "failure", "failed"}):
             c.errors += 1
         for k, v in ev.metadata.items():
             if v not in (None, "", {}, []) and k not in c.metadata_samples:
                 c.metadata_samples[k] = v if isinstance(v, (str, int, float, bool)) else json.dumps(v, default=str)[:300]
         bucket = json.dumps([ev.code_resources, ev.runtime_frameworks, ev.environment, ev.identity_assurance])
+        if bucket not in c.observations and len(c.observations) >= _MAX_DISTINCT_KEYS:
+            # Hostile exports can vary the environment label per record.
+            c.observations_dropped += ev.request_count
+            return
         observation = c.observations.setdefault(bucket, {
             "code_resources": ev.code_resources,
             "frameworks": ev.runtime_frameworks,
@@ -1219,7 +1299,13 @@ class GatewayLogConnector(BaseConnector):
         if c.errors and c.errors / c.events > 0.2:
             f.add_tag("high-error-rate")
 
-        f.owner = (c.users.most_common(1)[0][0] if c.users else None) or (c.teams.most_common(1)[0][0] if c.teams else None)
+        # A truncated distribution cannot establish its most frequent owner.
+        # Leave attribution unknown rather than promote the retained subset.
+        if not c.distribution_events_dropped.get("end_users"):
+            if c.users:
+                f.owner = c.users.most_common(1)[0][0]
+            elif c.teams and not c.distribution_events_dropped.get("teams"):
+                f.owner = c.teams.most_common(1)[0][0]
         f.metadata.update(
             {
                 "caller_kind": c.kind,
@@ -1228,6 +1314,7 @@ class GatewayLogConnector(BaseConnector):
                 "records": c.records,
                 "aggregate_records": c.aggregate_records,
                 "usage_intervals": c.usage_intervals,
+                "usage_intervals_dropped": c.usage_intervals_dropped,
                 "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
                 "models": dict(c.models.most_common(10)),
                 "providers": dict(c.providers.most_common(5)),
@@ -1237,6 +1324,11 @@ class GatewayLogConnector(BaseConnector):
                 "end_users": dict(c.users.most_common(5)),
                 "teams": dict(c.teams.most_common(3)),
                 "operations": dict(c.paths.most_common(5)),
+                "distribution_events_dropped": dict(c.distribution_events_dropped),
+                "distribution_limit": _MAX_DISTINCT_KEYS,
+                "classification_incomplete": any(c.distribution_events_dropped.get(name) for name in (
+                    "models", "providers", "hosts", "user_agents", "end_users", "teams",
+                )),
                 "tool_requests": c.tools_requests,
                 "tool_call_responses": c.tool_call_responses,
                 "tokens_in": c.tokens_in,
@@ -1247,6 +1339,7 @@ class GatewayLogConnector(BaseConnector):
                 "samples": c.metadata_samples,
                 "correlation_scope": c.scope,
                 "runtime_observations": list(c.observations.values()),
+                "runtime_observations_dropped": c.observations_dropped,
                 "runtime_source": {"id": self.source_id, "input": str(self.ctx.input_path or ""), "label": self.label, "schemas": sorted(c.schemas)},
             }
         )

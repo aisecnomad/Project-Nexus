@@ -25,7 +25,14 @@ from urllib.parse import urlsplit
 from requests import RequestException, Session
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.cloud.common import cloud_finding, done, name_hint, scan_env, scan_iam_actions
+from shadowscan.connectors.cloud.common import (
+    cloud_finding,
+    done,
+    name_hint,
+    scan_env,
+    scan_iam_actions,
+    string_list,
+)
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials, require_local_adc
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -57,7 +64,12 @@ class GcpConnector(BaseConnector):
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
-        self.locations = ctx.get("locations") or DEFAULT_LOCATIONS
+        try:
+            # Locations are interpolated into API hostnames.
+            self.locations = string_list(ctx.get("locations"), "locations", pattern=r"[a-z0-9-]+") or DEFAULT_LOCATIONS
+            self.projects = string_list(ctx.get("projects"), "projects", pattern=r"[A-Za-z0-9._:-]+") or []
+        except ValueError as exc:
+            raise ConnectorError(f"cloud.gcp: {exc}") from None
         self.audit_days = int(ctx.get("audit_days", 0))
         self.max_projects = int(ctx.get("max_projects", 200))
         if self.max_projects < 1:
@@ -184,7 +196,7 @@ class GcpConnector(BaseConnector):
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
-        projects: Iterable[str] = self.ctx.get("projects") or []
+        projects: Iterable[str] = self.projects
         if not projects:
             projects = (p["projectId"] for p in self._pages("https://cloudresourcemanager.googleapis.com/v1/projects", "projects", filter="lifecycleState:ACTIVE") if p.get("projectId"))
         for i, project in enumerate(projects):
@@ -216,15 +228,15 @@ class GcpConnector(BaseConnector):
             # project-visible locations through the documented v1 locations API.
             seen_locations: set[str] = set()
             for location in self._pages(f"https://run.googleapis.com/v1/projects/{project}/locations", "locations"):
-                loc = location.get("locationId")
-                if not isinstance(loc, str) or not re.fullmatch(r"[a-z][a-z0-9-]*[0-9]", loc):
+                run_location = location.get("locationId")
+                if not isinstance(run_location, str) or not re.fullmatch(r"[a-z][a-z0-9-]*[0-9]", run_location):
                     self.ctx.warn(f"cloud.gcp: invalid Cloud Run location for {project}; coverage unknown")
                     continue
-                if loc in seen_locations:
+                if run_location in seen_locations:
                     continue
-                seen_locations.add(loc)
-                for svc in self._pages(f"https://run.googleapis.com/v2/projects/{project}/locations/{loc}/services", "services"):
-                    yield {**svc, "_kind": "cloud-run-service", "_project": project, "_location": loc}
+                seen_locations.add(run_location)
+                for svc in self._pages(f"https://run.googleapis.com/v2/projects/{project}/locations/{run_location}/services", "services"):
+                    yield {**svc, "_kind": "cloud-run-service", "_project": project, "_location": run_location}
         if "cloudfunctions.googleapis.com" in enabled:
             for fn in self._pages(f"https://cloudfunctions.googleapis.com/v2/projects/{project}/locations/-/functions", "functions"):
                 yield {"_kind": "cloud-function", "_project": project, **fn}
@@ -235,12 +247,24 @@ class GcpConnector(BaseConnector):
                 self.ctx.warn(f"cloud.gcp: invalid IAM policy response for {project}")
             else:
                 yield {"_kind": "iam-policy", "_project": project, "bindings": policy.get("bindings", [])}
-        except (HttpError, RequestException) as exc:
+        except (HttpError, RequestException, ValueError) as exc:
             status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
             self.ctx.warn(f"cloud.gcp: IAM policy not readable for {project} ({status})")
         for sa in self._pages(f"https://iam.googleapis.com/v1/projects/{project}/serviceAccounts", "accounts"):
-            keys = self._get(f"https://iam.googleapis.com/v1/{sa['name']}/keys", keyTypes="USER_MANAGED") or {}
-            yield {"_kind": "service-account", "_project": project, "user_managed_keys": len(keys.get("keys", [])), **sa}
+            name = sa.get("name")
+            if not isinstance(name, str) or not re.fullmatch(r"projects/[A-Za-z0-9._:-]+/serviceAccounts/[^/?#\s]+", name):
+                self.ctx.warn(f"cloud.gcp: invalid service account identifier for {project}; coverage unknown")
+                continue
+            keys = self._get(f"https://iam.googleapis.com/v1/{name}/keys", keyTypes="USER_MANAGED")
+            key_list = keys.get("keys", []) if isinstance(keys, dict) and "error" not in keys else None
+            count = len(key_list) if isinstance(key_list, list) and all(isinstance(key, dict) for key in key_list) else None
+            complete = count is not None
+            if not complete:
+                self.ctx.warn(f"cloud.gcp: service account key inventory unavailable for {name}; coverage unknown")
+            # Access-denied and malformed responses must not be reported as zero keys.
+            yield {**sa, "_kind": "service-account", "_project": project,
+                   "user_managed_keys": count,
+                   "key_coverage": "observed" if complete else "unknown"}
         if "apikeys.googleapis.com" in enabled:
             for key in self._pages(f"https://apikeys.googleapis.com/v2/projects/{project}/locations/global/keys", "keys"):
                 yield {"_kind": "api-key", "_project": project, **key}
@@ -467,10 +491,13 @@ class GcpConnector(BaseConnector):
         name_hint(self.index, f, rec.get("displayName"), rec.get("description"), email.split("@")[0])
         if not f.frameworks:
             return None
-        f.add_evidence(Evidence(signal="gcp:service-account", description=f"Service account '{rec.get('displayName') or email}' with {rec.get('user_managed_keys', 0)} user-managed key(s); disabled={rec.get('disabled', False)}", weight=0.35))
-        if rec.get("user_managed_keys"):
+        keys = rec.get("user_managed_keys")
+        keys_known = isinstance(keys, int) and not isinstance(keys, bool) and keys >= 0 and rec.get("key_coverage") != "unknown"
+        key_description = f"{keys} user-managed key(s)" if keys_known else "unknown user-managed key inventory"
+        f.add_evidence(Evidence(signal="gcp:service-account", description=f"Service account '{rec.get('displayName') or email}' with {key_description}; disabled={rec.get('disabled', False)}", weight=0.35))
+        if isinstance(keys, int) and keys_known and keys > 0:
             f.add_tag("user-managed-keys")
-        f.metadata.update({"email": email, "keys": rec.get("user_managed_keys"), "disabled": rec.get("disabled")})
+        f.metadata.update({"email": email, "keys": keys if keys_known else None, "key_coverage": "observed" if keys_known else "unknown", "disabled": rec.get("disabled")})
         return done(f, self.index, Kind.SERVICE_IDENTITY)
 
     def _h_api_key(self, rec: dict[str, Any]) -> Finding | None:

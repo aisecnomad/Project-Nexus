@@ -165,7 +165,11 @@ def domain_matches(index: SignatureIndex, *urls: str | None) -> list[Match]:
 
 def classify_permissions(index: SignatureIndex, finding: Finding, scopes: Iterable[str]) -> None:
     """Record scopes on the finding and tag privileged / data-access / llm-access classes."""
+    unordered = isinstance(scopes, (set, frozenset))
     scopes = [str(s) for s in scopes if s]
+    if unordered:
+        # Sets depend on the process hash seed; keep reports reproducible.
+        scopes.sort()
     for s in scopes:
         if s not in finding.permissions:
             finding.permissions.append(s)

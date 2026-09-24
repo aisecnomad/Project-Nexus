@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import html
 import json
 
@@ -46,14 +48,25 @@ def render_html(result: ScanResult) -> str:
         finding.sanitize()
     s = result.summary()
     parts: list[str] = []
-    parts.append("<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>ShadowScan report</title><style>" + _CSS + "</style></head><body>")
+    script_hash = base64.b64encode(hashlib.sha256(_JS.encode("utf-8")).digest()).decode("ascii")
+    # Permit only the shipped filter/sort script. Finding text cannot authorize
+    # another script or trigger outbound resource loads if escaping regresses.
+    parts.append(
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; "
+        f"script-src 'sha256-{script_hash}'; style-src 'unsafe-inline'; "
+        "base-uri 'none'; form-action 'none'\">"
+        "<meta name='referrer' content='no-referrer'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>ShadowScan report</title><style>" + _CSS + "</style></head><body>"
+    )
     parts.append(f"<header><h1>ShadowScan report <span>v{_e(result.version)} · {_e(result.finished_at or result.started_at)}</span></h1><div class='muted'>Shadow AI agent discovery across code, identity, gateways, low-code, SaaS and cloud.</div></header>")
     if not result.complete:
         parts.append("<div class='controls'><strong class='shadow'>INCOMPLETE SCAN — some required inputs could not be assessed. Review connector statistics.</strong></div>")
     parts.append("<div class='stats'>")
     parts.append(f"<div class='stat'><b>{s['total']}</b>findings</div>")
     if result.inventory_size:
-        parts.append(f"<div class='stat'><b class='shadow'>{s['shadow']}</b>shadow (unregistered)</div><div class='stat'><b>{result.inventory_size}</b>registered agents</div>")
+        parts.append(f"<div class='stat'><b class='shadow'>{s['shadow']}</b>shadow (unregistered)</div><div class='stat'><b>{_e(result.inventory_size)}</b>registered agents</div>")
     for lvl in ("critical", "high", "medium", "low"):
         parts.append(f"<div class='stat'><b><span class='pill {lvl}'>{s['by_risk_level'].get(lvl, 0)}</span></b>{lvl}</div>")
     for k, v in sorted(s["by_surface"].items()):
@@ -69,8 +82,8 @@ def render_html(result: ScanResult) -> str:
     for f in result.findings:
         shadow = "" if f.shadow is None else ("yes" if f.shadow else "no")
         text = " ".join([f.title, f.resource, f.owner or "", " ".join(f.frameworks + f.model_providers + f.tags + f.capabilities), f.kind.value, f.surface.value, f.provider or ""]).lower()
-        parts.append(f"<tr class='row' data-score='{f.risk.score}' data-level='{f.risk.level.value}' data-shadow='{shadow}' data-surface='{_e(f.surface.value)}' data-kind='{_e(f.kind.value)}' data-title='{_e(f.title)}' data-owner='{_e(f.owner or '')}' data-confidence='{f.confidence}' data-text='{_e(text)}'>")
-        parts.append(f"<td><span class='pill {f.risk.level.value}'>{f.risk.level.value} {f.risk.score}</span></td><td>{'<span class=shadow>SHADOW</span>' if f.shadow else _e(f.registry_match or shadow)}</td><td>{_e(f.surface.value)}</td><td>{_e(f.kind.value)}</td><td>{_e(f.title)}<br><code>{_e(f.resource)}</code></td><td>{_e(f.owner or '—')}</td><td>{f.confidence:.2f}</td><td>{''.join(f'<span class=tag>{_e(t)}</span>' for t in (f.frameworks + f.model_providers)[:6])}</td></tr>")
+        parts.append(f"<tr class='row' data-score='{_e(f.risk.score)}' data-level='{f.risk.level.value}' data-shadow='{shadow}' data-surface='{_e(f.surface.value)}' data-kind='{_e(f.kind.value)}' data-title='{_e(f.title)}' data-owner='{_e(f.owner or '')}' data-confidence='{_e(f.confidence)}' data-text='{_e(text)}'>")
+        parts.append(f"<td><span class='pill {f.risk.level.value}'>{f.risk.level.value} {_e(f.risk.score)}</span></td><td>{'<span class=shadow>SHADOW</span>' if f.shadow else _e(f.registry_match or shadow)}</td><td>{_e(f.surface.value)}</td><td>{_e(f.kind.value)}</td><td>{_e(f.title)}<br><code>{_e(f.resource)}</code></td><td>{_e(f.owner or '—')}</td><td>{f.confidence:.2f}</td><td>{''.join(f'<span class=tag>{_e(t)}</span>' for t in (f.frameworks + f.model_providers)[:6])}</td></tr>")
         parts.append("<tr class='detail'><td colspan='8'>")
         parts.append(f"<div><b>Id</b> <code>{_e(f.id)}</code> · <b>connector</b> <code>{_e(f.connector)}</code> · <b>type</b> {_e(f.resource_type)} · <b>where</b> {_e(f.provider or '')} {_e(f.account or '')} {_e(f.region or '')} · <b>seen</b> {_e(f.first_seen or '?')} → {_e(f.last_seen or '?')}</div>")
         if f.capabilities:
@@ -104,7 +117,7 @@ def render_html(result: ScanResult) -> str:
     parts.append("<footer><b>Connector statistics</b><ul>")
     for st in result.stats:
         status = "skipped" if st.skipped else "incomplete" if st.incomplete or st.errors else "cached" if st.cached else "complete"
-        parts.append(f"<li>{_e(st.connector)}: {_e(status)}, {st.objects_examined} examined, {st.findings} findings")
+        parts.append(f"<li>{_e(st.connector)}: {_e(status)}, {_e(st.objects_examined)} examined, {_e(st.findings)} findings")
         diagnostics = [*st.errors, *st.warnings, *([st.skip_reason] if st.skip_reason else [])]
         if diagnostics:
             parts.append("<ul>" + "".join(f"<li>{_e(message)}</li>" for message in diagnostics) + "</ul>")

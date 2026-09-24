@@ -7,6 +7,8 @@ entry. Tenant canaries and container runtime acceptance are still required.
 
 ### Security
 
+- Validate headers before requests can echo credential-bearing invalid values; redact additional provider formats and escaped credentials before source excerpts are shortened.
+- Redact opaque Azure app settings and OCI Function configuration in record exports. Reject malformed numeric fields in imported findings and restrict HTML scripts to the shipped script's SHA-256 hash.
 - Redact multiline YAML credentials before evidence excerpts, and pin GitLab API tree pagination to an immutable commit.
 - Route GCP token refresh through bounded response and redirect policy.
 - Classify JWT issuer families by parsed hostname labels rather than substring matches.
@@ -18,12 +20,18 @@ entry. Tenant canaries and container runtime acceptance are still required.
 
 ### Reliability
 
+- Preserve valid cloud, identity and SaaS records after individual collection/analysis failures. GCP service-account key coverage now distinguishes unknown inventory from observed zero keys.
+- Normalize scalar cloud scope options and reject unknown AWS service selections instead of reporting an empty successful scan.
+- Bound diagnostic streams, gateway detail cardinality and numeric aggregates; isolate failures without losing later valid records.
+- Deduplicate repeated source observations without dropping distinct custom signal capabilities. Preserve caller scan budgets and bound concurrent manifest matching by both CPU and wall time.
 - Add a default 120-second connector deadline with incomplete-scan reporting. This is a soft thread deadline; host job timeouts remain necessary for blocked SDK/plugin calls.
 - Protect incremental cache slots with nonblocking POSIX advisory locks. Contention or missing platform locking falls back to full scans without unsafe cache reuse or saves.
 - Preserve the required CodeQL check name `analyze` and test hash-locked runtime installation in the Python 3.11/3.12 CI matrix.
 
 ### Operations
 
+- Reuse bounded inventory patterns and per-analysis JWKS documents; index source newlines, avoid unnecessary JSONC parsing and reuse OCI clients within one collection session.
+- Consolidate additional verified fixes from PR #31 on top of the PR #30 candidate; preserve PR #30's credential isolation, default deadlines and release gates.
 - Explain how to select and verify the final reviewed full commit SHA; avoid an install example that silently falls behind later candidate fixes.
 - Raise the development Ruff requirement to 0.16.8 and validate wheel installations against the runtime lock.
 - Correct README commands, formatting and discovery claims; document the active required checks and independent-review merge gate.

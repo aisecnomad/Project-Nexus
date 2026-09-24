@@ -36,6 +36,7 @@ from shadowscan.connectors.cloud.common import (
     scan_blob,
     scan_env,
     scan_iam_actions,
+    string_list,
 )
 from shadowscan.connectors.cloud.credentials import (
     allow_instance_credentials,
@@ -48,6 +49,7 @@ from shadowscan.utils.identity import has_aws_account_scope
 from shadowscan.utils.text import truncate
 
 DEFAULT_REGIONS = ["us-east-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"]
+KNOWN_SERVICES = frozenset({"bedrock", "agentcore", "lambda", "ecs", "sagemaker", "stepfunctions", "qbusiness", "lex", "iam", "secrets", "cloudtrail"})
 LLM_ACTION_PREFIXES = ("bedrock:", "bedrock-agentcore:", "sagemaker:invoke", "qbusiness:", "lex:", "q:", "kendra:")
 CLOUDTRAIL_EVENTS = ["InvokeModel", "InvokeModelWithResponseStream", "Converse", "ConverseStream", "InvokeAgent", "InvokeFlow", "InvokeInlineAgent", "InvokeAgentRuntime", "RetrieveAndGenerate", "InvokeEndpoint", "ChatSync"]
 MAX_LIST_PAGES = 1000
@@ -82,8 +84,17 @@ class AwsConnector(BaseConnector):
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
-        self.regions = ctx.get("regions") or DEFAULT_REGIONS
-        self.services = set(ctx.get("services") or ["bedrock", "agentcore", "lambda", "ecs", "sagemaker", "stepfunctions", "qbusiness", "lex", "iam", "secrets", "cloudtrail"])
+        try:
+            self.regions = string_list(ctx.get("regions"), "regions", pattern=r"[a-z0-9-]+") or DEFAULT_REGIONS
+            services = string_list(ctx.get("services"), "services") or sorted(KNOWN_SERVICES)
+        except ValueError as exc:
+            raise ConnectorError(f"cloud.aws: {exc}") from None
+        unknown = sorted(set(services) - KNOWN_SERVICES)
+        if unknown:
+            raise ConnectorError(f"cloud.aws: unknown services {', '.join(unknown)}; choose from {', '.join(sorted(KNOWN_SERVICES))}")
+        if "all" in self.regions and self.regions != ["all"]:
+            raise ConnectorError("cloud.aws: regions 'all' cannot be combined with explicit regions")
+        self.services = set(services)
         self.cloudtrail_days = int(ctx.get("cloudtrail_days", 7))
         self.max_lambda = int(ctx.get("max_lambda", 2000))
         if self.max_lambda < 1:
@@ -129,11 +140,11 @@ class AwsConnector(BaseConnector):
             reject_instance_profile_sources(sdk_session, profile)
         session = boto3.Session(botocore_session=sdk_session)
         role = self.ctx.get("role_arn")
-        if role:
-            sts = session.client("sts", config=self._sdk_config())
-            creds = sts.assume_role(RoleArn=role, RoleSessionName="shadowscan")["Credentials"]
-            session = boto3.Session(aws_access_key_id=creds["AccessKeyId"], aws_secret_access_key=creds["SecretAccessKey"], aws_session_token=creds["SessionToken"])
         try:
+            if role:
+                sts = session.client("sts", config=self._sdk_config())
+                creds = sts.assume_role(RoleArn=role, RoleSessionName="shadowscan")["Credentials"]
+                session = boto3.Session(aws_access_key_id=creds["AccessKeyId"], aws_secret_access_key=creds["SecretAccessKey"], aws_session_token=creds["SessionToken"])
             account = session.client("sts", config=self._sdk_config()).get_caller_identity()["Account"]
             if not isinstance(account, str) or len(account) != 12 or not account.isascii() or not account.isdigit():
                 raise ValueError("invalid STS account identifier")
@@ -833,7 +844,9 @@ class AwsConnector(BaseConnector):
         f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Lambda function: {rec.get('FunctionName')}", resource=_resource_id(arn or rec.get("FunctionName")), resource_type="lambda-function", account=self._arn_account(arn), region=rec.get("_region"), last_seen=rec.get("LastModified"))
         scan_env(self.index, f, rec.get("Environment"), location=arn)
         for layer in rec.get("Layers") or []:
-            for m in self.index.match_domains_in_text(layer) + self.index.match_code(layer.rsplit(":", 2)[0].rsplit(":", 1)[-1].replace("-", " ") if ":" in layer else layer):
+            # arn:aws:lambda:REGION:ACCOUNT:layer:NAME:VERSION -> NAME
+            layer_name = layer.split(":")[6] if layer.count(":") >= 7 else layer
+            for m in self.index.match_domains_in_text(layer) + self.index.match_code(layer_name.replace("-", " ")):
                 apply_matches(f, [m], location=arn, weight_scale=0.5)
             low = layer.lower()
             for key, sig in (("langchain", "framework.langchain"), ("llamaindex", "framework.llamaindex"), ("llama-index", "framework.llamaindex"), ("openai", "provider.openai"), ("anthropic", "provider.anthropic"), ("bedrock", "provider.aws-bedrock"), ("crewai", "framework.crewai"), ("strands", "framework.aws-strands"), ("agentcore", "cloud.aws-bedrock-agents"), ("litellm", "platform.litellm"), ("mcp", "protocol.mcp")):
@@ -922,7 +935,7 @@ class AwsConnector(BaseConnector):
         return self._name_only_secret(rec, "secretsmanager-secret", rec.get("ARN"))
 
     def _h_ssm_parameter(self, rec: dict[str, Any]) -> Finding | None:
-        return self._name_only_secret(rec, "ssm-parameter", f"arn:aws:ssm:{rec.get('_region')}:{self.account}:parameter{rec.get('Name')}")
+        return self._name_only_secret(rec, "ssm-parameter", f"arn:aws:ssm:{rec.get('_region')}:{self.account}:parameter/{str(rec.get('Name') or '').lstrip('/')}")
 
     def _name_only_secret(self, rec: dict[str, Any], rtype: str, arn: str | None) -> Finding | None:
         name = str(rec.get("Name") or "")
