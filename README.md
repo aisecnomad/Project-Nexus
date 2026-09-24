@@ -68,8 +68,8 @@ tells you what a package, host, user agent, model id, scope or file path maps to
 ## Install
 
 ```bash
-pip install "git+https://github.com/aisecnomad/Project-Nexus.git@12c96daf56f5acb549cfbbe91182775184183437"           # core (code, identity, gateway, low-code, SaaS via REST)
-pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@12c96daf56f5acb549cfbbe91182775184183437"   # + boto3, google-auth, azure-identity, oci
+pip install "git+https://github.com/aisecnomad/Project-Nexus.git@e870f7cb3711f934652fd9925873dfdda452bfc2"           # core (code, identity, gateway, low-code, SaaS via REST)
+pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@e870f7cb3711f934652fd9925873dfdda452bfc2"   # + boto3, google-auth, azure-identity, oci
 ```
 
 These examples pin an existing 0.1.1 release-candidate revision, not a published
