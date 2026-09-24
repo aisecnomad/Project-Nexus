@@ -10,3 +10,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      # Refresh the Dockerfile base image digest only. The interpreter line
+      # follows the supported matrix in pyproject.toml and CI, not Docker Hub.
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
