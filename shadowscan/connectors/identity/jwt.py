@@ -344,6 +344,6 @@ def _issuer_family(iss: str, claims: dict[str, Any]) -> str:
         return "github-actions"
     if host == "gitlab.com":
         return "gitlab"
-    if domain("kubernetes.default.svc") or any(key == "kubernetes.io" or key.startswith("kubernetes.io/") for key in claims):
+    if domain("kubernetes.default.svc") or any(key.partition("/")[0] == "kubernetes.io" for key in claims):
         return "kubernetes"
     return "custom" if iss else "unknown"
