@@ -20,7 +20,7 @@ REDACTED = "[REDACTED]"
 _FINGERPRINT = re.compile(r"^credential:sha256:[a-f0-9]{64}$")
 _SENSITIVE_SUFFIXES = (
     "apikey", "accesskey", "secretkey", "accesskeyid", "secretaccesskey",
-    "accesstoken", "refreshtoken", "idtoken", "authtoken", "clientsecret",
+    "accesstoken", "refreshtoken", "idtoken", "authtoken", "apitoken", "foundrytoken", "githubtoken", "clientsecret",
     "authorization", "proxyauthorization", "password", "passwd", "privatekey",
     "credential", "credentials", "bearertoken", "sessiontoken", "signingkey",
     "secretstring", "secretbinary", "connectionstring", "connstr",
@@ -401,12 +401,14 @@ def sanitize_text(text: str) -> str:
     return _redact_mapping_values(assignments(text))
 
 
-def sanitize(value: Any) -> Any:
+def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
     """Return a sanitized JSON-like copy, preserving nonsecret fields and types.
 
     Environment variable values are omitted regardless of name. Lists additionally
     recognize argv pairs, so ``["--token", "opaque-value"]`` is safe to retain.
     Known credential values are also removed from other fields in the same object.
+    Diagnostics can opt into replacing even short configured credentials; the
+    default avoids obscuring unrelated evidence with tiny substring matches.
     """
     _check_sanitization_structure(value)
     known: set[str] = set()
@@ -416,7 +418,7 @@ def sanitize(value: Any) -> Any:
         return isinstance(name, str) and _sensitive_key(name)
 
     def remember(child: Any) -> None:
-        if isinstance(child, str) and len(child) >= 8:
+        if isinstance(child, str) and child and (redact_short_secrets or len(child) >= 8):
             if child != REDACTED and not _FINGERPRINT.fullmatch(child):
                 known.add(child)
                 # Library diagnostics often use repr(), which escapes secret
@@ -465,7 +467,22 @@ def sanitize(value: Any) -> Any:
         if redaction_work > _MAX_REDACTION_WORK:
             raise SanitizationLimitError("credential replacement work limit exceeded")
         for secret in ordered:
-            item = item.replace(secret, REDACTED)
+            if redact_short_secrets:
+                redaction_work += 3 * len(item)
+                if redaction_work > _MAX_REDACTION_WORK:
+                    raise SanitizationLimitError("credential replacement work limit exceeded")
+                # A one-character secret must not recursively expand markers
+                # inserted by a previous replacement (e.g. a password of 'R').
+                # Only protect markers when the secret occurs inside one: a
+                # longer real secret may itself contain the literal marker.
+                parts = item.split(REDACTED) if secret in REDACTED else [item]
+                occurrences = sum(part.count(secret) for part in parts)
+                projected_chars = len(item) + occurrences * max(0, len(REDACTED) - len(secret))
+                if projected_chars > _MAX_SANITIZATION_CHARS:
+                    raise SanitizationLimitError("credential replacement size limit exceeded")
+                item = REDACTED.join(part.replace(secret, REDACTED) for part in parts)
+            else:
+                item = item.replace(secret, REDACTED)
         return sanitize_text(item)
 
     cleaning: set[int] = set()

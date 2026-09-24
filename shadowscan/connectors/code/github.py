@@ -97,7 +97,7 @@ class GitHubConnector(BaseConnector):
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.api_url = str(ctx.get("api_url", "https://api.github.com", env="GITHUB_API_URL")).rstrip("/")
-        self.token = ctx.get("token", env="GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        self.token = ctx.get("token", env="GITHUB_TOKEN") or ctx.get("github_token", env="GH_TOKEN")
         self.mode = str(ctx.get("mode", "clone" if shutil.which("git") else "api"))
         self.max_repos = int(ctx.get("max_repos", 500))
         if self.max_repos < 1:
