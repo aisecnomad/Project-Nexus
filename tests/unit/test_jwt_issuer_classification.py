@@ -46,3 +46,14 @@ def test_generic_grant_or_tenant_claims_do_not_name_a_provider():
 def test_kubernetes_claim_namespace_does_not_match_arbitrary_claim_text():
     assert _issuer_family("https://id.example", {"note": "kubernetes.io"}) == "custom"
     assert _issuer_family("https://cluster.example", {"kubernetes.io": {"pod": "agent"}}) == "kubernetes"
+
+
+def test_kubernetes_claim_namespace_segment_is_exact():
+    assert _issuer_family(
+        "https://id.example",
+        {"kubernetes.io/serviceaccount/namespace": "default"},
+    ) == "kubernetes"
+    assert _issuer_family(
+        "https://id.example",
+        {"kubernetes.ioevil/serviceaccount/namespace": "default"},
+    ) == "custom"
