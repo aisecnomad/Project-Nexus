@@ -17,7 +17,7 @@ from typing import Any
 from shadowscan import __version__
 from shadowscan.config import PATH_KEYS, ConnectorSpec, ScanConfig
 from shadowscan.connectors import _BUILTIN
-from shadowscan.models import FINDING_IDENTITY_SCHEMA
+from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.redaction import _sensitive_key, sanitize
@@ -151,8 +151,12 @@ def _complete(report: dict[str, Any]) -> bool:
         isinstance(summary, dict) and summary.get("complete") is True
         and isinstance(stats, list) and bool(stats)
         and all(
-            isinstance(s, dict) and isinstance(s.get("connector"), str) and bool(s["connector"])
-            and not (s.get("errors") or s.get("skipped") or s.get("incomplete"))
+            isinstance(s, dict) and isinstance(s.get("connector"), str) and bool(s["connector"].strip())
+            # Missing or malformed completion fields are not evidence that a
+            # connector succeeded. In particular, falsey null/0/"" values must
+            # not let truncated or transformed reports resolve prior findings.
+            and isinstance(s.get("errors"), list) and not s["errors"]
+            and s.get("skipped") is False and s.get("incomplete") is False
             for s in stats
         )
     )
@@ -215,33 +219,55 @@ def _identity_attested(report: dict[str, Any]) -> bool:
     )
 
 
+def _public_finding(record: dict[str, Any]) -> dict[str, Any]:
+    """Apply the normal finding export boundary to imported comparison records.
+
+    JSON reports may come from older versions or external producers. Reusing
+    the model's allowlist and cross-field credential sanitization avoids
+    reflecting raw secrets (or arbitrary extra columns) through the diff CLI.
+    Matching and change detection still use the original observation values.
+    """
+    try:
+        return Finding.from_dict(record).to_dict()
+    except (AttributeError, KeyError, TypeError, ValueError, RecursionError):
+        raise ValueError("report contains a finding that cannot be safely exported") from None
+
+
 def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     """Keep positive observations, but never infer absence from lost coverage."""
     if not isinstance(baseline, dict) or not isinstance(current, dict):
         raise ValueError("reports must be JSON objects")
     b, c = _findings(baseline), _findings(current)
+    # Validate and sanitize every imported record before publishing anything,
+    # including shared records with no substantive change. Schema keys and
+    # verified generated identities stay under the model's protection.
+    public_b = {identifier: _public_finding(record) for identifier, record in b.items()}
+    public_c = {identifier: _public_finding(record) for identifier, record in c.items()}
     reasons = []
     for label, report in (("baseline", baseline), ("current", current)):
         if not _complete(report):
             reasons.append(f"{label} scan is incomplete or lacks completion metadata")
         if not _identity_attested(report):
             reasons.append(f"{label} finding identity schema is legacy or unsupported; collect a fresh baseline after upgrade")
+    if _complete(baseline) and _complete(current):
+        if sorted(s["connector"] for s in baseline["stats"]) != sorted(s["connector"] for s in current["stats"]):
+            reasons.append("connector completion coverage differs")
     bs, cs = _scope_digest(baseline), _scope_digest(current)
     if not bs or not cs:
         reasons.append("collection scope is unavailable; regenerate legacy reports or use attested static inputs")
     elif bs != cs:
         reasons.append("collection or detection scope differs")
-    missing = [b[i] for i in sorted(b.keys() - c.keys())]
+    missing = [public_b[i] for i in sorted(b.keys() - c.keys())]
     changes = []
     for identifier in sorted(b.keys() & c.keys()):
         before, after = _substantive_state(b[identifier]), _substantive_state(c[identifier])
         fields = sorted(key for key in before if before[key] != after[key])
         if fields:
-            changes.append({"before": b[identifier], "after": c[identifier], "changed_fields": fields})
+            changes.append({"before": public_b[identifier], "after": public_c[identifier], "changed_fields": fields})
     return {
         "comparable": not reasons,
         "reasons": reasons,
-        "new": [c[i] for i in sorted(c.keys() - b.keys())],
+        "new": [public_c[i] for i in sorted(c.keys() - b.keys())],
         "resolved": [] if reasons else missing,
         "unknown": missing if reasons else [],
         "changed": changes,

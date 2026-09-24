@@ -2,6 +2,20 @@
 
 ## 0.1.1 — Unreleased
 
+### Follow-up trust-boundary review (2026-09-24)
+
+- Reject duplicate fields and nonfinite numbers in provider API JSON before
+  interpreting collection, pagination or signing-key data.
+- Mark offline Slack cursors and AWS truncation markers incomplete, retaining
+  observed records while refusing a clean result for uncollected pages.
+- Require intact, unambiguous code identities and recognized caller assurance
+  before attaching runtime activity; clear stale derived observations.
+- Sanitize imported findings before publishing report comparisons and require
+  explicit, matching connector completion evidence before resolving findings.
+- Render terminal control characters visibly in untrusted CLI display values.
+- Bound evaluation corpus reads, reject the reserved aggregate family name,
+  and bind annotation checks to the exact corpus snapshot being evaluated.
+
 ### Detection and collection assurance (2026-09-24)
 
 - Require corroborating AI evidence and bound source constructors to imported

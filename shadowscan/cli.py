@@ -39,7 +39,7 @@ from shadowscan.registry import Inventory, InventoryValidationError, card_stub_f
 from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures import get_index
-from shadowscan.utils.output import prepare_private_directory, write_private_text
+from shadowscan.utils.output import prepare_private_directory, terminal_text, write_private_text
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 
 console = Console(width=None if sys.stdout.isatty() else 200)
@@ -80,7 +80,7 @@ def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_r
             write_private_text(output, text)
         except (OSError, ValueError):
             raise click.ClickException("could not write report; check output path and permissions") from None
-        err_console.print(f"[green]wrote {fmt if fmt != 'table' else 'json'} report to {output}[/green]")
+        err_console.print(Text(terminal_text(f"wrote {fmt if fmt != 'table' else 'json'} report to {output}"), style="green"))
         if fmt == "table":
             print_table(result, console=console, verbose=verbose, max_rows=max_rows)
     else:
@@ -115,7 +115,7 @@ def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
 
 def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, max_rows: int | None, only: list[str] | None = None) -> None:
     def progress(cid: str, msg: str) -> None:
-        err_console.print(f"[dim]{escape(cid)}: {escape(msg)}[/dim]")
+        err_console.print(Text(terminal_text(f"{cid}: {msg}"), style="dim"))
 
     try:
         engine = Engine(cfg, progress=progress if verbose else None)
@@ -536,7 +536,7 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
         except (OSError, ValueError):
             raise click.ClickException("could not write inventory stub; check output path and permissions") from None
         n += 1
-    console.print(f"[green]wrote {n} capability card stub(s) to {out}[/green]")
+    console.print(Text(terminal_text(f"wrote {n} capability card stub(s) to {out}"), style="green"))
 
 
 # ---------------------------------------------------------------------- diff
@@ -562,11 +562,11 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
             console.print(f"Comparison incomplete: {reason}", markup=False)
         for marker, records in (("+", new), ("-", resolved), ("?", unknown)):
             for d in sorted(records, key=lambda d: -d["risk"]["score"]):
-                console.print(f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}", markup=False)
+                console.print(terminal_text(f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}"), markup=False)
         for change in changed:
             x, y = change["before"], change["after"]
             fields = ", ".join(change["changed_fields"])
-            console.print(f"  ~ {y['title']}: {fields} (risk {x['risk']['score']} → {y['risk']['score']})", markup=False)
+            console.print(terminal_text(f"  ~ {y['title']}: {fields} (risk {x['risk']['score']} → {y['risk']['score']})"), markup=False)
     if not comparison["comparable"]:
         raise click.exceptions.Exit(3)
 

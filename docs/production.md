@@ -372,18 +372,18 @@ lost user attribution before using their counts as governance evidence.
 
 ### Protect the merge gate
 
-On 2026-09-24, ruleset
+At this follow-up review on 2026-09-24, ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
 is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an up-to-date
-branch, and one approving review, but its live enforcement is **disabled**.
-Restore enforcement before relying on GitHub to block unsafe merges; until then,
-verify these checks and an independent review manually. Keep the CodeQL job's
-displayed name `analyze` when restoring the required check.
+branch, and one approving review. Its live enforcement is **active**, with no
+bypass actors configured on this required-check ruleset. `Protect main` is also
+active. Earlier review notes describing disabled enforcement are historical.
+Keep the CodeQL job's displayed name `analyze` consistent with the required check.
 
 A successful workflow is necessary but does not supply independent approval.
-Obtain an eligible review on the final changes; do not treat disabled rules as
-evidence of a protected merge gate. Recheck live ruleset and
-PR status at release time because repository settings can change.
+Obtain an eligible review on the final changes. Recheck live ruleset and PR status
+at release time because repository settings can change; do not weaken the rules
+to self-merge.
 
 The CI workflow installs the hash-locked core/cloud runtime dependency set and validates signatures, lint, typing, dependency advisories, tests
 with a minimum 80% statement coverage, wheel creation, installed-wheel validation

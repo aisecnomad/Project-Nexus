@@ -78,6 +78,9 @@ first labels or scanner observations. Both reviewers agreed on all 42 cases
 before the first evaluation. The annotation ledger records both decisions and
 their reasons and binds them to the exact corpus SHA-256. CI rejects missing
 votes, unresolved disagreements, changed labels and content-digest mismatches.
+The evaluator checks that the annotation digest matches the exact snapshot it
+loaded for scanning, and rejects a corpus changed between those reads. Corpus
+reads are bounded and reject symbolic links in every path component.
 This is recorded independent **AI** annotation, not independent human validation
 or authenticated third-party certification. Selection is purposive; the sample
 does not estimate the prevalence or accuracy of a production estate.
@@ -93,7 +96,8 @@ alongside them. [Assurance results](assurance-results.md) preserve the first
 observations and subsequent regression results.
 
 Metrics use **one binary target per case**, selected by finding kind and optional
-signature ID. `TP` means the target is present in the case and detected; `FP`
+signature ID. The family name `all` is reserved for aggregate metrics and cannot
+be used as a case's family. `TP` means the target is present in the case and detected; `FP`
 means absent but detected; `FN` means present and missed; `TN` means absent and
 not detected. Precision is `TP/(TP+FP)`, recall is `TP/(TP+FN)`, specificity
 is `TN/(TN+FP)`. Undefined denominators are JSON `null`. Additional assertions

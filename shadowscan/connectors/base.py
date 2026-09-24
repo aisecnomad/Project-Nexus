@@ -667,6 +667,34 @@ class BaseConnector(ABC):
                 return False
         return True
 
+    @staticmethod
+    def _offline_pagination_issue(data: dict[str, Any]) -> str | None:
+        """Reject partial export envelopes without disclosing opaque cursors.
+
+        Slack nests its continuation cursor under response_metadata; AWS also
+        signals truncation separately from its marker. Empty result arrays do
+        not establish that either provider has reached the end of a collection.
+        Call only for collection envelopes, never arbitrary resource fields.
+        """
+        for flag in ("has_more", "IsTruncated"):
+            if flag in data and not isinstance(data[flag], bool):
+                return "offline export has invalid pagination metadata"
+        metadata = data.get("response_metadata", {})
+        if not isinstance(metadata, dict):
+            return "offline export has invalid pagination metadata"
+        for container in (data, metadata):
+            cursor = container.get("next_cursor")
+            if cursor is not None and not isinstance(cursor, str):
+                return "offline export has invalid pagination metadata"
+        keys = (
+            "has_more", "IsTruncated", "next_page", "nextPage", "next_page_token",
+            "nextPageToken", "nextToken", "NextToken", "NextMarker", "@odata.nextLink",
+            "nextLink", "nextCursor", "next_cursor",
+        )
+        if any(data.get(key) for key in keys) or metadata.get("next_cursor"):
+            return "offline export contains an uncollected next page"
+        return None
+
     @classmethod
     def _unwrap(cls, data: Any, on_error: Callable[[str], None] | None = None) -> Iterator[dict[str, Any]]:
         """Accept records or a common envelope, rejecting invalid shapes explicitly.
@@ -700,12 +728,9 @@ class BaseConnector(ABC):
                 failed("ambiguous export envelope contains multiple record collections")
                 return
             if keys:
-                pagination_keys = (
-                    "has_more", "next_page", "nextPage", "next_page_token", "nextPageToken",
-                    "nextToken", "NextToken", "@odata.nextLink", "nextLink", "nextCursor",
-                )
-                if any(data.get(key) for key in pagination_keys):
-                    failed("offline export contains an uncollected next page")
+                pagination_issue = cls._offline_pagination_issue(data)
+                if pagination_issue:
+                    failed(pagination_issue)
                 key = next(iter(keys))
                 record_kind = cls._OFFLINE_COLLECTION_KINDS.get(key)
                 collection = data[key]

@@ -1120,12 +1120,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             if not self._valid_record(data):
                 self.ctx.error("gateway.logs: invalid export record")
                 return
-            if any(data.get(key) for key in (
-                "has_more", "next_page", "nextPage", "next_page_token",
-                "nextPageToken", "nextToken", "NextToken", "@odata.nextLink",
-                "nextLink", "nextCursor",
-            )):
-                self.ctx.error("gateway.logs: offline export contains an uncollected next page")
+            pagination_issue = self._offline_pagination_issue(data)
+            if pagination_issue:
+                self.ctx.error(f"gateway.logs: {pagination_issue}")
             yield data
         else:
             yield from self._unwrap(data, lambda message: self.ctx.error(f"gateway.logs: {message}"))

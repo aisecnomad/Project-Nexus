@@ -108,6 +108,20 @@ def test_counts_have_explicit_undefined_denominators():
     assert result["two"]["recall"] is None
 
 
+def test_aggregate_family_cannot_grow_the_input_while_summarizing():
+    rows = [{"family": "all", "present": False, "predicted": False}]
+    with pytest.raises(CorpusError, match="reserved"):
+        summarize(rows)
+    assert len(rows) == 1
+
+
+def test_reserved_aggregate_family_is_rejected_before_scanning(tmp_path: Path):
+    data = _corpus({"plain.py": "pass\n"})
+    data["cases"][0]["family"] = "all"
+    with pytest.raises(CorpusError, match="reserved"):
+        load_corpus(_write(tmp_path / "data.json", data))
+
+
 def test_calibration_proxies_cover_each_score_once():
     rows = [
         {"score": score, "present": label}
@@ -132,6 +146,19 @@ def test_corpus_rejects_duplicate_json_keys(tmp_path: Path):
         load_corpus(path)
 
 
+def test_corpus_rejects_symlinked_parent_and_oversized_input(tmp_path: Path):
+    real = tmp_path / "real"
+    real.mkdir()
+    path = _write(real / "data.json", _corpus({"plain.py": "pass\n"}))
+    link = tmp_path / "linked"
+    link.symlink_to(real, target_is_directory=True)
+    with pytest.raises(CorpusError):
+        load_corpus(link / path.name)
+    path.write_text(" " * 2_000_001, encoding="utf-8")
+    with pytest.raises(CorpusError):
+        load_corpus(path)
+
+
 def test_corpus_rejects_non_boolean_label_and_invalid_assertions(tmp_path: Path):
     data = _corpus({"plain.py": "pass\n"})
     data["cases"][0]["present"] = 1
@@ -149,6 +176,14 @@ def test_public_snapshot_digest_is_verified(tmp_path: Path):
     first["files"][first["source"]["path"]] += "extra"
     with pytest.raises(CorpusError, match="digest mismatch"):
         load_corpus(_write(tmp_path / "tampered.json", value))
+
+
+@pytest.mark.parametrize("path", [[], {}, 1, None])
+def test_public_snapshot_malformed_path_is_a_validation_error(tmp_path: Path, path):
+    value = json.loads(DEFAULT_CORPUS.with_name("public_corpus.json").read_text())
+    value["cases"][0]["source"]["path"] = path
+    with pytest.raises(CorpusError, match="source attribution"):
+        load_corpus(_write(tmp_path / "malformed.json", value))
 
 
 def test_evaluation_end_to_end_with_isolated_offline_files(tmp_path: Path):
