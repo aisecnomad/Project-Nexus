@@ -39,9 +39,12 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   without being echoed. The Okta `SSWS` scheme is redacted like `Bearer` and
   `Basic`, and known configuration values are also redacted in their
   `repr()`-escaped spelling, which library errors use.
-  Unknown SDK diagnostic text stays in the access-controlled scan report; application
-  logs receive fixed failure summaries. Opaque `api_token`, `foundry_token`, and
-  `github_token` values, including the `GH_TOKEN` fallback, are sensitive.
+* Connector warning/error log events contain fixed summaries, never diagnostic
+  payloads or exception arguments. Bounded, sanitized diagnostic details remain
+  in the scan report; treat reports as sensitive operational artifacts because
+  arbitrary upstream text can contain data beyond recognized secret formats.
+  Opaque `api_token`, `foundry_token`, and `github_token` values, including the
+  `GH_TOKEN` fallback, are sensitive.
 * `options.connector_timeout_seconds` / `--connector-timeout-seconds` defaults
   to a 120-second cooperative completion deadline. Late connector results are
   discarded and coverage is incomplete. Legacy `connector_timeout` /

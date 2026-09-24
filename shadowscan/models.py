@@ -119,8 +119,11 @@ class Evidence:
         names = [attr.name for attr in fields(self)]
         # The schema keys are trusted code, while attributes can contain
         # attacker-controlled keys. Keep the former outside the sanitizer.
-        values = sanitize([getattr(self, name) for name in names])
-        for name, value in zip(names, values, strict=True):
+        # A field that resembles an argv flag must not reinterpret the next
+        # dataclass field as its value. Real argv lists inside a field retain
+        # their normal pair-aware redaction.
+        values = sanitize([(getattr(self, name),) for name in names])
+        for name, (value,) in zip(names, values, strict=True):
             setattr(self, name, value)
 
 
@@ -210,11 +213,11 @@ class Finding:
                  and not (trusted_schema and attr.name == "identity_schema")]
         evidence_names = [attr.name for attr in fields(Evidence)]
         values, evidence_values, risk_values = sanitize((
-            [getattr(self, name) for name in names],
-            [[getattr(ev, name) for name in evidence_names] for ev in self.evidence],
-            [[factor.id, factor.description] for factor in self.risk.factors],
+            [(getattr(self, name),) for name in names],
+            [[(getattr(ev, name),) for name in evidence_names] for ev in self.evidence],
+            [[(factor.id,), (factor.description,)] for factor in self.risk.factors],
         ))
-        for name, value in zip(names, values, strict=True):
+        for name, (value,) in zip(names, values, strict=True):
             setattr(self, name, value)
         changed = {name for name, original in zip(identity_names, identity_before, strict=True)
                    if getattr(self, name) != original}
@@ -227,9 +230,9 @@ class Finding:
         } or (changed and not generated_id):
             raise SanitizationLimitError("finding identity includes a credential; finding omitted")
         for ev, clean in zip(self.evidence, evidence_values, strict=True):
-            for name, value in zip(evidence_names, clean, strict=True):
+            for name, (value,) in zip(evidence_names, clean, strict=True):
                 setattr(ev, name, value)
-        for factor, (identifier, description) in zip(self.risk.factors, risk_values, strict=True):
+        for factor, ((identifier,), (description,)) in zip(self.risk.factors, risk_values, strict=True):
             factor.id = identifier
             factor.description = description
 

@@ -342,14 +342,18 @@ class JwtConnector(BaseConnector, _NoDump):
 
 
 def _has_kubernetes_service_account_claims(claims: dict[str, Any]) -> bool:
-    """Recognize exact legacy claim names or a structured bound-token claim."""
+    """Recognize documented JWT claim fields, not URL substrings or trust.
+
+    Bound tokens use a structured ``kubernetes.io`` object; legacy tokens
+    use these exact service-account claim names with string values. Claim
+    names are opaque identifiers, so do not URL-decode or prefix-match them.
+    """
     structured = claims.get("kubernetes.io")
     if isinstance(structured, dict) and structured:
         return True
-    return any(
-        isinstance(claims.get(key), str) and bool(claims[key].strip())
-        for key in _KUBERNETES_LEGACY_CLAIMS
-    )
+    return any(isinstance(value, str) and bool(value.strip()) for value in (
+        claims.get(key) for key in _KUBERNETES_LEGACY_CLAIMS
+    ))
 
 
 def _issuer_family(iss: str, claims: dict[str, Any]) -> str:

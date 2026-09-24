@@ -52,6 +52,7 @@ from shadowscan.utils.text import get_path, host_of, parse_timestamp, redact, to
 
 _MAX_CACHED_USER_AGENTS = 256
 _MAX_CACHED_USER_AGENT_CHARS = 1024
+_OPAQUE_SCOPE_PREFIX = "scope:sha256:"
 
 # ---------------------------------------------------------------- schemas
 
@@ -85,6 +86,7 @@ class Event:
     metadata: dict[str, Any] = field(default_factory=dict)
     schema: str = "generic"
     scope: dict[str, str] = field(default_factory=dict)
+    scope_redacted: bool = False
     environment: str | None = None
     runtime_frameworks: list[str] = field(default_factory=list)
     code_resources: list[str] = field(default_factory=list)
@@ -261,6 +263,45 @@ def normalise(rec: dict[str, Any], schema: str) -> Event | None:
     return normalise_with_record(rec, schema)[0]
 
 
+def _runtime_labels(rec: dict[str, Any], metadata: dict[str, Any]) -> tuple[dict[str, str], str | None]:
+    """Extract known context fields before redaction can replace source keys."""
+    aliases = {
+        "tenant": ("tenant_id", "tenant", "organization_id", "org_id", "metadata.tenant_id", "metadata.tenant", "identity.claims.tid", "properties.identity.claims.tid"),
+        "account": ("account_id", "accountId", "account", "subscription_id", "subscriptionId", "metadata.account_id", "metadata.account"),
+        "project": ("project_id", "projectId", "project", "metadata.project_id", "resource.labels.project_id"),
+        "workspace": ("workspace_id", "workspace", "metadata.workspace_id"),
+    }
+    scope = {}
+    for key, paths in aliases.items():
+        value = get_path(rec, *paths)
+        if value is None:
+            value = metadata.get(key)
+        if isinstance(value, (str, int)) and str(value):
+            scope[key] = str(value)
+    environment = get_path(rec, "environment", "deployment_environment", "metadata.environment", "metadata.deployment_environment")
+    return scope, environment if isinstance(environment, str) and environment else None
+
+
+def _restore_scope(scope: dict[str, str], clean_values: Iterable[tuple[str]]) -> tuple[dict[str, str], bool]:
+    """Keep redacted scope identities distinct without disclosing their labels.
+
+    The output prefix is reserved: a raw label using it is always hashed again.
+    This prevents a caller-supplied label from impersonating an opaque label;
+    credential_id() is deliberately unsuitable because it is idempotent.
+    """
+    result = {}
+    redacted = False
+    for (key, original), (clean,) in zip(scope.items(), clean_values, strict=True):
+        changed = clean != original or original.startswith(_OPAQUE_SCOPE_PREFIX)
+        if changed:
+            identity = json.dumps(["shadowscan.gateway.scope.v1", key, original], separators=(",", ":"))
+            result[key] = _OPAQUE_SCOPE_PREFIX + hashlib.sha256(identity.encode()).hexdigest()
+        else:
+            result[key] = clean
+        redacted = redacted or changed
+    return result, redacted
+
+
 def normalise_with_record(rec: dict[str, Any], schema: str) -> tuple[Event | None, dict[str, Any] | None]:
     """Normalize and also return the sanitized source record.
 
@@ -293,9 +334,15 @@ def normalise_with_record(rec: dict[str, Any], schema: str) -> tuple[Event | Non
     # unrelated metadata are scrubbed before samples are truncated. Preserve
     # trusted Event field names: even a one-character credential can match a
     # schema key, and sanitization of mapping keys must not corrupt the Event.
+    raw_scope, ev.environment = _runtime_labels(rec, ev.metadata)
     fields = asdict(ev)
-    clean_record, clean_fields = sanitize((rec, list(fields.values())))
-    cleaned = dict(zip(fields, clean_fields, strict=True))
+    # Singleton wrappers prevent unrelated scalar fields from being interpreted
+    # as adjacent command-line arguments (e.g. a label '--token', timestamp).
+    clean_record, clean_fields, clean_scope = sanitize((
+        rec, [(value,) for value in fields.values()], [(value,) for value in raw_scope.values()],
+    ))
+    cleaned = dict(zip(fields, (value for (value,) in clean_fields), strict=True))
+    cleaned["scope"], cleaned["scope_redacted"] = _restore_scope(raw_scope, clean_scope)
     cleaned["caller_kind"] = ev.caller_kind  # normalized enum, not a source field
     cleaned["schema"] = ev.schema  # detected/validated provider schema
     if cleaned["caller"] != ev.caller:
@@ -753,6 +800,7 @@ class _Caller:
     schemas: Counter = field(default_factory=Counter)
     metadata_samples: dict[str, Any] = field(default_factory=dict)
     scope: dict[str, str] = field(default_factory=dict)
+    scope_redacted: bool = False
     observations: dict[str, dict[str, Any]] = field(default_factory=dict)
     observations_dropped: int = 0
     distribution_events_dropped: Counter = field(default_factory=Counter)
@@ -1130,26 +1178,22 @@ class GatewayLogConnector(BaseConnector):
         """Operator bindings identify workloads; log names alone never do.
 
         ``rec`` is the raw record (its credential field decides binding
-        assurance); ``clean`` is its sanitized copy when the caller already
-        has one, so the record is not sanitized twice.
+        assurance); ``clean`` signals that normalization already extracted and
+        sanitized context under trusted field names in one pass.
         """
         identity_assurance = self._binding_identity_assurance(ev, rec)
-        rec = sanitize(rec) if clean is None else clean
-        aliases = {
-            "tenant": ("tenant_id", "tenant", "organization_id", "org_id", "metadata.tenant_id", "metadata.tenant", "identity.claims.tid", "properties.identity.claims.tid"),
-            "account": ("account_id", "accountId", "account", "subscription_id", "subscriptionId", "metadata.account_id", "metadata.account"),
-            "project": ("project_id", "projectId", "project", "metadata.project_id", "resource.labels.project_id"),
-            "workspace": ("workspace_id", "workspace", "metadata.workspace_id"),
-        }
-        for key, paths in aliases.items():
-            value = get_path(rec, *paths)
-            if value is None:
-                value = ev.metadata.get(key)
-            if isinstance(value, (str, int)) and str(value):
-                ev.scope[key] = str(value)
-        environment = get_path(rec, "environment", "deployment_environment", "metadata.environment", "metadata.deployment_environment")
-        if isinstance(environment, str) and environment:
-            ev.environment = environment.strip().lower()
+        if clean is None:
+            # Private callers may enrich an Event without using normalise().
+            raw_scope, environment = _runtime_labels(rec, ev.metadata)
+            _, clean_scope, (ev.environment,) = sanitize((
+                rec, [(value,) for value in raw_scope.values()], (environment,),
+            ))
+            ev.scope, ev.scope_redacted = _restore_scope(raw_scope, clean_scope)
+        if ev.scope_redacted:
+            self.ctx.warn("gateway.logs: scope labels were redacted; distinct opaque scopes retained; runtime attribution incomplete")
+            identity_assurance = "unverified"
+        if ev.environment:
+            ev.environment = ev.environment.strip().lower()
         ua = ev.user_agent or ""
         cached = framework_cache.get(ua)
         if cached is None:
@@ -1235,6 +1279,7 @@ class GatewayLogConnector(BaseConnector):
             raise ValueError("gateway cost total exceeds finite numeric range")
         if c is None:
             c = callers[identity] = _Caller(ev.caller, ev.caller_kind, ev.caller_label, scope=dict(ev.scope))
+        c.scope_redacted = c.scope_redacted or ev.scope_redacted
         c.events += ev.request_count
         c.records += 1
         if ev.aggregated:
@@ -1425,6 +1470,7 @@ class GatewayLogConnector(BaseConnector):
                 "schemas": dict(c.schemas),
                 "samples": c.metadata_samples,
                 "correlation_scope": c.scope,
+                "correlation_scope_redacted": c.scope_redacted,
                 "runtime_observations": list(c.observations.values()),
                 "runtime_observations_dropped": c.observations_dropped,
                 "runtime_source": {"id": self.source_id, "input": str(self.ctx.input_path or ""), "label": self.label, "schemas": sorted(c.schemas)},

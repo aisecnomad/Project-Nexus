@@ -447,8 +447,9 @@ and `--connector-timeout` remain deprecated compatibility aliases. Configure onl
 one YAML key; supplying both is rejected. Legacy YAML `connector_timeout: null`
 uses the 120-second default rather than disabling it.
 Workers are not replaced after all capacity is occupied by blocked calls; the
-remaining queue is reported incomplete. The CLI does not forcibly exit from a
-library call. Continue to enforce the disposable worker's external job deadline.
+remaining queue is reported incomplete. `Engine.run()` returns control to library
+callers; the CLI exits after reporting abandoned workers. Continue to enforce
+the disposable worker's external job deadline for blocked publication or output.
 
 New Azure App Service settings and OCI Function exports store configuration under
 `environment`, which redacts every value even when a credential has an unusual
@@ -467,6 +468,9 @@ message per file; context-generated errors and warnings are separately capped at
 1,000 plus a suppression message per connector. Suppression never clears incomplete
 coverage, and later valid records continue to be analyzed. Gateway detail caps
 also mark missing detail incomplete while preserving supported aggregate totals.
+Application logs contain fixed warning/error summaries. Inspect the bounded,
+sanitized connector diagnostics in the report for details, and retain reports
+under the same access controls as inventory data.
 
 JWKS documents are fetched lazily and cached only within a JWT analysis. Tokens
 with rejected algorithms do not trigger a lookup, and each token is still checked

@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any
+from typing import Any, NoReturn
 
 import click
 import yaml
@@ -97,6 +97,22 @@ def _exit_code(result: ScanResult, fail_on: str | None) -> int:
     return 2 if worst <= threshold else 0
 
 
+def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
+    """Best-effort output must not prevent the CLI leaving blocked workers."""
+    try:
+        try:
+            err_console.print(message)
+        except Exception:  # noqa: BLE001 - output streams may already be closed
+            pass
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except Exception:  # noqa: BLE001 - still try the other stream and exit
+                pass
+    finally:
+        os._exit(code)
+
+
 def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, max_rows: int | None, only: list[str] | None = None) -> None:
     def progress(cid: str, msg: str) -> None:
         err_console.print(f"[dim]{escape(cid)}: {escape(msg)}[/dim]")
@@ -112,22 +128,16 @@ def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, m
         _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows)
     except Exception:  # noqa: BLE001 - any emission failure must still release an abandoned CLI worker
         if engine.abandoned_workers:
-            err_console.print("[red]could not emit the incomplete report; exiting without waiting for timed-out workers[/red]")
-            sys.stdout.flush()
-            sys.stderr.flush()
-            os._exit(1)
+            _exit_abandoned_workers(1, "[red]could not emit the incomplete report; exiting without waiting for timed-out workers[/red]")
         raise
     code = _exit_code(result, cfg.fail_on)
     if engine.abandoned_workers:
         # A timed-out connector's thread may still be blocked in an SDK call.
         # Python joins worker threads at interpreter exit, which would hold the
         # process (and its CI job) open indefinitely. The report is written.
-        err_console.print(
+        _exit_abandoned_workers(code,
             f"[yellow]exiting without waiting for {len(engine.abandoned_workers)} timed-out connector worker(s)[/yellow]"
         )
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(code)
     sys.exit(code)
 
 

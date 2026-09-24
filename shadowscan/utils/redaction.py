@@ -20,8 +20,7 @@ REDACTED = "[REDACTED]"
 _FINGERPRINT = re.compile(r"^credential:sha256:[a-f0-9]{64}$")
 _SENSITIVE_SUFFIXES = (
     "apikey", "accesskey", "secretkey", "accesskeyid", "secretaccesskey",
-    "accesstoken", "refreshtoken", "idtoken", "authtoken", "apitoken",
-    "foundrytoken", "githubtoken", "clientsecret",
+    "accesstoken", "refreshtoken", "idtoken", "authtoken", "apitoken", "foundrytoken", "githubtoken", "clientsecret",
     "authorization", "proxyauthorization", "password", "passwd", "privatekey",
     "credential", "credentials", "bearertoken", "sessiontoken", "signingkey",
     "secretstring", "secretbinary", "connectionstring", "connstr",
@@ -449,12 +448,14 @@ def sanitize_text(text: str) -> str:
     return _redact_mapping_values(assignments(text))
 
 
-def sanitize(value: Any) -> Any:
+def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
     """Return a sanitized JSON-like copy, preserving nonsecret fields and types.
 
     Environment variable values are omitted regardless of name. Lists additionally
     recognize argv pairs, so ``["--token", "opaque-value"]`` is safe to retain.
     Known credential values are also removed from other fields in the same object.
+    Short credentials withhold a matching field by default. Diagnostics can opt
+    into bounded substring replacement to retain surrounding diagnostic context.
     """
     _check_sanitization_structure(value)
     known: set[str] = set()
@@ -504,21 +505,54 @@ def sanitize(value: Any) -> Any:
                 previous = child
 
     discover(value)
-    ordered = sorted(known, key=len, reverse=True)
     redaction_work = 0
+    if redact_short_secrets:
+        # The structural pass can rewrite part of a whole configured secret.
+        # Remember that spelling too so its other opaque fragments are removed.
+        for secret in tuple(known):
+            redaction_work += len(secret)
+            if redaction_work > _MAX_REDACTION_WORK:
+                raise SanitizationLimitError("credential replacement work limit exceeded")
+            spelling = sanitize_text(secret)
+            if spelling and spelling != REDACTED:
+                known.add(spelling)
+    ordered = sorted(known, key=len, reverse=True)
 
     def text(item: str) -> str:
         nonlocal redaction_work
         redaction_work += len(item) * (len(ordered) + 1)
         if redaction_work > _MAX_REDACTION_WORK:
             raise SanitizationLimitError("credential replacement work limit exceeded")
+        if redact_short_secrets and ordered:
+            # Preserve recognizable token/URL structure before a short known
+            # secret changes a scheme, hostname, or credential prefix. For
+            # example, removing 'hooks' first would hide a Slack webhook URL
+            # from the path-secret rules while retaining its capability token.
+            redaction_work += len(item)
+            if redaction_work > _MAX_REDACTION_WORK:
+                raise SanitizationLimitError("credential replacement work limit exceeded")
+            item = sanitize_text(item)
         for secret in ordered:
-            # Short credentials may occur in ordinary words. Replacing each
-            # occurrence could expand a report dramatically and still expose
-            # fragments in surrounding context; withhold that field instead.
-            if len(secret) < 8 and secret in item:
-                return REDACTED
-            item = item.replace(secret, REDACTED)
+            if redact_short_secrets:
+                redaction_work += 3 * len(item)
+                if redaction_work > _MAX_REDACTION_WORK:
+                    raise SanitizationLimitError("credential replacement work limit exceeded")
+                # A one-character secret must not recursively expand markers
+                # inserted by a previous replacement (e.g. a password of 'R').
+                # Only protect markers when the secret occurs inside one: a
+                # longer real secret may itself contain the literal marker.
+                parts = item.split(REDACTED) if secret in REDACTED else [item]
+                occurrences = sum(part.count(secret) for part in parts)
+                projected_chars = len(item) + occurrences * max(0, len(REDACTED) - len(secret))
+                if projected_chars > _MAX_SANITIZATION_CHARS:
+                    raise SanitizationLimitError("credential replacement size limit exceeded")
+                item = REDACTED.join(part.replace(secret, REDACTED) for part in parts)
+            else:
+                # Default report sanitization withholds the entire field for
+                # short secrets; this avoids both expansion and partial leaks.
+                if len(secret) < 8 and secret in item:
+                    return REDACTED
+                item = item.replace(secret, REDACTED)
         return sanitize_text(item)
 
     cleaning: set[int] = set()

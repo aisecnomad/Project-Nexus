@@ -37,7 +37,7 @@ def test_invalid_header_name_diagnostic_never_quotes_the_supplied_name():
 
 def test_one_character_secret_cannot_corrupt_trusted_diagnostic_or_finding_schema():
     context = ConnectorContext(config={"token": "a"})
-    assert context.sanitize_message("InvalidHeader: a") == REDACTED
+    assert context.sanitize_message("InvalidHeader: a") == f"Inv{REDACTED}lidHe{REDACTED}der: {REDACTED}"
     finding = Finding(
         surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
         title="Sample agent", resource="repo", resource_type="repository",

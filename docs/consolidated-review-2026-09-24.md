@@ -13,6 +13,14 @@ While this review was in progress, PR #31 merged into `main` as
 that updated base, retaining the reviewed controls and the integration decisions
 below. This review did not merge or close the existing PRs.
 
+PR #33 subsequently merged this candidate through `fb366e4` into `main` as
+`755ad3d2dd8fe1c8aafae7d8fee59c3d1b44a8c5`, while final CodeQL findings were
+being investigated. The follow-up is based on that new main and retains its
+additional HTTP, webhook-redaction, SARIF and CLI corrections. It addresses
+diagnostic logging, configured credential redaction and exact Kubernetes claim
+classification as described below. The external merge was not performed by this
+review.
+
 The candidate materially improves security and production reliability. It remains
 a release candidate: passing automated checks cannot establish actual tenant
 coverage, operational acceptance, or field detection precision. Refer to
@@ -27,6 +35,8 @@ and provider responses used for regression testing were synthetic or mocked.
 |---|---|---|
 | High | Malformed HTTP headers could expose token values through library error messages. | Validate constructor, injected session, mutated session and per-request headers; diagnostics omit both header names and values. Catch authentication-handler `InvalidHeader` safely. |
 | High | Credentials could survive source excerpt truncation or appear as escaped diagnostic values. | Redact before truncation, expand provider-format coverage, redact SSWS authorization and known credentials' escaped representations. |
+| High | Application logging accepted upstream diagnostic payloads after heuristic redaction, which cannot recognize every opaque secret. | Log fixed summaries only; retain bounded, sanitized details in access-controlled report artifacts. |
+| High | Opaque Atlassian API and Azure Foundry tokens were not recognized by credential field names; GitHub's fallback token bypassed resolved configuration. | Recognize those credential fields and track the fallback token for diagnostic redaction; remove configured short secrets from diagnostics. |
 | High | Azure/OCI configuration exports retained opaque values under ordinary mapping keys. | Store live configuration as `environment`, applying value-wide redaction; continue reading legacy export keys. |
 | Medium | Imported risk/evidence numeric fields accepted strings and non-finite values. | Validate numeric types/ranges at import; escape numeric HTML slots and authorize only the shipped JavaScript hash through CSP. |
 | Medium | Scalar cloud scopes were iterated as characters; unknown AWS services could produce apparently complete empty scans. | Normalize string/list options and reject malformed values and service names. |
@@ -42,6 +52,13 @@ and provider responses used for regression testing were synthetic or mocked.
 Also corrected AWS Lambda layer parsing, SSM parameter ARN construction, Foundry
 project scope inheritance, nested GitLab group attribution and timestamp parsing.
 
+Final CodeQL inspection also flagged broad `kubernetes.io/` matching. This
+expression classified JWT claim names, not trusted issuer URLs or authorization.
+Replaced broad claim-prefix inference with recognized Kubernetes service-account
+claim names and a structured `kubernetes.io` object, rejecting arbitrary namespace
+suffixes and URL lookalikes. Regression tests cover the supported forms and
+unrecognized claims. No alert suppression or security-gate bypass was introduced.
+
 ## Deliberate integration decisions
 
 - Retained PR #30's default 120-second cooperative deadline, cancellation-aware
@@ -50,9 +67,12 @@ project scope inheritance, nested GitLab group attribution and timestamp parsing
 - Accepted PR #31's `connector_timeout` / `--connector-timeout` names as
   compatibility aliases for canonical `connector_timeout_seconds` /
   `--connector-timeout-seconds`. Legacy YAML null uses the 120-second default.
-  Retained bounded worker capacity without replacement-worker pools or
-  `os._exit()` from the CLI/library scan path. Blocked calls still require an
-  externally supervised disposable process.
+  Retained bounded worker capacity without replacement-worker pools. PR #36
+  subsequently adds a CLI-only process exit after reporting abandoned workers;
+  the embedded Engine returns an incomplete result and refuses reuse while an
+  abandoned worker remains active. Diagnostic/flush errors must not prevent
+  that CLI exit. Blocking publication or output still requires an externally
+  supervised disposable process.
 - Did not introduce digest-gated finding sanitization or a process-wide text
   sanitization cache. Digesting nested objects before the sanitizer's resource
   checks can amplify alias graphs; caching also needs explicit redaction-policy
@@ -83,10 +103,13 @@ performed in this review.
 
 ## Merge and deployment gates
 
-The live `Require CI and CodeQL` ruleset was inspected during this review. It
-requires `test (3.11)`, `test (3.12)`, `analyze`, an up-to-date branch and one
-approving review. It has no bypass actors. Preserve that gate and obtain an
-independent eligible review of the final candidate; no rules were weakened.
+The live `Require CI and CodeQL` ruleset was active at the start of this review,
+requiring `test (3.11)`, `test (3.12)`, `analyze`, an up-to-date branch and one
+approving review. Both it and `Protect main` were disabled externally before the
+final merge-verification request. This review did not change their enforcement.
+The user subsequently authorized merging verified open PRs. Restore the intended
+repository protections before production release; verification results are tied
+to the exact merged source in the PR.
 
 Before production deployment, complete tenant canaries, held-out detection
 evaluation, approved image-digest selection and an enforced host/job deadline.

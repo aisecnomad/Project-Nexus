@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
@@ -157,3 +158,44 @@ def test_cli_returns_promptly_when_a_timed_out_worker_outlives_report_emission(m
     failed = CliRunner().invoke(main, args)
     assert failed.exit_code == 1 and exit_codes == [3, 1]
     assert "could not emit the incomplete report" in failed.output
+
+
+@pytest.mark.parametrize("failure_point", ["stdout", "stderr", "diagnostic"])
+@pytest.mark.parametrize("emission_fails", [False, True])
+def test_cli_hard_exit_survives_broken_diagnostic_streams(monkeypatch, failure_point, emission_fails):
+    calls = []
+
+    class FakeEngine:
+        def __init__(self, cfg, progress=None):
+            self.abandoned_workers = ["blocked"]
+
+        def run(self, only=None):
+            return ScanResult(stats=[ScanStats(connector="blocked", started_at="now", incomplete=True)])
+
+    def output_step(name):
+        calls.append(name)
+        if name == failure_point:
+            raise BrokenPipeError("output consumer is unavailable")
+
+    def emit(*args, **kwargs):
+        if emission_fails:
+            raise OSError("report destination is unavailable")
+
+    def exit_process(code):
+        calls.append(("exit", code))
+        raise SystemExit(code)
+
+    # Replace the CLI's sys reference, not pytest's own captured streams.
+    monkeypatch.setattr(cli_module, "sys", SimpleNamespace(
+        stdout=SimpleNamespace(flush=lambda: output_step("stdout")),
+        stderr=SimpleNamespace(flush=lambda: output_step("stderr")),
+    ))
+    monkeypatch.setattr(cli_module, "err_console", SimpleNamespace(print=lambda *args: output_step("diagnostic")))
+    monkeypatch.setattr(cli_module, "Engine", FakeEngine)
+    monkeypatch.setattr(cli_module, "_emit", emit)
+    monkeypatch.setattr(cli_module.os, "_exit", exit_process)
+    with pytest.raises(SystemExit) as failure:
+        cli_module._run_and_emit(ScanConfig(), "json", None, 0, None)
+    expected_code = 1 if emission_fails else 3
+    assert failure.value.code == expected_code
+    assert calls == ["diagnostic", "stdout", "stderr", ("exit", expected_code)]
