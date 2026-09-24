@@ -14,7 +14,8 @@
 #
 # Drop --network none for live API collection. Never mount production
 # credential files into a container that also mounts an untrusted repo.
-# Supply an approved image digest for immutable deployment builds.
+# Supply an approved image digest for immutable deployment builds:
+#   docker build --build-arg PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:<digest> .
 ARG PYTHON_IMAGE=python:3.12-slim-bookworm
 FROM ${PYTHON_IMAGE}
 
@@ -29,8 +30,9 @@ COPY pyproject.toml requirements.lock README.md LICENSE NOTICE /opt/shadowscan/
 COPY shadowscan /opt/shadowscan/shadowscan
 COPY agent-card.yaml /opt/shadowscan/agent-card.yaml
 
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock \
+# Do not `pip install --upgrade pip` from a floating index. The lockfile pins
+# runtime dependencies; the image's default pip is sufficient to install them.
+RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock \
     && pip install --no-cache-dir --no-deps /opt/shadowscan \
     && pip check \
     && mkdir -p /work /output \
