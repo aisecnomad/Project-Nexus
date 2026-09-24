@@ -1,6 +1,6 @@
 """Golden replay of gateway log normalisation and caller findings.
 
-Every file under ``tests/fixtures/gateway/golden/`` pins, for one input, the
+Every file under ``tests/fixtures/gateway_golden/`` pins, for one input, the
 observable behaviour of the gateway connector: the schema detected for each
 expanded record, the ``Event`` that ``_normalise`` builds from it, the findings
 the connector emits (``Finding.to_dict``) and the diagnostics it records. The
@@ -41,7 +41,7 @@ from shadowscan.connectors.gateway.logs import NORMALISERS, GatewayLogConnector,
 from shadowscan.signatures.matcher import MatchTimeoutError
 
 GATEWAY_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "gateway"
-GOLDEN_DIR = GATEWAY_FIXTURES / "golden"
+GOLDEN_DIR = GATEWAY_FIXTURES.parent / "gateway_golden"  # outside gateway/ so a directory scan of the samples never ingests goldens
 
 # A fixed key makes every HMAC-derived opaque identity reproducible. It is a
 # test constant, never a secret.
@@ -172,8 +172,9 @@ def test_golden_replay(index, tmp_path, golden_path):
     golden = _load(golden_path)
     observed = json.loads(json.dumps(observe(index, golden, tmp_path), allow_nan=False))
     if _update_requested():
+        # Regenerate, then still verify the rewritten file so update mode can never pass silently.
         _write(golden_path, golden, observed)
-        return
+        golden = _load(golden_path)
     assert golden["volatile_fields"] == list(VOLATILE_FINDING_FIELDS)
     expected = {key: golden[key] for key in ("events", "findings", "diagnostics")}
     assert observed == expected
