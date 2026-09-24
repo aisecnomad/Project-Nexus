@@ -356,7 +356,7 @@ class SignatureIndex:
                     # redaction. Dedicated secret detectors need the raw match
                     # to create their redacted evidence/fingerprint downstream.
                     value = excerpt if signal_type == "secret" else sanitize_text(excerpt)[:200]
-                    out.append(Match(sig, s, value, s.weight, line=line))
+                    out.append(Match(sig, s, value, s.weight, line=line, extra={"start": m.start(), "end": m.end()}))
                     hits += 1
                     if hits >= max_per_signal:
                         break

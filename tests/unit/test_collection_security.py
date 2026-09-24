@@ -60,7 +60,7 @@ def test_slack_all_inventories_follow_pagination(index, monkeypatch):
         params = dict(params or {})
         calls.append((path, params))
         if path == "/team.info":
-            return {"ok": True, "team": {"name": "test"}}
+            return {"ok": True, "team": {"id": "T1", "name": "test"}}
         if path == "/users.list":
             return {"ok": True, "members": [{"id": "bot", "is_bot": True}]}
         if path == "/team.integrationLogs":

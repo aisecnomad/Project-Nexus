@@ -16,6 +16,10 @@ python -m tools.evaluation.evaluate --output /tmp/nexus-synthetic-eval.json
 python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/public_corpus.json \
   --output /tmp/nexus-public-eval.json
+python -m tools.evaluation.evaluate \
+  --corpus tools/evaluation/independent_corpus.json \
+  --annotations tools/evaluation/independent_annotations.json \
+  --output /tmp/nexus-independent-eval.json
 python -m tools.evaluation.evaluate --repeats 5 \
   --output /tmp/nexus-timing-eval.json
 python -m tools.evaluation.benchmark --files 1000 --runs 3 \
@@ -67,6 +71,27 @@ pool its results with synthetic cases or report its rates as estate-wide
 precision, recall, or calibrated probabilities. See
 `tools/evaluation/THIRD_PARTY_NOTICES.md` for attribution.
 
+The separate `independent_corpus.json` is a negative-heavy public source sample
+selected and labeled by a curator who did not inspect the scanner implementation
+or its results. A second AI reviewer labeled a neutral source packet without the
+first labels or scanner observations. Both reviewers agreed on all 42 cases
+before the first evaluation. The annotation ledger records both decisions and
+their reasons and binds them to the exact corpus SHA-256. CI rejects missing
+votes, unresolved disagreements, changed labels and content-digest mismatches.
+This is recorded independent **AI** annotation, not independent human validation
+or authenticated third-party certification. Selection is purposive; the sample
+does not estimate the prevalence or accuracy of a production estate.
+
+Once observations are used to improve detection, this set is a frozen regression
+corpus, not a fresh held-out test. Keep its labels unchanged when improving the
+scanner and report the first evaluation separately from subsequent results.
+Commission a new independently labeled sample before making field claims.
+See `INDEPENDENT_CORPUS.md` beside the corpus for selection, licenses and labeling
+provenance. Reports identify the signature and scanner-source fingerprints,
+scanner version and runtime; retain the reviewed source commit and CI run
+alongside them. [Assurance results](assurance-results.md) preserve the first
+observations and subsequent regression results.
+
 Metrics use **one binary target per case**, selected by finding kind and optional
 signature ID. `TP` means the target is present in the case and detected; `FP`
 means absent but detected; `FN` means present and missed; `TN` means absent and
@@ -93,7 +118,9 @@ the tiny selected sample does not calibrate that score.
    labels, and adjudicate disagreement. An ambiguous case is excluded with
    its reason recorded, not silently counted as a negative.
 3. Create the same JSON schema as `tools/evaluation/corpus.json`; set metadata
-   type to `adjudicated` and record provenance and labeling method. The runner
+   type to `adjudicated` and record provenance and labeling method in an annotation
+   ledger supplied through `--annotations`. A ledger requires two distinct reviewer
+   declarations and source-based resolutions for every disagreement. The runner
    limits the corpus to 500 cases, 20 text files per case, 32 KB per file, 1 MB
    combined case content, and 2 MB of JSON. Larger real repositories need a
    separate offline scan and a repository-level annotation protocol. Keep the
@@ -110,6 +137,12 @@ the tiny selected sample does not calibrate that score.
    information about uncommon production patterns.
 
 ## Read-only tenant canary procedure
+
+Executable AWS and Slack live canaries, credential preflight, permission-denied
+controls and clearly separated offline replay checks are documented in
+[canaries.md](canaries.md). Replay or mocked transport success is never recorded
+as live tenant acceptance. Other connectors still require provider-specific
+canary acceptance; these two adapters do not validate the whole estate.
 
 Use distinct disposable, resource-limited workers: one for repository content,
 and others for credentialed cloud, identity, gateway or SaaS APIs. Give each

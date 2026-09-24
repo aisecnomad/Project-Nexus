@@ -108,10 +108,13 @@ class N8nConnector(_AutomationBase):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for w in records:
-            if "nodes" not in w:
-                continue
             self.ctx.examined()
-            nodes = w.get("nodes") or []
+            if not self._record_fields_valid(w, arrays=("nodes",)) or not isinstance(w.get("nodes"), list):
+                self.ctx.warn("lowcode.n8n: missing or invalid workflow graph; definition coverage unknown")
+                continue
+            nodes = [node for node in w["nodes"] if self._record_fields_valid(node, required=("type",), strings=("name",), mappings=("parameters",))]
+            if len(nodes) != len(w["nodes"]):
+                self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
             types = [str(n.get("type", "")) for n in nodes]
             ai_steps = [f"{n.get('name')} ({n.get('type')})" for n in nodes if re.search(r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace|\.agent$|mcp", str(n.get("type", "")), re.I)]
             triggers = [t for t in types if re.search(r"trigger|cron|schedule|webhook", t, re.I)]

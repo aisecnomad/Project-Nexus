@@ -133,6 +133,8 @@ def test_agent_manifest_projection_retains_sibling_credential_context(tmp_path, 
         "name": "agent " + secret, "api_key": secret,
         "description": "Credential copied here: " + secret,
         "instructions": "Use " + secret, "url": "https://example.test/" + secret,
+        "version": "1.0", "capabilities": [] if filename == "declarativeAgent.json" else {},
+        "skills": [{"id": "summary", "name": "Summarize"}],
     }))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors

@@ -1,0 +1,439 @@
+{
+  "schema": 1,
+  "corpus_sha256": "128cf2c972cb13b11bafe141d584b910828899d689d5a457135ad7746f98eff3",
+  "method": "independent-ai-double-label-before-scan",
+  "selection": "Purposive complete-file sample: 42 cases from 15 public repositories in five languages, with 30 non-agent and 12 agent examples. Two separate AI reviewers labeled source without scanner implementation or observations, and without seeing each other's labels. Not randomized, human-adjudicated, or representative of estate prevalence.",
+  "reviewers": [
+    {
+      "id": "independent-corpus-curator",
+      "labels": [
+        {
+          "case_id": "independent-001",
+          "present": true,
+          "reason": "Constructs smolagents.CodeAgent with an inference model and multiple locally defined API tools, then runs a currency-conversion instruction."
+        },
+        {
+          "case_id": "independent-002",
+          "present": false,
+          "reason": "OpenAI chat-completion requests print text, stream deltas and inspect headers. No tools, autonomous action loop, or agent SDK construction is configured."
+        },
+        {
+          "case_id": "independent-003",
+          "present": false,
+          "reason": "Build concurrency utility implementing a GNU Make Jobserver pool. It allocates job-slot tokens through a POSIX pipe/FIFO or a Windows semaphore, communicates the pool using MAKEFLAGS, runs the exact command supplied on the command line, and verifies token return before cleanup. The complete program uses fixed platform and CLI branches with ordinary subprocess execution; it has no AI model, planning, or model-directed choice of commands."
+        },
+        {
+          "case_id": "independent-004",
+          "present": false,
+          "reason": "The client uploads training data, polls file status, starts fine-tuning and polls job events. Fixed training-job polling is not model-directed action or an agent SDK."
+        },
+        {
+          "case_id": "independent-005",
+          "present": false,
+          "reason": "A Celery task sleeps then returns x + y. Broker configuration and delayed task execution are conventional job processing, not an AI agent."
+        },
+        {
+          "case_id": "independent-006",
+          "present": true,
+          "reason": "Imports the agents SDK and constructs Agent with instructions and the locally defined get_weather tool, then executes it through Runner.run."
+        },
+        {
+          "case_id": "independent-007",
+          "present": false,
+          "reason": "pRetry repeatedly invokes the same caller-supplied function after exceptions. Retry counts, fixed option callbacks, exponential delay, elapsed-time limits, and AbortSignal govern the loop; AbortError ends it. makeRetriable is a function wrapper. No model, prompt, tool-call response interpretation, or model-selected next action appears in the complete module."
+        },
+        {
+          "case_id": "independent-008",
+          "present": false,
+          "reason": "A single chat-completion request parses math output into Pydantic models. Structured response parsing has no agent SDK, tools or model-directed action loop."
+        },
+        {
+          "case_id": "independent-009",
+          "present": false,
+          "reason": "PriorityQueue stores run functions in a sorted array and exposes enqueue, dequeue, remove and priority updates. Deterministic scheduling is not AI tool selection."
+        },
+        {
+          "case_id": "independent-010",
+          "present": false,
+          "reason": "pLimit enqueues caller-supplied functions, tracks activeCount, and starts the next queued item when below a numeric concurrency limit. Completion decrements the count; clearQueue, map, and limitFunction are queue/function helpers. Its scheduling decisions depend only on queue size and configured concurrency, with no AI inference or agent planning."
+        },
+        {
+          "case_id": "independent-011",
+          "present": true,
+          "reason": "Constructs @openai/agents language agents and a triage Agent with handoffs, runs streamed conversations and retains the selected current agent."
+        },
+        {
+          "case_id": "independent-012",
+          "present": false,
+          "reason": "CachePadded<T> selects memory alignment by target architecture and wraps a value to reduce cache-line sharing. All implementation methods create, unwrap, dereference, convert, or format that value, with Send/Sync forwarding. The complete file has no behavioral agent, model interaction, or decision loop."
+        },
+        {
+          "case_id": "independent-013",
+          "present": true,
+          "reason": "Constructs pydantic_ai.Agent with a model, instructions and dependency types, registers customer_balance as an agent tool and runs support requests."
+        },
+        {
+          "case_id": "independent-014",
+          "present": false,
+          "reason": "A Celery worker schedules say(\"hello\") every ten seconds. The recurring task and worker lifecycle contain no AI model or agent configuration."
+        },
+        {
+          "case_id": "independent-015",
+          "present": false,
+          "reason": "Audio is recorded for five seconds, transcribed by the provider API and printed. This linear transcription workflow does not construct an AI agent."
+        },
+        {
+          "case_id": "independent-016",
+          "present": false,
+          "reason": "A min-priority queue implements key indexing, heap repair and decrease-priority operations. This data structure has no AI-agent configuration or inference."
+        },
+        {
+          "case_id": "independent-017",
+          "present": false,
+          "reason": "The OpenAI upload API transfers a user-selected file from disk or memory. The CLI and chunked upload helpers do not define an AI agent."
+        },
+        {
+          "case_id": "independent-018",
+          "present": true,
+          "reason": "Explicitly constructs typed pydantic_ai.Agent, provides schema instructions and an output validator that raises ModelRetry for invalid SQL, then runs the agent."
+        },
+        {
+          "case_id": "independent-019",
+          "present": false,
+          "reason": "An OpenAI completion request intentionally uses an unknown model and catches NotFoundError. Error handling around one API call is not an AI agent."
+        },
+        {
+          "case_id": "independent-020",
+          "present": false,
+          "reason": "An Express resource helper maps HTTP methods to a local user controller. CRUD and format selection are ordinary web routing without an AI agent."
+        },
+        {
+          "case_id": "independent-021",
+          "present": true,
+          "reason": "Constructs translator agents and an orchestrator whose tool list wraps them with as_tool; Runner executes the orchestrator and a synthesizer agent."
+        },
+        {
+          "case_id": "independent-022",
+          "present": true,
+          "reason": "Constructs an agents SDK Agent with WebSearchTool and uses Runner.run for a search task. Explicit agent construction and tool configuration are present."
+        },
+        {
+          "case_id": "independent-023",
+          "present": false,
+          "reason": "A Celery task performs requests.get on its supplied URL and reports success or failure. No AI inference, tool selection or agent SDK is present."
+        },
+        {
+          "case_id": "independent-024",
+          "present": false,
+          "reason": "Dijkstra computes numeric shortest paths using a priority queue and fixed edge relaxation. Graph traversal and its while loop contain no AI agent construction."
+        },
+        {
+          "case_id": "independent-025",
+          "present": false,
+          "reason": "Express login routes hash passwords, manage sessions and render views. Request-driven authentication has no AI agent or model-directed action selection."
+        },
+        {
+          "case_id": "independent-026",
+          "present": true,
+          "reason": "Defines a SQL execution tool and constructs smolagents.CodeAgent with that tool and InferenceClientModel, then runs a natural-language database query."
+        },
+        {
+          "case_id": "independent-027",
+          "present": false,
+          "reason": "Celery groups and chords execute fixed request tasks; joinall traverses result containers and unlock_graph retries readiness checks. The task graph has no AI agent."
+        },
+        {
+          "case_id": "independent-028",
+          "present": false,
+          "reason": "Ninja build-file generation utility. Writer emits build, rule, pool, include, subninja, default, and variable statements into a supplied text stream; helper functions escape paths, wrap text, and expand Ninja variables. The complete file performs deterministic formatting and build-configuration serialization, with no model inference, prompt processing, tool-call decisions, or agent execution loop."
+        },
+        {
+          "case_id": "independent-029",
+          "present": false,
+          "reason": "Synchronous and asynchronous OpenAI clients stream a fixed counting prompt and print data. Iterating response chunks does not construct an AI agent."
+        },
+        {
+          "case_id": "independent-030",
+          "present": false,
+          "reason": "PQueue schedules caller-provided functions using explicit concurrency, priority, rate limits, timers and cancellation. The complete generic executor contains no AI model or agent SDK."
+        },
+        {
+          "case_id": "independent-031",
+          "present": true,
+          "reason": "Imports Agent, run and tool from @openai/agents, constructs a weather tool with guardrails and a new Agent using it, then executes two requests."
+        },
+        {
+          "case_id": "independent-032",
+          "present": false,
+          "reason": "MCPServer exposes arithmetic, a random word and deterministic weather tools over SSE. A tool server by itself has no model, agent construction or action selector."
+        },
+        {
+          "case_id": "independent-033",
+          "present": true,
+          "reason": "Constructs pydantic_ai.Agent with a model and instructions to use roulette_wheel, registers that tool and invokes agent.run_stream for bets."
+        },
+        {
+          "case_id": "independent-034",
+          "present": true,
+          "reason": "Constructs language-specific agents and a triage Agent with explicit handoffs, then runs it through Runner.run_streamed and carries forward the current agent."
+        },
+        {
+          "case_id": "independent-035",
+          "present": false,
+          "reason": "A Responses API stream prints events for a fixed math prompt and checks completion status. Event listeners and response iteration alone do not create an AI agent."
+        },
+        {
+          "case_id": "independent-036",
+          "present": true,
+          "reason": "Constructs pydantic_ai.Agent with a model and retries, registers location and weather tools, and runs a multi-location query requiring model-directed tool use."
+        },
+        {
+          "case_id": "independent-037",
+          "present": false,
+          "reason": "GithubView fetches a template with HTTPS and passes text to a renderer. HTTP callbacks and dynamic rendering do not construct an AI agent."
+        },
+        {
+          "case_id": "independent-038",
+          "present": false,
+          "reason": "Backoff stores an integer step in Cell and uses bounded spin_loop iterations or thread::yield_now to reduce synchronization contention. reset and is_completed only manage/check the step counter. Included examples wait for atomics and perform compare_exchange. This is processor/thread backoff, not an AI decision or tool loop."
+        },
+        {
+          "case_id": "independent-039",
+          "present": false,
+          "reason": "Chain.Then composes supplied job wrappers. Recover catches panics, DelayIfStillRunning serializes Job.Run calls using a mutex, and SkipIfStillRunning uses a one-slot channel to skip overlapping calls. The complete file implements caller-provided job decorators and fixed synchronization rules; it has no model inference or model-directed action loop."
+        },
+        {
+          "case_id": "independent-040",
+          "present": false,
+          "reason": "Tarjan computes strongly connected components with recursive DFS and a stack. All decisions are graph-algorithm comparisons, with no AI model or agent SDK."
+        },
+        {
+          "case_id": "independent-041",
+          "present": false,
+          "reason": "Every normalizes a duration to a whole-second interval; ConstantDelaySchedule.Next computes the next activation using time arithmetic. The entire file contains only this fixed scheduling calculation, with no model, prompt, tool selection, or autonomous planning."
+        },
+        {
+          "case_id": "independent-042",
+          "present": false,
+          "reason": "Express API-key middleware and fixed HTTP routes return in-memory users and repositories; no model, AI SDK, or agent construction occurs."
+        }
+      ]
+    },
+    {
+      "id": "blind-source-reviewer",
+      "labels": [
+        {
+          "case_id": "independent-001",
+          "present": true,
+          "reason": "Constructs smolagents.CodeAgent with an InferenceClientModel and six callable tools, then runs it on a currency-conversion request."
+        },
+        {
+          "case_id": "independent-002",
+          "present": false,
+          "reason": "Instantiates OpenAI and submits ordinary chat completion requests, including streaming and raw-response variants; it defines no agent or model-selected tools."
+        },
+        {
+          "case_id": "independent-003",
+          "present": false,
+          "reason": "Creates GNU Make jobserver semaphores, pipes, or FIFOs, runs a supplied subprocess, and checks returned job tokens; this is build-process coordination without AI decisions."
+        },
+        {
+          "case_id": "independent-004",
+          "present": false,
+          "reason": "Uses the OpenAI client to upload training data, start a fine-tuning job, and poll file/job status; the loops monitor fixed API operations and do not configure an agent."
+        },
+        {
+          "case_id": "independent-005",
+          "present": false,
+          "reason": "Creates a Celery application and a delayed addition task; the worker executes a predetermined function without any AI model or agent construction."
+        },
+        {
+          "case_id": "independent-006",
+          "present": true,
+          "reason": "Imports Agent and Runner from the agents SDK, constructs an Agent with get_weather in its tools list, and runs it on a weather question."
+        },
+        {
+          "case_id": "independent-007",
+          "present": false,
+          "reason": "Implements pRetry with retry counters, exponential delays, abort handling, and caller-provided retry callbacks; it contains no AI model or agent configuration."
+        },
+        {
+          "case_id": "independent-008",
+          "present": false,
+          "reason": "Calls OpenAI chat.completions.parse once with a MathResponse schema and prints the parsed answer; structured output alone does not construct an agent."
+        },
+        {
+          "case_id": "independent-009",
+          "present": false,
+          "reason": "Implements a priority queue for RunFunction callbacks with sorted insertion, removal, dequeue, and compaction; scheduling is based on supplied numeric priorities, without AI."
+        },
+        {
+          "case_id": "independent-010",
+          "present": false,
+          "reason": "Implements pLimit by queuing functions and enforcing a concurrency limit; execution order and queue clearing are ordinary promise scheduling, with no agent SDK or model-directed actions."
+        },
+        {
+          "case_id": "independent-011",
+          "present": true,
+          "reason": "Constructs four @openai/agents Agent objects, configures the triage Agent with language-agent handoffs, and invokes run while preserving currentAgent and conversation history."
+        },
+        {
+          "case_id": "independent-012",
+          "present": false,
+          "reason": "Defines the Rust CachePadded generic value wrapper with architecture-specific memory alignment and Deref implementations; there is no AI agent construction or orchestration."
+        },
+        {
+          "case_id": "independent-013",
+          "present": true,
+          "reason": "Constructs pydantic_ai.Agent with a model, typed dependencies, support instructions, and structured output; attaches a customer_balance tool and runs the support agent."
+        },
+        {
+          "case_id": "independent-014",
+          "present": false,
+          "reason": "Configures a Celery app and a periodic say task through add_periodic_task; the timer-driven worker behavior is fixed and contains no AI agent."
+        },
+        {
+          "case_id": "independent-015",
+          "present": false,
+          "reason": "Records audio and passes it to OpenAI audio.transcriptions.create using whisper-1; this is a direct transcription API client workflow without an agent."
+        },
+        {
+          "case_id": "independent-016",
+          "present": false,
+          "reason": "Implements a heap-based min-priority queue with key indexing, decrease, heapify, and removeMin; it is a data structure without model-directed action selection."
+        },
+        {
+          "case_id": "independent-017",
+          "present": false,
+          "reason": "Uses OpenAI uploads.upload_file_chunked for files read from disk or memory; this is file-upload client code without any agent definition."
+        },
+        {
+          "case_id": "independent-018",
+          "present": true,
+          "reason": "Explicitly constructs pydantic_ai.Agent[Deps, Response] with a model and output types, adds a SQL system prompt and output validator that can raise ModelRetry, and invokes agent.run."
+        },
+        {
+          "case_id": "independent-019",
+          "present": false,
+          "reason": "Makes an OpenAI completions request with an unknown model and handles NotFoundError; the exception-handling example contains no AI agent definition."
+        },
+        {
+          "case_id": "independent-020",
+          "present": false,
+          "reason": "Builds Express routes for listing, showing, deleting, and rendering fake user records; these HTTP handlers are deterministic web-service code without AI orchestration."
+        },
+        {
+          "case_id": "independent-021",
+          "present": true,
+          "reason": "Constructs translation Agents and an orchestrator Agent whose tools are the translators exposed through as_tool, then runs the orchestrator and a synthesizer Agent."
+        },
+        {
+          "case_id": "independent-022",
+          "present": true,
+          "reason": "Constructs an agents.Agent with WebSearchTool and invokes Runner.run on a request requiring web search, explicitly configuring model-directed tool use."
+        },
+        {
+          "case_id": "independent-023",
+          "present": false,
+          "reason": "Defines a Celery task that calls requests.get on its supplied URL and reports success or failure; it does not construct an AI agent."
+        },
+        {
+          "case_id": "independent-024",
+          "present": false,
+          "reason": "Implements Dijkstra shortest paths by relaxing weighted graph edges through a priority queue; this graph algorithm does not contain an AI model or agent."
+        },
+        {
+          "case_id": "independent-025",
+          "present": false,
+          "reason": "Defines Express authentication routes, password hashing, session management, and access checks; the supplied source contains no AI agent or model-driven tools."
+        },
+        {
+          "case_id": "independent-026",
+          "present": true,
+          "reason": "Constructs smolagents.CodeAgent with an InferenceClientModel and a sql_engine tool backed by SQLAlchemy, then asks the agent to answer a database question."
+        },
+        {
+          "case_id": "independent-027",
+          "present": false,
+          "reason": "Uses Celery chords, groups, result joining, readiness checks, and retries to manage a fixed task graph; no AI model selects actions or defines an agent."
+        },
+        {
+          "case_id": "independent-028",
+          "present": false,
+          "reason": "Defines a Writer that emits Ninja build-file syntax and utilities for escaping and expanding variables; it is build-file generation without AI behavior."
+        },
+        {
+          "case_id": "independent-029",
+          "present": false,
+          "reason": "Uses OpenAI and AsyncOpenAI to stream ordinary chat completions and iterate response chunks; stream iteration does not configure or orchestrate an agent."
+        },
+        {
+          "case_id": "independent-030",
+          "present": false,
+          "reason": "Implements PQueue task scheduling with concurrency limits, rate windows, priorities, cancellation, timeout handling, and lifecycle events; all control is ordinary queue machinery with no AI model or agent SDK."
+        },
+        {
+          "case_id": "independent-031",
+          "present": true,
+          "reason": "Constructs an @openai/agents Agent with a getWeather tool, input/output guardrails, and instructions, then invokes run for weather questions."
+        },
+        {
+          "case_id": "independent-032",
+          "present": false,
+          "reason": "Constructs an MCPServer and registers arithmetic, random-word, and weather tools before serving SSE; it supplies tools but contains no agent construction or model-selected orchestration."
+        },
+        {
+          "case_id": "independent-033",
+          "present": true,
+          "reason": "Constructs a pydantic_ai.Agent with a model, typed dependencies, retries, and instructions to use roulette_wheel; registers that tool and runs the agent with betting prompts."
+        },
+        {
+          "case_id": "independent-034",
+          "present": true,
+          "reason": "Constructs language-specific agents and a triage Agent with handoffs, then uses Runner.run_streamed and the returned current_agent to continue routed conversations."
+        },
+        {
+          "case_id": "independent-035",
+          "present": false,
+          "reason": "Calls OpenAI responses.stream, subscribes to output events, and reads finalResponse; this is a direct model response stream without agent construction or tools."
+        },
+        {
+          "case_id": "independent-036",
+          "present": true,
+          "reason": "Constructs a pydantic_ai.Agent with a model and dependencies, registers get_lat_lng and get_weather tools, and runs it on a multi-location weather request."
+        },
+        {
+          "case_id": "independent-037",
+          "present": false,
+          "reason": "Defines GithubView and an HTTPS-backed render method that fetches a template and invokes its configured rendering engine; no AI model or agent is present."
+        },
+        {
+          "case_id": "independent-038",
+          "present": false,
+          "reason": "Implements Rust Backoff with spin loops, thread yielding, and completion thresholds for synchronization; these concurrency primitives do not select AI actions."
+        },
+        {
+          "case_id": "independent-039",
+          "present": false,
+          "reason": "Defines cron job wrappers that recover panics, serialize overlapping runs, or skip a still-running job; these are scheduling and synchronization behaviors without an AI agent."
+        },
+        {
+          "case_id": "independent-040",
+          "present": false,
+          "reason": "Implements Tarjan strongly connected components using deterministic depth-first graph traversal, stack membership, and lowlink values; no AI agent is configured."
+        },
+        {
+          "case_id": "independent-041",
+          "present": false,
+          "reason": "Defines ConstantDelaySchedule, rounds durations to seconds, and calculates the next recurring activation time; it contains only schedule arithmetic."
+        },
+        {
+          "case_id": "independent-042",
+          "present": false,
+          "reason": "Builds an Express API with key-checking middleware, fixed user/repository endpoints, and JSON error handlers; there is no AI model, agent definition, or model-directed action selection."
+        }
+      ]
+    }
+  ],
+  "adjudications": []
+}

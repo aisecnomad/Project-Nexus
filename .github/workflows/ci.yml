@@ -44,7 +44,7 @@ jobs:
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
-      - run: mypy shadowscan tools/evaluation
+      - run: mypy shadowscan tools/evaluation tools/canaries
       - run: pip-audit --progress-spinner off
       - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
@@ -56,6 +56,9 @@ jobs:
           python -m tools.evaluation.evaluate --output "$RUNNER_TEMP/shadowscan-synthetic-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/public_corpus.json \
             --output "$RUNNER_TEMP/shadowscan-public-evaluation.json"
+          python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
+            --annotations tools/evaluation/independent_annotations.json \
+            --output "$RUNNER_TEMP/shadowscan-independent-evaluation.json"
       - name: Build distributable wheel
         run: python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
       - name: Validate installed wheel outside the checkout
@@ -82,6 +85,13 @@ jobs:
           python -c 'import json, os, pathlib; report = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "container-report.json").read_text()); assert report["summary"]["complete"] is True; assert report["findings"]'
       - name: Self-scan (demo, offline)
         run: shadowscan scan -c examples/shadowscan.offline.yaml --format sarif -o shadowscan.sarif
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: shadowscan-evaluation-${{ matrix.python }}
+          path: ${{ runner.temp }}/shadowscan-*-evaluation.json
+          if-no-files-found: ignore
+          retention-days: 14
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always() && hashFiles('shadowscan.sarif') != ''
         with:
