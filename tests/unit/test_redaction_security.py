@@ -263,7 +263,7 @@ def test_ssws_authorization_is_redacted():
 
 
 def test_repr_escaped_configured_secret_is_redacted():
-    credential = "first-line\\nsecond-line"
+    credential = "first-line\nsecond-line"
     result = sanitize({"client_secret": credential, "debug": repr(credential)})
     assert credential not in result["debug"]
     assert repr(credential)[1:-1] not in result["debug"]
