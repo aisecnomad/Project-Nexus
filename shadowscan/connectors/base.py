@@ -226,6 +226,12 @@ class BaseConnector(ABC):
     config_keys: ClassVar[dict[str, str]] = {}  # documentation: key -> description
     offline_formats: ClassVar[str] = "JSON / JSONL / YAML / CSV export"
     _OFFLINE_COLLECTION_KINDS: ClassVar[dict[str, str]] = {}
+    # Provider inventory records (cloud functions, apps, containers) carry
+    # environment blocks that are mostly ordinary settings. Their values are
+    # still withheld in exports, but they are not credentials to remove from
+    # sibling fields such as ARNs. Tool/agent configuration parsers keep the
+    # default: their env blocks are where secrets live.
+    _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = False
 
     def __init__(self, ctx: ConnectorContext):
         self.ctx = ctx
@@ -741,7 +747,8 @@ class BaseConnector(ABC):
                     offset = fh.tell()
                     try:
                         encoded_chars = 0
-                        for chunk in json.JSONEncoder(default=str).iterencode(sanitize(rec)):
+                        clean = sanitize(rec, env_values_are_secrets=not self._ENV_VALUES_ARE_CONFIGURATION)
+                        for chunk in json.JSONEncoder(default=str).iterencode(clean):
                             encoded_chars += len(chunk)
                             if encoded_chars > self._MAX_OFFLINE_FILE_BYTES:
                                 raise SanitizationLimitError("export record size limit exceeded")

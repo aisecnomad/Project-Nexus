@@ -50,9 +50,11 @@ class Engine:
         self.config = config
         config.validate_security_options()
         self._index_supplied = index is not None
-        self.index = index if index is not None else get_index(
-            extra_dirs=config.signature_dirs or None, reload=True, allow_override=config.allow_signature_override,
-        )
+        # Packs are parsed and every pattern compiled on load, which costs
+        # roughly half a second. Load lazily so a CLI invocation pays once,
+        # and drop the loaded index after each run so a reused Engine still
+        # notices signature pack edits between runs.
+        self._index: SignatureIndex | None = index
         self.progress = progress or (lambda cid, msg: None)
         self.inventory: Inventory | None = None
         # Connector ids whose worker threads outlived ``connector_timeout_seconds`` in
@@ -62,6 +64,20 @@ class Engine:
         self._abandoned_futures: list[Future[Any]] = []
         if config.inventory:
             self.inventory = Inventory.load(config.inventory)
+
+    @property
+    def index(self) -> SignatureIndex:
+        if self._index is None:
+            self._index = get_index(
+                extra_dirs=self.config.signature_dirs or None, reload=True,
+                allow_override=self.config.allow_signature_override,
+            )
+        return self._index
+
+    @index.setter
+    def index(self, value: SignatureIndex) -> None:
+        self._index = value
+        self._index_supplied = True
 
     def _report_progress(self, connector: str, message: str) -> None:
         """A failed output observer must not change collection or scan completeness."""
@@ -78,10 +94,11 @@ class Engine:
         self.abandoned_workers.clear()
         self.config.min_confidence = validate_min_confidence(self.config.min_confidence)
         self.config.validate_security_options()
-        # A reusable Engine must notice signature pack edits between runs.
+        # A reusable Engine must notice signature pack edits between runs. The
+        # property reloads on first use; a run that raises before the index is
+        # touched keeps the pending reload for the next attempt.
         if not self._index_supplied:
-            self.index = get_index(extra_dirs=self.config.signature_dirs or None, reload=True,
-                                   allow_override=self.config.allow_signature_override)
+            self._index = None
         # Registry approval can change independently of source inputs or an Engine
         # instance's lifetime. It is never persisted in connector cache entries.
         self.inventory = Inventory.load(self.config.inventory) if self.config.inventory else None

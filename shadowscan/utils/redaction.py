@@ -448,7 +448,7 @@ def sanitize_text(text: str) -> str:
     return _redact_mapping_values(assignments(text))
 
 
-def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
+def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_secrets: bool = True) -> Any:
     """Return a sanitized JSON-like copy, preserving nonsecret fields and types.
 
     Environment variable values are omitted regardless of name. Lists additionally
@@ -456,6 +456,15 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
     Known credential values are also removed from other fields in the same object.
     Short credentials withhold a matching field by default. Diagnostics can opt
     into bounded substring replacement to retain surrounding diagnostic context.
+
+    ``env_values_are_secrets`` controls whether every environment value is also
+    treated as a credential to remove from *sibling* fields. That is right for
+    tool and agent configuration, where an ``env`` block is where tokens live and
+    a source excerpt can repeat them. A provider inventory record's environment
+    holds mostly ordinary settings (``STAGE=prod``, ``WORKERS=4``, a region), and
+    removing those from sibling fields destroys resource identities. Producers of
+    such records pass ``False``; values under sensitive names, secret-record
+    shapes and recognizable credential formats are still removed everywhere.
     """
     _check_sanitization_structure(value)
     known: set[str] = set()
@@ -487,7 +496,7 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
             for key, child in item.items():
                 if _sensitive_key(str(key)):
                     remember(child)
-                if str(key).lower() in {"env", "environment", "environment_variables", "environmentvariables"}:
+                if env_values_are_secrets and str(key).lower() in {"env", "environment", "environment_variables", "environmentvariables"}:
                     if isinstance(child, Mapping):
                         for env_value in child.values():
                             remember(env_value)

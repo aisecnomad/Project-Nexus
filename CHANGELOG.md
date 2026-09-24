@@ -2,6 +2,20 @@
 
 ## 0.1.1 — Unreleased
 
+### Production review round 2 (2026-09-24)
+
+- Stop treating every environment value of a cloud inventory record as a credential to remove from sibling fields: a benign setting such as `STAGE=prod` or `WORKERS=4` no longer redacts ARNs, account IDs and names out of SageMaker findings and `--dump-records` exports, which also restores stable finding IDs when an export is re-analysed offline. Environment values remain withheld in exports, and values under sensitive names or in recognizable credential formats are still removed everywhere. SageMaker findings now record environment variable names only, like Lambda findings.
+- Snapshot Bedrock agent DRAFT details instead of storing the agent record inside itself; the previous self-reference collapsed to a redaction marker in record exports and marked every re-analysed agent incomplete. Older exports with the collapsed entry are read without a coverage warning.
+- Evaluate IAM `NotAction` allow statements (everything not listed is granted) and treat `sagemaker:*` as an LLM invoke grant during live collection, matching the offline analysis.
+- Report OCI custom (fine-tuned) models by `type: CUSTOM` / base model reference instead of a vendor test that excluded every real custom model.
+- A `bedrock-logging` export record without a `loggingConfig` key, or carrying an error body, is unknown coverage rather than a "logging DISABLED" finding.
+- Verify unchanged findings by digest instead of re-running the full credential sanitizer on every engine stage and reporter; rendering 5,000 findings to JSON drops from about 18 s to under 2 s, and sanitization semantics are unchanged (any later mutation is re-sanitized in full).
+- Load signature packs once per CLI invocation instead of twice (a reused `Engine` still reloads packs between runs).
+- Show the configuration policy reason when scan setup is rejected (for example the code-scan and live-credential separation rule) instead of a generic message; the rule's message now names `--allow-credential-mixing`.
+- Render `shadowscan connectors` config keys with real styling instead of literal `[bold]`/`[dim]` markup.
+- Sort Entra delegated scopes so `permissions` are reproducible across runs.
+- Tests that assert successful Git history enrichment skip with a clear reason when the local Git lacks `--no-lazy-fetch` (2.45+) instead of failing; CI enables pip caching and mypy checks untyped function bodies.
+
 ### Final reconciliation after PR #33 (2026-09-24)
 
 - Fence incremental cache and record publication against timed-out connectors, and refuse to reuse an Engine while a prior abandoned worker still runs. A separate process deadline remains necessary for blocked SDK or plugin calls.

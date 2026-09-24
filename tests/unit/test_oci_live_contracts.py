@@ -201,7 +201,8 @@ def test_oci_live_inventory_classifies_models_containers_policies_and_secret_nam
     genai = _empty_client("list_endpoints", "list_dedicated_ai_clusters")
     genai.list_models.return_value = response([
         oci.generative_ai.models.ModelSummary(id="ocid1.model.custom", display_name="tuned",
-                                               base_model_id="ocid1.model.base", capabilities=["FINE_TUNE"]),
+                                               base_model_id="ocid1.model.base", type="CUSTOM", vendor="cohere",
+                                               capabilities=["TEXT_GENERATION"]),
         oci.generative_ai.models.ModelSummary(id="ocid1.model.base", display_name="foundation", vendor="meta"),
     ])
     ds = _empty_client()

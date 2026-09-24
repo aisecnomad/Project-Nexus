@@ -152,7 +152,8 @@ class ScanConfig:
         if any(source is not credentialed for source in code for credentialed in live):
             raise ConfigValidationError(
                 "code scanning and live credentialed connectors require separate scans; "
-                "set options.allow_credential_mixing to true only for reviewed inputs"
+                "set options.allow_credential_mixing to true (or pass --allow-credential-mixing) "
+                "only for reviewed inputs"
             )
 
     @classmethod

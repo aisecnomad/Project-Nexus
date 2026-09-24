@@ -532,6 +532,7 @@ def test_plugin_overriding_builtin_name_is_not_cached(tmp_path, index, monkeypat
     assert second.findings[0].resource == "run:2" and not second.stats[0].cached
 
 
+@pytest.mark.requires_git_metadata
 def test_git_replacement_cannot_reuse_stale_owner(tmp_path, index):
     cfg = config(tmp_path)
     repo = tmp_path / "repo"
@@ -557,3 +558,22 @@ def test_git_replacement_cannot_reuse_stale_owner(tmp_path, index):
     changed = Engine(cfg, index).run()
     assert changed.complete and not changed.stats[0].cached
     assert changed.findings[0].owner == "bob@example.com"
+
+
+def test_engine_loads_signature_index_once_per_run(tmp_path, monkeypatch):
+    import shadowscan.engine as engine_module
+
+    loads = []
+    original = engine_module.get_index
+
+    def counting(*args, **kwargs):
+        loads.append(kwargs.get("reload"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(engine_module, "get_index", counting)
+    engine = Engine(config(tmp_path, incremental=False))
+    assert loads == [], "constructing an Engine must not parse signature packs"
+    assert engine.run().complete
+    assert loads == [True], "one run must load the packs exactly once"
+    assert engine.run().complete
+    assert loads == [True, True], "a reused Engine reloads packs so edits between runs are noticed"

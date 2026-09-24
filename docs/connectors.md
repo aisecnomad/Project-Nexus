@@ -208,6 +208,12 @@ All cloud connectors need the matching extra (`shadowscan[aws|gcp|azure|oci]`)
 for live mode, or a JSONL record dump for offline mode. They use read-only
 list/describe/get calls only.
 
+Cloud record exports withhold every environment value of a function, app or
+container. Those values are ordinary configuration rather than credentials, so
+they are not also removed from sibling fields such as ARNs; values under
+sensitive names and recognizable credential formats are removed everywhere.
+Findings record environment variable names only.
+
 ### `cloud.aws`
 Bedrock Agents (action groups, knowledge bases, aliases, collaborators,
 guardrails, memory), Flows, AgentCore (runtimes, gateways = MCP, memories,

@@ -173,6 +173,10 @@ class Finding:
     # several observations of one resource/type must supply distinct values.
     identity_discriminator: str = ""
     identity_schema: str = FINDING_IDENTITY_SCHEMA
+    # Digest of the complete field state that the last sanitize() call verified.
+    # Bookkeeping only: never imported, exported, compared or shown. Any later
+    # mutation changes the digest and forces a full pass again.
+    _sanitized_state: str | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.identity_discriminator:
@@ -195,8 +199,22 @@ class Finding:
             ], separators=(",", ":"), ensure_ascii=True)
         return "ss-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
+    def _state_digest(self) -> str:
+        # The dataclass repr covers every model field (the cache field opts
+        # out) and reaches into the JSON-like containers the sanitizer inspects.
+        return hashlib.sha256(repr(self).encode("utf-8", "surrogatepass")).hexdigest()
+
     def sanitize(self) -> None:
-        """Remove credentials from every persisted/reportable field in place."""
+        """Remove credentials from every persisted/reportable field in place.
+
+        Findings are sanitized at construction, after collection, after each
+        engine stage and again by every reporter. A full pass costs milliseconds
+        per finding, so an unchanged finding that already passed is verified by
+        digest instead; the sanitizer is idempotent, so the outcome is the same.
+        """
+        state = self._state_digest()
+        if state == self._sanitized_state:
+            return
         identity_names = (
             "connector", "resource", "resource_type", "provider", "account", "region",
             "identity_discriminator", "identity_schema",
@@ -208,7 +226,7 @@ class Finding:
         generated_id = self.id == self.compute_id()
         trusted_schema = self.identity_schema in {FINDING_IDENTITY_SCHEMA, LEGACY_FINDING_IDENTITY_SCHEMA}
         names = [attr.name for attr in fields(self)
-                 if attr.name not in {"surface", "kind", "likelihood", "risk", "evidence"}
+                 if attr.name not in {"surface", "kind", "likelihood", "risk", "evidence", "_sanitized_state"}
                  and not (generated_id and attr.name == "id")
                  and not (trusted_schema and attr.name == "identity_schema")]
         evidence_names = [attr.name for attr in fields(Evidence)]
@@ -235,6 +253,8 @@ class Finding:
         for factor, ((identifier,), (description,)) in zip(self.risk.factors, risk_values, strict=True):
             factor.id = identifier
             factor.description = description
+        # Record the verified state only after a complete, successful pass.
+        self._sanitized_state = self._state_digest()
 
     def add_evidence(self, ev: Evidence) -> None:
         ev.sanitize()
@@ -271,6 +291,7 @@ class Finding:
     def to_dict(self) -> dict[str, Any]:
         self.sanitize()
         d = asdict(self)
+        del d["_sanitized_state"]
         d["surface"] = self.surface.value
         d["kind"] = self.kind.value
         d["likelihood"] = self.likelihood.value
@@ -286,7 +307,7 @@ class Finding:
         for name in ("surface", "connector", "kind", "title", "resource", "resource_type"):
             if not isinstance(d.get(name), str) or not d[name].strip():
                 raise ValueError(f"finding {name} is required")
-        d = {name: d[name] for name in (attr.name for attr in fields(cls)) if name in d}
+        d = {name: d[name] for name in (attr.name for attr in fields(cls) if attr.init) if name in d}
         # Reading an old report preserves its identity rather than silently
         # relabeling old ids as v2. Upgrades require a freshly collected baseline.
         d.setdefault("identity_schema", LEGACY_FINDING_IDENTITY_SCHEMA)

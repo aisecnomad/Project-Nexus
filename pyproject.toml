@@ -75,3 +75,6 @@ addopts = "-q"
 python_version = "3.11"
 ignore_missing_imports = true
 warn_unused_ignores = false
+# Bodies of untyped helpers (closures inside connectors) are checked too; the
+# package passes today and this keeps later regressions out of those paths.
+check_untyped_defs = true

@@ -122,6 +122,11 @@ def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, m
         result = engine.run(only=only)
     except InventoryValidationError as exc:
         raise click.ClickException(str(exc)) from None
+    except ConfigValidationError as exc:
+        # Policy rejections (for example a code scan selected alongside a live
+        # credentialed connector) never echo configured values, so the reason
+        # can be shown instead of a generic setup failure the operator cannot act on.
+        raise click.ClickException(f"invalid scan configuration: {exc}") from None
     except (ValueError, TypeError, OSError, yaml.YAMLError):
         raise click.ClickException("scan setup failed; check connector configuration, signature packs and inventory") from None
     try:
@@ -385,9 +390,18 @@ def list_connectors(surface: str | None, as_json: bool) -> None:
         if "error" in r:
             table.add_row(Text(r["name"]), "?", Text(r["error"], style="red"), "")
             continue
-        keys = "\n".join(f"[bold]{k}[/bold]: {v}" for k, v in r["config"].items())
-        extra = f"\n[dim]requires: {', '.join(r['requires'])}[/dim]" if r["requires"] else ""
-        table.add_row(Text(r["name"]), Text(str(r["surface"])), Text(r["description"] + extra), Text(keys))
+        # Text renders literally, so styles are attached to spans rather than
+        # written as markup that would appear verbatim in the table.
+        keys = Text()
+        for k, v in r["config"].items():
+            if keys:
+                keys.append("\n")
+            keys.append(str(k), style="bold")
+            keys.append(f": {v}")
+        description = Text(r["description"])
+        if r["requires"]:
+            description.append(f"\nrequires: {', '.join(r['requires'])}", style="dim")
+        table.add_row(Text(r["name"]), Text(str(r["surface"])), description, keys)
     console.print(table)
 
 

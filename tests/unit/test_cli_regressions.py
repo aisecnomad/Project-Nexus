@@ -32,3 +32,18 @@ def test_signature_test_never_prints_matched_credential(kind):
     assert "provider.openai" in result.output
     assert key not in result.output
     assert "[REDACTED]" in result.output
+
+
+def test_connectors_table_renders_styles_rather_than_literal_markup():
+    result = CliRunner().invoke(main, ["connectors"])
+    assert result.exit_code == 0, result.output
+    assert "[bold]" not in result.output and "[dim]" not in result.output
+    assert "profile" in result.output and "requires: boto3" in result.output
+
+
+def test_code_scan_explains_credential_isolation_rejection(tmp_path):
+    (tmp_path / "requirements.txt").write_text("langchain\n")
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--github-org", "acme", "--format", "json"])
+    assert result.exit_code == 1, result.output
+    assert "separate scans" in result.output and "--allow-credential-mixing" in result.output
+    assert "acme" not in result.output.replace("--allow-credential-mixing", "")

@@ -489,3 +489,7 @@ requires a new scan.
 
 See [the consolidated review](consolidated-review-2026-09-24.md) for verification
 evidence and implementation choices.
+
+The [round 2 production review](production-review-2026-09-24-round2.md) records the
+later verified corrections to export sanitization, Bedrock/IAM/OCI collection,
+JWT classification, gateway detection and report rendering performance.
