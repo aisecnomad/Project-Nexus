@@ -15,8 +15,8 @@ from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, Surface
 from shadowscan.registry import Inventory, InventoryEntry, InventoryValidationError
 
-APPROVED = "arn:aws:bedrock:*:111:agent/APPROVED"
-OTHER = "arn:aws:bedrock:us-east-1:222:agent/OTHER"
+APPROVED = "arn:aws:bedrock:*:111111111111:agent/APPROVED"
+OTHER = "arn:aws:bedrock:us-east-1:222222222222:agent/OTHER"
 LIST_FIELDS = ("resources", "names", "aliases", "frameworks", "surfaces", "providers", "accounts", "regions", "tags")
 
 

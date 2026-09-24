@@ -243,9 +243,14 @@ class Engine:
                     stats.append(st)
         else:
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="shadowscan") as pool:
-                futures = {pool.submit(_run, number, spec): spec for number, spec in jobs}
+                futures = {pool.submit(_run, number, spec): number for number, spec in jobs}
+                completed: dict[int, tuple[ConnectorSpec, list[Finding], ScanStats]] = {}
                 for fut in as_completed(futures):
-                    _, fs, st = fut.result()
+                    completed[futures[fut]] = fut.result()
+                # Merge uses first-observed owner and metadata as precedence.
+                # Preserve configured order regardless of request completion.
+                for number, _ in jobs:
+                    _, fs, st = completed[number]
                     findings.extend(fs)
                     if st:
                         stats.append(st)
@@ -337,11 +342,33 @@ def _gateway_sources(finding: Finding) -> list[dict[str, Any]]:
     return existing if isinstance(existing, list) else [_gateway_source_snapshot(finding)]
 
 
-def _merge_gateway_sources(cur: Finding, sources: list[dict[str, Any]]) -> None:
+def _unique_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate nested observations while retaining their first provenance."""
+    def key_for(value: Any) -> Any:
+        if isinstance(value, dict):
+            return ("dict", frozenset((key, key_for(item)) for key, item in value.items()))
+        if isinstance(value, (list, tuple)):
+            return (type(value).__name__, tuple(key_for(item) for item in value))
+        if isinstance(value, (set, frozenset)):
+            return ("set", frozenset(key_for(item) for item in value))
+        # Python considers True == 1 and False == 0. JSON evidence preserves
+        # those distinctions, so its deduplication key must do the same.
+        return (type(value).__name__, value)
+
     unique: list[dict[str, Any]] = []
-    for source in sources:
-        if isinstance(source, dict) and source not in unique:
-            unique.append(source)
+    seen: set[Any] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        key = key_for(record)
+        if key not in seen:
+            seen.add(key)
+            unique.append(record)
+    return unique
+
+
+def _merge_gateway_sources(cur: Finding, sources: list[dict[str, Any]]) -> None:
+    unique = _unique_records(sources)
     cur.metadata["runtime_sources"] = unique
     for key in _GATEWAY_TOTALS:
         values = [source.get("metrics", {}).get(key) for source in unique]
@@ -406,7 +433,9 @@ def merge(findings: list[Finding]) -> list[Finding]:
         gateway_sources = _gateway_sources(cur) + _gateway_sources(f) if cur.surface == f.surface == Surface.GATEWAY else []
         seen = {(e.signal, e.location, e.description) for e in cur.evidence}
         for e in f.evidence:
-            if (e.signal, e.location, e.description) not in seen:
+            evidence_key = (e.signal, e.location, e.description)
+            if evidence_key not in seen:
+                seen.add(evidence_key)
                 cur.evidence.append(e)
         for fw in f.frameworks:
             cur.add_framework(fw)
@@ -443,9 +472,8 @@ def merge(findings: list[Finding]) -> list[Finding]:
                         if isinstance(observation, dict):
                             entry = dict(observation)
                             entry.setdefault("source", finding.metadata.get("runtime_source", {}))
-                            if entry not in observations:
-                                observations.append(entry)
-                cur.metadata[k] = observations
+                            observations.append(entry)
+                cur.metadata[k] = _unique_records(observations)
             else:
                 cur.metadata.setdefault(k, v)
         if gateway_sources:

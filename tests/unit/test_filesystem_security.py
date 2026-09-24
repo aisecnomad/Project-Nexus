@@ -165,6 +165,59 @@ def test_codeowners_parent_symlink_is_not_followed(tmp_path, run_connector):
     assert ctx.stats.errors
 
 
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_source_symlink_is_skipped_and_marks_scan_incomplete(tmp_path, run_connector, kind):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    private = tmp_path / "private"
+    private.mkdir()
+    (private / "agent.py").write_text("from crewai import Agent  # private business notes\n")
+    (repo / "good.py").write_text("from langgraph.graph import StateGraph\n")
+    if kind == "file":
+        (repo / "agent.py").symlink_to(private / "agent.py")
+    else:
+        (repo / "agent").symlink_to(private, target_is_directory=True)
+
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert any("framework.langgraph" in finding.frameworks for finding in findings)
+    assert not any("private business notes" in str(finding.to_dict()) for finding in findings)
+    assert ctx.stats.incomplete
+    assert any("symbolic link" in issue for issue in ctx.stats.errors)
+
+
+def test_explicitly_excluded_symlink_is_outside_scan_scope(tmp_path, run_connector):
+    private = tmp_path / "private"
+    private.mkdir()
+    (private / "agent.py").write_text("from crewai import Agent\n")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "excluded.py").symlink_to(private / "agent.py")
+    (repo / "good.py").write_text("from langgraph.graph import StateGraph\n")
+
+    findings, ctx = run_connector("code.filesystem", path=str(repo), exclude=["*excluded.py"], use_git=False)
+    assert any("framework.langgraph" in finding.frameworks for finding in findings)
+    assert not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("kind", ["root", "ancestor", "dotdot"])
+def test_symlink_in_selected_root_cannot_read_outside(tmp_path, run_connector, kind):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    private = tmp_path / "private"
+    private.mkdir()
+    (private / "agent.py").write_text("from crewai import Agent  # private business notes\n")
+    (repo / "linked").symlink_to(private, target_is_directory=True)
+    selected = {
+        "root": repo / "linked",
+        "ancestor": repo / "linked" / "agent.py",
+        "dotdot": repo / "linked" / ".." / "agent.py",
+    }[kind]
+    findings, ctx = run_connector("code.filesystem", path=str(selected), use_git=False)
+    assert findings == []
+    assert ctx.stats.incomplete
+    assert any("symbolic link" in issue for issue in ctx.stats.errors)
+
+
 def test_codeowners_cache_scoped_to_each_scan_root(tmp_path, run_connector):
     roots = []
     for name in ("one", "two"):

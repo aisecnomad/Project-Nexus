@@ -18,7 +18,13 @@ from rich.table import Table
 
 from shadowscan import __version__
 from shadowscan.comparison import compare_reports
-from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options, validate_min_confidence
+from shadowscan.config import (
+    ConfigValidationError,
+    ConnectorSpec,
+    ScanConfig,
+    parse_set_options,
+    validate_min_confidence,
+)
 from shadowscan.connectors import (
     available_connectors,
     builtin_connector_names,
@@ -154,6 +160,8 @@ def scan(config_path: str, only: tuple[str, ...], fmt: str, output: str | None, 
     """Run every connector defined in a config file."""
     try:
         cfg = ScanConfig.from_yaml(config_path)
+    except ConfigValidationError as exc:
+        raise click.ClickException(f"invalid scan configuration: {exc}") from None
     except ValueError as exc:
         if str(exc) == "min_confidence must be a finite number between 0 and 1":
             raise click.BadParameter(str(exc), param_hint="--config") from None

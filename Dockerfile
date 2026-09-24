@@ -1,11 +1,11 @@
 # Disposable ShadowScan worker.
 # Does not contain audit credentials. Run with secrets at runtime only.
 #
-#   docker build -t shadowscan:0.1.1 .
+#   docker build -t shadowscan:0.1.0 .
 #   docker run --rm --read-only --tmpfs /tmp:mode=1777 --tmpfs /home/nonroot:mode=1777 \
 #     --network none \
 #     -v "$PWD/repo:/input:ro" -v "$PWD/out:/output" \
-#     shadowscan:0.1.1 code /input --format sarif -o /output/shadowscan.sarif
+#     shadowscan:0.1.0 code /input --format sarif -o /output/shadowscan.sarif
 #
 # Drop --network none for live API collection. Never mount production
 # credential files into a container that also mounts an untrusted repo.
