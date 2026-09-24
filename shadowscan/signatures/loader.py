@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 from collections.abc import Sequence
@@ -71,25 +73,36 @@ class Signal:
     capabilities: list[str] = field(default_factory=list)  # capabilities implied when matched
     agent_indicator: bool = False  # this signal by itself indicates an *agent* (not just LLM use)
     description: str | None = None
-    compiled: list[re.Pattern[str]] = field(default_factory=list, repr=False)
     bounded_compiled: list[Any] = field(default_factory=list, repr=False)
 
+    @property
+    def compiled(self) -> list[re.Pattern[str]]:
+        """Stdlib compilations of ``patterns``, for callers that need ``re`` objects.
+
+        Matching only ever uses ``bounded_compiled``; this view is computed on
+        demand so loading a pack never pays for an unused second compilation.
+        """
+        return [re.compile(p, re.MULTILINE) for p in self.patterns]
+
     def compile(self) -> None:
-        self.compiled = []
+        """Compile patterns with the bounded engine the matcher executes.
+
+        Every pattern the matcher will run (including ``re:`` domain values,
+        which :class:`SignatureIndex` compiles itself) must compile here so
+        ``shadowscan.signatures.validate`` rejects a broken pack before a scan.
+        """
         self.bounded_compiled = []
         for p in self.patterns:
             try:
-                self.compiled.append(re.compile(p, re.MULTILINE))
                 self.bounded_compiled.append(regex.compile(p, regex.MULTILINE | regex.VERSION0))
-            except (re.error, regex.error) as exc:
+            except regex.error as exc:
                 raise ValueError(f"invalid regex {p!r}: {exc}") from exc
         if self.type == "domain":
             for value in self.values:
                 if value.startswith("re:"):
                     try:
-                        re.compile(value[3:], re.IGNORECASE)
                         regex.compile(value[3:], regex.IGNORECASE | regex.VERSION0)
-                    except (re.error, regex.error) as exc:
+                    except regex.error as exc:
                         raise ValueError(f"invalid domain regex {value!r}: {exc}") from exc
 
 
@@ -225,6 +238,42 @@ def builtin_signature_dir() -> Path:
     return Path(str(resources.files("shadowscan.signatures") / "data"))
 
 
+def _signature_dirs(extra_dirs: Sequence[str | os.PathLike[str]] | None, include_builtin: bool) -> list[Path]:
+    dirs: list[Path] = []
+    if include_builtin:
+        dirs.append(builtin_signature_dir())
+    for d in extra_dirs or []:
+        dirs.append(Path(d))
+    return dirs
+
+
+def signature_source_digest(
+    extra_dirs: Sequence[str | os.PathLike[str]] | None = None,
+    include_builtin: bool = True,
+    *, allow_override: bool = False,
+) -> str:
+    """Digest the exact inputs :func:`load_signatures` would read.
+
+    Loading is deterministic in the pack directories' YAML text, their order
+    and the override approval, so an unchanged digest proves a previously
+    loaded index is still current without parsing the packs again. Errors
+    propagate so a caller falls back to a full load, which reports them.
+    """
+    if not isinstance(allow_override, bool):
+        raise ValueError("allow_override must be a boolean")
+    sources = []
+    for number, d in enumerate(_signature_dirs(extra_dirs, include_builtin)):
+        if not d.is_dir():
+            raise FileNotFoundError(f"signature directory not found: {d}")
+        files = [
+            [f.relative_to(d).as_posix(), hashlib.sha256(read_policy_text(f).encode()).hexdigest()]
+            for f in _iter_yaml_files(d)
+        ]
+        sources.append([number, os.fspath(d), files])
+    payload = {"allow_override": allow_override, "sources": sources}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def load_signatures(
     extra_dirs: Sequence[str | os.PathLike[str]] | None = None,
     include_builtin: bool = True,
@@ -238,11 +287,7 @@ def load_signatures(
     if not isinstance(allow_override, bool):
         raise ValueError("allow_override must be a boolean")
     by_id: dict[str, Signature] = {}
-    dirs: list[Path] = []
-    if include_builtin:
-        dirs.append(builtin_signature_dir())
-    for d in extra_dirs or []:
-        dirs.append(Path(d))
+    dirs = _signature_dirs(extra_dirs, include_builtin)
     reserved: set[str] = set()
     for number, d in enumerate(dirs):
         if not d.is_dir():

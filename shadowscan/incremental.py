@@ -30,6 +30,7 @@ from shadowscan.connectors import _BUILTIN
 from shadowscan.connectors.code.filesystem import DEFAULT_EXCLUDES
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
+from shadowscan.utils.digest import scanner_source_digest
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.redaction import sanitize
 
@@ -281,11 +282,7 @@ class IncrementalCache:
                     if self.directory.resolve().is_relative_to(root):
                         raise ValueError("state directory overlaps a scan input")
             self._secure_directory()
-            package = Path(__file__).parent
-            self.scanner_digest = hashlib.sha256(_json([
-                [p.relative_to(package).as_posix(), _file_digest(p)]
-                for p in sorted(package.rglob("*.py"))
-            ])).hexdigest()
+            self.scanner_digest = scanner_source_digest()
         except (OSError, ValueError):
             self.enabled = False
             log.warning("incremental state is unavailable or unsafe; running full scans")

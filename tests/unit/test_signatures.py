@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+import regex
+
 from shadowscan.signatures import SignatureIndex, load_signatures
 from shadowscan.signatures.loader import VALID_CATEGORIES, VALID_SIGNAL_TYPES
 
@@ -17,9 +19,11 @@ def test_all_signatures_load_and_validate():
         assert s.signals, f"{s.id} has no signals"
         for sig in s.signals:
             assert sig.type in VALID_SIGNAL_TYPES
-            assert len(sig.compiled) == len(sig.bounded_compiled) == len(sig.patterns)
-            for rx in sig.compiled:
-                assert isinstance(rx, re.Pattern)
+            assert len(sig.bounded_compiled) == len(sig.patterns)
+            assert all(isinstance(rx, regex.Pattern) for rx in sig.bounded_compiled)
+            # The stdlib view is computed on demand and never drives matching.
+            assert len(sig.compiled) == len(sig.patterns)
+            assert all(isinstance(rx, re.Pattern) for rx in sig.compiled)
 
 
 def test_required_frameworks_present(index: SignatureIndex):
