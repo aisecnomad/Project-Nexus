@@ -85,6 +85,7 @@ class AzureConnector(BaseConnector):
     config_keys: ClassVar[dict[str, str]] = {
         "subscriptions": "list of subscription ids (default: all visible)",
         "access_token": "ARM token (env AZURE_ACCESS_TOKEN); otherwise DefaultAzureCredential from azure-identity",
+        "allow_instance_credentials": "allow managed identity discovery (default false; inherited from options)",
         "foundry_token": "token for https://ai.azure.com/.default to list Foundry agents (auto-minted with azure-identity)",
         "include_app_settings": "read App Service settings (names + credential detection) (default true)",
         "input": "offline: JSONL dump of records",
@@ -105,7 +106,13 @@ class AzureConnector(BaseConnector):
                 from azure.identity import DefaultAzureCredential
             except ImportError as exc:
                 raise ConnectorError("cloud.azure: install azure-identity (pip install 'shadowscan[azure]') or provide access_token") from exc
-            self._cred = DefaultAzureCredential()
+            self._cred = DefaultAzureCredential(
+                exclude_managed_identity_credential=self.ctx.get("allow_instance_credentials", False) is not True,
+                connection_timeout=10,
+                read_timeout=30,
+                retry_total=2,
+                process_timeout=10,
+            )
             token = self._cred.get_token("https://management.azure.com/.default").token
         self.http = HttpClient(ARM, headers={"Authorization": f"Bearer {token}"})
 
@@ -116,7 +123,7 @@ class AzureConnector(BaseConnector):
             try:
                 self._foundry_token = self._cred.get_token("https://ai.azure.com/.default").token
             except Exception as exc:  # noqa: BLE001
-                self.log.debug("foundry token: %s", exc)
+                self.log.debug("foundry token acquisition failed (%s)", type(exc).__name__)
         return self._foundry_token
 
     def _get(self, path: str, api: str, **params: Any) -> Any:
@@ -131,38 +138,53 @@ class AzureConnector(BaseConnector):
                 return None
             raise
 
-    def _list(self, path: str, api: str) -> list[dict[str, Any]] | None:
-        """Collect ARM nextLink pages; None means coverage is unknown."""
+    def _list(self, path: str, api: str, *, allow_partial: bool = False) -> list[dict[str, Any]] | None:
+        """Keep observed ARM resources; strict callers require complete coverage.
+
+        Failed collection always marks the scan incomplete. Diagnostic posture
+        uses allow_partial=False so an unobserved page cannot prove logging off.
+        """
         assert self.http
         items: list[dict[str, Any]] = []
         seen: set[str] = set()
+        malformed = False
         for _ in range(1000):
             if path in seen:
                 self.ctx.warn("cloud.azure: repeated list continuation", incomplete=True)
-                return None
+                break
             seen.add(path)
-            data = self._get(path, api)
-            if not isinstance(data, dict) or not isinstance(data.get("value"), list):
-                if data is not None:
-                    self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)
-                return None
-            items.extend(data["value"])
+            try:
+                data = self._get(path, api)
+            except (HttpError, RequestException, ValueError) as exc:
+                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                self.ctx.warn(f"cloud.azure: list collection failed ({status}); coverage unknown")
+                break
+            if not isinstance(data, dict) or "error" in data or not isinstance(data.get("value"), list):
+                self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)
+                break
+            for item in data["value"]:
+                if not isinstance(item, dict):
+                    self.ctx.warn("cloud.azure: invalid list record; coverage unknown")
+                    malformed = True
+                    continue
+                items.append(item)
             next_path = data.get("nextLink", data.get("@odata.nextLink"))
             if next_path is None or next_path == "":
-                return items
+                return None if malformed and not allow_partial else items
             if not isinstance(next_path, str):
                 self.ctx.warn("cloud.azure: invalid list continuation; coverage unknown", incomplete=True)
-                return None
+                break
             path = next_path
             # _get/HttpClient reject any nextLink outside ARM before sending auth.
-        self.ctx.warn("cloud.azure: list page limit reached", incomplete=True)
-        return None
+        else:
+            self.ctx.warn("cloud.azure: list page limit reached", incomplete=True)
+        return items if allow_partial and items else None
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        subs = self.ctx.get("subscriptions") or [s["subscriptionId"] for s in self._list("/subscriptions", "2022-12-01") or []]
+        subs = self.ctx.get("subscriptions") or [s["subscriptionId"] for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or []]
         if not subs:
             raise ConnectorError("cloud.azure: no subscriptions visible")
         rows: list[dict[str, Any]] = []
@@ -210,11 +232,11 @@ class AzureConnector(BaseConnector):
             yield r
             t = str(r.get("type", "")).lower()
             if t == "microsoft.cognitiveservices/accounts":
-                for d in self._list(f"{rid}/deployments", "2024-10-01") or []:
+                for d in self._list(f"{rid}/deployments", "2024-10-01", allow_partial=True) or []:
                     yield {"_kind": "deployment", "_account": rid, "_account_name": r.get("name"), **d}
-                diag = self._list(f"{rid}/providers/Microsoft.Insights/diagnosticSettings", "2021-05-01-preview")
+                diag = self._list(f"{rid}/providers/Microsoft.Insights/diagnosticSettings", "2021-05-01-preview", allow_partial=False)
                 yield {"_kind": "diagnostics", "_account": rid, "settings": diag, "coverage": "unknown" if diag is None else "observed"}
-                for p in self._list(f"{rid}/projects", "2025-04-01-preview") or []:
+                for p in self._list(f"{rid}/projects", "2025-04-01-preview", allow_partial=True) or []:
                     p["_kind"] = "resource"
                     p["type"] = "microsoft.cognitiveservices/accounts/projects"
                     p["_account"] = rid
@@ -230,7 +252,7 @@ class AzureConnector(BaseConnector):
                 except HttpError as exc:
                     self.ctx.warn(f"cloud.azure: appsettings HTTP {exc.status} for {rid}", incomplete=True)
         for sub in subs:
-            for ra in self._list(f"/subscriptions/{sub}/providers/Microsoft.Authorization/roleAssignments", "2022-04-01") or []:
+            for ra in self._list(f"/subscriptions/{sub}/providers/Microsoft.Authorization/roleAssignments", "2022-04-01", allow_partial=True) or []:
                 role_id = str(get_path(ra, "properties.roleDefinitionId", default="")).rsplit("/", 1)[-1]
                 if role_id in AI_ROLE_IDS:
                     yield {"_kind": "role-assignment", "_subscription": sub, "role_id": role_id, "role": AI_ROLE_IDS[role_id], **(ra.get("properties") or {}), "id": ra.get("id")}

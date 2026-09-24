@@ -75,12 +75,26 @@ def available_connectors() -> dict[str, str]:
     """
     out = dict(_BUILTIN)
     try:
-        for ep in entry_points(group="shadowscan.connectors"):
-            if ep.name in _BUILTIN:
+        entries = entry_points(group="shadowscan.connectors")
+    except Exception:  # pragma: no cover - defensive against damaged package metadata
+        return out
+    ambiguous: set[str] = set()
+    for ep in entries:
+        try:
+            name, value = ep.name, ep.value
+            if not isinstance(name, str) or not name.strip() or not isinstance(value, str) or not value.strip():
                 continue
-            out[ep.name] = ep.value
-    except Exception:  # pragma: no cover - defensive against odd metadata
-        pass
+            if name in _BUILTIN or name in ambiguous:
+                continue
+            if name in out and out[name] != value:
+                # Conflicting packages must not make the selected code depend
+                # on installation order, even when the name is approved.
+                del out[name]
+                ambiguous.add(name)
+                continue
+            out[name] = value
+        except Exception:  # malformed entry does not hide later valid plugins
+            continue
     return out
 
 

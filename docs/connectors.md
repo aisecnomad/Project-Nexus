@@ -213,7 +213,10 @@ for deployed references, including referenced inactive revisions. Findings
 separate running-task/service references from registered-only definitions; a
 reference does not establish successful AI execution. Exhausted API budgets or
 partial/denied responses mark coverage incomplete. Account identity is resolved
-before collection emits account metadata.
+before collection emits account metadata. Live `account_id` is an expected
+12-digit account, verified through STS even when explicitly configured;
+mismatches stop collection. AWS SDK clients use finite connection/read timeouts
+and retry attempts. `max_lambda` limits streamed enumeration.
 IAM analysis includes both local and AWS-managed attached policies. Unresolved
 attachments make collection incomplete. CloudTrail LookupEvents only supplies
 management events: `InvokeAgent` / `InvokeInlineAgent` data events require a
@@ -229,6 +232,10 @@ Manager names, optional Cloud Audit Log callers (`audit_days`). Auth: ADC via
 `google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
 retained as privileged access findings even without an AI-specific role. A grant
 shows access, not observed agent execution.
+Cloud Run discovery enumerates project locations and then lists services in each
+concrete region (`run.locations.list` and `run.services.list` permissions).
+Unreachable locations reported by GCP make the scan incomplete. `max_projects`
+limits discovery without loading all projects first.
 
 ### `cloud.azure`
 Azure Resource Graph inventory across subscriptions, then: OpenAI/AI Services

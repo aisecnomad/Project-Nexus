@@ -44,11 +44,12 @@ from shadowscan.utils.redaction import sanitize_text
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-PATH_KEYS = ("input", "path", "paths", "service_account_file", "config_file", "token_file")
+PATH_KEYS = ("input", "path", "paths", "service_account_file", "credentials_file", "config_file", "token_file")
 _CONFIG_FIELDS = {"connectors", "inventory", "signatures", "options"}
 _OPTION_FIELDS = {
     "min_confidence", "fail_on", "dump_records", "workdir", "parallel", "incremental",
     "state_dir", "plugins", "allow_signature_override", "allow_private_origin",
+    "allow_instance_credentials", "allow_credential_mixing", "connector_timeout_seconds",
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 
@@ -106,6 +107,9 @@ class ScanConfig:
     plugins: list[str] = field(default_factory=list)
     allow_signature_override: bool = False
     allow_private_origin: bool = False
+    allow_instance_credentials: bool = False
+    allow_credential_mixing: bool = False
+    connector_timeout_seconds: float = 120.0
     source: str | None = None
 
     def __post_init__(self) -> None:
@@ -115,10 +119,30 @@ class ScanConfig:
         self.plugins = validate_plugins(self.plugins)
         self.allow_signature_override = _boolean_option(self.allow_signature_override, "allow_signature_override")
         self.allow_private_origin = _boolean_option(self.allow_private_origin, "allow_private_origin")
+        self.allow_instance_credentials = _boolean_option(self.allow_instance_credentials, "allow_instance_credentials")
+        self.allow_credential_mixing = _boolean_option(self.allow_credential_mixing, "allow_credential_mixing")
+        self.connector_timeout_seconds = validate_connector_timeout(self.connector_timeout_seconds)
         self.incremental = _boolean_option(self.incremental, "incremental")
         if self.fail_on is not None and (not isinstance(self.fail_on, str) or self.fail_on not in _RISK_LEVELS):
             raise ConfigValidationError("options.fail_on must be critical, high, medium, low, info, or null")
         self.parallel = _positive_integer(self.parallel, "options.parallel")
+
+    def validate_connector_isolation(self, specs: list[ConnectorSpec]) -> None:
+        """Do not expose live connector credentials to an unrelated source parser."""
+        if self.allow_credential_mixing:
+            return
+        code = [spec for spec in specs if spec.name.startswith("code.")]
+        live = [spec for spec in specs if not spec.config.get("input") and (
+            spec.name in {"code.github", "code.gitlab"}
+            or (spec.name.startswith(("cloud.", "identity.", "saas.", "lowcode."))
+                and spec.name != "identity.jwt")
+            or spec.name in self.plugins
+        )]
+        if any(source is not credentialed for source in code for credentialed in live):
+            raise ConfigValidationError(
+                "code scanning and live credentialed connectors require separate scans; "
+                "set options.allow_credential_mixing to true only for reviewed inputs"
+            )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], source: str | None = None) -> ScanConfig:
@@ -167,13 +191,16 @@ class ScanConfig:
             min_confidence=validate_min_confidence(opts.get("min_confidence", 0.0)),
             fail_on=opts.get("fail_on"),
             dump_records=_optional_path(base, opts.get("dump_records"), "options.dump_records"),
-            workdir=_optional_string(opts.get("workdir"), "options.workdir"),
+            workdir=_optional_path(base, opts.get("workdir"), "options.workdir"),
             parallel=_positive_integer(opts.get("parallel", 4), "options.parallel"),
             incremental=_boolean_option(opts.get("incremental", False), "incremental"),
             state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
             plugins=validate_plugins(opts.get("plugins", [])),
             allow_signature_override=_boolean_option(opts.get("allow_signature_override", False), "allow_signature_override"),
             allow_private_origin=_boolean_option(opts.get("allow_private_origin", False), "allow_private_origin"),
+            allow_instance_credentials=_boolean_option(opts.get("allow_instance_credentials", False), "allow_instance_credentials"),
+            allow_credential_mixing=_boolean_option(opts.get("allow_credential_mixing", False), "allow_credential_mixing"),
+            connector_timeout_seconds=validate_connector_timeout(opts.get("connector_timeout_seconds", 120.0)),
             source=source,
         )
 
@@ -195,27 +222,27 @@ class ScanConfig:
 
 def _resolve(base: Path, p: str) -> str:
     path = Path(p).expanduser()
-    if path.is_absolute() or any(ch in p for ch in "*?["):
+    if path.is_absolute():
         return str(path)
     return str(base / path)
 
 
 def _boolean_option(value: Any, name: str) -> bool:
     if not isinstance(value, bool):
-        raise ValueError(f"options.{name} must be a YAML boolean")
+        raise ConfigValidationError(f"options.{name} must be a YAML boolean")
     return value
 
 
 def validate_plugins(value: Any) -> list[str]:
     """Loading a connector imports arbitrary code, so approvals must be explicit names."""
     if not isinstance(value, list) or any(not isinstance(name, str) or not name.strip() for name in value):
-        raise ValueError("options.plugins must be a list of nonempty connector names")
+        raise ConfigValidationError("options.plugins must be a list of nonempty connector names")
     return list(dict.fromkeys(name.strip() for name in value))
 
 
 def _check_fields(value: dict[Any, Any], allowed: set[str], location: str) -> None:
     if any(not isinstance(key, str) or key not in allowed for key in value):
-        raise ConfigValidationError(f"{location} contains an unsupported field")
+        raise ConfigValidationError(f"{location} contains an unsupported field; allowed fields: " + ", ".join(sorted(allowed)))
 
 
 def _nonempty_string(value: Any, location: str) -> str:
@@ -228,10 +255,6 @@ def _path_list(value: Any, location: str) -> list[str]:
     if not isinstance(value, list):
         raise ConfigValidationError(f"{location} must be a list of nonempty paths")
     return [_nonempty_string(path, location) for path in value]
-
-
-def _optional_string(value: Any, location: str) -> str | None:
-    return None if value is None else _nonempty_string(value, location)
 
 
 def _optional_path(base: Path, value: Any, location: str) -> str | None:
@@ -279,7 +302,20 @@ def _connector_enabled(value: Any) -> bool:
             return True
         if normalized in {"false", "no", "off", "0"}:
             return False
-    raise ValueError("connector enabled must be a boolean (true or false)")
+    raise ConfigValidationError("connector enabled must be a boolean (true or false)")
+
+
+def validate_connector_timeout(value: Any) -> float:
+    message = "connector_timeout_seconds must be a positive finite number"
+    if isinstance(value, bool):
+        raise ConfigValidationError(message)
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ConfigValidationError(message) from None
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ConfigValidationError(message)
+    return timeout
 
 
 def validate_min_confidence(value: Any) -> float:
@@ -303,7 +339,10 @@ def parse_set_options(items: list[str]) -> dict[str, Any]:
         if "=" not in item:
             raise ValueError(f"--set expects key=value, got {item!r}")
         key, value = item.split("=", 1)
-        out[key.strip()] = _coerce(value.strip())
+        key, value = key.strip(), value.strip()
+        # Account IDs are identifiers: integer coercion loses leading zeros
+        # and changes exact comparisons with provider-issued string IDs.
+        out[key] = value if key == "account_id" and re.fullmatch(r"[0-9]+", value) else _coerce(value)
     return out
 
 

@@ -18,7 +18,7 @@ import re
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import cloud_finding, done, name_hint, scan_env
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -43,6 +43,7 @@ class OciConnector(BaseConnector):
         "profile": "~/.oci/config profile (default DEFAULT)",
         "config_file": "path to OCI config (default ~/.oci/config)",
         "auth": "config | instance_principal | resource_principal (default config)",
+        "allow_instance_credentials": "allow instance/resource principal credentials (default false; inherited from options)",
         "regions": "regions to scan (default: all subscribed)",
         "compartments": "compartment OCIDs (default: all active compartments in the tenancy)",
         "input": "offline: JSONL dump of records",
@@ -61,8 +62,17 @@ class OciConnector(BaseConnector):
         import oci
 
         auth = str(self.ctx.get("auth", "config"))
+        if auth not in {"config", "instance_principal", "resource_principal"}:
+            raise ConnectorError("cloud.oci: auth must be config, instance_principal or resource_principal")
+        if auth != "config" and self.ctx.get("allow_instance_credentials", False) is not True:
+            raise ConnectorError("cloud.oci: instance/resource credentials require options.allow_instance_credentials=true")
         if auth == "instance_principal":
-            self._signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+            # SDK signer HTTP calls have finite transport timeouts; also bound
+            # metadata certificate and federation token acquisition retries.
+            self._signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner(
+                retry_strategy=self._retry_strategy(),
+                federation_client_retry_strategy=self._retry_strategy(),
+            )
             self._config = {"region": self.ctx.get("region") or self._signer.region}
             self.tenancy = self.tenancy or self._signer.tenancy_id
         elif auth == "resource_principal":
@@ -73,11 +83,26 @@ class OciConnector(BaseConnector):
             self._config = oci.config.from_file(file_location=self.ctx.get("config_file", "~/.oci/config"), profile_name=self.ctx.get("profile", "DEFAULT"))
             self.tenancy = self.tenancy or self._config.get("tenancy")
 
+    @staticmethod
+    def _retry_strategy() -> Any:
+        import oci
+
+        return oci.retry.RetryStrategyBuilder(
+            max_attempts=3, total_elapsed_time_seconds=120,
+            retry_max_wait_between_calls_seconds=10,
+        ).get_retry_strategy()
+
     def _client(self, cls: Any, region: str | None = None) -> Any:
         cfg = dict(self._config)
         if region:
             cfg["region"] = region
-        return cls(cfg, signer=self._signer) if self._signer else cls(cfg)
+        kwargs: dict[str, Any] = {
+            "timeout": (10, 30),
+            "retry_strategy": self._retry_strategy(),
+        }
+        if self._signer:
+            kwargs["signer"] = self._signer
+        return cls(cfg, **kwargs)
 
     def _all(self, fn: Any, *args: Any, **kwargs: Any) -> list[Any]:
         """Keep successful pages when a later OCI request fails or pagination stalls."""
