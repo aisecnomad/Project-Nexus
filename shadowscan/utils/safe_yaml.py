@@ -131,8 +131,3 @@ class BoundedSafeLoader(yaml.SafeLoader):
 def bounded_safe_load(stream: Any) -> Any:
     """Load one bounded YAML document, retaining PyYAML's safe type semantics."""
     return yaml.load(stream, Loader=BoundedSafeLoader)
-
-
-def bounded_safe_load_all(stream: Any) -> list[Any]:
-    """Load a bounded stream of YAML documents."""
-    return list(yaml.load_all(stream, Loader=BoundedSafeLoader))

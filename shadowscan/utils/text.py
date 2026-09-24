@@ -1,4 +1,4 @@
-"""Text helpers: redaction, safe file reading, small parsers, path confinement."""
+"""Text helpers: redaction, safe file reading and small parsers."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from shadowscan.utils.redaction import credential_id, sanitize, sanitize_text
+from shadowscan.utils.redaction import credential_id, sanitize
 
 _BINARY_SNIFF = 8192
 # Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
@@ -27,86 +27,9 @@ def redact(value: str, keep: int = 4) -> str:
     return credential_id(value)
 
 
-def redact_in_text(text: str, patterns: list[re.Pattern[str]] | None = None) -> str:
-    if patterns:
-        for rx in patterns:
-            text = rx.sub(lambda m: redact(m.group(0)), text)
-    return sanitize_text(text)
-
-
 def sanitize_record(obj: Any, *, _depth: int = 0) -> Any:
     """Compatibility alias for the shared bounded evidence sanitizer."""
     return sanitize(obj)
-
-
-def safe_join(root: Path, rel: str) -> Path | None:
-    """Join ``rel`` under ``root``. Return None if the result would escape."""
-    if not rel or rel.startswith(("/", "\\")) or ":" in Path(rel).parts[0]:
-        return None
-    candidate = Path(rel)
-    if candidate.is_absolute() or any(part in {"..", ""} and part == ".." for part in candidate.parts):
-        return None
-    if ".." in candidate.parts:
-        return None
-    try:
-        base = root.expanduser().resolve()
-        target = (base / candidate).resolve()
-    except OSError:
-        return None
-    try:
-        target.relative_to(base)
-    except ValueError:
-        return None
-    return target
-
-
-def iter_files_confined(root: Path, *, suffixes: set[str] | None = None) -> list[Path]:
-    """List regular files under ``root`` without following directory or file symlinks."""
-    base = root.expanduser().resolve()
-    found: list[Path] = []
-    if base.is_symlink() or not base.is_dir():
-        return found
-    for dirpath, dirnames, filenames in __import__("os").walk(base, followlinks=False):
-        current = Path(dirpath)
-        try:
-            current.resolve().relative_to(base)
-        except ValueError:
-            dirnames[:] = []
-            continue
-        keep: list[str] = []
-        for name in dirnames:
-            child = current / name
-            try:
-                if child.is_symlink():
-                    continue
-                child.resolve().relative_to(base)
-            except (OSError, ValueError):
-                continue
-            keep.append(name)
-        dirnames[:] = keep
-        for name in filenames:
-            path = current / name
-            try:
-                if path.is_symlink() or not path.is_file():
-                    continue
-                path.resolve().relative_to(base)
-            except (OSError, ValueError):
-                continue
-            if suffixes is not None and path.suffix.lower() not in suffixes:
-                continue
-            found.append(path)
-    return found
-
-
-def is_probably_binary(path: Path) -> bool:
-    try:
-        with path.open("rb") as fh:
-            chunk = fh.read(_BINARY_SNIFF)
-    except OSError:
-        return True
-    if b"\x00" in chunk:
-        return True
-    return False
 
 
 def read_text(path: Path, max_bytes: int, errors: list[str] | None = None) -> str | None:
@@ -173,16 +96,6 @@ def notebook_to_source(text: str, errors: list[str] | None = None) -> str:
             continue
         out.append(src)
     return "\n".join(out)
-
-
-def excerpt_line(text: str, line: int, width: int = 160) -> str:
-    """Return the given 1-indexed line trimmed to width."""
-    try:
-        s = text.splitlines()[line - 1]
-    except IndexError:
-        return ""
-    s = s.strip()
-    return s if len(s) <= width else s[: width - 1] + "…"
 
 
 def parse_timestamp(value: Any) -> datetime | None:
