@@ -18,9 +18,37 @@ from shadowscan.config import PATH_KEYS, ConnectorSpec, ScanConfig
 from shadowscan.connectors import _BUILTIN
 from shadowscan.models import FINDING_IDENTITY_SCHEMA
 from shadowscan.signatures import SignatureIndex
+from shadowscan.utils.files import read_policy_text
 
 _SCHEMA = "shadowscan.collection-scope/v1"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+MAX_REPORT_BYTES = 64 * 1024 * 1024
+
+
+def load_report(path: str | Path) -> dict[str, Any]:
+    """Read an unambiguous, bounded report without following input symlinks."""
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate report field")
+            result[key] = value
+        return result
+
+    def invalid_number(value: str) -> None:
+        raise ValueError("report numbers must be finite")
+
+    try:
+        report = json.loads(
+            read_policy_text(Path(path), max_bytes=MAX_REPORT_BYTES),
+            object_pairs_hook=unique_object, parse_constant=invalid_number,
+        )
+        if not isinstance(report, dict):
+            raise ValueError("report must be a JSON object")
+        _findings(report)
+        return report
+    except RecursionError:
+        raise ValueError("report structure exceeds nesting limit") from None
 
 
 def _canonical(value: Any) -> bytes:
@@ -109,12 +137,16 @@ def _findings(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
         risk = record.get("risk")
         if (
             not isinstance(risk, dict) or risk.get("level") not in {"critical", "high", "medium", "low", "info"}
-            or not isinstance(risk.get("score"), (int, float))
+            or not isinstance(risk.get("score"), (int, float)) or isinstance(risk.get("score"), bool)
+            or not 0 <= risk["score"] <= 100
             or not isinstance(record.get("title"), str) or not isinstance(record.get("resource"), str)
         ):
             raise ValueError("each finding must have valid risk, title and resource fields")
         if record["id"] in result:
             raise ValueError("report has duplicate finding ids")
+        # Validate new and missing observations as well as shared identities.
+        # Malformed records must never be represented as successfully resolved.
+        _substantive_state(record)
         result[record["id"]] = record
     return result
 

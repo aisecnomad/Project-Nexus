@@ -167,7 +167,7 @@ class ScanConfig:
             min_confidence=validate_min_confidence(opts.get("min_confidence", 0.0)),
             fail_on=opts.get("fail_on"),
             dump_records=_optional_path(base, opts.get("dump_records"), "options.dump_records"),
-            workdir=_optional_string(opts.get("workdir"), "options.workdir"),
+            workdir=_optional_path(base, opts.get("workdir"), "options.workdir"),
             parallel=_positive_integer(opts.get("parallel", 4), "options.parallel"),
             incremental=_boolean_option(opts.get("incremental", False), "incremental"),
             state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
@@ -195,7 +195,7 @@ class ScanConfig:
 
 def _resolve(base: Path, p: str) -> str:
     path = Path(p).expanduser()
-    if path.is_absolute() or any(ch in p for ch in "*?["):
+    if path.is_absolute():
         return str(path)
     return str(base / path)
 
@@ -228,10 +228,6 @@ def _path_list(value: Any, location: str) -> list[str]:
     if not isinstance(value, list):
         raise ConfigValidationError(f"{location} must be a list of nonempty paths")
     return [_nonempty_string(path, location) for path in value]
-
-
-def _optional_string(value: Any, location: str) -> str | None:
-    return None if value is None else _nonempty_string(value, location)
 
 
 def _optional_path(base: Path, value: Any, location: str) -> str | None:

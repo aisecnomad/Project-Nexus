@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import sys
-from pathlib import Path
 from typing import Any
 
 import click
@@ -17,7 +16,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from shadowscan import __version__
-from shadowscan.comparison import compare_reports
+from shadowscan.comparison import compare_reports, load_report
 from shadowscan.config import (
     ConfigValidationError,
     ConnectorSpec,
@@ -449,20 +448,27 @@ def inventory_check(paths: tuple[str, ...]) -> None:
 @click.option("--min-risk", type=click.Choice(LEVELS), default="low", show_default=True)
 def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str) -> None:
     """Generate Agent Capability Card stubs for shadow findings so they can be reviewed and registered."""
-    data = json.loads(Path(findings_json).read_text(encoding="utf-8"))
     wanted = {k.strip() for k in kinds.split(",")}
     threshold = LEVELS.index(min_risk)
+    # Finish validation and card generation before writing any approval stubs.
+    # A bad later record must not leave an apparently successful partial import.
+    try:
+        data = load_report(findings_json)
+        cards = []
+        for record in data["findings"]:
+            finding = Finding.from_dict(record)
+            if finding.kind.value not in wanted or finding.shadow is False or LEVELS.index(finding.risk.level.value) > threshold:
+                continue
+            cards.append((finding.id, card_stub_for(finding)))
+    except (ValueError, TypeError, OSError, KeyError, AttributeError, RecursionError):
+        raise click.ClickException("invalid inventory input; expected a bounded ShadowScan JSON report with valid findings") from None
     try:
         out = prepare_private_directory(out_dir)
     except (OSError, ValueError):
         raise click.ClickException("inventory output requires a private directory with mode 0700 and no symlinks") from None
     n = 0
-    for d in data.get("findings", []):
-        f = Finding.from_dict(d)
-        if f.kind.value not in wanted or f.shadow is False or LEVELS.index(f.risk.level.value) > threshold:
-            continue
-        card = card_stub_for(f)
-        suffix = hashlib.sha256(f.id.encode()).hexdigest()[:8]
+    for finding_id, card in cards:
+        suffix = hashlib.sha256(finding_id.encode()).hexdigest()[:8]
         path = out / f"{card['metadata']['agent_id']}-{suffix}.yaml"
         try:
             write_private_text(path, yaml.safe_dump(card, sort_keys=False, allow_unicode=True))
@@ -481,8 +487,8 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
     """Compare reports; missing findings require complete, comparable scans to resolve."""
     try:
         comparison = compare_reports(
-            json.loads(Path(baseline).read_text(encoding="utf-8")),
-            json.loads(Path(current).read_text(encoding="utf-8")),
+            load_report(baseline),
+            load_report(current),
         )
     except (ValueError, TypeError, OSError):
         raise click.ClickException("invalid comparison input; expected two ShadowScan JSON reports") from None

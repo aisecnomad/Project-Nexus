@@ -15,10 +15,14 @@ Offline export: records carrying ``_table`` / ``sys_class_name`` or wrapped as
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from requests import RequestException
+
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.common import apply_matches, finalize, name_matches
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -42,6 +46,13 @@ def _val(v: Any) -> Any:
     return v
 
 
+def _reference(v: Any) -> Any:
+    """Join reference fields by stable sys_id, retaining display-only exports."""
+    if isinstance(v, dict):
+        return v.get("value") or v.get("display_value")
+    return v
+
+
 class ServiceNowConnector(BaseConnector):
     name: ClassVar[str] = "lowcode.servicenow"
     surface: ClassVar[Surface] = Surface.LOWCODE
@@ -52,6 +63,7 @@ class ServiceNowConnector(BaseConnector):
         "username": "basic auth user (env SNOW_USERNAME)",
         "password": "env SNOW_PASSWORD",
         "token": "OAuth bearer token instead of basic auth (env SNOW_TOKEN)",
+        "max_pages": "maximum pages per table, capped at 1000 (default 1000)",
         "input": "offline: JSON export of table records",
     }
 
@@ -78,34 +90,71 @@ class ServiceNowConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
+        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
         for table, fields in TABLES.items():
-            offset = 0
-            while True:
+            seen: set[str] = set()
+            for page in range(max_pages):
                 try:
-                    data = self.http.get_json(f"/api/now/table/{table}", params={"sysparm_fields": fields, "sysparm_limit": 500, "sysparm_offset": offset, "sysparm_display_value": "all"})
-                except HttpError as exc:
-                    if exc.status in (400, 403, 404):
-                        self.ctx.warn(f"lowcode.servicenow: table {table} not readable ({exc.status})")
-                        break
-                    raise
-                rows = (data or {}).get("result", []) or []
+                    data = self.http.get_json(f"/api/now/table/{table}", params={"sysparm_fields": fields, "sysparm_limit": 500, "sysparm_offset": page * 500, "sysparm_display_value": "all"})
+                except (HttpError, RequestException, ValueError, RuntimeError) as exc:
+                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    self.ctx.warn(f"lowcode.servicenow: table {table} collection incomplete ({status})")
+                    break
+                if not isinstance(data, dict) or not isinstance(data.get("result"), list):
+                    self.ctx.warn(f"lowcode.servicenow: invalid result page for {table}")
+                    break
+                if self._is_error_record(data):
+                    self.ctx.warn(f"lowcode.servicenow: provider error in {table} page; coverage incomplete")
+                rows = data["result"]
+                fingerprint = hashlib.sha256(json.dumps(rows, sort_keys=True, default=str).encode()).hexdigest()
+                if fingerprint in seen:
+                    self.ctx.warn(f"lowcode.servicenow: repeated pagination page for {table}")
+                    break
+                seen.add(fingerprint)
                 for r in rows:
-                    r["_table"] = table
-                    yield r
+                    if not isinstance(r, dict):
+                        self.ctx.warn(f"lowcode.servicenow: invalid record in {table} page")
+                        continue
+                    yield {**r, "_table": table}
                 if len(rows) < 500:
                     break
-                offset += 500
+            else:
+                self.ctx.warn(f"lowcode.servicenow: pagination limit reached for {table}")
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
         for rec in super().load_offline(path):
-            if "result" in rec and isinstance(rec["result"], list):
+            if "result" in rec:
+                if not isinstance(rec["result"], list):
+                    self.ctx.warn("lowcode.servicenow: invalid result collection in export")
+                    continue
                 table = rec.get("table") or rec.get("_table")
                 for r in rec["result"]:
+                    if not isinstance(r, dict):
+                        self.ctx.warn("lowcode.servicenow: malformed table export record")
+                        continue
                     if table and "_table" not in r:
-                        r["_table"] = table
+                        r = {**r, "_table": table}
                     yield r
             else:
                 yield rec
+
+    def _valid_provider_record(self, rec: Any, table: Any) -> bool:
+        if not isinstance(rec, dict) or self._is_error_record(rec) or not isinstance(table, str) or table not in TABLES:
+            return False
+        for key in TABLES[table].split(","):
+            value = rec.get(key)
+            if isinstance(value, dict):
+                if "value" not in value or any(value.get(k) is not None and not isinstance(value[k], (str, int, float, bool)) for k in ("value", "display_value")):
+                    return False
+            elif value is not None and not isinstance(value, (str, int, float, bool)):
+                return False
+            if key in {"name", "description", "instructions", "condition", "redirect_url", "client_id", "sys_created_by", "sys_updated_by", "sys_created_on", "sys_updated_on"} and _val(value) is not None and not isinstance(_val(value), str):
+                return False
+        identifier = _reference(rec.get("sys_id")) or _val(rec.get("name"))
+        if not isinstance(identifier, str) or not identifier.strip():
+            return False
+        parent = {"sn_aia_tool": "agent", "sn_aia_trigger": "usecase"}.get(table)
+        return not parent or bool(isinstance(_reference(rec.get(parent)), str) and _reference(rec.get(parent)).strip())
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -114,15 +163,18 @@ class ServiceNowConnector(BaseConnector):
         usecases: list[dict[str, Any]] = []
         triggers: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
-            table = rec.get("_table") or _val(rec.get("sys_class_name")) or ""
+            table = (rec.get("_table") or _val(rec.get("sys_class_name")) or "") if isinstance(rec, dict) else ""
+            if not self._valid_provider_record(rec, table):
+                self.ctx.warn("lowcode.servicenow: unsupported or malformed table record; coverage incomplete")
+                continue
             if table == "sn_aia_agent":
                 agents.append(rec)
             elif table == "sn_aia_tool":
-                tools.setdefault(str(_val(rec.get("agent")) or ""), []).append(rec)
+                tools.setdefault(str(_reference(rec.get("agent"))), []).append(rec)
             elif table == "sn_aia_usecase":
                 usecases.append(rec)
             elif table == "sn_aia_trigger":
-                triggers.setdefault(str(_val(rec.get("usecase")) or ""), []).append(rec)
+                triggers.setdefault(str(_reference(rec.get("usecase"))), []).append(rec)
             elif table == "sys_hub_flow":
                 self.ctx.examined()
                 f = self._flow_finding(rec)
@@ -135,12 +187,12 @@ class ServiceNowConnector(BaseConnector):
                     yield f
         for a in agents:
             self.ctx.examined()
-            key_candidates = {str(_val(a.get("sys_id"))), str(_val(a.get("name")))}
+            key_candidates = {str(_reference(a.get("sys_id"))), str(_val(a.get("name")))}
             my_tools = [t for k, ts in tools.items() for t in ts if k in key_candidates]
             yield self._agent_finding(a, my_tools)
         for u in usecases:
             self.ctx.examined()
-            key_candidates = {str(_val(u.get("sys_id"))), str(_val(u.get("name")))}
+            key_candidates = {str(_reference(u.get("sys_id"))), str(_val(u.get("name")))}
             my_triggers = [t for k, ts in triggers.items() for t in ts if k in key_candidates]
             yield self._usecase_finding(u, my_triggers)
 
@@ -151,7 +203,7 @@ class ServiceNowConnector(BaseConnector):
             connector=self.name,
             kind=Kind.AGENT,
             title=f"ServiceNow AI agent: {name}",
-            resource=f"servicenow:sn_aia_agent:{_val(a.get('sys_id')) or name}",
+            resource=f"servicenow:sn_aia_agent:{_reference(a.get('sys_id')) or name}",
             resource_type="now-assist-agent",
             provider="servicenow",
             account=self.instance or None,
@@ -182,7 +234,7 @@ class ServiceNowConnector(BaseConnector):
             connector=self.name,
             kind=Kind.WORKFLOW,
             title=f"ServiceNow AI agent use case: {name}",
-            resource=f"servicenow:sn_aia_usecase:{_val(u.get('sys_id')) or name}",
+            resource=f"servicenow:sn_aia_usecase:{_reference(u.get('sys_id')) or name}",
             resource_type="now-assist-usecase",
             provider="servicenow",
             account=self.instance or None,
@@ -211,7 +263,7 @@ class ServiceNowConnector(BaseConnector):
             connector=self.name,
             kind=Kind.WORKFLOW,
             title=f"ServiceNow flow with AI hints: {name}",
-            resource=f"servicenow:sys_hub_flow:{_val(rec.get('sys_id')) or name}",
+            resource=f"servicenow:sys_hub_flow:{_reference(rec.get('sys_id')) or name}",
             resource_type="flow",
             provider="servicenow",
             account=self.instance or None,
@@ -232,7 +284,7 @@ class ServiceNowConnector(BaseConnector):
             connector=self.name,
             kind=Kind.OAUTH_GRANT,
             title=f"ServiceNow OAuth application: {name}",
-            resource=f"servicenow:oauth_entity:{_val(rec.get('sys_id')) or name}",
+            resource=f"servicenow:oauth_entity:{_reference(rec.get('sys_id')) or name}",
             resource_type="oauth-application-registry",
             provider="servicenow",
             account=self.instance or None,

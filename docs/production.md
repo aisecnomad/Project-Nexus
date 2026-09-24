@@ -54,6 +54,8 @@ Configuration rejects duplicate authored YAML keys and unknown top-level or
 `fail_on` thresholds or `parallel` values stop the scan before collection.
 Environment references are validated in disabled connector declarations too;
 remove unused placeholders or give intentionally optional values a fallback.
+Relative inventory globs and `options.workdir`, like other configured paths,
+resolve beside the configuration file, independent of the process directory.
 
 All scan commands also expose `--allow-plugin`,
 `--allow-signature-override/--deny-signature-override` and
@@ -110,6 +112,11 @@ there is no claim of a universal deadline for all vendor SDKs.
 Saved provider errors and unsupported/malformed export records also make scans
 incomplete. Valid neighbors remain available. Explicit empty inventories such
 as `[]` remain valid; an authorization-error document is not an empty inventory.
+Identity and low-code collectors retain available records when enrichment or a
+later page fails. Auth0 offset pagination has a finite page budget and detects
+repeated pages. Okta grants and optional tokens both follow pagination.
+Google Workspace accepts omitted empty arrays only in identified native users
+and token-list envelopes; an arbitrary empty object is incomplete coverage.
 Every `--only` value must match an enabled connector name or label, including
 when another selector matches successfully.
 
@@ -178,6 +185,18 @@ Diffs now identify substantive changes in classification, permissions,
 capabilities, technologies, risk score/factors, registration and ownership,
 including changes within the same risk band. `changed_fields` identifies the
 changed attributes. Timestamp and evidence ordering alone do not create changes.
+`diff` and `inventory stubs` accept regular JSON report files up to 64 MiB,
+without input or ancestor symlinks. Duplicate keys, non-finite numbers, invalid
+finding fields and excessive nesting fail validation. All records are checked
+before stub generation writes files; this does not make multiple file writes
+transactional if a later filesystem operation fails.
+
+GitHub and GitLab API source downloads use the immutable blob IDs returned by
+tree enumeration. Symlinks and submodules are skipped with incomplete coverage;
+malformed Base64 is rejected. GitLab's paginated tree listing still uses a branch
+ref, so this guarantees each downloaded blob's association with its enumerated
+entry, not an atomic snapshot of the whole repository. Use an immutable checkout
+for scans requiring that stronger guarantee.
 
 Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
 Filesystem scans reject selected roots whose paths traverse a symbolic link.
@@ -191,7 +210,13 @@ are written atomically and checked against the current input fingerprint.
 
 ## Cloud collection changes
 
-AWS resolves its account before emitting account metadata. ECS discovery follows
+AWS verifies the live account through STS before emitting account metadata,
+including when `account_id` is configured. For live scans, that setting is an
+expected account and a mismatch stops collection. AWS and OCI SDK clients have
+explicit 10-second connect and 30-second read timeouts with at most three
+attempts. These bounds do not replace the overall worker deadline. AWS Lambda
+and GCP project limits stop enumeration without materializing the full inventory.
+ECS discovery follows
 exact definition ARNs referenced by running tasks and service deployments,
 including referenced inactive revisions, and retains the latest active registered
 revision of each family as a separate evidence category. Stopped tasks and unused
@@ -209,6 +234,13 @@ actually executed. Use trusted runtime telemetry for additional attribution.
 GCP audit caller findings keep events from separate projects distinct, including
 when the service account principal is the same. Azure Resource Graph failures on
 later pages preserve earlier observations and mark collection incomplete.
+Cloud Run discovers concrete regions using the locations API before listing
+services; the v2 services endpoint does not accept a `-` location. Unreachable
+regions in GCP list responses make coverage incomplete while retaining reachable
+observations. The audit identity must have `run.locations.list` and
+`run.services.list` for this discovery path. Azure ARM inventory pages also retain
+observations after later failures; diagnostic-setting coverage remains unknown
+unless every page was collected successfully.
 
 Foundry collection uses the verified classic Agent Service `/assistants` route
 with `api-version=v1` and validates its pagination envelope. Newer `/agents`

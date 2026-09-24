@@ -56,6 +56,8 @@ class GcpConnector(BaseConnector):
         self.locations = ctx.get("locations") or DEFAULT_LOCATIONS
         self.audit_days = int(ctx.get("audit_days", 0))
         self.max_projects = int(ctx.get("max_projects", 200))
+        if self.max_projects < 1:
+            raise ConnectorError("cloud.gcp: max_projects must be positive")
         self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
         self.http: HttpClient | None = None
 
@@ -97,6 +99,14 @@ class GcpConnector(BaseConnector):
             if not isinstance(data, dict) or "error" in data:
                 self.ctx.warn(f"cloud.gcp: invalid response for {url}")
                 return
+            # Aggregated list APIs may succeed while omitting unavailable regions.
+            # Keep reachable observations, but never turn partial success into a
+            # complete inventory (Cloud Functions v2 and Cloud Run v2 contract).
+            unreachable = data.get("unreachable", [])
+            if not isinstance(unreachable, list) or any(not isinstance(loc, str) or not loc for loc in unreachable):
+                self.ctx.warn(f"cloud.gcp: invalid unreachable locations for {url}")
+            elif unreachable:
+                self.ctx.warn(f"cloud.gcp: {len(unreachable)} unreachable location(s) for {url}; coverage unknown")
             items = data.get(items_key, [])
             if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
                 self.ctx.warn(f"cloud.gcp: invalid {items_key} page for {url}")
@@ -114,9 +124,9 @@ class GcpConnector(BaseConnector):
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
-        projects = self.ctx.get("projects") or []
+        projects: Iterable[str] = self.ctx.get("projects") or []
         if not projects:
-            projects = [p["projectId"] for p in self._pages("https://cloudresourcemanager.googleapis.com/v1/projects", "projects", filter="lifecycleState:ACTIVE") if p.get("projectId")]
+            projects = (p["projectId"] for p in self._pages("https://cloudresourcemanager.googleapis.com/v1/projects", "projects", filter="lifecycleState:ACTIVE") if p.get("projectId"))
         for i, project in enumerate(projects):
             if i >= self.max_projects:
                 self.ctx.warn("cloud.gcp: max_projects reached")
@@ -142,8 +152,19 @@ class GcpConnector(BaseConnector):
                 for eng in self._pages(f"https://discoveryengine.googleapis.com/v1/projects/{project}/locations/{loc}/collections/default_collection/engines", "engines"):
                     yield {"_kind": "discovery-engine", "_project": project, "_location": loc, **eng}
         if "run.googleapis.com" in enabled:
-            for svc in self._pages(f"https://run.googleapis.com/v2/projects/{project}/locations/-/services", "services"):
-                yield {"_kind": "cloud-run-service", "_project": project, **svc}
+            # Cloud Run v2 services.list rejects the '-' wildcard. Enumerate
+            # project-visible locations through the documented v1 locations API.
+            seen_locations: set[str] = set()
+            for location in self._pages(f"https://run.googleapis.com/v1/projects/{project}/locations", "locations"):
+                loc = location.get("locationId")
+                if not isinstance(loc, str) or not re.fullmatch(r"[a-z][a-z0-9-]*[0-9]", loc):
+                    self.ctx.warn(f"cloud.gcp: invalid Cloud Run location for {project}; coverage unknown")
+                    continue
+                if loc in seen_locations:
+                    continue
+                seen_locations.add(loc)
+                for svc in self._pages(f"https://run.googleapis.com/v2/projects/{project}/locations/{loc}/services", "services"):
+                    yield {**svc, "_kind": "cloud-run-service", "_project": project, "_location": loc}
         if "cloudfunctions.googleapis.com" in enabled:
             for fn in self._pages(f"https://cloudfunctions.googleapis.com/v2/projects/{project}/locations/-/functions", "functions"):
                 yield {"_kind": "cloud-function", "_project": project, **fn}

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -63,6 +64,13 @@ def repository_target(root: str, path: str) -> Path:
     if not target.is_relative_to(Path(root).resolve()) or target == Path(root).resolve():
         raise ConnectorError("Repository tree path escapes checkout")
     return target
+
+
+def repository_blob_id(value: Any) -> str:
+    """Accept only immutable Git object IDs before interpolating API paths."""
+    if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", value):
+        raise ConnectorError("Repository tree contains an invalid blob object ID")
+    return value
 
 
 class GitHubConnector(BaseConnector):
@@ -282,7 +290,17 @@ class GitHubConnector(BaseConnector):
             return None
         if tree.get("truncated"):
             self.ctx.warn(f"code.github: tree of {full} truncated; results partial", incomplete=True)
-        paths = [t["path"] for t in tree["tree"] if t.get("type") == "blob" and int(t.get("size") or 0) <= 512_000]
+        # Gitlinks and symlink blobs are not regular source files. In
+        # particular the contents endpoint can dereference a symlink; keep the
+        # same confinement and partial-coverage behavior as a local checkout.
+        if any(t.get("type") == "commit" or t.get("mode") in {"120000", "160000"} for t in tree["tree"]):
+            self.ctx.warn(f"code.github: symbolic links or submodules in {full} skipped; source coverage partial", incomplete=True)
+        blobs = {
+            t["path"]: t for t in tree["tree"]
+            if t.get("type") == "blob" and t.get("mode") not in {"120000", "160000"}
+            and int(t.get("size") or 0) <= 512_000
+        }
+        paths = list(blobs)
         selected = self._select_paths(paths)
         if len(selected) < sum(t.get("type") == "blob" for t in tree["tree"]):
             self.ctx.warn(f"code.github: API mode samples repository {full}; source coverage partial", incomplete=True)
@@ -291,13 +309,25 @@ class GitHubConnector(BaseConnector):
         fetched = 0
         for p in selected:
             target = repository_target(dest, p)
-            data = self.http.try_get_json(f"/repos/{full}/contents/{quote(p, safe='/')}", params={"ref": branch})
-            if not data or data.get("encoding") != "base64":
+            try:
+                blob_id = repository_blob_id(blobs[p].get("sha"))
+            except ConnectorError:
+                self.ctx.warn(f"code.github: invalid blob object ID in {full}; content skipped", incomplete=True)
+                continue
+            # A branch can advance after enumeration. Download the enumerated
+            # object directly so findings always describe that tree's bytes.
+            data = self.http.try_get_json(f"/repos/{full}/git/blobs/{blob_id}")
+            if not isinstance(data, dict) or data.get("encoding") != "base64":
                 self.ctx.warn(f"code.github: cannot read content in {full}", incomplete=True)
                 continue
             try:
-                content = base64.b64decode(data.get("content") or "")
-            except ValueError:
+                encoded = data.get("content")
+                if not isinstance(encoded, str):
+                    raise ValueError("missing or invalid encoded content")
+                # GitHub wraps base64 with newlines; reject all other invalid
+                # characters instead of silently decoding corruption as empty.
+                content = base64.b64decode(encoded.replace("\r", "").replace("\n", ""), validate=True)
+            except (ValueError, TypeError):
                 self.ctx.warn(f"code.github: invalid encoded content in {full}", incomplete=True)
                 continue
             if len(content) > 512_000:

@@ -74,10 +74,21 @@ class OciConnector(BaseConnector):
             self.tenancy = self.tenancy or self._config.get("tenancy")
 
     def _client(self, cls: Any, region: str | None = None) -> Any:
+        import oci
+
         cfg = dict(self._config)
         if region:
             cfg["region"] = region
-        return cls(cfg, signer=self._signer) if self._signer else cls(cfg)
+        kwargs: dict[str, Any] = {
+            "timeout": (10, 30),
+            "retry_strategy": oci.retry.RetryStrategyBuilder(
+                max_attempts=3, total_elapsed_time_seconds=120,
+                retry_max_wait_between_calls_seconds=10,
+            ).get_retry_strategy(),
+        }
+        if self._signer:
+            kwargs["signer"] = self._signer
+        return cls(cfg, **kwargs)
 
     def _all(self, fn: Any, *args: Any, **kwargs: Any) -> list[Any]:
         """Keep successful pages when a later OCI request fails or pagination stalls."""

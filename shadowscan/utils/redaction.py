@@ -47,6 +47,11 @@ _QUERY_SEPARATOR = re.compile(r"[&#]")
 _PYTHON_ASSIGNMENT_KEY = re.compile(
     r"(?<![\w-])(?P<key>[A-Za-z_][A-Za-z0-9_.]{0,100})[ \t]*(?P<separator>:|=(?!=))"
 )
+_MAPPING_VALUE = re.compile(
+    r"(?<![\w-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]{0,100})(?P=quote)"
+    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]{0,100}))[ \t]*:[ \t]*"
+    r"(?P<value>[\"'`\[\{(])"
+)
 _MAX_SANITIZATION_NODES = 100_000
 _MAX_SANITIZATION_CHARS = 64 * 1024 * 1024
 _MAX_REDACTION_WORK = 128 * 1024 * 1024
@@ -54,6 +59,76 @@ _MAX_REDACTION_WORK = 128 * 1024 * 1024
 
 class SanitizationLimitError(ValueError):
     """Evidence cannot be safely sanitized within the work/output budget."""
+
+
+def _mapping_expression_end(text: str, start: int) -> int:
+    """Find a mapping value's delimiter without evaluating source code.
+
+    Quoted scalars, escaped/doubled quotes, concatenations and nested containers
+    are consumed in full. Malformed expressions are withheld through EOF.
+    Values are visited once and nesting is bounded before allocating more work.
+    """
+    position = start
+    brackets: list[str] = []
+    while position < len(text):
+        char = text[position]
+        if char in "\"'`":
+            delimiter = char
+            if char != "`" and text.startswith(char * 3, position):
+                delimiter = char * 3
+            position += len(delimiter)
+            while position < len(text):
+                if text[position] == "\\":
+                    position += 2
+                elif text.startswith(delimiter, position):
+                    # YAML escapes a single quote by doubling it. Consuming
+                    # adjacent Python literals here is equally conservative.
+                    if delimiter == "'" and text.startswith("''", position):
+                        position += 2
+                        continue
+                    position += len(delimiter)
+                    break
+                else:
+                    position += 1
+            else:
+                return len(text)
+            continue
+        if char in "([{":
+            if len(brackets) >= 64:
+                raise SanitizationLimitError("mapping expression nesting limit exceeded")
+            brackets.append(char)
+        elif char in ")]}":
+            if not brackets:
+                return position
+            if brackets.pop() != {")": "(", "]": "[", "}": "{"}[char]:
+                return len(text)
+        elif not brackets and char in ",;\r\n#":
+            return position
+        position += 1
+    return len(text)
+
+
+def _redact_mapping_values(text: str) -> str:
+    """Withhold full sensitive mapping expressions before excerpt shortening."""
+    pieces: list[str] = []
+    cursor = 0
+    for match in _MAPPING_VALUE.finditer(text):
+        if match.start() < cursor or not _sensitive_key(match.group("quoted") or match.group("plain")):
+            continue
+        start = match.start("value")
+        end = _mapping_expression_end(text, start)
+        raw = text[start:end]
+        bare = raw.strip()
+        if len(bare) > 1 and bare[0] in "\"'" and bare[-1] == bare[0] and _FINGERPRINT.fullmatch(bare[1:-1]):
+            continue
+        pieces.append(text[cursor:start])
+        trailing_space = raw[len(raw.rstrip(" \t")):]
+        pieces.append('"' + REDACTED + '"' + "\n" * raw.count("\n") + trailing_space)
+        cursor = end
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def _redact_python_assignments(text: str) -> str:
@@ -231,6 +306,7 @@ def sanitize_text(text: str) -> str:
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
     text = _redact_python_assignments(text)
+    text = _redact_mapping_values(text)
     text = _JWT.sub(REDACTED, text)
     text = _SECRET_TOKEN.sub(REDACTED, text)
     text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED, text)
@@ -254,7 +330,10 @@ def sanitize_text(text: str) -> str:
 
         return _ASSIGNMENT.sub(assignment, value)
 
-    return assignments(text)
+    # Plain assignment redaction can introduce a bracketed marker after a
+    # mapping colon (including annotations). Normalize those expressions in
+    # this same pass so repeated sanitization does not change the result.
+    return _redact_mapping_values(assignments(text))
 
 
 def sanitize(value: Any) -> Any:
