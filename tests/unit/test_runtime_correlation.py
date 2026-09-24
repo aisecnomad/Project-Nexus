@@ -118,15 +118,22 @@ def test_gateway_raw_credentials_never_survive_normalisation_or_report(index, sc
     record = {**event(), "api_key": secret, "metadata": {"note": secret}, **extra}
     result = normalise(record, schema)
     assert secret not in str(result)
-    assert credential_id(secret) in result.caller
+    assert result.caller_redacted
+    assert "credential:hmac-sha256:" in result.caller
+    assert credential_id(secret) not in result.caller
     connector = GatewayLogConnector(ConnectorContext(config={"format": schema}, index=index))
     findings = list(connector.analyze([record]))
-    assert findings and secret not in json.dumps([finding.to_dict() for finding in findings])
+    report = json.dumps([finding.to_dict() for finding in findings])
+    assert findings and secret not in report and credential_id(secret) not in report
+    assert findings[0].metadata["runtime_observations"][0]["code_resources"] == []
 
 
-def test_fingerprint_can_be_used_for_binding_without_a_raw_key_in_config(index):
+def test_exact_private_api_key_fingerprint_can_bind_without_report_disclosure(index):
     key = "opaque-key-with-an-explicit-fingerprint"
     code = static()
     mapping = {**binding(), "caller": "api-key:" + credential_id(key)}
-    correlate_runtime([code, *gateways(index, [event(api_key=key)], [mapping])])
+    findings = gateways(index, [event(api_key=key)], [mapping])
+    correlate_runtime([code, *findings])
     assert code.metadata["runtime_activity"]["status"] == "observed"
+    assert findings[0].metadata["runtime_observations"][0]["code_resources"] == [code.resource]
+    assert credential_id(key) not in json.dumps([finding.to_dict() for finding in findings])

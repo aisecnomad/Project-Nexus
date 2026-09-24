@@ -70,6 +70,21 @@ def test_multiple_preemptions_retain_live_result_within_original_cpu_and_wall_bu
     assert attempts == 6
 
 
+def test_sustained_scheduler_contention_uses_the_original_budgets():
+    attempts = 0
+
+    def preempted_before_running(timeout):
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 12:
+            raise TimeoutError("regex timed out while this thread was suspended")
+        return "matched"
+
+    with SignatureIndex([]).scan_budget(seconds=1):
+        assert _run_regex(preempted_before_running, "custom.pattern") == "matched"
+    assert attempts == 13
+
+
 def test_contention_retry_cannot_restart_the_input_wall_deadline(monkeypatch):
     now = time.monotonic()
     monkeypatch.setattr("shadowscan.signatures.matcher.time.monotonic", lambda: now)

@@ -27,9 +27,11 @@ Input: JSONL / JSON / CSV / plain text access logs, file or directory.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import math
 import re
+import secrets
 from collections import Counter, OrderedDict
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
@@ -42,17 +44,20 @@ from shadowscan.connectors.base import (
     BaseConnector,
     ConnectorContext,
     ConnectorError,
+    _NoDump,
     _positive_limit,
 )
 from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
-from shadowscan.utils.redaction import credential_id, sanitize
-from shadowscan.utils.text import get_path, host_of, parse_timestamp, redact, to_iso
+from shadowscan.utils.redaction import REDACTED, credential_id, sanitize
+from shadowscan.utils.text import get_path, host_of, parse_timestamp, to_iso
 
 _MAX_CACHED_USER_AGENTS = 256
 _MAX_CACHED_USER_AGENT_CHARS = 1024
-_OPAQUE_SCOPE_PREFIX = "scope:sha256:"
+_OPAQUE_SCOPE_PREFIX = "scope:hmac-sha256:"
+_LEGACY_SCOPE_PREFIX = "scope:sha256:"
+_PUBLIC_CREDENTIAL_ID = re.compile(r"credential:sha256:[0-9a-f]{64}\Z")
 
 # ---------------------------------------------------------------- schemas
 
@@ -87,6 +92,8 @@ class Event:
     schema: str = "generic"
     scope: dict[str, str] = field(default_factory=dict)
     scope_redacted: bool = False
+    caller_redacted: bool = False
+    binding_caller: str | None = field(default=None, repr=False)  # private exact-match key; never exported
     environment: str | None = None
     runtime_frameworks: list[str] = field(default_factory=list)
     code_resources: list[str] = field(default_factory=list)
@@ -282,27 +289,54 @@ def _runtime_labels(rec: dict[str, Any], metadata: dict[str, Any]) -> tuple[dict
     return scope, environment if isinstance(environment, str) and environment else None
 
 
-def _restore_scope(scope: dict[str, str], clean_values: Iterable[tuple[str]]) -> tuple[dict[str, str], bool]:
+def _restore_scope(
+    scope: dict[str, str], clean_values: Iterable[tuple[str]], scope_key: bytes,
+) -> tuple[dict[str, str], bool]:
     """Keep redacted scope identities distinct without disclosing their labels.
 
-    The output prefix is reserved: a raw label using it is always hashed again.
-    This prevents a caller-supplied label from impersonating an opaque label;
-    credential_id() is deliberately unsuitable because it is idempotent.
+    The random key belongs to this connector instance, never to a report. An
+    unkeyed hash would disclose a short scope by offline dictionary search.
+    Both current and legacy prefixes are reserved so raw labels cannot
+    impersonate an opaque label. credential_id() is unsuitable here: it is
+    idempotent and its public SHA-256 fingerprint is enumerable.
     """
     result = {}
     redacted = False
     for (key, original), (clean,) in zip(scope.items(), clean_values, strict=True):
-        changed = clean != original or original.startswith(_OPAQUE_SCOPE_PREFIX)
+        changed = clean != original or original.startswith((_OPAQUE_SCOPE_PREFIX, _LEGACY_SCOPE_PREFIX))
         if changed:
             identity = json.dumps(["shadowscan.gateway.scope.v1", key, original], separators=(",", ":"))
-            result[key] = _OPAQUE_SCOPE_PREFIX + hashlib.sha256(identity.encode()).hexdigest()
+            result[key] = _OPAQUE_SCOPE_PREFIX + hmac.digest(scope_key, identity.encode(), "sha256").hex()
         else:
             result[key] = clean
         redacted = redacted or changed
     return result, redacted
 
 
-def normalise_with_record(rec: dict[str, Any], schema: str) -> tuple[Event | None, dict[str, Any] | None]:
+def _withhold_public_credential_id(value: Any, identifier: str) -> Any:
+    """Remove a supplied public key fingerprint from sanitized gateway data.
+
+    The shared sanitizer treats existing fingerprints as idempotent, but an
+    imported fingerprint of a short key is enumerable. Input structure and
+    string work were already bounded by sanitize() before this linear pass.
+    """
+    if isinstance(value, str):
+        return value.replace(identifier, REDACTED)
+    if isinstance(value, dict):
+        # A credential-bearing metadata key must not survive as a dictionary
+        # key or collide with a different key after replacement.
+        return {key: _withhold_public_credential_id(child, identifier)
+                for key, child in value.items() if not isinstance(key, str) or identifier not in key}
+    if isinstance(value, list):
+        return [_withhold_public_credential_id(child, identifier) for child in value]
+    if isinstance(value, tuple):
+        return tuple(_withhold_public_credential_id(child, identifier) for child in value)
+    return value
+
+
+def normalise_with_record(
+    rec: dict[str, Any], schema: str, *, scope_key: bytes | None = None,
+) -> tuple[Event | None, dict[str, Any] | None]:
     """Normalize and also return the sanitized source record.
 
     Sanitizing a record is the dominant per-record cost; callers that need the
@@ -311,6 +345,7 @@ def normalise_with_record(rec: dict[str, Any], schema: str) -> tuple[Event | Non
     ev = _normalise(rec, schema)
     if ev is None:
         return None, None
+    scope_key = scope_key if scope_key is not None else secrets.token_bytes(32)
     # Validate scalar fields before attribution or counters are updated. JSON
     # containers in headers/identity fields otherwise fail partway through
     # accumulation and can discard all callers collected before that record.
@@ -322,11 +357,17 @@ def normalise_with_record(rec: dict[str, Any], schema: str) -> tuple[Event | Non
         if value is not None and not isinstance(value, str):
             raise ConnectorError(f"gateway.logs: normalized {name} must be a string")
     opaque_id = None
+    raw_key = None
     if ev.caller_kind == "api-key":
         namespace, _, raw_key = ev.caller.partition(":")
-        opaque_id = credential_id(raw_key)
+        ev.binding_caller = f"{namespace}:{credential_id(raw_key)}"
+        # No publicly enumerable digest of a caller-supplied API key or key ID
+        # may appear in a report. Even provider key IDs can be guessable.
+        material = json.dumps(["shadowscan.gateway.credential.v1", namespace, raw_key], separators=(",", ":"))
+        opaque_id = "credential:hmac-sha256:" + hmac.digest(scope_key, material.encode(), "sha256").hex()
         ev.caller = f"{namespace}:{opaque_id}"
-        if not ev.caller_label or ev.caller_label == raw_key or ev.caller_label in raw_key:
+        ev.caller_redacted = True
+        if not ev.caller_label or raw_key in ev.caller_label or ev.caller_label in raw_key:
             ev.caller_label = opaque_id
         if schema == "litellm" and not get_path(rec, "api_key_alias", "key_alias", "metadata.user_api_key_alias"):
             ev.caller_label = opaque_id
@@ -336,21 +377,43 @@ def normalise_with_record(rec: dict[str, Any], schema: str) -> tuple[Event | Non
     # schema key, and sanitization of mapping keys must not corrupt the Event.
     raw_scope, ev.environment = _runtime_labels(rec, ev.metadata)
     fields = asdict(ev)
+    # Only the reportable Event fields enter sanitization. The legacy exact
+    # binding fingerprint remains private and is never returned in a report.
+    fields.pop("binding_caller")
     # Singleton wrappers prevent unrelated scalar fields from being interpreted
     # as adjacent command-line arguments (e.g. a label '--token', timestamp).
-    clean_record, clean_fields, clean_scope = sanitize((
+    # IDs such as api_key_id are not universally secret to other connectors.
+    # Inside a gateway export, they can be short credentials or share bytes
+    # with aliases, owners, metadata, and scope labels. Register the raw value
+    # locally before sanitizing all reportable Event fields and the record.
+    clean_record, clean_fields, clean_scope, _ = sanitize((
         rec, [(value,) for value in fields.values()], [(value,) for value in raw_scope.values()],
+        {"api_key": raw_key} if raw_key is not None else {},
     ))
+    if raw_key is not None and _PUBLIC_CREDENTIAL_ID.fullmatch(raw_key):
+        clean_record, clean_fields, clean_scope = _withhold_public_credential_id(
+            (clean_record, clean_fields, clean_scope), raw_key,
+        )
     cleaned = dict(zip(fields, (value for (value,) in clean_fields), strict=True))
-    cleaned["scope"], cleaned["scope_redacted"] = _restore_scope(raw_scope, clean_scope)
+    cleaned["scope"], cleaned["scope_redacted"] = _restore_scope(
+        raw_scope, clean_scope, scope_key,
+    )
     cleaned["caller_kind"] = ev.caller_kind  # normalized enum, not a source field
     cleaned["schema"] = ev.schema  # detected/validated provider schema
     if cleaned["caller"] != ev.caller:
-        # A short credential may occur inside an unrelated identity. Hash the
-        # original normalized identity to avoid merging unrelated callers.
-        cleaned["caller"] = ev.caller if opaque_id else f"{ev.caller_kind}:{credential_id(ev.caller)}"
+        # Preserve separation if sanitization changed an unrelated identity,
+        # without exposing its short credential to a public hash dictionary.
+        if opaque_id:
+            # A short key may occur by chance in an HMAC's hex digits. The
+            # generated identity is safe despite that substring overlap.
+            cleaned["caller"] = ev.caller
+        else:
+            material = json.dumps(["shadowscan.gateway.caller.v1", ev.caller], separators=(",", ":"))
+            cleaned["caller"] = f"{ev.caller_kind}:caller:hmac-sha256:{hmac.digest(scope_key, material.encode(), 'sha256').hex()}"
+            cleaned["caller_redacted"] = True
     if opaque_id and ev.caller_label == opaque_id:
         cleaned["caller_label"] = opaque_id
+    cleaned["binding_caller"] = ev.binding_caller
     return Event(**cleaned), clean_record
 
 
@@ -366,7 +429,7 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
         return Event(
             caller=caller,
             caller_kind="api-key",
-            caller_label=alias or (redact(str(key)) if key else "anonymous"),
+            caller_label=alias or str(key or "anonymous"),
             timestamp=parse_timestamp(rec.get("startTime") or rec.get("start_time") or rec.get("endTime") or rec.get("timestamp")),
             model=rec.get("model") or rec.get("model_group"),
             provider=rec.get("custom_llm_provider") or rec.get("provider"),
@@ -845,7 +908,7 @@ def _json_lines_fallback(lines: list[str]) -> bool:
     return bool(first) and first != "{" and not first.startswith("[")
 
 
-class GatewayLogConnector(BaseConnector):
+class GatewayLogConnector(BaseConnector, _NoDump):
     name: ClassVar[str] = "gateway.logs"
     surface: ClassVar[Surface] = Surface.GATEWAY
     provider: ClassVar[str | None] = "gateway"
@@ -865,6 +928,9 @@ class GatewayLogConnector(BaseConnector):
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
+        # Engine.run shares one key across its gateway jobs; direct connector
+        # use gets an isolated key. Never place this key in config or reports.
+        self._scope_key = ctx.gateway_identity_key or secrets.token_bytes(32)
         self.format = ctx.get("format")
         self.min_events = int(ctx.get("min_events", 1))
         self.llm_hosts_only = bool(ctx.get("llm_hosts_only", True))
@@ -890,7 +956,9 @@ class GatewayLogConnector(BaseConnector):
         identity = json.dumps([source, self.label, self.format, self.min_events,
                                self.llm_hosts_only, self.max_records,
                                sorted(self.correlation_bindings, key=lambda b: json.dumps(b, sort_keys=True))], sort_keys=True)
-        self.source_id = hashlib.sha256(identity.encode()).hexdigest()
+        # Any source configuration may contain guessable labels or bindings;
+        # never disclose an unkeyed digest even if rows are filtered out.
+        self.source_id = hmac.digest(self._scope_key, identity.encode(), "sha256").hex()
 
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError("gateway.logs: this connector reads exported logs; set 'input' to a file or directory")
@@ -1103,7 +1171,7 @@ class GatewayLogConnector(BaseConnector):
             n += 1
             try:
                 schema = self.format or detect_schema(rec)
-                ev, clean = normalise_with_record(rec, schema)
+                ev, clean = normalise_with_record(rec, schema, scope_key=self._scope_key)
                 if ev is None:
                     self.ctx.warn(f"gateway.logs: unrecognized record {n}; could not identify a caller")
                     skipped += 1
@@ -1188,9 +1256,11 @@ class GatewayLogConnector(BaseConnector):
             _, clean_scope, (ev.environment,) = sanitize((
                 rec, [(value,) for value in raw_scope.values()], (environment,),
             ))
-            ev.scope, ev.scope_redacted = _restore_scope(raw_scope, clean_scope)
+            ev.scope, ev.scope_redacted = _restore_scope(raw_scope, clean_scope, self._scope_key)
         if ev.scope_redacted:
             self.ctx.warn("gateway.logs: scope labels were redacted; distinct opaque scopes retained; runtime attribution incomplete")
+            identity_assurance = "unverified"
+        if ev.caller_redacted and not ev.binding_caller:
             identity_assurance = "unverified"
         if ev.environment:
             ev.environment = ev.environment.strip().lower()
@@ -1210,9 +1280,10 @@ class GatewayLogConnector(BaseConnector):
             framework_cache.move_to_end(ua)
         ev.runtime_frameworks = list(frameworks)
         ev.identity_assurance = identity_assurance
+        caller_for_binding = ev.binding_caller or ev.caller
         ev.code_resources = sorted({
             binding["code_resource"] for binding in self.correlation_bindings
-            if ev.identity_assurance != "unverified" and binding["caller"] == ev.caller and binding["scope"] == ev.scope
+            if ev.identity_assurance != "unverified" and binding["caller"] == caller_for_binding and binding["scope"] == ev.scope
         })
 
     @staticmethod
@@ -1367,7 +1438,8 @@ class GatewayLogConnector(BaseConnector):
             observation["last_seen"] = max(observation["last_seen"], timestamp) if observation["last_seen"] else timestamp
         return interval_stored
 
-    def _finding(self, c: _Caller) -> Finding:
+    def _finding(self, c: _Caller, *, source_id: str | None = None) -> Finding:
+        source_id = source_id or self.source_id
         f = Finding(
             surface=Surface.GATEWAY,
             connector=self.name,
@@ -1473,10 +1545,10 @@ class GatewayLogConnector(BaseConnector):
                 "correlation_scope_redacted": c.scope_redacted,
                 "runtime_observations": list(c.observations.values()),
                 "runtime_observations_dropped": c.observations_dropped,
-                "runtime_source": {"id": self.source_id, "input": str(self.ctx.input_path or ""), "label": self.label, "schemas": sorted(c.schemas)},
+                "runtime_source": {"id": source_id, "input": str(self.ctx.input_path or ""), "label": self.label, "schemas": sorted(c.schemas)},
             }
         )
-        f.id = "ss-" + hashlib.sha256(f"{f.compute_id()}|{self.source_id}".encode()).hexdigest()[:16]
+        f.id = "ss-" + hashlib.sha256(f"{f.compute_id()}|{source_id}".encode()).hexdigest()[:16]
         finalize(f, self.index)
         f.kind = Kind.GATEWAY_CALLER
         what = "Agentic caller" if f.metadata.get("agent_indicators") else "LLM caller"

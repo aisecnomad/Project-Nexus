@@ -25,7 +25,10 @@ from shadowscan.utils.redaction import sanitize_text
 _SCAN_DEADLINE: ContextVar[float | None] = ContextVar("signature_scan_deadline", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
 DEFAULT_SCAN_BUDGET_SECONDS = 2.0
-_MAX_CONTENTION_RETRIES = 8
+# A briefly busy worker can exhaust several regex wall-clock attempts before
+# this thread has used its own 100 ms CPU allowance. Keep retries finite and
+# inside the original per-pattern CPU and per-input wall deadlines.
+_MAX_CONTENTION_RETRIES = 16
 
 
 class MatchTimeoutError(RuntimeError):

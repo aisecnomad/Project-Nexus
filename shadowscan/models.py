@@ -334,7 +334,6 @@ class ScanStats:
     skipped: bool = False
     skip_reason: str | None = None
     cached: bool = False
-    cache_key: str | None = None
     incomplete: bool = False
 
 

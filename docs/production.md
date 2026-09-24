@@ -195,8 +195,11 @@ roots share that connector's deadline. The engine stops accepting a connector's
 results after the deadline and records incomplete coverage. Python
 worker threads cannot safely be killed: a blocked SDK call can continue after
 that soft deadline. The CLI normally exits after emitting an incomplete report,
-but timeout handling may wait for an in-progress filesystem replacement of a
-cache or record artifact. Embedded callers must supervise their process and
+but a filesystem replacement already in progress can finish after the timeout
+report. Such cache or record artifacts are unaccepted even if present; timed-out
+record exports are `exported: false` in the manifest. Use a fresh state and
+export directory after a timeout to avoid reusing a late cache or orphan export.
+Embedded callers must supervise their process and
 cannot reuse an Engine with an active abandoned worker. Also enforce a host/job
 wall-clock deadline and terminate the disposable worker when it expires.
 SDK connect/read limits and bounded retries reduce blocking; none guarantees a
@@ -449,7 +452,8 @@ uses the 120-second default rather than disabling it.
 Workers are not replaced after all capacity is occupied by blocked calls; the
 remaining queue is reported incomplete. `Engine.run()` returns control to library
 callers; the CLI exits after reporting abandoned workers. Continue to enforce
-the disposable worker's external job deadline for blocked publication or output.
+the disposable worker's external job deadline for blocked output or filesystem
+replacement still in progress after the report.
 
 New Azure App Service settings and OCI Function exports store configuration under
 `environment`, which redacts every value even when a credential has an unusual

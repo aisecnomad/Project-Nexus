@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import time
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -119,6 +120,9 @@ class Engine:
         dump_directory = prepare_private_directory(self.config.dump_records) if self.config.dump_records else None
         exports: list[dict[str, Any]] = []
         states = {number: _JobState() for number, _ in jobs}
+        # Identical gateway sources in one report share an opaque identity,
+        # while separate Engine.run calls cannot link redacted caller/scope IDs.
+        gateway_identity_key = secrets.token_bytes(32)
         timed_out: set[int] = set()
         export_lock = Lock()
 
@@ -145,7 +149,8 @@ class Engine:
                 cfg["_dump_path"] = os.path.join(dump_directory, f"{dump_key}-{label}.jsonl")
             ctx = ConnectorContext(config=cfg, index=self.index, workdir=self.config.workdir,
                                    deadline=state.deadline, cancelled=state.cancelled,
-                                   publication_lock=state.publication_lock)
+                                   publication_lock=state.publication_lock,
+                                   gateway_identity_key=gateway_identity_key if spec.name == "gateway.logs" else None)
             fs: list[Finding] = []
             started_at = now_iso()
             origin_token = set_allow_private_origin(self.config.allow_private_origin)
@@ -185,7 +190,6 @@ class Engine:
                     # scan incomplete and require a fresh scan for security gates.
                     if cache.snapshot(spec) == snapshot:
                         ctx.check_deadline()
-                        st.cache_key = snapshot.fingerprint
                         cache.save(snapshot, fs, st, check_deadline=ctx.check_deadline,
                                    publish_replace=ctx.publish_replace)
                     else:
@@ -278,8 +282,6 @@ class Engine:
             )
             if cached_count:
                 stats.warnings.append(f"incremental: reused {cached_count}/{len(parts)} unchanged repository roots")
-            if all(s.cache_key for s in parts):
-                stats.cache_key = hashlib.sha256("|".join(s.cache_key or "" for s in parts).encode()).hexdigest()
             return spec, combined, stats
 
         def _run(number: int, spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
@@ -320,7 +322,19 @@ class Engine:
                 for future in expired:
                     number, spec = futures[future]
                     state = states[number]
-                    with state.publication_lock:
+                    # A worker may already be blocked inside an OS replacement
+                    # while holding this lock. Waiting here would turn the
+                    # cooperative connector deadline into an unbounded wait.
+                    # If acquired, cancel before another publication can begin;
+                    # otherwise mark cancellation immediately. The in-flight
+                    # replacement may finish after we return, so its artifact
+                    # must never be treated as an accepted scan export.
+                    if state.publication_lock.acquire(blocking=False):
+                        try:
+                            state.cancelled.set()
+                        finally:
+                            state.publication_lock.release()
+                    else:
                         state.cancelled.set()
                     timed_out.add(number)
                     if future.running():
@@ -331,9 +345,11 @@ class Engine:
                         connector=spec.id, started_at=state.started_at or result.started_at,
                         finished_at=now_iso(), incomplete=True, skipped=True,
                         skip_reason=message, errors=[message],
-                        warnings=["Cancellation is cooperative: an in-flight SDK or plugin call may continue, "
-                                  "and Python may wait for its worker at process exit. Use an external process "
-                                  "timeout when a hard execution limit is required."],
+                        warnings=["Cancellation is cooperative: an in-flight SDK, plugin call, or filesystem "
+                                  "replacement may continue. A cache or record artifact whose replacement "
+                                  "started before cancellation may appear after this incomplete report; do not "
+                                  "use timed-out artifacts as accepted results. Use an external process timeout "
+                                  "when a hard execution limit is required."],
                     ))
                     pending.remove(future)
                 if pending and timed_out:

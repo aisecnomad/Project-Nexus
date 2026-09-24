@@ -56,8 +56,9 @@ overridden history also disable reuse; HEAD and shallow boundaries are tracked.
 Symlinked roots and ancestor path components are also ineligible for reuse.
 Input changes detected between hashing and collection make the result
 incomplete and require a rerun. `--dump-records` disables cache reuse to ensure the
-requested export is actually collected. JSON connector statistics expose `cached`
-and `cache_key`; cached connectors examine zero objects during analysis.
+requested export is actually collected. JSON connector statistics expose `cached`;
+the private cache fingerprint stays in the access-restricted state directory.
+Cached connectors examine zero objects during analysis.
 Pre/post hashes do not form an atomic snapshot: inputs must remain immutable
 throughout the scan to exclude changes that occur and revert between reads.
 
@@ -90,6 +91,10 @@ Record dumps use a private directory and distinct filenames per configured
 connector instance. `manifest.json` maps configuration ordinals to committed
 export files and records each instance's completion status. Use only entries
 marked `exported: true`; a failed attempt may leave an older file in place.
+`gateway.logs` does not export source records through `--dump-records`: provider
+key IDs and arbitrary log payloads can be sensitive even when a generic field
+sanitizer does not recognize them. Its manifest entry has `exported: false`;
+gateway findings and scan completion are unaffected.
 See [deployment and migration](production.md) for explicit plugin, signature
 override and private-endpoint policies, output changes and rollout checks.
 
@@ -163,10 +168,31 @@ endpoint/host. Access logs with a path require a recognized LLM/API route;
 a framework user agent or model field on `/favicon.ico` does not qualify as
 execution evidence.
 
-API-key callers use a stable `credential:sha256:<64 hex digits>` identifier.
-Copy the full caller resource from the gateway report (for example
-`api-key:credential:sha256:...` or `litellm-key:credential:sha256:...`); do not put
+API-key callers use a private, connector-local `credential:hmac-sha256:<64 hex
+digits>` report identifier. A public SHA-256 fingerprint of a short key or key
+ID is recoverable by guessing it offline. An operator can still configure an
+exact `api-key:credential:sha256:...` binding computed privately from the raw
+key, which the connector checks in memory without writing that public digest to
+findings. Keep binding configuration private: publishing a public digest of a
+guessable key would itself disclose the key. The exported HMAC is scan-local
+and cannot be pasted into a future binding. Other caller names changed by
+credential redaction remain `unverified` for runtime attribution. Do not put
 raw API keys into bindings.
+
+If a gateway scope label overlaps a credential or uses an opaque scope prefix,
+the report contains a `scope:hmac-sha256:…` value instead. The connector uses
+an ephemeral private key so these values preserve distinct tenant groups within
+one connector instance without exposing short labels to offline guessing. They
+change across independent scans and cannot serve as cross-run identifiers or
+correlation binding values. Gateway source IDs always use a private scan-local
+key because configuration can include short labels or bindings even if no
+accepted event uses that scope. The configured gateway label itself is written
+to findings; do not put secrets in labels. The engine shares that key across gateway
+jobs in one report, so duplicate sources retain one identity, and creates a new
+key for each scan. Direct connector instances use independent keys. Redacted scope scans are
+marked incomplete; gateway exports are noncomparable across independent runs.
+Resolve the scope/credential overlap before interpreting a report comparison
+as evidence that a finding was resolved.
 
 Code findings with frameworks gain `metadata.runtime_activity`:
 
@@ -193,9 +219,13 @@ static confidence or reduce risk.
 
 Gateway finding IDs include the canonical input path and relevant connector
 configuration (label, format, filters and bindings). This changes IDs from older
-reports. Repeating an identical configured source is idempotent; distinct exports
-retain separate provenance. Overlapping exports count observations from each
-source, so aggregate counts are not guaranteed to represent unique requests.
+reports. Repeating an identical configured source within one connector instance
+is idempotent for nonredacted principal/service callers; API-key callers and
+redacted scopes use connector-local HMAC IDs. Gateway exports are noncomparable
+across independent scans to avoid claiming that a missing scan-local ID is a
+resolved finding. Distinct exports retain
+separate provenance. Overlapping exports count observations from each source,
+so aggregate counts are not guaranteed to represent unique requests.
 
 OpenAI organization usage exports with `data[].results[]` are supported.
 `metadata.events` counts requests and `metadata.records` counts exported rows;
@@ -213,7 +243,11 @@ completed, declare the same supported finding-identity schema and have the same
 `collection_scope` fingerprint. This opaque digest covers
 selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
-are excluded so real removals and approval changes can be compared.
+are excluded so real removals and approval changes can be compared. A public
+digest does not hide guessable paths or labels; keep these settings nonsecret.
+Credential-bearing configurations omit the digest, and gateway exports cannot
+attest comparable scope because private caller/scope identities may change
+between scans.
 
 Incomplete scans, changed scope, older reports without provenance, live provider
 collections and third-party connectors cannot establish equivalent coverage.
