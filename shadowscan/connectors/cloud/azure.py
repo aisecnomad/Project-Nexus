@@ -19,6 +19,8 @@ from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar, TypedDict
 from urllib.parse import parse_qs, urlsplit
 
+from requests import RequestException
+
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import (
     cloud_finding,
@@ -171,13 +173,24 @@ class AzureConnector(BaseConnector):
             if skip_token:
                 options["$skipToken"] = skip_token
             body = {"subscriptions": subs, "query": ARG_QUERY, "options": options}
-            data = self.http.post_json("/providers/Microsoft.ResourceGraph/resources", params={"api-version": "2021-03-01"}, json=body) or {}
-            batch = data.get("data", [])
+            try:
+                data = self.http.post_json("/providers/Microsoft.ResourceGraph/resources", params={"api-version": "2021-03-01"}, json=body)
+            except (HttpError, RequestException, ValueError) as exc:
+                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                self.ctx.warn(f"cloud.azure: Resource Graph collection failed ({status}); coverage unknown")
+                break
+            if not isinstance(data, dict) or "error" in data or not isinstance(data.get("data"), list):
+                self.ctx.warn("cloud.azure: invalid Resource Graph response; coverage unknown")
+                break
+            batch = data["data"]
             rows.extend(batch)
             skip_token = data.get("$skipToken")
-            if not skip_token:
+            if skip_token is None or skip_token == "":
                 if str(data.get("resultTruncated", "false")).lower() == "true":
                     self.ctx.warn("cloud.azure: Resource Graph results truncated without continuation", incomplete=True)
+                break
+            if not isinstance(skip_token, str):
+                self.ctx.warn("cloud.azure: invalid Resource Graph continuation; coverage unknown")
                 break
             if skip_token in seen_tokens:
                 self.ctx.warn("cloud.azure: repeated Resource Graph continuation", incomplete=True)

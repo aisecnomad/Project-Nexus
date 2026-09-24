@@ -38,11 +38,13 @@ from shadowscan.connectors.cloud.common import (
 )
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.utils.identity import has_aws_account_scope
 from shadowscan.utils.text import truncate
 
 DEFAULT_REGIONS = ["us-east-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"]
 LLM_ACTION_PREFIXES = ("bedrock:", "bedrock-agentcore:", "sagemaker:invoke", "qbusiness:", "lex:", "q:", "kendra:")
 CLOUDTRAIL_EVENTS = ["InvokeModel", "InvokeModelWithResponseStream", "Converse", "ConverseStream", "InvokeAgent", "InvokeFlow", "InvokeInlineAgent", "InvokeAgentRuntime", "RetrieveAndGenerate", "InvokeEndpoint", "ChatSync"]
+MAX_LIST_PAGES = 1000
 
 
 def _resource_id(value: Any) -> str:
@@ -114,26 +116,56 @@ class AwsConnector(BaseConnector):
             return [r["RegionName"] for r in ec2.describe_regions(AllRegions=False)["Regions"]]
         return list(self.regions)
 
-    @staticmethod
-    def _paginate(client: Any, op: str, key: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
+    def _pages(self, client: Any, op: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
+        """Keep successful pages when a later provider request fails."""
         try:
-            paginator = client.get_paginator(op)
-            for page in paginator.paginate(**kwargs):
-                yield from page.get(key, []) or []
-        except Exception as exc:  # noqa: BLE001 - not every op has a paginator
-            # Never restart a failed paginator as a one-page request: that can
-            # turn a denied/truncated inventory into apparent success.
-            if type(exc).__name__ != "OperationNotPageableError":
-                raise
-            resp = getattr(client, op)(**kwargs)
-            yield from resp.get(key, []) or []
-            token = resp.get("nextToken") or resp.get("NextToken")
-            while token:
-                kw = dict(kwargs)
-                kw["nextToken" if "nextToken" in resp else "NextToken"] = token
-                resp = getattr(client, op)(**kw)
-                yield from resp.get(key, []) or []
-                token = resp.get("nextToken") or resp.get("NextToken")
+            try:
+                paginator = client.get_paginator(op)
+            except Exception as exc:  # noqa: BLE001 - some operations are not pageable
+                if type(exc).__name__ != "OperationNotPageableError":
+                    raise
+                # Only failure to create a paginator permits the manual path.
+                seen: set[str] = set()
+                request = dict(kwargs)
+                for _ in range(MAX_LIST_PAGES):
+                    page = getattr(client, op)(**request)
+                    if not isinstance(page, dict):
+                        raise ValueError("invalid AWS list page")
+                    yield page
+                    token_key = "nextToken" if "nextToken" in page else "NextToken"
+                    token = page.get(token_key)
+                    if token is None or token == "":
+                        return
+                    if not isinstance(token, str) or token in seen:
+                        raise ValueError("invalid or repeated AWS pagination token")
+                    seen.add(token)
+                    request[token_key] = token
+                self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
+                return
+            for number, page in enumerate(paginator.paginate(**kwargs)):
+                if number >= MAX_LIST_PAGES:
+                    self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
+                    return
+                if not isinstance(page, dict):
+                    raise ValueError("invalid AWS list page")
+                yield page
+        except Exception as exc:  # noqa: BLE001 - preserve pages already yielded
+            self.ctx.warn(f"cloud.aws: {op} collection failed ({type(exc).__name__})")
+
+    def _paginate(self, client: Any, op: str, key: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
+        for page in self._pages(client, op, **kwargs):
+            if key not in page or "error" in page or "Error" in page:
+                self.ctx.warn(f"cloud.aws: missing or failed {key} page for {op}")
+                continue
+            items = page[key]
+            if not isinstance(items, list):
+                self.ctx.warn(f"cloud.aws: invalid {key} page for {op}")
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    self.ctx.warn(f"cloud.aws: invalid {key} record for {op}")
+                    continue
+                yield item
 
     def _safe(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
         try:
@@ -529,12 +561,17 @@ class AwsConnector(BaseConnector):
                     }
 
     def _paginate_details(self, iam: Any) -> Iterator[dict[str, Any]]:
-        paginator = iam.get_paginator("get_account_authorization_details")
-        for page in paginator.paginate(Filter=["Role", "User", "Group", "LocalManagedPolicy", "AWSManagedPolicy"]):
+        for page in self._pages(iam, "get_account_authorization_details", Filter=["Role", "User", "Group", "LocalManagedPolicy", "AWSManagedPolicy"]):
             for key in ("RoleDetailList", "UserDetailList", "GroupDetailList", "Policies"):
-                for item in page.get(key, []) or []:
-                    item["_type"] = key
-                    yield item
+                items = page.get(key, [])
+                if not isinstance(items, list):
+                    self.ctx.warn(f"cloud.aws: invalid IAM {key} page")
+                    continue
+                for item in items:
+                    if not isinstance(item, dict):
+                        self.ctx.warn(f"cloud.aws: invalid IAM {key} record")
+                        continue
+                    yield {**item, "_type": key}
 
     def _collect_cloudtrail(self, region: str) -> Iterator[dict[str, Any]]:
         self.ctx.warn(
@@ -589,6 +626,11 @@ class AwsConnector(BaseConnector):
                 else:
                     f = handlers[kind](rec)
                     if f:
+                        if not has_aws_account_scope(f.provider, f.account, f.resource):
+                            self.ctx.warn(
+                                "cloud.aws: resource lacks account scope; supply account_id or an account export record",
+                                incomplete=True,
+                            )
                         yield f
             except (ValueError, TypeError, KeyError, AttributeError):
                 self.ctx.warn("cloud.aws: record has invalid fields for its _kind")

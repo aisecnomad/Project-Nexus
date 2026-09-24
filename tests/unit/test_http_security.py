@@ -6,11 +6,12 @@ from unittest.mock import Mock
 
 import pytest
 import requests
+from requests.adapters import HTTPAdapter
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.code.github import GitHubConnector, repository_target
 from shadowscan.connectors.code.gitlab import GitLabConnector
-from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.http import HttpClient, HttpError, _DestinationPolicyAdapter
 
 
 def response(data=None, status=200, headers=None):
@@ -328,6 +329,47 @@ def test_json_limit_can_be_overridden_for_a_documented_page():
     assert http.get_json("/keys", max_bytes=16) == {"ok": True}
 
 
+def test_injected_session_specific_adapter_cannot_bypass_destination_policy():
+    session = requests.Session()
+    legacy = HTTPAdapter()
+    session.mount("https://8.8.8.8/private", legacy)
+    session.mount("HTTPS://8.8.8.8", legacy)
+    http = HttpClient("https://8.8.8.8", session=session)
+    try:
+        assert set(session.adapters) == {"https://"}
+        assert isinstance(session.get_adapter("https://8.8.8.8/private/items"), _DestinationPolicyAdapter)
+        # A session retained by its caller must not replace the adapter later.
+        session.mount("https://8.8.8.8/private", legacy)
+        with pytest.raises(ValueError, match="adapter was replaced"):
+            http.get("/private/items", stream=True)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+def test_default_raw_response_is_bounded_before_returning_content(method):
+    oversized = response(headers={"Content-Length": "17"})
+    oversized.iter_content = Mock(side_effect=AssertionError("oversize body should not be read"))
+    oversized.close = Mock()
+    http, session = client(oversized, max_response_bytes=16)
+
+    with pytest.raises(ValueError, match="byte limit"):
+        getattr(http, method)("/items")
+    assert session.request.call_args.kwargs["stream"] is True
+    oversized.iter_content.assert_not_called()
+    oversized.close.assert_called_once()
+
+
+def test_default_raw_response_preserves_cached_content_after_close():
+    result = response({"ok": True})
+    result.close = Mock()
+    http, _ = client(result)
+    returned = http.get("/items")
+    assert returned is result
+    assert returned.json() == {"ok": True}
+    result.close.assert_called_once()
+
+
 def test_post_json_uses_the_default_streamed_body_limit():
     result = response({"keys": []})
     result.iter_content = Mock(return_value=iter([b"x" * 9]))
@@ -359,4 +401,3 @@ def test_paginators_fail_closed_on_missing_or_invalid_collection(paginator, data
 
     with pytest.raises(RuntimeError, match="collection"):
         list(getattr(http, paginator)("/items", **kwargs))
-
