@@ -132,7 +132,7 @@ class ScanConfig:
         self.allow_private_origin = _boolean_option(self.allow_private_origin, "allow_private_origin")
         self.allow_instance_credentials = _boolean_option(self.allow_instance_credentials, "allow_instance_credentials")
         self.allow_credential_mixing = _boolean_option(self.allow_credential_mixing, "allow_credential_mixing")
-        self.connector_timeout_seconds = validate_connector_timeout(self.connector_timeout_seconds)
+        self.connector_timeout_seconds = validate_connector_timeout_seconds(self.connector_timeout_seconds)
         self.incremental = _boolean_option(self.incremental, "incremental")
         if self.fail_on is not None and (not isinstance(self.fail_on, str) or self.fail_on not in _RISK_LEVELS):
             raise ConfigValidationError("options.fail_on must be critical, high, medium, low, info, or null")
@@ -323,7 +323,7 @@ def _connector_enabled(value: Any) -> bool:
     raise ConfigValidationError("connector enabled must be a boolean (true or false)")
 
 
-def validate_connector_timeout(value: Any) -> float:
+def validate_connector_timeout_seconds(value: Any) -> float:
     message = "connector_timeout_seconds must be a positive finite number"
     if isinstance(value, bool):
         raise ConfigValidationError(message)
@@ -334,6 +334,11 @@ def validate_connector_timeout(value: Any) -> float:
     if not math.isfinite(timeout) or timeout <= 0:
         raise ConfigValidationError(message)
     return timeout
+
+
+def validate_connector_timeout(value: Any) -> float:
+    """Validate the deprecated spelling with the canonical finite deadline."""
+    return validate_connector_timeout_seconds(value)
 
 
 def validate_min_confidence(value: Any) -> float:

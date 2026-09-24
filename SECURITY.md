@@ -39,13 +39,19 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   without being echoed. The Okta `SSWS` scheme is redacted like `Bearer` and
   `Basic`, and known configuration values are also redacted in their
   `repr()`-escaped spelling, which library errors use.
+  Unknown SDK diagnostic text stays in the access-controlled scan report; application
+  logs receive fixed failure summaries. Opaque `api_token`, `foundry_token`, and
+  `github_token` values, including the `GH_TOKEN` fallback, are sensitive.
 * `options.connector_timeout_seconds` / `--connector-timeout-seconds` defaults
   to a 120-second cooperative completion deadline. Late connector results are
   discarded and coverage is incomplete. Legacy `connector_timeout` /
   `--connector-timeout` remain compatibility aliases; legacy YAML null uses the
   default. Python cannot forcibly interrupt blocked threads: calls may outlive
-  `Engine.run()` and delay CLI shutdown. Worker concurrency remains bounded;
-  enforce an external process or job deadline when a hard runtime limit is needed.
+  `Engine.run()`. The CLI writes an incomplete report and exits without joining
+  an abandoned worker once timeout handling returns. A filesystem publication
+  in progress can delay timeout handling. Embedded callers still need a process
+  supervisor; worker concurrency remains bounded. Enforce an external process
+  or job deadline when a hard runtime limit is needed.
 * Azure App Service settings and OCI Function configuration are exported under
   `environment`, so record dumps redact every value; Salesforce token
   values are never requested.

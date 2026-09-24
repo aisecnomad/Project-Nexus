@@ -101,19 +101,20 @@ class OciConnector(BaseConnector):
         ).get_retry_strategy()
 
     def _client(self, cls: Any, region: str | None = None) -> Any:
+        """One SDK client per (service, region); construction parses the signing key each time."""
         key = (cls, region)
-        if key in self._clients:
-            return self._clients[key]
-        cfg = dict(self._config)
-        if region:
-            cfg["region"] = region
-        kwargs: dict[str, Any] = {
-            "timeout": (10, 30),
-            "retry_strategy": self._retry_strategy(),
-        }
-        if self._signer:
-            kwargs["signer"] = self._signer
-        client = self._clients[key] = cls(cfg, **kwargs)
+        client = self._clients.get(key)
+        if client is None:
+            cfg = dict(self._config)
+            if region:
+                cfg["region"] = region
+            kwargs: dict[str, Any] = {
+                "timeout": (10, 30),
+                "retry_strategy": self._retry_strategy(),
+            }
+            if self._signer:
+                kwargs["signer"] = self._signer
+            client = self._clients[key] = cls(cfg, **kwargs)
         return client
 
     def _all(self, fn: Any, *args: Any, **kwargs: Any) -> list[Any]:

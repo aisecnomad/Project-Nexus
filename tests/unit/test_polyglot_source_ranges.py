@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from time import monotonic
 
 import pytest
 
@@ -49,6 +50,20 @@ def test_go_import_strings_remain_visible_but_ordinary_literals_are_ignored(tmp_
         framework for finding in findings for framework in finding.frameworks
     }
     assert not [finding for finding in findings if finding.kind == Kind.AGENT]
+
+
+def test_long_go_line_with_many_quotes_and_import_tokens_stays_bounded():
+    # Hostile source need not parse as Go. Each quote and import-like token
+    # previously copied/scanned the whole prefix or suffix of this line.
+    source = 'import "github.com/tmc/langchaingo/agents"\nvar _ = ' + ('""+import ""+' * 40_000)
+    started = monotonic()
+    spans, incomplete = noncode_ranges(source, "go", ".go")
+    assert monotonic() - started < 5
+    assert not incomplete
+    imported = source.index("github.com/")
+    literal = source.index('""+import')
+    assert not any(start <= imported < end for start, end in spans)
+    assert any(start <= literal < end for start, end in spans)
 
 
 @pytest.mark.parametrize(

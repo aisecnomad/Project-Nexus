@@ -80,7 +80,8 @@ def test_github_apps_pat_denial_does_not_reclassify_partial_scan_as_complete(run
     findings, ctx = run_connector("saas.github-apps", org="acme", token="example-readonly-token")
 
     assert [f.resource for f in findings] == ["github:installation:101"]
-    assert ctx.stats.incomplete and ctx.stats.warnings and not ctx.stats.errors
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert any("fine-grained PAT inventory unavailable" in warning for warning in ctx.stats.warnings)
     assert "example-readonly-token" not in str(ctx.stats.warnings)
 
 

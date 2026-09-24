@@ -2,6 +2,14 @@
 
 ## 0.1.1 — Unreleased
 
+### Final reconciliation after PR #33 (2026-09-24)
+
+- Fence incremental cache and record publication against timed-out connectors, and refuse to reuse an Engine while a prior abandoned worker still runs. A separate process deadline remains necessary for blocked SDK or plugin calls.
+- Redact short configured credentials in diagnostics. Bound gateway caller/detail/interval state and repository-wide CODEOWNERS work, and avoid excessive work on Go source ranges.
+- Keep untrusted SDK diagnostics out of application logs, redact opaque API/Foundry/GitHub token fields and the `GH_TOKEN` fallback, and restrict Kubernetes JWT classification to documented claim shapes.
+- Preserve the newer webhook, HTTP header, imported finding, CSP, SARIF, GCP and Azure safeguards from the consolidated candidate.
+- Fix the example code-scanning workflow for repositories without an inventory directory and for fork pull requests.
+
 Package version: 0.1.1. No release tag or published artifact is implied by this
 entry. Tenant canaries and container runtime acceptance are still required.
 

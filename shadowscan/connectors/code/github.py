@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
@@ -97,7 +98,7 @@ class GitHubConnector(BaseConnector):
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.api_url = str(ctx.get("api_url", "https://api.github.com", env="GITHUB_API_URL")).rstrip("/")
-        self.token = ctx.get("token", env="GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        self.token = ctx.get("token", env="GITHUB_TOKEN") or ctx.get("github_token", env="GH_TOKEN")
         self.mode = str(ctx.get("mode", "clone" if shutil.which("git") else "api"))
         self.max_repos = int(ctx.get("max_repos", 500))
         if self.max_repos < 1:
@@ -233,7 +234,11 @@ class GitHubConnector(BaseConnector):
                 "topics": repo.get("topics"),
             },
         }
-        fs = FilesystemConnector(ConnectorContext(config=cfg, index=self.index, logger=self.log))
+        fs = FilesystemConnector(ConnectorContext(
+            config=cfg, index=self.index, logger=self.log, workdir=self.ctx.workdir,
+            deadline=self.ctx.deadline, cancelled=self.ctx.cancelled,
+            publication_lock=self.ctx.publication_lock,
+        ))
         fs.ctx.stats = self.ctx.stats
         for f in fs.analyze([{"path": local}]):
             f.connector = self.name
@@ -256,6 +261,7 @@ class GitHubConnector(BaseConnector):
             if self._clone(repo, dest):
                 return dest
             self.ctx.warn(f"code.github: clone failed for {full}; falling back to API mode")
+        self.ctx.check_deadline()
         return self._fetch_via_api(repo, tmp)
 
     def _clone(self, repo: dict[str, Any], dest: str) -> bool:
@@ -271,7 +277,10 @@ class GitHubConnector(BaseConnector):
             self.ctx.warn("code.github: unsupported default branch; cloned remote HEAD, requested branch coverage unknown", incomplete=True)
         cmd += ["--", url, dest]
         try:
-            res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600, check=False)
+            self.ctx.check_deadline()
+            timeout = min(600.0, max(0.001, self.ctx.deadline - time.monotonic())) if self.ctx.deadline else 600.0
+            res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout, check=False)
+            self.ctx.check_deadline()
         except (OSError, subprocess.SubprocessError) as exc:
             self.log.debug("git clone error: %s", exc)
             return False

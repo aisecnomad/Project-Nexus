@@ -184,6 +184,25 @@ def test_gcp_repeated_pagination_token_preserves_partial_data_but_marks_incomple
     assert ctx.stats.incomplete
 
 
+def test_gcp_malformed_continuation_keeps_observed_resources_without_leaking_payload(index):
+    ctx = context(index)
+    connector = GcpConnector(ctx)
+    connector.http = Mock()
+    secret = "sk-proj-" + "x" * 40
+    connector.http.get_json.side_effect = [
+        {"items": [{"id": "observed-agent"}], "nextPageToken": "next"},
+        {"items": secret},  # malformed successful response on the next page
+    ]
+
+    records = list(connector._pages("https://example.googleapis.com/v1/agents", "items"))
+
+    assert records == [{"id": "observed-agent"}]
+    assert connector.http.get_json.call_count == 2
+    assert ctx.stats.incomplete
+    assert any("invalid items page" in warning for warning in ctx.stats.warnings)
+    assert secret not in str(ctx.stats.warnings)
+
+
 def test_gcp_page_cap_marks_incomplete(index, monkeypatch):
     monkeypatch.setattr("shadowscan.connectors.cloud.gcp.MAX_LIST_PAGES", 2)
     ctx = context(index)

@@ -59,7 +59,8 @@ def test_stubs_validate_every_finding_before_creating_any_files(tmp_path):
     destination = tmp_path / "stubs"
     result = CliRunner().invoke(main, ["inventory", "stubs", str(source), "-o", str(destination)])
     assert result.exit_code == 1
-    assert "invalid" in result.output and "do-not-echo-this" not in result.output
+    assert "could not read a ShadowScan JSON report" in result.output
+    assert "do-not-echo-this" not in result.output
     assert not destination.exists()
 
 

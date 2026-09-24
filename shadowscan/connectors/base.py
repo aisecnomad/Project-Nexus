@@ -25,6 +25,7 @@ import stat
 import tempfile
 import time
 import zlib
+from _thread import LockType
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -95,6 +96,7 @@ class ConnectorContext:
         workdir: str | None = None,
         deadline: float | None = None,
         cancelled: Event | None = None,
+        publication_lock: LockType | None = None,
     ):
         self.config: dict[str, Any] = dict(config or {})
         self.index: SignatureIndex = index or get_index()
@@ -103,6 +105,7 @@ class ConnectorContext:
         self.workdir = workdir
         self.deadline = deadline
         self.cancelled = cancelled
+        self.publication_lock = publication_lock
         self.stats: ScanStats | None = None
         self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
@@ -114,6 +117,21 @@ class ConnectorContext:
             self.deadline is not None and time.monotonic() >= self.deadline
         ):
             raise ConnectorError("connector completion deadline exceeded")
+
+    def publish_replace(self, source: str | Path, target: str | Path) -> None:
+        """Publish only while cancellation and replacement share the same lock.
+
+        The supervisor sets ``cancelled`` under ``publication_lock``. A
+        replacement either finishes before that decision or sees cancellation
+        and leaves the prior artifact intact.
+        """
+        if self.publication_lock is None:
+            self.check_deadline()
+            os.replace(source, target)
+            return
+        with self.publication_lock:
+            self.check_deadline()
+            os.replace(source, target)
 
     def checked_records(self, records: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
         self.check_deadline()
@@ -142,7 +160,9 @@ class ConnectorContext:
     def sanitize_message(self, msg: str) -> str:
         """Remove configured credentials even when an upstream error echoes them."""
         try:
-            return sanitize({"config": {**self.config, **self._resolved_config}, "message": msg})["message"]
+            # Positional framing keeps these trusted labels intact even if a
+            # one-character credential appears inside "config" or "message".
+            return sanitize(({**self.config, **self._resolved_config}, msg))[1]
         except SanitizationLimitError:
             if self.stats is not None:
                 self.stats.incomplete = True
@@ -168,7 +188,9 @@ class ConnectorContext:
             msg = f"additional connector {channel} omitted: diagnostic limit reached"
         else:
             msg = self.sanitize_message(msg)
-        (self.log.warning if warning else self.log.error)(msg)
+        # External SDK errors can contain unrecognizable opaque credentials.
+        # Never send diagnostic content to a configured logging sink.
+        (self.log.warning if warning else self.log.error)("connector diagnostic recorded")
         if self.stats is not None:
             getattr(self.stats, channel).append(msg)
 
@@ -721,8 +743,7 @@ class BaseConnector(ABC):
                     written += 1
                     yield rec
             if written or not rejected:
-                self.ctx.check_deadline()
-                os.replace(temporary, target)
+                self.ctx.publish_replace(temporary, target)
                 self.ctx.dump_path = str(target)
         finally:
             Path(temporary).unlink(missing_ok=True)

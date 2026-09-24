@@ -46,6 +46,12 @@ from shadowscan.utils.text import parse_timestamp, to_iso
 _JWT_RX = re.compile(r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*$")
 USER_CLAIMS = ("upn", "preferred_username", "email", "unique_name", "name", "given_name", "family_name", "username", "cognito:username", "oid_user")
 AGENT_CLAIM_KEYS = ("agent_id", "agent", "agent_name", "agentid", "x-agent-id", "bot", "bot_id", "client_name", "app_displayname", "azp_name", "workload", "spiffe_id", "delegation", "on_behalf_of", "obo", "actor", "act", "may_act", "purpose", "tool", "tools")
+_KUBERNETES_LEGACY_CLAIMS = (
+    "kubernetes.io/serviceaccount/namespace",
+    "kubernetes.io/serviceaccount/secret.name",
+    "kubernetes.io/serviceaccount/service-account.name",
+    "kubernetes.io/serviceaccount/service-account.uid",
+)
 
 
 class JwtConnector(BaseConnector, _NoDump):
@@ -335,6 +341,17 @@ class JwtConnector(BaseConnector, _NoDump):
         return f
 
 
+def _has_kubernetes_service_account_claims(claims: dict[str, Any]) -> bool:
+    """Recognize exact legacy claim names or a structured bound-token claim."""
+    structured = claims.get("kubernetes.io")
+    if isinstance(structured, dict) and structured:
+        return True
+    return any(
+        isinstance(claims.get(key), str) and bool(claims[key].strip())
+        for key in _KUBERNETES_LEGACY_CLAIMS
+    )
+
+
 def _issuer_family(iss: str, claims: dict[str, Any]) -> str:
     """Describe an issuer namespace, never establish token trust.
 
@@ -374,6 +391,6 @@ def _issuer_family(iss: str, claims: dict[str, Any]) -> str:
         return "github-actions"
     if host == "gitlab.com":
         return "gitlab"
-    if domain("kubernetes.default.svc") or any(key.partition("/")[0] == "kubernetes.io" for key in claims):
+    if domain("kubernetes.default.svc") or _has_kubernetes_service_account_claims(claims):
         return "kubernetes"
     return "custom" if iss else "unknown"

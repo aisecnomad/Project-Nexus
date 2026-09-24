@@ -20,7 +20,8 @@ REDACTED = "[REDACTED]"
 _FINGERPRINT = re.compile(r"^credential:sha256:[a-f0-9]{64}$")
 _SENSITIVE_SUFFIXES = (
     "apikey", "accesskey", "secretkey", "accesskeyid", "secretaccesskey",
-    "accesstoken", "refreshtoken", "idtoken", "authtoken", "clientsecret",
+    "accesstoken", "refreshtoken", "idtoken", "authtoken", "apitoken",
+    "foundrytoken", "githubtoken", "clientsecret",
     "authorization", "proxyauthorization", "password", "passwd", "privatekey",
     "credential", "credentials", "bearertoken", "sessiontoken", "signingkey",
     "secretstring", "secretbinary", "connectionstring", "connstr",
@@ -463,7 +464,7 @@ def sanitize(value: Any) -> Any:
         return isinstance(name, str) and _sensitive_key(name)
 
     def remember(child: Any) -> None:
-        if isinstance(child, str) and len(child) >= 8:
+        if isinstance(child, str) and child:
             if child != REDACTED and not _FINGERPRINT.fullmatch(child):
                 known.add(child)
                 # Library diagnostics often use repr(), which escapes secret
@@ -512,6 +513,11 @@ def sanitize(value: Any) -> Any:
         if redaction_work > _MAX_REDACTION_WORK:
             raise SanitizationLimitError("credential replacement work limit exceeded")
         for secret in ordered:
+            # Short credentials may occur in ordinary words. Replacing each
+            # occurrence could expand a report dramatically and still expose
+            # fragments in surrounding context; withhold that field instead.
+            if len(secret) < 8 and secret in item:
+                return REDACTED
             item = item.replace(secret, REDACTED)
         return sanitize_text(item)
 

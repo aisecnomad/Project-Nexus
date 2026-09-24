@@ -35,8 +35,15 @@ jobs:
             exit 1
           fi
           python -m pip install "git+https://github.com/aisecnomad/Project-Nexus.git@${SHADOWSCAN_REVISION}"
-      - run: shadowscan code . --inventory inventory/ --format sarif -o shadowscan.sarif --fail-on critical
+      - name: Scan checkout
+        shell: bash
+        run: |
+          args=(code . --format sarif -o shadowscan.sarif --fail-on critical)
+          if [ -d inventory ]; then
+            args+=(--inventory inventory/)
+          fi
+          shadowscan "${args[@]}"
       - uses: github/codeql-action/upload-sarif@e429ea58a9912cadc53f8132ad35562b54de1b30 # v3.38.1
-        if: always() && hashFiles('shadowscan.sarif') != ''
+        if: always() && hashFiles('shadowscan.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           sarif_file: shadowscan.sarif

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import sys
 from typing import Any
 
@@ -17,7 +18,7 @@ from rich.table import Table
 from rich.text import Text
 
 from shadowscan import __version__
-from shadowscan.comparison import compare_reports, load_report
+from shadowscan.comparison import MAX_REPORT_BYTES, compare_reports, load_report
 from shadowscan.config import (
     ConfigValidationError,
     ConnectorSpec,
@@ -44,6 +45,16 @@ from shadowscan.utils.redaction import REDACTED, sanitize_text
 console = Console(width=None if sys.stdout.isatty() else 200)
 err_console = Console(stderr=True)
 LEVELS = ["critical", "high", "medium", "low", "info"]
+
+
+def _load_report(path: str) -> dict[str, Any]:
+    """Turn strict, bounded report import failures into a CLI usage error."""
+    try:
+        return load_report(path)
+    except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
+        raise click.ClickException(
+            f"could not read a ShadowScan JSON report (regular file, at most {MAX_REPORT_BYTES // (1024 * 1024)} MiB)"
+        ) from None
 
 
 def _setup_logging(verbose: int, quiet: bool) -> None:
@@ -97,8 +108,27 @@ def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, m
         raise click.ClickException(str(exc)) from None
     except (ValueError, TypeError, OSError, yaml.YAMLError):
         raise click.ClickException("scan setup failed; check connector configuration, signature packs and inventory") from None
-    _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows)
-    sys.exit(_exit_code(result, cfg.fail_on))
+    try:
+        _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows)
+    except Exception:  # noqa: BLE001 - any emission failure must still release an abandoned CLI worker
+        if engine.abandoned_workers:
+            err_console.print("[red]could not emit the incomplete report; exiting without waiting for timed-out workers[/red]")
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(1)
+        raise
+    code = _exit_code(result, cfg.fail_on)
+    if engine.abandoned_workers:
+        # A timed-out connector's thread may still be blocked in an SDK call.
+        # Python joins worker threads at interpreter exit, which would hold the
+        # process (and its CI job) open indefinitely. The report is written.
+        err_console.print(
+            f"[yellow]exiting without waiting for {len(engine.abandoned_workers)} timed-out connector worker(s)[/yellow]"
+        )
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)
+    sys.exit(code)
 
 
 def _min_confidence_option(ctx: click.Context, param: click.Parameter, value: float) -> float:
@@ -473,8 +503,8 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
     threshold = LEVELS.index(min_risk)
     # Finish validation and card generation before writing any approval stubs.
     # A bad later record must not leave an apparently successful partial import.
+    data = _load_report(findings_json)
     try:
-        data = load_report(findings_json)
         cards = []
         for record in data["findings"]:
             finding = Finding.from_dict(record)
@@ -482,7 +512,7 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
                 continue
             cards.append((finding.id, card_stub_for(finding)))
     except (ValueError, TypeError, OSError, KeyError, AttributeError, RecursionError):
-        raise click.ClickException("invalid inventory input; expected a bounded ShadowScan JSON report with valid findings") from None
+        raise click.ClickException("report contains a malformed finding; no inventory stubs were written") from None
     try:
         out = prepare_private_directory(out_dir)
     except (OSError, ValueError):

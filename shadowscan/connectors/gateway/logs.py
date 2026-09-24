@@ -280,6 +280,7 @@ def normalise_with_record(rec: dict[str, Any], schema: str) -> tuple[Event | Non
         value = getattr(ev, name)
         if value is not None and not isinstance(value, str):
             raise ConnectorError(f"gateway.logs: normalized {name} must be a string")
+    opaque_id = None
     if ev.caller_kind == "api-key":
         namespace, _, raw_key = ev.caller.partition(":")
         opaque_id = credential_id(raw_key)
@@ -289,9 +290,21 @@ def normalise_with_record(rec: dict[str, Any], schema: str) -> tuple[Event | Non
         if schema == "litellm" and not get_path(rec, "api_key_alias", "key_alias", "metadata.user_api_key_alias"):
             ev.caller_label = opaque_id
     # Include original credential-bearing fields so duplicated opaque secrets in
-    # unrelated metadata are scrubbed before samples are truncated.
-    clean = sanitize({"record": rec, "event": asdict(ev)})
-    return Event(**clean["event"]), clean["record"]
+    # unrelated metadata are scrubbed before samples are truncated. Preserve
+    # trusted Event field names: even a one-character credential can match a
+    # schema key, and sanitization of mapping keys must not corrupt the Event.
+    fields = asdict(ev)
+    clean_record, clean_fields = sanitize((rec, list(fields.values())))
+    cleaned = dict(zip(fields, clean_fields, strict=True))
+    cleaned["caller_kind"] = ev.caller_kind  # normalized enum, not a source field
+    cleaned["schema"] = ev.schema  # detected/validated provider schema
+    if cleaned["caller"] != ev.caller:
+        # A short credential may occur inside an unrelated identity. Hash the
+        # original normalized identity to avoid merging unrelated callers.
+        cleaned["caller"] = ev.caller if opaque_id else f"{ev.caller_kind}:{credential_id(ev.caller)}"
+    if opaque_id and ev.caller_label == opaque_id:
+        cleaned["caller_label"] = opaque_id
+    return Event(**cleaned), clean_record
 
 
 def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
@@ -717,6 +730,7 @@ class _Caller:
     aggregate_records: int = 0
     usage_intervals: list[dict[str, Any]] = field(default_factory=list)
     usage_intervals_dropped: int = 0
+    usage_interval_requests_dropped: int = 0
     first: datetime | None = None
     last: datetime | None = None
     models: Counter = field(default_factory=Counter)
@@ -749,14 +763,31 @@ class _Caller:
 # provider, or owner. Memory remains bounded as record cardinality increases.
 _MAX_DISTINCT_KEYS = 2000
 _MAX_INVALID_LINE_ERRORS = 20
+_MAX_DISTINCT_CALLERS = 10_000
+_MAX_USAGE_INTERVALS = 2_000
+_MAX_TOTAL_USAGE_INTERVALS = 20_000
+_MAX_TOTAL_DETAIL_KEYS = 50_000
 
 
-def _count(counter: Counter, key: str, amount: int, dropped: Counter, dimension: str) -> None:
-    if key not in counter and len(counter) >= _MAX_DISTINCT_KEYS:
-        # These are request counts, not counts of distinct omitted labels:
-        # tracking distinct labels would defeat the cardinality limit.
-        dropped[dimension] += amount
-        return
+@dataclass(slots=True)
+class _DetailBudget:
+    """One shared budget for retained distribution and observation keys."""
+
+    used: int = 0
+    observations_omitted: int = 0
+    observation_requests_omitted: int = 0
+
+
+def _count(counter: Counter, key: str, amount: int, dropped: Counter, dimension: str,
+           budget: _DetailBudget | None = None) -> None:
+    """Bound retained labels, counting lost requests without inventing a label."""
+    if key not in counter:
+        if len(counter) >= _MAX_DISTINCT_KEYS or (budget is not None and budget.used >= _MAX_TOTAL_DETAIL_KEYS):
+            # Count requests, never distinct attacker-provided labels.
+            dropped[dimension] += amount
+            return
+        if budget is not None:
+            budget.used += 1
     counter[key] += amount
 
 
@@ -1011,8 +1042,12 @@ class GatewayLogConnector(BaseConnector):
         callers: dict[str, _Caller] = {}
         # Cache successful immutable framework summaries for this analysis only.
         framework_cache: OrderedDict[str, tuple[str, ...]] = OrderedDict()
+        detail_budget = _DetailBudget()
         n = 0
         skipped = 0
+        omitted_caller_records = 0
+        omitted_caller_requests = 0
+        retained_intervals = 0
         for rec in records:
             if n >= self.max_records:
                 self.ctx.warn(f"gateway.logs: max_records ({self.max_records}) reached")
@@ -1031,22 +1066,53 @@ class GatewayLogConnector(BaseConnector):
                     skipped += 1
                     continue
                 self._runtime_context(ev, rec, framework_cache, clean)
-                self._accumulate(callers, ev)
+                identity = json.dumps([ev.caller, ev.scope], sort_keys=True)
+                if identity not in callers and len(callers) >= _MAX_DISTINCT_CALLERS:
+                    # The export can contain millions of distinct identities.
+                    # Keep exact totals for retained callers; never attribute
+                    # omitted activity to a made-up or unrelated caller.
+                    omitted_caller_records += 1
+                    omitted_caller_requests += ev.request_count
+                    continue
+                retained_intervals += self._accumulate(
+                    callers, ev, identity, retained_intervals < _MAX_TOTAL_USAGE_INTERVALS,
+                    detail_budget,
+                )
             except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
                     RecursionError, ConnectorError, MatchTimeoutError) as exc:
                 detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
                 self.ctx.warn(f"gateway.logs: invalid record {n}: {type(exc).__name__}{detail}")
                 continue
         self.ctx.examined(n)
+        if omitted_caller_records:
+            self.ctx.warn(
+                f"gateway.logs: distinct caller limit ({_MAX_DISTINCT_CALLERS}) reached; "
+                f"omitted {omitted_caller_records} records representing {omitted_caller_requests} requests; "
+                "caller coverage incomplete"
+            )
+        interval_details_dropped = sum(c.usage_intervals_dropped for c in callers.values())
+        if interval_details_dropped:
+            self.ctx.warn(
+                f"gateway.logs: usage interval detail limit (per caller {_MAX_USAGE_INTERVALS}, "
+                f"total {_MAX_TOTAL_USAGE_INTERVALS}) reached for "
+                f"{sum(bool(c.usage_intervals_dropped) for c in callers.values())} callers; "
+                f"omitted {interval_details_dropped} interval details while retaining request totals"
+            )
+        distribution_requests_dropped = sum(sum(c.distribution_events_dropped.values()) for c in callers.values())
+        if distribution_requests_dropped or detail_budget.observations_omitted:
+            self.ctx.warn(
+                f"gateway.logs: distribution limit or bounded detail budget ({_MAX_TOTAL_DETAIL_KEYS} keys total, "
+                f"{_MAX_DISTINCT_KEYS} per distribution or caller observations) reached; "
+                f"omitted {distribution_requests_dropped} distribution dimension-request counts; "
+                f"omitted {detail_budget.observations_omitted} observation records representing "
+                f"{detail_budget.observation_requests_omitted} requests; "
+                "classification, attribution, and detail telemetry may be incomplete"
+            )
         if skipped:
             self.log.info("gateway.logs: %d/%d records skipped (unrecognised or non-LLM)", skipped, n)
         for c in callers.values():
             if c.events < self.min_events:
                 continue
-            if c.observations_dropped or c.usage_intervals_dropped:
-                self.ctx.warn("gateway.logs: per-caller runtime detail limit reached; request totals retained")
-            if c.distribution_events_dropped:
-                self.ctx.warn("gateway.logs: per-caller distribution limit reached; classification and attribution may be incomplete; request totals retained")
             try:
                 yield self._finding(c)
             except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
@@ -1055,7 +1121,10 @@ class GatewayLogConnector(BaseConnector):
                 self.ctx.warn(f"gateway.logs: caller analysis failed ({type(exc).__name__}){detail}")
 
     def _runtime_context(
-        self, ev: Event, rec: dict[str, Any], framework_cache: OrderedDict[str, tuple[str, ...]],
+        self,
+        ev: Event,
+        rec: dict[str, Any],
+        framework_cache: OrderedDict[str, tuple[str, ...]],
         clean: dict[str, Any] | None = None,
     ) -> None:
         """Operator bindings identify workloads; log names alone never do.
@@ -1152,8 +1221,12 @@ class GatewayLogConnector(BaseConnector):
         return bool(ev.host and not ev.path and self.index.match_domain(ev.host))
 
     @staticmethod
-    def _accumulate(callers: dict[str, _Caller], ev: Event) -> None:
-        identity = json.dumps([ev.caller, ev.scope], sort_keys=True)
+    def _accumulate(
+        callers: dict[str, _Caller], ev: Event, identity: str | None = None,
+        retain_interval: bool = True, detail_budget: _DetailBudget | None = None,
+    ) -> bool:
+        if identity is None:
+            identity = json.dumps([ev.caller, ev.scope], sort_keys=True)
         c = callers.get(identity)
         total_cost = (c.cost if c is not None else 0.0) + ev.cost
         if not math.isfinite(total_cost):
@@ -1174,29 +1247,35 @@ class GatewayLogConnector(BaseConnector):
             if not ev.aggregated:
                 c.hours[ev.timestamp.hour] += 1
                 c.weekdays[ev.timestamp.weekday()] += 1
+        interval_stored = False
         if ev.aggregated:
-            if len(c.usage_intervals) < _MAX_DISTINCT_KEYS:
+            if retain_interval and len(c.usage_intervals) < min(_MAX_USAGE_INTERVALS, _MAX_DISTINCT_KEYS):
                 c.usage_intervals.append({"start": to_iso(ev.timestamp), "end": to_iso(ev.interval_end),
                                           "requests": ev.request_count, "model": ev.model})
+                interval_stored = True
             else:
                 c.usage_intervals_dropped += 1
+                c.usage_interval_requests_dropped += ev.request_count
         if ev.model:
-            _count(c.models, str(ev.model), ev.request_count, c.distribution_events_dropped, "models")
+            _count(c.models, str(ev.model), ev.request_count, c.distribution_events_dropped, "models", detail_budget)
         if ev.provider:
-            _count(c.providers, str(ev.provider), ev.request_count, c.distribution_events_dropped, "providers")
+            _count(c.providers, str(ev.provider), ev.request_count, c.distribution_events_dropped, "providers", detail_budget)
         if ev.host:
-            _count(c.hosts, ev.host, ev.request_count, c.distribution_events_dropped, "hosts")
+            _count(c.hosts, ev.host, ev.request_count, c.distribution_events_dropped, "hosts", detail_budget)
         if ev.user_agent:
-            _count(c.user_agents, str(ev.user_agent)[:160], ev.request_count, c.distribution_events_dropped, "user_agents")
+            _count(c.user_agents, str(ev.user_agent)[:160], ev.request_count, c.distribution_events_dropped, "user_agents", detail_budget)
         if ev.ip:
-            _count(c.ips, ev.ip, ev.request_count, c.distribution_events_dropped, "source_ips")
+            _count(c.ips, ev.ip, ev.request_count, c.distribution_events_dropped, "source_ips", detail_budget)
         if ev.user:
-            _count(c.users, ev.user, ev.request_count, c.distribution_events_dropped, "end_users")
+            _count(c.users, ev.user, ev.request_count, c.distribution_events_dropped, "end_users", detail_budget)
         if ev.team:
-            _count(c.teams, str(ev.team), ev.request_count, c.distribution_events_dropped, "teams")
+            _count(c.teams, str(ev.team), ev.request_count, c.distribution_events_dropped, "teams", detail_budget)
         if ev.path:
             # Query strings carry per-request identifiers; the operation is the path.
-            _count(c.paths, str(ev.path).split("?", 1)[0][:120], ev.request_count, c.distribution_events_dropped, "operations")
+            _count(
+                c.paths, str(ev.path).split("?", 1)[0][:120], ev.request_count,
+                c.distribution_events_dropped, "operations", detail_budget,
+            )
         if ev.tools is not None:
             c.tool_known += ev.request_count
             if ev.tools:
@@ -1212,10 +1291,16 @@ class GatewayLogConnector(BaseConnector):
             if v not in (None, "", {}, []) and k not in c.metadata_samples:
                 c.metadata_samples[k] = v if isinstance(v, (str, int, float, bool)) else json.dumps(v, default=str)[:300]
         bucket = json.dumps([ev.code_resources, ev.runtime_frameworks, ev.environment, ev.identity_assurance])
-        if bucket not in c.observations and len(c.observations) >= _MAX_DISTINCT_KEYS:
-            # Hostile exports can vary the environment label per record.
-            c.observations_dropped += ev.request_count
-            return
+        if bucket not in c.observations:
+            if len(c.observations) >= _MAX_DISTINCT_KEYS or (detail_budget is not None and detail_budget.used >= _MAX_TOTAL_DETAIL_KEYS):
+                # Hostile exports can vary the environment label per record.
+                c.observations_dropped += ev.request_count
+                if detail_budget is not None:
+                    detail_budget.observations_omitted += 1
+                    detail_budget.observation_requests_omitted += ev.request_count
+                return interval_stored
+            if detail_budget is not None:
+                detail_budget.used += 1
         observation = c.observations.setdefault(bucket, {
             "code_resources": ev.code_resources,
             "frameworks": ev.runtime_frameworks,
@@ -1235,6 +1320,7 @@ class GatewayLogConnector(BaseConnector):
             observation["timestamped_events"] += 1
             observation["first_seen"] = min(observation["first_seen"], timestamp) if observation["first_seen"] else timestamp
             observation["last_seen"] = max(observation["last_seen"], timestamp) if observation["last_seen"] else timestamp
+        return interval_stored
 
     def _finding(self, c: _Caller) -> Finding:
         f = Finding(
@@ -1315,6 +1401,7 @@ class GatewayLogConnector(BaseConnector):
                 "aggregate_records": c.aggregate_records,
                 "usage_intervals": c.usage_intervals,
                 "usage_intervals_dropped": c.usage_intervals_dropped,
+                "usage_interval_requests_dropped": c.usage_interval_requests_dropped,
                 "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
                 "models": dict(c.models.most_common(10)),
                 "providers": dict(c.providers.most_common(5)),

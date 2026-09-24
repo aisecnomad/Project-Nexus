@@ -9,7 +9,7 @@ import os
 import re
 import time
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event, Lock
@@ -35,13 +35,13 @@ log = logging.getLogger("shadowscan.engine")
 
 ProgressFn = Callable[[str, str], None]  # (connector id, message)
 
-
 @dataclass
 class _JobState:
     started_at: str | None = None
     deadline: float | None = None
     completed_at: float | None = None
     cancelled: Event = field(default_factory=Event)
+    publication_lock: Lock = field(default_factory=Lock)
 
 
 class Engine:
@@ -54,11 +54,27 @@ class Engine:
         )
         self.progress = progress or (lambda cid, msg: None)
         self.inventory: Inventory | None = None
+        # Connector ids whose worker threads outlived ``connector_timeout_seconds`` in
+        # the last run. Their threads may still be blocked inside an SDK call;
+        # a process that must exit promptly has to use ``os._exit``.
+        self.abandoned_workers: list[str] = []
+        self._abandoned_futures: list[Future[Any]] = []
         if config.inventory:
             self.inventory = Inventory.load(config.inventory)
 
+    def _report_progress(self, connector: str, message: str) -> None:
+        """A failed output observer must not change collection or scan completeness."""
+        try:
+            self.progress(connector, message)
+        except Exception:  # noqa: BLE001 - third-party callback must not abort a worker
+            log.warning("progress callback failed; scan continues")
+
     # ------------------------------------------------------------------ run
     def run(self, only: list[str] | None = None) -> ScanResult:
+        if any(not future.done() for future in self._abandoned_futures):
+            raise RuntimeError("a previous timed-out connector is still running; use a fresh process for the next scan")
+        self._abandoned_futures.clear()
+        self.abandoned_workers.clear()
         self.config.min_confidence = validate_min_confidence(self.config.min_confidence)
         self.config.validate_security_options()
         # A reusable Engine must notice signature pack edits between runs.
@@ -117,7 +133,7 @@ class Engine:
             return get_connector_class(name)
 
         def _run_one(spec: ConnectorSpec, dump_key: str, state: _JobState) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
-            self.progress(spec.id, "starting")
+            self._report_progress(spec.id, "starting")
             cfg = dict(spec.config)
             if spec.name.startswith("cloud."):
                 # Scan-wide approval cannot be bypassed by a connector-level key.
@@ -128,7 +144,8 @@ class Engine:
                 label = re.sub(r"[^A-Za-z0-9_-]", "_", spec.id)[:80] or "connector"
                 cfg["_dump_path"] = os.path.join(dump_directory, f"{dump_key}-{label}.jsonl")
             ctx = ConnectorContext(config=cfg, index=self.index, workdir=self.config.workdir,
-                                   deadline=state.deadline, cancelled=state.cancelled)
+                                   deadline=state.deadline, cancelled=state.cancelled,
+                                   publication_lock=state.publication_lock)
             fs: list[Finding] = []
             started_at = now_iso()
             origin_token = set_allow_private_origin(self.config.allow_private_origin)
@@ -143,7 +160,7 @@ class Engine:
                     fs, st = cached
                     if cache.snapshot(spec) == snapshot:
                         ctx.check_deadline()
-                        self.progress(spec.id, f"{len(fs)} findings (unchanged input; cached)")
+                        self._report_progress(spec.id, f"{len(fs)} findings (unchanged input; cached)")
                         return spec, fs, st
                 fs = []
                 collected = connector.run()
@@ -169,7 +186,8 @@ class Engine:
                     if cache.snapshot(spec) == snapshot:
                         ctx.check_deadline()
                         st.cache_key = snapshot.fingerprint
-                        cache.save(snapshot, fs, st, check_deadline=ctx.check_deadline)
+                        cache.save(snapshot, fs, st, check_deadline=ctx.check_deadline,
+                                   publish_replace=ctx.publish_replace)
                     else:
                         st.incomplete = True
                         st.errors.append("static input changed during the scan; rerun required")
@@ -182,7 +200,7 @@ class Engine:
                 st.skipped = not fs
                 st.skip_reason = message if st.skipped else None
                 st.errors.append(message)
-                log.warning("connector failed: %s", message)
+                log.warning("connector failed; diagnostic recorded in incomplete scan stats")
             finally:
                 reset_allow_private_origin(origin_token)
             st.findings = len(fs)
@@ -203,7 +221,7 @@ class Engine:
                     "exported": exported,
                 })
             if not state.cancelled.is_set():
-                self.progress(spec.id, f"{len(fs)} findings")
+                self._report_progress(spec.id, f"{len(fs)} findings")
             return spec, fs, st
 
         def _run_impl(number: int, spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
@@ -267,7 +285,8 @@ class Engine:
         def _run(number: int, spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
             state = states[number]
             state.started_at = now_iso()
-            state.deadline = time.monotonic() + self.config.connector_timeout_seconds
+            timeout = self.config.connector_timeout_seconds
+            state.deadline = time.monotonic() + timeout
             try:
                 return _run_impl(number, spec)
             finally:
@@ -301,12 +320,17 @@ class Engine:
                 for future in expired:
                     number, spec = futures[future]
                     state = states[number]
-                    state.cancelled.set()
+                    with state.publication_lock:
+                        state.cancelled.set()
                     timed_out.add(number)
+                    if future.running():
+                        self.abandoned_workers.append(spec.id)
+                        self._abandoned_futures.append(future)
+                    message = "connector_timeout completion deadline exceeded; results discarded"
                     completed[number] = (spec, [], ScanStats(
                         connector=spec.id, started_at=state.started_at or result.started_at,
-                        finished_at=now_iso(), incomplete=True,
-                        errors=["connector completion deadline exceeded; results discarded"],
+                        finished_at=now_iso(), incomplete=True, skipped=True,
+                        skip_reason=message, errors=[message],
                         warnings=["Cancellation is cooperative: an in-flight SDK or plugin call may continue, "
                                   "and Python may wait for its worker at process exit. Use an external process "
                                   "timeout when a hard execution limit is required."],
@@ -329,7 +353,8 @@ class Engine:
                     for future in tuple(pending):
                         if future.cancel():
                             number, spec = futures[future]
-                            states[number].cancelled.set()
+                            with states[number].publication_lock:
+                                states[number].cancelled.set()
                             timed_out.add(number)
                             completed[number] = (spec, [], ScanStats(
                                 connector=spec.id, started_at=result.started_at, finished_at=now_iso(),
@@ -415,7 +440,6 @@ class Engine:
         result.stats = sorted(stats, key=lambda s: s.connector)
         result.finished_at = now_iso()
         return result
-
 
 # ------------------------------------------------------------------ merging
 

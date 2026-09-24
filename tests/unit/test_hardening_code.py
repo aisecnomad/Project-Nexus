@@ -110,6 +110,23 @@ def test_codeowners_large_monorepo_resolves_owners_without_exhausting_the_budget
     assert project.owner == "@org/everyone"
 
 
+def test_codeowners_aggregate_budget_marks_later_ownership_incomplete(tmp_path, index, monkeypatch):
+    (tmp_path / "CODEOWNERS").write_text("* @org/everyone\n")
+    monkeypatch.setattr(fs_module, "MAX_ROOT_OWNERSHIP_STEPS", 24)
+    ctx = ConnectorContext(config={"path": str(tmp_path)}, index=index)
+    ctx.stats = ScanStats(connector="code.filesystem", started_at=now_iso())
+    connector = FilesystemConnector(ctx)
+
+    owners = [connector._owner_for(tmp_path, f"file-{i}.py") for i in range(20)]
+    assert owners[0] == "@org/everyone"
+    assert owners[-1] is None
+    assert connector._ownership_steps_remaining[tmp_path] == 0
+    assert any("CODEOWNERS" in error and "ownership incomplete" in error for error in ctx.stats.errors)
+    errors_before = len(ctx.stats.errors)
+    assert connector._owner_for(tmp_path, "still-unknown.py") is None
+    assert len(ctx.stats.errors) == errors_before
+
+
 @pytest.mark.parametrize("pattern, path, expected", [
     ("/services/api/", "services/api/main.py", True),
     ("/services/api/", "packages/api/main.py", False),
