@@ -44,8 +44,9 @@ reviewed local metadata. The metadata command must support `--no-lazy-fetch`;
 unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 
-Options: `path`/`paths`, `exclude`, `max_file_size`, `max_files`, `scan_secrets`,
-`use_git`, `label`.
+Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
+`scan_secrets`, `use_git`, `label`. When using labeled `paths`, supply unique
+`root_ids` aligned with those paths for IDs that survive moving checkouts.
 
 ### `code.github`
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
@@ -140,7 +141,13 @@ apps (AI connector references: `shared_openai`, `shared_azureopenai`,
 `shared_aibuilder`, `shared_microsoftcopilotstudio`…), Dataverse `bots` +
 `botcomponents` (Copilot Studio agents: generative answers, actions, knowledge,
 authentication mode, publish state). Auth: Entra app registered as a Power
-Platform application user / tenant admin.
+Platform application user / tenant admin. Environment enumeration follows
+`nextLink`; app enumeration uses the documented AdminApps 2024-10-01 API at
+`api.powerplatform.com` with a separate `https://api.powerplatform.com/.default`
+token audience. A denied child request or failed continuation marks coverage
+incomplete while retaining findings from other environments. Before relying on
+live coverage, verify the application's Power Platform roles and known apps
+in a read-only tenant canary.
 
 ### `lowcode.salesforce`
 SOQL/Tooling: `BotDefinition`/`BotVersion` (Einstein bots & Agentforce
@@ -176,7 +183,9 @@ the org.
 
 ### `saas.atlassian` · `saas.notion` · `saas.zoom`
 UPM user-installed apps (Jira/Confluence), Notion bot users, Zoom Marketplace
-apps with scopes and install counts.
+apps with scopes and install counts. Notion rejects a missing/repeated pagination
+cursor and caps live pages (`max_pages`, at most 1000); either condition makes
+the scan incomplete.
 
 ### `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps

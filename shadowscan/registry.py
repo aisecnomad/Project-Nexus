@@ -20,7 +20,7 @@ The inventory can be supplied as:
 * a CSV with columns ``agent_id, name, owner, resources`` (resources separated by ``|``)
 
 Automatic approval requires an explicit, case-sensitive resource pattern and
-all configured ``surfaces``, ``providers`` and ``accounts`` constraints. Names
+all configured ``surfaces``, ``providers``, ``accounts`` and ``regions`` constraints. Names
 and aliases are review suggestions only; they never confer sanctioned status.
 """
 
@@ -39,10 +39,23 @@ import yaml
 
 from shadowscan.models import Finding, Surface
 from shadowscan.utils.files import policy_files, policy_glob, read_policy_text, require_no_symlinks
-from shadowscan.utils.redaction import sanitize_text
+from shadowscan.utils.redaction import REDACTED, sanitize_text
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
 NAME_FIELDS = ("agent_name", "name", "names", "display_name", "displayName", "app_slug", "okta_name", "developer_name", "schema_name", "caller", "principal", "function_name", "repository", "project", "agents", "agent_definitions")
+
+
+def _has_usable_resource_identity(finding: Finding) -> bool:
+    return isinstance(finding.resource, str) and bool(finding.resource) and REDACTED not in finding.resource
+
+
+def _has_usable_scope_identity(finding: Finding) -> bool:
+    # These fields can distinguish otherwise identical resource IDs. Redaction
+    # also turns different accounts/providers/regions into the same placeholder.
+    return all(
+        value is None or (isinstance(value, str) and REDACTED not in value)
+        for value in (finding.provider, finding.account, finding.region)
+    )
 
 
 def _meta_names(finding: Finding) -> set[str]:
@@ -73,6 +86,7 @@ class InventoryEntry:
     surfaces: list[str] = field(default_factory=list)
     providers: list[str] = field(default_factory=list)
     accounts: list[str] = field(default_factory=list)
+    regions: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     source: str | None = None
     card: dict[str, Any] = field(default_factory=dict)
@@ -225,6 +239,7 @@ class Inventory:
             surfaces=lists["surfaces"],
             providers=lists["providers"],
             accounts=lists["accounts"],
+            regions=lists["regions"],
             tags=tags,
             source=str(path),
             card=doc,
@@ -251,6 +266,7 @@ class Inventory:
             surfaces=lists["surfaces"],
             providers=lists["providers"],
             accounts=lists["accounts"],
+            regions=lists["regions"],
             tags=lists["tags"],
             source=str(path),
             card=item,
@@ -266,6 +282,16 @@ class Inventory:
         """
         finding.metadata.pop("registry_suggestions", None)
         finding.metadata.pop("registry_match_reason", None)
+        # Finding construction redacts credentials before reconciliation. A
+        # lossy resource ID is not an identity: distinct repositories, URLs or
+        # cloud objects can all become the same ".../[REDACTED]" string. Even
+        # an explicitly authored wildcard must not approve such a finding.
+        if not _has_usable_resource_identity(finding):
+            finding.metadata["registry_match_reason"] = "redacted-or-missing-resource-identity"
+            return None
+        if not _has_usable_scope_identity(finding):
+            finding.metadata["registry_match_reason"] = "redacted-scope-identity"
+            return None
         matches = [
             entry for entry in self.entries
             if self._scope_matches(entry, finding)
@@ -290,6 +316,7 @@ class Inventory:
             (not entry.surfaces or finding.surface.value in entry.surfaces)
             and (not entry.providers or finding.provider in entry.providers)
             and (not entry.accounts or finding.account in entry.accounts)
+            and (not entry.regions or finding.region in entry.regions)
         )
 
     def suggest(self, finding: Finding) -> list[InventoryEntry]:
@@ -316,7 +343,7 @@ def _invalid(path: Path, location: str, message: str) -> InventoryValidationErro
     return InventoryValidationError(sanitize_text(f"invalid inventory {path}: {location}: {message}"))
 
 
-_LIST_FIELDS = {"resources", "names", "aliases", "frameworks", "surfaces", "providers", "accounts", "tags"}
+_LIST_FIELDS = {"resources", "names", "aliases", "frameworks", "surfaces", "providers", "accounts", "regions", "tags"}
 _SIMPLE_FIELDS = _LIST_FIELDS | {"id", "agent_id", "name", "owner", "owner_team"}
 
 
@@ -341,6 +368,10 @@ def _string_list(value: dict, name: str, path: Path, location: str) -> list[str]
     items = value[name]
     if not isinstance(items, list) or any(not isinstance(item, str) or not item.strip() for item in items):
         raise _invalid(path, f"{location}.{name}", "expected a list of nonempty strings (quote numeric identifiers)")
+    if name == "resources" and any(_CITE.search(item) for item in items):
+        # Citation markers in a resource pattern can silently turn a specific
+        # approval into a glob if stripped. Require the author to correct it.
+        raise _invalid(path, f"{location}.{name}", "citation marker in resource pattern")
     if name == "surfaces" and any(item.strip() not in {surface.value for surface in Surface} for item in items):
         raise _invalid(path, f"{location}.{name}", "contains an unknown discovery surface")
     return [item.strip() for item in items]
@@ -377,8 +408,23 @@ _CITE = re.compile(r"\[cite(?:_start)?(?::[^\]]*)?\]")
 
 
 def _strip_cite_markers(text: str) -> str:
-    """The sample capability card carries `[cite_start]` / `[cite: n]` markers from a document export; ignore them."""
-    return "\n".join(_CITE.sub("", line) for line in text.splitlines())
+    """Ignore standalone export markers only before YAML content starts.
+
+    A global substitution would broaden a quoted ``agent-[cite_start]*``
+    resource approval to ``agent-*`` before the inventory parser could reject
+    it. Even a marker alone at column zero can be part of a multiline YAML
+    scalar; after the document begins, preserve every line for validation.
+    """
+    result: list[str] = []
+    preamble = True
+    for line in text.splitlines(keepends=True):
+        if preamble and line == line.lstrip() and _CITE.fullmatch(line.strip()):
+            result.append(line[len(line.rstrip("\r\n")):])
+            continue
+        result.append(line)
+        if line.strip() and not line.lstrip().startswith("#"):
+            preamble = False
+    return "".join(result)
 
 
 def card_stub_for(finding: Finding) -> dict[str, Any]:
@@ -407,12 +453,17 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
         "discovery": {
             # The discovered ID is literal. Hand-authored resource entries may
             # still deliberately use wildcards; generated approvals never do.
-            "resources": [finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})],
+            # Redacted resource or scope values can collide across objects.
+            # Leave this approval unbound pending an exact, reviewed identity.
+            "resources": [] if not (_has_usable_resource_identity(finding) and _has_usable_scope_identity(finding)) else [
+                finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})
+            ],
             "names": sorted({str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}),
             "frameworks": finding.frameworks,
             "surfaces": [finding.surface.value],
             "providers": [finding.provider] if finding.provider else [],
             "accounts": [finding.account] if finding.account else [],
+            "regions": [finding.region] if finding.region else [],
         },
     }
 

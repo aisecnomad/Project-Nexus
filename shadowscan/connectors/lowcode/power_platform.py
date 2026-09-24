@@ -5,7 +5,7 @@ Live (Entra app registered as a Power Platform *application user* / tenant admin
 * environments – ``api.bap.microsoft.com`` admin API
 * flows        – ``api.flow.microsoft.com`` admin listing per environment (connection references reveal
                  ``shared_openai`` / ``shared_azureopenai`` / ``shared_aibuilder`` / ``shared_microsoftcopilotstudio``...)
-* apps         – ``api.powerapps.com`` admin listing (connection references)
+* apps         – ``api.powerplatform.com`` admin listing (connection references)
 * bots         – Dataverse ``bots`` + ``botcomponents`` of each environment (Copilot Studio agents, topics,
                  generative-answer components, actions, authentication mode)
 
@@ -18,6 +18,9 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from typing import Any, ClassVar
+from urllib.parse import quote
+
+from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import apply_matches, blob_matches, finalize, name_matches
@@ -27,7 +30,7 @@ from shadowscan.utils.text import get_path
 
 BAP = "https://api.bap.microsoft.com"
 FLOW = "https://api.flow.microsoft.com"
-PAPPS = "https://api.powerapps.com"
+PAPPS = "https://api.powerplatform.com"
 
 AI_CONNECTORS = {
     "shared_openai": "OpenAI (independent publisher)",
@@ -93,29 +96,38 @@ class PowerPlatformConnector(BaseConnector):
     # --------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         bap = self._client(BAP, "https://service.powerapps.com/.default")
-        envs = bap.get_json("/providers/Microsoft.BusinessAppPlatform/scopes/admin/environments", params={"api-version": "2021-04-01"})
-        for env in (envs or {}).get("value", []):
+        for env in bap.paginate_odata(
+            "/providers/Microsoft.BusinessAppPlatform/scopes/admin/environments",
+            params={"api-version": "2021-04-01"},
+        ):
             name = env.get("name")
             display = get_path(env, "properties.displayName")
             if self.only_envs and name not in self.only_envs and display not in self.only_envs:
                 continue
+            if not isinstance(name, str) or not name:
+                self.ctx.warn("lowcode.power-platform: environment missing name; child resources cannot be listed")
+                continue
             env["_kind"] = "environment"
             yield env
+            env_id = quote(name, safe="")
             flow = self._client(FLOW, "https://service.flow.microsoft.com/.default")
             try:
-                for fl in flow.paginate_odata(f"/providers/Microsoft.ProcessSimple/scopes/admin/environments/{name}/v2/flows", params={"api-version": "2016-11-01", "$top": 250}):
+                for fl in flow.paginate_odata(f"/providers/Microsoft.ProcessSimple/scopes/admin/environments/{env_id}/v2/flows", params={"api-version": "2016-11-01", "$top": 250}):
                     fl["_kind"] = "flow"
                     fl["_environment"] = display or name
                     yield fl
-            except HttpError as exc:
-                self.ctx.warn(f"lowcode.power-platform: flows in {name}: {exc.status}")
+            except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+                self.ctx.warn(f"lowcode.power-platform: flows in {name}: {self._failure_reason(exc)}")
             try:
-                for app in bap.paginate_odata(f"/providers/Microsoft.PowerApps/scopes/admin/environments/{name}/apps", params={"api-version": "2016-11-01", "$top": 250}):
+                # AdminApps uses a distinct credential audience from the legacy BAP
+                # environment API. HttpClient pins all nextLink pages to this origin.
+                apps = self._client(PAPPS, "https://api.powerplatform.com/.default")
+                for app in apps.paginate_odata(f"/powerapps/environments/{env_id}/apps", params={"api-version": "2024-10-01", "$top": 250}):
                     app["_kind"] = "app"
                     app["_environment"] = display or name
                     yield app
-            except HttpError as exc:
-                self.ctx.warn(f"lowcode.power-platform: apps in {name}: {exc.status}")
+            except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+                self.ctx.warn(f"lowcode.power-platform: apps in {name}: {self._failure_reason(exc)}")
             instance_url = get_path(env, "properties.linkedEnvironmentMetadata.instanceUrl")
             if self.include_bots and instance_url:
                 try:
@@ -128,8 +140,14 @@ class PowerPlatformConnector(BaseConnector):
                         comp["_kind"] = "botcomponent"
                         comp["_environment"] = display or name
                         yield comp
-                except HttpError as exc:
-                    self.ctx.warn(f"lowcode.power-platform: Dataverse {instance_url}: {exc.status}")
+                except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+                    self.ctx.warn(f"lowcode.power-platform: Dataverse in {name}: {self._failure_reason(exc)}")
+
+    @staticmethod
+    def _failure_reason(exc: HttpError | RequestException | RuntimeError | ValueError) -> str:
+        # Pagination exceptions are generic; never include server-supplied URLs
+        # (which can contain opaque skip tokens) in scan warnings.
+        return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:

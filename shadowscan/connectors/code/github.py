@@ -228,6 +228,10 @@ class GitHubConnector(BaseConnector):
         for f in fs.analyze([{"path": local}]):
             f.connector = self.name
             f.provider = "github"
+            # The filesystem connector created the finding under its own name.
+            # Identity v2 includes connector and provider, so finalize it after
+            # projecting the observation onto the GitHub surface.
+            f.id = f.compute_id()
             if repo.get("pushed_at"):
                 f.last_seen = f.last_seen or repo["pushed_at"]
             if repo.get("created_at"):

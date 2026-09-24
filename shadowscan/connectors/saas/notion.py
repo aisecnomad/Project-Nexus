@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorError
+from shadowscan.connectors.base import BaseConnector, ConnectorError, _positive_limit
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -25,24 +25,45 @@ class NotionConnector(BaseConnector):
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "notion"
     description: ClassVar[str] = "Notion integrations (bot users) connected to the workspace."
-    config_keys: ClassVar[dict[str, str]] = {"token": "internal integration secret (env NOTION_TOKEN)", "input": "offline: /v1/users JSON"}
+    config_keys: ClassVar[dict[str, str]] = {
+        "token": "internal integration secret (env NOTION_TOKEN)",
+        "max_pages": "maximum live /v1/users pages, capped at 1000 (default 1000)",
+        "input": "offline: /v1/users JSON",
+    }
 
     def collect(self) -> Iterable[dict[str, Any]]:
         token = self.ctx.get("token", env="NOTION_TOKEN")
         if not token:
             raise ConnectorError("saas.notion: token required")
         http = HttpClient("https://api.notion.com", headers={"Authorization": f"Bearer {token}", "Notion-Version": "2022-06-28"})
+        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
         cursor: str | None = None
-        while True:
+        seen: set[str] = set()
+        for _ in range(max_pages):
             params: dict[str, Any] = {"page_size": 100}
             if cursor:
                 params["start_cursor"] = cursor
-            data = http.get_json("/v1/users", params=params) or {}
-            for u in data.get("results", []):
+            data = http.get_json("/v1/users", params=params)
+            if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+                self.ctx.warn("saas.notion: invalid users page; collection incomplete")
+                return
+            for u in data["results"]:
                 yield u
-            if not data.get("has_more"):
-                break
-            cursor = data.get("next_cursor")
+            if not isinstance(data.get("has_more"), bool):
+                self.ctx.warn("saas.notion: invalid has_more in users page; collection incomplete")
+                return
+            if not data["has_more"]:
+                return
+            next_cursor = data.get("next_cursor")
+            if not isinstance(next_cursor, str) or not next_cursor.strip():
+                self.ctx.warn("saas.notion: users page has_more without next_cursor; collection incomplete")
+                return
+            if next_cursor in seen:
+                self.ctx.warn("saas.notion: repeated users cursor; collection incomplete")
+                return
+            seen.add(next_cursor)
+            cursor = next_cursor
+        self.ctx.warn("saas.notion: users page limit reached; collection incomplete")
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for u in records:
