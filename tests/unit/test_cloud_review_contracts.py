@@ -12,6 +12,7 @@ from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.cloud.azure import AzureConnector
 from shadowscan.connectors.cloud.oci import OciConnector
 from shadowscan.models import ScanStats
+from shadowscan.utils.redaction import sanitize
 
 ENDPOINT = "https://example.services.ai.azure.com/api/projects/test"
 PROJECT = {"id": "/project", "properties": {"endpoints": {"AI Foundry API": ENDPOINT}}}
@@ -124,6 +125,27 @@ def oci_functions_client():
     return client, response
 
 
+def test_azure_app_settings_are_exported_as_redactable_environment(index, monkeypatch):
+    ctx = ConnectorContext(config={"subscriptions": ["sub1"]}, index=index)
+    ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
+    connector = AzureConnector(ctx)
+    monkeypatch.setattr(connector, "_auth", lambda: None)
+    monkeypatch.setattr(connector, "_list", lambda *args, **kwargs: [])
+    connector.http = Mock()
+    connector.http.post_json.side_effect = [
+        {"data": [{"id": "/subscriptions/sub1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
+                   "type": "microsoft.web/sites", "name": "worker", "kind": "app"}]},
+        {"properties": {"OPENAI_API_KEY": "synthetic-azure-app-secret"}},
+    ]
+
+    records = list(connector.collect())
+    record = next(item for item in records if item.get("_kind") == "appsettings")
+    assert record["environment"]["OPENAI_API_KEY"] == "synthetic-azure-app-secret"
+    assert "synthetic-azure-app-secret" not in json.dumps(sanitize(record))
+    finding = connector._h_appsettings(record)
+    assert finding and "provider.openai" in finding.model_providers
+
+
 def test_oci_reads_real_detail_models_inherits_config_and_preserves_image(index):
     client, _ = oci_functions_client()
     ctx = context(index)
@@ -133,14 +155,27 @@ def test_oci_reads_real_detail_models_inherits_config_and_preserves_image(index)
     record = records[0]
     client.get_application.assert_called_once_with("app1")
     client.get_function.assert_called_once_with("fn1")
+    assert "config" not in record
     assert record["environment"]["SHARED"] == "function"
     assert record["environment"]["APP_ONLY"] == "present"
+    assert "synthetic-application-secret" not in json.dumps(sanitize(record))
     finding = connector._h_function(record)
     assert {"provider.openai", "provider.ollama"} <= set(finding.model_providers)
     assert finding.metadata["image"] == "ollama/ollama:latest"
     assert "OPENAI_API_KEY" in finding.metadata["config_keys"]
     assert "synthetic-application-secret" not in json.dumps(finding.to_dict())
     assert not ctx.stats.incomplete
+
+
+def test_oci_handler_accepts_legacy_config_exports(index):
+    connector = OciConnector(context(index))
+    finding = connector._h_function({
+        "id": "fn-legacy", "display_name": "legacy-worker", "image": "ollama/ollama:latest",
+        "config": {"OPENAI_API_KEY": "synthetic-legacy-secret"},
+    })
+    assert finding is not None
+    assert "provider.openai" in finding.model_providers
+    assert "OPENAI_API_KEY" in finding.metadata["config_keys"]
 
 
 @pytest.mark.parametrize("kind", ["application", "function"])

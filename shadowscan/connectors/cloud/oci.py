@@ -273,7 +273,7 @@ class OciConnector(BaseConnector):
         if not isinstance(detail, dict) or detail.get("id") != summary["id"] or "error" in detail:
             self.ctx.warn(f"cloud.oci: invalid {kind} detail response; configuration coverage unknown", incomplete=True)
             return summary, {}, False
-        record = {**summary, **{key: value for key, value in detail.items() if value is not None}}
+        record = {**summary, **{key: value for key, value in detail.items() if key != "config" and value is not None}}
         config = detail.get("config")
         if "config" in detail and config is None:
             return record, {}, True

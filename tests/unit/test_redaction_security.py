@@ -11,6 +11,7 @@ import jwt
 import pytest
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext
+from shadowscan.connectors.code.filesystem import _excerpt
 from shadowscan.connectors.identity.jwt import JwtConnector
 from shadowscan.connectors.saas.generic import GenericSaaSConnector
 from shadowscan.models import Evidence, Finding, Kind, ScanResult, ScanStats, Surface
@@ -235,3 +236,41 @@ def test_diagnostics_redact_opaque_configured_credentials(caplog, monkeypatch, f
     context.warn(message)
     context.error(message)
     assert SECRET not in str(context.stats) and SECRET not in caplog.text
+
+
+@pytest.mark.parametrize("credential", [
+    "gsk_" + "a" * 40,
+    "pcsk_" + "a" * 20,
+    "e2b_" + "a" * 40,
+    "tgp_v1_" + "a" * 30,
+    "lsv2_pt_" + "a" * 32 + "_" + "b" * 10,
+    "tvly-prod-" + "a" * 20,
+    "xai-" + "a" * 60,
+    "pplx-" + "a" * 40,
+    "csk-" + "a" * 30,
+    "nvapi-" + "a" * 60,
+    "r8_" + "a" * 30,
+    "fc-" + "a" * 32,
+    "app-" + "a" * 24,
+])
+def test_additional_provider_tokens_are_redacted(credential):
+    assert credential not in sanitize_text(f"credential={credential}")
+
+
+def test_ssws_authorization_is_redacted():
+    credential = "synthetic-okta-token-value"
+    assert credential not in sanitize_text(f"Authorization: SSWS {credential}")
+
+
+def test_repr_escaped_configured_secret_is_redacted():
+    credential = "first-line\\nsecond-line"
+    result = sanitize({"client_secret": credential, "debug": repr(credential)})
+    assert credential not in result["debug"]
+    assert repr(credential)[1:-1] not in result["debug"]
+
+
+def test_long_secret_is_redacted_before_excerpt_truncation():
+    credential = "opaque-" + "x" * 240
+    excerpt = _excerpt([f"token={credential}"], 1, credential)
+    assert credential not in excerpt
+    assert credential[:120] not in excerpt

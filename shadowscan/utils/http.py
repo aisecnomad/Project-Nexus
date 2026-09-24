@@ -325,6 +325,11 @@ class HttpClient:
         self.session.mount("https://", self._policy_adapter)
         self.session.headers.update({"User-Agent": f"shadowscan/{__version__}", "Accept": "application/json"})
         if headers:
+            try:
+                for header in headers.items():
+                    check_header_validity(header)
+            except InvalidHeader:
+                raise ValueError("HTTP header name or value contains invalid characters") from None
             self.session.headers.update(headers)
         if auth is not None:
             self.session.auth = auth
