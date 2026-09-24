@@ -38,8 +38,9 @@ fresh Python 3.12 virtual environment installed with `.[all]`, without inherited
 system packages. The installer was upgraded to match CI before the dependency
 audit; the exact tested environment reported no known vulnerabilities.
 
-Full-suite counts, coverage and hosted check outcomes are recorded in the pull
-request for this change. Focused tests alone are not a release gate.
+The complete suite passed: **1,507 tests, no failures or skips, 85.18% statement
+coverage** (10,537 of 12,370 statements). This adds 304 cases over the passing
+1,203-test baseline. Hosted check outcomes are recorded in the pull request.
 
 Ruff, mypy (70 source files), and signature validation (178 signatures / 790
 signals) passed. Mypy retains the repository's existing untyped-function-body
@@ -86,6 +87,9 @@ Package version remains `0.1.0`; this review does not publish a release or certi
 the deployment environment. See [production.md](production.md) for migration and
 acceptance details. The older conflicting PR #23 should not be merged wholesale
 over the newer protections retained here.
+README and example workflow installation pins now point to the verified code
+revision `93132f6b923c6102ef4a5c00367513137e403f2a`; the follow-up commit changes
+documentation and example pins only.
 
 ## Provider contracts checked
 
