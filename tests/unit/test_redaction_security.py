@@ -10,10 +10,12 @@ import stat
 import jwt
 import pytest
 
+from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector, ConnectorContext
 from shadowscan.connectors.code.filesystem import _excerpt
 from shadowscan.connectors.identity.jwt import JwtConnector
 from shadowscan.connectors.saas.generic import GenericSaaSConnector
+from shadowscan.engine import Engine
 from shadowscan.models import Evidence, Finding, Kind, ScanResult, ScanStats, Surface
 from shadowscan.reporters.csv_ import render_csv
 from shadowscan.signatures.loader import Signature
@@ -64,9 +66,31 @@ def test_sanitizes_structured_credentials_urls_argv_and_copies():
     {"key": "OPENAI_API_KEY", "value": SECRET},
     {"Name": "CLIENT_SECRET", "Value": SECRET},
     {"SecretString": SECRET},
+    {"keyString": SECRET},
+    {"privateKeyData": SECRET},
 ])
 def test_cloud_environment_and_name_value_exports(record):
     assert SECRET not in json.dumps(sanitize(record))
+
+
+def test_gcp_api_key_string_never_reaches_report_or_record_dump(tmp_path, index):
+    secret = "opaque-private-google-api-value-123"
+    export = tmp_path / "api-keys.jsonl"
+    export.write_text(json.dumps({
+        "_kind": "api-key", "_project": "test-project",
+        "name": "projects/test-project/locations/global/keys/example",
+        "displayName": "Gemini service", "keyString": secret,
+    }) + "\n")
+    dumped = tmp_path / "dumped"
+    config = ScanConfig(connectors=[ConnectorSpec("cloud.gcp", {"input": str(export)})],
+                        dump_records=str(dumped))
+    result = Engine(config, index).run()
+    assert result.complete
+    assert any(finding.kind == Kind.SECRET for finding in result.findings)
+    dump_files = list(dumped.glob("*.jsonl"))
+    assert len(dump_files) == 1
+    assert json.loads(dump_files[0].read_text())["keyString"] == REDACTED
+    assert secret not in result.to_json() and secret not in dump_files[0].read_text()
 
 
 @pytest.mark.parametrize("value", [

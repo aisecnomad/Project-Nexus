@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
+from shadowscan import __version__
 from shadowscan.cli import main
-from shadowscan.comparison import build_collection_scope, compare_reports
+from shadowscan.comparison import _scanner_digest, build_collection_scope, compare_reports
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface
+from shadowscan.utils.redaction import credential_id
 
 
 def _finding(resource: str, level: str = "high") -> dict:
@@ -103,19 +106,60 @@ def test_duplicate_ids_rejected():
 def test_static_scope_tracks_detection_settings_not_content(tmp_path, index):
     source = tmp_path / "records.json"
     source.write_text("[]")
-    spec = ConnectorSpec("cloud.aws", {"input": str(source), "token": "private-value"})
+    spec = ConnectorSpec("cloud.aws", {"input": str(source), "regions": ["us-east-1"]})
     config = ScanConfig(connectors=[spec])
     original = build_collection_scope(config, index, [spec])
     assert original["comparable"] is True
-    assert "private-value" not in json.dumps(original)
     source.write_text('[{"name": "changed-content"}]')
     config.inventory = [str(tmp_path / "different-inventory.yaml")]
     assert build_collection_scope(config, index, [spec]) == original
     config.min_confidence = 0.9
     assert build_collection_scope(config, index, [spec]) != original
     config.min_confidence = 0
-    spec.config["token"] = "different-value"
+    spec.config["regions"] = ["us-west-2"]
     assert build_collection_scope(config, index, [spec]) != original
+
+
+@pytest.mark.parametrize("connector", ["cloud.aws", "code.github"])
+@pytest.mark.parametrize("private_config", [
+    {"token": "t1"},
+    {"token": credential_id("t1")},
+    {"safe_alias": credential_id("t1")},
+    {"safe_alias": "alias-" + credential_id("t1")},
+    {"auth": {"password": "t1"}},
+    {"env": {"CUSTOM_VALUE": "t1"}},
+])
+def test_secret_bearing_offline_scope_omits_public_fingerprint(tmp_path, index, connector, private_config):
+    spec = ConnectorSpec(connector, {"input": str(tmp_path / "records.json"), **private_config})
+    scope = build_collection_scope(ScanConfig(connectors=[spec]), index, [spec])
+    assert scope == {
+        "schema": "shadowscan.collection-scope/v1", "comparable": False,
+        "reason": "configuration contains private comparison values",
+    }
+    assert "t1" not in json.dumps(scope)
+
+
+def test_gateway_binding_cannot_be_guessed_from_collection_scope_digest(tmp_path, index):
+    source = str(tmp_path / "gateway.jsonl")
+    binding = {"caller": "principal:worker", "code_resource": "github:org/app", "scope": {"tenant": "t1"}}
+    spec = ConnectorSpec("gateway.logs", {"input": source, "correlation_bindings": [binding]})
+    scope = build_collection_scope(ScanConfig(connectors=[spec]), index, [spec])
+    guessed_public_digest = hashlib.sha256(json.dumps({
+        "inputs": [{"name": "gateway.logs", "label": None, "config": spec.config}],
+        "min_confidence": 0.0,
+        "signatures": index.fingerprint(),
+        "scanner": _scanner_digest(),
+        "version": __version__,
+    }, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    assert scope["comparable"] is False
+    assert scope.get("fingerprint") != guessed_public_digest
+    assert "fingerprint" not in scope and "t1" not in json.dumps(scope)
+
+
+def test_gateway_export_has_no_automatic_cross_run_scope_without_bindings(tmp_path, index):
+    spec = ConnectorSpec("gateway.logs", {"input": str(tmp_path / "gateway.jsonl")})
+    scope = build_collection_scope(ScanConfig(connectors=[spec]), index, [spec])
+    assert scope["comparable"] is False and "fingerprint" not in scope
 
 
 def test_scope_selection_order_paths_and_signature_changes(tmp_path, index):

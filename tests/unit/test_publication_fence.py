@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,8 +12,9 @@ from click.testing import CliRunner
 
 from shadowscan import cli as cli_module
 from shadowscan.cli import main
-from shadowscan.config import ScanConfig
+from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.engine import Engine
 from shadowscan.incremental import IncrementalCache, Snapshot
 from shadowscan.models import ScanResult, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
@@ -126,6 +128,78 @@ def test_publication_finishes_before_cancellation_can_take_the_lock(tmp_path, mo
     cancelling.join(3)
     assert not publishing.is_alive() and not cancelling.is_alive()
     assert target.read_text() == "sanitized" and cancelled.is_set()
+
+
+def test_engine_timeout_returns_while_record_replacement_is_blocked(tmp_path, monkeypatch):
+    from shadowscan.connectors import base
+
+    replacing = threading.Event()
+    release_replace = threading.Event()
+    returned = threading.Event()
+    worker_finished = threading.Event()
+    target_paths = []
+    original_replace = base.os.replace
+
+    class ExportConnector:
+        def __init__(self, ctx):
+            self.ctx = ctx
+
+        def run(self):
+            target = Path(self.ctx.config["_dump_path"])
+            pending = target.with_suffix(".pending")
+            pending.write_text('sanitized export\n')
+            try:
+                self.ctx.publish_replace(pending, target)
+            finally:
+                worker_finished.set()
+            self.ctx.dump_path = str(target)
+            self.ctx.stats = ScanStats(connector="gateway.logs", started_at=now_iso(), finished_at=now_iso())
+            return []
+
+    def held_replace(source, target):
+        if str(target).endswith(".jsonl"):
+            target_paths.append(Path(target))
+            replacing.set()
+            assert release_replace.wait(6)
+        original_replace(source, target)
+
+    monkeypatch.setattr(base.os, "replace", held_replace)
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: ExportConnector)
+    dump = tmp_path / "exports"
+    engine = Engine(ScanConfig(connectors=[ConnectorSpec("gateway.logs")],
+                               dump_records=str(dump), connector_timeout_seconds=0.2), SignatureIndex([]))
+    outcome = {}
+
+    def supervise():
+        try:
+            outcome["result"] = engine.run()
+        except BaseException as exc:  # propagate from the test's supervisor thread
+            outcome["error"] = exc
+        finally:
+            returned.set()
+
+    supervisor = threading.Thread(target=supervise, daemon=True)
+    supervisor.start()
+    try:
+        assert replacing.wait(3)
+        # The replacement remains blocked. A supervisor waiting on the
+        # publication lock would fail here rather than return an incomplete scan.
+        assert returned.wait(2)
+        assert "error" not in outcome
+        result = outcome["result"]
+        assert not result.complete
+        assert engine.abandoned_workers == ["gateway.logs"]
+        assert "may appear" in result.stats[0].warnings[0]
+        manifest = json.loads((dump / "manifest.json").read_text())
+        assert not manifest["complete"]
+        assert manifest["exports"][0]["exported"] is False
+        assert manifest["exports"][0]["filename"] is None
+        assert len(target_paths) == 1 and not target_paths[0].exists()
+    finally:
+        release_replace.set()
+        supervisor.join(3)
+    assert worker_finished.wait(3)
+    assert target_paths[0].read_text() == 'sanitized export\n'
 
 
 def test_cli_returns_promptly_when_a_timed_out_worker_outlives_report_emission(monkeypatch):
