@@ -1,0 +1,1494 @@
+{
+  "annotation_validation": {
+    "adjudicated_disagreements": 0,
+    "assurance": "Recorded independent AI annotation, not human validation or representative field accuracy.",
+    "cases": 42,
+    "corpus_sha256": "128cf2c972cb13b11bafe141d584b910828899d689d5a457135ad7746f98eff3",
+    "initial_agreement": 1.0,
+    "method": "independent-ai-double-label-before-scan",
+    "negative_cases": 30,
+    "positive_cases": 12,
+    "reviewers": [
+      "blind-source-reviewer",
+      "independent-corpus-curator"
+    ],
+    "selection": "Purposive complete-file sample: 42 cases from 15 public repositories in five languages, with 30 non-agent and 12 agent examples. Two separate AI reviewers labeled source without scanner implementation or observations, and without seeing each other's labels. Not randomized, human-adjudicated, or representative of estate prevalence.",
+    "source_repositories": [
+      "celery/celery",
+      "crossbeam-rs/crossbeam",
+      "dagrejs/graphlib",
+      "expressjs/express",
+      "huggingface/smolagents",
+      "ninja-build/ninja",
+      "openai/openai-agents-js",
+      "openai/openai-agents-python",
+      "openai/openai-node",
+      "openai/openai-python",
+      "pydantic/pydantic-ai",
+      "robfig/cron",
+      "sindresorhus/p-limit",
+      "sindresorhus/p-queue",
+      "sindresorhus/p-retry"
+    ]
+  },
+  "calibration": {
+    "bins": [
+      {
+        "count": 30,
+        "lower": 0.0,
+        "mean_score": 0.0,
+        "observed_fraction": 0.0,
+        "upper": 0.5
+      },
+      {
+        "count": 0,
+        "lower": 0.5,
+        "mean_score": null,
+        "observed_fraction": null,
+        "upper": 0.7
+      },
+      {
+        "count": 0,
+        "lower": 0.7,
+        "mean_score": null,
+        "observed_fraction": null,
+        "upper": 0.85
+      },
+      {
+        "count": 12,
+        "lower": 0.85,
+        "mean_score": 0.9698333333333333,
+        "observed_fraction": 1.0,
+        "upper": 1.0
+      }
+    ],
+    "brier_proxy": 0.00033714285714285704,
+    "ece_proxy": 0.008619047619047622,
+    "note": "Descriptive selected-case score reliability only; confidence is not a calibrated probability."
+  },
+  "cases": [
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Constructs smolagents.CodeAgent with an inference model and multiple locally defined API tools, then runs a currency-conversion instruction.",
+      "family": "smolagents-agent",
+      "findings": [
+        {
+          "confidence": 0.98,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.smolagents"
+          ]
+        }
+      ],
+      "id": "independent-001",
+      "median_ms": 42.04,
+      "predicted": true,
+      "present": true,
+      "score": 0.98,
+      "source": {
+        "commit": "227ef5e49ddd82339295939072f0223249aa8d38",
+        "label_evidence": "Constructs smolagents.CodeAgent with an inference model and multiple locally defined API tools, then runs a currency-conversion instruction.",
+        "license": "Apache-2.0",
+        "path": "examples/multiple_tools.py",
+        "repo": "huggingface/smolagents",
+        "sha256": "de3459a5533307b96f919a799686fd238ba58d7095d25aa5feacee141a416fb9",
+        "url": "https://github.com/huggingface/smolagents/blob/227ef5e49ddd82339295939072f0223249aa8d38/examples/multiple_tools.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "OpenAI chat-completion requests print text, stream deltas and inspect headers. No tools, autonomous action loop, or agent SDK construction is configured.",
+      "family": "provider-client",
+      "findings": [
+        {
+          "confidence": 0.8,
+          "kind": "framework-usage",
+          "resource_type": "project",
+          "signatures": [
+            "provider.openai"
+          ]
+        }
+      ],
+      "id": "independent-002",
+      "median_ms": 14.06,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "09c5b6f13f716ad4e417fd7ba9209a8a057e0383",
+        "label_evidence": "OpenAI chat-completion requests print text, stream deltas and inspect headers. No tools, autonomous action loop, or agent SDK construction is configured.",
+        "license": "Apache-2.0",
+        "path": "examples/demo.py",
+        "repo": "openai/openai-python",
+        "sha256": "245a051d360a187e25df51ff0131de235310dd182f31045bf1178543da31c870",
+        "url": "https://github.com/openai/openai-python/blob/09c5b6f13f716ad4e417fd7ba9209a8a057e0383/examples/demo.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Build concurrency utility implementing a GNU Make Jobserver pool. It allocates job-slot tokens through a POSIX pipe/FIFO or a Windows semaphore, communicates the pool using MAKEFLAGS, runs the exact command supplied on the command line, and verifies token return before cleanup. The complete program uses fixed platform and CLI branches with ordinary subprocess execution; it has no AI model, planning, or model-directed choice of commands.",
+      "family": "build-tools",
+      "findings": [],
+      "id": "independent-003",
+      "median_ms": 54.819,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "c8b233e8053c03d2fd57389035b47d36e98e69a8",
+        "label_evidence": "Build concurrency utility implementing a GNU Make Jobserver pool. It allocates job-slot tokens through a POSIX pipe/FIFO or a Windows semaphore, communicates the pool using MAKEFLAGS, runs the exact command supplied on the command line, and verifies token return before cleanup. The complete program uses fixed platform and CLI branches with ordinary subprocess execution; it has no AI model, planning, or model-directed choice of commands.",
+        "license": "Apache-2.0",
+        "path": "misc/jobserver_pool.py",
+        "repo": "ninja-build/ninja",
+        "sha256": "5a3ae98df00c522914db0299773c3999338d9e6b4e963339a1c09cbfd5a11237",
+        "url": "https://github.com/ninja-build/ninja/blob/c8b233e8053c03d2fd57389035b47d36e98e69a8/misc/jobserver_pool.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "The client uploads training data, polls file status, starts fine-tuning and polls job events. Fixed training-job polling is not model-directed action or an agent SDK.",
+      "family": "provider-client",
+      "findings": [
+        {
+          "confidence": 0.8,
+          "kind": "framework-usage",
+          "resource_type": "project",
+          "signatures": [
+            "provider.openai"
+          ]
+        }
+      ],
+      "id": "independent-004",
+      "median_ms": 19.343,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "5d258e4e82d7655fa82a4688fc04c53359417d27",
+        "label_evidence": "The client uploads training data, polls file status, starts fine-tuning and polls job events. Fixed training-job polling is not model-directed action or an agent SDK.",
+        "license": "Apache-2.0",
+        "path": "examples/fine-tuning/fine-tuning.ts",
+        "repo": "openai/openai-node",
+        "sha256": "038c9e85f025daf133dd5a2234ba6af908b34f09914cb93ce9905b151d5888f7",
+        "url": "https://github.com/openai/openai-node/blob/5d258e4e82d7655fa82a4688fc04c53359417d27/examples/fine-tuning/fine-tuning.ts"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "A Celery task sleeps then returns x + y. Broker configuration and delayed task execution are conventional job processing, not an AI agent.",
+      "family": "scheduled-tasks",
+      "findings": [],
+      "id": "independent-005",
+      "median_ms": 10.852,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "eb3dfa3844288ee35c94a08267cc5e075d42b278",
+        "label_evidence": "A Celery task sleeps then returns x + y. Broker configuration and delayed task execution are conventional job processing, not an AI agent.",
+        "license": "BSD-3-Clause",
+        "path": "examples/app/myapp.py",
+        "repo": "celery/celery",
+        "sha256": "f25a548e5dde142052011009ad4d9f7608331aa6bab9257bb72b85a1e0d9deb7",
+        "url": "https://github.com/celery/celery/blob/eb3dfa3844288ee35c94a08267cc5e075d42b278/examples/app/myapp.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Imports the agents SDK and constructs Agent with instructions and the locally defined get_weather tool, then executes it through Runner.run.",
+      "family": "openai-agent-python",
+      "findings": [
+        {
+          "confidence": 0.935,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.openai-agents-sdk"
+          ]
+        }
+      ],
+      "id": "independent-006",
+      "median_ms": 27.374,
+      "predicted": true,
+      "present": true,
+      "score": 0.935,
+      "source": {
+        "commit": "d303ce87e60f55e4a7c9b2c313cddba73de5f6f9",
+        "label_evidence": "Imports the agents SDK and constructs Agent with instructions and the locally defined get_weather tool, then executes it through Runner.run.",
+        "license": "MIT",
+        "path": "examples/basic/tools.py",
+        "repo": "openai/openai-agents-python",
+        "sha256": "d254af5b829ee2bc0a595207ac3d07434043398aff9397011d23d870ca3cc1d5",
+        "url": "https://github.com/openai/openai-agents-python/blob/d303ce87e60f55e4a7c9b2c313cddba73de5f6f9/examples/basic/tools.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "pRetry repeatedly invokes the same caller-supplied function after exceptions. Retry counts, fixed option callbacks, exponential delay, elapsed-time limits, and AbortSignal govern the loop; AbortError ends it. makeRetriable is a function wrapper. No model, prompt, tool-call response interpretation, or model-selected next action appears in the complete module.",
+      "family": "retry-concurrency",
+      "findings": [],
+      "id": "independent-007",
+      "median_ms": 21.724,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "1472907affe8d6107aba5884abc36d6361b3042e",
+        "label_evidence": "pRetry repeatedly invokes the same caller-supplied function after exceptions. Retry counts, fixed option callbacks, exponential delay, elapsed-time limits, and AbortSignal govern the loop; AbortError ends it. makeRetriable is a function wrapper. No model, prompt, tool-call response interpretation, or model-selected next action appears in the complete module.",
+        "license": "MIT",
+        "path": "index.js",
+        "repo": "sindresorhus/p-retry",
+        "sha256": "3981dc16bfa766054aad9cf3ea56540eddff4ad0c82ec34196954bff33844a6a",
+        "url": "https://github.com/sindresorhus/p-retry/blob/1472907affe8d6107aba5884abc36d6361b3042e/index.js"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "A single chat-completion request parses math output into Pydantic models. Structured response parsing has no agent SDK, tools or model-directed action loop.",
+      "family": "provider-client",
+      "findings": [
+        {
+          "confidence": 0.8,
+          "kind": "framework-usage",
+          "resource_type": "project",
+          "signatures": [
+            "provider.openai"
+          ]
+        }
+      ],
+      "id": "independent-008",
+      "median_ms": 17.189,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "09c5b6f13f716ad4e417fd7ba9209a8a057e0383",
+        "label_evidence": "A single chat-completion request parses math output into Pydantic models. Structured response parsing has no agent SDK, tools or model-directed action loop.",
+        "license": "Apache-2.0",
+        "path": "examples/parsing.py",
+        "repo": "openai/openai-python",
+        "sha256": "d192ecb2b70031a31c355caeb47a4a308341d8d9f2e990f2db4a91594841c498",
+        "url": "https://github.com/openai/openai-python/blob/09c5b6f13f716ad4e417fd7ba9209a8a057e0383/examples/parsing.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "PriorityQueue stores run functions in a sorted array and exposes enqueue, dequeue, remove and priority updates. Deterministic scheduling is not AI tool selection.",
+      "family": "queue-concurrency",
+      "findings": [],
+      "id": "independent-009",
+      "median_ms": 12.945,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "180ab9e25cd10b6f548767d7176076b50d25e188",
+        "label_evidence": "PriorityQueue stores run functions in a sorted array and exposes enqueue, dequeue, remove and priority updates. Deterministic scheduling is not AI tool selection.",
+        "license": "MIT",
+        "path": "source/priority-queue.ts",
+        "repo": "sindresorhus/p-queue",
+        "sha256": "cad66fe2d8006a0552530bd6afdc3c5551daf83041be60226ced0d9516ccc03d",
+        "url": "https://github.com/sindresorhus/p-queue/blob/180ab9e25cd10b6f548767d7176076b50d25e188/source/priority-queue.ts"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "pLimit enqueues caller-supplied functions, tracks activeCount, and starts the next queued item when below a numeric concurrency limit. Completion decrements the count; clearQueue, map, and limitFunction are queue/function helpers. Its scheduling decisions depend only on queue size and configured concurrency, with no AI inference or agent planning.",
+      "family": "retry-concurrency",
+      "findings": [],
+      "id": "independent-010",
+      "median_ms": 14.547,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "a8a6fbec4e0e866d6d779b10889bb4f5567e70eb",
+        "label_evidence": "pLimit enqueues caller-supplied functions, tracks activeCount, and starts the next queued item when below a numeric concurrency limit. Completion decrements the count; clearQueue, map, and limitFunction are queue/function helpers. Its scheduling decisions depend only on queue size and configured concurrency, with no AI inference or agent planning.",
+        "license": "MIT",
+        "path": "index.js",
+        "repo": "sindresorhus/p-limit",
+        "sha256": "edde12a4a4dbdbe8d27161cdd0853db0bab435d5dc6c15f9f4dedc27ee9bca60",
+        "url": "https://github.com/sindresorhus/p-limit/blob/a8a6fbec4e0e866d6d779b10889bb4f5567e70eb/index.js"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Constructs @openai/agents language agents and a triage Agent with handoffs, runs streamed conversations and retains the selected current agent.",
+      "family": "openai-agent-typescript",
+      "findings": [
+        {
+          "confidence": 0.97,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.openai-agents-sdk"
+          ]
+        }
+      ],
+      "id": "independent-011",
+      "median_ms": 24.767,
+      "predicted": true,
+      "present": true,
+      "score": 0.97,
+      "source": {
+        "commit": "4ef9008b08bda5e969bf7dc24c576103009dc611",
+        "label_evidence": "Constructs @openai/agents language agents and a triage Agent with handoffs, runs streamed conversations and retains the selected current agent.",
+        "license": "MIT",
+        "path": "examples/agent-patterns/routing.ts",
+        "repo": "openai/openai-agents-js",
+        "sha256": "b2e338d0b87d682d3418b573d312a4eef13befb0cd44f2b74c6f81eb2fa449b5",
+        "url": "https://github.com/openai/openai-agents-js/blob/4ef9008b08bda5e969bf7dc24c576103009dc611/examples/agent-patterns/routing.ts"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "CachePadded<T> selects memory alignment by target architecture and wraps a value to reduce cache-line sharing. All implementation methods create, unwrap, dereference, convert, or format that value, with Send/Sync forwarding. The complete file has no behavioral agent, model interaction, or decision loop.",
+      "family": "retry-concurrency",
+      "findings": [],
+      "id": "independent-012",
+      "median_ms": 14.751,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "38dacb462261fcd64edcb308aed9cbf95c8c82c3",
+        "label_evidence": "CachePadded<T> selects memory alignment by target architecture and wraps a value to reduce cache-line sharing. All implementation methods create, unwrap, dereference, convert, or format that value, with Send/Sync forwarding. The complete file has no behavioral agent, model interaction, or decision loop.",
+        "license": "MIT",
+        "path": "crossbeam-utils/src/cache_padded.rs",
+        "repo": "crossbeam-rs/crossbeam",
+        "sha256": "d4ae9f70550516d5a8b74dcca1ab996316bd52b9867c0e6d6be22c182a4d3cd9",
+        "url": "https://github.com/crossbeam-rs/crossbeam/blob/38dacb462261fcd64edcb308aed9cbf95c8c82c3/crossbeam-utils/src/cache_padded.rs"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Constructs pydantic_ai.Agent with a model, instructions and dependency types, registers customer_balance as an agent tool and runs support requests.",
+      "family": "pydantic-agent",
+      "findings": [
+        {
+          "confidence": 0.98,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.pydantic-ai"
+          ]
+        }
+      ],
+      "id": "independent-013",
+      "median_ms": 28.157,
+      "predicted": true,
+      "present": true,
+      "score": 0.98,
+      "source": {
+        "commit": "d49b5b62cf86d9ce14b99d72bcbbdcb6efab5c4f",
+        "label_evidence": "Constructs pydantic_ai.Agent with a model, instructions and dependency types, registers customer_balance as an agent tool and runs support requests.",
+        "license": "MIT",
+        "path": "examples/pydantic_ai_examples/bank_support.py",
+        "repo": "pydantic/pydantic-ai",
+        "sha256": "9fe72475bd293d83f1e534dbf04f865d7f0f531f15ce87de9e03fbbe2ca3505c",
+        "url": "https://github.com/pydantic/pydantic-ai/blob/d49b5b62cf86d9ce14b99d72bcbbdcb6efab5c4f/examples/pydantic_ai_examples/bank_support.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "A Celery worker schedules say(\"hello\") every ten seconds. The recurring task and worker lifecycle contain no AI model or agent configuration.",
+      "family": "scheduled-tasks",
+      "findings": [],
+      "id": "independent-014",
+      "median_ms": 9.906,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "eb3dfa3844288ee35c94a08267cc5e075d42b278",
+        "label_evidence": "A Celery worker schedules say(\"hello\") every ten seconds. The recurring task and worker lifecycle contain no AI model or agent configuration.",
+        "license": "BSD-3-Clause",
+        "path": "examples/periodic-tasks/myapp.py",
+        "repo": "celery/celery",
+        "sha256": "9525127b9b784af2867127a04c36a1b19b93f5267f5c62a24f9c8401858dc52a",
+        "url": "https://github.com/celery/celery/blob/eb3dfa3844288ee35c94a08267cc5e075d42b278/examples/periodic-tasks/myapp.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Audio is recorded for five seconds, transcribed by the provider API and printed. This linear transcription workflow does not construct an AI agent.",
+      "family": "provider-client",
+      "findings": [
+        {
+          "confidence": 0.8,
+          "kind": "framework-usage",
+          "resource_type": "project",
+          "signatures": [
+            "provider.openai"
+          ]
+        }
+      ],
+      "id": "independent-015",
+      "median_ms": 9.536,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "5d258e4e82d7655fa82a4688fc04c53359417d27",
+        "label_evidence": "Audio is recorded for five seconds, transcribed by the provider API and printed. This linear transcription workflow does not construct an AI agent.",
+        "license": "Apache-2.0",
+        "path": "examples/audio/speech-to-text.ts",
+        "repo": "openai/openai-node",
+        "sha256": "bed8cb4259fae166533c41ddba0f973a833c5886e80b859162fa1b2fc930bc03",
+        "url": "https://github.com/openai/openai-node/blob/5d258e4e82d7655fa82a4688fc04c53359417d27/examples/audio/speech-to-text.ts"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "A min-priority queue implements key indexing, heap repair and decrease-priority operations. This data structure has no AI-agent configuration or inference.",
+      "family": "graph-algorithms",
+      "findings": [],
+      "id": "independent-016",
+      "median_ms": 10.283,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "d649cb32a827619da09959c89d8973aaf2370b4e",
+        "label_evidence": "A min-priority queue implements key indexing, heap repair and decrease-priority operations. This data structure has no AI-agent configuration or inference.",
+        "license": "MIT",
+        "path": "lib/data/priority-queue.ts",
+        "repo": "dagrejs/graphlib",
+        "sha256": "fa115237830bc647ee760c057a353a3c0ddf2e785ab379e5791330f5c8b66846",
+        "url": "https://github.com/dagrejs/graphlib/blob/d649cb32a827619da09959c89d8973aaf2370b4e/lib/data/priority-queue.ts"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "The OpenAI upload API transfers a user-selected file from disk or memory. The CLI and chunked upload helpers do not define an AI agent.",
+      "family": "provider-client",
+      "findings": [
+        {
+          "confidence": 0.8,
+          "kind": "framework-usage",
+          "resource_type": "project",
+          "signatures": [
+            "provider.openai"
+          ]
+        }
+      ],
+      "id": "independent-017",
+      "median_ms": 20.613,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "09c5b6f13f716ad4e417fd7ba9209a8a057e0383",
+        "label_evidence": "The OpenAI upload API transfers a user-selected file from disk or memory. The CLI and chunked upload helpers do not define an AI agent.",
+        "license": "Apache-2.0",
+        "path": "examples/uploads.py",
+        "repo": "openai/openai-python",
+        "sha256": "23d78ed6aba313f4a7df07ec06049ba7bdb6f26fb9c202b0311be3603c300480",
+        "url": "https://github.com/openai/openai-python/blob/09c5b6f13f716ad4e417fd7ba9209a8a057e0383/examples/uploads.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Explicitly constructs typed pydantic_ai.Agent, provides schema instructions and an output validator that raises ModelRetry for invalid SQL, then runs the agent.",
+      "family": "pydantic-agent",
+      "findings": [
+        {
+          "confidence": 0.97,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.pydantic-ai"
+          ]
+        }
+      ],
+      "id": "independent-018",
+      "median_ms": 64.515,
+      "predicted": true,
+      "present": true,
+      "score": 0.97,
+      "source": {
+        "commit": "d49b5b62cf86d9ce14b99d72bcbbdcb6efab5c4f",
+        "label_evidence": "Explicitly constructs typed pydantic_ai.Agent, provides schema instructions and an output validator that raises ModelRetry for invalid SQL, then runs the agent.",
+        "license": "MIT",
+        "path": "examples/pydantic_ai_examples/sql_gen.py",
+        "repo": "pydantic/pydantic-ai",
+        "sha256": "029bab1edee67e2e9722eb6ec9ed2b0055d8e870eeb07458ef7ae5b4d884cfa0",
+        "url": "https://github.com/pydantic/pydantic-ai/blob/d49b5b62cf86d9ce14b99d72bcbbdcb6efab5c4f/examples/pydantic_ai_examples/sql_gen.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "An OpenAI completion request intentionally uses an unknown model and catches NotFoundError. Error handling around one API call is not an AI agent.",
+      "family": "provider-client",
+      "findings": [
+        {
+          "confidence": 0.8,
+          "kind": "framework-usage",
+          "resource_type": "project",
+          "signatures": [
+            "provider.openai"
+          ]
+        }
+      ],
+      "id": "independent-019",
+      "median_ms": 11.93,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "5d258e4e82d7655fa82a4688fc04c53359417d27",
+        "label_evidence": "An OpenAI completion request intentionally uses an unknown model and catches NotFoundError. Error handling around one API call is not an AI agent.",
+        "license": "Apache-2.0",
+        "path": "examples/client/errors.ts",
+        "repo": "openai/openai-node",
+        "sha256": "bf926a0a9bd5b900f3541c2008ff75d82726ca0516ed6afc68b30fde2ac71b3c",
+        "url": "https://github.com/openai/openai-node/blob/5d258e4e82d7655fa82a4688fc04c53359417d27/examples/client/errors.ts"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "An Express resource helper maps HTTP methods to a local user controller. CRUD and format selection are ordinary web routing without an AI agent.",
+      "family": "web-service",
+      "findings": [],
+      "id": "independent-020",
+      "median_ms": 12.547,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "9a34acf03cb818ff3f8bc40e44176e277a25cbb9",
+        "label_evidence": "An Express resource helper maps HTTP methods to a local user controller. CRUD and format selection are ordinary web routing without an AI agent.",
+        "license": "MIT",
+        "path": "examples/resource/index.js",
+        "repo": "expressjs/express",
+        "sha256": "df0a7101b8e7624a134a4c660be2e8c26450579b0bce1ce725f0a47662bd8c3c",
+        "url": "https://github.com/expressjs/express/blob/9a34acf03cb818ff3f8bc40e44176e277a25cbb9/examples/resource/index.js"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Constructs translator agents and an orchestrator whose tool list wraps them with as_tool; Runner executes the orchestrator and a synthesizer agent.",
+      "family": "openai-agent-python",
+      "findings": [
+        {
+          "confidence": 0.935,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.openai-agents-sdk"
+          ]
+        }
+      ],
+      "id": "independent-021",
+      "median_ms": 36.573,
+      "predicted": true,
+      "present": true,
+      "score": 0.935,
+      "source": {
+        "commit": "d303ce87e60f55e4a7c9b2c313cddba73de5f6f9",
+        "label_evidence": "Constructs translator agents and an orchestrator whose tool list wraps them with as_tool; Runner executes the orchestrator and a synthesizer agent.",
+        "license": "MIT",
+        "path": "examples/agent_patterns/agents_as_tools.py",
+        "repo": "openai/openai-agents-python",
+        "sha256": "9e86cc3a1570a329ebdf531f13c23748813e834397d5452f6cd2840aea877565",
+        "url": "https://github.com/openai/openai-agents-python/blob/d303ce87e60f55e4a7c9b2c313cddba73de5f6f9/examples/agent_patterns/agents_as_tools.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Constructs an agents SDK Agent with WebSearchTool and uses Runner.run for a search task. Explicit agent construction and tool configuration are present.",
+      "family": "openai-agent-python",
+      "findings": [
+        {
+          "confidence": 0.971,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.openai-agents-sdk",
+            "tool.web-search-scrape"
+          ]
+        }
+      ],
+      "id": "independent-022",
+      "median_ms": 25.385,
+      "predicted": true,
+      "present": true,
+      "score": 0.971,
+      "source": {
+        "commit": "d303ce87e60f55e4a7c9b2c313cddba73de5f6f9",
+        "label_evidence": "Constructs an agents SDK Agent with WebSearchTool and uses Runner.run for a search task. Explicit agent construction and tool configuration are present.",
+        "license": "MIT",
+        "path": "examples/tools/web_search.py",
+        "repo": "openai/openai-agents-python",
+        "sha256": "67724928f8fe65de2f4f7c9cadf9e9918017a1b212e92f941c16fbc23e02a1f7",
+        "url": "https://github.com/openai/openai-agents-python/blob/d303ce87e60f55e4a7c9b2c313cddba73de5f6f9/examples/tools/web_search.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "A Celery task performs requests.get on its supplied URL and reports success or failure. No AI inference, tool selection or agent SDK is present.",
+      "family": "scheduled-tasks",
+      "findings": [],
+      "id": "independent-023",
+      "median_ms": 9.366,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "eb3dfa3844288ee35c94a08267cc5e075d42b278",
+        "label_evidence": "A Celery task performs requests.get on its supplied URL and reports success or failure. No AI inference, tool selection or agent SDK is present.",
+        "license": "BSD-3-Clause",
+        "path": "examples/gevent/tasks.py",
+        "repo": "celery/celery",
+        "sha256": "cc5d6a53643a8b868715f515f73f8f8f3e5ffb6d64e368313dcc93d37e2bd559",
+        "url": "https://github.com/celery/celery/blob/eb3dfa3844288ee35c94a08267cc5e075d42b278/examples/gevent/tasks.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Dijkstra computes numeric shortest paths using a priority queue and fixed edge relaxation. Graph traversal and its while loop contain no AI agent construction.",
+      "family": "graph-algorithms",
+      "findings": [],
+      "id": "independent-024",
+      "median_ms": 11.983,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "d649cb32a827619da09959c89d8973aaf2370b4e",
+        "label_evidence": "Dijkstra computes numeric shortest paths using a priority queue and fixed edge relaxation. Graph traversal and its while loop contain no AI agent construction.",
+        "license": "MIT",
+        "path": "lib/alg/dijkstra.ts",
+        "repo": "dagrejs/graphlib",
+        "sha256": "9214ad423387e7689b37d363676956218d3000b71cf50ebc27541023022e732b",
+        "url": "https://github.com/dagrejs/graphlib/blob/d649cb32a827619da09959c89d8973aaf2370b4e/lib/alg/dijkstra.ts"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Express login routes hash passwords, manage sessions and render views. Request-driven authentication has no AI agent or model-directed action selection.",
+      "family": "web-service",
+      "findings": [],
+      "id": "independent-025",
+      "median_ms": 20.435,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "9a34acf03cb818ff3f8bc40e44176e277a25cbb9",
+        "label_evidence": "Express login routes hash passwords, manage sessions and render views. Request-driven authentication has no AI agent or model-directed action selection.",
+        "license": "MIT",
+        "path": "examples/auth/index.js",
+        "repo": "expressjs/express",
+        "sha256": "4acca9f794d50f57c41967b471031f7410cc61a2b979c86ad0f264567f06e69b",
+        "url": "https://github.com/expressjs/express/blob/9a34acf03cb818ff3f8bc40e44176e277a25cbb9/examples/auth/index.js"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Defines a SQL execution tool and constructs smolagents.CodeAgent with that tool and InferenceClientModel, then runs a natural-language database query.",
+      "family": "smolagents-agent",
+      "findings": [
+        {
+          "confidence": 0.98,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.smolagents"
+          ]
+        }
+      ],
+      "id": "independent-026",
+      "median_ms": 46.15,
+      "predicted": true,
+      "present": true,
+      "score": 0.98,
+      "source": {
+        "commit": "227ef5e49ddd82339295939072f0223249aa8d38",
+        "label_evidence": "Defines a SQL execution tool and constructs smolagents.CodeAgent with that tool and InferenceClientModel, then runs a natural-language database query.",
+        "license": "Apache-2.0",
+        "path": "examples/text_to_sql.py",
+        "repo": "huggingface/smolagents",
+        "sha256": "fe09584641825a2c1170a28446c0b773ab7d700db7b2afa70ba34ab87f580dc7",
+        "url": "https://github.com/huggingface/smolagents/blob/227ef5e49ddd82339295939072f0223249aa8d38/examples/text_to_sql.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Celery groups and chords execute fixed request tasks; joinall traverses result containers and unlock_graph retries readiness checks. The task graph has no AI agent.",
+      "family": "scheduled-tasks",
+      "findings": [],
+      "id": "independent-027",
+      "median_ms": 35.239,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "eb3dfa3844288ee35c94a08267cc5e075d42b278",
+        "label_evidence": "Celery groups and chords execute fixed request tasks; joinall traverses result containers and unlock_graph retries readiness checks. The task graph has no AI agent.",
+        "license": "BSD-3-Clause",
+        "path": "examples/resultgraph/tasks.py",
+        "repo": "celery/celery",
+        "sha256": "d0d953d98a3495ff3c7de06fb98dda1aebde7ecca84772866afb878031fa52ea",
+        "url": "https://github.com/celery/celery/blob/eb3dfa3844288ee35c94a08267cc5e075d42b278/examples/resultgraph/tasks.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Ninja build-file generation utility. Writer emits build, rule, pool, include, subninja, default, and variable statements into a supplied text stream; helper functions escape paths, wrap text, and expand Ninja variables. The complete file performs deterministic formatting and build-configuration serialization, with no model inference, prompt processing, tool-call decisions, or agent execution loop.",
+      "family": "build-tools",
+      "findings": [],
+      "id": "independent-028",
+      "median_ms": 42.628,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "c8b233e8053c03d2fd57389035b47d36e98e69a8",
+        "label_evidence": "Ninja build-file generation utility. Writer emits build, rule, pool, include, subninja, default, and variable statements into a supplied text stream; helper functions escape paths, wrap text, and expand Ninja variables. The complete file performs deterministic formatting and build-configuration serialization, with no model inference, prompt processing, tool-call decisions, or agent execution loop.",
+        "license": "Apache-2.0",
+        "path": "misc/ninja_syntax.py",
+        "repo": "ninja-build/ninja",
+        "sha256": "dfddc970d020b1468b290c0cfef3e88b56fcc83fcd0bbbeb5330956d93305593",
+        "url": "https://github.com/ninja-build/ninja/blob/c8b233e8053c03d2fd57389035b47d36e98e69a8/misc/ninja_syntax.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Synchronous and asynchronous OpenAI clients stream a fixed counting prompt and print data. Iterating response chunks does not construct an AI agent.",
+      "family": "provider-client",
+      "findings": [
+        {
+          "confidence": 0.8,
+          "kind": "framework-usage",
+          "resource_type": "project",
+          "signatures": [
+            "provider.openai"
+          ]
+        }
+      ],
+      "id": "independent-029",
+      "median_ms": 19.475,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "09c5b6f13f716ad4e417fd7ba9209a8a057e0383",
+        "label_evidence": "Synchronous and asynchronous OpenAI clients stream a fixed counting prompt and print data. Iterating response chunks does not construct an AI agent.",
+        "license": "Apache-2.0",
+        "path": "examples/streaming.py",
+        "repo": "openai/openai-python",
+        "sha256": "8a9e837194f8997dde5b80afc572f3e9984ae36f510f17bf9af7d2d5550c0b51",
+        "url": "https://github.com/openai/openai-python/blob/09c5b6f13f716ad4e417fd7ba9209a8a057e0383/examples/streaming.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "PQueue schedules caller-provided functions using explicit concurrency, priority, rate limits, timers and cancellation. The complete generic executor contains no AI model or agent SDK.",
+      "family": "queue-concurrency",
+      "findings": [],
+      "id": "independent-030",
+      "median_ms": 82.555,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "180ab9e25cd10b6f548767d7176076b50d25e188",
+        "label_evidence": "PQueue schedules caller-provided functions using explicit concurrency, priority, rate limits, timers and cancellation. The complete generic executor contains no AI model or agent SDK.",
+        "license": "MIT",
+        "path": "source/index.ts",
+        "repo": "sindresorhus/p-queue",
+        "sha256": "d129e016be3752f374d5a9ab10b601d3634d2af3f17cfae2171bfadf4721e7a0",
+        "url": "https://github.com/sindresorhus/p-queue/blob/180ab9e25cd10b6f548767d7176076b50d25e188/source/index.ts"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Imports Agent, run and tool from @openai/agents, constructs a weather tool with guardrails and a new Agent using it, then executes two requests.",
+      "family": "openai-agent-typescript",
+      "findings": [
+        {
+          "confidence": 0.97,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.openai-agents-sdk"
+          ]
+        }
+      ],
+      "id": "independent-031",
+      "median_ms": 23.934,
+      "predicted": true,
+      "present": true,
+      "score": 0.97,
+      "source": {
+        "commit": "4ef9008b08bda5e969bf7dc24c576103009dc611",
+        "label_evidence": "Imports Agent, run and tool from @openai/agents, constructs a weather tool with guardrails and a new Agent using it, then executes two requests.",
+        "license": "MIT",
+        "path": "examples/basic/tools.ts",
+        "repo": "openai/openai-agents-js",
+        "sha256": "a4c46ef5e66462ac58c88341aa3b41916131b021c120063122afd005ad9cdc42",
+        "url": "https://github.com/openai/openai-agents-js/blob/4ef9008b08bda5e969bf7dc24c576103009dc611/examples/basic/tools.ts"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "MCPServer exposes arithmetic, a random word and deterministic weather tools over SSE. A tool server by itself has no model, agent construction or action selector.",
+      "family": "mcp-service",
+      "findings": [
+        {
+          "confidence": 0.935,
+          "kind": "framework-usage",
+          "resource_type": "project",
+          "signatures": [
+            "protocol.mcp"
+          ]
+        }
+      ],
+      "id": "independent-032",
+      "median_ms": 20.094,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "d303ce87e60f55e4a7c9b2c313cddba73de5f6f9",
+        "label_evidence": "MCPServer exposes arithmetic, a random word and deterministic weather tools over SSE. A tool server by itself has no model, agent construction or action selector.",
+        "license": "MIT",
+        "path": "examples/mcp/sse_example/server.py",
+        "repo": "openai/openai-agents-python",
+        "sha256": "e4a29d82db515a1d780b5720b27f2dda951f79687256473d24046a8fe36f1c89",
+        "url": "https://github.com/openai/openai-agents-python/blob/d303ce87e60f55e4a7c9b2c313cddba73de5f6f9/examples/mcp/sse_example/server.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Constructs pydantic_ai.Agent with a model and instructions to use roulette_wheel, registers that tool and invokes agent.run_stream for bets.",
+      "family": "pydantic-agent",
+      "findings": [
+        {
+          "confidence": 0.98,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.pydantic-ai"
+          ]
+        }
+      ],
+      "id": "independent-033",
+      "median_ms": 26.214,
+      "predicted": true,
+      "present": true,
+      "score": 0.98,
+      "source": {
+        "commit": "d49b5b62cf86d9ce14b99d72bcbbdcb6efab5c4f",
+        "label_evidence": "Constructs pydantic_ai.Agent with a model and instructions to use roulette_wheel, registers that tool and invokes agent.run_stream for bets.",
+        "license": "MIT",
+        "path": "examples/pydantic_ai_examples/roulette_wheel.py",
+        "repo": "pydantic/pydantic-ai",
+        "sha256": "d981ca6c6cd83a42ec77df213b79ed8ccea90a14755299ac46b2c3dfa421e5fd",
+        "url": "https://github.com/pydantic/pydantic-ai/blob/d49b5b62cf86d9ce14b99d72bcbbdcb6efab5c4f/examples/pydantic_ai_examples/roulette_wheel.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Constructs language-specific agents and a triage Agent with explicit handoffs, then runs it through Runner.run_streamed and carries forward the current agent.",
+      "family": "openai-agent-python",
+      "findings": [
+        {
+          "confidence": 0.987,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.openai-agents-sdk",
+            "provider.openai"
+          ]
+        }
+      ],
+      "id": "independent-034",
+      "median_ms": 46.036,
+      "predicted": true,
+      "present": true,
+      "score": 0.987,
+      "source": {
+        "commit": "d303ce87e60f55e4a7c9b2c313cddba73de5f6f9",
+        "label_evidence": "Constructs language-specific agents and a triage Agent with explicit handoffs, then runs it through Runner.run_streamed and carries forward the current agent.",
+        "license": "MIT",
+        "path": "examples/agent_patterns/routing.py",
+        "repo": "openai/openai-agents-python",
+        "sha256": "b9b57061f5238335743ca54137df0210fd07f146613afb3783bf2a4c5650a71b",
+        "url": "https://github.com/openai/openai-agents-python/blob/d303ce87e60f55e4a7c9b2c313cddba73de5f6f9/examples/agent_patterns/routing.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "A Responses API stream prints events for a fixed math prompt and checks completion status. Event listeners and response iteration alone do not create an AI agent.",
+      "family": "provider-client",
+      "findings": [
+        {
+          "confidence": 0.8,
+          "kind": "framework-usage",
+          "resource_type": "project",
+          "signatures": [
+            "provider.openai"
+          ]
+        }
+      ],
+      "id": "independent-035",
+      "median_ms": 9.814,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "5d258e4e82d7655fa82a4688fc04c53359417d27",
+        "label_evidence": "A Responses API stream prints events for a fixed math prompt and checks completion status. Event listeners and response iteration alone do not create an AI agent.",
+        "license": "Apache-2.0",
+        "path": "examples/responses/stream.ts",
+        "repo": "openai/openai-node",
+        "sha256": "ed9783e2b86686d55d93be0961d5827e4c0d32cc7e088c5bd143258128dc5cb8",
+        "url": "https://github.com/openai/openai-node/blob/5d258e4e82d7655fa82a4688fc04c53359417d27/examples/responses/stream.ts"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Constructs pydantic_ai.Agent with a model and retries, registers location and weather tools, and runs a multi-location query requiring model-directed tool use.",
+      "family": "pydantic-agent",
+      "findings": [
+        {
+          "confidence": 0.98,
+          "kind": "agent",
+          "resource_type": "project",
+          "signatures": [
+            "framework.pydantic-ai"
+          ]
+        }
+      ],
+      "id": "independent-036",
+      "median_ms": 36.954,
+      "predicted": true,
+      "present": true,
+      "score": 0.98,
+      "source": {
+        "commit": "d49b5b62cf86d9ce14b99d72bcbbdcb6efab5c4f",
+        "label_evidence": "Constructs pydantic_ai.Agent with a model and retries, registers location and weather tools, and runs a multi-location query requiring model-directed tool use.",
+        "license": "MIT",
+        "path": "examples/pydantic_ai_examples/weather_agent.py",
+        "repo": "pydantic/pydantic-ai",
+        "sha256": "15917ba602f6536e26fb2985530e8c9ea0125695ce7e5e3d8a5ad802d65794ea",
+        "url": "https://github.com/pydantic/pydantic-ai/blob/d49b5b62cf86d9ce14b99d72bcbbdcb6efab5c4f/examples/pydantic_ai_examples/weather_agent.py"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "GithubView fetches a template with HTTPS and passes text to a renderer. HTTP callbacks and dynamic rendering do not construct an AI agent.",
+      "family": "web-service",
+      "findings": [],
+      "id": "independent-037",
+      "median_ms": 10.877,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "9a34acf03cb818ff3f8bc40e44176e277a25cbb9",
+        "label_evidence": "GithubView fetches a template with HTTPS and passes text to a renderer. HTTP callbacks and dynamic rendering do not construct an AI agent.",
+        "license": "MIT",
+        "path": "examples/view-constructor/github-view.js",
+        "repo": "expressjs/express",
+        "sha256": "936416302ea3d704cc603f63787ec3121204b3720153fcb2a99e5ec151432a2e",
+        "url": "https://github.com/expressjs/express/blob/9a34acf03cb818ff3f8bc40e44176e277a25cbb9/examples/view-constructor/github-view.js"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Backoff stores an integer step in Cell and uses bounded spin_loop iterations or thread::yield_now to reduce synchronization contention. reset and is_completed only manage/check the step counter. Included examples wait for atomics and perform compare_exchange. This is processor/thread backoff, not an AI decision or tool loop.",
+      "family": "retry-concurrency",
+      "findings": [],
+      "id": "independent-038",
+      "median_ms": 14.538,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "38dacb462261fcd64edcb308aed9cbf95c8c82c3",
+        "label_evidence": "Backoff stores an integer step in Cell and uses bounded spin_loop iterations or thread::yield_now to reduce synchronization contention. reset and is_completed only manage/check the step counter. Included examples wait for atomics and perform compare_exchange. This is processor/thread backoff, not an AI decision or tool loop.",
+        "license": "MIT",
+        "path": "crossbeam-utils/src/backoff.rs",
+        "repo": "crossbeam-rs/crossbeam",
+        "sha256": "fbb7c5b385734eee04098e8501b76ba2713dae04b8de7f010db0dbef5deae821",
+        "url": "https://github.com/crossbeam-rs/crossbeam/blob/38dacb462261fcd64edcb308aed9cbf95c8c82c3/crossbeam-utils/src/backoff.rs"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Chain.Then composes supplied job wrappers. Recover catches panics, DelayIfStillRunning serializes Job.Run calls using a mutex, and SkipIfStillRunning uses a one-slot channel to skip overlapping calls. The complete file implements caller-provided job decorators and fixed synchronization rules; it has no model inference or model-directed action loop.",
+      "family": "scheduled-tasks",
+      "findings": [],
+      "id": "independent-039",
+      "median_ms": 7.908,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "bc59245fe10efaed9d51b56900192527ed733435",
+        "label_evidence": "Chain.Then composes supplied job wrappers. Recover catches panics, DelayIfStillRunning serializes Job.Run calls using a mutex, and SkipIfStillRunning uses a one-slot channel to skip overlapping calls. The complete file implements caller-provided job decorators and fixed synchronization rules; it has no model inference or model-directed action loop.",
+        "license": "MIT",
+        "path": "chain.go",
+        "repo": "robfig/cron",
+        "sha256": "a66c78136aec5232865a62666abd6c055fb61da39d8d3672ac4a8f759437a394",
+        "url": "https://github.com/robfig/cron/blob/bc59245fe10efaed9d51b56900192527ed733435/chain.go"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Tarjan computes strongly connected components with recursive DFS and a stack. All decisions are graph-algorithm comparisons, with no AI model or agent SDK.",
+      "family": "graph-algorithms",
+      "findings": [],
+      "id": "independent-040",
+      "median_ms": 8.486,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "d649cb32a827619da09959c89d8973aaf2370b4e",
+        "label_evidence": "Tarjan computes strongly connected components with recursive DFS and a stack. All decisions are graph-algorithm comparisons, with no AI model or agent SDK.",
+        "license": "MIT",
+        "path": "lib/alg/tarjan.ts",
+        "repo": "dagrejs/graphlib",
+        "sha256": "5149158e9feba21384102828d47c719f76874db6b18c8afd23ea92af39825138",
+        "url": "https://github.com/dagrejs/graphlib/blob/d649cb32a827619da09959c89d8973aaf2370b4e/lib/alg/tarjan.ts"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Every normalizes a duration to a whole-second interval; ConstantDelaySchedule.Next computes the next activation using time arithmetic. The entire file contains only this fixed scheduling calculation, with no model, prompt, tool selection, or autonomous planning.",
+      "family": "scheduled-tasks",
+      "findings": [],
+      "id": "independent-041",
+      "median_ms": 5.51,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "bc59245fe10efaed9d51b56900192527ed733435",
+        "label_evidence": "Every normalizes a duration to a whole-second interval; ConstantDelaySchedule.Next computes the next activation using time arithmetic. The entire file contains only this fixed scheduling calculation, with no model, prompt, tool selection, or autonomous planning.",
+        "license": "MIT",
+        "path": "constantdelay.go",
+        "repo": "robfig/cron",
+        "sha256": "0a014f614180b2c3e45afc36cff2307ed07141259b45a37fbdc9574d7f329d3b",
+        "url": "https://github.com/robfig/cron/blob/bc59245fe10efaed9d51b56900192527ed733435/constantdelay.go"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    },
+    {
+      "assertion_failures": [],
+      "correct": true,
+      "description": "Express API-key middleware and fixed HTTP routes return in-memory users and repositories; no model, AI SDK, or agent construction occurs.",
+      "family": "web-service",
+      "findings": [],
+      "id": "independent-042",
+      "median_ms": 10.671,
+      "predicted": false,
+      "present": false,
+      "score": 0.0,
+      "source": {
+        "commit": "9a34acf03cb818ff3f8bc40e44176e277a25cbb9",
+        "label_evidence": "Express API-key middleware and fixed HTTP routes return in-memory users and repositories; no model, AI SDK, or agent construction occurs.",
+        "license": "MIT",
+        "path": "examples/web-service/index.js",
+        "repo": "expressjs/express",
+        "sha256": "726532ea16b88e64d1c492f1cd058ffeba04121887c866ab8257f318fd7ba101",
+        "url": "https://github.com/expressjs/express/blob/9a34acf03cb818ff3f8bc40e44176e277a25cbb9/examples/web-service/index.js"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": null
+      }
+    }
+  ],
+  "corpus": {
+    "name": "Independent public-file agent evaluation, September 2026",
+    "provenance": "Complete public source files pinned to full Git commits and SHA-256. Labels were prepared by AI-agent curators without scanner inspection; a separate blind AI-agent pass and review ledger accompany this corpus. This purposive sample is not an enterprise-estate prevalence estimate.",
+    "sha256": "128cf2c972cb13b11bafe141d584b910828899d689d5a457135ad7746f98eff3",
+    "type": "adjudicated"
+  },
+  "implementation": {
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+    "python": "3.12.14",
+    "scanner_source_sha256": "24e0098bcd198d988b7cfbca72b154a8f857e1702137e86678b586fd51d5688f",
+    "scanner_version": "0.1.1",
+    "signature_sha256": "e15dd74088383983ef1bc20d37bb401646333767f402f2226d27df4b65bd1949"
+  },
+  "metrics": {
+    "all": {
+      "cases": 42,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 30,
+      "positive_cases": 12,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 30,
+      "tp": 12
+    },
+    "build-tools": {
+      "cases": 2,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 2,
+      "positive_cases": 0,
+      "precision": null,
+      "recall": null,
+      "specificity": 1.0,
+      "tn": 2,
+      "tp": 0
+    },
+    "graph-algorithms": {
+      "cases": 3,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 3,
+      "positive_cases": 0,
+      "precision": null,
+      "recall": null,
+      "specificity": 1.0,
+      "tn": 3,
+      "tp": 0
+    },
+    "mcp-service": {
+      "cases": 1,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 1,
+      "positive_cases": 0,
+      "precision": null,
+      "recall": null,
+      "specificity": 1.0,
+      "tn": 1,
+      "tp": 0
+    },
+    "openai-agent-python": {
+      "cases": 4,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 0,
+      "positive_cases": 4,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": null,
+      "tn": 0,
+      "tp": 4
+    },
+    "openai-agent-typescript": {
+      "cases": 2,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 0,
+      "positive_cases": 2,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": null,
+      "tn": 0,
+      "tp": 2
+    },
+    "provider-client": {
+      "cases": 8,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 8,
+      "positive_cases": 0,
+      "precision": null,
+      "recall": null,
+      "specificity": 1.0,
+      "tn": 8,
+      "tp": 0
+    },
+    "pydantic-agent": {
+      "cases": 4,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 0,
+      "positive_cases": 4,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": null,
+      "tn": 0,
+      "tp": 4
+    },
+    "queue-concurrency": {
+      "cases": 2,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 2,
+      "positive_cases": 0,
+      "precision": null,
+      "recall": null,
+      "specificity": 1.0,
+      "tn": 2,
+      "tp": 0
+    },
+    "retry-concurrency": {
+      "cases": 4,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 4,
+      "positive_cases": 0,
+      "precision": null,
+      "recall": null,
+      "specificity": 1.0,
+      "tn": 4,
+      "tp": 0
+    },
+    "scheduled-tasks": {
+      "cases": 6,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 6,
+      "positive_cases": 0,
+      "precision": null,
+      "recall": null,
+      "specificity": 1.0,
+      "tn": 6,
+      "tp": 0
+    },
+    "smolagents-agent": {
+      "cases": 2,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 0,
+      "positive_cases": 2,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": null,
+      "tn": 0,
+      "tp": 2
+    },
+    "web-service": {
+      "cases": 4,
+      "fn": 0,
+      "fp": 0,
+      "negative_cases": 4,
+      "positive_cases": 0,
+      "precision": null,
+      "recall": null,
+      "specificity": 1.0,
+      "tn": 4,
+      "tp": 0
+    }
+  },
+  "passed": true,
+  "performance": {
+    "bytes_per_pass": 154838,
+    "files_per_pass": 42,
+    "median_scan_ms": 18.353,
+    "p95_scan_ms": 55.151,
+    "repeats": 2,
+    "scans": 84,
+    "total_scan_s": 1.985
+  },
+  "schema": 1
+}

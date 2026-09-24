@@ -262,8 +262,13 @@ class Finding:
         Independent weak signals reinforce each other but never exceed 1.0.
         """
         p_none = 1.0
-        for ev in self.evidence:
+        groups: dict[str, float] = {}
+        for number, ev in enumerate(self.evidence):
             w = max(0.0, min(1.0, ev.weight))
+            group = ev.attributes.get("confidence_group")
+            key = f"group:{group}" if isinstance(group, str) else f"evidence:{number}"
+            groups[key] = max(groups.get(key, 0.0), w)
+        for w in groups.values():
             p_none *= 1.0 - w
         self.confidence = round(1.0 - p_none, 3)
         self.likelihood = Likelihood.from_confidence(self.confidence)

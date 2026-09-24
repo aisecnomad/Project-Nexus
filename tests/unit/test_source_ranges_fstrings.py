@@ -73,7 +73,7 @@ def test_unterminated_native_fstring_marks_scan_incomplete(tmp_path, run_connect
     ('text = f"outer {f\'nested {StateGraph(1)}\'}"\n', True),
 ])
 def test_filesystem_scan_fstring_text_vs_code(tmp_path, run_connector, source, agent):
-    (tmp_path / "agent.py").write_text(source)
+    (tmp_path / "agent.py").write_text("from langgraph.graph import StateGraph\n" + source)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert any(f.kind == Kind.AGENT and "framework.langgraph" in f.frameworks for f in findings) == agent

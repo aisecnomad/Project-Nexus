@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 import re
 import statistics
 import sys
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from shadowscan import __version__
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.models import Kind
@@ -312,10 +314,30 @@ def calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def evaluate(path: Path, *, repeats: int = 1) -> dict[str, Any]:
+def _source_fingerprint() -> str:
+    """Identify the actual scanner sources, including an uncommitted candidate."""
+    root = Path(__file__).resolve().parents[2] / "shadowscan"
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*.py")):
+        name = path.relative_to(root).as_posix().encode()
+        content = path.read_bytes()
+        digest.update(len(name).to_bytes(4, "big"))
+        digest.update(name)
+        digest.update(hashlib.sha256(content).digest())
+    return digest.hexdigest()
+
+
+def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -> dict[str, Any]:
     if type(repeats) is not int or not 1 <= repeats <= 20:
         raise ValueError("repeats must be between 1 and 20")
     metadata, cases, corpus_digest = load_corpus(path)
+    annotation_report = None
+    if metadata["type"] == "adjudicated" and annotations is None:
+        raise CorpusError("adjudicated corpora require a frozen annotation ledger via --annotations")
+    if annotations is not None:
+        from tools.evaluation.annotations import validate_annotations
+
+        annotation_report = validate_annotations(path, annotations)
     index = get_index()
     rows: list[dict[str, Any]] = []
     durations: list[float] = []
@@ -361,6 +383,14 @@ def evaluate(path: Path, *, repeats: int = 1) -> dict[str, Any]:
     return {
         "schema": 1,
         "corpus": {**metadata, "sha256": corpus_digest},
+        "annotation_validation": annotation_report,
+        "implementation": {
+            "scanner_version": __version__,
+            "scanner_source_sha256": _source_fingerprint(),
+            "signature_sha256": index.fingerprint(),
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+        },
         "cases": rows,
         "metrics": summarize(rows),
         "calibration": calibration(rows),
@@ -386,10 +416,11 @@ def main(argv: list[str] | None = None) -> int:
         help="bounded, labeled corpus JSON; default is the bundled synthetic corpus",
     )
     parser.add_argument("--repeats", type=int, default=1, help="repeat each scan for timing (1-20)")
+    parser.add_argument("--annotations", type=Path, help="verify independent labels and corpus digest before scanning")
     parser.add_argument("--output", type=Path, help="write JSON report to a local file, mode 0600")
     args = parser.parse_args(argv)
     try:
-        report = evaluate(args.corpus, repeats=args.repeats)
+        report = evaluate(args.corpus, repeats=args.repeats, annotations=args.annotations)
         output = json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n"
         if args.output:
             # No automatic parent creation, and no accidental overwrite of a

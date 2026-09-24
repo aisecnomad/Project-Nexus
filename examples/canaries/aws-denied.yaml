@@ -1,0 +1,22 @@
+schema: shadowscan.tenant-canary/v1
+mode: live
+expectation: permission-denied
+connector:
+  name: cloud.aws
+  account_id: '123456789012'
+  regions:
+  - us-east-1
+  services:
+  - lambda
+scope:
+  account_id: '123456789012'
+  regions:
+  - us-east-1
+  services:
+  - lambda
+ground_truth:
+  owner: REPLACE_WITH_INDEPENDENT_TENANT_REVIEWER
+  reviewed_at: '2026-09-24'
+  source: REPLACE_WITH_APPROVED_INVENTORY_OR_CHANGE_TICKET
+  independent_of_scanner: true
+controls: []

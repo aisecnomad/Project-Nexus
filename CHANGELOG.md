@@ -2,6 +2,28 @@
 
 ## 0.1.1 — Unreleased
 
+### Detection and collection assurance (2026-09-24)
+
+- Require corroborating AI evidence and bound source constructors to imported
+  frameworks; resolve common Python and JavaScript/TypeScript aliases. Repeated
+  generic loops and subprocess calls cannot establish confirmed agents.
+- Validate agent manifests and project operational configuration fields before
+  matching signatures. Descriptions and empty configuration files cannot prove
+  an agent exists.
+- Preserve unknown Lambda environment coverage, recognize potential IAM
+  `NotAction` grants with policy limitations, and validate Slack collection
+  schemas and workspace scope. Preserve observed Slack records on later network
+  failures and report missing n8n workflow definitions as incomplete.
+- Add a frozen, negative-heavy public corpus with separate AI labeling passes,
+  source provenance and annotation-integrity checks in CI. This does not establish
+  independently measured production accuracy.
+- Add read-only AWS and Slack tenant canaries with explicit known controls,
+  scope and coverage assertions, permission-denied controls, and private reports.
+  Offline replay and unavailable credentials cannot produce live acceptance.
+
+Live tenant acceptance remains a deployment gate. Neither these changes nor an
+offline test result constitute evidence that a production tenant was scanned.
+
 ### Final reconciliation after PR #33 (2026-09-24)
 
 - Fence incremental cache and record publication against timed-out connectors, and refuse to reuse an Engine while a prior abandoned worker still runs. A separate process deadline remains necessary for blocked SDK or plugin calls.

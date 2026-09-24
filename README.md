@@ -49,6 +49,12 @@ provenance in your environment. See [evaluation](docs/evaluation.md) and
 [rollout acceptance](docs/production.md#rollout-acceptance) before using a risk
 threshold as a production gate.
 
+The [assurance results](docs/assurance-results.md) preserve the baseline and
+subsequent results on a frozen, independently AI-labeled corpus of 42 public
+files (30 negatives). [Read-only AWS and Slack canaries](docs/canaries.md)
+validate named tenant controls when approved credentials are supplied; offline
+replay does not establish live tenant acceptance.
+
 ## Surfaces & connectors
 
 | Surface | Connectors | What is discovered |
@@ -242,7 +248,7 @@ See [deployment and migration](docs/production.md) for the rollout checks.
 }
 ```
 
-* **confidence** combines evidence weights with noisy-OR. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
+* **confidence** combines evidence weights with noisy-OR. Correlated source evidence is grouped first, so repeated matches cannot inflate the score. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
 * **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence.
 * **shadow** is `true` unless exactly one inventory entry matches an explicit resource pattern and its configured scope restrictions; names only suggest entries for review. An approved entry lends its owner to the finding.
 * **related** links findings across surfaces (the Terraform that provisions an agent ↔ the agent in the account ↔ the role calling Bedrock ↔ the CloudTrail caller).

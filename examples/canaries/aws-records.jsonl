@@ -1,0 +1,3 @@
+{"_kind":"account","account":"123456789012","regions":["us-east-1"]}
+{"_kind":"lambda","_region":"us-east-1","FunctionName":"canary-model-client","FunctionArn":"arn:aws:lambda:us-east-1:123456789012:function:canary-model-client","Runtime":"python3.12","Environment":{"OPENAI_BASE_URL":"https://api.openai.com/v1"},"environment_coverage":"observed","Layers":[]}
+{"_kind":"lambda","_region":"us-east-1","FunctionName":"canary-report-worker","FunctionArn":"arn:aws:lambda:us-east-1:123456789012:function:canary-report-worker","Runtime":"python3.12","Environment":{"LOG_LEVEL":"INFO"},"environment_coverage":"observed","Layers":[]}
