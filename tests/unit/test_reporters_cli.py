@@ -16,13 +16,13 @@ from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.html import _JS
 
 
-def _result(fixtures):
+def _result(fixtures, index):
     cfg = ScanConfig(connectors=[ConnectorSpec(name="code.filesystem", config={"path": str(fixtures / "sample_repo"), "label": "repo"})], inventory=[str(Path(__file__).parents[2] / "agent-card.yaml")])
-    return Engine(cfg).run()
+    return Engine(cfg, index).run()
 
 
-def test_all_formats_render(fixtures):
-    result = _result(fixtures)
+def test_all_formats_render(fixtures, index):
+    result = _result(fixtures, index)
     out = render(result, "json")
     data = json.loads(out)
     assert data["summary"]["total"] == len(result.findings) and data["findings"][0]["risk"]["factors"]

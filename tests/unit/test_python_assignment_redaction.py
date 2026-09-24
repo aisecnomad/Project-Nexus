@@ -98,7 +98,7 @@ assert 'opaque-credential' not in safe and REDACTED in safe
 
 
 @pytest.mark.parametrize("scan_secrets", [False, True])
-def test_complete_engine_scan_never_exports_python_credentials(tmp_path, scan_secrets):
+def test_complete_engine_scan_never_exports_python_credentials(tmp_path, index, scan_secrets):
     # Each expression sits beside a framework signal, forcing its line into the
     # normal filesystem evidence path before any reporter shortens the snippet.
     for number, rhs in enumerate(EXPRESSIONS):
@@ -108,7 +108,7 @@ def test_complete_engine_scan_never_exports_python_credentials(tmp_path, scan_se
     config = ScanConfig(connectors=[ConnectorSpec(name="code.filesystem", config={
         "path": str(tmp_path), "use_git": False, "scan_secrets": scan_secrets,
     })])
-    result = Engine(config).run()
+    result = Engine(config, index).run()
     assert result.complete and result.findings
     assert any("framework.langchain" in finding.frameworks for finding in result.findings)
     for render in (render_json, render_sarif, render_html, render_markdown):

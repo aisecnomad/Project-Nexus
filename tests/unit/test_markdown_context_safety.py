@@ -27,11 +27,11 @@ def _html_and_headings(report: str) -> tuple[str, list[str]]:
     return markdown.render(report), headings
 
 
-def test_real_hostile_repository_name_remains_resource_text(tmp_path):
+def test_real_hostile_repository_name_remains_resource_text(tmp_path, index):
     root = tmp_path / "repository\n## SECURITY APPROVED"
     root.mkdir()
     (root / "agent.py").write_text("from langchain.agents import create_agent\n")
-    result = Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem", {"path": str(root)})])).run()
+    result = Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem", {"path": str(root)})]), index).run()
 
     assert result.complete and result.findings
     assert any("SECURITY APPROVED" in finding.resource for finding in result.findings)

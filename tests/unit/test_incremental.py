@@ -532,6 +532,7 @@ def test_plugin_overriding_builtin_name_is_not_cached(tmp_path, index, monkeypat
     assert second.findings[0].resource == "run:2" and not second.stats[0].cached
 
 
+@pytest.mark.requires_git_2_45
 def test_git_replacement_cannot_reuse_stale_owner(tmp_path, index):
     cfg = config(tmp_path)
     repo = tmp_path / "repo"
