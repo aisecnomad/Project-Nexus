@@ -219,6 +219,10 @@ class GitLabConnector(BaseConnector):
         for f in fs.analyze([{"path": local}]):
             f.connector = self.name
             f.provider = "gitlab"
+            # The filesystem connector created the finding under its own name.
+            # Identity v2 includes connector and provider, so finalize it after
+            # projecting the observation onto the GitLab surface.
+            f.id = f.compute_id()
             f.last_seen = f.last_seen or proj.get("last_activity_at")
             f.first_seen = proj.get("created_at")
             yield f
@@ -271,15 +275,20 @@ class GitLabConnector(BaseConnector):
         for p in selected:
             target = repository_target(dest, p)
             try:
-                resp = self.http.get(f"/projects/{pid}/repository/files/{quote(p, safe='')}/raw", params={"ref": ref})
+                resp = self.http.get(
+                    f"/projects/{pid}/repository/files/{quote(p, safe='')}/raw",
+                    params={"ref": ref},
+                    stream=True,
+                )
+                content = self.http.read_response_bytes(resp, max_bytes=512_000)
             except HttpError as exc:
                 self.ctx.warn(f"code.gitlab: repository content HTTP {exc.status}; coverage partial", incomplete=True)
                 continue
-            if len(resp.content) > 512_000:
-                self.ctx.warn("code.gitlab: oversized API content skipped", incomplete=True)
+            except ValueError:
+                self.ctx.warn("code.gitlab: oversized or invalid API content skipped", incomplete=True)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(resp.content)
+            target.write_bytes(content)
         return dest
 
     # --------------------------------------------------- project-level extra

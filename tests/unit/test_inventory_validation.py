@@ -17,7 +17,7 @@ from shadowscan.registry import Inventory, InventoryEntry, InventoryValidationEr
 
 APPROVED = "arn:aws:bedrock:*:111:agent/APPROVED"
 OTHER = "arn:aws:bedrock:us-east-1:222:agent/OTHER"
-LIST_FIELDS = ("resources", "names", "aliases", "frameworks", "surfaces", "providers", "accounts", "tags")
+LIST_FIELDS = ("resources", "names", "aliases", "frameworks", "surfaces", "providers", "accounts", "regions", "tags")
 
 
 def _write_inventory(tmp_path, payload, suffix="yaml"):
@@ -53,7 +53,7 @@ def test_approval_patterns_require_nonempty_string_items(tmp_path, bad_value, su
         Inventory.load([path])
 
 
-@pytest.mark.parametrize("field", ["names", "aliases", "frameworks", "surfaces", "providers", "accounts", "tags"])
+@pytest.mark.parametrize("field", ["names", "aliases", "frameworks", "surfaces", "providers", "accounts", "regions", "tags"])
 def test_all_list_items_are_validated(tmp_path, field):
     path = _write_inventory(tmp_path, {"id": "approved", "resources": [APPROVED], field: ["cloud", 111]})
     with pytest.raises(InventoryValidationError, match=field):
@@ -129,9 +129,9 @@ def test_csv_header_rows_and_list_items_are_validated(tmp_path, content):
 def test_csv_pipe_lists_remain_supported_for_every_list_field(tmp_path):
     path = tmp_path / "inventory.csv"
     path.write_text(
-        "agent_id,name,owner,resources,names,aliases,frameworks,surfaces,providers,accounts,tags\n"
+        "agent_id,name,owner,resources,names,aliases,frameworks,surfaces,providers,accounts,regions,tags\n"
         "approved, Approved Agent , Platform ,good|other,first|second,a|b,framework.one|framework.two,"
-        "cloud|code,aws|gcp,111|222,tag.one|tag.two\n"
+        "cloud|code,aws|gcp,111|222,us-east-1|eu-west-1,tag.one|tag.two\n"
     )
     entry = Inventory.load([path]).entries[0]
     assert entry.agent_id == "approved" and entry.owner == "Platform"
@@ -141,6 +141,7 @@ def test_csv_pipe_lists_remain_supported_for_every_list_field(tmp_path):
     assert entry.surfaces == ["cloud", "code"]
     assert entry.providers == ["aws", "gcp"]
     assert entry.accounts == ["111", "222"]
+    assert entry.regions == ["us-east-1", "eu-west-1"]
     assert entry.tags == ["tag.one", "tag.two"]
 
 

@@ -286,6 +286,8 @@ class HttpClient:
             raise ValueError("Proxies are unsupported by the destination-enforcing HTTP client")
         kwargs.setdefault("timeout", self.timeout)
         stream = kwargs.get("stream", False)
+        if not isinstance(stream, bool):
+            raise TypeError("stream must be a boolean")
         # Inspect status and headers before requests buffers any body, including
         # retry/redirect/error documents. Explicit streaming callers own reads.
         kwargs["stream"] = True
@@ -351,10 +353,17 @@ class HttpClient:
         """Bound decoded bytes, including compressed and chunked responses."""
         try:
             length = resp.headers.get("Content-Length")
-            if length is not None and (not length.isdigit() or int(length) > max_bytes):
-                raise ValueError("HTTP response exceeds the byte limit or has an invalid length")
+            if length is not None:
+                if not isinstance(length, str) or not length.isascii() or not length.isdecimal():
+                    raise ValueError("Invalid Content-Length on HTTP response")
+                if int(length) > max_bytes:
+                    raise ValueError("HTTP response exceeds the byte limit")
             body = bytearray()
             for chunk in resp.iter_content(chunk_size=min(65536, max_bytes + 1)):
+                if not chunk:
+                    continue
+                if not isinstance(chunk, bytes):
+                    raise ValueError("Invalid HTTP response chunk")
                 if len(body) + len(chunk) > max_bytes:
                     raise ValueError("HTTP response exceeds the byte limit")
                 body.extend(chunk)
@@ -370,6 +379,16 @@ class HttpClient:
             return json.loads(body)
         except (ValueError, RecursionError) as exc:
             raise ValueError("Invalid JSON response") from exc
+
+    def read_response_bytes(self, resp: requests.Response, *, max_bytes: int | None = None) -> bytes:
+        """Read a streamed response within the configured decoded-byte limit."""
+        limit = self.max_response_bytes if max_bytes is None else self._byte_limit(max_bytes)
+        return self._read_response(resp, limit)
+
+    def read_json_response(self, resp: requests.Response, *, max_bytes: int | None = None) -> Any:
+        """Decode one response using the configured decoded-byte limit."""
+        limit = self.max_response_bytes if max_bytes is None else self._byte_limit(max_bytes)
+        return self._json_response(resp, limit)
 
     def get_json(self, path: str, *, max_bytes: int | None = None, **kwargs: Any) -> Any:
         limit = self.max_response_bytes if max_bytes is None else self._byte_limit(max_bytes)

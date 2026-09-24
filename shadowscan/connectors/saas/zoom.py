@@ -42,8 +42,9 @@ class ZoomConnector(BaseConnector):
             secret = self.ctx.get("client_secret", env="ZOOM_CLIENT_SECRET")
             if not (self.account_id and cid and secret):
                 raise ConnectorError("saas.zoom: account_id, client_id, client_secret (or access_token) required")
-            resp = HttpClient().post("https://zoom.us/oauth/token", params={"grant_type": "account_credentials", "account_id": self.account_id}, auth=(cid, secret))
-            token = resp.json()["access_token"]
+            client = HttpClient()
+            resp = client.post("https://zoom.us/oauth/token", params={"grant_type": "account_credentials", "account_id": self.account_id}, auth=(cid, secret))
+            token = client.read_json_response(resp)["access_token"]
         http = HttpClient("https://api.zoom.us/v2", headers={"Authorization": f"Bearer {token}"})
         for app_type in ("installed", "created"):
             try:

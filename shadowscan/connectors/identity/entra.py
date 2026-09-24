@@ -65,11 +65,12 @@ class EntraConnector(BaseConnector):
             secret = self.ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
             if not (self.tenant and cid and secret):
                 raise ConnectorError("identity.entra: tenant_id, client_id and client_secret (or access_token) are required")
-            resp = HttpClient().post(
+            client = HttpClient()
+            resp = client.post(
                 f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token",
                 data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret, "scope": "https://graph.microsoft.com/.default"},
             )
-            token = resp.json()["access_token"]
+            token = client.read_json_response(resp)["access_token"]
         self.http = HttpClient(GRAPH, headers={"Authorization": f"Bearer {token}", "ConsistencyLevel": "eventual"})
 
     def _pages(self, path: str, **kwargs: Any) -> Iterator[dict[str, Any]]:

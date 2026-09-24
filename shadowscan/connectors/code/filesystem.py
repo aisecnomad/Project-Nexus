@@ -15,6 +15,7 @@ Produces:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -210,6 +211,31 @@ class _Project:
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
 
 
+_ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
+
+
+def validate_distinct_paths(paths: Any) -> list[Path]:
+    """Reject aliases that resolve to the same repository under one label."""
+    if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
+        raise ConnectorError("code.filesystem: paths must be a nonempty list of paths")
+    canonical = [Path(path).expanduser().resolve() for path in paths]
+    if len(set(canonical)) != len(canonical):
+        raise ConnectorError("code.filesystem: labeled paths must resolve to distinct scan roots")
+    return canonical
+
+
+def validate_root_ids(paths: Any, root_ids: Any) -> list[str]:
+    """Validate positional, stable IDs for a labeled ``paths`` connector."""
+    validate_distinct_paths(paths)
+    if not isinstance(root_ids, list) or len(root_ids) != len(paths):
+        raise ConnectorError("code.filesystem: root_ids must contain exactly one ID per path")
+    if not all(isinstance(root_id, str) and _ROOT_ID_RE.fullmatch(root_id) for root_id in root_ids):
+        raise ConnectorError("code.filesystem: root_ids must be 1-80 characters of letters, digits, '.', '_' or '-'")
+    if len(set(root_ids)) != len(root_ids):
+        raise ConnectorError("code.filesystem: root_ids must be unique within paths")
+    return root_ids
+
+
 class FilesystemConnector(BaseConnector):
     name: ClassVar[str] = "code.filesystem"
     surface: ClassVar[Surface] = Surface.CODE
@@ -224,6 +250,7 @@ class FilesystemConnector(BaseConnector):
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
+        "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
     }
     offline_formats: ClassVar[str] = "n/a (path is the input)"
 
@@ -242,6 +269,28 @@ class FilesystemConnector(BaseConnector):
         self.exclude_names = set(DEFAULT_EXCLUDES) | {e for e in extra if "*" not in e and "/" not in e}
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
         self.label: str | None = ctx.get("label")
+        # Every labeled `paths` root has its own identity, even if the list
+        # shrinks to one. The engine marks a child split for incremental reuse.
+        paths = ctx.get("paths")
+        self._shared_label_roots = isinstance(paths, list) or ctx.get("_shared_label_roots") is True
+        if self.label and isinstance(paths, list):
+            validate_distinct_paths(paths)
+        self._root_ids: dict[Path, str] = {}
+        root_ids = ctx.get("root_ids")
+        split_root_id = ctx.get("_root_id")
+        if root_ids is not None:
+            if not self.label or ctx.input_path:
+                raise ConnectorError("code.filesystem: root_ids requires a label and paths, without input")
+            validated = validate_root_ids(paths, root_ids)
+            self._root_ids = {
+                Path(path).expanduser().resolve(): root_id
+                for path, root_id in zip(paths, validated, strict=True)
+            }
+        elif split_root_id is not None:
+            path = ctx.get("path")
+            if not self.label or not isinstance(path, str) or not isinstance(split_root_id, str) or not _ROOT_ID_RE.fullmatch(split_root_id):
+                raise ConnectorError("code.filesystem: invalid split root identity")
+            self._root_ids[Path(path).expanduser().resolve()] = split_root_id
         self.account: str | None = ctx.get("account")
         self.owner: str | None = ctx.get("owner")
         self.provider_override: str | None = ctx.get("provider")
@@ -329,6 +378,14 @@ class FilesystemConnector(BaseConnector):
     # ------------------------------------------------------------------ scan
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         label = self.label or str(root)
+        if self.label and self._shared_label_roots:
+            # Explicit IDs survive checkout relocation; absent them, hash the
+            # resolved root to avoid exposing local directory names.
+            root_id = self._root_ids.get(root)
+            label = (
+                f"{label}/root-id-{root_id}" if root_id is not None
+                else f"{label}/root-{hashlib.sha256(os.fsencode(root)).hexdigest()}"
+            )
         projects: dict[str, _Project] = {".": _Project(".")}
         secret_hits: dict[str, list[tuple[Match, str]]] = {}  # relpath -> matches
         mcp_files: list[tuple[str, str]] = []  # relpath, text
@@ -386,21 +443,34 @@ class FilesystemConnector(BaseConnector):
                             self._handle_artifact(proj, art, rel, text, infra_files, secret_hits, infra_names)
 
                     # 3. source & config content
+                    # Match prose documentation by its dedicated filenames only.
+                    # Invocations in a README, even in fenced examples, do not
+                    # establish executable agent code in this repository.
+                    is_documentation = ext in {".md", ".mdc", ".mdx", ".txt"} and not is_manifest_name(name)
+                    # Maven's XML parser above extracts dependency declarations.
+                    # Generic regex matching over the raw POM would promote
+                    # examples in descriptions or CDATA to executable agents.
+                    is_nonexecutable = is_documentation or lower == "pom.xml"
+                    # XML comments are examples/disabled declarations. Preserve
+                    # offsets for match line numbers and the original redacted
+                    # excerpts; the manifest parser handles active XML itself.
+                    content_text = _without_xml_comments(text) if ext in {".xml", ".props", ".targets", ".csproj", ".fsproj", ".vbproj"} else text
                     is_mcp = self._looks_like_mcp_config(rel, name, text)
                     if is_source:
-                        for m in self.index.match_imports(text, lang):
+                        for m in self.index.match_imports(content_text, lang):
                             self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
-                        for m in self.index.match_code(text, lang):
+                        for m in self.index.match_code(content_text, lang):
                             self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
-                    else:
-                        for m in self.index.match_code(text, None):
+                    elif not is_nonexecutable:
+                        for m in self.index.match_code(content_text, None):
                             self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
                             if m.signature.category in {"platform", "cloud-service"} and m.agent_indicator and ext in {".json", ".yaml", ".yml"} and not is_mcp:
                                 workflow_files.setdefault(rel, []).append((m, excerpt_line(safe_text, m.line or 1)))
-                    for m in self.index.match_envs_in_text(text):
-                        self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
-                    for m in self.index.match_domains_in_text(text):
-                        self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                    if not is_nonexecutable:
+                        for m in self.index.match_envs_in_text(content_text):
+                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                        for m in self.index.match_domains_in_text(content_text):
+                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
                     if self.scan_secrets:
                         for m in self.index.match_secrets(text):
                             if looks_like_placeholder(m.value):
@@ -517,6 +587,34 @@ class FilesystemConnector(BaseConnector):
     @staticmethod
     def _looks_like_mcp_config(rel: str, name: str, text: str) -> bool:
         lower = name.lower()
+        if lower == "server.json":
+            # A generic service can use this filename. The MCP registry format
+            # has a name and structured package or remote transport records.
+            try:
+                data = json.loads(_strip_json_comments(text))
+            except (ValueError, RecursionError):
+                return False
+            if not isinstance(data, dict):
+                return False
+            explicit = data.get("mcpServers", data.get("mcp_servers"))
+            if isinstance(explicit, dict) and bool(explicit):
+                return True
+            if not isinstance(data.get("name"), str) or not data["name"].strip():
+                return False
+            packages = data.get("packages")
+            remotes = data.get("remotes")
+            return (
+                isinstance(packages, list) and any(
+                    isinstance(p, dict) and isinstance(p.get("registryType"), str)
+                    and isinstance(p.get("identifier"), str) and p["identifier"].strip()
+                    for p in packages
+                ) or isinstance(remotes, list) and any(
+                    isinstance(r, dict) and isinstance(r.get("url"), str)
+                    and r["url"].startswith(("https://", "http://"))
+                    and r.get("type") in {"streamable-http", "sse"}
+                    for r in remotes
+                )
+            )
         if lower in {".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json", "claude_desktop_config.json", "cline_mcp_settings.json", "mcp_settings.json", "smithery.yaml"}:
             return True
         if lower in MCP_CONFIG_NAMES or rel.endswith((".json", ".toml", ".yaml", ".yml")):
@@ -630,7 +728,10 @@ class FilesystemConnector(BaseConnector):
         return None, by_file
 
     # ----------------------------------------------------------------- emits
-    def _base(self, label: str, root: Path, rel: str, kind: Kind, title: str, resource_type: str) -> Finding:
+    def _base(
+        self, label: str, root: Path, rel: str, kind: Kind, title: str,
+        resource_type: str, *, identity_discriminator: str = "",
+    ) -> Finding:
         f = Finding(
             surface=Surface.CODE,
             connector=self.name,
@@ -638,6 +739,7 @@ class FilesystemConnector(BaseConnector):
             title=title,
             resource=f"{label}/{rel}" if rel != "." else label,
             resource_type=resource_type,
+            identity_discriminator=identity_discriminator,
             provider=self.provider_override or self.provider,
             account=self.account,
             owner=self.owner,
@@ -673,7 +775,11 @@ class FilesystemConnector(BaseConnector):
             yield f
         for sig_id, files in proj.coding_agent_files.items():
             sig = self.index.get(sig_id)
-            f = self._base(label, root, proj.root, Kind.AGENT_CONFIG, f"{sig.name if sig else sig_id} configured in {proj.root if proj.root != '.' else 'repository root'}", "coding-agent-config")
+            f = self._base(
+                label, root, proj.root, Kind.AGENT_CONFIG,
+                f"{sig.name if sig else sig_id} configured in {proj.root if proj.root != '.' else 'repository root'}",
+                "coding-agent-config", identity_discriminator=f"coding-agent-config:{sig_id}",
+            )
             for m, rel, snip in proj.coding_agent_matches.get(sig_id, []):
                 apply_matches(f, [m], location=rel, snippet=snip)
             f.metadata["files"] = sorted(files)
@@ -733,7 +839,9 @@ class FilesystemConnector(BaseConnector):
         f.metadata["server_count"] = len(servers)
         f.metadata["remote_urls"] = remote_hosts
         f.metadata["client"] = _mcp_client_for(rel)
-        if not servers and "mcpServers" not in text and "mcp_servers" not in text and "servers" not in text:
+        if not servers and (Path(rel).name.lower() == "server.json" or not any(
+            key in text for key in ("mcpServers", "mcp_servers", "servers")
+        )):
             return None
         f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
@@ -916,6 +1024,11 @@ def _mcp_client_for(rel: str) -> str:
 
 
 _SECRETISH = re.compile(r"(?i)(key|token|secret|password|passwd|credential|auth)")
+
+
+def _without_xml_comments(text: str) -> str:
+    """Mask XML comments while preserving character offsets and source lines."""
+    return re.sub(r"<!--.*?(?:-->|$)", lambda match: re.sub(r"[^\n]", " ", match.group()), text, flags=re.S)
 
 
 def _safe_source_text(rel: str, text: str) -> str:

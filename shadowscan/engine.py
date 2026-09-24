@@ -16,6 +16,8 @@ from shadowscan import __version__
 from shadowscan.comparison import build_collection_scope
 from shadowscan.config import ConnectorSpec, ScanConfig, validate_min_confidence
 from shadowscan.connectors import ConnectorContext, get_connector_class
+from shadowscan.connectors.base import ConnectorError
+from shadowscan.connectors.code.filesystem import validate_distinct_paths, validate_root_ids
 from shadowscan.correlation import correlate_runtime
 from shadowscan.incremental import IncrementalCache
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface, now_iso
@@ -177,10 +179,21 @@ class Engine:
 
         def _run(number: int, spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
             roots = spec.config.get("paths")
+            root_ids = spec.config.get("root_ids")
             split_roots = (
                 self.config.incremental and spec.name == "code.filesystem"
                 and not spec.config.get("input") and isinstance(roots, list) and len(roots) > 1
             )
+            if split_roots:
+                try:
+                    if spec.label or spec.config.get("label"):
+                        validate_distinct_paths(roots)
+                    if root_ids is not None:
+                        validate_root_ids(roots, root_ids)
+                except ConnectorError:
+                    # Run once so constructor validation reports an incomplete
+                    # scan, rather than partially scanning the valid children.
+                    split_roots = False
             if split_roots:
                 try:
                     split_roots = cache.supports_connector(spec, _lookup(spec.name))
@@ -193,8 +206,13 @@ class Engine:
             combined: list[Finding] = []
             parts: list[ScanStats] = []
             for root_number, root in enumerate(roots, 1):
-                child_config = {k: v for k, v in spec.config.items() if k != "paths"}
+                child_config = {k: v for k, v in spec.config.items() if k not in {"paths", "root_ids"}}
                 child_config["path"] = root
+                # A cache split retains both the `paths` identity and its
+                # optional stable root ID from the original configuration.
+                child_config["_shared_label_roots"] = True
+                if root_ids is not None:
+                    child_config["_root_id"] = root_ids[root_number - 1]
                 _, child_findings, child_stats = _run_one(ConnectorSpec(
                     name=spec.name, config=child_config, label=spec.label,
                 ), f"{number:04d}-{root_number:04d}")

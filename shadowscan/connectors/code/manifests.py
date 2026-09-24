@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import tomllib
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
@@ -343,19 +344,29 @@ def parse_cargo_toml(text: str) -> ManifestResult:
     return res
 
 
-_POM_DEP = re.compile(r"<dependency>\s*(.*?)\s*</dependency>", re.S)
-_POM_TAG = re.compile(r"<(groupId|artifactId|version|scope)>\s*([^<]+?)\s*</\1>")
-
-
 def parse_pom(text: str) -> ManifestResult:
     res = ManifestResult()
-    for m in _POM_DEP.finditer(text, timeout=0.1, concurrent=False):
-        tags = dict(_POM_TAG.findall(m.group(1), timeout=0.1, concurrent=False))
+    # XML comments often contain sample dependencies. Parse the document rather
+    # than extracting <dependency> tags with a regex, which treats comments as
+    # active configuration. Maven POMs also commonly use a default namespace.
+    # No DTD is needed for dependency extraction; reject entities to keep
+    # parsing an untrusted repository bounded even with older Expat versions.
+    if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
+        res.errors.append("POM DTD/entity declarations are unsupported")
+        return res
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        res.errors.append("invalid POM XML")
+        return res
+
+    for dependency in root.iter():
+        if dependency.tag.rsplit("}", 1)[-1] != "dependency":
+            continue
+        tags = {child.tag.rsplit("}", 1)[-1]: (child.text or "").strip() for child in dependency}
         g, a = tags.get("groupId"), tags.get("artifactId")
         if g and a:
             res.deps.append(Dep("maven", f"{g}:{a}", tags.get("version"), dev=tags.get("scope") == "test"))
-    for m in re.finditer(r"<(?:artifactId)>\s*([^<]+?)\s*</artifactId>", text, timeout=0.1, concurrent=False):
-        pass
     return res
 
 

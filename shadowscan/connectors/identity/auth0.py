@@ -43,8 +43,9 @@ class Auth0Connector(BaseConnector):
             secret = self.ctx.get("client_secret", env="AUTH0_CLIENT_SECRET")
             if not (cid and secret):
                 raise ConnectorError("identity.auth0: client_id + client_secret (or token) required")
-            resp = HttpClient().post(f"https://{self.domain}/oauth/token", json={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret, "audience": f"https://{self.domain}/api/v2/"})
-            token = resp.json()["access_token"]
+            client = HttpClient()
+            resp = client.post(f"https://{self.domain}/oauth/token", json={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret, "audience": f"https://{self.domain}/api/v2/"})
+            token = client.read_json_response(resp)["access_token"]
         self.http = HttpClient(f"https://{self.domain}", headers={"Authorization": f"Bearer {token}"})
 
     def collect(self) -> Iterable[dict[str, Any]]:

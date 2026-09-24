@@ -56,6 +56,17 @@ output, HTTP, JWT and cloud hardening already merged on `main`.
 Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and operational checks below; a passing unit
 suite does not establish complete coverage of a particular estate.
+PR #8 predates the protections now on `main` and must not be merged as-is.
+
+## Install from a reviewed revision
+
+For production, check out an audited full commit SHA before installing the
+package, then pin the resolved dependencies in your deployment environment.
+An example pinned install command in an older guide does not automatically
+track subsequent security fixes. Use `python -m pip install .` from the reviewed
+checkout, or `python -m pip install '.[cloud]'` when cloud SDKs are required.
+For record replay, read `exports/manifest.json` and use the `filename` for the
+intended connector instance; export names are not a fixed `cloud_aws.jsonl`.
 
 ## Explicit security policy
 
@@ -118,6 +129,9 @@ turn Git or the scanner into a process sandbox.
 
 ## Resource limits and incomplete scans
 
+Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded content by default. Pagination rejects missing or malformed collection arrays and records an incomplete scan when a response exceeds its limit. Review unusually large provider pages against their API contract before raising a per-client or per-request limit. GitLab file downloads remain capped at 512 KiB per file.
+
+
 YAML parsing checks input size, composed nodes, alias count, nesting, expanded
 nodes/content and merge work before object construction. Sanitization has a
 separate expanded-structure and total-work budget, so valid YAML aliases cannot
@@ -156,6 +170,25 @@ not lossless copies of upstream responses. JWTs are never included.
 Generated resource patterns escape literal `*`, `?` and `[` characters. Review
 previously generated cards for those characters and regenerate literal bindings
 where necessary. Existing intentionally authored wildcard approvals remain valid.
+Resources or identity scopes whose identifiers were redacted cannot establish
+an exact approval: assign a stable nonsecret resource, provider, account and
+region identity before registering them. A report display value containing
+`[REDACTED]` is not an authority to approve every object that renders to the
+same value.
+Generated cards now include `discovery.regions` when a region is known; review
+older cards with short resource IDs (for example a Bedrock agent ID without its
+ARN) and add explicit region constraints to avoid approving another region.
+
+For a labeled `code.filesystem` connector using `paths`, each root gets its own
+resource ID under the shared label, even if the list later contains just one
+path. Without `root_ids`, the suffix is `root-<SHA256 of canonical path>` and
+changes when a checkout moves. Set unique `root_ids` in the same order as
+`paths` to emit `root-id-<id>` suffixes that remain stable across CI workers;
+reorder the two lists together. Inventory entries using the old shared label
+will no longer approve these roots. Regenerate cards from a complete scan and
+approve each root separately. A scalar `path` retains its prior resource ID,
+so another option for stable identities is one connector per repository with
+its own explicit label.
 
 ## Finding identity and comparison migration
 
@@ -210,6 +243,18 @@ single-object and array forms. Regenerate earlier offline analyses affected by
 lost user attribution before using their counts as governance evidence.
 
 ## Release verification
+
+### Protect the merge gate
+
+The repository's `Protect main` ruleset requires pull requests but does not yet
+require CI checks or an approving review. A maintainer with repository ruleset
+administration access must update that active ruleset to require both matrix
+checks from `.github/workflows/ci.yml` (`test (3.11)` and `test (3.12)`) and
+at least one approval. Require a fresh successful run for each proposed merge;
+do not use a previously green branch run after the base branch has changed.
+Verify the exact check names in a current pull request before saving the
+ruleset, and test the protection with a disposable failing pull request. The
+workflow definition alone does not make checks mandatory.
 
 The CI workflow installs all cloud SDK extras and validates signatures, lint, typing, dependency advisories, tests
 with a minimum 80% statement coverage, wheel creation, installed-wheel validation

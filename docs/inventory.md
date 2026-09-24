@@ -32,9 +32,12 @@ discovery:
   surfaces: [cloud, code, gateway]              # enforced if supplied
   # providers: [aws]                          # optional exact provider constraint
   # accounts: ["123456789012"]                 # optional exact tenant/account constraint
+  # regions: [us-east-1]                     # optional exact region constraint
 ```
 
-`[cite_start]` / `[cite: n]` markers left by document exports are ignored.
+Standalone `[cite_start]` / `[cite: n]` export markers are ignored only in the
+leading document preamble. Markers inside resource patterns are rejected so
+that removing one cannot silently broaden an approval.
 
 ### Simple list
 
@@ -58,7 +61,7 @@ Pass any mix with `--inventory` (repeatable) or `inventory:` in the config;
 directories are searched recursively.
 
 YAML and JSON list fields (`resources`, `names`, `surfaces`, `providers`,
-`accounts`, `frameworks`, `tags`) must be arrays of nonempty strings. Quote
+`accounts`, `regions`, `frameworks`, `tags`) must be arrays of nonempty strings. Quote
 numeric account IDs. Optional lists may be omitted or empty; scalar strings
 are rejected rather than interpreted character by character. CSV retains
 pipe-separated lists. Malformed entries, duplicate keys, unknown simple-inventory
@@ -68,9 +71,15 @@ or discovery fields and inconsistent CSV columns fail validation before scanning
 
 Automatic registration requires exactly one matching `discovery.resources`
 pattern (or `resources` in the simple format). Resource matching is case-sensitive.
-Optional `surfaces`, `providers`, and `accounts` lists are enforced; a finding
-without a required scope cannot match. Prefer exact immutable IDs and narrowly
-scoped patterns; a broad glob is an explicit broad approval.
+Optional `surfaces`, `providers`, `accounts`, and `regions` lists are enforced; a finding
+without a required scope cannot match. A missing resource or one whose
+resource, provider, account or region contains `[REDACTED]` cannot be
+automatically approved by any pattern; supply a stable nonsecret identity for
+registration. Prefer exact
+immutable IDs and narrowly scoped patterns; a broad glob is an explicit broad
+approval. Region-scoped resources can share a short ID across regions; generated
+cards bind a region when available. Review existing cards with short cloud IDs
+and add explicit `regions` before using them to approve a single region.
 
 Names, aliases, and agent-ID similarities produce `registry_suggestions` only.
 They never confer registered status, inherit an owner, or reduce risk. An
@@ -94,7 +103,9 @@ shadowscan inventory stubs today.json -o inventory/pending/ --min-risk medium
 `inventory stubs` writes one capability-card skeleton per shadow finding (agent,
 mcp-server, workflow, bot-app, agent-config by default): the discovered
 resource goes into `discovery.resources` with literal glob characters escaped
-so the generated card approves only that exact resource, detected capabilities into
+so the generated card approves only that exact resource. A redacted resource or
+scope leaves `discovery.resources` empty pending an identity review. Generated
+cards also bind the finding's region when present. Detected capabilities go into
 `capability_surface`, the risk score into `risk_scoring`, and the owner (when
 known) into `owner_team`. Review, complete and move the card into the inventory
 directory; on the next scan the finding is registered and its risk drops.

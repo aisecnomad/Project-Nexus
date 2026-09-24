@@ -196,5 +196,6 @@ def _dwd_token(sa_file: Path, subject: str, scopes: str) -> str:
         algorithm="RS256",
         headers={"kid": info.get("private_key_id")},
     )
-    resp = HttpClient().post(info.get("token_uri", "https://oauth2.googleapis.com/token"), data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion})
-    return resp.json()["access_token"]
+    client = HttpClient()
+    resp = client.post(info.get("token_uri", "https://oauth2.googleapis.com/token"), data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion})
+    return client.read_json_response(resp)["access_token"]
