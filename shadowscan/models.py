@@ -17,7 +17,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from shadowscan.utils.redaction import SanitizationLimitError, sanitize
+from shadowscan.utils import redaction
+from shadowscan.utils.redaction import SanitizationLimitError, _check_sanitization_structure, sanitize
 
 FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v2"
 LEGACY_FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v1"
@@ -202,7 +203,14 @@ class Finding:
     def _state_digest(self) -> str:
         # The dataclass repr covers every model field (the cache field opts
         # out) and reaches into the JSON-like containers the sanitizer inspects.
-        return hashlib.sha256(repr(self).encode("utf-8", "surrogatepass")).hexdigest()
+        # Bound the expanded size first: repr of an aliased DAG is exponential,
+        # and the sanitizer would reject such a value anyway.
+        values = [getattr(self, attr.name) for attr in fields(self) if attr.name != "_sanitized_state"]
+        values.extend(ev.attributes for ev in self.evidence)
+        _check_sanitization_structure(values)
+        # A changed redaction policy must invalidate the verified state too.
+        state = repr((redaction.policy_token(), self))
+        return hashlib.sha256(state.encode("utf-8", "surrogatepass")).hexdigest()
 
     def sanitize(self) -> None:
         """Remove credentials from every persisted/reportable field in place.

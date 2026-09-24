@@ -104,3 +104,17 @@ def test_failed_sanitization_pass_records_no_verified_state():
         finding.sanitize()
     assert finding._sanitized_state != finding._state_digest(), "a failed pass never marks the state verified"
     assert REDACTED in finding.connector, "the rejected identity field is withheld even though the finding is omitted"
+
+
+def test_state_digest_rejects_an_aliased_dag_before_expanding_it():
+    from shadowscan.utils.redaction import SanitizationLimitError
+
+    node: list = ["x"]
+    for _ in range(40):
+        node = [node, node]  # 2**40 leaves if expanded by repr
+    finding = _finding()
+    finding.metadata["dag"] = node
+    with pytest.raises(SanitizationLimitError):
+        finding.sanitize()
+    with pytest.raises(SanitizationLimitError):
+        finding._state_digest()

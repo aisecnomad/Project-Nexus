@@ -100,6 +100,23 @@ _ASSIGNMENT_CREDENTIAL_NAME = re.compile(
 )
 
 
+def policy_token() -> tuple[tuple[int, Any], ...]:
+    """Identity of the redaction policy objects in effect.
+
+    Callers that memoize a sanitized state include this token so that a
+    replaced pattern or name set (for example a hot-patched policy) forces a
+    fresh pass instead of a stale verdict.
+    """
+    policy: tuple[Any, ...] = (
+        _SENSITIVE_SUFFIXES, _SENSITIVE_NAMES, _SECRET_TOKEN, _PATH_SECRET_RULES, _JWT, _PEM, _AUTH,
+        _URL, _ASSIGNMENT, _PYTHON_ASSIGNMENT_KEY, _MAPPING_VALUE, _YAML_MAPPING_LINE,
+        _ASSIGNMENT_CREDENTIAL_NAME,
+    )
+    return tuple(
+        (id(obj), obj.pattern if isinstance(obj, re.Pattern) else len(obj)) for obj in policy
+    ) + ((_MAX_SANITIZATION_NODES, _MAX_SANITIZATION_CHARS), (_MAX_REDACTION_WORK, REDACTED))
+
+
 class SanitizationLimitError(ValueError):
     """Evidence cannot be safely sanitized within the work/output budget."""
 
