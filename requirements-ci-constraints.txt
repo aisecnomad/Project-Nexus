@@ -1,0 +1,40 @@
+# Development-tool constraints for CPython 3.11/3.12 on Linux x86_64.
+# Captured from the Project Nexus Python 3.12 CI validation environment on
+# 2026-09-24. Direct tools and their dependency closure are listed below.
+# CI installs the separately hash-locked requirements.lock first and applies
+# both files as constraints when installing the project's [dev] extra.
+# These constraints select versions; they are not artifact hashes. Review and
+# refresh them alongside the runtime lock, then validate both CI interpreters.
+ast_serialize==0.11.2
+boolean.py==5.0
+CacheControl==0.14.4
+coverage==7.16.1
+cyclonedx-python-lib==11.12.0
+defusedxml==0.7.1
+filelock==4.0.3
+iniconfig==2.3.0
+librt==0.15.0
+license-expression==30.4.4
+msgpack==1.2.2
+mypy==2.3.1
+mypy_extensions==1.1.0
+packageurl-python==0.17.6
+packaging==26.3
+pathspec==1.1.1
+pip==26.2.1
+pip-requirements-parser==32.0.1
+pip_api==0.0.35
+pip_audit==2.10.1
+platformdirs==4.11.12
+pluggy==1.6.0
+py-serializable==2.1.0
+pyparsing==3.3.3
+pytest-cov==7.1.0
+pytest==9.1.1
+responses==0.26.3
+ruff==0.16.8
+sortedcontainers==2.4.0
+tomli==2.4.1
+tomli_w==1.2.0
+types-PyYAML==6.0.12.20260906
+types-requests==2.33.0.20260906

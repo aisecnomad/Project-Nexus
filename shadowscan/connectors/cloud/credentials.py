@@ -22,31 +22,30 @@ def allow_instance_credentials(value: object) -> bool:
 def application_default_credentials_path(explicit: str | None = None) -> Path | None:
     """Resolve a local ADC file without using google.auth private APIs.
 
-    Order: explicit path or ``GOOGLE_APPLICATION_CREDENTIALS``, then the
-    documented well-known gcloud user-credential files.
+    Precedence: explicit path, ``GOOGLE_APPLICATION_CREDENTIALS``, then the
+    documented well-known gcloud user-credential files. An invalid explicit
+    path or environment setting does not fall through to another identity.
     """
     candidates: list[Path] = []
     if explicit:
         candidates.append(Path(explicit).expanduser())
-    env = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if env:
-        candidates.append(Path(env).expanduser())
-    candidates.append(Path.home() / ".config" / "gcloud" / _ADC_FILENAME)
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        candidates.append(Path(appdata) / "gcloud" / _ADC_FILENAME)
+    else:
+        env = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        if env:
+            candidates.append(Path(env).expanduser())
+        else:
+            candidates.append(Path.home() / ".config" / "gcloud" / _ADC_FILENAME)
+            appdata = os.environ.get("APPDATA")
+            if appdata:
+                candidates.append(Path(appdata) / "gcloud" / _ADC_FILENAME)
     seen: set[Path] = set()
     for path in candidates:
-        try:
-            resolved = path if path.is_absolute() else path
-        except OSError:
+        if path in seen:
             continue
-        if resolved in seen:
-            continue
-        seen.add(resolved)
+        seen.add(path)
         try:
-            if resolved.is_file() and not resolved.is_symlink():
-                return resolved
+            if path.is_file() and not path.is_symlink():
+                return path
         except OSError:
             continue
     return None
@@ -70,25 +69,27 @@ def configure_aws_session(sdk_session: object, *, allow_instance: bool) -> None:
     denied, metadata attempts are disabled and IAM/container providers removed.
     """
     set_config = getattr(sdk_session, "set_config_variable", None)
-    if callable(set_config):
-        set_config("metadata_service_timeout", 3)
-        set_config("metadata_service_num_attempts", 1 if allow_instance else 0)
+    if not callable(set_config):
+        raise ConnectorError("cloud.aws: cannot enforce instance credential policy")
+    set_config("metadata_service_timeout", 3)
+    set_config("metadata_service_num_attempts", 1 if allow_instance else 0)
     if allow_instance:
         return
     get_component = getattr(sdk_session, "get_component", None)
     if not callable(get_component):
-        return
+        raise ConnectorError("cloud.aws: cannot enforce instance credential policy")
     try:
         resolver = get_component("credential_provider")
-    except Exception:
-        return
+    except Exception as exc:
+        raise ConnectorError("cloud.aws: cannot enforce instance credential policy") from exc
     remove = getattr(resolver, "remove", None)
-    if callable(remove):
-        for name in ("iam-role", "container-role"):
-            try:
-                remove(name)
-            except Exception:
-                continue
+    if not callable(remove):
+        raise ConnectorError("cloud.aws: cannot enforce instance credential policy")
+    for name in ("iam-role", "container-role"):
+        try:
+            remove(name)
+        except Exception as exc:
+            raise ConnectorError("cloud.aws: cannot enforce instance credential policy") from exc
 
 
 def reject_instance_profile_sources(sdk_session: object, profile: str | None) -> None:

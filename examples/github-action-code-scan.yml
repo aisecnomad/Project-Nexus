@@ -2,10 +2,9 @@
 # agent frameworks, MCP configs, coding-agent configs, IaC and LLM credentials
 # and uploads the results to GitHub code scanning as SARIF.
 #
-# Pin ShadowScan itself to a reviewed tag or full commit SHA. Floating `main`
-# runs unreviewed scanner code in every consumer workflow.
-# This immutable release-candidate revision exists; v0.1.1 is not published yet.
-# Update the SHA only after reviewing the replacement and its passing checks.
+# Set the repository variable SHADOWSCAN_REVISION to a reviewed full commit SHA.
+# This fails closed until the operator selects and verifies a scanner revision;
+# a floating branch would execute new scanner code without that review.
 name: ShadowScan
 on:
   pull_request:
@@ -27,7 +26,15 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install "git+https://github.com/aisecnomad/Project-Nexus.git@48354ae1365474c9fe4f1610b68d7ba293a3269a"
+      - name: Install reviewed ShadowScan revision
+        env:
+          SHADOWSCAN_REVISION: ${{ vars.SHADOWSCAN_REVISION }}
+        run: |
+          if ! [[ "$SHADOWSCAN_REVISION" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Set SHADOWSCAN_REVISION to an approved 40-character commit SHA" >&2
+            exit 1
+          fi
+          python -m pip install "git+https://github.com/aisecnomad/Project-Nexus.git@${SHADOWSCAN_REVISION}"
       - run: shadowscan code . --inventory inventory/ --format sarif -o shadowscan.sarif --fail-on critical
       - uses: github/codeql-action/upload-sarif@e429ea58a9912cadc53f8132ad35562b54de1b30 # v3.38.1
         if: always() && hashFiles('shadowscan.sarif') != ''

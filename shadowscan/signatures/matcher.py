@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from bisect import bisect_right
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
@@ -67,7 +67,10 @@ def _run_regex(operation: Callable[[float], Any], context: str) -> Any:
                 raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete") from exc
 
 
-def _finditer(rx: Any, text: str, context: str, limit: int) -> list[Any]:
+def _finditer(
+    rx: Any, text: str, context: str, limit: int,
+    excluded: Callable[[int], bool] | None = None,
+) -> list[Any]:
     def collect(timeout: float) -> list[Any]:
         # Tiny patterns dominate this workload. Releasing/reacquiring the GIL
         # for every token under parallel connectors can spend the entire wall
@@ -77,7 +80,10 @@ def _finditer(rx: Any, text: str, context: str, limit: int) -> list[Any]:
         # between next() calls. Consume only the caller's remaining match quota
         # before redaction or other connector threads can process yielded hits.
         # Never materialize the unbounded sequence of matches in a large input.
-        return list(islice(rx.finditer(text, timeout=timeout, concurrent=False), limit))
+        matches = rx.finditer(text, timeout=timeout, concurrent=False)
+        if excluded is not None:
+            matches = (match for match in matches if not excluded(match.start()))
+        return list(islice(matches, limit))
 
     return _run_regex(collect, context)
 
@@ -289,22 +295,33 @@ class SignatureIndex:
         return out
 
     def _match_regex_signals(
-        self, signal_type: str, text: str, language: str | None = None, max_per_signal: int = 3
+        self, signal_type: str, text: str, language: str | None = None, max_per_signal: int = 3,
+        ignore_spans: Sequence[tuple[int, int]] = (),
     ) -> list[Match]:
         # One deadline covers the whole signal class even outside filesystem scans.
         with self.scan_budget():
-            return self._match_regex_signals_with_budget(signal_type, text, language, max_per_signal)
+            return self._match_regex_signals_with_budget(signal_type, text, language, max_per_signal, ignore_spans)
 
     def _match_regex_signals_with_budget(
-        self, signal_type: str, text: str, language: str | None, max_per_signal: int
+        self, signal_type: str, text: str, language: str | None, max_per_signal: int,
+        ignore_spans: Sequence[tuple[int, int]],
     ) -> list[Match]:
         out: list[Match] = []
+        # Ignore matches beginning inside comments and literals before applying
+        # the per-signal quota. A file with many examples must not hide live code.
+        starts = [start for start, _ in ignore_spans]
+        ends = [end for _, end in ignore_spans]
+
+        def excluded(offset: int) -> bool:
+            previous = bisect_right(starts, offset) - 1
+            return previous >= 0 and offset < ends[previous]
+
         for sig, s in self._by_type.get(signal_type, []):
             if language and s.languages and language not in s.languages:
                 continue
             hits = 0
             for rx in s.bounded_compiled:
-                for m in _finditer(rx, text, sig.id, max_per_signal - hits):
+                for m in _finditer(rx, text, sig.id, max_per_signal - hits, excluded if starts else None):
                     line = text.count("\n", 0, m.start()) + 1
                     excerpt = m.group(0)
                     # Never cut away a credential's recognizable context before
@@ -319,11 +336,15 @@ class SignatureIndex:
                     break
         return out
 
-    def match_imports(self, text: str, language: str | None) -> list[Match]:
-        return self._match_regex_signals("import", text, language)
+    def match_imports(
+        self, text: str, language: str | None, ignore_spans: Sequence[tuple[int, int]] = (),
+    ) -> list[Match]:
+        return self._match_regex_signals("import", text, language, ignore_spans=ignore_spans)
 
-    def match_code(self, text: str, language: str | None = None) -> list[Match]:
-        return self._match_regex_signals("code", text, language)
+    def match_code(
+        self, text: str, language: str | None = None, ignore_spans: Sequence[tuple[int, int]] = (),
+    ) -> list[Match]:
+        return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans)
 
     def match_secrets(self, text: str) -> list[Match]:
         return self._match_regex_signals("secret", text, None, max_per_signal=5)

@@ -7,6 +7,7 @@ low-code platforms, SaaS apps and cloud accounts. It fingerprints frameworks and
 model providers, scores findings and reconciles discoveries against your approved
 inventory of
 [Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
+Counts and severity labels need analyst review before they drive enforcement.
 
 Example findings (totals vary as signatures evolve):
 
@@ -31,8 +32,22 @@ They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, O
 Bedrock Agents provisioned by Terraform, MCP servers wired into every 
 developer's editor, service principals with `Mail.ReadWrite` acting on behalf of nobody, and JWTs carrying an `act` claim. 
 Each surface has its own discovery API and its own vocabulary. 
-ShadowScan normalizes all of them into one finding model with evidence, so you can answer three questions for every
-agent in the estate: *who owns it, what can it do, and did anyone approve it?*
+ShadowScan normalizes these observations into one finding model with evidence,
+so investigators can ask: *who owns this candidate, what can it do, and is it
+registered in the inventory supplied for this scan?*
+
+| Observation | What it establishes | Next check |
+|---|---|---|
+| Source dependency, import, or configuration | A repository contains a potential integration. | Inspect executable code and deployment; comments, examples, and unused dependencies can mislead. |
+| Cloud or SaaS resource | The collector observed a configured resource within its granted scope. | Check resource state and authenticated runtime telemetry before claiming execution. |
+| Gateway event | The supplied log contains a request or tool-use signal. | Verify the log's origin, caller binding, and observation window before attributing it to a deployed agent. |
+| `shadow: true` | No single explicit binding in the **supplied** inventory matched the finding. | Confirm the inventory's scope and freshness; an unmatched finding alone does not prove unauthorized use. |
+
+Confidence is a heuristic evidence score, not a measured probability. Detection
+quality depends on the repositories, providers, tenant permissions and log
+provenance in your environment. See [evaluation](docs/evaluation.md) and
+[rollout acceptance](docs/production.md#rollout-acceptance) before using a risk
+threshold as a production gate.
 
 ## Surfaces & connectors
 
@@ -42,7 +57,7 @@ agent in the estate: *who owns it, what can it do, and did anyone approve it?*
 | **Identity** | `identity.okta`, `identity.entra`, `identity.google-workspace`, `identity.auth0`, `identity.jwt` | OAuth apps & consent grants to AI SaaS, service apps / service principals / managed identities with LLM or data permissions, app registrations that look like agents, JWT classification (human / service / workload / delegated-agent) with privilege and hygiene analysis |
 | **Gateway** | `gateway.logs` | Callers reconstructed from LiteLLM, Portkey, Kong AI, Cloudflare AI Gateway, Helicone, Langfuse, Bedrock invocation logs, Azure OpenAI diagnostics, Vertex audit logs, OpenAI/Anthropic usage exports, nginx/envoy/ALB access logs or any JSON: models, frameworks (from user agents), tool-use ratio, 24x7 activity, volume, cost |
 | **Low-code** | `lowcode.power-platform`, `lowcode.salesforce`, `lowcode.servicenow`, `lowcode.n8n`, `lowcode.make`, `lowcode.zapier`, `lowcode.workato` | Copilot Studio agents & topics, Power Automate/Apps using AI connectors, Agentforce planners/topics/actions, Einstein bots, prompt templates, Now Assist AI agents/tools/triggers, automation workflows with AI or agent steps |
-| **SaaS** | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | Bots and apps with their scopes, pending install requests, Teams apps with bots / Copilot agents, GitHub Apps (AI reviewers, coding agents) and their permissions, Rovo/Marketplace apps, Notion integrations, Zoom meeting bots, any CSV/JSON app inventory (CASB exports) |
+| **SaaS** | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | Bots and apps with their scopes, pending install requests, Teams apps with bots / Copilot agents, GitHub Apps (AI reviewers, coding agents) and their permissions, Rovo/Marketplace apps, Notion integrations, Zoom approved and account-created Marketplace apps (approval does not prove installation), any CSV/JSON app inventory (CASB exports) |
 | **Cloud** | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci` | Bedrock Agents / AgentCore / Flows / Q Business / Lex, Lambda/ECS/SageMaker/Step Functions with LLM signals, Vertex AI Agent Engine, Dialogflow CX, Agentspace, Cloud Run/Functions, Azure OpenAI deployments, AI Foundry agents, Bot Service, Logic Apps, Function/Container apps, OCI Generative AI Agents, Digital Assistant, GenAI endpoints, IAM roles/bindings/policies granting LLM access, secret *names*, API keys, CloudTrail / audit-log LLM callers |
 
 Connectors support **live** API collection, **offline** JSON/CSV/log exports,
@@ -67,21 +82,38 @@ tells you what a package, host, user agent, model id, scope or file path maps to
 
 ## Install
 
+Select the full 40-character commit SHA after reviewing its changes and CI
+results. Set `SHADOWSCAN_REVISION` to that SHA; do not use a moving branch or an
+unpublished tag in a deployment job. Install the core scanner **or** the cloud
+extra in a clean virtual environment:
+
 ```bash
-pip install "git+https://github.com/aisecnomad/Project-Nexus.git@48354ae1365474c9fe4f1610b68d7ba293a3269a"           # core (code, identity, gateway, low-code, SaaS via REST)
-pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@48354ae1365474c9fe4f1610b68d7ba293a3269a"   # + boto3, google-auth, azure-identity, oci
+SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
+python -m pip install "git+https://github.com/aisecnomad/Project-Nexus.git@${SHADOWSCAN_REVISION}"
 ```
 
-These examples pin an existing 0.1.1 release-candidate revision, not a published
-release; no `v0.1.1` tag is required. Review and pin the final approved commit
-before deployment. Python 3.11+ is required; CI covers 3.11 and 3.12. Core
-dependencies include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
+For cloud collection, install the extra from the same reviewed revision:
+
+```bash
+SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
+python -m pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@${SHADOWSCAN_REVISION}"
+```
+
+The current `0.1.1` source version is an unreleased candidate; the version
+string does not imply a published or signed artifact. These VCS installs resolve
+transitive dependencies at install time. For deployment, use the locked install
+below. Python 3.11+ is required; CI covers 3.11 and 3.12. Core dependencies
+include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
 
 For deployment on Linux x86_64 with Python 3.11 or 3.12, the checked-in
 `requirements.lock` pins and hashes the core and all cloud runtime dependencies.
-See [reproducible installs and lock maintenance](docs/production.md#install-from-a-reviewed-revision).
+Build and retain a wheel from the selected commit; see
+[locked installs and release evidence](docs/production.md#install-from-a-reviewed-revision).
+The [consumer GitHub Action example](examples/github-action-code-scan.yml) requires
+the repository variable `SHADOWSCAN_REVISION` to hold that reviewed full SHA;
+it fails until the variable is set.
 
 ## Quick start
 
@@ -103,7 +135,7 @@ shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # re-analyse l
 
 # 5. Logs and tokens
 shadowscan gateway litellm-spend.jsonl bedrock-invocations/ egress-proxy.log
-shadowscan jwt "$TOKEN" --jwks-url https://acme.okta.com/oauth2/default/v1/keys
+shadowscan jwt --file ./token.jwt --jwks-url https://acme.okta.com/oauth2/default/v1/keys
 
 # 6. Register what you found
 shadowscan inventory stubs report.json -o inventory/pending/    # capability-card stubs for shadow agents

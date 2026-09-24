@@ -24,10 +24,11 @@ entry. Tenant canaries and container runtime acceptance are still required.
 
 ### Operations
 
-- Pin the current install examples to an existing immutable candidate commit rather than the not-yet-published `v0.1.1` tag.
+- Explain how to select and verify the final reviewed full commit SHA; avoid an install example that silently falls behind later candidate fixes.
 - Raise the development Ruff requirement to 0.16.8 and validate wheel installations against the runtime lock.
 - Correct README commands, formatting and discovery claims; document the active required checks and independent-review merge gate.
 - Document dependency lock maintenance, soft deadline limits, rollout evidence and remaining tenant/container acceptance.
+- Clarify that finding confidence is heuristic, that static signals and resource existence need runtime corroboration, and that field precision/recall require a held-out local corpus before risk-gate enforcement.
 
 ## Earlier hardening notes — 2026-09-24
 

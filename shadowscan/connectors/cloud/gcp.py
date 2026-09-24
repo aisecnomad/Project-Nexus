@@ -19,7 +19,6 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
@@ -27,6 +26,7 @@ from requests import RequestException, Session
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import cloud_finding, done, name_hint, scan_env, scan_iam_actions
+from shadowscan.connectors.cloud.credentials import allow_instance_credentials, require_local_adc
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
@@ -75,7 +75,7 @@ class GcpConnector(BaseConnector):
                 raise ConnectorError("cloud.gcp: install google-auth (pip install 'shadowscan[gcp]') or provide access_token") from exc
             # google-auth otherwise uses its own 120-second transport default,
             # including discovery/refresh requests outside our HttpClient.
-            allow_instance = self.ctx.get("allow_instance_credentials", False) is True
+            allow_instance = allow_instance_credentials(self.ctx.get("allow_instance_credentials", False))
 
             class CredentialSession(Session):
                 """Retain OAuth status bodies within the complete HTTP policy."""
@@ -125,12 +125,10 @@ class GcpConnector(BaseConnector):
             if allow_instance and not credentials_file:
                 creds, _ = google.auth.default(scopes=scopes, request=request)
             else:
-                if not credentials_file:
-                    from google.auth import _cloud_sdk
-
-                    credentials_file = _cloud_sdk.get_application_default_credentials_path()
-                    if not Path(credentials_file).is_file():
-                        raise ConnectorError("cloud.gcp: provide access_token or local ADC; instance credentials require options.allow_instance_credentials=true")
+                # Local-only mode never calls the default ADC chain, which may
+                # silently fall through to instance metadata or external hooks.
+                if not allow_instance:
+                    credentials_file = require_local_adc(credentials_file)
                 creds, _ = google.auth.load_credentials_from_file(credentials_file, scopes=scopes, request=request)
             creds.refresh(request)
             token = creds.token

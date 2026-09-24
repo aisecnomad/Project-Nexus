@@ -39,6 +39,7 @@ from shadowscan.connectors.code.ownership import (
 from shadowscan.connectors.code.ownership import (
     codeowners_match as _codeowners_match,
 )
+from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.connectors.common import apply_matches, finalize, looks_like_placeholder
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
@@ -448,7 +449,7 @@ class FilesystemConnector(BaseConnector):
             )
         projects: dict[str, _Project] = {".": _Project(".")}
         secret_hits: dict[str, list[tuple[Match, str]]] = {}  # relpath -> matches
-        mcp_files: list[tuple[str, str]] = []  # relpath, text
+        mcp_files: list[tuple[str, list[dict[str, Any]]]] = []  # relpath, parsed servers
         card_files: list[tuple[str, str, str]] = []  # relpath, text, kind
         workflow_files: dict[str, list[tuple[Match, str]]] = {}
         infra_files: dict[str, list[tuple[Match, str, str]]] = {}  # relpath -> (match, value, snippet)
@@ -469,7 +470,8 @@ class FilesystemConnector(BaseConnector):
                     # 1. file-name signals (config files of agents / MCP / A2A ...)
                     file_matches = self.index.match_file(rel)
                     for m in file_matches:
-                        self._record(proj, m, rel, None)
+                        if m.signature_id != "protocol.mcp":
+                            self._record(proj, m, rel, None)
 
                     is_source = ext in SOURCE_EXTENSIONS
                     is_text_cfg = ext in TEXT_CONFIG_EXTENSIONS or lower.startswith(".env") or is_manifest_name(name) or "." not in name
@@ -488,6 +490,25 @@ class FilesystemConnector(BaseConnector):
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                         lang = "python"
                     safe_text = _safe_source_text(rel, text)
+                    is_mcp = self._looks_like_mcp_config(rel, name, text) or (
+                        lower == "server.json" and '"mcpServers"' in text
+                    )
+                    mcp_servers: list[dict[str, Any]] = []
+                    if is_mcp:
+                        mcp_errors: list[str] = []
+                        mcp_servers = _parse_mcp_servers(rel, text, mcp_errors)
+                        for issue in dict.fromkeys(mcp_errors):
+                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                    active_mcp = [server for server in mcp_servers if not server["disabled"]]
+                    for m in file_matches:
+                        if m.signature_id == "protocol.mcp" and active_mcp:
+                            self._record(proj, m, rel, None)
+
+                    def record_content_match(m: Match, snippet: str | None) -> None:
+                        # A bare key or matching filename is not evidence of a
+                        # configured server when all entries are empty/disabled.
+                        if m.signature_id != "protocol.mcp" or not is_mcp or active_mcp:
+                            self._record(proj, m, rel, snippet)
 
                     # 2. manifests (dependencies, images, env names, IaC types)
                     manifest = parse_manifest(rel, text) if (is_manifest_name(name) or ext in {".tf", ".bicep", ".yml", ".yaml", ".json", ".hcl"} or ".github/workflows" in rel) else None
@@ -515,22 +536,41 @@ class FilesystemConnector(BaseConnector):
                     # offsets for match line numbers and the original redacted
                     # excerpts; the manifest parser handles active XML itself.
                     content_text = _without_xml_comments(text) if ext in {".xml", ".props", ".targets", ".csproj", ".fsproj", ".vbproj"} else text
-                    is_mcp = self._looks_like_mcp_config(rel, name, text)
                     if is_source:
-                        for m in self.index.match_imports(content_text, lang):
-                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
-                        for m in self.index.match_code(content_text, lang):
-                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                        # Malformed trailing literals are masked through EOF;
+                        # preceding valid imports/code remain inspectable.
+                        ignored, ambiguous = noncode_ranges(
+                            content_text, lang, ext, jsx=ext in {".jsx", ".tsx"},
+                        )
+                        if ambiguous:
+                            self.ctx.error(f"code.filesystem: {rel}: incomplete source lexical analysis")
+                        imports = (
+                            self.index.match_imports(content_text, lang, ignore_spans=ignored)
+                            if ignored else self.index.match_imports(content_text, lang)
+                        )
+                        for m in imports:
+                            record_content_match(m, excerpt_line(safe_text, m.line or 1))
+                        code_matches = (
+                            self.index.match_code(content_text, lang, ignore_spans=ignored)
+                            if ignored else self.index.match_code(content_text, lang)
+                        )
+                        for m in code_matches:
+                            record_content_match(m, excerpt_line(safe_text, m.line or 1))
                     elif not is_nonexecutable:
                         for m in self.index.match_code(content_text, None):
-                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                            # MCP configs are structured data. A disabled server
+                            # may contain sample commands that look like agent
+                            # code; only the parsed protocol marker is relevant.
+                            if is_mcp and m.signature_id != "protocol.mcp":
+                                continue
+                            record_content_match(m, excerpt_line(safe_text, m.line or 1))
                             if m.signature.category in {"platform", "cloud-service"} and m.agent_indicator and ext in {".json", ".yaml", ".yml"} and not is_mcp:
                                 workflow_files.setdefault(rel, []).append((m, excerpt_line(safe_text, m.line or 1)))
-                    if not is_nonexecutable:
+                    if not is_nonexecutable and not is_mcp:
                         for m in self.index.match_envs_in_text(content_text):
-                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                            record_content_match(m, excerpt_line(safe_text, m.line or 1))
                         for m in self.index.match_domains_in_text(content_text):
-                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                            record_content_match(m, excerpt_line(safe_text, m.line or 1))
                     if self.scan_secrets:
                         for m in self.index.match_secrets(text):
                             if looks_like_placeholder(m.value):
@@ -539,8 +579,8 @@ class FilesystemConnector(BaseConnector):
                             self._record(proj, m, rel, None)
 
                     # 4. special files
-                    if is_mcp:
-                        mcp_files.append((rel, text))
+                    if active_mcp:
+                        mcp_files.append((rel, mcp_servers))
                     if lower in {"agent.json", "agent-card.json", "agent_card.json"} and ".well-known" in rel or lower in {"agent-card.json", "agent_card.json"}:
                         card_files.append((rel, text, "a2a"))
                     elif lower.startswith("declarativeagent") and ext == ".json":
@@ -557,12 +597,10 @@ class FilesystemConnector(BaseConnector):
         # ------------------------------------------------------------ emit
         for proj in projects.values():
             yield from self._emit_project(label, root, proj)
-        for rel, text in mcp_files:
+        for rel, servers in mcp_files:
             try:
                 with self.index.scan_budget(seconds=self.scan_timeout):
-                    f = self._mcp_finding(label, root, rel, text)
-                    if f:
-                        yield f
+                    yield self._mcp_finding(label, root, rel, servers)
             except Exception as exc:  # noqa: BLE001 - retain findings from other configurations
                 self.ctx.error(f"code.filesystem: {rel}: MCP analysis incomplete ({type(exc).__name__})")
         for rel, text, kind in card_files:
@@ -680,7 +718,11 @@ class FilesystemConnector(BaseConnector):
         if lower in MCP_CONFIG_NAMES or rel.endswith((".json", ".toml", ".yaml", ".yml")):
             head = text[:200_000]
             return (
-                '"mcpServers"' in head or "mcpServers:" in head or "[mcp_servers." in head
+                '"mcpServers"' in head or '"mcp_servers"' in head
+                or "mcpServers:" in head or "mcp_servers:" in head
+                or "[mcp_servers." in head
+                or re.search(r"(?m)^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$", head) is not None
+                or re.search(r"(?m)^[ \t]*mcp_servers\.[A-Za-z0-9_-]+[ \t]*=", head) is not None
                 or ('"mcp"' in head and '"servers"' in head)
                 or ("mcp:" in head and "servers:" in head)
             )
@@ -830,6 +872,14 @@ class FilesystemConnector(BaseConnector):
             f.models = f.metadata["models"]
             if proj.agent_defs:
                 f.metadata["agent_definitions"] = proj.agent_defs
+            # Installed SDKs, imports and endpoint strings establish framework
+            # use. MCP code/config alone establishes a tool server/client, not
+            # an agent capable of choosing actions or planning.
+            f.metadata["agent_indicators"] = sum(
+                m.agent_indicator and m.signal.type in {"code", "file"}
+                and m.signature_id != "protocol.mcp"
+                for m, _, _ in tech_matches
+            )
             finalize(f, self.index)
             f.title = self._project_title(f, proj)
             yield f
@@ -869,18 +919,15 @@ class FilesystemConnector(BaseConnector):
         detail = ", ".join(names) or ", ".join(provs) or "LLM SDK"
         return f"{what} in {where}: {detail}"
 
-    def _mcp_finding(self, label: str, root: Path, rel: str, text: str) -> Finding | None:
-        errors: list[str] = []
-        servers = _parse_mcp_servers(rel, text, errors)
-        for issue in dict.fromkeys(errors):
-            self.ctx.error(f"code.filesystem: {rel}: {issue}")
+    def _mcp_finding(self, label: str, root: Path, rel: str, servers: list[dict[str, Any]]) -> Finding:
+        enabled = [server for server in servers if not server["disabled"]]
         f = self._base(label, root, rel, Kind.MCP_SERVER, f"MCP configuration: {rel}", "mcp-config")
         sig = self.index.get("protocol.mcp")
         f.add_framework("protocol.mcp")
         f.add_capability("tool-use")
         f.add_evidence(Evidence(signal="file:protocol.mcp", description=f"MCP client/server configuration file {rel}", location=rel, weight=0.95, signature="protocol.mcp"))
         remote_hosts: list[str] = []
-        for s in servers:
+        for s in enabled:
             if s.get("url"):
                 for m in self.index.match_domains_in_text(s["url"]):
                     if m.signature.category != "identity-app":
@@ -895,14 +942,11 @@ class FilesystemConnector(BaseConnector):
             cmd = " ".join([str(s.get("command") or "")] + [str(a) for a in s.get("args", [])]).lower()
             if any(k in cmd for k in ("filesystem", "shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh", "sqlite", "postgres", "mysql", "mongodb", "github", "gitlab", "slack", "gmail", "google-drive", "aws", "gcloud", "azure", "puppeteer", "playwright", "browser")):
                 f.add_capability("code-exec" if any(k in cmd for k in ("shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh")) else "saas-actions")
-        f.metadata["servers"] = servers
-        f.metadata["server_count"] = len(servers)
+        f.metadata["servers"] = enabled
+        f.metadata["server_count"] = len(enabled)
+        f.metadata["disabled_server_count"] = len(servers) - len(enabled)
         f.metadata["remote_urls"] = remote_hosts
         f.metadata["client"] = _mcp_client_for(rel)
-        if not servers and (Path(rel).name.lower() == "server.json" or not any(
-            key in text for key in ("mcpServers", "mcp_servers", "servers")
-        )):
-            return None
         f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.MCP_SERVER
@@ -1173,6 +1217,18 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
         if command is not None and not isinstance(command, str):
             errors.append("MCP command must be a string")
             command = None
+        packages = cfg.get("packages")
+        valid_package = isinstance(packages, list) and any(
+            isinstance(package, dict)
+            and isinstance(package.get("registryType"), str)
+            and isinstance(package.get("identifier"), str)
+            and package["identifier"].strip()
+            for package in packages
+        )
+        if not (command and command.strip()) and not (url and url.strip()) and not valid_package:
+            if cfg.get("disabled") is not True and cfg.get("enabled") is not False:
+                errors.append("MCP server entry has no command, URL, or valid package")
+            continue
         args = cfg.get("args", [])
         args = [] if args is None else args
         if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
@@ -1205,7 +1261,14 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
         inline = inline or safe["args"] != args or safe["url"] != url or safe["command"] != command
         safe["args"] = safe["args"][:12]
         safe["secrets_inline"] = bool(inline)
-        safe["disabled"] = bool(cfg.get("disabled", False))
+        disabled = cfg.get("disabled", False)
+        enabled = cfg.get("enabled", True)
+        if not isinstance(disabled, bool) or not isinstance(enabled, bool):
+            errors.append("MCP enabled/disabled flags must be booleans")
+            # Unknown activation state cannot substantiate an active server.
+            safe["disabled"] = True
+        else:
+            safe["disabled"] = disabled or not enabled
         out.append(safe)
     return sanitize({"context": data, "servers": out})["servers"]
 

@@ -312,9 +312,20 @@ class Engine:
                                   "timeout when a hard execution limit is required."],
                     ))
                     pending.remove(future)
-                if expired:
-                    # Do not queue more work behind blocked workers or create
-                    # replacement threads that exceed the configured parallelism.
+                if pending and timed_out:
+                    # A timed-out worker can still be running inside an SDK or
+                    # plugin call. Preserve queued siblings while *any* worker
+                    # can eventually run them. Only abandon the queue when all
+                    # worker slots are still occupied by timed-out calls; waiting
+                    # for those calls would defeat the completion deadline, and
+                    # replacing them would exceed the configured parallelism.
+                    running = [future for future in futures if future.running()]
+                    capacity_exhausted = (
+                        len(running) >= workers
+                        and all(futures[future][0] in timed_out for future in running)
+                    )
+                    if not capacity_exhausted:
+                        continue
                     for future in tuple(pending):
                         if future.cancel():
                             number, spec = futures[future]
@@ -322,8 +333,9 @@ class Engine:
                             timed_out.add(number)
                             completed[number] = (spec, [], ScanStats(
                                 connector=spec.id, started_at=result.started_at, finished_at=now_iso(),
-                                incomplete=True, skipped=True, skip_reason="cancelled after another connector timed out",
-                                errors=["connector not started after a completion deadline was exceeded"],
+                                incomplete=True, skipped=True,
+                                skip_reason="no worker capacity remains after connector timeouts",
+                                errors=["connector not started: all worker slots remain occupied by timed-out calls"],
                             ))
                             pending.remove(future)
         finally:

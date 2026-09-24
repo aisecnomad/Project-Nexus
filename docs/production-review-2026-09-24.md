@@ -3,6 +3,11 @@
 Base reviewed: `5486827cb478dc476412a6758c5897dd92d9b7ca` (`main`, including PR #25).
 Disposition: implementation hardened; production rollout remains subject to tenant acceptance and an enforced merge gate.
 
+**Historical review.** The version, ruleset and installation-pin observations below
+describe that reviewed base and the follow-up available at the time. For the
+current release candidate, required checks and rollout gates, use
+[deployment and migration](production.md) and verify the live repository ruleset.
+
 This review examined the current implementation rather than replaying the older
 findings against `b13753d`. It preserved the intervening main-branch protections
 and selectively recovered useful HTTP, cloud and performance changes from the
@@ -83,8 +88,9 @@ actual expensive regex preemption.
    Sanitized reports are still sensitive. Inventory-stub validation is complete
    before writes, but a multi-file write is not transactional on filesystem error.
 
-Package version remains `0.1.0`; this review does not publish a release or certify
-the deployment environment. See [production.md](production.md) for migration and
+At the reviewed base, the package version remained `0.1.0`; this review did not
+publish a release or certify the deployment environment. See
+[production.md](production.md) for migration and
 acceptance details. The older conflicting PR #23 should not be merged wholesale
 over the newer protections retained here.
 README and example workflow installation pins now point to the verified code

@@ -37,6 +37,11 @@ from shadowscan.connectors.cloud.common import (
     scan_env,
     scan_iam_actions,
 )
+from shadowscan.connectors.cloud.credentials import (
+    allow_instance_credentials,
+    configure_aws_session,
+    reject_instance_profile_sources,
+)
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.identity import has_aws_account_scope
@@ -116,23 +121,12 @@ class AwsConnector(BaseConnector):
         # concurrent scans and can unexpectedly enable metadata access elsewhere.
         sdk_session = Session(profile=profile)
         sdk_session.set_default_client_config(self._sdk_config())
-        sdk_session.set_config_variable("metadata_service_timeout", 3)
-        sdk_session.set_config_variable("metadata_service_num_attempts", 1)
-        if self.ctx.get("allow_instance_credentials", False) is not True:
-            resolver = sdk_session.get_component("credential_provider")
-            resolver.remove("iam-role")
-            resolver.remove("container-role")
-            # AssumeRoleProvider keeps a separate credential source chain, so
-            # removing top-level metadata providers alone is insufficient.
-            profiles = sdk_session.full_config.get("profiles", {})
-            source = profile or sdk_session.get_config_variable("profile") or "default"
-            visited: set[str] = set()
-            while source and source not in visited:
-                visited.add(source)
-                details = profiles.get(source, {})
-                if details.get("credential_source") in {"Ec2InstanceMetadata", "EcsContainer"}:
-                    raise ConnectorError("cloud.aws: instance credentials require options.allow_instance_credentials=true")
-                source = details.get("source_profile")
+        allow_instance = allow_instance_credentials(self.ctx.get("allow_instance_credentials", False))
+        configure_aws_session(sdk_session, allow_instance=allow_instance)
+        if not allow_instance:
+            # AssumeRoleProvider has its own source chain; removing providers
+            # from this session alone cannot override a named instance profile.
+            reject_instance_profile_sources(sdk_session, profile)
         session = boto3.Session(botocore_session=sdk_session)
         role = self.ctx.get("role_arn")
         if role:

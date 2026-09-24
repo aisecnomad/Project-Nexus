@@ -13,9 +13,22 @@ passing unit suite does not establish complete coverage of a particular estate.
 ## Install from a reviewed revision
 
 Check out an audited full commit SHA before installation. README and example
-workflow pins point to an existing candidate; they do not automatically include
-later changes. Use the final approved SHA recorded with the deployment evidence,
-not a floating branch or a tag that has not been published.
+workflow instructions require a full reviewed commit; a fixed example SHA would
+fall behind new fixes. Record the exact revision with deployment evidence and
+verify the checkout matches it before building. Do not use a floating branch or
+a tag that has not been published.
+
+```bash
+SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
+git clone https://github.com/aisecnomad/Project-Nexus.git
+cd Project-Nexus
+git checkout --detach "$SHADOWSCAN_REVISION"
+test "$(git rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
+```
+
+The install commands below use the files in this checked out tree. Check that
+`git status --porcelain` is empty and retain the commit SHA, CI links, dependency
+lock and built wheel hash for each worker deployment.
 
 The runtime lock covers the core scanner and all cloud SDK extras on CPython
 3.11/3.12, Linux x86_64. It contains exact versions and permitted SHA-256 hashes;
@@ -27,7 +40,8 @@ From the reviewed checkout, in a clean virtual environment:
 
 ```bash
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-python -m pip wheel . --no-deps --wheel-dir dist
+python -m pip install --only-binary=:all: setuptools==84.0.0 wheel==0.48.0
+python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 python -m pip install --no-deps dist/shadowscan-0.1.1-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
@@ -36,9 +50,14 @@ shadowscan --help
 
 The runtime lock deliberately includes all cloud extras, even for a code-only
 worker. Development tools and isolated wheel build tooling are not part of this
-runtime lock. Build the wheel in a controlled builder, retain its SHA-256, and
-install that reviewed artifact into workers. Dependency hashes prevent silent
-artifact substitution; they do not establish that a dependency is safe.
+runtime lock. The build backend versions are fixed in `pyproject.toml`, and CI
+uses a separate exact-version constraints file for development tools. Build the
+wheel in a controlled builder, retain its SHA-256, and install that reviewed
+artifact into workers. Capture the builder image digest, Python/pip/build-backend
+versions and wheel hash: matching runtime dependencies alone does not ensure
+identical wheel bytes. Dependency hashes
+prevent silent runtime artifact substitution; they do not establish that a
+dependency is safe.
 
 Regenerate intentionally in a clean Linux environment with Python 3.12 and
 `pip-tools==7.5.3`, review the dependency diff and advisory results, and let both
@@ -56,11 +75,11 @@ supported-platform comment when regenerating. Do not bypass failed hash checks.
 The Dockerfile uses this runtime lock and UID/GID 65532. Supply an approved base
 image digest through `--build-arg PYTHON_IMAGE=python@sha256:<approved-digest>`
 and retain the built image digest. The default base tag and distribution packages
-are mutable; the Dockerfile alone does not promise byte-for-byte reproducible
-images. Build and test the actual image before release: verify the non-root UID,
-read-only filesystem operation, resource limits and output-directory permissions.
-A Docker daemon was unavailable in this review environment, so container runtime
-acceptance remains pending. Opt-in Git history enrichment requires Git 2.45+;
+and isolated build tooling are mutable; the Dockerfile alone does not promise
+byte-for-byte reproducible images. CI smoke-tests a non-root, read-only and
+network-isolated image; build and test the deployment image at its approved base
+digest, including resource limits and output-directory permissions, before rollout.
+Opt-in Git history enrichment requires Git 2.45+;
 verify the distribution Git version if that feature is needed. Keep runtime
 secrets out of the build context.
 
@@ -186,6 +205,9 @@ as `[]` remain valid; an authorization-error document is not an empty inventory.
 Identity and low-code collectors retain available records when enrichment or a
 later page fails. Auth0 offset pagination has a finite page budget and detects
 repeated pages. Okta grants and optional tokens both follow pagination.
+Zoom's Marketplace listing enumerates approved public and account-created apps;
+its results do not prove a per-user installation. A denied or incomplete
+Marketplace category marks the scan incomplete.
 Google Workspace accepts omitted empty arrays only in identified native users
 and token-list envelopes; an arbitrary empty object is incomplete coverage.
 Every `--only` value must match an enabled connector name or label, including
@@ -353,8 +375,12 @@ PR status at release time because repository settings can change.
 
 The CI workflow installs the hash-locked core/cloud runtime dependency set and validates signatures, lint, typing, dependency advisories, tests
 with a minimum 80% statement coverage, wheel creation, installed-wheel validation
-outside the source checkout and offline SARIF output. The required Python 3.12
-job also builds the Docker image and checks its non-root UID, signature assets and
+outside the source checkout and offline SARIF output. Both Python jobs enforce a
+75% statement-coverage floor for each built-in connector module, so a
+well-tested engine cannot conceal an untested provider. Coverage proves
+execution of code paths in tests; it does not prove provider compatibility or
+complete tenant inventory. The required Python 3.12 job also builds the Docker
+image and checks its non-root UID, signature assets and
 network-isolated scan with a read-only root filesystem and resource limits.
 Focused regressions cover the review findings, private-address enforcement,
 public-key verification, plugin policy, artifact permissions and replay integrity.
@@ -366,6 +392,15 @@ operational rollout, run a read-only canary in each target tenant, inspect compl
 coverage and account identity, verify expected known resources, and compare live
 results with the retained export. These environment-specific checks require
 access to those tenants and are not performed by offline CI.
+
+The [synthetic evaluation](evaluation.md) guards against known classification
+regressions. It does not measure field precision, recall or the calibration of
+the heuristic confidence score. Before turning on `--fail-on` for an estate,
+label a representative held-out set from that estate, include inactive configs,
+commented/string-only source, disabled integrations and genuinely executing
+agents, and review errors by connector and severity. Set a documented acceptable
+false-alert and miss rate for each high-impact workflow; keep human triage while
+those acceptance metrics are measured.
 
 ## Rollout acceptance
 
@@ -390,6 +425,10 @@ Before broad deployment, retain evidence for each intended connector instance:
 6. Pin the reviewed scanner commit, wheel/image digest and approved dependency lock for rollout.
    Establish a fresh comparison baseline, retain the prior pinned version for
    rollback, and keep rollback reports separate from the new identity schema.
+7. Measure precision and recall on a held-out, representative set of your own
+   code and tenant records. Record the labeled corpus, per-connector confusion
+   matrix, severity thresholds, reviewer decisions and accepted failure budget
+   before treating findings as an automated policy decision.
 
 These checks require operator-specific tenant access and operational decisions.
 Until completed, describe deployment status as pending tenant and container acceptance.

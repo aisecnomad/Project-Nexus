@@ -240,7 +240,14 @@ class Finding:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Finding:
-        d = dict(d)
+        if not isinstance(d, dict):
+            raise TypeError("finding must be an object")
+        # Reports can carry newer display fields. Only accept known model
+        # fields, while requiring the fields that define a usable identity.
+        for name in ("surface", "connector", "kind", "title", "resource", "resource_type"):
+            if not isinstance(d.get(name), str) or not d[name].strip():
+                raise ValueError(f"finding {name} is required")
+        d = {name: d[name] for name in (attr.name for attr in fields(cls)) if name in d}
         # Reading an old report preserves its identity rather than silently
         # relabeling old ids as v2. Upgrades require a freshly collected baseline.
         d.setdefault("identity_schema", LEGACY_FINDING_IDENTITY_SCHEMA)
@@ -248,12 +255,23 @@ class Finding:
         d["kind"] = Kind(d["kind"])
         d["likelihood"] = Likelihood(d.get("likelihood", "weak"))
         risk = d.get("risk") or {}
+        if not isinstance(risk, dict):
+            raise ValueError("finding risk must be an object")
+        factors = risk.get("factors", [])
+        if not isinstance(factors, list) or any(not isinstance(factor, dict) for factor in factors):
+            raise ValueError("finding risk factors must be objects")
         d["risk"] = Risk(
             score=risk.get("score", 0),
             level=RiskLevel(risk.get("level", "info")),
-            factors=[RiskFactor(**f) for f in risk.get("factors", [])],
+            factors=[RiskFactor(**{name: value for name, value in factor.items()
+                                   if name in {"id", "description", "weight"}}) for factor in factors],
         )
-        d["evidence"] = [Evidence(**e) for e in d.get("evidence", [])]
+        evidence = d.get("evidence", [])
+        if not isinstance(evidence, list) or any(not isinstance(item, dict) for item in evidence):
+            raise ValueError("finding evidence must be objects")
+        evidence_fields = {attr.name for attr in fields(Evidence)}
+        d["evidence"] = [Evidence(**{name: value for name, value in item.items() if name in evidence_fields})
+                         for item in evidence]
         return cls(**d)
 
 
