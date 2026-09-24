@@ -16,6 +16,7 @@ from typing import Any
 from shadowscan import __version__
 from shadowscan.config import PATH_KEYS, ConnectorSpec, ScanConfig
 from shadowscan.connectors import _BUILTIN
+from shadowscan.models import FINDING_IDENTITY_SCHEMA
 from shadowscan.signatures import SignatureIndex
 
 _SCHEMA = "shadowscan.collection-scope/v1"
@@ -118,6 +119,30 @@ def _findings(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _substantive_state(finding: dict[str, Any]) -> dict[str, Any]:
+    """Security state, excluding timestamps, counters, prose and evidence order."""
+    state = {key: finding.get(key) for key in ("kind", "resource_type", "owner", "shadow", "registry_match")}
+    for key in ("permissions", "capabilities", "frameworks", "model_providers", "models", "tags"):
+        values = finding.get(key, [])
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise ValueError("finding security attributes must be arrays of strings")
+        state[key] = sorted(set(values))
+    risk = finding["risk"]
+    state["risk.score"] = risk["score"]
+    state["risk.level"] = risk["level"]
+    factors = risk.get("factors", [])
+    if not isinstance(factors, list) or any(not isinstance(factor, dict) for factor in factors):
+        raise ValueError("finding risk factors must be an array of objects")
+    state["risk.factors"] = sorted({_canonical([factor.get("id"), factor.get("weight")]) for factor in factors})
+    return state
+
+
+def _identity_attested(report: dict[str, Any]) -> bool:
+    return report.get("finding_identity_schema") == FINDING_IDENTITY_SCHEMA and all(
+        finding.get("identity_schema") == FINDING_IDENTITY_SCHEMA for finding in report["findings"]
+    )
+
+
 def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     """Keep positive observations, but never infer absence from lost coverage."""
     if not isinstance(baseline, dict) or not isinstance(current, dict):
@@ -127,20 +152,25 @@ def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[s
     for label, report in (("baseline", baseline), ("current", current)):
         if not _complete(report):
             reasons.append(f"{label} scan is incomplete or lacks completion metadata")
+        if not _identity_attested(report):
+            reasons.append(f"{label} finding identity schema is legacy or unsupported; collect a fresh baseline after upgrade")
     bs, cs = _scope_digest(baseline), _scope_digest(current)
     if not bs or not cs:
         reasons.append("collection scope is unavailable; regenerate legacy reports or use attested static inputs")
     elif bs != cs:
         reasons.append("collection or detection scope differs")
     missing = [b[i] for i in sorted(b.keys() - c.keys())]
+    changes = []
+    for identifier in sorted(b.keys() & c.keys()):
+        before, after = _substantive_state(b[identifier]), _substantive_state(c[identifier])
+        fields = sorted(key for key in before if before[key] != after[key])
+        if fields:
+            changes.append({"before": b[identifier], "after": c[identifier], "changed_fields": fields})
     return {
         "comparable": not reasons,
         "reasons": reasons,
         "new": [c[i] for i in sorted(c.keys() - b.keys())],
         "resolved": [] if reasons else missing,
         "unknown": missing if reasons else [],
-        "changed": [
-            {"before": b[i], "after": c[i]} for i in sorted(b.keys() & c.keys())
-            if b[i]["risk"]["level"] != c[i]["risk"]["level"]
-        ],
+        "changed": changes,
     }

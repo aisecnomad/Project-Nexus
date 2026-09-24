@@ -198,10 +198,7 @@ class OciConnector(BaseConnector):
             self.ctx.warn("cloud.oci: data_science unavailable in installed SDK", incomplete=True)
         try:
             fn = self._client(oci.functions.FunctionsManagementClient, region)
-            for app in self._all(fn.list_applications, comp):
-                for func in self._all(fn.list_functions, app.id):
-                    d = self._d(func)
-                    yield {"_kind": "function", "_region": region, "_compartment": comp, "_application": app.display_name, **d}
+            yield from self._collect_functions(fn, region, comp)
         except AttributeError:
             self.ctx.warn("cloud.oci: functions unavailable in installed SDK", incomplete=True)
         try:
@@ -226,6 +223,51 @@ class OciConnector(BaseConnector):
                 yield {"_kind": "secret-name", "_region": region, "_compartment": comp, "id": s.id, "secret_name": s.secret_name, "description": s.description, "time_created": str(s.time_created)}
         except AttributeError:
             self.ctx.warn("cloud.oci: vault unavailable in installed SDK", incomplete=True)
+
+    def _function_detail(self, client: Any, kind: str, summary: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str], bool]:
+        """List summaries omit config; retain known evidence when detail is denied."""
+        try:
+            detail = self._d(getattr(client, f"get_{kind}")(summary["id"]).data)
+        except Exception as exc:  # noqa: BLE001 - detail failure must not erase listed functions
+            status = getattr(exc, "status", None)
+            reason = f"HTTP {status}" if isinstance(status, int) else type(exc).__name__
+            self.ctx.warn(f"cloud.oci: {kind} detail collection failed ({reason}); configuration coverage unknown", incomplete=True)
+            return summary, {}, False
+        if not isinstance(detail, dict) or detail.get("id") != summary["id"] or "error" in detail:
+            self.ctx.warn(f"cloud.oci: invalid {kind} detail response; configuration coverage unknown", incomplete=True)
+            return summary, {}, False
+        record = {**summary, **{key: value for key, value in detail.items() if value is not None}}
+        config = detail.get("config")
+        if "config" in detail and config is None:
+            return record, {}, True
+        if not isinstance(config, dict):
+            self.ctx.warn(f"cloud.oci: invalid {kind} configuration; coverage unknown", incomplete=True)
+            return record, {}, False
+        valid = {key: value for key, value in config.items() if isinstance(key, str) and isinstance(value, str)}
+        complete = len(valid) == len(config)
+        if not complete:
+            self.ctx.warn(f"cloud.oci: invalid {kind} configuration entries; coverage unknown", incomplete=True)
+        return record, valid, complete
+
+    def _collect_functions(self, client: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
+        for app in self._all(client.list_applications, comp):
+            app_summary = self._d(app)
+            if not isinstance(app_summary, dict) or not isinstance(app_summary.get("id"), str) or not app_summary["id"].strip():
+                self.ctx.warn("cloud.oci: invalid application summary; coverage unknown", incomplete=True)
+                continue
+            application, inherited, application_complete = self._function_detail(client, "application", app_summary)
+            for func in self._all(client.list_functions, app_summary["id"]):
+                summary = self._d(func)
+                if not isinstance(summary, dict) or not isinstance(summary.get("id"), str) or not summary["id"].strip():
+                    self.ctx.warn("cloud.oci: invalid function summary; coverage unknown", incomplete=True)
+                    continue
+                detail, overrides, function_complete = self._function_detail(client, "function", summary)
+                # OCI passes application settings to every function; function settings win.
+                yield {**detail, "config": {**inherited, **overrides}, "_kind": "function", "_region": region,
+                       "_compartment": comp, "_application": application.get("display_name"),
+                       "_application_id": app_summary["id"],
+                       "_config_coverage": {"application": "observed" if application_complete else "unknown",
+                                            "function": "observed" if function_complete else "unknown"}}
 
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -345,13 +387,19 @@ class OciConnector(BaseConnector):
     def _h_function(self, rec: dict[str, Any]) -> Finding | None:
         f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI Function: {rec.get('_application')}/{rec.get('display_name')}", resource=_resource_id(rec.get("id") or rec.get("display_name")), resource_type="function", **self._base(rec))
         scan_env(self.index, f, rec.get("config"), location=rec.get("id"))
-        if rec.get("image"):
-            apply_matches(f, self.index.match_image(rec["image"]), location=rec.get("id"))
+        # New SDKs expose source_details.image; older SDKs / exports use image.
+        source = rec.get("source_details")
+        image = source.get("image") if isinstance(source, dict) else None
+        image = image or rec.get("image")
+        if image:
+            apply_matches(f, self.index.match_image(image), location=rec.get("id"))
         name_hint(self.index, f, rec.get("display_name"))
         if not f.frameworks and not f.model_providers:
             return None
-        f.add_evidence(Evidence(signal="oci:function", description=f"Function '{rec.get('display_name')}' image {rec.get('image')}", weight=0.25))
-        f.metadata.update({"image": rec.get("image"), "application": rec.get("_application"), "config_keys": sorted((rec.get("config") or {}).keys())[:40]})
+        f.add_evidence(Evidence(signal="oci:function", description=f"Function '{rec.get('display_name')}' image {image}", weight=0.25))
+        f.metadata.update({"image": image, "application": rec.get("_application"), "config_keys": sorted((rec.get("config") or {}).keys())[:40]})
+        if "_config_coverage" in rec:
+            f.metadata["config_coverage"] = rec["_config_coverage"]
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_container_instance(self, rec: dict[str, Any]) -> Finding | None:

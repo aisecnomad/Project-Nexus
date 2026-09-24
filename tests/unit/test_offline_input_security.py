@@ -120,5 +120,6 @@ def test_offline_clone_loaders_skip_symlinks_and_enforce_repo_caps(tmp_path, ind
     records = list(connector_type(ctx).load_offline(str(root)))
 
     assert len(records) == 1
-    assert Path(records[0]["_local_path"]).parent == root
+    assert Path(records[0].local_path).parent == root
+    assert "_local_path" not in records[0]
     assert ctx.stats.incomplete

@@ -11,7 +11,7 @@ import pytest
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.filesystem import _codeowners_match
 from shadowscan.connectors.code.github import GitHubConnector
-from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.connectors.code.gitlab import GitLabConnector, _GitLabMetadata
 from shadowscan.connectors.code.manifests import parse_requirements
 from shadowscan.models import Kind, ScanStats
 
@@ -95,12 +95,12 @@ def test_codeowners_later_ownerless_rule_clears_owner(tmp_path: Path, run_connec
 def test_group_variables_keep_all_names_in_one_finding(index):
     connector = GitLabConnector(ConnectorContext(index=index))
     findings = list(connector.analyze([
-        {"_kind": "group_variable", "group": "team", "key": "OPENAI_API_KEY", "masked": True},
-        {"_kind": "group_variable", "group": "team", "key": "ANTHROPIC_API_KEY", "masked": False},
-        {"_kind": "group_variables", "group": "team", "variables": [
+        _GitLabMetadata("group_variable", {"group": "team", "key": "OPENAI_API_KEY", "masked": True}),
+        _GitLabMetadata("group_variable", {"group": "team", "key": "ANTHROPIC_API_KEY", "masked": False}),
+        _GitLabMetadata("group_variables", {"group": "team", "variables": [
             {"key": "GEMINI_API_KEY", "masked": True},
             {"key": 42, "masked": False},
-        ]},
+        ]}),
     ]))
     assert len(findings) == 1
     assert set(findings[0].metadata["variable_names"]) == {

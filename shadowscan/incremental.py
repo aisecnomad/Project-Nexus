@@ -27,11 +27,11 @@ from shadowscan.connectors import _BUILTIN
 from shadowscan.connectors.code.filesystem import DEFAULT_EXCLUDES
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
-from shadowscan.utils.git import git_argv_prefix, safe_git_env
+from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.redaction import sanitize
 
 log = logging.getLogger("shadowscan.incremental")
-_FORMAT = 2
+_FORMAT = 3  # v2 finding identities: older entries require a full rescan
 _MAX_CACHE_BYTES = 64 * 1024 * 1024
 _MAX_HASH_FILE_BYTES = 64 * 1024 * 1024
 _MAX_HASH_BYTES = 512 * 1024 * 1024
@@ -55,7 +55,10 @@ def _paths(spec: ConnectorSpec) -> list[Path]:
         return []
     if not isinstance(raw, list) or not all(isinstance(p, str) and p for p in raw):
         return []
-    return [Path(p).expanduser().resolve() for p in raw]
+    roots = [Path(p).expanduser().absolute() for p in raw]
+    if any(part.is_symlink() for root in roots for part in (root, *root.parents)):
+        raise ValueError("symlink in static input root path")
+    return [root.resolve() for root in roots]
 
 
 def _eligible(spec: ConnectorSpec) -> bool:
@@ -100,9 +103,9 @@ def _file_digest(path: Path, *, max_bytes: int = _MAX_HASH_FILE_BYTES, budget: _
     attrs = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
     if any(getattr(before, a) != getattr(after, a) or getattr(after, a) != getattr(current, a) for a in attrs):
         raise ValueError("input changed while hashing")
-    # Include change time and identity alongside content: a file that changes
-    # A -> B -> A during collection must not make the before/after snapshots
-    # appear equal and permit caching findings derived from B as A.
+    # Change time and inode identity catch ordinary replace/restore changes.
+    # These checks are not an atomic snapshot or a defense against an adversary
+    # concurrently changing inputs. Incremental scans require immutable inputs.
     digest.update(_json([getattr(after, attr) for attr in attrs]))
     return digest.hexdigest()
 
@@ -119,8 +122,8 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     def git(*args: str) -> bytes:
         budget.check()
         result = subprocess.run(
-            [*git_argv_prefix(), "-C", str(root), *args], check=False, capture_output=True, timeout=10,
-            env=safe_git_env(),
+            [*metadata_git_argv_prefix(), "-C", str(root), *args], check=False, capture_output=True, timeout=10,
+            env=metadata_git_env(),
         )
         budget.check(size=len(result.stdout))
         if result.returncode:
@@ -275,7 +278,7 @@ class IncrementalCache:
             if not roots:
                 return None
             code = spec.name in _CODE
-            use_git = bool(spec.config.get("use_git", True))
+            use_git = bool(spec.config.get("use_git", False))
             budget = _HashBudget()
             max_bytes = min(int(spec.config.get("max_file_size", 1_000_000)), _MAX_HASH_FILE_BYTES) if code else _MAX_HASH_FILE_BYTES
             inputs = []

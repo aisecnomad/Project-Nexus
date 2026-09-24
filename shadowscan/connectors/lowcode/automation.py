@@ -330,7 +330,10 @@ class ZapierConnector(_AutomationBase):
                 triggers=steps_list[:1],
                 ai_steps=ai_steps,
                 kind=kind,
-                resource_type="zap" if kind == Kind.WORKFLOW else "agent",
+                # Title-based agent classification can change without changing
+                # the source entity. Only structural source type selects its
+                # namespace; a zap named "AI agent" remains the same zap.
+                resource_type="agent" if rec.get("type") == "agent" or "instructions" in rec else "zap",
                 extra={"steps": steps_list[:20], "status": rec.get("status") or rec.get("Status")},
                 url=rec.get("url") or rec.get("editor_url"),
             )

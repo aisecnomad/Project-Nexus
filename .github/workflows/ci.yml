@@ -5,6 +5,9 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,7 +16,7 @@ jobs:
       matrix:
         python: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
@@ -29,6 +32,13 @@ jobs:
       - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Build distributable wheel
         run: python -m pip wheel . --no-deps --wheel-dir dist
+      - name: Validate installed wheel outside the checkout
+        run: |
+          python -m venv "$RUNNER_TEMP/shadowscan-wheel"
+          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m shadowscan.signatures.validate
+          "$RUNNER_TEMP/shadowscan-wheel/bin/shadowscan" --help
       - name: Self-scan (demo, offline)
         run: shadowscan scan -c examples/shadowscan.offline.yaml --format sarif -o shadowscan.sarif
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

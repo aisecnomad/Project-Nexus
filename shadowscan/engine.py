@@ -56,6 +56,21 @@ class Engine:
         # instance's lifetime. It is never persisted in connector cache entries.
         self.inventory = Inventory.load(self.config.inventory) if self.config.inventory else None
         result = ScanResult(version=__version__, inventory_size=len(self.inventory) if self.inventory else 0)
+        if only:
+            selectable = {value for spec in self.config.connectors if spec.enabled for value in (spec.id, spec.name)}
+            invalid = [selector for selector in only if selector not in selectable]
+            if invalid:
+                result.collection_scope = {
+                    "schema": "shadowscan.collection-scope/v1", "comparable": False,
+                    "reason": "requested connectors are unknown or disabled",
+                }
+                result.stats = [ScanStats(
+                    connector="engine.selection", started_at=result.started_at, finished_at=now_iso(),
+                    skipped=True, incomplete=True, skip_reason="invalid connector selection",
+                    errors=[sanitize(f"unknown or disabled connector selector: {selector}") for selector in invalid],
+                )]
+                result.finished_at = now_iso()
+                return result
         jobs = [(number, spec) for number, spec in enumerate(self.config.connectors, 1)
                 if spec.enabled and (not only or spec.id in only or spec.name in only)]
         specs = [spec for _, spec in jobs]
@@ -353,6 +368,23 @@ def merge(findings: list[Finding]) -> list[Finding]:
         if cur is None:
             by_id[f.id] = f
             continue
+        # Select the classification and its resource subtype as one pair. A
+        # lexical subtype tie-break keeps repeated/grouped merges associative
+        # without attaching the first record's subtype to another record's kind.
+        priority = {Kind.AGENT: 3, Kind.SERVICE_IDENTITY: 2, Kind.OAUTH_GRANT: 1}
+        classifications = [(finding.kind, finding.resource_type) for finding in (cur, f)]
+        classification = max(classifications, key=lambda value: (priority.get(value[0], 0), value[0].value, value[1]))
+        for key, current_values in (
+            ("observed_kinds", {kind.value for kind, _ in classifications}),
+            ("observed_resource_types", {resource_type for _, resource_type in classifications}),
+        ):
+            for finding in (cur, f):
+                previous = finding.metadata.get(key)
+                if isinstance(previous, list):
+                    current_values.update(value for value in previous if isinstance(value, str))
+            if len(current_values) > 1:
+                cur.metadata[key] = sorted(current_values)
+        cur.kind, cur.resource_type = classification
         gateway_sources = _gateway_sources(cur) + _gateway_sources(f) if cur.surface == f.surface == Surface.GATEWAY else []
         seen = {(e.signal, e.location, e.description) for e in cur.evidence}
         for e in f.evidence:
@@ -400,8 +432,6 @@ def merge(findings: list[Finding]) -> list[Finding]:
                 cur.metadata.setdefault(k, v)
         if gateway_sources:
             _merge_gateway_sources(cur, gateway_sources)
-        if f.kind == Kind.AGENT and cur.kind == Kind.FRAMEWORK_USAGE:
-            cur.kind = Kind.AGENT
         cur.recompute_confidence()
     return list(by_id.values())
 
