@@ -575,7 +575,9 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
                 # short secrets; this avoids both expansion and partial leaks.
                 if len(secret) < 8 and secret in item:
                     return REDACTED
-                item = item.replace(secret, REDACTED)
+                # Keep line counts stable: excerpts index sanitized text by the
+                # raw line number, and a multi-line secret would shift them.
+                item = item.replace(secret, REDACTED + "\n" * secret.count("\n"))
         return sanitize_text(item)
 
     cleaning: set[int] = set()

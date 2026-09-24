@@ -13,6 +13,8 @@ import re
 import tokenize
 from dataclasses import dataclass
 
+_RUBY_BLOCK_END = re.compile(r"(?m)^=end(?:\s|$)")
+
 _FSTRING_PREFIX = re.compile(r"(?i)^([rubf]{1,3})(\"\"\"|'''|\"|')")
 _STRING_PREFIX = re.compile(r"(?i)[rubf]{0,3}(\"\"\"|'''|\"|')")
 _MAX_FSTRING_DEPTH = 24
@@ -151,9 +153,12 @@ def _python_ranges(text: str) -> tuple[list[tuple[int, int]], bool]:
             return [*(span for span in spans if span[1] <= start), (start, len(text))], True
         position = exc.args[1] if isinstance(exc, tokenize.TokenError) else (exc.lineno or 1, exc.offset or 0)
         spans.append((offset(position), len(text)))
-        # Unterminated literals are masked through EOF. Nothing after that
-        # opening quote can be executable Python; preceding code is covered.
-        return spans, False
+        # An unterminated multi-line literal/statement is masked through EOF:
+        # nothing after that opening can be executable Python. Python 3.12+ also
+        # raises TokenError for mid-file lexical errors that 3.11 tolerated; those
+        # mask the remainder ambiguously and must mark the file incomplete.
+        message = str(exc.args[0]) if exc.args else ""
+        return spans, not (isinstance(exc, tokenize.TokenError) and "EOF" in message)
     if fstring_starts:
         start = fstring_starts[0]
         return [*(span for span in spans if span[1] <= start), (start, len(text))], True
@@ -651,11 +656,13 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
             continue
 
         if language == "ruby" and (i == 0 or text[i - 1] == "\n") and text.startswith("=begin", i) and (i + 6 == size or text[i + 6].isspace()):
-            end_marker = re.search(r"(?m)^=end(?:\s|$)", text[i + 6:])
+            # Search from a position instead of slicing: a file of many short
+            # blocks would otherwise copy the remainder for each one (quadratic).
+            end_marker = _RUBY_BLOCK_END.search(text, i + 6)
             if end_marker is None:
                 spans.append((i, size))
                 return spans, True
-            end = i + 6 + end_marker.end()
+            end = end_marker.end()
             spans.append((i, end))
             i = end
             continue
