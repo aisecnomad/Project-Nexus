@@ -83,7 +83,8 @@ expanded nodes, 1,000 aliases, depth 64 and 64 MiB of expanded scalar content.
 Recursive aliases and excessive merge expansion are rejected. Sanitization uses
 separate structure and work budgets; rejected records mark collection incomplete
 while valid neighboring records remain available. CODEOWNERS matching has a
-bounded per-root work budget and marks exhausted ownership coverage incomplete.
+bounded per-lookup work budget; an exhausted lookup marks the root's ownership
+coverage incomplete.
 
 Record dumps use a private directory and distinct filenames per configured
 connector instance. `manifest.json` maps configuration ordinals to committed
@@ -91,6 +92,31 @@ export files and records each instance's completion status. Use only entries
 marked `exported: true`; a failed attempt may leave an older file in place.
 See [deployment and migration](production.md) for explicit plugin, signature
 override and private-endpoint policies, output changes and rollout checks.
+
+## Connector deadlines and parallelism
+
+`options.connector_timeout_seconds` (or `--connector-timeout-seconds`) sets a
+positive, finite completion deadline for each connector, defaulting to 120 seconds.
+It starts when the connector worker begins; split filesystem roots share that
+connector's deadline. Legacy `options.connector_timeout` and `--connector-timeout`
+are deprecated compatibility aliases. Configure only one YAML key; supplying
+both is rejected. Legacy YAML `connector_timeout: null` uses the 120-second
+default; it does not disable the deadline.
+
+On expiry, the engine discards that connector's results, records incomplete
+coverage and the reason, retains other completed connectors' findings, and
+returns an incomplete scan (CLI exit 3). Cancellation is cooperative: Python
+cannot forcibly interrupt a thread blocked in a vendor SDK or plugin call. Such
+a call may outlive `Engine.run()` and delay CLI process shutdown. No replacement
+workers are created beyond the configured parallelism; if all slots remain
+occupied by timed-out calls, queued connectors are skipped with incomplete
+coverage. Enforce an external process or CI job deadline for a hard runtime limit.
+
+`options.parallel` (default 4) is the maximum number of worker threads. Additional
+workers can improve throughput when connectors wait on network APIs. Offline
+exports and repository scans also perform CPU-intensive parsing and matching;
+extra threads can add contention. The offline example uses two workers as a
+starting point; measure representative workloads before increasing parallelism.
 
 ## Link code to gateway activity
 
@@ -215,7 +241,8 @@ review per-connector diagnostics and rerun after restoring access.
 Malformed files are isolated, so one bad manifest cannot suppress neighboring
 findings. Regex matches have time budgets; exhausted budgets mark the scan
 incomplete. Configure `code.filesystem.scan_timeout` in seconds to adjust the
-shared per-file regex budget (default 2 seconds).
+shared per-file regex budget (default 2 seconds); manifest parsers additionally
+cap each pattern at one second within that budget.
 
 Denied or failed API requests and exhausted pagination mark collection incomplete.
 Offline exports require valid objects or arrays of objects; scalar records,

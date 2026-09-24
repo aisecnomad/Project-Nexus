@@ -133,7 +133,7 @@ def _connector_timeout_option(ctx: click.Context, param: click.Parameter, value:
 output_options = [
     click.option("--allow-instance-credentials/--deny-instance-credentials", default=None, help="explicitly allow cloud instance or managed-identity credentials"),
     click.option("--allow-credential-mixing/--deny-credential-mixing", default=None, help="allow reviewed source inputs alongside live credentialed connectors"),
-    click.option("--connector-timeout-seconds", type=float, callback=_connector_timeout_option, help="per-connector completion deadline in seconds (default: 120); blocking calls cannot be forcibly stopped"),
+    click.option("--connector-timeout-seconds", "--connector-timeout", "connector_timeout_seconds", type=float, callback=_connector_timeout_option, help="per-connector completion deadline in seconds (default: 120); --connector-timeout is a deprecated alias; blocking calls cannot be forcibly stopped"),
     click.option("--allow-plugin", multiple=True, help="allow one reviewed third-party connector name (repeatable)"),
     click.option("--allow-signature-override/--deny-signature-override", default=None, help="explicitly allow a reviewed custom pack to replace built-in signatures"),
     click.option("--allow-private-origin/--deny-private-origin", default=None, help="allow private HTTPS endpoints for this scan; origin restrictions still apply"),

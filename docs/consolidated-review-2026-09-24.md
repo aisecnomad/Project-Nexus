@@ -2,13 +2,16 @@
 
 ## Scope and disposition
 
-Reviewed `main` at `78414f4795e0c7fc5f0fb3101f901c1f310c16fa`, all four
-open hardening PRs, and the implementation at PR #30 head
+Review began with `main` at `78414f4795e0c7fc5f0fb3101f901c1f310c16fa`, the
+four then-open hardening PRs, and the implementation at PR #30 head
 `57d0725137931ea804f0bc3dbf091e3b360627b8`. PR #30 already integrates #26
 and #29. This candidate builds on that head and selectively incorporates verified
 changes from PR #31 (`5f263015a4f5ed46bc4b5a7385fe5903f35670dc`), together
 with additional fixes found during integration and an independent code review.
-Existing PRs were not merged or closed.
+While this review was in progress, PR #31 merged into `main` as
+`3bb4870e73635da52c9fcaf05a2a8d81d1afadea`. The candidate was reconciled with
+that updated base, retaining the reviewed controls and the integration decisions
+below. This review did not merge or close the existing PRs.
 
 The candidate materially improves security and production reliability. It remains
 a release candidate: passing automated checks cannot establish actual tenant
@@ -44,8 +47,11 @@ project scope inheritance, nested GitLab group attribution and timestamp parsing
 - Retained PR #30's default 120-second cooperative deadline, cancellation-aware
   cache/export publication, bounded worker concurrency, credential isolation,
   immutable repository snapshots, source lexical classification and release gates.
-- Did not introduce PR #31's alternate deadline setting, replacement-worker pools
-  or `os._exit()` from the CLI/library scan path. Blocked calls still require an
+- Accepted PR #31's `connector_timeout` / `--connector-timeout` names as
+  compatibility aliases for canonical `connector_timeout_seconds` /
+  `--connector-timeout-seconds`. Legacy YAML null uses the 120-second default.
+  Retained bounded worker capacity without replacement-worker pools or
+  `os._exit()` from the CLI/library scan path. Blocked calls still require an
   externally supervised disposable process.
 - Did not introduce digest-gated finding sanitization or a process-wide text
   sanitization cache. Digesting nested objects before the sanitizer's resource

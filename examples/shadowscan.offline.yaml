@@ -6,7 +6,12 @@ inventory:
   - ./inventory
 options:
   min_confidence: 0.2
-  parallel: 6
+  # Start with two workers for offline parsing and matching; measure contention
+  # before increasing this. Live API workloads may benefit from more workers.
+  parallel: 2
+  # Soft completion deadline: late results are discarded and coverage is incomplete.
+  # Blocked SDK calls can delay shutdown; enforce an external process/job timeout.
+  connector_timeout_seconds: 600
 connectors:
   - name: code.filesystem
     path: ../tests/fixtures/sample_repo

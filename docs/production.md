@@ -185,7 +185,7 @@ YAML parsing checks input size, composed nodes, alias count, nesting, expanded
 nodes/content and merge work before object construction. Sanitization has a
 separate expanded-structure and total-work budget, so valid YAML aliases cannot
 cause unbounded report serialization. CODEOWNERS patterns use bounded iterative
-matching with a per-root work budget.
+matching with a per-lookup work budget.
 
 A limit hit is a diagnostic and incomplete coverage, not proof of absence. Exit 3
 must remain a failed gate in CI. Exit 2 means a complete scan exceeded the chosen
@@ -435,9 +435,13 @@ Until completed, describe deployment status as pending tenant and container acce
 
 ## Consolidated candidate compatibility
 
-The consolidated review preserves the PR #30 runtime policies and incorporates
-verified additional fixes from PR #31. The supported deadline setting remains
-`options.connector_timeout_seconds` / `--connector-timeout-seconds` (default 120).
+The consolidated review preserves the PR #30 runtime policies and reconciles
+verified additional fixes with PR #31, which merged during the review. The
+canonical deadline setting is `options.connector_timeout_seconds` /
+`--connector-timeout-seconds` (default 120). Legacy `options.connector_timeout`
+and `--connector-timeout` remain deprecated compatibility aliases. Configure only
+one YAML key; supplying both is rejected. Legacy YAML `connector_timeout: null`
+uses the 120-second default rather than disabling it.
 Workers are not replaced after all capacity is occupied by blocked calls; the
 remaining queue is reported incomplete. The CLI does not forcibly exit from a
 library call. Continue to enforce the disposable worker's external job deadline.

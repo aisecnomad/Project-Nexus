@@ -19,6 +19,10 @@
 ARG PYTHON_IMAGE=python:3.12-slim-bookworm
 FROM ${PYTHON_IMAGE}
 
+LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Project-Nexus" \
+      org.opencontainers.image.description="ShadowScan disposable scan worker" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
