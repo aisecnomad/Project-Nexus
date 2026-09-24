@@ -33,6 +33,12 @@ logs, identity, SaaS inputs and third-party connectors are collected anew: uncha
 establish that remote state is unchanged. Hashing still reads eligible inputs;
 the saving is avoiding repeated parsing and signature evaluation.
 
+When a shared `label` is set for multiple `code.filesystem.paths`, add
+`root_ids: [repo-a, repo-b]` in the same order as `paths`. This keeps each root's
+finding identity stable when the checkout location or list length changes.
+Without `root_ids`, the canonical local path determines a distinct root suffix.
+Using a scalar `path` with its own connector `label` preserves the older ID.
+
 The default state location is `$XDG_STATE_HOME/shadowscan`, or
 `~/.local/state/shadowscan`. `--state-dir` overrides it; YAML relative paths are
 resolved against the configuration file. Keep the directory outside every scan

@@ -219,6 +219,10 @@ class GitLabConnector(BaseConnector):
         for f in fs.analyze([{"path": local}]):
             f.connector = self.name
             f.provider = "gitlab"
+            # The filesystem connector created the finding under its own name.
+            # Identity v2 includes connector and provider, so finalize it after
+            # projecting the observation onto the GitLab surface.
+            f.id = f.compute_id()
             f.last_seen = f.last_seen or proj.get("last_activity_at")
             f.first_seen = proj.get("created_at")
             yield f
