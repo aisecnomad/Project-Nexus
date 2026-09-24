@@ -24,6 +24,10 @@ _SENSITIVE_SUFFIXES = (
     "authorization", "proxyauthorization", "password", "passwd", "privatekey",
     "credential", "credentials", "bearertoken", "sessiontoken", "signingkey",
     "secretstring", "secretbinary", "connectionstring", "connstr",
+    # Azure storage / Service Bus connection-string members and SAS tokens.
+    "accountkey", "sharedaccesskey", "sastoken",
+    # Capability URLs: whoever holds a webhook URL can post through it.
+    "webhookurl", "webhookuri", "webhookid", "hookurl",
 )
 _SENSITIVE_NAMES = {"token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie"}
 # Keep this backstop aligned with detectable credential formats regardless of
@@ -38,6 +42,22 @@ _SECRET_TOKEN = re.compile(
     r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}"
     r"|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}"
     r"|r8_[A-Za-z0-9]{30,}|fc-[a-f0-9]{32}|app-[A-Za-z0-9]{24})\b"
+)
+# Webhook and bot endpoints whose *path* is the credential. The scheme, host
+# and a fixed prefix are kept for context; the remainder of the path is
+# withheld. Query parameters (e.g. Power Automate's ``sig``) are handled by the
+# ordinary query-field rules.
+_PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
+    (re.compile(r"hooks\.slack(?:-gov)?\.com"), re.compile(r"/(?:services|workflows|triggers|actions|commands)/")),
+    (re.compile(r"(?:(?:ptb|canary)\.)?discord(?:app)?\.com"), re.compile(r"/api(?:/v\d+)?/webhooks/")),
+    (re.compile(r"(?:[a-z0-9-]+\.)*webhook\.office\.com"), re.compile(r"/webhook(?:b2)?/")),
+    (re.compile(r"outlook\.office(?:365)?\.com"), re.compile(r"/webhook(?:b2)?/")),
+    (re.compile(r"hooks\.zapier\.com"), re.compile(r"/hooks/")),
+    (re.compile(r"hook\.(?:[a-z0-9-]+\.)?(?:make|integromat)\.com"), re.compile(r"/")),
+    (re.compile(r"maker\.ifttt\.com"), re.compile(r"/trigger/[^/]+/(?:json/)?with/key/")),
+    (re.compile(r"api\.telegram\.org"), re.compile(r"/(?:file/)?bot")),
+    # n8n (commonly self-hosted, so any host): /webhook/<id> and /webhook-test/<id>.
+    (re.compile(r".+"), re.compile(r"(?:/[^/]+)*?/webhook(?:-test|-waiting)?/")),
 )
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
 _PEM = re.compile(r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)", re.DOTALL)
@@ -325,6 +345,31 @@ def _redact_value(value: Any) -> Any:
     return REDACTED
 
 
+def _url_host(authority: str) -> str:
+    host = authority.rsplit("@", 1)[-1]
+    if host.startswith("["):
+        host = host[1:host.find("]")] if "]" in host else host[1:]
+    else:
+        host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    return host.rstrip(".").lower()
+
+
+def _redact_path_secret(host: str, path: str) -> str:
+    """Withhold the credential-bearing remainder of a known webhook path.
+
+    Idempotent: an already withheld path is returned unchanged.
+    """
+    if not host or not path:
+        return path
+    for host_rx, prefix_rx in _PATH_SECRET_RULES:
+        if not host_rx.fullmatch(host):
+            continue
+        prefix = prefix_rx.match(path)
+        if prefix and prefix.end() < len(path):
+            return path[:prefix.end()] + REDACTED
+    return path
+
+
 def _sanitize_url(match: re.Match[str]) -> str:
     url = match.group(0)
     scheme, rest = url.split("://", 1)
@@ -334,6 +379,8 @@ def _sanitize_url(match: re.Match[str]) -> str:
     authority, tail = rest[:authority_end], rest[authority_end:]
     if "@" in authority:
         authority = REDACTED + "@" + authority.rsplit("@", 1)[1]
+    path_end = min((pos for c in "?#" if (pos := tail.find(c)) >= 0), default=len(tail))
+    tail = _redact_path_secret(_url_host(authority), tail[:path_end]) + tail[path_end:]
     url = scheme + "://" + authority + tail
 
     def query_value(field: str) -> str:

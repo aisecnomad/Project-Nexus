@@ -9,6 +9,7 @@ import contextvars
 import ipaddress
 import json
 import logging
+import random
 import re
 import socket
 import time
@@ -246,6 +247,31 @@ class _DestinationPolicyAdapter(HTTPAdapter):
         raise ValueError("Proxies are unsupported by the destination-enforcing HTTP client")
 
 
+def _rate_limited(resp: requests.Response) -> bool:
+    """GitHub reports primary and secondary rate limits with 403 as well as 429."""
+    return resp.status_code == 403 and (
+        resp.headers.get("X-RateLimit-Remaining") == "0" or bool(resp.headers.get("Retry-After"))
+    )
+
+
+def _retry_delay(resp: requests.Response, attempt: int) -> float:
+    """Honor server hints; otherwise back off exponentially with jitter.
+
+    Jitter keeps parallel connectors (and scanner fleets) from retrying in
+    lockstep against the same API. Every delay is capped at MAX_RETRY_DELAY.
+    """
+    retry_after = resp.headers.get("Retry-After")
+    if retry_after and retry_after.isascii() and retry_after.isdigit():
+        delay = float(retry_after) + random.uniform(0, 1)
+    else:
+        step = min(2 ** attempt, 30)
+        delay = step / 2 + random.uniform(0, step / 2)
+    reset = resp.headers.get("X-RateLimit-Reset")
+    if resp.headers.get("X-RateLimit-Remaining") == "0" and reset and reset.isascii() and reset.isdigit():
+        delay = max(delay, float(reset) - time.time() + 1)
+    return max(0.0, min(delay, MAX_RETRY_DELAY))
+
+
 def diagnostic_url(url: str) -> str:
     """Drop query/fragment and userinfo before URLs enter errors or logs."""
     parsed = urlsplit(url)
@@ -367,15 +393,9 @@ class HttpClient:
                     kwargs.pop("json", None)
                     kwargs.pop("data", None)
                 continue
-            if resp.status_code in RETRY_STATUSES and attempt <= self.max_retries:
+            if (resp.status_code in RETRY_STATUSES or _rate_limited(resp)) and attempt <= self.max_retries:
                 resp.close()
-                retry_after = resp.headers.get("Retry-After")
-                delay = min(float(retry_after), MAX_RETRY_DELAY) if retry_after and retry_after.isascii() and retry_after.isdigit() else min(2 ** attempt, 30)
-                # GitHub style secondary rate limit
-                reset = resp.headers.get("X-RateLimit-Reset")
-                remaining = resp.headers.get("X-RateLimit-Remaining")
-                if remaining == "0" and reset and reset.isascii() and reset.isdigit():
-                    delay = max(delay, min(float(reset) - time.time() + 1, MAX_RETRY_DELAY))
+                delay = _retry_delay(resp, attempt)
                 log.warning("HTTP %s from %s; retrying in %.0fs (attempt %d)", resp.status_code, diagnostic_url(url), delay, attempt)
                 time.sleep(delay)
                 continue

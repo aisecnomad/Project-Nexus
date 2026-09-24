@@ -232,7 +232,10 @@ class JwtConnector(BaseConnector, _NoDump):
             identity_type = "workload"
             reasons.append("SPIFFE workload identity")
             f.add_tag("spiffe")
-        if family == "keycloak" and str(sub).startswith("service-account-") or str(claims.get("preferred_username", "")).startswith("service-account-"):
+        if family == "keycloak" and (
+            str(sub).startswith("service-account-")
+            or str(claims.get("preferred_username", "")).startswith("service-account-")
+        ):
             identity_type = "service"
             reasons.append("Keycloak service account")
         if "act" in claims or "may_act" in claims:

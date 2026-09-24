@@ -7,6 +7,9 @@ entry. Tenant canaries and container runtime acceptance are still required.
 
 ### Security
 
+- Withhold the credential-bearing path of webhook capability URLs (Slack, Discord, Teams, Zapier, Make, IFTTT, Telegram, n8n) in evidence, reports and record exports; `webhookUrl`/`webhookUri`/`webhookId`/`hookUrl`, `AccountKey`, `SharedAccessKey` and `sas_token` fields are sensitive.
+- Apply the Keycloak service-account rule to Keycloak issuers only; a `preferred_username` starting with `service-account-` no longer relabels tokens from other issuers.
+- Match the Kubernetes JWT claim namespace on the exact `kubernetes.io` prefix.
 - Validate headers before requests can echo credential-bearing invalid values; redact additional provider formats and escaped credentials before source excerpts are shortened.
 - Redact opaque Azure app settings and OCI Function configuration in record exports. Reject malformed numeric fields in imported findings and restrict HTML scripts to the shipped script's SHA-256 hash.
 - Redact multiline YAML credentials before evidence excerpts, and pin GitLab API tree pagination to an immutable commit.
@@ -20,6 +23,8 @@ entry. Tenant canaries and container runtime acceptance are still required.
 
 ### Reliability
 
+- Retry GitHub 403 rate-limit responses (`X-RateLimit-Remaining: 0` or `Retry-After`) but not plain permission denials; all HTTP backoff is jittered and capped at 120 seconds.
+- SARIF artifact URIs are percent-encoded, made root-relative only on path boundaries, absolute outside the scan root, and each rule reports its most severe result.
 - Preserve valid cloud, identity and SaaS records after individual collection/analysis failures. GCP service-account key coverage now distinguishes unknown inventory from observed zero keys.
 - Normalize scalar cloud scope options and reject unknown AWS service selections instead of reporting an empty successful scan.
 - Bound diagnostic streams, gateway detail cardinality and numeric aggregates; isolate failures without losing later valid records.
