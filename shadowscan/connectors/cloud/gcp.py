@@ -24,7 +24,14 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.cloud.common import cloud_finding, done, name_hint, scan_env, scan_iam_actions
+from shadowscan.connectors.cloud.common import (
+    cloud_finding,
+    done,
+    name_hint,
+    scan_env,
+    scan_iam_actions,
+    string_list,
+)
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -53,7 +60,13 @@ class GcpConnector(BaseConnector):
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
-        self.locations = ctx.get("locations") or DEFAULT_LOCATIONS
+        try:
+            # Locations are interpolated into API hostnames; keep them to the
+            # documented region syntax.
+            self.locations = string_list(ctx.get("locations"), "locations", pattern=r"[a-z0-9-]+") or DEFAULT_LOCATIONS
+            self.projects = string_list(ctx.get("projects"), "projects", pattern=r"[A-Za-z0-9._:-]+") or []
+        except ValueError as exc:
+            raise ConnectorError(f"cloud.gcp: {exc}") from None
         self.audit_days = int(ctx.get("audit_days", 0))
         self.max_projects = int(ctx.get("max_projects", 200))
         self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
@@ -114,7 +127,7 @@ class GcpConnector(BaseConnector):
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
-        projects = self.ctx.get("projects") or []
+        projects = list(self.projects)
         if not projects:
             projects = [p["projectId"] for p in self._pages("https://cloudresourcemanager.googleapis.com/v1/projects", "projects", filter="lifecycleState:ACTIVE") if p.get("projectId")]
         for i, project in enumerate(projects):

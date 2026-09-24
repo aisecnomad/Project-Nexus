@@ -46,7 +46,7 @@ from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, language_for_path
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
-from shadowscan.utils.text import excerpt_line, notebook_to_source, read_text, redact, truncate
+from shadowscan.utils.text import notebook_to_source, read_text, redact, truncate
 
 DEFAULT_EXCLUDES = {
     ".git",
@@ -209,6 +209,7 @@ class _Project:
     coding_agent_files: dict[str, list[str]] = field(default_factory=dict)  # sig id -> files
     coding_agent_matches: dict[str, list[tuple[Match, str, str | None]]] = field(default_factory=dict)
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
+    seen: set[tuple[str, str, str, str, int | None]] = field(default_factory=set)
 
 
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
@@ -318,7 +319,6 @@ class FilesystemConnector(BaseConnector):
         self.provider_override: str | None = ctx.get("provider")
         self.extra_metadata: dict[str, Any] = dict(ctx.get("metadata", {}) or {})
         self._codeowners_cache: dict[Path, list[tuple[str, list[str]]]] = {}
-        self._ownership_budgets: dict[Path, OwnershipBudget] = {}
         self._ownership_exhausted: set[Path] = set()
         self._owner_cache: dict[tuple[Path, str], str | None] = {}
         self._symlink_warnings: set[Path] = set()
@@ -488,6 +488,10 @@ class FilesystemConnector(BaseConnector):
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                         lang = "python"
                     safe_text = _safe_source_text(rel, text)
+                    safe_lines = safe_text.splitlines()
+
+                    def excerpt(line_number: int | None, secret: str | None = None) -> str:
+                        return _excerpt(safe_lines, line_number or 1, secret)
 
                     # 2. manifests (dependencies, images, env names, IaC types)
                     manifest = parse_manifest(rel, text) if (is_manifest_name(name) or ext in {".tf", ".bicep", ".yml", ".yaml", ".json", ".hcl"} or ".github/workflows" in rel) else None
@@ -518,24 +522,24 @@ class FilesystemConnector(BaseConnector):
                     is_mcp = self._looks_like_mcp_config(rel, name, text)
                     if is_source:
                         for m in self.index.match_imports(content_text, lang):
-                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                            self._record(proj, m, rel, excerpt(m.line))
                         for m in self.index.match_code(content_text, lang):
-                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                            self._record(proj, m, rel, excerpt(m.line))
                     elif not is_nonexecutable:
                         for m in self.index.match_code(content_text, None):
-                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                            self._record(proj, m, rel, excerpt(m.line))
                             if m.signature.category in {"platform", "cloud-service"} and m.agent_indicator and ext in {".json", ".yaml", ".yml"} and not is_mcp:
-                                workflow_files.setdefault(rel, []).append((m, excerpt_line(safe_text, m.line or 1)))
+                                workflow_files.setdefault(rel, []).append((m, excerpt(m.line)))
                     if not is_nonexecutable:
                         for m in self.index.match_envs_in_text(content_text):
-                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                            self._record(proj, m, rel, excerpt(m.line))
                         for m in self.index.match_domains_in_text(content_text):
-                            self._record(proj, m, rel, excerpt_line(safe_text, m.line or 1))
+                            self._record(proj, m, rel, excerpt(m.line))
                     if self.scan_secrets:
                         for m in self.index.match_secrets(text):
                             if looks_like_placeholder(m.value):
                                 continue
-                            secret_hits.setdefault(rel, []).append((m, excerpt_line(safe_text, m.line or 1).replace(m.value, redact(m.value))))
+                            secret_hits.setdefault(rel, []).append((m, excerpt(m.line, m.value)))
                             self._record(proj, m, rel, None)
 
                     # 4. special files
@@ -556,7 +560,10 @@ class FilesystemConnector(BaseConnector):
 
         # ------------------------------------------------------------ emit
         for proj in projects.values():
-            yield from self._emit_project(label, root, proj)
+            try:
+                yield from self._emit_project(label, root, proj)
+            except Exception as exc:  # noqa: BLE001 - one project must not discard the root's other findings
+                self.ctx.error(f"code.filesystem: {proj.root}: project analysis incomplete ({type(exc).__name__})")
         for rel, text in mcp_files:
             try:
                 with self.index.scan_budget(seconds=self.scan_timeout):
@@ -574,17 +581,33 @@ class FilesystemConnector(BaseConnector):
             except Exception as exc:  # noqa: BLE001 - retain findings from other manifests
                 self.ctx.error(f"code.filesystem: {rel}: agent manifest analysis incomplete ({type(exc).__name__})")
         for rel, hits in workflow_files.items():
-            yield self._workflow_finding(label, root, rel, hits)
+            try:
+                yield self._workflow_finding(label, root, rel, hits)
+            except Exception as exc:  # noqa: BLE001 - retain findings from other files
+                self.ctx.error(f"code.filesystem: {rel}: workflow analysis incomplete ({type(exc).__name__})")
         for rel, infra_hits in infra_files.items():
-            yield self._infra_finding(label, root, rel, infra_hits, infra_names.get(rel, []))
+            try:
+                yield self._infra_finding(label, root, rel, infra_hits, infra_names.get(rel, []))
+            except Exception as exc:  # noqa: BLE001 - retain findings from other files
+                self.ctx.error(f"code.filesystem: {rel}: infrastructure analysis incomplete ({type(exc).__name__})")
         for rel, hits in secret_hits.items():
-            yield self._secret_finding(label, root, rel, hits)
+            try:
+                yield self._secret_finding(label, root, rel, hits)
+            except Exception as exc:  # noqa: BLE001 - retain findings from other files
+                self.ctx.error(f"code.filesystem: {rel}: credential analysis incomplete ({type(exc).__name__})")
 
     # --------------------------------------------------------------- helpers
     def _record(self, proj: _Project, m: Match, rel: str, snippet: str | None) -> None:
         snippet = sanitize_text(snippet) if snippet is not None else None
         if m.signature.category == "identity-app":
             return  # identity-app signatures describe OAuth/SaaS apps, not code
+        # A manifest artifact and the generic text pass can observe the same
+        # token on the same line. Confidence combines evidence as independent
+        # signals, so a duplicate observation must not count twice.
+        key = (m.signature_id, m.signal.type, m.value, rel, m.line)
+        if key in proj.seen:
+            return
+        proj.seen.add(key)
         if m.signature.category == "coding-agent":
             proj.coding_agent_files.setdefault(m.signature_id, [])
             if rel not in proj.coding_agent_files[m.signature_id]:
@@ -651,7 +674,7 @@ class FilesystemConnector(BaseConnector):
             # A generic service can use this filename. The MCP registry format
             # has a name and structured package or remote transport records.
             try:
-                data = json.loads(_strip_json_comments(text))
+                data = _load_json_lenient(text)
             except (ValueError, RecursionError):
                 return False
             if not isinstance(data, dict):
@@ -702,7 +725,10 @@ class FilesystemConnector(BaseConnector):
             out = subprocess.run(
                 [*metadata_git_argv_prefix(), "-C", str(root), "log", "--no-show-signature", "--no-ext-diff", "--no-textconv", "-1", "--format=%an|%ae|%cI", "--", target],
                 capture_output=True,
-                text=True,
+                # Author bytes follow the repository's i18n.logOutputEncoding;
+                # a strict decode would abort the whole project's findings.
+                encoding="utf-8",
+                errors="replace",
                 env=metadata_git_env(),
                 timeout=20,
                 check=False,
@@ -712,7 +738,7 @@ class FilesystemConnector(BaseConnector):
                 return {"last_author": an, "last_author_email": ae, "last_commit": ci}
             if out.returncode == 0:
                 return {}
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, ValueError, subprocess.SubprocessError):
             pass
         self.ctx.warn("code.filesystem: offline git enrichment failed; Git 2.45+ and locally available history are required")
         return {}
@@ -763,7 +789,9 @@ class FilesystemConnector(BaseConnector):
         key = (root, rel_root)
         if key in self._owner_cache:
             return self._owner_cache[key]
-        budget = self._ownership_budgets.setdefault(root, OwnershipBudget())
+        # The budget bounds one lookup. A root-wide budget was exhausted by
+        # ordinary 1-2k rule monorepo CODEOWNERS files after ~100 lookups.
+        budget = OwnershipBudget()
         try:
             # Last matching rule wins, including ownerless exclusions. Stop at
             # that rule instead of repeatedly re-evaluating overridden rules.
@@ -1013,6 +1041,12 @@ class FilesystemConnector(BaseConnector):
 
     def _secret_finding(self, label: str, root: Path, rel: str, hits: list[tuple[Match, str]]) -> Finding:
         f = self._base(label, root, rel, Kind.SECRET, f"LLM provider credential in {rel}", "file")
+        # A structured value (e.g. a .env assignment) and the raw text pass can
+        # both observe the same credential on the same line; count it once.
+        unique: dict[tuple[str, str, int | None], tuple[Match, str]] = {}
+        for m, snip in hits:
+            unique.setdefault((m.signature_id, m.value, m.line), (m, snip))
+        hits = list(unique.values())
         for m, snip in hits:
             apply_matches(f, [m], location=rel, snippet=snip)
         f.add_tag("hardcoded-credential")
@@ -1039,6 +1073,34 @@ class FilesystemConnector(BaseConnector):
                         v = fm[k]
                         info[k] = truncate(sanitize_text(v), 200) if isinstance(v, str) else sanitize(v)
         return info
+
+
+def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int = 160) -> str:
+    """Return one trimmed source line; a matched credential is redacted before truncation.
+
+    Truncating first can leave a recognisable prefix of a long credential in
+    the snippet when the full value no longer appears in the shortened text.
+    """
+    try:
+        text = lines[line - 1]
+    except IndexError:
+        return ""
+    text = text.strip()
+    if secret:
+        text = text.replace(secret, redact(secret))
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def _load_json_lenient(text: str) -> Any:
+    """Parse JSON, tolerating JSONC comments and trailing commas only when needed.
+
+    Stripping comments is a pure-Python character loop; ordinary JSON must not
+    pay for it on every file.
+    """
+    try:
+        return json.loads(text)
+    except ValueError:
+        return json.loads(_strip_json_comments(text))
 
 
 def _nearest_root(rel_dir: str, roots: list[str]) -> str:
@@ -1095,7 +1157,7 @@ def _safe_source_text(rel: str, text: str) -> str:
     """
     try:
         if rel.endswith((".json", ".jsonc", ".json5")):
-            data = json.loads(_strip_json_comments(text))
+            data = _load_json_lenient(text)
         elif rel.endswith(".toml"):
             data = tomllib.loads(text)
         elif rel.endswith((".yaml", ".yml")):
@@ -1121,7 +1183,7 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
         elif rel.endswith((".yaml", ".yml")):
             data = bounded_safe_load(text)
         else:
-            data = json.loads(_strip_json_comments(text))
+            data = _load_json_lenient(text)
     except (ValueError, RecursionError, yaml.YAMLError):
         errors.append("invalid MCP configuration syntax")
         return []

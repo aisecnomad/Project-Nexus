@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections import Counter
 from collections.abc import Iterable, Iterator
@@ -104,16 +105,19 @@ def _b(v: Any) -> bool | None:
 
 def _i(v: Any) -> int:
     try:
-        return int(float(v))
-    except (TypeError, ValueError):
+        number = float(v)
+    except (TypeError, ValueError, OverflowError):
         return 0
+    return int(number) if math.isfinite(number) else 0
 
 
 def _f(v: Any) -> float:
+    """Finite floats only: NaN/Infinity would poison caller totals and the JSON report."""
     try:
-        return float(v)
-    except (TypeError, ValueError):
+        number = float(v)
+    except (TypeError, ValueError, OverflowError):
         return 0.0
+    return number if math.isfinite(number) else 0.0
 
 
 def _has_tools(obj: Any) -> bool | None:
@@ -251,9 +255,18 @@ def detect_schema(rec: dict[str, Any]) -> str:
 
 def normalise(rec: dict[str, Any], schema: str) -> Event | None:
     """Normalize without retaining credentials, including in nested metadata."""
+    return normalise_with_record(rec, schema)[0]
+
+
+def normalise_with_record(rec: dict[str, Any], schema: str) -> tuple[Event | None, dict[str, Any] | None]:
+    """Normalize and also return the sanitized source record.
+
+    Sanitizing a record is the dominant per-record cost; callers that need the
+    clean record for scope attribution must not sanitize it a second time.
+    """
     ev = _normalise(rec, schema)
     if ev is None:
-        return None
+        return None, None
     # Validate scalar fields before attribution or counters are updated. JSON
     # containers in headers/identity fields otherwise fail partway through
     # accumulation and can discard all callers collected before that record.
@@ -274,8 +287,8 @@ def normalise(rec: dict[str, Any], schema: str) -> Event | None:
             ev.caller_label = opaque_id
     # Include original credential-bearing fields so duplicated opaque secrets in
     # unrelated metadata are scrubbed before samples are truncated.
-    clean = sanitize({"record": rec, "event": asdict(ev)})["event"]
-    return Event(**clean)
+    clean = sanitize({"record": rec, "event": asdict(ev)})
+    return Event(**clean["event"]), clean["record"]
 
 
 def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
@@ -629,9 +642,13 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
 
 # --------------------------------------------------------------- text logs
 
+# These stdlib patterns run outside the signature engine's regex timeouts, so
+# they must be linear: possessive tokens (Python 3.11+) never backtrack into a
+# long unterminated request or a bare token blob to retry a failed match.
 _COMBINED = re.compile(
-    r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>\S+)[^"]*" (?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
+    r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>[^\s"]++)[^"]*" (?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
 )
+_LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=("[^"]*"|\S+)')
 _HOST_IN_LINE = re.compile(r"\b(?:host|authority|upstream_host|server_name)[=:]\s*\"?([A-Za-z0-9.-]+\.[a-z]{2,})", re.I)
 
 
@@ -652,7 +669,7 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
         return rec
     # key=value logfmt
     if "=" in line and " " in line:
-        kv = dict(re.findall(r'(\w[\w.-]*)=("[^"]*"|\S+)', line))
+        kv = dict(_LOGFMT_PAIR.findall(line))
         if kv:
             return {k: v.strip('"') for k, v in kv.items()}
     return None
@@ -719,6 +736,31 @@ class _Caller:
     metadata_samples: dict[str, Any] = field(default_factory=dict)
     scope: dict[str, str] = field(default_factory=dict)
     observations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    observations_dropped: int = 0
+
+
+# Per-caller distributions keep this many distinct keys; the remainder is
+# folded into one bucket so a caller with per-request query strings or
+# per-build user agents cannot grow memory with the number of records.
+_MAX_DISTINCT_KEYS = 2000
+_MAX_INVALID_LINE_ERRORS = 20
+
+
+def _count(counter: Counter, key: str, amount: int) -> None:
+    if key not in counter and len(counter) >= _MAX_DISTINCT_KEYS:
+        key = "<other>"
+    counter[key] += amount
+
+
+def _first_line_is_object(lines: list[str]) -> bool:
+    """A JSON-lines export starts with a complete object on its first line."""
+    first = next((line for line in lines if line.strip()), "")
+    if not first.lstrip().startswith("{"):
+        return False
+    try:
+        return isinstance(json.loads(first), dict)
+    except (ValueError, RecursionError):
+        return False
 
 
 class GatewayLogConnector(BaseConnector):
@@ -767,6 +809,9 @@ class GatewayLogConnector(BaseConnector):
                                self.llm_hosts_only, self.max_records,
                                sorted(self.correlation_bindings, key=lambda b: json.dumps(b, sort_keys=True))], sort_keys=True)
         self.source_id = hashlib.sha256(identity.encode()).hexdigest()
+        # Logs repeat a handful of user agents millions of times; matching the
+        # user-agent signatures once per distinct string is a large saving.
+        self._ua_frameworks: dict[str, list[str]] = {}
 
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError("gateway.logs: this connector reads exported logs; set 'input' to a file or directory")
@@ -893,8 +938,14 @@ class GatewayLogConnector(BaseConnector):
                 try:
                     data = json.loads(text)
                 except json.JSONDecodeError:
-                    # A .json export may contain one JSON object per line.
-                    yield from self._json_gateway_lines(text.splitlines())
+                    # A .json export may contain one JSON object per line. A
+                    # corrupted pretty-printed document is not one: reporting
+                    # every line of it individually would flood the report.
+                    lines = text.splitlines()
+                    if _first_line_is_object(lines):
+                        yield from self._json_gateway_lines(lines)
+                    else:
+                        self.ctx.error("gateway.logs: invalid JSON export")
                 except (RecursionError, ValueError):
                     self.ctx.error("gateway.logs: invalid JSON export")
                 else:
@@ -933,6 +984,7 @@ class GatewayLogConnector(BaseConnector):
             yield from self._unwrap(data, lambda message: self.ctx.error(f"gateway.logs: {message}"))
 
     def _json_gateway_lines(self, lines: Iterable[str]) -> Iterator[dict[str, Any]]:
+        invalid = 0
         for number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
@@ -941,11 +993,15 @@ class GatewayLogConnector(BaseConnector):
                 return
             try:
                 data = json.loads(line)
-            except (json.JSONDecodeError, RecursionError, ValueError):
-                self.ctx.error(f"gateway.logs: invalid JSON record at line {number}")
-                continue
-            if not isinstance(data, dict):
-                self.ctx.error(f"gateway.logs: line {number}: JSONL records must be objects")
+                if not isinstance(data, dict):
+                    raise ValueError("JSONL records must be objects")
+            except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+                invalid += 1
+                if invalid <= _MAX_INVALID_LINE_ERRORS:
+                    detail = "JSONL records must be objects" if isinstance(exc, ValueError) and not isinstance(exc, json.JSONDecodeError) else "invalid JSON record"
+                    self.ctx.error(f"gateway.logs: line {number}: {detail}")
+                elif invalid == _MAX_INVALID_LINE_ERRORS + 1:
+                    self.ctx.error("gateway.logs: further invalid records in this export are not listed individually")
                 continue
             for rec in self._gateway_records(data):
                 yield from self._expand_record(rec)
@@ -962,7 +1018,7 @@ class GatewayLogConnector(BaseConnector):
             n += 1
             try:
                 schema = self.format or detect_schema(rec)
-                ev = normalise(rec, schema)
+                ev, clean = normalise_with_record(rec, schema)
                 if ev is None:
                     self.ctx.warn(f"gateway.logs: unrecognized record {n}; could not identify a caller")
                     skipped += 1
@@ -972,7 +1028,7 @@ class GatewayLogConnector(BaseConnector):
                 if schema in {"access-log", "generic"} and self.llm_hosts_only and not self._is_llm_traffic(ev):
                     skipped += 1
                     continue
-                self._runtime_context(ev, rec)
+                self._runtime_context(ev, rec, clean)
                 self._accumulate(callers, ev)
             except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
                     RecursionError, ConnectorError, MatchTimeoutError) as exc:
@@ -986,10 +1042,15 @@ class GatewayLogConnector(BaseConnector):
                 continue
             yield self._finding(c)
 
-    def _runtime_context(self, ev: Event, rec: dict[str, Any]) -> None:
-        """Operator bindings identify workloads; log names alone never do."""
+    def _runtime_context(self, ev: Event, rec: dict[str, Any], clean: dict[str, Any] | None = None) -> None:
+        """Operator bindings identify workloads; log names alone never do.
+
+        ``rec`` is the raw record (its credential field decides binding
+        assurance); ``clean`` is its sanitized copy when the caller already
+        has one, so the record is not sanitized twice.
+        """
         identity_assurance = self._binding_identity_assurance(ev, rec)
-        rec = sanitize(rec)
+        rec = sanitize(rec) if clean is None else clean
         aliases = {
             "tenant": ("tenant_id", "tenant", "organization_id", "org_id", "metadata.tenant_id", "metadata.tenant", "identity.claims.tid", "properties.identity.claims.tid"),
             "account": ("account_id", "accountId", "account", "subscription_id", "subscriptionId", "metadata.account_id", "metadata.account"),
@@ -1005,10 +1066,16 @@ class GatewayLogConnector(BaseConnector):
         environment = get_path(rec, "environment", "deployment_environment", "metadata.environment", "metadata.deployment_environment")
         if isinstance(environment, str) and environment:
             ev.environment = environment.strip().lower()
-        ev.runtime_frameworks = sorted({
-            match.signature.id for match in self.index.match_user_agent(ev.user_agent or "")
-            if match.signature.category == "framework"
-        })
+        user_agent = ev.user_agent or ""
+        frameworks = self._ua_frameworks.get(user_agent)
+        if frameworks is None:
+            frameworks = sorted({
+                match.signature.id for match in self.index.match_user_agent(user_agent)
+                if match.signature.category == "framework"
+            })
+            if len(self._ua_frameworks) < _MAX_DISTINCT_KEYS:
+                self._ua_frameworks[user_agent] = frameworks
+        ev.runtime_frameworks = list(frameworks)
         ev.identity_assurance = identity_assurance
         ev.code_resources = sorted({
             binding["code_resource"] for binding in self.correlation_bindings
@@ -1086,21 +1153,22 @@ class GatewayLogConnector(BaseConnector):
             c.usage_intervals.append({"start": to_iso(ev.timestamp), "end": to_iso(ev.interval_end),
                                       "requests": ev.request_count, "model": ev.model})
         if ev.model:
-            c.models[str(ev.model)] += ev.request_count
+            _count(c.models, str(ev.model), ev.request_count)
         if ev.provider:
-            c.providers[str(ev.provider)] += ev.request_count
+            _count(c.providers, str(ev.provider), ev.request_count)
         if ev.host:
-            c.hosts[ev.host] += ev.request_count
+            _count(c.hosts, ev.host, ev.request_count)
         if ev.user_agent:
-            c.user_agents[str(ev.user_agent)[:160]] += ev.request_count
+            _count(c.user_agents, str(ev.user_agent)[:160], ev.request_count)
         if ev.ip:
-            c.ips[ev.ip] += ev.request_count
+            _count(c.ips, ev.ip, ev.request_count)
         if ev.user:
-            c.users[ev.user] += ev.request_count
+            _count(c.users, ev.user, ev.request_count)
         if ev.team:
-            c.teams[str(ev.team)] += ev.request_count
+            _count(c.teams, str(ev.team), ev.request_count)
         if ev.path:
-            c.paths[str(ev.path)[:120]] += ev.request_count
+            # Query strings carry per-request identifiers; the operation is the path.
+            _count(c.paths, str(ev.path).split("?", 1)[0][:120], ev.request_count)
         if ev.tools is not None:
             c.tool_known += ev.request_count
             if ev.tools:
@@ -1116,6 +1184,10 @@ class GatewayLogConnector(BaseConnector):
             if v not in (None, "", {}, []) and k not in c.metadata_samples:
                 c.metadata_samples[k] = v if isinstance(v, (str, int, float, bool)) else json.dumps(v, default=str)[:300]
         bucket = json.dumps([ev.code_resources, ev.runtime_frameworks, ev.environment, ev.identity_assurance])
+        if bucket not in c.observations and len(c.observations) >= _MAX_DISTINCT_KEYS:
+            # Hostile exports can vary the environment label per record.
+            c.observations_dropped += ev.request_count
+            return
         observation = c.observations.setdefault(bucket, {
             "code_resources": ev.code_resources,
             "frameworks": ev.runtime_frameworks,
@@ -1227,6 +1299,7 @@ class GatewayLogConnector(BaseConnector):
                 "samples": c.metadata_samples,
                 "correlation_scope": c.scope,
                 "runtime_observations": list(c.observations.values()),
+                "runtime_observations_dropped": c.observations_dropped,
                 "runtime_source": {"id": self.source_id, "input": str(self.ctx.input_path or ""), "label": self.label, "schemas": sorted(c.schemas)},
             }
         )

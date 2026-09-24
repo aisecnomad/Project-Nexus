@@ -487,18 +487,36 @@ class BaseConnector(ABC):
         else:
             yield from self._unwrap(data, report)
 
+    _MAX_INVALID_LINE_ERRORS = 20
+
     @classmethod
     def _json_lines(cls, text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:
-        for number, line in enumerate(text.splitlines(), 1):
+        lines = text.splitlines()
+        first = next((line for line in lines if line.strip()), "")
+        try:
+            first_is_object = first.lstrip().startswith("{") and isinstance(json.loads(first), dict)
+        except (json.JSONDecodeError, RecursionError, ValueError):
+            first_is_object = False
+        if not first_is_object:
+            # A corrupted pretty-printed document is not a JSON-lines export;
+            # one diagnostic is enough instead of one per line.
+            report("invalid JSON export")
+            return
+        invalid = 0
+        for number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
             try:
                 data = json.loads(line)
-            except (json.JSONDecodeError, RecursionError, ValueError):
-                report(f"invalid JSON record at line {number}")
-                continue
-            if not isinstance(data, dict):
-                report(f"line {number}: JSONL records must be objects")
+                if not isinstance(data, dict):
+                    raise TypeError("JSONL records must be objects")
+            except (json.JSONDecodeError, RecursionError, ValueError, TypeError) as exc:
+                invalid += 1
+                if invalid <= cls._MAX_INVALID_LINE_ERRORS:
+                    detail = "JSONL records must be objects" if isinstance(exc, TypeError) else "invalid JSON record"
+                    report(f"line {number}: {detail}")
+                elif invalid == cls._MAX_INVALID_LINE_ERRORS + 1:
+                    report("further invalid records in this export are not listed individually")
                 continue
             yield from cls._unwrap(data, lambda message: report(f"line {number}: {message}"))
 

@@ -15,7 +15,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.http import HttpClient
+from shadowscan.utils.http import HttpClient, HttpError
 
 
 class GitHubAppsConnector(BaseConnector):
@@ -46,9 +46,16 @@ class GitHubAppsConnector(BaseConnector):
         billing = http.try_get_json(f"/orgs/{self.org}/copilot/billing", ok_statuses={404})
         if billing:
             yield {"_kind": "copilot_billing", **billing}
-        for pat in http.paginate_link(f"/orgs/{self.org}/personal-access-tokens", params={"per_page": 100}):
-            pat["_kind"] = "pat"
-            yield pat
+        try:
+            for pat in http.paginate_link(f"/orgs/{self.org}/personal-access-tokens", params={"per_page": 100}):
+                pat["_kind"] = "pat"
+                yield pat
+        except HttpError as exc:
+            if exc.status not in {401, 403, 404}:
+                raise
+            # The token lacks organization_personal_access_tokens:read; the
+            # installation inventory above is still valid, with partial coverage.
+            self.ctx.warn(f"saas.github-apps: fine-grained PAT inventory unavailable (HTTP {exc.status})", incomplete=True)
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:

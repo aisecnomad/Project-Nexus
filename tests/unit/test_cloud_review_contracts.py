@@ -133,8 +133,10 @@ def test_oci_reads_real_detail_models_inherits_config_and_preserves_image(index)
     record = records[0]
     client.get_application.assert_called_once_with("app1")
     client.get_function.assert_called_once_with("fn1")
-    assert record["config"]["SHARED"] == "function"
-    assert record["config"]["APP_ONLY"] == "present"
+    # Values live under an env-style key so record dumps redact them.
+    assert "config" not in record
+    assert record["environment"]["SHARED"] == "function"
+    assert record["environment"]["APP_ONLY"] == "present"
     finding = connector._h_function(record)
     assert {"provider.openai", "provider.ollama"} <= set(finding.model_providers)
     assert finding.metadata["image"] == "ollama/ollama:latest"

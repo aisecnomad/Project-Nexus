@@ -32,6 +32,18 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   are streamed and capped at 16 MiB after content decoding; malformed successful
   pagination envelopes and oversized responses make collection incomplete.
   GitLab source-file downloads have a stricter 512 KiB per-file cap.
+* Configured header values are validated before any request is built; a value
+  with control characters (typically a secret file's trailing newline) fails
+  without being echoed. The Okta `SSWS` scheme is redacted like `Bearer` and
+  `Basic`, and known configuration values are also redacted in their
+  `repr()`-escaped spelling, which library errors use.
+* `options.connector_timeout` / `--connector-timeout` abandons a connector that
+  exceeds its deadline and reports the scan incomplete. Python threads cannot
+  be interrupted: the CLI exits without joining the abandoned worker, and
+  library callers must expect the thread to outlive `Engine.run()`.
+* Azure App Service settings and OCI Function configuration are exported under
+  an env-style key, so record dumps redact every value; Salesforce token
+  values are never requested.
 * Cloud SDKs and Git use separate transports. Network egress rules remain needed
   for those paths. URL preflight checks alone do not pin Git's later DNS lookup.
   Custom injected HTTP sessions/adapters are trusted extension/test mechanisms.

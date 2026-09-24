@@ -29,6 +29,7 @@ from shadowscan.connectors.cloud.common import (
     scan_blob,
     scan_env,
     scan_iam_actions,
+    string_list,
 )
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -94,6 +95,10 @@ class AzureConnector(BaseConnector):
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.include_app_settings = bool(ctx.get("include_app_settings", True))
+        try:
+            self.subscriptions = string_list(ctx.get("subscriptions"), "subscriptions", pattern=r"[A-Za-z0-9-]+")
+        except ValueError as exc:
+            raise ConnectorError(f"cloud.azure: {exc}") from None
         self.http: HttpClient | None = None
         self._cred: Any = None
         self._foundry_token: str | None = ctx.get("foundry_token")
@@ -105,7 +110,8 @@ class AzureConnector(BaseConnector):
                 from azure.identity import DefaultAzureCredential
             except ImportError as exc:
                 raise ConnectorError("cloud.azure: install azure-identity (pip install 'shadowscan[azure]') or provide access_token") from exc
-            self._cred = DefaultAzureCredential()
+            # azure-core's transport defaults are 300 s; token endpoints answer in seconds.
+            self._cred = DefaultAzureCredential(connection_timeout=10, read_timeout=30)
             token = self._cred.get_token("https://management.azure.com/.default").token
         self.http = HttpClient(ARM, headers={"Authorization": f"Bearer {token}"})
 
@@ -120,16 +126,16 @@ class AzureConnector(BaseConnector):
         return self._foundry_token
 
     def _get(self, path: str, api: str, **params: Any) -> Any:
+        """One failed detail call is unknown coverage for that resource, never a lost subscription."""
         assert self.http
         try:
             if "api-version" not in parse_qs(urlsplit(path).query):
                 params = {"api-version": api, **params}
             return self.http.get_json(path, params=params or None)
-        except HttpError as exc:
-            if exc.status in (400, 401, 403, 404, 409):
-                self.ctx.warn(f"cloud.azure: HTTP {exc.status} for {path}; coverage unknown", incomplete=True)
-                return None
-            raise
+        except (HttpError, RequestException, ValueError) as exc:
+            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            self.ctx.warn(f"cloud.azure: {status} for {path}; coverage unknown", incomplete=True)
+            return None
 
     def _list(self, path: str, api: str) -> list[dict[str, Any]] | None:
         """Collect ARM nextLink pages; None means coverage is unknown."""
@@ -162,7 +168,7 @@ class AzureConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        subs = self.ctx.get("subscriptions") or [s["subscriptionId"] for s in self._list("/subscriptions", "2022-12-01") or []]
+        subs = self.subscriptions or [s["subscriptionId"] for s in self._list("/subscriptions", "2022-12-01") or [] if isinstance(s.get("subscriptionId"), str)]
         if not subs:
             raise ConnectorError("cloud.azure: no subscriptions visible")
         rows: list[dict[str, Any]] = []
@@ -215,9 +221,16 @@ class AzureConnector(BaseConnector):
                 diag = self._list(f"{rid}/providers/Microsoft.Insights/diagnosticSettings", "2021-05-01-preview")
                 yield {"_kind": "diagnostics", "_account": rid, "settings": diag, "coverage": "unknown" if diag is None else "observed"}
                 for p in self._list(f"{rid}/projects", "2025-04-01-preview") or []:
+                    if not isinstance(p, dict):
+                        self.ctx.warn("cloud.azure: invalid Foundry project record; coverage unknown", incomplete=True)
+                        continue
                     p["_kind"] = "resource"
                     p["type"] = "microsoft.cognitiveservices/accounts/projects"
                     p["_account"] = rid
+                    # ARM payloads carry no subscriptionId column; Resource
+                    # Graph rows do. Attribute the project like its account.
+                    p.setdefault("subscriptionId", r.get("subscriptionId") or rid.split("/subscriptions/")[-1].split("/")[0])
+                    p.setdefault("location", r.get("location"))
                     yield p
                     yield from self._collect_agents(r, p)
             elif t == "microsoft.logic/workflows":
@@ -226,9 +239,12 @@ class AzureConnector(BaseConnector):
             elif t == "microsoft.web/sites" and self.include_app_settings:
                 try:
                     settings = self.http.post_json(f"{rid}/config/appsettings/list", params={"api-version": "2022-03-01"}) or {}
-                    yield {"_kind": "appsettings", "id": rid, "name": r.get("name"), "kind": r.get("kind"), "settings": settings.get("properties") or {}}
-                except HttpError as exc:
-                    self.ctx.warn(f"cloud.azure: appsettings HTTP {exc.status} for {rid}", incomplete=True)
+                    # Under an env-style key every value is redacted in record
+                    # dumps; live analysis still sees the values for credential detection.
+                    yield {"_kind": "appsettings", "id": rid, "name": r.get("name"), "kind": r.get("kind"), "environment": settings.get("properties") or {}}
+                except (HttpError, RequestException, ValueError) as exc:
+                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    self.ctx.warn(f"cloud.azure: appsettings {status} for {rid}", incomplete=True)
         for sub in subs:
             for ra in self._list(f"/subscriptions/{sub}/providers/Microsoft.Authorization/roleAssignments", "2022-04-01") or []:
                 role_id = str(get_path(ra, "properties.roleDefinitionId", default="")).rsplit("/", 1)[-1]
@@ -241,18 +257,26 @@ class AzureConnector(BaseConnector):
         if not (token and endpoint):
             self.ctx.warn("cloud.azure: Foundry agent inventory unavailable; token or endpoint missing", incomplete=True)
             return
-        validate_url(str(endpoint))
+        try:
+            validate_url(str(endpoint))
+        except ValueError:
+            # Private Link endpoints resolve to private addresses; that project's
+            # agents are unknown coverage, not a reason to abandon the tenant.
+            self.ctx.warn("cloud.azure: Foundry endpoint refused by the destination policy; agent coverage unknown", incomplete=True)
+            return
         host = urlsplit(str(endpoint)).hostname or ""
         if not any(host.endswith(suffix) for suffix in (".services.ai.azure.com", ".cognitiveservices.azure.com", ".api.azureml.ms")):
-            raise ConnectorError("cloud.azure: refusing Foundry credentials to an unrecognized endpoint origin")
+            self.ctx.warn("cloud.azure: refusing Foundry credentials to an unrecognized endpoint origin; agent coverage unknown", incomplete=True)
+            return
         http = HttpClient(str(endpoint).rstrip("/"), headers={"Authorization": f"Bearer {token}"})
         params: dict[str, Any] = {"api-version": FOUNDRY_AGENTS_API_VERSION, "limit": 100}
         seen: set[str] = set()
         for _ in range(1000):
             try:
                 data = http.get_json("/assistants", params=dict(params))
-            except HttpError as exc:
-                self.ctx.warn(f"cloud.azure: Foundry agents HTTP {exc.status}; coverage unknown", incomplete=True)
+            except (HttpError, RequestException, ValueError) as exc:
+                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                self.ctx.warn(f"cloud.azure: Foundry agents {status}; coverage unknown", incomplete=True)
                 return
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("data"), list):
                 self.ctx.warn("cloud.azure: invalid Foundry agent response; coverage unknown", incomplete=True)
@@ -458,12 +482,14 @@ class AzureConnector(BaseConnector):
     def _h_appsettings(self, rec: dict[str, Any]) -> Finding | None:
         rid = rec.get("id", "")
         f = cloud_finding(self.name, "azure", kind=Kind.CLOUD_RESOURCE, title=f"{'Function' if 'functionapp' in str(rec.get('kind', '')).lower() else 'Web'} app: {rec.get('name')}", resource=rid, resource_type=f"web-site/{rec.get('kind')}", account=rid.split("/subscriptions/")[-1].split("/")[0] if "/subscriptions/" in rid else None)
-        scan_env(self.index, f, rec.get("settings"), location=rid)
+        # Older exports used "settings"; live records now use the env-style key.
+        settings = rec.get("environment") if isinstance(rec.get("environment"), dict) else rec.get("settings")
+        scan_env(self.index, f, settings, location=rid)
         name_hint(self.index, f, rec.get("name"))
         if not f.frameworks and not f.model_providers:
             return None
         f.add_evidence(Evidence(signal="azure:app-settings", description=f"App '{rec.get('name')}' has LLM-related app settings: {', '.join(f.metadata.get('env_matches', []))[:200]}", location=rid, weight=0.3))
-        f.metadata["setting_names"] = sorted((rec.get("settings") or {}).keys())[:60]
+        f.metadata["setting_names"] = sorted((settings or {}).keys())[:60]
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_role_assignment(self, rec: dict[str, Any], identities: dict[str, str]) -> Finding | None:

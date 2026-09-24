@@ -100,12 +100,16 @@ YAML parsing checks input size, composed nodes, alias count, nesting, expanded
 nodes/content and merge work before object construction. Sanitization has a
 separate expanded-structure and total-work budget, so valid YAML aliases cannot
 cause unbounded report serialization. CODEOWNERS patterns use bounded iterative
-matching with a per-root work budget.
+matching with a per-lookup work budget.
 
 A limit hit is a diagnostic and incomplete coverage, not proof of absence. Exit 3
 must remain a failed gate in CI. Exit 2 means a complete scan exceeded the chosen
-risk threshold. Hosted CI has a job timeout as an additional containment boundary;
-there is no claim of a universal deadline for all vendor SDKs.
+risk threshold. Set `options.connector_timeout` so a connector blocked in a
+vendor SDK call is abandoned and reported incomplete; hosted CI's job timeout
+remains the outer containment boundary because an abandoned thread still holds
+its SDK call until that call returns. AWS clients use a 10 s connect / 60 s read
+timeout with standard retries, OCI clients 10 s / 60 s, and azure-identity token
+requests 10 s / 30 s; the shared HTTP client uses 30 s.
 
 Saved provider errors and unsupported/malformed export records also make scans
 incomplete. Valid neighbors remain available. Explicit empty inventories such
@@ -220,6 +224,21 @@ identity can read those details, not just enumerate summary records.
 Google Workspace per-user token envelopes preserve the parent user in both
 single-object and array forms. Regenerate earlier offline analyses affected by
 lost user attribution before using their counts as governance evidence.
+
+Azure per-resource detail failures (throttling after retries, transport errors,
+Private Link or unrecognised Foundry endpoints) are incomplete coverage for that
+resource; the rest of the subscription inventory is retained. Foundry projects
+carry their account's subscription and location. List-typed settings such as
+`regions`, `services`, `subscriptions`, `locations`, `projects` and
+`compartments` accept a single string as one value; unknown AWS `services`
+names are rejected at configuration time. Azure `appsettings` and OCI `function`
+records place values under an `environment` key so record dumps redact them.
+Salesforce continuation failures and ServiceNow repeated or unbounded pages keep
+the collected records and mark coverage incomplete.
+
+SSM parameter findings use the real `...:parameter/<name>` ARN, and GitLab
+group-scoped findings carry the plain group path rather than its URL encoding.
+Both change finding identity for those objects: rebuild comparison baselines.
 
 ## Release verification
 

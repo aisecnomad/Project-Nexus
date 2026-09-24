@@ -7,7 +7,9 @@ from pathlib import PurePosixPath
 
 MAX_RULES = 10_000
 MAX_PATTERN_LENGTH = 4_096
-MAX_OWNERSHIP_STEPS = 10_000_000
+# Steps for one ownership lookup (one path against every rule). Ordinary
+# monorepo files (2k rules, 6-part paths) need well under 100k steps.
+MAX_OWNERSHIP_STEPS = 2_000_000
 
 
 class OwnershipLimitError(ValueError):
@@ -62,7 +64,7 @@ def codeowners_match(pattern: str, path: str, budget: OwnershipBudget | None = N
     budget = budget if budget is not None else OwnershipBudget()
     if len(pattern) > MAX_PATTERN_LENGTH or len(path) > MAX_PATTERN_LENGTH:
         raise OwnershipLimitError("CODEOWNERS pattern or path exceeds length limit")
-    budget.consume(len(pattern) + len(path) + 1)
+    budget.consume()
     anchored = pattern.startswith("/") or "/" in pattern.rstrip("/")
     directory = pattern.endswith("/")
     pattern = pattern.strip("/")
@@ -74,6 +76,12 @@ def codeowners_match(pattern: str, path: str, budget: OwnershipBudget | None = N
     if not anchored:
         candidates = parts if descendants else parts[-1:]
         return any(_component_match(pattern, part, budget) for part in candidates)
+    # Most anchored rules in a large CODEOWNERS file start with a literal
+    # directory that differs from the path's first component; reject those
+    # without running the dynamic program (the work is charged per step below).
+    first = selectors[0]
+    if first != "**" and not any(char in first for char in "*?") and parts and first != parts[0]:
+        return False
 
     previous = [True] + [False] * len(parts)
     for selector in selectors:

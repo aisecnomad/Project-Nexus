@@ -83,7 +83,8 @@ expanded nodes, 1,000 aliases, depth 64 and 64 MiB of expanded scalar content.
 Recursive aliases and excessive merge expansion are rejected. Sanitization uses
 separate structure and work budgets; rejected records mark collection incomplete
 while valid neighboring records remain available. CODEOWNERS matching has a
-bounded per-root work budget and marks exhausted ownership coverage incomplete.
+bounded per-lookup work budget; an exhausted lookup marks the root's ownership
+coverage incomplete.
 
 Record dumps use a private directory and distinct filenames per configured
 connector instance. `manifest.json` maps configuration ordinals to committed
@@ -91,6 +92,21 @@ export files and records each instance's completion status. Use only entries
 marked `exported: true`; a failed attempt may leave an older file in place.
 See [deployment and migration](production.md) for explicit plugin, signature
 override and private-endpoint policies, output changes and rollout checks.
+
+## Connector deadlines and parallelism
+
+`options.connector_timeout` (or `--connector-timeout`) is the number of seconds
+one connector may run. A connector that exceeds it is abandoned: its statistics
+record `skipped`, `incomplete` and the reason, the other connectors' findings
+are kept, and the scan exits 3. Python cannot interrupt a thread blocked in a
+vendor SDK call, so the CLI exits without waiting for the abandoned worker;
+library callers keep the thread until the call returns. There is no default
+deadline; set one in CI.
+
+`options.parallel` (default 4) is the number of worker threads. Only connectors
+that wait on network APIs benefit from it. Offline exports and repository scans
+are CPU-bound signature matching that holds the interpreter lock, and more
+threads than about two make such scans slower, not faster.
 
 ## Link code to gateway activity
 
@@ -215,7 +231,8 @@ review per-connector diagnostics and rerun after restoring access.
 Malformed files are isolated, so one bad manifest cannot suppress neighboring
 findings. Regex matches have time budgets; exhausted budgets mark the scan
 incomplete. Configure `code.filesystem.scan_timeout` in seconds to adjust the
-shared per-file regex budget (default 2 seconds).
+shared per-file regex budget (default 2 seconds); manifest parsers additionally
+cap each pattern at one second within that budget.
 
 Denied or failed API requests and exhausted pagination mark collection incomplete.
 Offline exports require valid objects or arrays of objects; scalar records,
