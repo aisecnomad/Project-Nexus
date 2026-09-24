@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shadowscan"
-version = "0.1.0"
+version = "0.1.1"
 description = "ShadowScan: discover shadow AI agents across code, identity providers, LLM gateways, low-code platforms, SaaS, and cloud accounts."
 readme = "README.md"
 license = { text = "Apache-2.0" }
