@@ -23,11 +23,13 @@ import logging
 import os
 import stat
 import tempfile
+import time
 import zlib
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from typing import Any, ClassVar
 
 import yaml
@@ -89,15 +91,33 @@ class ConnectorContext:
         logger: logging.Logger | None = None,
         input_path: str | None = None,
         workdir: str | None = None,
+        deadline: float | None = None,
+        cancelled: Event | None = None,
     ):
         self.config: dict[str, Any] = dict(config or {})
         self.index: SignatureIndex = index or get_index()
         self.log = logger or logging.getLogger("shadowscan")
         self.input_path = input_path or self.config.get("input")
         self.workdir = workdir
+        self.deadline = deadline
+        self.cancelled = cancelled
         self.stats: ScanStats | None = None
         self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
+
+    def check_deadline(self) -> None:
+        """Cooperative cancellation; cannot interrupt an in-flight SDK or plugin call."""
+        if (self.cancelled is not None and self.cancelled.is_set()) or (
+            self.deadline is not None and time.monotonic() >= self.deadline
+        ):
+            raise ConnectorError("connector completion deadline exceeded")
+
+    def checked_records(self, records: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+        self.check_deadline()
+        for record in records:
+            self.check_deadline()
+            yield record
+        self.check_deadline()
 
     # ---------------------------------------------------------------- config
     def get(self, key: str, default: Any = None, env: str | None = None) -> Any:
@@ -140,6 +160,7 @@ class ConnectorContext:
             self.stats.incomplete = True
 
     def examined(self, n: int = 1) -> None:
+        self.check_deadline()
         if self.stats is not None:
             self.stats.objects_examined += n
 
@@ -663,6 +684,7 @@ class BaseConnector(ABC):
                     written += 1
                     yield rec
             if written or not rejected:
+                self.ctx.check_deadline()
                 os.replace(temporary, target)
                 self.ctx.dump_path = str(target)
         finally:
@@ -675,20 +697,24 @@ class BaseConnector(ABC):
         self._offline_bytes_read = 0
         findings: list[Finding] = []
         try:
+            self.ctx.check_deadline()
             if self.offline:
                 records: Iterable[dict[str, Any]] = self.load_offline(str(self.ctx.input_path))
             else:
                 self.check_requirements()
                 records = self.collect()
+            records = self.ctx.checked_records(records)
             dump = self.ctx.config.get("_dump_path")
             if dump and not isinstance(self, _NoDump):
                 records = self._tee(records, str(dump))
             for f in self.analyze(records):
+                self.ctx.check_deadline()
                 f.connector = self.name
                 if f.provider is None:
                     f.provider = self.provider
                 f.sanitize()
                 findings.append(f)
+            self.ctx.check_deadline()
         except ConnectorError as exc:
             stats.skipped = True
             stats.skip_reason = self.ctx.sanitize_message(str(exc))

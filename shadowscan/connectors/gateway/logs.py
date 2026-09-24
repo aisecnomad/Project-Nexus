@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -48,6 +48,9 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.redaction import credential_id, sanitize
 from shadowscan.utils.text import get_path, host_of, parse_timestamp, redact, to_iso
+
+_MAX_CACHED_USER_AGENTS = 256
+_MAX_CACHED_USER_AGENT_CHARS = 1024
 
 # ---------------------------------------------------------------- schemas
 
@@ -953,6 +956,9 @@ class GatewayLogConnector(BaseConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         callers: dict[str, _Caller] = {}
+        # Headers repeat across exported requests. Keep only successful immutable
+        # framework summaries for this analysis, with bounded keys and entries.
+        framework_cache: OrderedDict[str, tuple[str, ...]] = OrderedDict()
         n = 0
         skipped = 0
         for rec in records:
@@ -972,11 +978,12 @@ class GatewayLogConnector(BaseConnector):
                 if schema in {"access-log", "generic"} and self.llm_hosts_only and not self._is_llm_traffic(ev):
                     skipped += 1
                     continue
-                self._runtime_context(ev, rec)
+                self._runtime_context(ev, rec, framework_cache)
                 self._accumulate(callers, ev)
             except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
                     RecursionError, ConnectorError, MatchTimeoutError) as exc:
-                self.ctx.warn(f"gateway.logs: invalid record {n}: {type(exc).__name__}")
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"gateway.logs: invalid record {n}: {type(exc).__name__}{detail}")
                 continue
         self.ctx.examined(n)
         if skipped:
@@ -986,7 +993,9 @@ class GatewayLogConnector(BaseConnector):
                 continue
             yield self._finding(c)
 
-    def _runtime_context(self, ev: Event, rec: dict[str, Any]) -> None:
+    def _runtime_context(
+        self, ev: Event, rec: dict[str, Any], framework_cache: OrderedDict[str, tuple[str, ...]],
+    ) -> None:
         """Operator bindings identify workloads; log names alone never do."""
         identity_assurance = self._binding_identity_assurance(ev, rec)
         rec = sanitize(rec)
@@ -1005,10 +1014,21 @@ class GatewayLogConnector(BaseConnector):
         environment = get_path(rec, "environment", "deployment_environment", "metadata.environment", "metadata.deployment_environment")
         if isinstance(environment, str) and environment:
             ev.environment = environment.strip().lower()
-        ev.runtime_frameworks = sorted({
-            match.signature.id for match in self.index.match_user_agent(ev.user_agent or "")
-            if match.signature.category == "framework"
-        })
+        ua = ev.user_agent or ""
+        cached = framework_cache.get(ua)
+        if cached is None:
+            frameworks = tuple(sorted({
+                match.signature.id for match in self.index.match_user_agent(ua)
+                if match.signature.category == "framework"
+            }))
+            if len(ua) <= _MAX_CACHED_USER_AGENT_CHARS:
+                framework_cache[ua] = frameworks
+                if len(framework_cache) > _MAX_CACHED_USER_AGENTS:
+                    framework_cache.popitem(last=False)
+        else:
+            frameworks = cached
+            framework_cache.move_to_end(ua)
+        ev.runtime_frameworks = list(frameworks)
         ev.identity_assurance = identity_assurance
         ev.code_resources = sorted({
             binding["code_resource"] for binding in self.correlation_bindings

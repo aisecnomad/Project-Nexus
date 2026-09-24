@@ -1,15 +1,22 @@
-# Disposable ShadowScan worker.
-# Does not contain audit credentials. Run with secrets at runtime only.
+# Disposable ShadowScan worker with hash-locked core and cloud dependencies.
+# Provide audit credentials at runtime only.
 #
-#   docker build -t shadowscan:0.1.0 .
-#   docker run --rm --read-only --tmpfs /tmp:mode=1777 --tmpfs /home/nonroot:mode=1777 \
+# Run from a non-root Linux account. Match the host UID/GID so the private bind
+# mount is writable without making report directories world-writable.
+#   mkdir -p out && chmod 700 out
+#   docker build -t shadowscan:reviewed .
+#   docker run --rm --read-only --user "$(id -u):$(id -g)" \
+#     --cap-drop ALL --security-opt no-new-privileges \
+#     --tmpfs /tmp:mode=1777 --env HOME=/tmp \
 #     --network none \
 #     -v "$PWD/repo:/input:ro" -v "$PWD/out:/output" \
-#     shadowscan:0.1.0 code /input --format sarif -o /output/shadowscan.sarif
+#     shadowscan:reviewed code /input --format sarif -o /output/shadowscan.sarif
 #
 # Drop --network none for live API collection. Never mount production
 # credential files into a container that also mounts an untrusted repo.
-FROM python:3.12-slim-bookworm
+# Supply an approved image digest for immutable deployment builds.
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm
+FROM ${PYTHON_IMAGE}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
@@ -18,12 +25,14 @@ RUN apt-get update \
     && useradd --uid 65532 --gid 65532 --create-home --home-dir /home/nonroot nonroot
 
 WORKDIR /opt/shadowscan
-COPY pyproject.toml README.md LICENSE NOTICE /opt/shadowscan/
+COPY pyproject.toml requirements.lock README.md LICENSE NOTICE /opt/shadowscan/
 COPY shadowscan /opt/shadowscan/shadowscan
 COPY agent-card.yaml /opt/shadowscan/agent-card.yaml
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir /opt/shadowscan \
+    && pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock \
+    && pip install --no-cache-dir --no-deps /opt/shadowscan \
+    && pip check \
     && mkdir -p /work /output \
     && chown nonroot:nonroot /work /output
 

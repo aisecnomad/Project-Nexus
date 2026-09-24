@@ -1,12 +1,12 @@
 # Project Nexus · ShadowScan
 
-**ShadowScan finds unregistered AI agents running in your non-production and production environments. ****
+**ShadowScan discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
 
-It sweeps the six places agents hide — code repositories, identity providers,
-LLM gateway logs, low-code platforms, SaaS apps, and cloud accounts. 
-Fingerprints the frameworks and model providers they use, scores their risk, and reconciles
-every discovery against your sanctioned inventory of
-[Agent Cards](agent-card.yaml).*.
+It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
+low-code platforms, SaaS apps and cloud accounts. It fingerprints frameworks and
+model providers, scores findings and reconciles discoveries against your approved
+inventory of
+[Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
 
 Example findings (totals vary as signatures evolve):
 
@@ -45,9 +45,9 @@ agent in the estate: *who owns it, what can it do, and did anyone approve it?*
 | **SaaS** | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | Bots and apps with their scopes, pending install requests, Teams apps with bots / Copilot agents, GitHub Apps (AI reviewers, coding agents) and their permissions, Rovo/Marketplace apps, Notion integrations, Zoom meeting bots, any CSV/JSON app inventory (CASB exports) |
 | **Cloud** | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci` | Bedrock Agents / AgentCore / Flows / Q Business / Lex, Lambda/ECS/SageMaker/Step Functions with LLM signals, Vertex AI Agent Engine, Dialogflow CX, Agentspace, Cloud Run/Functions, Azure OpenAI deployments, AI Foundry agents, Bot Service, Logic Apps, Function/Container apps, OCI Generative AI Agents, Digital Assistant, GenAI endpoints, IAM roles/bindings/policies granting LLM access, secret *names*, API keys, CloudTrail / audit-log LLM callers |
 
-Every connector runs **live** (API credentials) or **offline** (a JSON/CSV/log
-export, or a record dump from a previous live run), so the same detection
-logic works in a CI job, on an analyst laptop, or from a SIEM export.
+Connectors support **live** API collection, **offline** JSON/CSV/log exports,
+or both; see the connector guide for the supported modes and provider scope.
+Offline analysis can run in CI, on an analyst laptop or against a SIEM export.
 
 ## Frameworks & products recognised
 
@@ -68,14 +68,20 @@ tells you what a package, host, user agent, model id, scope or file path maps to
 ## Install
 
 ```bash
-pip install "git+https://github.com/aisecnomad/Project-Nexus.git@31fbf62c1ea9e8df64ced753cf237a3dcff65ef0"           # core (code, identity, gateway, low-code, SaaS via REST)
-pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@31fbf62c1ea9e8df64ced753cf237a3dcff65ef0"   # + boto3, google-auth, azure-identity, oci
+pip install "git+https://github.com/aisecnomad/Project-Nexus.git@e870f7cb3711f934652fd9925873dfdda452bfc2"           # core (code, identity, gateway, low-code, SaaS via REST)
+pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@e870f7cb3711f934652fd9925873dfdda452bfc2"   # + boto3, google-auth, azure-identity, oci
 ```
 
-These examples pin the reviewed implementation. Python 3.11+ is required. Core
+These examples pin an existing 0.1.1 release-candidate revision, not a published
+release; no `v0.1.1` tag is required. Review and pin the final approved commit
+before deployment. Python 3.11+ is required; CI covers 3.11 and 3.12. Core
 dependencies include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
+
+For deployment on Linux x86_64 with Python 3.11 or 3.12, the checked-in
+`requirements.lock` pins and hashes the core and all cloud runtime dependencies.
+See [reproducible installs and lock maintenance](docs/production.md#install-from-a-reviewed-revision).
 
 ## Quick start
 
@@ -114,13 +120,13 @@ options:
   plugins: []                        # exact names of reviewed third-party connectors
   allow_signature_override: false
   allow_private_origin: false        # opt in only for trusted private HTTPS APIs
+  allow_credential_mixing: false     # separate repository scans from live tenant access
+  allow_instance_credentials: false # cloud metadata credentials require explicit opt-in
+  connector_timeout_seconds: 120    # soft deadline; also enforce a host job timeout
   min_confidence: 0.3
   fail_on: high
   dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs
 connectors:
-  - name: code.github
-    org: acme
-    token: ${GITHUB_TOKEN}
   - name: identity.entra
     tenant_id: ${AZURE_TENANT_ID}
     client_id: ${AZURE_CLIENT_ID}
@@ -143,7 +149,11 @@ connectors:
 
 `shadowscan connectors` lists every connector with its configuration keys,
 required extras, and offline format. See [docs/connectors.md](docs/connectors.md)
-for credentials and least-privilege scopes per connector.
+for credentials and least-privilege scopes per connector. Run repository scans in
+a separate job/configuration from live tenant collection. Mixing these credential
+boundaries requires an explicit `allow_credential_mixing` exception; keep the
+separation for untrusted repositories. Cloud instance-metadata credentials require
+`allow_instance_credentials: true`; use an explicit audit identity by default.
 
 Use `--incremental` to reuse completed scans of unchanged local checkouts and
 static cloud exports. Live APIs and gateway logs are refreshed on every run.
@@ -196,7 +206,7 @@ See [deployment and migration](docs/production.md) for the rollout checks.
 }
 ```
 
-* **confidence** is a noisy-OR of evidence weights — how sure we are this is an agent / agent enabler (not just "a project that imports `openai`").
+* **confidence** combines evidence weights with noisy-OR. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
 * **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence.
 * **shadow** is `true` unless exactly one inventory entry matches an explicit resource pattern and its configured scope restrictions; names only suggest entries for review. An approved entry lends its owner to the finding.
 * **related** links findings across surfaces (the Terraform that provisions an agent ↔ the agent in the account ↔ the role calling Bedrock ↔ the CloudTrail caller).
@@ -221,8 +231,8 @@ discovery:
   names: ["ops provisioning agent"]
 ```
 
-Simple `agents.yaml` lists and CSV work too. `shadowscan inventory stubs.`
-Turns shadow findings into card skeletons for review. See
+Simple `agents.yaml` lists and CSV work too. `shadowscan inventory stubs`
+turns shadow findings into card skeletons for review. See
 [docs/inventory.md](docs/inventory.md).
 
 ## Extending
@@ -239,7 +249,7 @@ Turns shadow findings into card skeletons for review. See
 
 ```bash
 pip install -e ".[dev]"
-python -m shadowscan. signatures.validate
+python -m shadowscan.signatures.validate
 ruff check shadowscan tests
 mypy shadowscan
 pip-audit --progress-spinner off
@@ -252,7 +262,7 @@ shadowscan scan -c examples/shadowscan.offline.yaml
 * Known credential formats, sensitive configuration fields, and credential-bearing URLs are **redacted** before findings or sanitized record exports are persisted. Redaction cannot identify every arbitrary secret; reports still contain security-sensitive inventory data.
 * Secret stores (Secrets Manager, Key Vault, Secret Manager, OCI Vault) are read for **names only**.
 * JWTs are never persisted; findings reference a truncated hash.
-* Connectors never modify anything; every API call is read-only.
+* Built-in collectors inspect provider resources using read operations. Scope the audit identity to the documented read permissions and review any enabled third-party plugin separately.
 
 Deployment behavior, migration options, and limits are documented in
 [SECURITY.md](SECURITY.md) and [docs/production.md](docs/production.md).

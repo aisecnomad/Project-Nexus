@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -62,21 +63,24 @@ def test_merge_and_correlate():
 
 
 def test_parallel_connector_completion_cannot_change_merge_attribution(monkeypatch):
+    second_finished = Event()
     class Connector:
         def __init__(self, ctx):
             self.ctx = ctx
 
         def run(self):
             label = self.ctx.config["label"]
+            if label == "first":
+                assert second_finished.wait(2)
+            else:
+                second_finished.set()
             self.ctx.stats = ScanStats(connector="code.filesystem", started_at=now_iso(), finished_at=now_iso())
             return [_f(surface=Surface.CODE, connector="code.filesystem", kind=Kind.FRAMEWORK_USAGE,
                        title="Same resource", resource="repo", resource_type="project",
                        owner=label, metadata={"first_source": label})]
 
-    # Force the completed-future iterator to hand the second configured
-    # connector to the engine first, independent of scheduler timing.
+    # Make the second connector complete before the first.
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
-    monkeypatch.setattr("shadowscan.engine.as_completed", lambda futures: reversed(list(futures)))
     cfg = ScanConfig(connectors=[
         ConnectorSpec("code.filesystem", label="first"),
         ConnectorSpec("code.filesystem", label="second"),

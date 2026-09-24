@@ -6,14 +6,18 @@ Offline export: list of client objects (``/api/v2/clients``) and client-grant ob
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import hashlib
+import json
+from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from requests import RequestException
+
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Surface
-from shadowscan.utils.http import HttpClient
+from shadowscan.utils.http import HttpClient, HttpError
 
 
 class Auth0Connector(BaseConnector):
@@ -26,6 +30,7 @@ class Auth0Connector(BaseConnector):
         "client_id": "M2M app client id for the Management API (env AUTH0_CLIENT_ID)",
         "client_secret": "env AUTH0_CLIENT_SECRET",
         "token": "pre-issued Management API token (env AUTH0_MGMT_TOKEN)",
+        "max_pages": "maximum pages per collection, capped at 1000 (default 1000)",
         "input": "offline: JSON export of clients / client-grants",
     }
 
@@ -51,34 +56,64 @@ class Auth0Connector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        page = 0
-        while True:
-            batch = self.http.get_json("/api/v2/clients", params={"per_page": 100, "page": page, "include_fields": "true", "fields": "client_id,name,description,app_type,grant_types,callbacks,allowed_origins,web_origins,initiate_login_uri,client_metadata,is_first_party,token_endpoint_auth_method,logo_uri,sso"})
-            if not batch:
-                break
-            for c in batch:
-                c["_kind"] = "client"
-                yield c
+        yield from self._pages(
+            "/api/v2/clients", "client",
+            include_fields="true",
+            fields="client_id,name,description,app_type,grant_types,callbacks,allowed_origins,web_origins,initiate_login_uri,client_metadata,is_first_party,token_endpoint_auth_method,logo_uri,sso",
+        )
+        yield from self._pages("/api/v2/client-grants", "client_grant")
+
+    def _pages(self, path: str, kind: str, **params: Any) -> Iterator[dict[str, Any]]:
+        """Bound pagination and retain collected identities when enrichment fails."""
+        assert self.http
+        seen: set[str] = set()
+        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
+        for page in range(max_pages):
+            try:
+                batch = self.http.get_json(path, params={**params, "per_page": 100, "page": page})
+            except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                self.ctx.warn(f"identity.auth0: collection incomplete for {path} ({status})")
+                return
+            if not isinstance(batch, list):
+                self.ctx.warn(f"identity.auth0: invalid collection response for {path}")
+                return
+            fingerprint = hashlib.sha256(json.dumps(batch, sort_keys=True).encode()).hexdigest()
+            if fingerprint in seen:
+                self.ctx.warn(f"identity.auth0: repeated pagination page for {path}")
+                return
+            seen.add(fingerprint)
+            for record in batch:
+                if not isinstance(record, dict):
+                    self.ctx.warn(f"identity.auth0: invalid record in {path}; coverage incomplete")
+                    continue
+                yield {**record, "_kind": kind}
             if len(batch) < 100:
-                break
-            page += 1
-        page = 0
-        while True:
-            batch = self.http.try_get_json("/api/v2/client-grants", params={"per_page": 100, "page": page}, default=[])
-            if not batch:
-                break
-            for g in batch:
-                g["_kind"] = "client_grant"
-                yield g
-            if len(batch) < 100:
-                break
-            page += 1
+                return
+        self.ctx.warn(f"identity.auth0: pagination limit reached for {path}")
+
+    def _record_kind(self, rec: Any) -> str | None:
+        if not self._record_fields_valid(
+            rec, required=("client_id",), strings=("_kind", "name", "description", "app_type", "initiate_login_uri", "logo_uri", "token_endpoint_auth_method"),
+            mappings=("client_metadata",), arrays=("grant_types", "callbacks", "allowed_origins", "web_origins"),
+        ):
+            return None
+        kind = rec.get("_kind") or ("client_grant" if "audience" in rec and "scope" in rec else "client")
+        if kind not in {"client", "client_grant"}:
+            return None
+        for field in ("grant_types", "callbacks", "allowed_origins", "web_origins"):
+            if any(not isinstance(value, str) for value in rec.get(field) or []):
+                return None
+        return kind
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         clients: list[dict[str, Any]] = []
         grants: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
-            kind = rec.get("_kind") or ("client_grant" if "audience" in rec and "scope" in rec else "client")
+            kind = self._record_kind(rec)
+            if kind is None:
+                self.ctx.warn("identity.auth0: malformed client or grant record; coverage incomplete")
+                continue
             if kind == "client_grant":
                 grants.setdefault(rec.get("client_id", ""), []).append(rec)
             else:

@@ -89,6 +89,7 @@ def available_connectors() -> dict[str, str]:
         errors.append(f"plugin metadata listing failed: {type(exc).__name__}")
         _plugin_errors[:] = errors
         return out
+    ambiguous: set[str] = set()
     for ep in discovered:
         try:
             name = ep.name
@@ -102,8 +103,12 @@ def available_connectors() -> dict[str, str]:
         if name in _BUILTIN:
             errors.append(f"plugin '{sanitize_text(name)}' cannot replace a built-in connector")
             continue
+        if name in ambiguous:
+            continue
         if name in out and out[name] != value:
             errors.append(f"plugin '{sanitize_text(name)}' is defined more than once")
+            del out[name]
+            ambiguous.add(name)
             continue
         if not isinstance(value, str) or ":" not in value:
             errors.append(f"plugin '{sanitize_text(name)}' has an invalid import path")

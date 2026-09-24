@@ -19,15 +19,17 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
-from requests import RequestException
+from requests import RequestException, Session
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import cloud_finding, done, name_hint, scan_env, scan_iam_actions
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
 
 DEFAULT_LOCATIONS = ["us-central1", "us-east4", "us-west1", "europe-west1", "europe-west4", "asia-southeast1", "asia-northeast1"]
@@ -45,6 +47,8 @@ class GcpConnector(BaseConnector):
         "projects": "list of project ids (default: all projects visible to the credentials)",
         "locations": f"Vertex/Dialogflow locations (default {DEFAULT_LOCATIONS})",
         "access_token": "OAuth token (env GOOGLE_OAUTH_ACCESS_TOKEN); otherwise Application Default Credentials via google-auth",
+        "credentials_file": "explicit Google credentials file (env GOOGLE_APPLICATION_CREDENTIALS); otherwise local gcloud ADC",
+        "allow_instance_credentials": "allow metadata-based Application Default Credentials (default false; inherited from options)",
         "audit_days": "look back N days in Cloud Audit Logs for Vertex callers (default 0 = off)",
         "max_projects": "default 200",
         "input": "offline: JSONL dump of records",
@@ -56,6 +60,8 @@ class GcpConnector(BaseConnector):
         self.locations = ctx.get("locations") or DEFAULT_LOCATIONS
         self.audit_days = int(ctx.get("audit_days", 0))
         self.max_projects = int(ctx.get("max_projects", 200))
+        if self.max_projects < 1:
+            raise ConnectorError("cloud.gcp: max_projects must be positive")
         self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
         self.http: HttpClient | None = None
 
@@ -67,8 +73,66 @@ class GcpConnector(BaseConnector):
                 import google.auth.transport.requests
             except ImportError as exc:
                 raise ConnectorError("cloud.gcp: install google-auth (pip install 'shadowscan[gcp]') or provide access_token") from exc
-            creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-            creds.refresh(google.auth.transport.requests.Request())
+            # google-auth otherwise uses its own 120-second transport default,
+            # including discovery/refresh requests outside our HttpClient.
+            allow_instance = self.ctx.get("allow_instance_credentials", False) is True
+
+            class CredentialSession(Session):
+                """Retain OAuth status bodies within the complete HTTP policy."""
+
+                def __init__(self) -> None:
+                    super().__init__()
+                    self.trust_env = False
+                    self.client = HttpClient(allow_private_origin=allow_instance, max_retries=0, max_response_bytes=1024 * 1024)
+
+                def request(self, method: Any, url: Any, *args: Any, **kwargs: Any) -> Any:
+                    if args:
+                        # google-auth supplies HTTP options by keyword.
+                        raise TypeError("Credential transport requires keyword HTTP options")
+                    if allow_instance and urlsplit(url).scheme == "http":
+                        # IMDS requires HTTP. Opt-in permits that transport, but
+                        # never redirects credentials and still bounds its body.
+                        kwargs["allow_redirects"] = False
+                        kwargs["stream"] = True
+                        response = super().request(method, url, **kwargs)
+                        if 300 <= response.status_code < 400:
+                            response.close()
+                            raise ValueError("Cloud credential endpoint redirects are refused")
+                        response._content = self.client.read_response_bytes(response)
+                        response._content_consumed = True  # type: ignore[attr-defined]
+                        return response
+                    kwargs["stream"] = False
+                    return self.client.request(method, url, raise_for_status=False, **kwargs)
+
+                def close(self) -> None:
+                    self.client.session.close()
+                    super().close()
+
+            class BoundedRequest(google.auth.transport.requests.Request):
+                def __call__(self, *args: Any, **kwargs: Any) -> Any:
+                    if not allow_instance:
+                        # A file-based workload identity can itself reference IMDS.
+                        # Apply public destination/socket policy during refresh too.
+                        validate_url(kwargs.get("url") or args[0], allow_private=False)
+                    timeout = kwargs.pop("timeout", 30)
+                    kwargs["timeout"] = min(float(timeout), 30) if timeout is not None else 30
+                    return super().__call__(*args, **kwargs)
+
+            request = BoundedRequest(session=CredentialSession())
+
+            scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+            credentials_file = self.ctx.get("credentials_file", env="GOOGLE_APPLICATION_CREDENTIALS")
+            if allow_instance and not credentials_file:
+                creds, _ = google.auth.default(scopes=scopes, request=request)
+            else:
+                if not credentials_file:
+                    from google.auth import _cloud_sdk
+
+                    credentials_file = _cloud_sdk.get_application_default_credentials_path()
+                    if not Path(credentials_file).is_file():
+                        raise ConnectorError("cloud.gcp: provide access_token or local ADC; instance credentials require options.allow_instance_credentials=true")
+                creds, _ = google.auth.load_credentials_from_file(credentials_file, scopes=scopes, request=request)
+            creds.refresh(request)
             token = creds.token
         self.http = HttpClient(headers={"Authorization": f"Bearer {token}"})
 
@@ -97,6 +161,14 @@ class GcpConnector(BaseConnector):
             if not isinstance(data, dict) or "error" in data:
                 self.ctx.warn(f"cloud.gcp: invalid response for {url}")
                 return
+            # Aggregated list APIs may succeed while omitting unavailable regions.
+            # Keep reachable observations, but never turn partial success into a
+            # complete inventory (Cloud Functions v2 and Cloud Run v2 contract).
+            unreachable = data.get("unreachable", [])
+            if not isinstance(unreachable, list) or any(not isinstance(loc, str) or not loc for loc in unreachable):
+                self.ctx.warn(f"cloud.gcp: invalid unreachable locations for {url}")
+            elif unreachable:
+                self.ctx.warn(f"cloud.gcp: {len(unreachable)} unreachable location(s) for {url}; coverage unknown")
             items = data.get(items_key, [])
             if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
                 self.ctx.warn(f"cloud.gcp: invalid {items_key} page for {url}")
@@ -114,9 +186,9 @@ class GcpConnector(BaseConnector):
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
-        projects = self.ctx.get("projects") or []
+        projects: Iterable[str] = self.ctx.get("projects") or []
         if not projects:
-            projects = [p["projectId"] for p in self._pages("https://cloudresourcemanager.googleapis.com/v1/projects", "projects", filter="lifecycleState:ACTIVE") if p.get("projectId")]
+            projects = (p["projectId"] for p in self._pages("https://cloudresourcemanager.googleapis.com/v1/projects", "projects", filter="lifecycleState:ACTIVE") if p.get("projectId"))
         for i, project in enumerate(projects):
             if i >= self.max_projects:
                 self.ctx.warn("cloud.gcp: max_projects reached")
@@ -142,8 +214,19 @@ class GcpConnector(BaseConnector):
                 for eng in self._pages(f"https://discoveryengine.googleapis.com/v1/projects/{project}/locations/{loc}/collections/default_collection/engines", "engines"):
                     yield {"_kind": "discovery-engine", "_project": project, "_location": loc, **eng}
         if "run.googleapis.com" in enabled:
-            for svc in self._pages(f"https://run.googleapis.com/v2/projects/{project}/locations/-/services", "services"):
-                yield {"_kind": "cloud-run-service", "_project": project, **svc}
+            # Cloud Run v2 services.list rejects the '-' wildcard. Enumerate
+            # project-visible locations through the documented v1 locations API.
+            seen_locations: set[str] = set()
+            for location in self._pages(f"https://run.googleapis.com/v1/projects/{project}/locations", "locations"):
+                loc = location.get("locationId")
+                if not isinstance(loc, str) or not re.fullmatch(r"[a-z][a-z0-9-]*[0-9]", loc):
+                    self.ctx.warn(f"cloud.gcp: invalid Cloud Run location for {project}; coverage unknown")
+                    continue
+                if loc in seen_locations:
+                    continue
+                seen_locations.add(loc)
+                for svc in self._pages(f"https://run.googleapis.com/v2/projects/{project}/locations/{loc}/services", "services"):
+                    yield {**svc, "_kind": "cloud-run-service", "_project": project, "_location": loc}
         if "cloudfunctions.googleapis.com" in enabled:
             for fn in self._pages(f"https://cloudfunctions.googleapis.com/v2/projects/{project}/locations/-/functions", "functions"):
                 yield {"_kind": "cloud-function", "_project": project, **fn}
@@ -217,8 +300,8 @@ class GcpConnector(BaseConnector):
                     for field in ("principal", "method", "resource", "userAgent", "timestamp", "_project"):
                         if rec.get(field) is not None and not isinstance(rec[field], str):
                             raise ValueError("event field")
-                    # A principal may call resources in several projects. A
-                    # shared bucket would attribute all events to the first.
+                    # One principal may call multiple projects. Preserve the
+                    # resource project as part of each observation's identity.
                     key = (rec.get("_project"), rec.get("principal") or "unknown")
                     agg = callers.setdefault(key, {"events": 0, "methods": {}, "resources": {}, "agents": {}, "first": None, "last": None, "project": rec.get("_project"), "delegated": False})
                     agg["events"] += 1

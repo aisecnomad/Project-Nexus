@@ -17,8 +17,11 @@ import stat
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from shadowscan import __version__
@@ -29,6 +32,15 @@ from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.redaction import sanitize
+
+fcntl: ModuleType | None
+try:
+    import fcntl as _fcntl
+
+    fcntl = _fcntl
+except ImportError:  # pragma: no cover - non-POSIX: full scans remain available
+    fcntl = None
+
 
 log = logging.getLogger("shadowscan.incremental")
 _FORMAT = 3  # v2 finding identities: older entries require a full rescan
@@ -261,6 +273,8 @@ class IncrementalCache:
         if not self.enabled:
             return
         try:
+            if fcntl is None:
+                raise ValueError("incremental locking requires POSIX flock")
             # Reject state in any configured input, including another connector's.
             for spec in config.enabled_connectors():
                 for root in _paths(spec):
@@ -332,7 +346,36 @@ class IncrementalCache:
             log.warning("could not fingerprint static input for %s; running a full scan", spec.id)
             return None
 
+    @contextmanager
+    def _slot_lock(self, snapshot: Snapshot, *, exclusive: bool):
+        """Use a stable per-slot inode; contention degrades to a full scan."""
+        if fcntl is None or len(snapshot.slot) != 64 or any(c not in "0123456789abcdef" for c in snapshot.slot):
+            raise ValueError("invalid or unsupported incremental lock")
+        self._secure_directory()
+        fd = os.open(self.directory / f"{snapshot.slot}.lock", os.O_CREAT | os.O_RDWR
+                     | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), 0o600)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+                raise ValueError("incremental lock must be a private regular file")
+            if hasattr(os, "getuid") and info.st_uid != os.getuid():
+                raise ValueError("incremental lock must belong to the current user")
+            fcntl.flock(fd, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
     def load(self, spec: ConnectorSpec, snapshot: Snapshot) -> tuple[list[Finding], ScanStats] | None:
+        try:
+            with self._slot_lock(snapshot, exclusive=False):
+                return self._load_unlocked(spec, snapshot)
+        except (OSError, ValueError):
+            return None
+
+    def _load_unlocked(self, spec: ConnectorSpec, snapshot: Snapshot) -> tuple[list[Finding], ScanStats] | None:
         path = self.directory / f"{snapshot.slot}.json"
         try:
             fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
@@ -359,10 +402,19 @@ class IncrementalCache:
                 warnings=sanitize(payload["warnings"]), cached=True, cache_key=snapshot.fingerprint,
             )
             return findings, stats
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
             return None
 
-    def save(self, snapshot: Snapshot, findings: list[Finding], stats: ScanStats) -> None:
+    def save(self, snapshot: Snapshot, findings: list[Finding], stats: ScanStats, *, check_deadline: Callable[[], None] | None = None) -> None:
+        if stats.incomplete or stats.errors or stats.skipped:
+            return
+        try:
+            with self._slot_lock(snapshot, exclusive=True):
+                self._save_unlocked(snapshot, findings, stats, check_deadline=check_deadline)
+        except (OSError, ValueError):
+            log.warning("incremental state is locked or unavailable; next scan will run in full")
+
+    def _save_unlocked(self, snapshot: Snapshot, findings: list[Finding], stats: ScanStats, *, check_deadline: Callable[[], None] | None = None) -> None:
         if stats.incomplete or stats.errors or stats.skipped:
             return
         temp: str | None = None
@@ -377,11 +429,15 @@ class IncrementalCache:
             })
             if len(data) > _MAX_CACHE_BYTES:
                 return
+            if check_deadline is not None:
+                check_deadline()
             fd, temp = tempfile.mkstemp(prefix=".pending-", dir=self.directory)
             with os.fdopen(fd, "wb") as stream:
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
+            if check_deadline is not None:
+                check_deadline()
             os.replace(temp, self.directory / f"{snapshot.slot}.json")
             temp = None
         except (OSError, ValueError, TypeError):

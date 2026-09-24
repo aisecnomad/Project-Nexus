@@ -1,25 +1,69 @@
 # Deployment and migration
 
-This hardening change addresses all nine findings in the review of `main` at
-`b13753df3199242c9e13cbfd04aefc18dd31a735`. It closes unsafe Git metadata execution,
-Python credential redaction gaps and falsely complete export scans; corrects
-Foundry and OCI collection; separates remote records from local paths; validates
-every explicit scan selector; stabilizes finding identity; and preserves Google
-Workspace user attribution. It retains the earlier bounded YAML, inventory,
-output, HTTP, JWT and cloud hardening already merged on `main`.
+This is the rollout guide for the unreleased 0.1.1 candidate. It combines the
+previous input, transport, identity and collection fixes with explicit credential
+boundaries, connector deadlines, serialized incremental state and reproducible
+runtime dependency installs. The package version is 0.1.1; a version string does
+not establish that a tag, signed artifact or production acceptance exists.
 
 Automated validation establishes implementation behavior. Production rollout
-also requires the tenant canaries and operational checks below; a passing unit
-suite does not establish complete coverage of a particular estate.
-PR #8 predates the protections now on `main` and must not be merged as-is.
+also requires the tenant canaries and container/operational checks below; a
+passing unit suite does not establish complete coverage of a particular estate.
 
 ## Install from a reviewed revision
 
-For production, check out an audited full commit SHA before installing the
-package, then pin the resolved dependencies in your deployment environment.
-An example pinned install command in an older guide does not automatically
-track subsequent security fixes. Use `python -m pip install .` from the reviewed
-checkout, or `python -m pip install '.[cloud]'` when cloud SDKs are required.
+Check out an audited full commit SHA before installation. README and example
+workflow pins point to an existing candidate; they do not automatically include
+later changes. Use the final approved SHA recorded with the deployment evidence,
+not a floating branch or a tag that has not been published.
+
+The runtime lock covers the core scanner and all cloud SDK extras on CPython
+3.11/3.12, Linux x86_64. It contains exact versions and permitted SHA-256 hashes;
+CI checks installation and dependency consistency on both Python versions. It is
+not a universal lock for Windows, macOS, ARM or every future Python release.
+Resolve and validate a separate lock before deploying on another platform.
+
+From the reviewed checkout, in a clean virtual environment:
+
+```bash
+python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+python -m pip wheel . --no-deps --wheel-dir dist
+python -m pip install --no-deps dist/shadowscan-0.1.1-*.whl
+python -m pip check
+python -m shadowscan.signatures.validate
+shadowscan --help
+```
+
+The runtime lock deliberately includes all cloud extras, even for a code-only
+worker. Development tools and isolated wheel build tooling are not part of this
+runtime lock. Build the wheel in a controlled builder, retain its SHA-256, and
+install that reviewed artifact into workers. Dependency hashes prevent silent
+artifact substitution; they do not establish that a dependency is safe.
+
+Regenerate intentionally in a clean Linux environment with Python 3.12 and
+`pip-tools==7.5.3`, review the dependency diff and advisory results, and let both
+CI matrix jobs verify the result:
+
+```bash
+pip-compile --extra cloud --generate-hashes --strip-extras \
+  --no-emit-index-url --no-emit-trusted-host --no-annotate \
+  --output-file requirements.lock pyproject.toml
+```
+
+Use `--upgrade` only for an intentional dependency refresh. Preserve the lock's
+supported-platform comment when regenerating. Do not bypass failed hash checks.
+
+The Dockerfile uses this runtime lock and UID/GID 65532. Supply an approved base
+image digest through `--build-arg PYTHON_IMAGE=python@sha256:<approved-digest>`
+and retain the built image digest. The default base tag and distribution packages
+are mutable; the Dockerfile alone does not promise byte-for-byte reproducible
+images. Build and test the actual image before release: verify the non-root UID,
+read-only filesystem operation, resource limits and output-directory permissions.
+A Docker daemon was unavailable in this review environment, so container runtime
+acceptance remains pending. Opt-in Git history enrichment requires Git 2.45+;
+verify the distribution Git version if that feature is needed. Keep runtime
+secrets out of the build context.
+
 For record replay, read `exports/manifest.json` and use the `filename` for the
 intended connector instance; export names are not a fixed `cloud_aws.jsonl`.
 
@@ -30,6 +74,9 @@ options:
   plugins: []
   allow_signature_override: false
   allow_private_origin: false
+  allow_credential_mixing: false
+  allow_instance_credentials: false
+  connector_timeout_seconds: 120
 connectors:
   - name: identity.jwt
     input: ./tokens.json
@@ -43,6 +90,20 @@ Approved plugins still run trusted Python code. `shadowscan connectors` lists
 installed plugin metadata without importing it. A plugin must be explicitly
 allowed on each scan, even if a prior scan imported it.
 
+Keep scans of repository content separate from jobs holding live cloud, identity,
+SaaS or low-code credentials. By default, configuration rejects a selected code
+connector alongside a selected live credentialed collector. A single remote code
+connector can use its repository token; code plus offline exports is allowed.
+`allow_credential_mixing: true` permits a reviewed exception, but does not isolate
+the repository from credentials available in the worker. Use separate disposable
+workers for untrusted repositories.
+
+`allow_instance_credentials: false` disables implicit cloud instance-metadata
+credential acquisition. Enabling it is a global opt-in; a connector-level value
+cannot silently override that policy. Use explicit audit credentials or approved
+workload credentials and inspect account/tenant attribution before rollout.
+These settings are credential-use policy, not a process or network sandbox.
+
 Custom packs can add signatures by default. Replacing a built-in signature
 requires explicit `allow_signature_override` approval. Enable private origins
 only when the selected scan requires a trusted private HTTPS endpoint; keep
@@ -54,7 +115,12 @@ Configuration rejects duplicate authored YAML keys and unknown top-level or
 `fail_on` thresholds or `parallel` values stop the scan before collection.
 Environment references are validated in disabled connector declarations too;
 remove unused placeholders or give intentionally optional values a fallback.
+Relative inventory globs and `options.workdir`, like other configured paths,
+resolve beside the configuration file, independent of the process directory.
 
+The new policies also expose `--connector-timeout-seconds`,
+`--allow-credential-mixing/--deny-credential-mixing` and
+`--allow-instance-credentials/--deny-instance-credentials`.
 All scan commands also expose `--allow-plugin`,
 `--allow-signature-override/--deny-signature-override` and
 `--allow-private-origin/--deny-private-origin`. Configured values are retained
@@ -104,12 +170,24 @@ matching with a per-root work budget.
 
 A limit hit is a diagnostic and incomplete coverage, not proof of absence. Exit 3
 must remain a failed gate in CI. Exit 2 means a complete scan exceeded the chosen
-risk threshold. Hosted CI has a job timeout as an additional containment boundary;
-there is no claim of a universal deadline for all vendor SDKs.
+risk threshold. `connector_timeout_seconds` defaults to 120 seconds and must be a strictly positive
+finite number. It starts when the connector worker begins, and split filesystem
+roots share that connector's deadline. The engine stops accepting a connector's
+results after the deadline and records incomplete coverage. Python
+worker threads cannot safely be killed: a blocked SDK call can continue after
+that soft deadline and can delay process shutdown. Also enforce a host/job
+wall-clock deadline and terminate the disposable worker when it expires.
+SDK connect/read limits and bounded retries reduce blocking; none guarantees a
+universal hard deadline for the whole scan.
 
 Saved provider errors and unsupported/malformed export records also make scans
 incomplete. Valid neighbors remain available. Explicit empty inventories such
 as `[]` remain valid; an authorization-error document is not an empty inventory.
+Identity and low-code collectors retain available records when enrichment or a
+later page fails. Auth0 offset pagination has a finite page budget and detects
+repeated pages. Okta grants and optional tokens both follow pagination.
+Google Workspace accepts omitted empty arrays only in identified native users
+and token-list envelopes; an arbitrary empty object is incomplete coverage.
 Every `--only` value must match an enabled connector name or label, including
 when another selector matches successfully.
 
@@ -174,10 +252,26 @@ and diff reports missing findings as unknown. Incremental cache format changes
 force a full rescan; cached approval is never reused. Review any downstream
 deduplication, SARIF alert history and ticket integrations that store old IDs.
 
+This candidate preserves the v2 algorithm (`ss-` plus the first 16 SHA-256 hex
+characters). Corrected JWT issuer labels can change provider-derived IDs for
+previously misclassified tokens; review those deltas when updating a baseline.
+
 Diffs now identify substantive changes in classification, permissions,
 capabilities, technologies, risk score/factors, registration and ownership,
 including changes within the same risk band. `changed_fields` identifies the
 changed attributes. Timestamp and evidence ordering alone do not create changes.
+`diff` and `inventory stubs` accept regular JSON report files up to 64 MiB,
+without input or ancestor symlinks. Duplicate keys, non-finite numbers, invalid
+finding fields and excessive nesting fail validation. All records are checked
+before stub generation writes files; this does not make multiple file writes
+transactional if a later filesystem operation fails.
+
+GitHub and GitLab API source downloads use the immutable blob IDs returned by
+tree enumeration. Symlinks and submodules are skipped with incomplete coverage;
+malformed Base64 is rejected. GitLab resolves a branch to one immutable commit
+before tree pagination; all tree pages use that commit and content reads use
+the enumerated blob IDs. Missing or malformed commit resolution marks coverage
+incomplete. Provider metadata collected separately is not part of that snapshot.
 
 Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
 Filesystem scans reject selected roots whose paths traverse a symbolic link.
@@ -186,12 +280,25 @@ review or explicitly exclude them before accepting a completeness gate.
 Pre/post content hashes can detect ordinary concurrent edits but do not form an
 atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
 and revert between those reads.
-Concurrent scanner processes do not lock the incremental cache; cache entries
-are written atomically and checked against the current input fingerprint.
+Incremental state uses nonblocking advisory `flock` per cache slot
+(`<sha256>.lock`): shared for reading and exclusive for publication, as well as
+atomic writes and current-input fingerprint checks.
+Keep state in a dedicated private directory outside the scanned repository. A
+busy read lock causes a cache miss; a busy write lock skips that publication.
+Platforms without `fcntl` fall back to full scans. Symlinked, non-owner or non-private lock files are
+rejected. Use local filesystems with working advisory locks; a lock is not a
+distributed coordination service or a security boundary against another process
+with the same user ID.
 
 ## Cloud collection changes
 
-AWS resolves its account before emitting account metadata. ECS discovery follows
+AWS verifies the live account through STS before emitting account metadata,
+including when `account_id` is configured. For live scans, that setting is an
+expected account and a mismatch stops collection. AWS and OCI SDK clients have
+explicit 10-second connect and 30-second read timeouts with at most three
+attempts. These bounds do not replace the overall worker deadline. AWS Lambda
+and GCP project limits stop enumeration without materializing the full inventory.
+ECS discovery follows
 exact definition ARNs referenced by running tasks and service deployments,
 including referenced inactive revisions, and retains the latest active registered
 revision of each family as a separate evidence category. Stopped tasks and unused
@@ -209,6 +316,13 @@ actually executed. Use trusted runtime telemetry for additional attribution.
 GCP audit caller findings keep events from separate projects distinct, including
 when the service account principal is the same. Azure Resource Graph failures on
 later pages preserve earlier observations and mark collection incomplete.
+Cloud Run discovers concrete regions using the locations API before listing
+services; the v2 services endpoint does not accept a `-` location. Unreachable
+regions in GCP list responses make coverage incomplete while retaining reachable
+observations. The audit identity must have `run.locations.list` and
+`run.services.list` for this discovery path. Azure ARM inventory pages also retain
+observations after later failures; diagnostic-setting coverage remains unknown
+unless every page was collected successfully.
 
 Foundry collection uses the verified classic Agent Service `/assistants` route
 with `api-version=v1` and validates its pagination envelope. Newer `/agents`
@@ -225,19 +339,23 @@ lost user attribution before using their counts as governance evidence.
 
 ### Protect the merge gate
 
-The repository's `Protect main` ruleset requires pull requests but does not yet
-require CI checks or an approving review. A maintainer with repository ruleset
-administration access must update that active ruleset to require both matrix
-checks from `.github/workflows/ci.yml` (`test (3.11)` and `test (3.12)`) and
-at least one approval. Require a fresh successful run for each proposed merge;
-do not use a previously green branch run after the base branch has changed.
-Verify the exact check names in a current pull request before saving the
-ruleset, and test the protection with a disposable failing pull request. The
-workflow definition alone does not make checks mandatory.
+On 2026-09-24, active ruleset
+[23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
+requires `test (3.11)`, `test (3.12)` and `analyze`, a branch up to date with its
+base, and one approving review. New pushes dismiss stale reviews and no bypass
+actor is configured. Keep the CodeQL job's displayed name `analyze`; changing it
+without updating the rule leaves the required check pending.
 
-The CI workflow installs all cloud SDK extras and validates signatures, lint, typing, dependency advisories, tests
+A successful workflow is necessary but does not supply the required independent
+approval. Obtain an eligible review on the final changes and let GitHub enforce
+the merge gate; do not weaken rules to complete a merge. Recheck live ruleset and
+PR status at release time because repository settings can change.
+
+The CI workflow installs the hash-locked core/cloud runtime dependency set and validates signatures, lint, typing, dependency advisories, tests
 with a minimum 80% statement coverage, wheel creation, installed-wheel validation
-outside the source checkout and offline SARIF output.
+outside the source checkout and offline SARIF output. The required Python 3.12
+job also builds the Docker image and checks its non-root UID, signature assets and
+network-isolated scan with a read-only root filesystem and resource limits.
 Focused regressions cover the review findings, private-address enforcement,
 public-key verification, plugin policy, artifact permissions and replay integrity.
 Dependabot checks Python and GitHub Actions dependencies weekly.
@@ -269,9 +387,9 @@ Before broad deployment, retain evidence for each intended connector instance:
 5. Run a representative large scan in a resource-limited disposable worker.
    Set a job deadline, monitor incomplete/failed runs and provider throttling,
    and document how to restore access or rerun after a partial collection.
-6. Pin the reviewed scanner commit and an approved dependency set for rollout.
+6. Pin the reviewed scanner commit, wheel/image digest and approved dependency lock for rollout.
    Establish a fresh comparison baseline, retain the prior pinned version for
    rollback, and keep rollback reports separate from the new identity schema.
 
 These checks require operator-specific tenant access and operational decisions.
-Until completed, describe deployment status as pending tenant acceptance.
+Until completed, describe deployment status as pending tenant and container acceptance.

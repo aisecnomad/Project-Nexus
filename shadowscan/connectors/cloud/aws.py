@@ -14,7 +14,8 @@ Enumerates, per region:
   LookupEvents does not expose data events; import exported invocation records
   for model and agent data-plane activity.
 
-Auth: standard boto3 credential chain (``profile``, ``role_arn`` optional).
+Auth: boto3 credential chain (``profile``, ``role_arn`` optional). Instance and
+container role credentials require ``options.allow_instance_credentials``.
 Offline export: JSONL of the raw records this connector emits (``_kind`` per record) – produce one
 with ``shadowscan run cloud.aws --dump-records aws.jsonl``.
 """
@@ -63,6 +64,8 @@ class AwsConnector(BaseConnector):
     config_keys: ClassVar[dict[str, str]] = {
         "profile": "AWS profile (env AWS_PROFILE)",
         "role_arn": "role to assume before scanning",
+        "account_id": "expected AWS account id for live scans (verified through STS); account label for offline exports",
+        "allow_instance_credentials": "allow EC2/ECS credential discovery (default false; inherited from options)",
         "regions": f"regions to scan (default {DEFAULT_REGIONS}; 'all' = every enabled region)",
         "services": "subset of: bedrock, agentcore, lambda, ecs, sagemaker, stepfunctions, qbusiness, lex, iam, secrets, cloudtrail (default all)",
         "cloudtrail_days": "look-back window for LLM invocation events (default 7, 0 disables)",
@@ -78,37 +81,78 @@ class AwsConnector(BaseConnector):
         self.services = set(ctx.get("services") or ["bedrock", "agentcore", "lambda", "ecs", "sagemaker", "stepfunctions", "qbusiness", "lex", "iam", "secrets", "cloudtrail"])
         self.cloudtrail_days = int(ctx.get("cloudtrail_days", 7))
         self.max_lambda = int(ctx.get("max_lambda", 2000))
+        if self.max_lambda < 1:
+            raise ConnectorError("cloud.aws: max_lambda must be positive")
         self.max_ecs_api_calls = int(ctx.get("max_ecs_api_calls", 2000))
         if self.max_ecs_api_calls < 1:
             raise ConnectorError("cloud.aws: max_ecs_api_calls must be positive")
-        self.account: str | None = ctx.get("account_id")
+        account = ctx.get("account_id")
+        # YAML numeric account IDs are common; never pad an already-truncated
+        # identifier or accept booleans/floats as a cloud account identity.
+        if isinstance(account, int) and not isinstance(account, bool):
+            account = str(account)
+        if not self.offline and account is not None and (not isinstance(account, str) or len(account) != 12 or not account.isascii() or not account.isdigit()):
+            raise ConnectorError("cloud.aws: account_id must be exactly 12 ASCII digits (quote identifiers with leading zeros)")
+        self.account: str | None = account
         self._session: Any = None
 
     # ------------------------------------------------------------- session
+    @staticmethod
+    def _sdk_config() -> Any:
+        from botocore.config import Config
+
+        # Apply finite transport/retry bounds to STS as well as inventory calls.
+        return Config(connect_timeout=10, read_timeout=30,
+                      retries={"mode": "standard", "total_max_attempts": 3})
+
     def _session_(self) -> Any:
         if self._session is not None:
             return self._session
         import boto3
+        from botocore.session import Session
 
-        kwargs: dict[str, Any] = {}
         profile = self.ctx.get("profile", env="AWS_PROFILE")
-        if profile:
-            kwargs["profile_name"] = profile
-        session = boto3.Session(**kwargs)
+        # Configure this session only: process-wide environment changes race with
+        # concurrent scans and can unexpectedly enable metadata access elsewhere.
+        sdk_session = Session(profile=profile)
+        sdk_session.set_default_client_config(self._sdk_config())
+        sdk_session.set_config_variable("metadata_service_timeout", 3)
+        sdk_session.set_config_variable("metadata_service_num_attempts", 1)
+        if self.ctx.get("allow_instance_credentials", False) is not True:
+            resolver = sdk_session.get_component("credential_provider")
+            resolver.remove("iam-role")
+            resolver.remove("container-role")
+            # AssumeRoleProvider keeps a separate credential source chain, so
+            # removing top-level metadata providers alone is insufficient.
+            profiles = sdk_session.full_config.get("profiles", {})
+            source = profile or sdk_session.get_config_variable("profile") or "default"
+            visited: set[str] = set()
+            while source and source not in visited:
+                visited.add(source)
+                details = profiles.get(source, {})
+                if details.get("credential_source") in {"Ec2InstanceMetadata", "EcsContainer"}:
+                    raise ConnectorError("cloud.aws: instance credentials require options.allow_instance_credentials=true")
+                source = details.get("source_profile")
+        session = boto3.Session(botocore_session=sdk_session)
         role = self.ctx.get("role_arn")
         if role:
-            sts = session.client("sts")
+            sts = session.client("sts", config=self._sdk_config())
             creds = sts.assume_role(RoleArn=role, RoleSessionName="shadowscan")["Credentials"]
             session = boto3.Session(aws_access_key_id=creds["AccessKeyId"], aws_secret_access_key=creds["SecretAccessKey"], aws_session_token=creds["SessionToken"])
         try:
-            self.account = self.account or session.client("sts").get_caller_identity()["Account"]
+            account = session.client("sts", config=self._sdk_config()).get_caller_identity()["Account"]
+            if not isinstance(account, str) or len(account) != 12 or not account.isascii() or not account.isdigit():
+                raise ValueError("invalid STS account identifier")
         except Exception as exc:  # noqa: BLE001
-            raise ConnectorError(f"cloud.aws: cannot authenticate: {exc}") from exc
+            raise ConnectorError(f"cloud.aws: cannot authenticate ({type(exc).__name__})") from exc
+        if self.account is not None and self.account != account:
+            raise ConnectorError("cloud.aws: configured account_id does not match the authenticated AWS account")
+        self.account = account
         self._session = session
         return session
 
     def _client(self, service: str, region: str | None = None) -> Any:
-        return self._session_().client(service, region_name=region)
+        return self._session_().client(service, region_name=region, config=self._sdk_config())
 
     def _regions(self) -> list[str]:
         if self.regions == "all" or self.regions == ["all"]:
@@ -142,13 +186,15 @@ class AwsConnector(BaseConnector):
                     request[token_key] = token
                 self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
                 return
-            for number, page in enumerate(paginator.paginate(**kwargs)):
-                if number >= MAX_LIST_PAGES:
-                    self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
-                    return
+            for number, page in enumerate(islice(paginator.paginate(**kwargs), MAX_LIST_PAGES), start=1):
                 if not isinstance(page, dict):
                     raise ValueError("invalid AWS list page")
                 yield page
+                if number == MAX_LIST_PAGES:
+                    # Inspect the last response without fetching another page.
+                    if page.get("IsTruncated") or any(page.get(key) for key in ("nextToken", "NextToken", "NextMarker", "Marker")):
+                        self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
+                    return
         except Exception as exc:  # noqa: BLE001 - preserve pages already yielded
             self.ctx.warn(f"cloud.aws: {op} collection failed ({type(exc).__name__})")
 
@@ -308,7 +354,7 @@ class AwsConnector(BaseConnector):
     def _collect_lambda(self, region: str) -> Iterator[dict[str, Any]]:
         lam = self._client("lambda", region)
         n = 0
-        for fn in self._safe(lambda: list(self._paginate(lam, "list_functions", "Functions"))) or []:
+        for fn in self._paginate(lam, "list_functions", "Functions"):
             n += 1
             if n > self.max_lambda:
                 self.ctx.warn(f"cloud.aws: max_lambda reached in {region}", incomplete=True)
