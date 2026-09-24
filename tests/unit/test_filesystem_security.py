@@ -67,7 +67,7 @@ def test_bad_agent_card_does_not_suppress_later_secret_findings(tmp_path, run_co
     (tmp_path / "agent-card.json").write_text('{"name": "invalid", "skills": 42}')
     (tmp_path / "agent.py").write_text(
         'from langgraph.graph import StateGraph\n'
-        'OPENAI_API_KEY = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnop"\n'
+        'OPENAI_API_KEY = "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h"\n'
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert any(finding.kind == Kind.SECRET for finding in findings)

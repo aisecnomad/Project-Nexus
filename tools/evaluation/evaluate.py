@@ -189,7 +189,7 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
 
 def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str, Any]]]:
     ctx = ConnectorContext(
-        config={"path": str(root), "label": f"eval:{case.id}", "use_git": False, "scan_secrets": False},
+        config={"path": str(root), "label": f"eval:{case.id}", "use_git": False, "scan_secrets": True},
         index=index,
     )
     started = time.perf_counter()

@@ -233,6 +233,26 @@ OpenAI organization usage exports with `data[].results[]` are supported.
 per-request timestamp: it cannot establish hourly continuous activity or confirm
 timestamped framework execution for runtime correlation.
 
+## Precision safeguards
+
+Several rules keep weak observations from producing confirmed or high-risk
+findings. A credential whose value looks like a documentation placeholder
+(`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
+sequences after the provider prefix) is never a `secret` finding; it is listed
+on the project finding as low-weight `example-credential` evidence. A key alone
+does not establish LLM usage, and vendor-neutral heuristics (agent loops,
+`subprocess.run`, auto-approve flags) only count in a project that also matches
+a framework, provider, platform, protocol or cloud-service signature. When every
+observation for a project is an environment-variable or display-name reference,
+the finding is tagged `env-names-only`, its evidence weights are halved and its
+confidence is capped at 0.8 (`likely`), however many names appear. MCP servers
+for files and databases carry the `data-access` capability, browser servers
+`browsing`, and shells `code-exec`. In gateway logs, round-the-clock activity
+keeps the informational `always-on` tag but only marks a caller as agentic,
+with the `autonomous` capability, when tool use, an agent-framework user agent,
+a service or principal identity, or missing end-user attribution corroborates
+it. `tools/evaluation/corpus.json` carries regression cases for each rule.
+
 ## Comparing reports
 
 `shadowscan diff baseline.json current.json` reports new findings and substantive

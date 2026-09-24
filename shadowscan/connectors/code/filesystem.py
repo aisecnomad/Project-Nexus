@@ -11,6 +11,23 @@ Produces:
 * one ``workflow`` finding per exported low-code flow (n8n, Flowise, Langflow, Dify, Make, Power Automate, Logic Apps);
 * one ``infra`` finding per IaC / container file provisioning agent platforms;
 * one ``secret`` finding per file containing LLM-provider credentials (redacted).
+
+Precision safeguards
+--------------------
+* A credential whose value looks like a documentation placeholder (see
+  ``shadowscan.connectors.common.placeholder_reason``) never becomes a
+  ``secret`` finding. It is attached to the project finding as low-weight
+  ``example-credential`` evidence (tag ``example-credential``) so analysts
+  still see that a sample key exists, without a high-risk alert.
+* A credential alone does not establish LLM usage: secret matches only join
+  the project finding when the project has another technology observation.
+* Vendor-neutral heuristics (agent loops, autonomy flags, shell execution)
+  only count when the project also matches a framework, provider, platform,
+  protocol or cloud-service signature; on their own they describe ordinary
+  automation code and are dropped.
+* When every technology observation is an environment-variable or display-name
+  reference, evidence weights are halved, the finding is tagged
+  ``env-names-only`` and confidence is capped below the ``confirmed`` band.
 """
 
 from __future__ import annotations
@@ -41,7 +58,13 @@ from shadowscan.connectors.code.ownership import (
     codeowners_match as _codeowners_match,
 )
 from shadowscan.connectors.code.source_ranges import noncode_ranges
-from shadowscan.connectors.common import apply_matches, finalize, looks_like_placeholder
+from shadowscan.connectors.common import (
+    apply_matches,
+    cap_confidence,
+    finalize,
+    looks_like_placeholder,
+    placeholder_reason,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, language_for_path
@@ -200,12 +223,30 @@ MCP_CONFIG_NAMES = {
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
 
+# Documentation placeholders are informational: enough to be listed, never
+# enough to establish a technology or raise risk.
+EXAMPLE_CREDENTIAL_WEIGHT = 0.1
+MAX_EXAMPLE_CREDENTIAL_EVIDENCE = 20
+# Environment-variable names alone are a weak signal (see module docstring):
+# weights are halved and confidence stays inside the "likely" band.
+ENV_ONLY_WEIGHT_SCALE = 0.5
+ENV_ONLY_MAX_CONFIDENCE = 0.8
+# Capability implied by an MCP server's launch command; the first matching
+# group wins, so a database server launched through docker keeps code-exec.
+_MCP_CAPABILITY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("code-exec", ("shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh")),
+    ("data-access", ("filesystem", "sqlite", "postgres", "mysql", "mongodb")),
+    ("browsing", ("puppeteer", "playwright", "browser")),
+    ("saas-actions", ("github", "gitlab", "slack", "gmail", "google-drive", "aws", "gcloud", "azure")),
+)
+
 
 @dataclass
 class _Project:
     root: str  # relative posix path ("." for scan root)
     files: int = 0
     matches: list[tuple[Match, str, str | None]] = field(default_factory=list)  # match, relpath, snippet
+    example_credentials: list[tuple[Match, str, str]] = field(default_factory=list)  # match, relpath, reason
     deps: list[Dep] = field(default_factory=list)
     languages: set[str] = field(default_factory=set)
     coding_agent_files: dict[str, list[str]] = field(default_factory=dict)  # sig id -> files
@@ -581,7 +622,9 @@ class FilesystemConnector(BaseConnector):
                             record_content_match(m, excerpt(m.line))
                     if self.scan_secrets:
                         for m in self.index.match_secrets(text):
-                            if looks_like_placeholder(m.value):
+                            reason = placeholder_reason(m.value)
+                            if reason:
+                                self._record_example_credential(proj, m, rel, reason)
                                 continue
                             secret_hits.setdefault(rel, []).append((m, excerpt(m.line, m.value)))
                             self._record(proj, m, rel, None)
@@ -634,11 +677,21 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"code.filesystem: {rel}: infrastructure analysis incomplete ({type(exc).__name__})")
         for rel, hits in secret_hits.items():
             try:
-                yield self._secret_finding(label, root, rel, hits)
+                f = self._secret_finding(label, root, rel, hits)
+                if f:
+                    yield f
             except Exception as exc:  # noqa: BLE001 - retain findings from other files
                 self.ctx.error(f"code.filesystem: {rel}: credential analysis incomplete ({type(exc).__name__})")
 
     # --------------------------------------------------------------- helpers
+    def _record_example_credential(self, proj: _Project, m: Match, rel: str, reason: str) -> None:
+        """Remember a placeholder credential for informational project evidence."""
+        key = (m.signature_id, id(m.signal), m.value, rel, m.line)
+        if key in proj.seen:
+            return
+        proj.seen.add(key)
+        proj.example_credentials.append((m, rel, reason))
+
     def _record(self, proj: _Project, m: Match, rel: str, snippet: str | None) -> None:
         snippet = sanitize_text(snippet) if snippet is not None else None
         if m.signature.category == "identity-app":
@@ -681,9 +734,15 @@ class FilesystemConnector(BaseConnector):
                 m.line = art.line
                 self._record(proj, m, rel, f"{art.kind}: {art.value}")
             val = art.extra.get("value") if art.extra else None
-            if val and self.scan_secrets and not looks_like_placeholder(val):
+            if val and self.scan_secrets:
                 for m in self.index.match_secrets(val):
                     m.line = art.line
+                    # Judge the matched credential, not the whole assignment:
+                    # a trailing comment must not hide a real key.
+                    reason = placeholder_reason(m.value)
+                    if reason:
+                        self._record_example_credential(proj, m, rel, reason)
+                        continue
                     secret_hits.setdefault(rel, []).append((m, f"{art.value}={redact(m.value)}"))
                     self._record(proj, m, rel, None)
         elif art.kind == "iac":
@@ -895,11 +954,20 @@ class FilesystemConnector(BaseConnector):
         return f
 
     def _emit_project(self, label: str, root: Path, proj: _Project) -> Iterator[Finding]:
-        tech_matches = [(m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}]
+        observations = [(m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}]
+        # Anchors establish LLM / agent technology on their own. A credential
+        # alone is already a SECRET finding, and a vendor-neutral heuristic
+        # alone (a retry loop, subprocess.run) describes ordinary automation.
+        anchors = [t for t in observations if t[0].signature.category != "heuristic" and t[0].signal.type != "secret"]
+        tech_matches = observations if anchors else []
         if tech_matches:
+            env_only = all(m.signal.type in {"env", "name"} for m, _, _ in tech_matches)
             f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
             for m, rel, snip in tech_matches:
-                apply_matches(f, [m], location=rel, snippet=snip)
+                apply_matches(f, [m], location=rel, snippet=snip, weight_scale=ENV_ONLY_WEIGHT_SCALE if env_only else 1.0)
+            if env_only:
+                f.add_tag("env-names-only")
+            self._attach_example_credentials(f, proj)
             git = self._git_info(root, proj.root)
             f.metadata.update(git)
             if git.get("last_commit"):
@@ -924,6 +992,9 @@ class FilesystemConnector(BaseConnector):
                 for m, _, _ in tech_matches
             )
             finalize(f, self.index)
+            if env_only:
+                cap_confidence(f, ENV_ONLY_MAX_CONFIDENCE)
+                f.metadata["confidence_cap"] = {"reason": "env-names-only", "maximum": ENV_ONLY_MAX_CONFIDENCE}
             f.title = self._project_title(f, proj)
             yield f
         for sig_id, files in proj.coding_agent_files.items():
@@ -948,6 +1019,33 @@ class FilesystemConnector(BaseConnector):
             finalize(f, self.index)
             f.kind = Kind.AGENT_CONFIG
             yield f
+
+    @staticmethod
+    def _attach_example_credentials(f: Finding, proj: _Project) -> None:
+        """Attach placeholder credentials as informational evidence (see module docstring)."""
+        if not proj.example_credentials:
+            return
+        f.add_tag("example-credential")
+        files: list[str] = []
+        for i, (m, rel, reason) in enumerate(proj.example_credentials):
+            if rel not in files:
+                files.append(rel)
+            if i >= MAX_EXAMPLE_CREDENTIAL_EVIDENCE:
+                continue
+            what = m.signal.description or m.signature.name
+            f.add_evidence(
+                Evidence(
+                    signal=f"example-credential:{m.signature_id}",
+                    description=f"placeholder {what} ({reason}) in {rel}: {redact(m.value)}",
+                    location=f"{rel}:{m.line}" if m.line else rel,
+                    weight=EXAMPLE_CREDENTIAL_WEIGHT,
+                    signature=m.signature_id,
+                    attributes={"category": m.signature.category, "value": redact(m.value), "placeholder": reason},
+                )
+            )
+        # The key name must not read as a credential field, or the report
+        # sanitizer withholds the file list itself.
+        f.metadata["placeholder_samples"] = {"count": len(proj.example_credentials), "files": sorted(files)[:MAX_EXAMPLE_CREDENTIAL_EVIDENCE]}
 
     def _project_title(self, f: Finding, proj: _Project) -> str:
         order = {"framework": 0, "cloud-service": 1, "platform": 2, "protocol": 3}
@@ -983,8 +1081,10 @@ class FilesystemConnector(BaseConnector):
                 f.add_tag("inline-secrets")
                 f.add_evidence(Evidence(signal="secret:inline", description=f"MCP server '{s['name']}' has credential-looking values in its env block", location=rel, weight=0.3))
             cmd = " ".join([str(s.get("command") or "")] + [str(a) for a in s.get("args", [])]).lower()
-            if any(k in cmd for k in ("filesystem", "shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh", "sqlite", "postgres", "mysql", "mongodb", "github", "gitlab", "slack", "gmail", "google-drive", "aws", "gcloud", "azure", "puppeteer", "playwright", "browser")):
-                f.add_capability("code-exec" if any(k in cmd for k in ("shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh")) else "saas-actions")
+            for capability, keywords in _MCP_CAPABILITY_KEYWORDS:
+                if any(k in cmd for k in keywords):
+                    f.add_capability(capability)
+                    break
         f.metadata["servers"] = enabled
         f.metadata["server_count"] = len(enabled)
         f.metadata["disabled_server_count"] = len(servers) - len(enabled)
@@ -1098,14 +1198,18 @@ class FilesystemConnector(BaseConnector):
         f.kind = Kind.INFRA
         return f
 
-    def _secret_finding(self, label: str, root: Path, rel: str, hits: list[tuple[Match, str]]) -> Finding:
-        f = self._base(label, root, rel, Kind.SECRET, f"LLM provider credential in {rel}", "file")
+    def _secret_finding(self, label: str, root: Path, rel: str, hits: list[tuple[Match, str]]) -> Finding | None:
         # A structured value (e.g. a .env assignment) and the raw text pass can
         # both observe the same credential on the same line; count it once.
+        # Placeholders are filtered again here so every caller shares the rule.
         unique: dict[tuple[str, str, int | None], tuple[Match, str]] = {}
         for m, snip in hits:
-            unique.setdefault((m.signature_id, m.value, m.line), (m, snip))
+            if not looks_like_placeholder(m.value):
+                unique.setdefault((m.signature_id, m.value, m.line), (m, snip))
         hits = list(unique.values())
+        if not hits:
+            return None
+        f = self._base(label, root, rel, Kind.SECRET, f"LLM provider credential in {rel}", "file")
         for m, snip in hits:
             apply_matches(f, [m], location=rel, snippet=snip)
         f.add_tag("hardcoded-credential")

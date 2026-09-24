@@ -95,7 +95,7 @@ def test_azure_app_settings_are_redacted_in_dumps_but_analyzed_live(index):
     record = {
         "_kind": "appsettings", "id": "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
         "name": "app", "kind": "functionapp",
-        "environment": {"OPENAI_API_KEY": "sk-proj-" + "a" * 40, "SENDGRID_KEY": "SG.opaque-value-1234567890"},
+        "environment": {"OPENAI_API_KEY": "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h", "SENDGRID_KEY": "SG.opaque-value-1234567890"},
     }
     dumped = sanitize(record)
     assert set(dumped["environment"].values()) == {REDACTED}

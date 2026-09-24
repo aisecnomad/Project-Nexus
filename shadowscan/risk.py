@@ -37,6 +37,7 @@ CAPABILITY_WEIGHTS: dict[str, tuple[int, str]] = {
     "code-exec": (15, "can execute code or shell commands"),
     "autonomous": (10, "runs without a human in the loop"),
     "saas-actions": (10, "performs write actions in SaaS / business systems"),
+    "data-access": (10, "reads or writes files and databases directly (exfiltration / tampering surface)"),
     "browsing": (5, "has live web access (prompt-injection surface)"),
     "memory": (5, "persists memory / state across sessions"),
     "multi-agent": (5, "orchestrates or delegates to other agents"),

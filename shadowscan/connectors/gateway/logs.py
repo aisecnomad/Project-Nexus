@@ -1458,8 +1458,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             apply_matches(f, self.index.match_model(m), weight_scale=0.5)
         for h, _ in c.hosts.most_common(10):
             apply_matches(f, self.index.match_domain(h), weight_scale=0.6)
+        framework_user_agent = False
         for ua, _ in c.user_agents.most_common(10):
-            apply_matches(f, self.index.match_user_agent(ua), weight_scale=1.0)
+            ua_matches = self.index.match_user_agent(ua)
+            apply_matches(f, ua_matches, weight_scale=1.0)
+            framework_user_agent = framework_user_agent or any(m.signature.category in {"framework", "coding-agent"} for m in ua_matches)
         for p, _ in c.providers.most_common(5):
             sid = _provider_signature(self.index, p)
             if sid:
@@ -1481,18 +1484,31 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             f.add_evidence(Evidence(signal="gateway:tool-calls", description=f"{c.tool_call_responses} responses contained tool calls", weight=0.6))
             f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
 
+        # Non-temporal automation indicators: tool use (counted above), an
+        # agent framework user agent, or an identity that no end user owns.
+        unattributed = c.kind in {"api-key", "service", "principal"} and not c.users
+        service_style = c.kind in {"service", "principal"}
         # temporal shape: automated callers run around the clock and on weekends
         total_ts = sum(c.hours.values())
         if total_ts >= 50:
             night = sum(v for h, v in c.hours.items() if h < 6 or h >= 22) / total_ts
             weekend = sum(v for d, v in c.weekdays.items() if d >= 5) / total_ts
             active_hours = len(c.hours)
-            if active_hours >= 20 or (night > 0.25 and weekend > 0.15):
-                f.add_capability("autonomous")
+            always_on = active_hours >= 20 or (night > 0.25 and weekend > 0.15)
+            # A shared key used across time zones also produces round-the-clock
+            # activity; the pattern alone must not promote a human-attributed
+            # caller to an agent. The tag stays informational.
+            corroborated = always_on and (bool(f.metadata.get("agent_indicators")) or framework_user_agent or unattributed or service_style)
+            if always_on:
                 f.add_tag("always-on")
-                f.add_evidence(Evidence(signal="gateway:always-on", description=f"Activity across {active_hours}/24 hours, {night:.0%} at night, {weekend:.0%} on weekends: unattended / scheduled caller", weight=0.5))
-                f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
-            f.metadata["activity"] = {"active_hours": active_hours, "night_share": round(night, 2), "weekend_share": round(weekend, 2)}
+                shape = f"Activity across {active_hours}/24 hours, {night:.0%} at night, {weekend:.0%} on weekends"
+                if corroborated:
+                    f.add_capability("autonomous")
+                    f.add_evidence(Evidence(signal="gateway:always-on", description=f"{shape}: unattended / scheduled caller", weight=0.5))
+                    f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
+                else:
+                    f.add_evidence(Evidence(signal="gateway:always-on", description=f"{shape}: round-the-clock activity without tool use, an agent framework or an unattended identity", weight=0.3))
+            f.metadata["activity"] = {"active_hours": active_hours, "night_share": round(night, 2), "weekend_share": round(weekend, 2), "always_on": always_on, "always_on_corroborated": corroborated}
         if c.events >= 1000:
             f.add_evidence(Evidence(signal="gateway:volume", description=f"High volume: {c.events} requests", weight=0.2))
         if len(c.models) >= 4:
