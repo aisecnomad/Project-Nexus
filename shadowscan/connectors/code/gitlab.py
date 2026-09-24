@@ -271,15 +271,20 @@ class GitLabConnector(BaseConnector):
         for p in selected:
             target = repository_target(dest, p)
             try:
-                resp = self.http.get(f"/projects/{pid}/repository/files/{quote(p, safe='')}/raw", params={"ref": ref})
+                resp = self.http.get(
+                    f"/projects/{pid}/repository/files/{quote(p, safe='')}/raw",
+                    params={"ref": ref},
+                    stream=True,
+                )
+                content = self.http.read_response_bytes(resp, max_bytes=512_000)
             except HttpError as exc:
                 self.ctx.warn(f"code.gitlab: repository content HTTP {exc.status}; coverage partial", incomplete=True)
                 continue
-            if len(resp.content) > 512_000:
-                self.ctx.warn("code.gitlab: oversized API content skipped", incomplete=True)
+            except ValueError:
+                self.ctx.warn("code.gitlab: oversized or invalid API content skipped", incomplete=True)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(resp.content)
+            target.write_bytes(content)
         return dest
 
     # --------------------------------------------------- project-level extra

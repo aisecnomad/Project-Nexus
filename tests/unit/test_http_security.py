@@ -61,7 +61,8 @@ def test_server_retry_after_is_bounded(monkeypatch):
 
 @pytest.mark.parametrize("paginator", ["paginate_link", "paginate_odata"])
 def test_pagination_refuses_cross_origin_links(paginator):
-    http, session = client(response({"value": []}, headers={"Link": '<https://evil.example/next>; rel="next"'}))
+    initial = [] if paginator == "paginate_link" else {"value": []}
+    http, session = client(response(initial, headers={"Link": '<https://evil.example/next>; rel="next"'}))
     if paginator == "paginate_odata":
         session.request.side_effect = [response({"value": [], "@odata.nextLink": "https://evil.example/next"})]
     with pytest.raises(ValueError):
@@ -305,3 +306,57 @@ def test_bounded_json_refuses_oversized_declared_or_decoded_body(content_length,
     with pytest.raises(ValueError, match="byte limit"):
         http.get_json("/keys", max_bytes=16)
     result.close.assert_called_once()
+
+def test_default_json_limit_is_enforced_while_streaming():
+    result = response({"keys": []})
+    result.iter_content = Mock(return_value=iter([b"x" * 9]))
+    result.close = Mock()
+    http, session = client(result, max_response_bytes=8)
+
+    with pytest.raises(ValueError, match="byte limit"):
+        http.get_json("/keys")
+
+    assert session.request.call_args.kwargs["stream"] is True
+    result.close.assert_called_once()
+
+
+def test_json_limit_can_be_overridden_for_a_documented_page():
+    result = response({"ok": True})
+    result.iter_content = Mock(return_value=iter([b'{"ok": true}']))
+    http, _ = client(result, max_response_bytes=4)
+
+    assert http.get_json("/keys", max_bytes=16) == {"ok": True}
+
+
+def test_post_json_uses_the_default_streamed_body_limit():
+    result = response({"keys": []})
+    result.iter_content = Mock(return_value=iter([b"x" * 9]))
+    result.close = Mock()
+    http, session = client(result, max_response_bytes=8)
+
+    with pytest.raises(ValueError, match="byte limit"):
+        http.post_json("/keys", json={"query": "test"})
+
+    assert session.request.call_args.kwargs["stream"] is True
+    result.close.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "paginator,data,kwargs",
+    [
+        ("paginate_link", {"error": "upstream failure"}, {"item_key": "items"}),
+        ("paginate_link", {"items": {}}, {"item_key": "items"}),
+        ("paginate_odata", {"error": "upstream failure"}, {}),
+        ("paginate_odata", {"value": {}}, {}),
+        ("paginate_token", {"nextPageToken": None}, {}),
+        ("paginate_token", {"items": None}, {}),
+        ("paginate_cursor", {"ok": True}, {}),
+        ("paginate_cursor", {"results": {}}, {}),
+    ],
+)
+def test_paginators_fail_closed_on_missing_or_invalid_collection(paginator, data, kwargs):
+    http, _ = client(response(data))
+
+    with pytest.raises(RuntimeError, match="collection"):
+        list(getattr(http, paginator)("/items", **kwargs))
+

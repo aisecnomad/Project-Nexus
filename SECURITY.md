@@ -28,7 +28,10 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   to the checked address, retaining hostname TLS verification. A trusted private
   API requires `options.allow_private_origin: true` or `--allow-private-origin`.
   This exception does not relax origin or TLS checks. HTTP proxies, including
-  environment proxy settings, are unsupported by this transport.
+  environment proxy settings, are unsupported by this transport. JSON bodies
+  are streamed and capped at 16 MiB after content decoding; malformed successful
+  pagination envelopes and oversized responses make collection incomplete.
+  GitLab source-file downloads have a stricter 512 KiB per-file cap.
 * Cloud SDKs and Git use separate transports. Network egress rules remain needed
   for those paths. URL preflight checks alone do not pin Git's later DNS lookup.
   Custom injected HTTP sessions/adapters are trusted extension/test mechanisms.

@@ -33,6 +33,7 @@ def foundry_http(monkeypatch, pages):
         response = requests.Response()
         response.status_code = 200
         response._content = json.dumps(next(page_iter)).encode()
+        response._content_consumed = True
         return response
 
     monkeypatch.setattr(requests.Session, "request", request)

@@ -1,0 +1,7 @@
+# Default reviewers for production changes.
+* @aisecnomad
+
+/.github/ @aisecnomad
+/shadowscan/utils/ @aisecnomad
+/SECURITY.md @aisecnomad
+/docs/production.md @aisecnomad

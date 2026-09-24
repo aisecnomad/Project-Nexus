@@ -72,8 +72,9 @@ class SalesforceConnector(BaseConnector):
             secret = self.ctx.get("client_secret", env="SFDC_CLIENT_SECRET")
             if not (cid and secret):
                 raise ConnectorError("lowcode.salesforce: access_token or client_id/client_secret required")
-            resp = HttpClient().post(f"{self.instance}/services/oauth2/token", data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret})
-            token = resp.json()["access_token"]
+            client = HttpClient()
+            resp = client.post(f"{self.instance}/services/oauth2/token", data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret})
+            token = client.read_json_response(resp)["access_token"]
         self.http = HttpClient(self.instance, headers={"Authorization": f"Bearer {token}"})
 
     def collect(self) -> Iterable[dict[str, Any]]:

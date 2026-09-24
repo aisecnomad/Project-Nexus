@@ -78,11 +78,12 @@ class PowerPlatformConnector(BaseConnector):
             return self._tokens[scope]
         if not (self.tenant and self.client_id and self.client_secret):
             raise ConnectorError("lowcode.power-platform: tenant_id, client_id, client_secret required")
-        resp = HttpClient().post(
+        client = HttpClient()
+        resp = client.post(
             f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token",
             data={"grant_type": "client_credentials", "client_id": self.client_id, "client_secret": self.client_secret, "scope": scope},
         )
-        tok = resp.json()["access_token"]
+        tok = client.read_json_response(resp)["access_token"]
         self._tokens[scope] = tok
         return tok
 
