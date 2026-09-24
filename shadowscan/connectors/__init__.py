@@ -8,11 +8,14 @@ registered here; third parties can add more through the
 from __future__ import annotations
 
 import importlib
+import logging
 from collections.abc import Sequence
 from importlib.metadata import entry_points
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.models import Surface
+
+log = logging.getLogger("shadowscan.connectors")
 
 _BUILTIN: dict[str, str] = {
     # code
@@ -71,16 +74,33 @@ def available_connectors() -> dict[str, str]:
     """Return name -> import path for built-in and plugin connectors.
 
     Third-party ``shadowscan.connectors`` entry points may *add* names. They
-    cannot replace a built-in name: a colliding plugin is ignored.
+    cannot replace a built-in name: a colliding plugin is ignored. Duplicate
+    third-party names are omitted so an attacker cannot silently last-win
+    another plugin. Discovery failures keep the built-in registry and log a
+    warning; listing never imports plugin code.
     """
     out = dict(_BUILTIN)
+    plugins: dict[str, str] = {}
     try:
-        for ep in entry_points(group="shadowscan.connectors"):
-            if ep.name in _BUILTIN:
-                continue
-            out[ep.name] = ep.value
-    except Exception:  # pragma: no cover - defensive against odd metadata
-        pass
+        discovered = list(entry_points(group="shadowscan.connectors"))
+    except Exception as exc:  # pragma: no cover - defensive against odd metadata
+        log.warning("plugin entry-point discovery failed: %s", type(exc).__name__)
+        return out
+    skipped: set[str] = set()
+    for ep in discovered:
+        if not getattr(ep, "name", None) or not getattr(ep, "value", None):
+            continue
+        if ep.name in _BUILTIN:
+            continue
+        previous = plugins.get(ep.name)
+        if previous is not None and previous != ep.value:
+            log.warning("ambiguous third-party connector name '%s' omitted", ep.name)
+            skipped.add(ep.name)
+            continue
+        plugins[ep.name] = ep.value
+    for name in skipped:
+        plugins.pop(name, None)
+    out.update(plugins)
     return out
 
 
