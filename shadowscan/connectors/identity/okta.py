@@ -11,15 +11,18 @@ Offline export: list of app objects, optionally with ``_grants`` and ``_tokens``
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
+from urllib.parse import quote
+
+from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
-from shadowscan.utils.http import HttpClient
+from shadowscan.utils.http import HttpClient, HttpError
 
 
 class OktaConnector(BaseConnector):
@@ -45,35 +48,66 @@ class OktaConnector(BaseConnector):
             headers["Authorization"] = f"Bearer {bearer}"
         elif token:
             headers["Authorization"] = f"SSWS {token}"
-        # Denied optional lookups (grants/tokens) are incomplete coverage for
-        # one app, not a reason to abandon the whole application inventory.
-        self.http = HttpClient(
-            self.org_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True),
-        ) if self.org_url else None
+        self.http = HttpClient(self.org_url, headers=headers) if self.org_url else None
         self.include_inactive = bool(ctx.get("include_inactive", False))
         self.fetch_tokens = bool(ctx.get("fetch_tokens", True))
 
     def collect(self) -> Iterable[dict[str, Any]]:
         if not self.http or "Authorization" not in self.http.session.headers:
             raise ConnectorError("identity.okta: org_url and token (or bearer) are required")
-        for app in self.http.paginate_link("/api/v1/apps", params={"limit": 200}):
+        for app in self._pages("/api/v1/apps"):
+            if not self._app_valid(app):
+                self.ctx.warn("identity.okta: malformed application record; coverage incomplete")
+                continue
             if app.get("status") != "ACTIVE" and not self.include_inactive:
                 continue
-            app_id = app["id"]
+            app_id = quote(app["id"], safe="")
             if app.get("signOnMode") == "OPENID_CONNECT":
-                app["_grants"] = self.http.try_get_json(f"/api/v1/apps/{app_id}/grants", default=[]) or []
+                app["_grants"] = list(self._pages(f"/api/v1/apps/{app_id}/grants"))
                 if self.fetch_tokens:
-                    app["_tokens"] = list(self.http.paginate_link(f"/api/v1/apps/{app_id}/tokens", params={"limit": 200}))
+                    app["_tokens"] = list(self._pages(f"/api/v1/apps/{app_id}/tokens"))
             yield app
+
+    def _pages(self, path: str) -> Iterator[dict[str, Any]]:
+        assert self.http
+        try:
+            yield from self.http.paginate_link(path, params={"limit": 200})
+        except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            self.ctx.warn(f"identity.okta: collection incomplete for {path} ({status})")
+
+    def _app_valid(self, app: Any) -> bool:
+        if not self._record_fields_valid(
+            app, required=("id",), strings=("name", "label", "status", "signOnMode", "created", "lastUpdated"),
+            mappings=("settings", "credentials", "_links"), arrays=("_grants", "_tokens"),
+        ):
+            return False
+        for field in ("settings", "credentials"):
+            parent = app.get(field) or {}
+            if not self._record_fields_valid(parent, mappings=("oauthClient",)):
+                return False
+        oauth = (app.get("settings") or {}).get("oauthClient") or {}
+        creds = (app.get("credentials") or {}).get("oauthClient") or {}
+        if not self._record_fields_valid(oauth, strings=("application_type", "initiate_login_uri"), arrays=("grant_types", "redirect_uris", "post_logout_redirect_uris")):
+            return False
+        if not self._record_fields_valid(creds, strings=("client_id", "token_endpoint_auth_method")):
+            return False
+        for field in ("grant_types", "redirect_uris", "post_logout_redirect_uris"):
+            if any(not isinstance(value, str) for value in oauth.get(field) or []):
+                return False
+        return True
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for app in records:
+            if not self._app_valid(app):
+                self.ctx.warn("identity.okta: malformed application record; coverage incomplete")
+                continue
             self.ctx.examined()
             try:
                 f = self._app_finding(app)
-            except (AttributeError, TypeError, ValueError, KeyError, MatchTimeoutError) as exc:
-                # One malformed export record must not discard every later app.
-                self.ctx.warn(f"identity.okta: skipped a malformed application record ({type(exc).__name__})")
+            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"identity.okta: skipped a malformed application record ({type(exc).__name__}){detail}")
                 continue
             if f:
                 yield f
@@ -86,8 +120,18 @@ class OktaConnector(BaseConnector):
         grant_types = oauth.get("grant_types") or []
         app_type = oauth.get("application_type")
         machine = app_type == "service" or "client_credentials" in grant_types
-        grants = app.get("_grants") or []
-        tokens = app.get("_tokens") or []
+        grants = []
+        for grant in app.get("_grants") or []:
+            if not self._record_fields_valid(grant, required=("scopeId",)):
+                self.ctx.warn("identity.okta: invalid grant; permission inventory incomplete")
+                continue
+            grants.append(grant)
+        tokens = []
+        for token in app.get("_tokens") or []:
+            if not self._record_fields_valid(token, strings=("userId",), arrays=("scopes",)) or any(not isinstance(scope, str) for scope in token.get("scopes") or []):
+                self.ctx.warn("identity.okta: invalid token; consent inventory incomplete")
+                continue
+            tokens.append(token)
         scopes: set[str] = set()
         for g in grants:
             if g.get("scopeId"):
@@ -109,7 +153,16 @@ class OktaConnector(BaseConnector):
             first_seen=app.get("created"),
             last_seen=app.get("lastUpdated"),
         )
-        urls = [oauth.get("initiate_login_uri"), *(oauth.get("redirect_uris") or []), *(oauth.get("post_logout_redirect_uris") or []), (app.get("_links") or {}).get("appLinks", [{}])[0].get("href") if isinstance((app.get("_links") or {}).get("appLinks"), list) else None]
+        app_links = (app.get("_links") or {}).get("appLinks") or []
+        if not isinstance(app_links, list):
+            self.ctx.warn("identity.okta: invalid app links; coverage incomplete")
+            app_links = []
+        urls = [oauth.get("initiate_login_uri"), *(oauth.get("redirect_uris") or []), *(oauth.get("post_logout_redirect_uris") or [])]
+        for link in app_links:
+            if not self._record_fields_valid(link, strings=("href",)):
+                self.ctx.warn("identity.okta: invalid app link; coverage incomplete")
+                continue
+            urls.append(link.get("href"))
         assess_app(
             self.index,
             f,

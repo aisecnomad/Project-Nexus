@@ -23,11 +23,13 @@ import logging
 import os
 import stat
 import tempfile
+import time
 import zlib
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from typing import Any, ClassVar
 
 import yaml
@@ -82,6 +84,8 @@ def _positive_limit(value: Any, name: str) -> int:
 class ConnectorContext:
     """Runtime context handed to a connector."""
 
+    _MAX_DIAGNOSTICS = 1000
+
     def __init__(
         self,
         config: dict[str, Any] | None = None,
@@ -89,15 +93,34 @@ class ConnectorContext:
         logger: logging.Logger | None = None,
         input_path: str | None = None,
         workdir: str | None = None,
+        deadline: float | None = None,
+        cancelled: Event | None = None,
     ):
         self.config: dict[str, Any] = dict(config or {})
         self.index: SignatureIndex = index or get_index()
         self.log = logger or logging.getLogger("shadowscan")
         self.input_path = input_path or self.config.get("input")
         self.workdir = workdir
+        self.deadline = deadline
+        self.cancelled = cancelled
         self.stats: ScanStats | None = None
         self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
+        self._diagnostic_counts: dict[str, int] = {}
+
+    def check_deadline(self) -> None:
+        """Cooperative cancellation; cannot interrupt an in-flight SDK or plugin call."""
+        if (self.cancelled is not None and self.cancelled.is_set()) or (
+            self.deadline is not None and time.monotonic() >= self.deadline
+        ):
+            raise ConnectorError("connector completion deadline exceeded")
+
+    def checked_records(self, records: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+        self.check_deadline()
+        for record in records:
+            self.check_deadline()
+            yield record
+        self.check_deadline()
 
     # ---------------------------------------------------------------- config
     def get(self, key: str, default: Any = None, env: str | None = None) -> Any:
@@ -126,20 +149,31 @@ class ConnectorContext:
             return f"diagnostic omitted: sanitization safety limit exceeded {REDACTED}"
 
     def warn(self, msg: str, incomplete: bool = True) -> None:
-        msg = self.sanitize_message(msg)
-        self.log.warning(msg)
         if self.stats is not None:
-            self.stats.warnings.append(msg)
             self.stats.incomplete = self.stats.incomplete or incomplete
+        self._diagnostic(msg, warning=True)
 
     def error(self, msg: str) -> None:
-        msg = self.sanitize_message(msg)
-        self.log.error(msg)
         if self.stats is not None:
-            self.stats.errors.append(msg)
             self.stats.incomplete = True
+        self._diagnostic(msg, warning=False)
+
+    def _diagnostic(self, msg: str, *, warning: bool) -> None:
+        channel = "warnings" if warning else "errors"
+        count = self._diagnostic_counts.get(channel, 0) + 1
+        self._diagnostic_counts[channel] = count
+        if count > self._MAX_DIAGNOSTICS + 1:
+            return
+        if count == self._MAX_DIAGNOSTICS + 1:
+            msg = f"additional connector {channel} omitted: diagnostic limit reached"
+        else:
+            msg = self.sanitize_message(msg)
+        (self.log.warning if warning else self.log.error)(msg)
+        if self.stats is not None:
+            getattr(self.stats, channel).append(msg)
 
     def examined(self, n: int = 1) -> None:
+        self.check_deadline()
         if self.stats is not None:
             self.stats.objects_examined += n
 
@@ -428,8 +462,7 @@ class BaseConnector(ABC):
 
     def _load_offline_file(self, source: Path, budget: _OfflineInputBudget) -> Iterator[dict[str, Any]]:
         suffix = source.suffix.lower()
-        def report(message: str) -> None:
-            self.ctx.error(f"{self.name}: {message}")
+        report = self._bounded_diagnostics(lambda message: self.ctx.error(f"{self.name}: {message}"))
 
         if suffix in {".jsonl", ".ndjson"}:
             saw_record = False
@@ -490,33 +523,40 @@ class BaseConnector(ABC):
     _MAX_INVALID_LINE_ERRORS = 20
 
     @classmethod
+    def _bounded_diagnostics(cls, report: Callable[[str], None]) -> Callable[[str], None]:
+        """Bound diagnostics per export while continuing to inspect later records."""
+        errors = 0
+
+        def limited(message: str) -> None:
+            nonlocal errors
+            errors += 1
+            if errors <= cls._MAX_INVALID_LINE_ERRORS:
+                report(message)
+            elif errors == cls._MAX_INVALID_LINE_ERRORS + 1:
+                report("further invalid records in this export are not listed individually")
+
+        return limited
+
+    @classmethod
     def _json_lines(cls, text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:
         lines = text.splitlines()
-        first = next((line for line in lines if line.strip()), "")
-        try:
-            first_is_object = first.lstrip().startswith("{") and isinstance(json.loads(first), dict)
-        except (json.JSONDecodeError, RecursionError, ValueError):
-            first_is_object = False
-        if not first_is_object:
-            # A corrupted pretty-printed document is not a JSON-lines export;
-            # one diagnostic is enough instead of one per line.
+        first = next((line.strip() for line in lines if line.strip()), "")
+        if first in {"[", "{"}:
+            # A broken pretty-printed document is not a JSONL stream. Do not
+            # amplify a single parse failure into one diagnostic per line.
             report("invalid JSON export")
             return
-        invalid = 0
+        report = cls._bounded_diagnostics(report)
         for number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
             try:
                 data = json.loads(line)
-                if not isinstance(data, dict):
-                    raise TypeError("JSONL records must be objects")
-            except (json.JSONDecodeError, RecursionError, ValueError, TypeError) as exc:
-                invalid += 1
-                if invalid <= cls._MAX_INVALID_LINE_ERRORS:
-                    detail = "JSONL records must be objects" if isinstance(exc, TypeError) else "invalid JSON record"
-                    report(f"line {number}: {detail}")
-                elif invalid == cls._MAX_INVALID_LINE_ERRORS + 1:
-                    report("further invalid records in this export are not listed individually")
+            except (json.JSONDecodeError, RecursionError, ValueError):
+                report(f"invalid JSON record at line {number}")
+                continue
+            if not isinstance(data, dict):
+                report(f"line {number}: JSONL records must be objects")
                 continue
             yield from cls._unwrap(data, lambda message: report(f"line {number}: {message}"))
 
@@ -681,6 +721,7 @@ class BaseConnector(ABC):
                     written += 1
                     yield rec
             if written or not rejected:
+                self.ctx.check_deadline()
                 os.replace(temporary, target)
                 self.ctx.dump_path = str(target)
         finally:
@@ -693,20 +734,24 @@ class BaseConnector(ABC):
         self._offline_bytes_read = 0
         findings: list[Finding] = []
         try:
+            self.ctx.check_deadline()
             if self.offline:
                 records: Iterable[dict[str, Any]] = self.load_offline(str(self.ctx.input_path))
             else:
                 self.check_requirements()
                 records = self.collect()
+            records = self.ctx.checked_records(records)
             dump = self.ctx.config.get("_dump_path")
             if dump and not isinstance(self, _NoDump):
                 records = self._tee(records, str(dump))
             for f in self.analyze(records):
+                self.ctx.check_deadline()
                 f.connector = self.name
                 if f.provider is None:
                     f.provider = self.provider
                 f.sanitize()
                 findings.append(f)
+            self.ctx.check_deadline()
         except ConnectorError as exc:
             stats.skipped = True
             stats.skip_reason = self.ctx.sanitize_message(str(exc))

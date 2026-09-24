@@ -1,21 +1,16 @@
-.git
-.github
-.venv
-venv
-__pycache__
-*.pyc
-*.egg-info
-.pytest_cache
-.ruff_cache
-.mypy_cache
-.coverage
-htmlcov
-tests
-exports
-.shadowscan-state
-*.sarif
-report.*
-.env
-.DS_Store
-dist
-build
+# Keep credentials, exports, tests and unrelated files out of the build context.
+# Only packaging inputs and supported package source/assets are included.
+**
+!Dockerfile
+!pyproject.toml
+!requirements.lock
+!README.md
+!LICENSE
+!NOTICE
+!agent-card.yaml
+!shadowscan/
+!shadowscan/**/
+!shadowscan/**/*.py
+!shadowscan/py.typed
+!shadowscan/signatures/data/**/*.yaml
+!shadowscan/reporters/templates/*.html

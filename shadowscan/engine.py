@@ -7,11 +7,12 @@ import json
 import logging
 import os
 import re
-import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Event, Lock
 from typing import Any
 
 from shadowscan import __version__
@@ -33,8 +34,14 @@ from shadowscan.utils.redaction import SanitizationLimitError, sanitize
 log = logging.getLogger("shadowscan.engine")
 
 ProgressFn = Callable[[str, str], None]  # (connector id, message)
-_JobResult = tuple[ConnectorSpec, list[Finding], ScanStats]
-_DEADLINE_POLL_SECONDS = 1.0
+
+
+@dataclass
+class _JobState:
+    started_at: str | None = None
+    deadline: float | None = None
+    completed_at: float | None = None
+    cancelled: Event = field(default_factory=Event)
 
 
 class Engine:
@@ -42,37 +49,22 @@ class Engine:
         self.config = config
         config.validate_security_options()
         self._index_supplied = index is not None
-        self.index = index if index is not None else self._load_index()
-        # The index built here serves the first run; later runs reload so a
-        # reusable Engine notices signature pack edits between runs.
-        self._index_used = False
+        self.index = index if index is not None else get_index(
+            extra_dirs=config.signature_dirs or None, reload=True, allow_override=config.allow_signature_override,
+        )
         self.progress = progress or (lambda cid, msg: None)
         self.inventory: Inventory | None = None
-        # Connector ids whose worker threads outlived ``connector_timeout`` in
-        # the last run. Their threads may still be blocked inside an SDK call;
-        # a process that must exit promptly has to use ``os._exit``.
-        self.abandoned_workers: list[str] = []
         if config.inventory:
             self.inventory = Inventory.load(config.inventory)
-
-    def _index_settings(self) -> tuple[tuple[str, ...], bool]:
-        return tuple(self.config.signature_dirs), self.config.allow_signature_override
-
-    def _load_index(self) -> SignatureIndex:
-        self._index_settings_loaded = self._index_settings()
-        return get_index(
-            extra_dirs=self.config.signature_dirs or None, reload=True,
-            allow_override=self.config.allow_signature_override,
-        )
 
     # ------------------------------------------------------------------ run
     def run(self, only: list[str] | None = None) -> ScanResult:
         self.config.min_confidence = validate_min_confidence(self.config.min_confidence)
         self.config.validate_security_options()
-        if not self._index_supplied and (self._index_used or self._index_settings() != self._index_settings_loaded):
-            self.index = self._load_index()
-        self._index_used = True
-        self.abandoned_workers = []
+        # A reusable Engine must notice signature pack edits between runs.
+        if not self._index_supplied:
+            self.index = get_index(extra_dirs=self.config.signature_dirs or None, reload=True,
+                                   allow_override=self.config.allow_signature_override)
         # Registry approval can change independently of source inputs or an Engine
         # instance's lifetime. It is never persisted in connector cache entries.
         self.inventory = Inventory.load(self.config.inventory) if self.config.inventory else None
@@ -95,6 +87,7 @@ class Engine:
         jobs = [(number, spec) for number, spec in enumerate(self.config.connectors, 1)
                 if spec.enabled and (not only or spec.id in only or spec.name in only)]
         specs = [spec for _, spec in jobs]
+        self.config.validate_connector_isolation(specs)
         result.collection_scope = build_collection_scope(self.config, self.index, specs)
         if not specs:
             log.warning("no connectors selected")
@@ -109,25 +102,38 @@ class Engine:
         cache = IncrementalCache(self.config, self.index)
         dump_directory = prepare_private_directory(self.config.dump_records) if self.config.dump_records else None
         exports: list[dict[str, Any]] = []
+        states = {number: _JobState() for number, _ in jobs}
+        timed_out: set[int] = set()
+        export_lock = Lock()
+
+        def _record_export(state: _JobState, entry: dict[str, Any]) -> None:
+            with export_lock:
+                if not state.cancelled.is_set():
+                    exports.append(entry)
 
         def _lookup(name: str):
             if self.config.plugins:
                 return get_connector_class(name, allowed_plugins=self.config.plugins)
             return get_connector_class(name)
 
-        def _run_one(spec: ConnectorSpec, dump_key: str) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
+        def _run_one(spec: ConnectorSpec, dump_key: str, state: _JobState) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
             self.progress(spec.id, "starting")
             cfg = dict(spec.config)
+            if spec.name.startswith("cloud."):
+                # Scan-wide approval cannot be bypassed by a connector-level key.
+                cfg["allow_instance_credentials"] = self.config.allow_instance_credentials
             if spec.label:
                 cfg.setdefault("label", spec.label)
             if dump_directory:
                 label = re.sub(r"[^A-Za-z0-9_-]", "_", spec.id)[:80] or "connector"
                 cfg["_dump_path"] = os.path.join(dump_directory, f"{dump_key}-{label}.jsonl")
-            ctx = ConnectorContext(config=cfg, index=self.index, workdir=self.config.workdir)
+            ctx = ConnectorContext(config=cfg, index=self.index, workdir=self.config.workdir,
+                                   deadline=state.deadline, cancelled=state.cancelled)
             fs: list[Finding] = []
             started_at = now_iso()
             origin_token = set_allow_private_origin(self.config.allow_private_origin)
             try:
+                ctx.check_deadline()
                 cls = _lookup(spec.name)
                 # Constructor validation still runs before a cached result is used.
                 connector = cls(ctx)
@@ -136,10 +142,12 @@ class Engine:
                 if cached is not None:
                     fs, st = cached
                     if cache.snapshot(spec) == snapshot:
+                        ctx.check_deadline()
                         self.progress(spec.id, f"{len(fs)} findings (unchanged input; cached)")
                         return spec, fs, st
                 fs = []
                 collected = connector.run()
+                ctx.check_deadline()
                 st = ctx.stats or ScanStats(
                     connector=spec.id, started_at=started_at, finished_at=now_iso(),
                     incomplete=True, errors=["connector did not report completion status"],
@@ -159,8 +167,9 @@ class Engine:
                     # changed during collection. Preserve the findings, mark the
                     # scan incomplete and require a fresh scan for security gates.
                     if cache.snapshot(spec) == snapshot:
+                        ctx.check_deadline()
                         st.cache_key = snapshot.fingerprint
-                        cache.save(snapshot, fs, st)
+                        cache.save(snapshot, fs, st, check_deadline=ctx.check_deadline)
                     else:
                         st.incomplete = True
                         st.errors.append("static input changed during the scan; rerun required")
@@ -184,19 +193,21 @@ class Engine:
                 st.incomplete = True
                 st.errors = ["connector diagnostics omitted: sanitization safety limit exceeded"]
                 st.warnings = []
-            if dump_directory:
+            if dump_directory and not state.cancelled.is_set():
                 exported = ctx.dump_path == cfg.get("_dump_path") and ctx.dump_path is not None and not st.skipped
-                exports.append({
+                _record_export(state, {
                     "config_ordinal": int(dump_key.split("-")[0]), "part": dump_key,
                     "connector": spec.name, "label": spec.label,
                     "filename": Path(ctx.dump_path).name if exported and ctx.dump_path else None,
                     "complete": not (st.incomplete or st.skipped or st.errors),
                     "exported": exported,
                 })
-            self.progress(spec.id, f"{len(fs)} findings")
+            if not state.cancelled.is_set():
+                self.progress(spec.id, f"{len(fs)} findings")
             return spec, fs, st
 
-        def _run(number: int, spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
+        def _run_impl(number: int, spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
+            state = states[number]
             roots = spec.config.get("paths")
             root_ids = spec.config.get("root_ids")
             split_roots = (
@@ -219,7 +230,7 @@ class Engine:
                 except Exception:  # noqa: BLE001 - _run_one reports lookup/import failures as incomplete
                     split_roots = False
             if not split_roots or not isinstance(roots, list):
-                return _run_one(spec, f"{number:04d}")
+                return _run_one(spec, f"{number:04d}", state)
             # Repositories are independent cache units: modifying repo B must not
             # force expensive analysis of unchanged repo A in the same connector.
             combined: list[Finding] = []
@@ -234,7 +245,7 @@ class Engine:
                     child_config["_root_id"] = root_ids[root_number - 1]
                 _, child_findings, child_stats = _run_one(ConnectorSpec(
                     name=spec.name, config=child_config, label=spec.label,
-                ), f"{number:04d}-{root_number:04d}")
+                ), f"{number:04d}-{root_number:04d}", state)
                 combined.extend(child_findings)
                 parts.append(child_stats)
             cached_count = sum(s.cached for s in parts)
@@ -253,22 +264,97 @@ class Engine:
                 stats.cache_key = hashlib.sha256("|".join(s.cache_key or "" for s in parts).encode()).hexdigest()
             return spec, combined, stats
 
+        def _run(number: int, spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
+            state = states[number]
+            state.started_at = now_iso()
+            state.deadline = time.monotonic() + self.config.connector_timeout_seconds
+            try:
+                return _run_impl(number, spec)
+            finally:
+                # Include sanitization, cache writes and callbacks in the
+                # measured runtime, even if completion precedes the next poll.
+                state.completed_at = time.monotonic()
+
         workers = max(1, min(self.config.parallel, len(specs) or 1))
-        if workers == 1 and self.config.connector_timeout is None:
-            for number, spec in jobs:
-                _, fs, st = _run(number, spec)
-                findings.extend(fs)
-                if st:
-                    stats.append(st)
-        else:
-            completed = self._run_pool(jobs, _run, workers, self.config.connector_timeout, result.started_at)
-            # Merge uses first-observed owner and metadata as precedence.
-            # Preserve configured order regardless of request completion.
-            for number, _ in jobs:
-                _, fs, st = completed[number]
-                findings.extend(fs)
-                if st:
-                    stats.append(st)
+        # Supervise the single-worker path too. A ThreadPoolExecutor context
+        # manager would wait forever for a stuck connector on exit.
+        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="shadowscan")
+        futures = {pool.submit(_run, number, spec): (number, spec) for number, spec in jobs}
+        pending = set(futures)
+        completed: dict[int, tuple[ConnectorSpec, list[Finding], ScanStats]] = {}
+        try:
+            while pending:
+                done, _ = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
+                expired = []
+                for future in done:
+                    number, _ = futures[future]
+                    state = states[number]
+                    if state.completed_at is not None and state.deadline is not None and state.completed_at >= state.deadline:
+                        expired.append(future)
+                    else:
+                        completed[number] = future.result()
+                        pending.remove(future)
+                for future in pending - done:
+                    deadline = states[futures[future][0]].deadline
+                    if deadline is not None and time.monotonic() >= deadline:
+                        expired.append(future)
+                for future in expired:
+                    number, spec = futures[future]
+                    state = states[number]
+                    state.cancelled.set()
+                    timed_out.add(number)
+                    completed[number] = (spec, [], ScanStats(
+                        connector=spec.id, started_at=state.started_at or result.started_at,
+                        finished_at=now_iso(), incomplete=True,
+                        errors=["connector completion deadline exceeded; results discarded"],
+                        warnings=["Cancellation is cooperative: an in-flight SDK or plugin call may continue, "
+                                  "and Python may wait for its worker at process exit. Use an external process "
+                                  "timeout when a hard execution limit is required."],
+                    ))
+                    pending.remove(future)
+                if pending and timed_out:
+                    # A timed-out worker can still be running inside an SDK or
+                    # plugin call. Preserve queued siblings while *any* worker
+                    # can eventually run them. Only abandon the queue when all
+                    # worker slots are still occupied by timed-out calls; waiting
+                    # for those calls would defeat the completion deadline, and
+                    # replacing them would exceed the configured parallelism.
+                    running = [future for future in futures if future.running()]
+                    capacity_exhausted = (
+                        len(running) >= workers
+                        and all(futures[future][0] in timed_out for future in running)
+                    )
+                    if not capacity_exhausted:
+                        continue
+                    for future in tuple(pending):
+                        if future.cancel():
+                            number, spec = futures[future]
+                            states[number].cancelled.set()
+                            timed_out.add(number)
+                            completed[number] = (spec, [], ScanStats(
+                                connector=spec.id, started_at=result.started_at, finished_at=now_iso(),
+                                incomplete=True, skipped=True,
+                                skip_reason="no worker capacity remains after connector timeouts",
+                                errors=["connector not started: all worker slots remain occupied by timed-out calls"],
+                            ))
+                            pending.remove(future)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+        # Merge uses first-observed owner and metadata as precedence.
+        # Preserve configured order regardless of request completion.
+        for number, _ in jobs:
+            _, fs, st = completed[number]
+            findings.extend(fs)
+            stats.append(st)
+        if dump_directory:
+            with export_lock:
+                exports = [entry for entry in exports if entry["config_ordinal"] not in timed_out]
+                for number, spec in jobs:
+                    if number in timed_out:
+                        exports.append({
+                            "config_ordinal": number, "part": f"{number:04d}", "connector": spec.name,
+                            "label": spec.label, "filename": None, "complete": False, "exported": False,
+                        })
 
         omitted = 0
 
@@ -330,87 +416,6 @@ class Engine:
         result.finished_at = now_iso()
         return result
 
-    def _run_pool(
-        self,
-        jobs: list[tuple[int, ConnectorSpec]],
-        run: Callable[[int, ConnectorSpec], _JobResult],
-        workers: int,
-        timeout: float | None,
-        started_at: str,
-    ) -> dict[int, _JobResult]:
-        """Run connectors on worker threads, abandoning any that exceed ``timeout``.
-
-        Python threads cannot be interrupted, so a connector blocked inside an
-        SDK call keeps its thread. The engine stops waiting for it, records an
-        incomplete, skipped connector and continues with the other results.
-        """
-        started: dict[int, float] = {}
-        lock = threading.Lock()
-
-        def timed(number: int, spec: ConnectorSpec) -> _JobResult:
-            with lock:
-                started[number] = time.monotonic()
-            return run(number, spec)
-
-        specs = dict(jobs)
-        completed: dict[int, _JobResult] = {}
-        pools = [ThreadPoolExecutor(max_workers=workers, thread_name_prefix="shadowscan")]
-        try:
-            futures: dict[Future[_JobResult], int] = {pools[0].submit(timed, number, spec): number for number, spec in jobs}
-            pending = set(futures)
-            while pending:
-                wait_for: float | None = None
-                if timeout is not None:
-                    now = time.monotonic()
-                    with lock:
-                        remaining = [started[futures[fut]] + timeout - now for fut in pending if futures[fut] in started]
-                    wait_for = max(0.0, min([*remaining, _DEADLINE_POLL_SECONDS]))
-                done, pending = wait(pending, timeout=wait_for, return_when=FIRST_COMPLETED)
-                for fut in done:
-                    completed[futures[fut]] = fut.result()
-                if timeout is None:
-                    continue
-                now = time.monotonic()
-                for fut in list(pending):
-                    if fut not in futures:
-                        continue  # re-queued onto a fresh pool below
-                    number = futures[fut]
-                    with lock:
-                        began = started.get(number)
-                    if began is None or now - began <= timeout:
-                        continue
-                    spec = specs[number]
-                    message = f"connector exceeded connector_timeout ({timeout:g}s); its worker was abandoned"
-                    log.warning("connector timed out: %s", spec.id)
-                    self.progress(spec.id, "timed out")
-                    self.abandoned_workers.append(spec.id)
-                    completed[number] = (spec, [], ScanStats(
-                        connector=spec.id, started_at=started_at, finished_at=now_iso(),
-                        skipped=True, incomplete=True, skip_reason=message, errors=[message],
-                    ))
-                    pending.discard(fut)
-                    # The blocked thread is lost to its pool. Jobs still queued
-                    # behind it would otherwise wait for a worker that never
-                    # returns; move them to a fresh pool. cancel() only succeeds
-                    # for jobs that have not started, so nothing runs twice.
-                    with lock:
-                        queued = [other for other in pending if futures[other] not in started]
-                    requeue = [other for other in queued if other.cancel()]
-                    if requeue:
-                        pools.append(ThreadPoolExecutor(max_workers=workers, thread_name_prefix="shadowscan"))
-                        for other in requeue:
-                            other_number = futures.pop(other)
-                            pending.discard(other)
-                            replacement = pools[-1].submit(timed, other_number, specs[other_number])
-                            futures[replacement] = other_number
-                            pending.add(replacement)
-        finally:
-            # Abandoned workers cannot be joined without waiting for the blocked
-            # call; every other worker has already completed at this point.
-            for pool in pools:
-                pool.shutdown(wait=not self.abandoned_workers)
-        return completed
-
 
 # ------------------------------------------------------------------ merging
 
@@ -447,8 +452,10 @@ def _unique_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             return (type(value).__name__, tuple(key_for(item) for item in value))
         if isinstance(value, (set, frozenset)):
             return ("set", frozenset(key_for(item) for item in value))
-        # Python considers True == 1 and False == 0. JSON evidence preserves
-        # those distinctions, so its deduplication key must do the same.
+        # JSON numbers remain equivalent when exporters vary number syntax,
+        # but booleans must not collide with Python's equal numeric values.
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return ("number", value)
         return (type(value).__name__, value)
 
     unique: list[dict[str, Any]] = []

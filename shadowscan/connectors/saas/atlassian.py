@@ -12,6 +12,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
+from requests import RequestException
+
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app
@@ -48,21 +50,46 @@ class AtlassianConnector(BaseConnector):
             path = "/rest/plugins/1.0/" if product == "jira" else "/wiki/rest/plugins/1.0/"
             try:
                 data = http.get_json(path, params={"os_authType": "basic"}) or {}
-            except HttpError as exc:
-                self.ctx.warn(f"saas.atlassian: {product} UPM not readable ({exc.status})")
+            except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+                reason = str(exc.status) if isinstance(exc, HttpError) else type(exc).__name__
+                self.ctx.warn(f"saas.atlassian: {product} UPM not readable ({reason})")
                 continue
-            for p in data.get("plugins", []) or []:
+            if not isinstance(data, dict) or not isinstance(data.get("plugins"), list):
+                self.ctx.warn(f"saas.atlassian: {product} UPM returned an invalid collection")
+                continue
+            for p in data["plugins"]:
+                if not isinstance(p, dict):
+                    self.ctx.warn(f"saas.atlassian: {product} UPM returned an invalid plugin entry")
+                    continue
                 p["_product"] = product
                 yield p
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for p in records:
+            if not self._valid_provider_record(p):
+                self.ctx.warn("saas.atlassian: unsupported or malformed app record; coverage incomplete")
+                continue
             if not p.get("userInstalled", True) and not p.get("_force"):
                 continue
             self.ctx.examined()
             f = self._app_finding(p)
             if f:
                 yield f
+
+    def _valid_provider_record(self, p: Any) -> bool:
+        if not self._record_fields_valid(
+            p, strings=("name", "key", "description", "version", "_product"),
+            mappings=("links",), arrays=("scopes",),
+        ):
+            return False
+        vendor = p.get("vendor")
+        return (
+            bool((p.get("key") or p.get("name") or "").strip())
+            and (vendor is None or isinstance(vendor, str) or self._record_fields_valid(vendor, strings=("name", "link")))
+            and self._record_fields_valid(p.get("links") or {}, strings=("self",))
+            and all(isinstance(scope, str) for scope in (p.get("scopes") or []))
+            and all(p.get(key) is None or isinstance(p[key], bool) for key in ("userInstalled", "enabled", "_force"))
+        )
 
     def _app_finding(self, p: dict[str, Any]) -> Finding | None:
         name = p.get("name") or p.get("key")

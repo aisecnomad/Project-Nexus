@@ -79,3 +79,22 @@ def test_parallel_manifest_parsing_preserves_all_artifacts():
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = list(pool.map(scan, jobs))
     assert results == expected * 18
+
+
+def test_yaml_artifacts_keep_source_lines_across_chunks():
+    lines = ["services:"] + [f"  padding{i}: # {'x' * 55}" for i in range(120)]
+    lines += [
+        "  -",
+        "    OPENAI_API_KEY: example",
+        "    image: ghcr.io/acme/agent:1",
+        "    uses: actions/checkout@v4",
+        "    token: ${{ secrets.CI_TOKEN }}",
+    ]
+    result = parse_manifest("compose.yaml", "\n".join(lines) + "\n")
+    assert result is not None and not result.errors
+    assert {(artifact.kind, artifact.value, artifact.line) for artifact in result.artifacts} == {
+        ("env", "OPENAI_API_KEY", 123),
+        ("image", "ghcr.io/acme/agent:1", 124),
+        ("action", "actions/checkout@v4", 125),
+        ("secret_ref", "CI_TOKEN", 126),
+    }

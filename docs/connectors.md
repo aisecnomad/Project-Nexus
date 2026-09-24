@@ -182,10 +182,15 @@ coding agents), Copilot billing/seat settings, fine-grained PATs approved for
 the org.
 
 ### `saas.atlassian` · `saas.notion` · `saas.zoom`
-UPM user-installed apps (Jira/Confluence), Notion bot users, Zoom Marketplace
-apps with scopes and install counts. Notion rejects a missing/repeated pagination
-cursor and caps live pages (`max_pages`, at most 1000); either condition makes
-the scan incomplete.
+UPM user-installed apps (Jira/Confluence) and Notion bot users. Zoom's
+Marketplace list API returns approved public apps and account-created apps
+(`type=public` and `type=account_created`), including app scopes when supplied.
+See [Zoom's Marketplace List apps API](https://developers.zoom.us/docs/api/marketplace/).
+Approval or account creation does not establish that any individual installed
+or used the app; for that question, obtain a separate tenant activity or
+installation export. Notion rejects a missing/repeated pagination cursor and
+caps live pages (`max_pages`, at most 1000); either condition makes the scan
+incomplete. Zoom likewise marks denied, invalid, or truncated pages incomplete.
 
 ### `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
@@ -213,7 +218,10 @@ for deployed references, including referenced inactive revisions. Findings
 separate running-task/service references from registered-only definitions; a
 reference does not establish successful AI execution. Exhausted API budgets or
 partial/denied responses mark coverage incomplete. Account identity is resolved
-before collection emits account metadata.
+before collection emits account metadata. Live `account_id` is an expected
+12-digit account, verified through STS even when explicitly configured;
+mismatches stop collection. AWS SDK clients use finite connection/read timeouts
+and retry attempts. `max_lambda` limits streamed enumeration.
 IAM analysis includes both local and AWS-managed attached policies. Unresolved
 attachments make collection incomplete. CloudTrail LookupEvents only supplies
 management events: `InvokeAgent` / `InvokeInlineAgent` data events require a
@@ -229,6 +237,10 @@ Manager names, optional Cloud Audit Log callers (`audit_days`). Auth: ADC via
 `google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
 retained as privileged access findings even without an AI-specific role. A grant
 shows access, not observed agent execution.
+Cloud Run discovery enumerates project locations and then lists services in each
+concrete region (`run.locations.list` and `run.services.list` permissions).
+Unreachable locations reported by GCP make the scan incomplete. `max_projects`
+limits discovery without loading all projects first.
 
 ### `cloud.azure`
 Azure Resource Graph inventory across subscriptions, then: OpenAI/AI Services

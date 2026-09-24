@@ -9,7 +9,8 @@ import os
 import re
 import threading
 import time
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
@@ -24,6 +25,7 @@ from shadowscan.utils.redaction import sanitize_text
 _SCAN_DEADLINE: ContextVar[float | None] = ContextVar("signature_scan_deadline", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
 DEFAULT_SCAN_BUDGET_SECONDS = 2.0
+_MAX_CONTENTION_RETRIES = 8
 
 
 class MatchTimeoutError(RuntimeError):
@@ -39,11 +41,7 @@ def _remaining_timeout() -> float:
 
 
 def pattern_timeout(default: float = REGEX_TIMEOUT_SECONDS) -> float:
-    """Per-pattern timeout for regex calls made outside the matcher.
-
-    Callers such as manifest parsers pass their own ceiling; an open per-input
-    deadline (``scan_budget``) always caps it, and an elapsed deadline raises.
-    """
+    """Cap external pattern calls by the active per-input execution budget."""
     deadline = _SCAN_DEADLINE.get()
     if deadline is None:
         return default
@@ -53,28 +51,56 @@ def pattern_timeout(default: float = REGEX_TIMEOUT_SECONDS) -> float:
     return min(default, remaining)
 
 
-def _finditer(rx: Any, text: str, context: str, limit: int) -> list[Any]:
-    try:
+def _run_regex(operation: Callable[[float], Any], context: str) -> Any:
+    """Retry clear scheduler contention within the original execution budget.
+
+    regex can charge CPU used by other threads while a scanner is suspended,
+    including between iterator construction and its first next(). Only retry
+    when this thread used less than half its original pattern budget. Genuine
+    expensive matching, exhausted input deadlines and repeated contention still
+    fail closed; retries never receive a fresh cumulative CPU budget.
+    """
+    budget = _remaining_timeout()
+    started = time.thread_time()
+    for attempt in range(_MAX_CONTENTION_RETRIES + 1):
+        elapsed = time.thread_time() - started
+        remaining = min(_remaining_timeout(), budget - elapsed)
+        if remaining <= 0:
+            raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete")
+        try:
+            result = operation(remaining)
+            _remaining_timeout()
+            if time.thread_time() - started >= budget:
+                raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete")
+            return result
+        except TimeoutError as exc:
+            if attempt == _MAX_CONTENTION_RETRIES or time.thread_time() - started >= budget / 2:
+                raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete") from exc
+
+
+def _finditer(
+    rx: Any, text: str, context: str, limit: int,
+    excluded: Callable[[int], bool] | None = None,
+) -> list[Any]:
+    def collect(timeout: float) -> list[Any]:
         # Tiny patterns dominate this workload. Releasing/reacquiring the GIL
         # for every token under parallel connectors can spend the entire wall
-        # deadline waiting for another thread. Regex timeouts with
-        # concurrent=False still bound individual operations holding the GIL.
+        # deadline waiting for another thread. Engine timeouts remain preemptive
+        # with concurrent=False and also bound any period holding the GIL.
         # The regex engine's iterator timeout also charges CPU work performed
         # between next() calls. Consume only the caller's remaining match quota
         # before redaction or other connector threads can process yielded hits.
         # Never materialize the unbounded sequence of matches in a large input.
-        matches = list(islice(rx.finditer(text, timeout=_remaining_timeout(), concurrent=False), limit))
-        _remaining_timeout()
-        return matches
-    except TimeoutError as exc:
-        raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete") from exc
+        matches = rx.finditer(text, timeout=timeout, concurrent=False)
+        if excluded is not None:
+            matches = (match for match in matches if not excluded(match.start()))
+        return list(islice(matches, limit))
+
+    return _run_regex(collect, context)
 
 
 def _search(rx: Any, text: str, context: str):
-    try:
-        return rx.search(text, timeout=_remaining_timeout(), concurrent=False)
-    except TimeoutError as exc:
-        raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete") from exc
+    return _run_regex(lambda timeout: rx.search(text, timeout=timeout, concurrent=False), context)
 
 _LANG_ALIASES = {
     "py": "python",
@@ -281,11 +307,7 @@ class SignatureIndex:
 
     @contextmanager
     def _input_budget(self):
-        """Use the caller's deadline when one is open; otherwise open the default.
-
-        Nesting the default budget under an explicit one previously capped
-        every file at the default two seconds, whatever ``scan_timeout`` said.
-        """
+        """Preserve a caller's explicit budget or open the default input budget."""
         if _SCAN_DEADLINE.get() is not None:
             _remaining_timeout()
             yield
@@ -295,28 +317,37 @@ class SignatureIndex:
             yield
 
     def _match_regex_signals(
-        self, signal_type: str, text: str, language: str | None = None, max_per_signal: int = 3
+        self, signal_type: str, text: str, language: str | None = None, max_per_signal: int = 3,
+        ignore_spans: Sequence[tuple[int, int]] = (),
     ) -> list[Match]:
         # One deadline covers the whole signal class even outside filesystem scans.
         with self._input_budget():
-            return self._match_regex_signals_with_budget(signal_type, text, language, max_per_signal)
+            return self._match_regex_signals_with_budget(signal_type, text, language, max_per_signal, ignore_spans)
 
     def _match_regex_signals_with_budget(
-        self, signal_type: str, text: str, language: str | None, max_per_signal: int
+        self, signal_type: str, text: str, language: str | None, max_per_signal: int,
+        ignore_spans: Sequence[tuple[int, int]],
     ) -> list[Match]:
         out: list[Match] = []
-        # Counting newlines from the start of the text for every hit is
-        # quadratic on large inputs with many signals; index them once.
+        # Ignore matches beginning inside comments and literals before applying
+        # the per-signal quota. A file with many examples must not hide live code.
         newlines: list[int] | None = None
+        starts = [start for start, _ in ignore_spans]
+        ends = [end for _, end in ignore_spans]
+
+        def excluded(offset: int) -> bool:
+            previous = bisect_right(starts, offset) - 1
+            return previous >= 0 and offset < ends[previous]
+
         for sig, s in self._by_type.get(signal_type, []):
             if language and s.languages and language not in s.languages:
                 continue
             hits = 0
             for rx in s.bounded_compiled:
-                for m in _finditer(rx, text, sig.id, max_per_signal - hits):
+                for m in _finditer(rx, text, sig.id, max_per_signal - hits, excluded if starts else None):
                     if newlines is None:
                         newlines = [newline.start() for newline in re.finditer("\n", text)]
-                    line = bisect_right(newlines, m.start()) + 1
+                    line = bisect_left(newlines, m.start()) + 1
                     excerpt = m.group(0)
                     # Never cut away a credential's recognizable context before
                     # redaction. Dedicated secret detectors need the raw match
@@ -330,11 +361,15 @@ class SignatureIndex:
                     break
         return out
 
-    def match_imports(self, text: str, language: str | None) -> list[Match]:
-        return self._match_regex_signals("import", text, language)
+    def match_imports(
+        self, text: str, language: str | None, ignore_spans: Sequence[tuple[int, int]] = (),
+    ) -> list[Match]:
+        return self._match_regex_signals("import", text, language, ignore_spans=ignore_spans)
 
-    def match_code(self, text: str, language: str | None = None) -> list[Match]:
-        return self._match_regex_signals("code", text, language)
+    def match_code(
+        self, text: str, language: str | None = None, ignore_spans: Sequence[tuple[int, int]] = (),
+    ) -> list[Match]:
+        return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans)
 
     def match_secrets(self, text: str) -> list[Match]:
         return self._match_regex_signals("secret", text, None, max_per_signal=5)

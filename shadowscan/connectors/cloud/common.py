@@ -15,17 +15,13 @@ _SECRETISH = re.compile(r"(?i)(?:key|token|secret|password|passwd|credential|api
 
 
 def string_list(value: Any, name: str, *, pattern: str | None = None) -> list[str] | None:
-    """Coerce a list-typed connector setting; a bare string is one item, not its characters.
-
-    ``--set regions=us-east-1`` reaches the connector as a string. Iterating it
-    as a list silently produced a complete-looking scan of nothing.
-    """
+    """Normalize CLI/YAML list settings without iterating a scalar's characters."""
     if value is None:
         return None
     items = [value] if isinstance(value, str) else value
     if not isinstance(items, list) or any(not isinstance(item, str) for item in items):
         raise ValueError(f"{name} must be a string or a list of strings")
-    cleaned = [item.strip() for item in items if item.strip()]
+    cleaned = list(dict.fromkeys(item.strip() for item in items if item.strip()))
     if pattern is not None and any(not re.fullmatch(pattern, item) for item in cleaned):
         raise ValueError(f"{name} contains an invalid value")
     return cleaned or None

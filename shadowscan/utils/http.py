@@ -9,9 +9,11 @@ import contextvars
 import ipaddress
 import json
 import logging
+import random
+import re
 import socket
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -32,10 +34,37 @@ DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_RETRY_DELAY = 120
 RETRY_STATUSES = {429, 500, 502, 503, 504}
+_HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
 
 _allow_private_origin: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "shadowscan_allow_private_origin", default=False
 )
+
+
+def _validate_headers(headers: Any, *, allow_removal: bool = False) -> None:
+    """Reject malformed headers without putting their names or values in errors.
+
+    requests and the underlying HTTP transport quote invalid input in errors.
+    Header names can contain credentials too, so diagnostics are deliberately
+    independent of both. Per-request None retains requests' removal semantics.
+    """
+    if headers is None:
+        return
+    if not isinstance(headers, Mapping):
+        raise ValueError("HTTP headers must be a mapping")
+    for name, value in headers.items():
+        try:
+            encoded_name = name.encode("ascii") if isinstance(name, str) else name
+            if not isinstance(encoded_name, bytes) or not _HEADER_NAME.fullmatch(encoded_name):
+                raise ValueError
+            if allow_removal and value is None:
+                continue
+            check_header_validity((name, value))
+            encoded_value = value.encode("latin-1") if isinstance(value, str) else value
+            if any(byte < 32 and byte != 9 or byte == 127 for byte in encoded_value):
+                raise ValueError
+        except (InvalidHeader, TypeError, ValueError, UnicodeError):
+            raise ValueError("HTTP header contains invalid characters or types") from None
 
 
 def _positive_byte_limit(value: int | None, default: int) -> int:
@@ -218,6 +247,31 @@ class _DestinationPolicyAdapter(HTTPAdapter):
         raise ValueError("Proxies are unsupported by the destination-enforcing HTTP client")
 
 
+def _rate_limited(resp: requests.Response) -> bool:
+    """GitHub reports primary and secondary rate limits with 403 as well as 429."""
+    return resp.status_code == 403 and (
+        resp.headers.get("X-RateLimit-Remaining") == "0" or bool(resp.headers.get("Retry-After"))
+    )
+
+
+def _retry_delay(resp: requests.Response, attempt: int) -> float:
+    """Honor server hints; otherwise back off exponentially with jitter.
+
+    Jitter keeps parallel connectors (and scanner fleets) from retrying in
+    lockstep against the same API. Every delay is capped at MAX_RETRY_DELAY.
+    """
+    retry_after = resp.headers.get("Retry-After")
+    if retry_after and retry_after.isascii() and retry_after.isdigit():
+        delay = float(retry_after) + random.uniform(0, 1)
+    else:
+        step = min(2 ** attempt, 30)
+        delay = step / 2 + random.uniform(0, step / 2)
+    reset = resp.headers.get("X-RateLimit-Reset")
+    if resp.headers.get("X-RateLimit-Remaining") == "0" and reset and reset.isascii() and reset.isdigit():
+        delay = max(delay, float(reset) - time.time() + 1)
+    return max(0.0, min(delay, MAX_RETRY_DELAY))
+
+
 def diagnostic_url(url: str) -> str:
     """Drop query/fragment and userinfo before URLs enter errors or logs."""
     parsed = urlsplit(url)
@@ -254,6 +308,8 @@ class HttpClient:
         if not isinstance(self.allow_private_origin, bool):
             raise TypeError("allow_private_origin must be a boolean")
         self.session = session or requests.Session()
+        _validate_headers(self.session.headers)
+        _validate_headers(headers)
         # Environment proxies can resolve destinations outside our socket policy.
         # Explicit proxies are refused by the adapter as well.
         self.session.trust_env = False
@@ -269,15 +325,6 @@ class HttpClient:
         self.session.mount("https://", self._policy_adapter)
         self.session.headers.update({"User-Agent": f"shadowscan/{__version__}", "Accept": "application/json"})
         if headers:
-            for name, value in headers.items():
-                # requests rejects control characters later, quoting the whole
-                # header (credential included) in the exception. Fail here
-                # without echoing the value; a trailing newline from a secret
-                # file is the usual cause.
-                try:
-                    check_header_validity((name, value))
-                except InvalidHeader:
-                    raise ValueError(f"HTTP header {name!r} contains invalid characters") from None
             self.session.headers.update(headers)
         if auth is not None:
             self.session.auth = auth
@@ -294,9 +341,19 @@ class HttpClient:
             url = f"{self.base_url}/{path.lstrip('/')}"
         return validate_url(url, self.base_url or None, allow_private=self.allow_private_origin)
 
-    def request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
+    def request(self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any) -> requests.Response:
+        if not isinstance(raise_for_status, bool):
+            raise TypeError("raise_for_status must be a boolean")
+        _validate_headers(self.session.headers)
+        _validate_headers(kwargs.get("headers"), allow_removal=True)
         url = self._url(path)
-        if kwargs.get("verify") is False or getattr(self.session, "verify", True) is False:
+        # requests treats any falsy effective setting as CERT_NONE, including
+        # 0, an empty CA path and a session-level None. Per-request None inherits
+        # the session setting; inspect that effective value before sending.
+        verify = kwargs.get("verify")
+        if verify is None:
+            verify = getattr(self.session, "verify", True)
+        if not verify:
             raise ValueError("TLS certificate verification cannot be disabled")
         if kwargs.get("proxies") or (isinstance(self.session, requests.Session) and self.session.proxies):
             raise ValueError("Proxies are unsupported by the destination-enforcing HTTP client")
@@ -317,7 +374,11 @@ class HttpClient:
                 raise ValueError("HTTP destination policy adapter was replaced")
             attempt += 1
             self.requests_made += 1
-            resp = self.session.request(method, url, **kwargs)
+            try:
+                resp = self.session.request(method, url, **kwargs)
+            except InvalidHeader:
+                # Auth handlers can add headers after our preflight validation.
+                raise ValueError("HTTP header contains invalid characters or types") from None
             if resp.status_code in {301, 302, 303, 307, 308}:
                 location = resp.headers.get("Location")
                 resp.close()
@@ -332,19 +393,13 @@ class HttpClient:
                     kwargs.pop("json", None)
                     kwargs.pop("data", None)
                 continue
-            if resp.status_code in RETRY_STATUSES and attempt <= self.max_retries:
-                retry_after = resp.headers.get("Retry-After")
-                delay = min(float(retry_after), MAX_RETRY_DELAY) if retry_after and retry_after.isdigit() else min(2 ** attempt, 30)
-                # GitHub style secondary rate limit
-                reset = resp.headers.get("X-RateLimit-Reset")
-                remaining = resp.headers.get("X-RateLimit-Remaining")
-                if remaining == "0" and reset and reset.isdigit():
-                    delay = max(delay, min(int(reset) - time.time() + 1, MAX_RETRY_DELAY))
-                log.warning("HTTP %s from %s; retrying in %.0fs (attempt %d)", resp.status_code, diagnostic_url(url), delay, attempt)
+            if (resp.status_code in RETRY_STATUSES or _rate_limited(resp)) and attempt <= self.max_retries:
                 resp.close()
+                delay = _retry_delay(resp, attempt)
+                log.warning("HTTP %s from %s; retrying in %.0fs (attempt %d)", resp.status_code, diagnostic_url(url), delay, attempt)
                 time.sleep(delay)
                 continue
-            if resp.status_code >= 400:
+            if resp.status_code >= 400 and raise_for_status:
                 resp.close()
                 raise HttpError(resp.status_code, url)
             if not stream:
@@ -368,18 +423,20 @@ class HttpClient:
         responses cannot expand past the limit unnoticed. The response is closed
         on success and on every parse, transport, or size error.
         """
-        limit = _positive_byte_limit(max_bytes, self.max_response_bytes)
         try:
+            limit = _positive_byte_limit(max_bytes, self.max_response_bytes)
             length = resp.headers.get("Content-Length")
             if length is not None:
                 if not isinstance(length, str) or not length.isascii() or not length.isdecimal():
                     raise ValueError("Invalid Content-Length on HTTP response")
-                if int(length) > limit:
+                # Compare decimal strings before conversion so arbitrarily
+                # padded headers never reach Python's big-integer parser.
+                digits = length.lstrip("0") or "0"
+                maximum = str(limit)
+                if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
                     raise ValueError("HTTP response exceeds the byte limit")
             body = bytearray()
             for chunk in resp.iter_content(chunk_size=min(65536, limit + 1)):
-                if not chunk:
-                    continue
                 if not isinstance(chunk, bytes):
                     raise ValueError("Invalid HTTP response chunk")
                 if len(body) + len(chunk) > limit:
@@ -431,6 +488,9 @@ class HttpClient:
     # ------------------------------------------------------------ paginators
     @staticmethod
     def _require_page_items(data: Any, key: str | None, paginator: str) -> list[dict[str, Any]]:
+        if isinstance(data, dict) and ("error" in data or data.get("ok") is False):
+            # Error documents can reflect credentials, so never echo fields.
+            raise RuntimeError(f"{paginator} API collection failed; collection incomplete")
         if key is None:
             items = data
         elif not isinstance(data, dict) or key not in data:
@@ -440,6 +500,14 @@ class HttpClient:
         if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
             raise RuntimeError(f"{paginator} response has an invalid collection; collection incomplete")
         return items
+
+    @staticmethod
+    def _continuation(value: Any) -> str | None:
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError("Invalid pagination continuation; collection incomplete")
+        return value
 
     def paginate_link(self, path: str, params: dict[str, Any] | None = None, item_key: str | None = None, max_pages: int = 1000) -> Iterator[Any]:
         """RFC 5988 Link-header pagination for GitHub and GitLab."""
@@ -455,9 +523,7 @@ class HttpClient:
             resp = self.get(url, params=params if pages == 0 else None, stream=True)
             data = self.read_json_response(resp)
             items = self._require_page_items(data, item_key, "Link pagination")
-            next_url = resp.links.get("next", {}).get("url")
-            if next_url is not None and not isinstance(next_url, str):
-                raise RuntimeError("Invalid pagination link; collection incomplete")
+            next_url = self._continuation(resp.links.get("next", {}).get("url"))
             yield from items
             url = next_url
             pages += 1
@@ -479,9 +545,11 @@ class HttpClient:
             if not isinstance(data, dict):
                 raise RuntimeError("Invalid paginated API response; collection incomplete")
             items = self._require_page_items(data, "value", "OData pagination")
-            next_url = data.get("@odata.nextLink") or data.get("nextLink")
-            if next_url is not None and not isinstance(next_url, str):
-                raise RuntimeError("Invalid OData continuation link; collection incomplete")
+            # Validate both fields before selecting; falsy malformed values
+            # must not silently terminate collection or hide behind a fallback.
+            odata_link = self._continuation(data.get("@odata.nextLink"))
+            legacy_link = self._continuation(data.get("nextLink"))
+            next_url = odata_link or legacy_link
             yield from items
             url = next_url or None
             pages += 1
@@ -498,8 +566,14 @@ class HttpClient:
         max_pages: int = 1000,
         method: str = "GET",
         body: dict[str, Any] | None = None,
+        expected_empty_kind: str | None = None,
     ) -> Iterator[dict[str, Any]]:
-        """Google / AWS style page-token pagination."""
+        """Google / AWS style page-token pagination.
+
+        An omitted empty collection is accepted only when an operator-supplied
+        documented response kind matches and the envelope has no continuation
+        or error. Ordinary missing collection fields remain incomplete scans.
+        """
         params = dict(params or {})
         pages = 0
         seen: set[str] = set()
@@ -513,10 +587,17 @@ class HttpClient:
                 data = self.get_json(path, params=params)
             if not isinstance(data, dict):
                 raise RuntimeError("Invalid paginated API response; collection incomplete")
+            if (
+                expected_empty_kind
+                and data.get("kind") == expected_empty_kind
+                and items_key not in data
+                and "error" not in data
+                and data.get("ok") is not False
+                and self._continuation(data.get(token_key)) is None
+            ):
+                return
             items = self._require_page_items(data, items_key, "Token pagination")
-            token = data.get(token_key)
-            if token not in (None, "") and not isinstance(token, str):
-                raise RuntimeError("Invalid pagination token; collection incomplete")
+            token = self._continuation(data.get(token_key))
             yield from items
             if not token:
                 return
@@ -540,20 +621,21 @@ class HttpClient:
         params = dict(params or {})
         pages = 0
         seen: set[str] = set()
-        cursor_path = cursor_path or (lambda d: (d.get("response_metadata") or {}).get("next_cursor"))
         while pages < max_pages:
             data = self.get_json(path, params=params)
             if not isinstance(data, dict):
                 raise RuntimeError("Invalid paginated API response; collection incomplete")
-            if data.get("ok") is False:
-                raise RuntimeError(f"API collection failed: {data.get('error', 'unknown error')}")
             items = self._require_page_items(data, items_key, "Cursor pagination")
-            try:
-                cursor = cursor_path(data)
-            except (AttributeError, TypeError) as exc:
-                raise RuntimeError("Invalid pagination cursor; collection incomplete") from exc
-            if cursor not in (None, "") and not isinstance(cursor, str):
-                raise RuntimeError("Invalid pagination cursor; collection incomplete")
+            if cursor_path is None:
+                metadata = data.get("response_metadata", {})
+                if not isinstance(metadata, dict):
+                    raise RuntimeError("Invalid pagination metadata; collection incomplete")
+                cursor = self._continuation(metadata.get("next_cursor"))
+            else:
+                try:
+                    cursor = self._continuation(cursor_path(data))
+                except (AttributeError, KeyError, TypeError) as exc:
+                    raise RuntimeError("Invalid pagination cursor; collection incomplete") from exc
             yield from items
             if not cursor:
                 return

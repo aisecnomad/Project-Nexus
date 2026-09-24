@@ -7,14 +7,11 @@ signature settings; disabling secret discovery must never disable redaction.
 
 from __future__ import annotations
 
-import functools
 import hashlib
 import io
 import re
-import threading
 import token
 import tokenize
-from collections import OrderedDict
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import unquote
@@ -27,11 +24,14 @@ _SENSITIVE_SUFFIXES = (
     "authorization", "proxyauthorization", "password", "passwd", "privatekey",
     "credential", "credentials", "bearertoken", "sessiontoken", "signingkey",
     "secretstring", "secretbinary", "connectionstring", "connstr",
+    # Azure storage / Service Bus connection-string members and SAS tokens.
+    "accountkey", "sharedaccesskey", "sastoken",
+    # Capability URLs: whoever holds a webhook URL can post through it.
+    "webhookurl", "webhookuri", "webhookid", "hookurl",
 )
 _SENSITIVE_NAMES = {"token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie"}
-# Keep this aligned with the ``secret`` signal patterns in the signature packs
-# so Evidence/Finding sanitization is a real backstop for every format the
-# scanner can detect, not only the most common ones.
+# Keep this backstop aligned with detectable credential formats regardless of
+# which signature packs the operator enables for discovery.
 _SECRET_TOKEN = re.compile(
     r"\b(?:sk-(?:proj-|ant-|live-|or-v1-|lf-|litellm-|svcacct-|admin-)?[A-Za-z0-9_-]{8,}"
     r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
@@ -42,6 +42,22 @@ _SECRET_TOKEN = re.compile(
     r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}"
     r"|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}"
     r"|r8_[A-Za-z0-9]{30,}|fc-[a-f0-9]{32}|app-[A-Za-z0-9]{24})\b"
+)
+# Webhook and bot endpoints whose *path* is the credential. The scheme, host
+# and a fixed prefix are kept for context; the remainder of the path is
+# withheld. Query parameters (e.g. Power Automate's ``sig``) are handled by the
+# ordinary query-field rules.
+_PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
+    (re.compile(r"hooks\.slack(?:-gov)?\.com"), re.compile(r"/(?:services|workflows|triggers|actions|commands)/")),
+    (re.compile(r"(?:(?:ptb|canary)\.)?discord(?:app)?\.com"), re.compile(r"/api(?:/v\d+)?/webhooks/")),
+    (re.compile(r"(?:[a-z0-9-]+\.)*webhook\.office\.com"), re.compile(r"/webhook(?:b2)?/")),
+    (re.compile(r"outlook\.office(?:365)?\.com"), re.compile(r"/webhook(?:b2)?/")),
+    (re.compile(r"hooks\.zapier\.com"), re.compile(r"/hooks/")),
+    (re.compile(r"hook\.(?:[a-z0-9-]+\.)?(?:make|integromat)\.com"), re.compile(r"/")),
+    (re.compile(r"maker\.ifttt\.com"), re.compile(r"/trigger/[^/]+/(?:json/)?with/key/")),
+    (re.compile(r"api\.telegram\.org"), re.compile(r"/(?:file/)?bot")),
+    # n8n (commonly self-hosted, so any host): /webhook/<id> and /webhook-test/<id>.
+    (re.compile(r".+"), re.compile(r"(?:/[^/]+)*?/webhook(?:-test|-waiting)?/")),
 )
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
 _PEM = re.compile(r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)", re.DOTALL)
@@ -57,21 +73,146 @@ _QUERY_SEPARATOR = re.compile(r"[&#]")
 _PYTHON_ASSIGNMENT_KEY = re.compile(
     r"(?<![\w-])(?P<key>[A-Za-z_][A-Za-z0-9_.]{0,100})[ \t]*(?P<separator>:|=(?!=))"
 )
+_MAPPING_VALUE = re.compile(
+    r"(?<![\w-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]{0,100})(?P=quote)"
+    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]{0,100}))[ \t]*:[ \t]*"
+    r"(?P<value>[\"'`\[\{(])"
+)
+_YAML_MAPPING_LINE = re.compile(
+    r"^(?P<prefix>[ \t]*(?:-[ \t]+)*)(?:(?P<quote>[\"'])"
+    r"(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]{0,100})(?P=quote)"
+    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]{0,100}))[ \t]*:[ \t]*"
+    r"(?P<value>[^\r\n]*)", re.MULTILINE,
+)
+_YAML_CONTINUATION_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n|\Z)")
 _MAX_SANITIZATION_NODES = 100_000
 _MAX_SANITIZATION_CHARS = 64 * 1024 * 1024
 _MAX_REDACTION_WORK = 128 * 1024 * 1024
 _KEY_NORMALISE = re.compile(r"[^a-z0-9]")
-# Report values repeat heavily (signal ids, descriptions, field names). Cache
-# sanitized results for short strings keyed by a digest of the input so the
-# cache never retains raw, possibly credential-bearing, input text.
-_TEXT_CACHE_MAX_CHARS = 512
-_TEXT_CACHE_ENTRIES = 4096
-_text_cache: OrderedDict[bytes, str] = OrderedDict()
-_text_cache_lock = threading.Lock()
 
 
 class SanitizationLimitError(ValueError):
     """Evidence cannot be safely sanitized within the work/output budget."""
+
+
+def _redact_yaml_multiline_values(text: str) -> str:
+    """Withhold indented sensitive YAML values before line-based excerpting.
+
+    Literal/folded blocks and continued plain scalars can contain opaque
+    credentials with no recognizable token prefix. Consume their indentation
+    boundary once, without loading or executing the untrusted source. Preserve
+    newline counts for evidence locations and the following peer mapping.
+    """
+    pieces: list[str] = []
+    cursor = 0
+    for match in _YAML_MAPPING_LINE.finditer(text):
+        if match.start() < cursor or not _sensitive_key(match.group("quoted") or match.group("plain")):
+            continue
+        value = match.group("value").strip()
+        # Quoted and flow-style values are consumed by the mapping lexer.
+        if value.startswith(('"', "'", "`", "[", "{", "(")):
+            continue
+        start = match.start("value")
+        end = match.end()
+        position = end
+        if text.startswith("\r\n", position):
+            position += 2
+        elif text.startswith(("\n", "\r"), position):
+            position += 1
+        else:
+            continue
+        indent = len(match.group("prefix").expandtabs(8))
+        has_continuation = False
+        while position < len(text):
+            line = _YAML_CONTINUATION_LINE.match(text, position)
+            assert line is not None
+            raw = line.group(0)
+            content = raw.rstrip("\r\n")
+            whitespace = len(content) - len(content.lstrip(" \t"))
+            if content.strip() and len(content[:whitespace].expandtabs(8)) <= indent:
+                break
+            has_continuation = has_continuation or bool(content.strip())
+            end = line.end()
+            position = end
+        if not has_continuation:
+            continue
+        pieces.append(text[cursor:start])
+        pieces.append('"' + REDACTED + '"' + "\n" * text[start:end].count("\n"))
+        cursor = end
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _mapping_expression_end(text: str, start: int) -> int:
+    """Find a mapping value's delimiter without evaluating source code.
+
+    Quoted scalars, escaped/doubled quotes, concatenations and nested containers
+    are consumed in full. Malformed expressions are withheld through EOF.
+    Values are visited once and nesting is bounded before allocating more work.
+    """
+    position = start
+    brackets: list[str] = []
+    while position < len(text):
+        char = text[position]
+        if char in "\"'`":
+            delimiter = char
+            if char != "`" and text.startswith(char * 3, position):
+                delimiter = char * 3
+            position += len(delimiter)
+            while position < len(text):
+                if text[position] == "\\":
+                    position += 2
+                elif text.startswith(delimiter, position):
+                    # YAML escapes a single quote by doubling it. Consuming
+                    # adjacent Python literals here is equally conservative.
+                    if delimiter == "'" and text.startswith("''", position):
+                        position += 2
+                        continue
+                    position += len(delimiter)
+                    break
+                else:
+                    position += 1
+            else:
+                return len(text)
+            continue
+        if char in "([{":
+            if len(brackets) >= 64:
+                raise SanitizationLimitError("mapping expression nesting limit exceeded")
+            brackets.append(char)
+        elif char in ")]}":
+            if not brackets:
+                return position
+            if brackets.pop() != {")": "(", "]": "[", "}": "{"}[char]:
+                return len(text)
+        elif not brackets and char in ",;\r\n#":
+            return position
+        position += 1
+    return len(text)
+
+
+def _redact_mapping_values(text: str) -> str:
+    """Withhold full sensitive mapping expressions before excerpt shortening."""
+    pieces: list[str] = []
+    cursor = 0
+    for match in _MAPPING_VALUE.finditer(text):
+        if match.start() < cursor or not _sensitive_key(match.group("quoted") or match.group("plain")):
+            continue
+        start = match.start("value")
+        end = _mapping_expression_end(text, start)
+        raw = text[start:end]
+        bare = raw.strip()
+        if len(bare) > 1 and bare[0] in "\"'" and bare[-1] == bare[0] and _FINGERPRINT.fullmatch(bare[1:-1]):
+            continue
+        pieces.append(text[cursor:start])
+        trailing_space = raw[len(raw.rstrip(" \t")):]
+        pieces.append('"' + REDACTED + '"' + "\n" * raw.count("\n") + trailing_space)
+        cursor = end
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def _redact_python_assignments(text: str) -> str:
@@ -183,7 +324,6 @@ def _redact_python_assignments(text: str) -> str:
     return "".join(pieces)
 
 
-@functools.lru_cache(maxsize=4096)
 def _sensitive_key(key: str) -> bool:
     normalized = _KEY_NORMALISE.sub("", key.lower())
     return normalized in _SENSITIVE_NAMES or normalized.endswith(_SENSITIVE_SUFFIXES)
@@ -205,6 +345,31 @@ def _redact_value(value: Any) -> Any:
     return REDACTED
 
 
+def _url_host(authority: str) -> str:
+    host = authority.rsplit("@", 1)[-1]
+    if host.startswith("["):
+        host = host[1:host.find("]")] if "]" in host else host[1:]
+    else:
+        host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    return host.rstrip(".").lower()
+
+
+def _redact_path_secret(host: str, path: str) -> str:
+    """Withhold the credential-bearing remainder of a known webhook path.
+
+    Idempotent: an already withheld path is returned unchanged.
+    """
+    if not host or not path:
+        return path
+    for host_rx, prefix_rx in _PATH_SECRET_RULES:
+        if not host_rx.fullmatch(host):
+            continue
+        prefix = prefix_rx.match(path)
+        if prefix and prefix.end() < len(path):
+            return path[:prefix.end()] + REDACTED
+    return path
+
+
 def _sanitize_url(match: re.Match[str]) -> str:
     url = match.group(0)
     scheme, rest = url.split("://", 1)
@@ -214,6 +379,8 @@ def _sanitize_url(match: re.Match[str]) -> str:
     authority, tail = rest[:authority_end], rest[authority_end:]
     if "@" in authority:
         authority = REDACTED + "@" + authority.rsplit("@", 1)[1]
+    path_end = min((pos for c in "?#" if (pos := tail.find(c)) >= 0), default=len(tail))
+    tail = _redact_path_secret(_url_host(authority), tail[:path_end]) + tail[path_end:]
     url = scheme + "://" + authority + tail
 
     def query_value(field: str) -> str:
@@ -245,29 +412,13 @@ def sanitize_text(text: str) -> str:
     """Redact recognizable credentials, assignments, auth headers and URL secrets."""
     if not isinstance(text, str):
         text = str(text)
-    if len(text) > _TEXT_CACHE_MAX_CHARS:
-        return _sanitize_text_uncached(text)
-    key = hashlib.blake2b(text.encode("utf-8", "surrogatepass"), digest_size=16).digest()
-    with _text_cache_lock:
-        cached = _text_cache.get(key)
-        if cached is not None:
-            _text_cache.move_to_end(key)
-            return cached
-    clean = _sanitize_text_uncached(text)
-    with _text_cache_lock:
-        _text_cache[key] = clean
-        _text_cache.move_to_end(key)
-        while len(_text_cache) > _TEXT_CACHE_ENTRIES:
-            _text_cache.popitem(last=False)
-    return clean
-
-
-def _sanitize_text_uncached(text: str) -> str:
     if len(text) > _MAX_SANITIZATION_CHARS:
         raise SanitizationLimitError("text sanitization size limit exceeded")
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
     text = _redact_python_assignments(text)
+    text = _redact_yaml_multiline_values(text)
+    text = _redact_mapping_values(text)
     text = _JWT.sub(REDACTED, text)
     text = _SECRET_TOKEN.sub(REDACTED, text)
     text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED, text)
@@ -291,7 +442,10 @@ def _sanitize_text_uncached(text: str) -> str:
 
         return _ASSIGNMENT.sub(assignment, value)
 
-    return assignments(text)
+    # Plain assignment redaction can introduce a bracketed marker after a
+    # mapping colon (including annotations). Normalize those expressions in
+    # this same pass so repeated sanitization does not change the result.
+    return _redact_mapping_values(assignments(text))
 
 
 def sanitize(value: Any) -> Any:
@@ -312,8 +466,8 @@ def sanitize(value: Any) -> Any:
         if isinstance(child, str) and len(child) >= 8:
             if child != REDACTED and not _FINGERPRINT.fullmatch(child):
                 known.add(child)
-                # Library errors often quote the offending value with repr(),
-                # which escapes control characters; redact that spelling too.
+                # Library diagnostics often use repr(), which escapes secret
+                # control characters. Remove both spellings in sibling fields.
                 escaped = repr(child)[1:-1]
                 if escaped != child:
                     known.add(escaped)

@@ -28,6 +28,7 @@ import re
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorError, _NoDump
 from shadowscan.connectors.common import (
@@ -138,13 +139,16 @@ class JwtConnector(BaseConnector, _NoDump):
             except (ValueError, TypeError, OverflowError, RecursionError, KeyError, MatchTimeoutError) as exc:
                 # Hostile claims (huge numbers, odd types) must not stop the
                 # analysis of every later token in the input.
-                self.ctx.warn(f"identity.jwt: token analysis failed ({type(exc).__name__})")
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"identity.jwt: token analysis failed ({type(exc).__name__}){detail}")
                 continue
             if f:
                 yield f
 
     def _jwks_document(self, jwks_url: str) -> dict[str, Any]:
         """Fetch each configured key set once per run, including its failure."""
+        if not hasattr(self, "_jwks_cache"):
+            self._jwks_cache = {}
         cached = self._jwks_cache.get(jwks_url)
         if cached is None:
             try:
@@ -153,7 +157,9 @@ class JwtConnector(BaseConnector, _NoDump):
                 cached = exc
             self._jwks_cache[jwks_url] = cached
         if isinstance(cached, BaseException):
-            raise cached
+            # Re-raising one cached exception otherwise retains a traceback
+            # frame for every token analyzed after an unavailable key set.
+            raise cached.with_traceback(None)
         return cached
 
     # -------------------------------------------------------------- analysis
@@ -178,7 +184,7 @@ class JwtConnector(BaseConnector, _NoDump):
                     header,
                     expected_issuer=self.ctx.get("expected_issuer"),
                     allowed_algorithms=self.ctx.get("allowed_algorithms"),
-                    document=self._jwks_document(jwks_url),
+                    document_loader=self._jwks_document,
                 )
             except Exception as exc:  # noqa: BLE001
                 verified = False
@@ -226,7 +232,10 @@ class JwtConnector(BaseConnector, _NoDump):
             identity_type = "workload"
             reasons.append("SPIFFE workload identity")
             f.add_tag("spiffe")
-        if family == "keycloak" and str(sub).startswith("service-account-") or str(claims.get("preferred_username", "")).startswith("service-account-"):
+        if family == "keycloak" and (
+            str(sub).startswith("service-account-")
+            or str(claims.get("preferred_username", "")).startswith("service-account-")
+        ):
             identity_type = "service"
             reasons.append("Keycloak service account")
         if "act" in claims or "may_act" in claims:
@@ -327,25 +336,44 @@ class JwtConnector(BaseConnector, _NoDump):
 
 
 def _issuer_family(iss: str, claims: dict[str, Any]) -> str:
-    i = iss.lower()
-    if "login.microsoftonline.com" in i or "sts.windows.net" in i or "login.windows.net" in i or "tid" in claims and "aud" in claims and ("appid" in claims or "azp" in claims):
+    """Describe an issuer namespace, never establish token trust.
+
+    Parse the hostname before matching provider domains: substrings in paths,
+    userinfo, query strings or attacker-controlled suffixes prove nothing.
+    Generic claims such as ``gty`` are not provider identifiers.
+    """
+    try:
+        parsed = urlsplit(iss)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if parsed.username or parsed.password:
+            host = ""
+    except ValueError:
+        return "custom" if iss else "unknown"
+    if parsed.scheme not in {"https", "http", "spiffe"}:
+        # Google documents this exact scheme-less issuer value.
+        host = "accounts.google.com" if iss == "accounts.google.com" else ""
+
+    def domain(name: str) -> bool:
+        return host == name or host.endswith("." + name)
+
+    if host in {"login.microsoftonline.com", "sts.windows.net", "login.windows.net", "login.microsoftonline.us", "login.chinacloudapi.cn"}:
         return "entra"
-    if "okta.com" in i or "oktapreview.com" in i or "okta-emea.com" in i:
+    if any(domain(name) for name in ("okta.com", "oktapreview.com", "okta-emea.com")):
         return "okta"
-    if "accounts.google.com" in i or i.endswith("googleapis.com") or "google" in i:
+    if host == "accounts.google.com" or domain("googleapis.com"):
         return "google"
-    if ".auth0.com" in i or claims.get("gty"):
+    if domain("auth0.com"):
         return "auth0"
-    if "cognito-idp" in i:
+    if re.fullmatch(r"cognito-idp\.[a-z0-9-]+\.amazonaws\.com(?:\.cn)?", host):
         return "cognito"
-    if "/realms/" in i:
+    if host and "/realms/" in parsed.path:
         return "keycloak"
-    if "spiffe://" in i or str(claims.get("sub", "")).startswith("spiffe://"):
+    if parsed.scheme == "spiffe" and host or str(claims.get("sub", "")).startswith("spiffe://"):
         return "spiffe"
-    if "github.com" in i or "token.actions.githubusercontent.com" in i:
+    if host == "token.actions.githubusercontent.com":
         return "github-actions"
-    if "gitlab" in i:
+    if host == "gitlab.com":
         return "gitlab"
-    if "kubernetes" in i or "serviceaccount" in i or "kubernetes.io" in json.dumps(claims)[:500]:
+    if domain("kubernetes.default.svc") or any(key.partition("/")[0] == "kubernetes.io" for key in claims):
         return "kubernetes"
     return "custom" if iss else "unknown"
