@@ -463,6 +463,9 @@ message per file; context-generated errors and warnings are separately capped at
 1,000 plus a suppression message per connector. Suppression never clears incomplete
 coverage, and later valid records continue to be analyzed. Gateway detail caps
 also mark missing detail incomplete while preserving supported aggregate totals.
+Application logs contain fixed warning/error summaries. Inspect the bounded,
+sanitized connector diagnostics in the report for details, and retain reports
+under the same access controls as inventory data.
 
 JWKS documents are fetched lazily and cached only within a JWT analysis. Tokens
 with rejected algorithms do not trigger a lookup, and each token is still checked
