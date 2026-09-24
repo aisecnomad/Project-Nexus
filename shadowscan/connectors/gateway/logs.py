@@ -30,7 +30,7 @@ import hashlib
 import json
 import math
 import re
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -49,6 +49,9 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.redaction import credential_id, sanitize
 from shadowscan.utils.text import get_path, host_of, parse_timestamp, redact, to_iso
+
+_MAX_CACHED_USER_AGENTS = 256
+_MAX_CACHED_USER_AGENT_CHARS = 1024
 
 # ---------------------------------------------------------------- schemas
 
@@ -809,9 +812,6 @@ class GatewayLogConnector(BaseConnector):
                                self.llm_hosts_only, self.max_records,
                                sorted(self.correlation_bindings, key=lambda b: json.dumps(b, sort_keys=True))], sort_keys=True)
         self.source_id = hashlib.sha256(identity.encode()).hexdigest()
-        # Logs repeat a handful of user agents millions of times; matching the
-        # user-agent signatures once per distinct string is a large saving.
-        self._ua_frameworks: dict[str, list[str]] = {}
 
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError("gateway.logs: this connector reads exported logs; set 'input' to a file or directory")
@@ -1009,6 +1009,9 @@ class GatewayLogConnector(BaseConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         callers: dict[str, _Caller] = {}
+        # Headers repeat across exported requests. Keep only successful immutable
+        # framework summaries for this analysis, with bounded keys and entries.
+        framework_cache: OrderedDict[str, tuple[str, ...]] = OrderedDict()
         n = 0
         skipped = 0
         for rec in records:
@@ -1028,11 +1031,12 @@ class GatewayLogConnector(BaseConnector):
                 if schema in {"access-log", "generic"} and self.llm_hosts_only and not self._is_llm_traffic(ev):
                     skipped += 1
                     continue
-                self._runtime_context(ev, rec, clean)
+                self._runtime_context(ev, rec, framework_cache, clean)
                 self._accumulate(callers, ev)
             except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
                     RecursionError, ConnectorError, MatchTimeoutError) as exc:
-                self.ctx.warn(f"gateway.logs: invalid record {n}: {type(exc).__name__}")
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"gateway.logs: invalid record {n}: {type(exc).__name__}{detail}")
                 continue
         self.ctx.examined(n)
         if skipped:
@@ -1042,7 +1046,10 @@ class GatewayLogConnector(BaseConnector):
                 continue
             yield self._finding(c)
 
-    def _runtime_context(self, ev: Event, rec: dict[str, Any], clean: dict[str, Any] | None = None) -> None:
+    def _runtime_context(
+        self, ev: Event, rec: dict[str, Any], framework_cache: OrderedDict[str, tuple[str, ...]],
+        clean: dict[str, Any] | None = None,
+    ) -> None:
         """Operator bindings identify workloads; log names alone never do.
 
         ``rec`` is the raw record (its credential field decides binding
@@ -1066,15 +1073,20 @@ class GatewayLogConnector(BaseConnector):
         environment = get_path(rec, "environment", "deployment_environment", "metadata.environment", "metadata.deployment_environment")
         if isinstance(environment, str) and environment:
             ev.environment = environment.strip().lower()
-        user_agent = ev.user_agent or ""
-        frameworks = self._ua_frameworks.get(user_agent)
-        if frameworks is None:
-            frameworks = sorted({
-                match.signature.id for match in self.index.match_user_agent(user_agent)
+        ua = ev.user_agent or ""
+        cached = framework_cache.get(ua)
+        if cached is None:
+            frameworks = tuple(sorted({
+                match.signature.id for match in self.index.match_user_agent(ua)
                 if match.signature.category == "framework"
-            })
-            if len(self._ua_frameworks) < _MAX_DISTINCT_KEYS:
-                self._ua_frameworks[user_agent] = frameworks
+            }))
+            if len(ua) <= _MAX_CACHED_USER_AGENT_CHARS:
+                framework_cache[ua] = frameworks
+                if len(framework_cache) > _MAX_CACHED_USER_AGENTS:
+                    framework_cache.popitem(last=False)
+        else:
+            frameworks = cached
+            framework_cache.move_to_end(ua)
         ev.runtime_frameworks = list(frameworks)
         ev.identity_assurance = identity_assurance
         ev.code_resources = sorted({

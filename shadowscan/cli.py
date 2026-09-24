@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import os
-import stat
 import sys
 from typing import Any
 
@@ -18,7 +17,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from shadowscan import __version__
-from shadowscan.comparison import compare_reports
+from shadowscan.comparison import compare_reports, load_report
 from shadowscan.config import (
     ConfigValidationError,
     ConnectorSpec,
@@ -45,32 +44,6 @@ from shadowscan.utils.redaction import REDACTED, sanitize_text
 console = Console(width=None if sys.stdout.isatty() else 200)
 err_console = Console(stderr=True)
 LEVELS = ["critical", "high", "medium", "low", "info"]
-_MAX_REPORT_BYTES = 256 * 1024 * 1024
-
-
-def _load_report(path: str) -> dict[str, Any]:
-    """Read a bounded ShadowScan JSON report; malformed input is a usage error, not a traceback."""
-    try:
-        with open(path, "rb") as stream:
-            info = os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode):
-                raise ValueError("not a regular file")
-            if info.st_size > _MAX_REPORT_BYTES:
-                raise ValueError("too large")
-            raw = stream.read(_MAX_REPORT_BYTES + 1)
-        if len(raw) > _MAX_REPORT_BYTES:
-            raise ValueError("too large")
-        data = json.loads(raw.decode("utf-8"))
-    except (OSError, ValueError, UnicodeError):
-        raise click.ClickException(
-            f"could not read a ShadowScan JSON report (regular file, at most {_MAX_REPORT_BYTES // (1024 * 1024)} MiB) "
-            f"from {sanitize_text(path)}"
-        ) from None
-    if not isinstance(data, dict):
-        raise click.ClickException(f"{sanitize_text(path)} is not a ShadowScan JSON report")
-    return data
-
-
 def _setup_logging(verbose: int, quiet: bool) -> None:
     level = logging.WARNING
     if quiet:
@@ -145,22 +118,33 @@ def _min_confidence_option(ctx: click.Context, param: click.Parameter, value: fl
         raise click.BadParameter(str(exc)) from exc
 
 
+def _apply_security_options(cfg: ScanConfig, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
+    cfg.plugins = list(dict.fromkeys([*cfg.plugins, *allow_plugin]))
+    if allow_signature_override is not None:
+        cfg.allow_signature_override = allow_signature_override
+    if allow_private_origin is not None:
+        cfg.allow_private_origin = allow_private_origin
+    if allow_instance_credentials is not None:
+        cfg.allow_instance_credentials = allow_instance_credentials
+    if allow_credential_mixing is not None:
+        cfg.allow_credential_mixing = allow_credential_mixing
+    if connector_timeout_seconds is not None:
+        cfg.connector_timeout_seconds = connector_timeout_seconds
+
+
 def _connector_timeout_option(ctx: click.Context, param: click.Parameter, value: float | None) -> float | None:
+    if value is None:
+        return None
     try:
         return validate_connector_timeout(value)
     except ValueError as exc:
         raise click.BadParameter(str(exc)) from exc
 
 
-def _apply_security_options(cfg: ScanConfig, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None) -> None:
-    cfg.plugins = list(dict.fromkeys([*cfg.plugins, *allow_plugin]))
-    if allow_signature_override is not None:
-        cfg.allow_signature_override = allow_signature_override
-    if allow_private_origin is not None:
-        cfg.allow_private_origin = allow_private_origin
-
-
 output_options = [
+    click.option("--allow-instance-credentials/--deny-instance-credentials", default=None, help="explicitly allow cloud instance or managed-identity credentials"),
+    click.option("--allow-credential-mixing/--deny-credential-mixing", default=None, help="allow reviewed source inputs alongside live credentialed connectors"),
+    click.option("--connector-timeout-seconds", type=float, callback=_connector_timeout_option, help="per-connector completion deadline in seconds (default: 120); blocking calls cannot be forcibly stopped"),
     click.option("--allow-plugin", multiple=True, help="allow one reviewed third-party connector name (repeatable)"),
     click.option("--allow-signature-override/--deny-signature-override", default=None, help="explicitly allow a reviewed custom pack to replace built-in signatures"),
     click.option("--allow-private-origin/--deny-private-origin", default=None, help="allow private HTTPS endpoints for this scan; origin restrictions still apply"),
@@ -174,7 +158,6 @@ output_options = [
     click.option("--fail-on", type=click.Choice(LEVELS), help="exit 2 if any finding reaches this risk level"),
     click.option("--max-rows", type=int, default=None, help="limit rows printed in table mode"),
     click.option("--dump-records", type=click.Path(file_okay=False), help="directory for sanitized connector records (JWTs are never exported)"),
-    click.option("--connector-timeout", type=float, default=None, callback=_connector_timeout_option, help="seconds a single connector may run before it is abandoned and the scan is reported incomplete"),
 ]
 
 
@@ -202,7 +185,7 @@ def main(verbose: int, quiet: bool) -> None:
 @click.option("--config", "-c", "config_path", type=click.Path(exists=True, dir_okay=False), required=True, help="shadowscan.yaml")
 @click.option("--only", multiple=True, help="run only these connector names / labels (repeatable)")
 @add_options(output_options)
-def scan(config_path: str, only: tuple[str, ...], fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, connector_timeout: float | None) -> None:
+def scan(config_path: str, only: tuple[str, ...], fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
     """Run every connector defined in a config file."""
     try:
         cfg = ScanConfig.from_yaml(config_path)
@@ -223,9 +206,7 @@ def scan(config_path: str, only: tuple[str, ...], fmt: str, output: str | None, 
         cfg.incremental = incremental
     if state_dir is not None:
         cfg.state_dir = state_dir
-    if connector_timeout is not None:
-        cfg.connector_timeout = connector_timeout
-    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin)
+    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin, allow_instance_credentials, allow_credential_mixing, connector_timeout_seconds)
     _run_and_emit(cfg, fmt, output, main.verbose, max_rows, only=list(only) or None)  # type: ignore[attr-defined]
 
 
@@ -235,7 +216,7 @@ def scan(config_path: str, only: tuple[str, ...], fmt: str, output: str | None, 
 @click.option("--input", "input_path", type=click.Path(exists=True), help="offline export (file or directory) instead of the live API")
 @click.option("--set", "-S", "settings", multiple=True, help="connector option key=value (repeatable; lists as a,b,c)")
 @add_options(output_options)
-def run(connector: str, input_path: str | None, settings: tuple[str, ...], fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, connector_timeout: float | None) -> None:
+def run(connector: str, input_path: str | None, settings: tuple[str, ...], fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
     """Run a single connector, e.g. `shadowscan run identity.okta --set org_url=https://acme.okta.com`."""
     if connector not in available_connectors():
         raise click.BadParameter(f"unknown connector {connector!r}; see `shadowscan connectors`")
@@ -245,8 +226,8 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], fmt: 
         raise click.BadParameter("--set expects key=value pairs") from None
     if input_path:
         conf["input"] = input_path
-    cfg = ScanConfig(connectors=[ConnectorSpec(name=connector, config=conf)], inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir, connector_timeout=connector_timeout)
-    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin)
+    cfg = ScanConfig(connectors=[ConnectorSpec(name=connector, config=conf)], inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir)
+    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin, allow_instance_credentials, allow_credential_mixing, connector_timeout_seconds)
     _run_and_emit(cfg, fmt, output, main.verbose, max_rows)  # type: ignore[attr-defined]
 
 
@@ -260,7 +241,7 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], fmt: 
 @click.option("--exclude", multiple=True, help="extra directory names / globs to skip")
 @click.option("--no-secrets", is_flag=True, help="skip credential detection")
 @add_options(output_options)
-def code(paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str, ...], gitlab_group: str | None, mode: str | None, exclude: tuple[str, ...], no_secrets: bool, fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, connector_timeout: float | None) -> None:
+def code(paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str, ...], gitlab_group: str | None, mode: str | None, exclude: tuple[str, ...], no_secrets: bool, fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
     """Scan local directories and/or remote repositories for agent code, MCP, coding agents, IaC and secrets."""
     specs: list[ConnectorSpec] = []
     common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
@@ -282,8 +263,8 @@ def code(paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str,
         specs.append(ConnectorSpec(name="code.gitlab", config=gl))
     if not specs:
         raise click.UsageError("give at least one PATH, --github-org/--github-repo or --gitlab-group")
-    cfg = ScanConfig(connectors=specs, inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir, connector_timeout=connector_timeout)
-    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin)
+    cfg = ScanConfig(connectors=specs, inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir)
+    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin, allow_instance_credentials, allow_credential_mixing, connector_timeout_seconds)
     _run_and_emit(cfg, fmt, output, main.verbose, max_rows)  # type: ignore[attr-defined]
 
 
@@ -295,7 +276,7 @@ def code(paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str,
 @click.option("--all-hosts", is_flag=True, help="for access logs, keep traffic to every host (default: LLM/agent hosts only)")
 @click.option("--label", help="gateway name used as the findings' account/provider")
 @add_options(output_options)
-def gateway(logs: tuple[str, ...], log_format: str, min_events: int, all_hosts: bool, label: str | None, fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, connector_timeout: float | None) -> None:
+def gateway(logs: tuple[str, ...], log_format: str, min_events: int, all_hosts: bool, label: str | None, fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
     """Analyse LLM gateway / provider / proxy logs and reconstruct the callers."""
     specs = []
     for i, path in enumerate(logs):
@@ -305,8 +286,8 @@ def gateway(logs: tuple[str, ...], log_format: str, min_events: int, all_hosts: 
         if label:
             conf["label"] = label
         specs.append(ConnectorSpec(name="gateway.logs", config=conf, label=f"gateway.logs#{i + 1}" if len(logs) > 1 else None))
-    cfg = ScanConfig(connectors=specs, inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir, connector_timeout=connector_timeout)
-    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin)
+    cfg = ScanConfig(connectors=specs, inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir)
+    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin, allow_instance_credentials, allow_credential_mixing, connector_timeout_seconds)
     _run_and_emit(cfg, fmt, output, main.verbose, max_rows)  # type: ignore[attr-defined]
 
 
@@ -318,7 +299,7 @@ def gateway(logs: tuple[str, ...], log_format: str, min_events: int, all_hosts: 
 @click.option("--expected-issuer", help="require this exact issuer when checking a JWT signature")
 @click.option("--jwt-algorithm", multiple=True, type=click.Choice(["RS256", "ES256", "EdDSA", "PS256"]), help="narrow allowed signature algorithms (repeatable)")
 @add_options(output_options)
-def jwt(tokens: tuple[str, ...], token_file: str | None, jwks_url: str | None, expected_issuer: str | None, jwt_algorithm: tuple[str, ...], fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, connector_timeout: float | None) -> None:
+def jwt(tokens: tuple[str, ...], token_file: str | None, jwks_url: str | None, expected_issuer: str | None, jwt_algorithm: tuple[str, ...], fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
     """Classify JWTs as human / service / delegated-agent identities and assess their privileges."""
     conf: dict[str, Any] = {}
     if tokens:
@@ -339,8 +320,8 @@ def jwt(tokens: tuple[str, ...], token_file: str | None, jwks_url: str | None, e
             conf["tokens"] = [line.strip() for line in sys.stdin if line.strip()]
         else:
             raise click.UsageError("give tokens as arguments, --file, or on stdin")
-    cfg = ScanConfig(connectors=[ConnectorSpec(name="identity.jwt", config=conf)], inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir, connector_timeout=connector_timeout)
-    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin)
+    cfg = ScanConfig(connectors=[ConnectorSpec(name="identity.jwt", config=conf)], inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir)
+    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin, allow_instance_credentials, allow_credential_mixing, connector_timeout_seconds)
     _run_and_emit(cfg, fmt, output, main.verbose, max_rows)  # type: ignore[attr-defined]
 
 
@@ -497,26 +478,27 @@ def inventory_check(paths: tuple[str, ...]) -> None:
 @click.option("--min-risk", type=click.Choice(LEVELS), default="low", show_default=True)
 def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str) -> None:
     """Generate Agent Capability Card stubs for shadow findings so they can be reviewed and registered."""
-    data = _load_report(findings_json)
-    records = data.get("findings")
-    if not isinstance(records, list):
-        raise click.ClickException("report has no findings array")
     wanted = {k.strip() for k in kinds.split(",")}
     threshold = LEVELS.index(min_risk)
+    # Finish validation and card generation before writing any approval stubs.
+    # A bad later record must not leave an apparently successful partial import.
+    try:
+        data = load_report(findings_json)
+        cards = []
+        for record in data["findings"]:
+            finding = Finding.from_dict(record)
+            if finding.kind.value not in wanted or finding.shadow is False or LEVELS.index(finding.risk.level.value) > threshold:
+                continue
+            cards.append((finding.id, card_stub_for(finding)))
+    except (ValueError, TypeError, OSError, KeyError, AttributeError, RecursionError):
+        raise click.ClickException("invalid inventory input; expected a bounded ShadowScan JSON report with valid findings") from None
     try:
         out = prepare_private_directory(out_dir)
     except (OSError, ValueError):
         raise click.ClickException("inventory output requires a private directory with mode 0700 and no symlinks") from None
     n = 0
-    for number, d in enumerate(records, 1):
-        try:
-            f = Finding.from_dict(d)
-        except (TypeError, ValueError, KeyError):
-            raise click.ClickException(f"finding {number} in the report is malformed") from None
-        if f.kind.value not in wanted or f.shadow is False or LEVELS.index(f.risk.level.value) > threshold:
-            continue
-        card = card_stub_for(f)
-        suffix = hashlib.sha256(f.id.encode()).hexdigest()[:8]
+    for finding_id, card in cards:
+        suffix = hashlib.sha256(finding_id.encode()).hexdigest()[:8]
         path = out / f"{card['metadata']['agent_id']}-{suffix}.yaml"
         try:
             write_private_text(path, yaml.safe_dump(card, sort_keys=False, allow_unicode=True))
@@ -534,8 +516,11 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
 def diff(baseline: str, current: str, as_json: bool) -> None:
     """Compare reports; missing findings require complete, comparable scans to resolve."""
     try:
-        comparison = compare_reports(_load_report(baseline), _load_report(current))
-    except (ValueError, TypeError, KeyError):
+        comparison = compare_reports(
+            load_report(baseline),
+            load_report(current),
+        )
+    except (ValueError, TypeError, OSError):
         raise click.ClickException("invalid comparison input; expected two ShadowScan JSON reports") from None
     if as_json:
         click.echo(json.dumps(comparison, indent=2, default=str))

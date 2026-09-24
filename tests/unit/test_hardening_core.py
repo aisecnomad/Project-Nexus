@@ -108,14 +108,13 @@ def test_http_client_rejects_control_characters_in_headers_without_echoing_them(
 
 
 def test_connector_timeout_validation():
-    assert validate_connector_timeout(None) is None
     assert validate_connector_timeout(5) == 5.0
-    for invalid in (0, -1, True, "5", float("inf"), float("nan")):
+    for invalid in (0, -1, True, None, "fast", float("inf"), float("nan")):
         with pytest.raises(ConfigValidationError):
             validate_connector_timeout(invalid)
-    assert ScanConfig.from_dict({"options": {"connector_timeout": 2}}).connector_timeout == 2.0
+    assert ScanConfig.from_dict({"options": {"connector_timeout_seconds": 2}}).connector_timeout_seconds == 2.0
     with pytest.raises(ConfigValidationError):
-        ScanConfig(connector_timeout=-1)
+        ScanConfig.from_dict({"options": {"connector_timeout_seconds": -1}})
     with pytest.raises(ConfigValidationError):
         ScanConfig.from_dict({"options": {"connector_deadline": 2}})
 
@@ -145,19 +144,24 @@ def test_engine_abandons_a_connector_that_exceeds_its_deadline(monkeypatch, para
             return [_finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.FRAMEWORK_USAGE,
                              resource="repo", resource_type="project")]
 
-    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: {"cloud.aws": Blocking, "code.filesystem": Quick}[name])
-    cfg = ScanConfig(connectors=[ConnectorSpec("cloud.aws", label="slow"), ConnectorSpec("code.filesystem", label="fast")],
-                     parallel=parallel, connector_timeout=0.5)
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: {"cloud.aws": Blocking, "identity.okta": Quick}[name])
+    cfg = ScanConfig(connectors=[ConnectorSpec("cloud.aws", label="slow"), ConnectorSpec("identity.okta", label="fast")],
+                     parallel=parallel, connector_timeout_seconds=0.5)
     engine = Engine(cfg, SignatureIndex([]))
     try:
         started = time.monotonic()
         result = engine.run()
         assert time.monotonic() - started < 10
+        # The blocked worker is reported so the CLI can exit without joining it.
         assert engine.abandoned_workers == ["slow"]
         by_connector = {s.connector: s for s in result.stats}
-        assert by_connector["slow"].skipped and by_connector["slow"].incomplete
-        assert "connector_timeout" in by_connector["slow"].errors[0]
-        assert by_connector["fast"].findings == 1 and len(result.findings) == 1
+        assert by_connector["slow"].incomplete and "deadline exceeded" in by_connector["slow"].errors[0]
+        fast = by_connector["fast"]
+        if parallel == 2:
+            assert fast.findings == 1 and len(result.findings) == 1
+        else:
+            # The only worker slot is still held by the timed-out call.
+            assert fast.skipped and "no worker capacity" in (fast.skip_reason or "") and result.findings == []
         assert not result.complete
     finally:
         release.set()
@@ -183,16 +187,16 @@ def test_engine_loads_the_signature_index_once_for_the_first_run(monkeypatch):
 
 def test_cli_validates_connector_timeout_and_rejects_malformed_reports(tmp_path):
     runner = CliRunner()
-    result = runner.invoke(main, ["run", "identity.jwt", "--connector-timeout", "0", "--set", "tokens=a.b.c"])
-    assert result.exit_code == 2 and "connector_timeout" in result.output
+    result = runner.invoke(main, ["run", "identity.jwt", "--connector-timeout-seconds", "0", "--set", "tokens=a.b.c"])
+    assert result.exit_code == 2 and "connector_timeout_seconds" in result.output
     broken = tmp_path / "report.json"
     broken.write_text("{not json")
     out = tmp_path / "stubs"
     result = runner.invoke(main, ["inventory", "stubs", str(broken), "-o", str(out)])
-    assert result.exit_code == 1 and "could not read" in result.output and "Traceback" not in result.output
+    assert result.exit_code == 1 and "invalid inventory input" in result.output and "Traceback" not in result.output
     broken.write_text(json.dumps({"findings": [{"surface": "cloud"}]}))
     result = runner.invoke(main, ["inventory", "stubs", str(broken), "-o", str(out)])
-    assert result.exit_code == 1 and "malformed" in result.output
+    assert result.exit_code == 1 and "invalid inventory input" in result.output
     result = runner.invoke(main, ["diff", str(broken), str(broken)])
     assert result.exit_code == 1 and "Traceback" not in result.output
 

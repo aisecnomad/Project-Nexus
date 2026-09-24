@@ -28,25 +28,28 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   to the checked address, retaining hostname TLS verification. A trusted private
   API requires `options.allow_private_origin: true` or `--allow-private-origin`.
   This exception does not relax origin or TLS checks. HTTP proxies, including
-  environment proxy settings, are unsupported by this transport. JSON bodies
-  are streamed and capped at 16 MiB after content decoding; malformed successful
-  pagination envelopes and oversized responses make collection incomplete.
+  environment proxy settings, are unsupported by this transport.
+* Default shared HTTP responses and JSON/pagination helpers are limited to 16 MiB
+  of decoded bytes; oversized and malformed collection responses fail collection.
+  Explicit raw streaming callers are responsible for bounded reads and closure.
+  Injected Requests sessions have their adapters replaced by destination policy.
   GitLab source-file downloads have a stricter 512 KiB per-file cap.
 * Configured header values are validated before any request is built; a value
   with control characters (typically a secret file's trailing newline) fails
   without being echoed. The Okta `SSWS` scheme is redacted like `Bearer` and
   `Basic`, and known configuration values are also redacted in their
   `repr()`-escaped spelling, which library errors use.
-* `options.connector_timeout` / `--connector-timeout` abandons a connector that
-  exceeds its deadline and reports the scan incomplete. Python threads cannot
-  be interrupted: the CLI exits without joining the abandoned worker, and
-  library callers must expect the thread to outlive `Engine.run()`.
+* `options.connector_timeout_seconds` / `--connector-timeout-seconds` (default
+  120) is the per-connector completion deadline; an expired connector is
+  reported incomplete. Python threads cannot be interrupted: the CLI exits
+  without joining the abandoned worker, and library callers must expect the
+  thread to outlive `Engine.run()`.
 * Azure App Service settings and OCI Function configuration are exported under
   an env-style key, so record dumps redact every value; Salesforce token
   values are never requested.
 * Cloud SDKs and Git use separate transports. Network egress rules remain needed
   for those paths. URL preflight checks alone do not pin Git's later DNS lookup.
-  Custom injected HTTP sessions/adapters are trusted extension/test mechanisms.
+  Custom non-Requests transport doubles remain trusted extension/test mechanisms.
 * JWT classification remains unverified by default. Optional `jwks_url` signature
   verification uses the shared transport with a bounded JWKS body and key count.
   Only allowlisted asymmetric algorithms and unambiguous eligible public keys
@@ -81,6 +84,9 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
   provider and account restrictions still apply; ambiguous matches do not approve.
+* Configuration rejects missing or empty required environment substitutions,
+  duplicate YAML keys, unknown top-level/options fields and invalid gate levels.
+  Explicit `${VAR:-default}` fallbacks remain an operator policy decision.
 * Incomplete scans exit 3 and set SARIF executionSuccessful=false. Only complete
   results qualify for incremental reuse. Comparisons infer resolution only for
   complete scans with matching collection, detection and finding-identity schemas.

@@ -69,8 +69,8 @@ def test_aws_clients_carry_explicit_timeouts(index, monkeypatch):
     connector._session = session
     connector._client("lambda", "us-east-1")
     config = session.client.call_args.kwargs["config"]
-    assert config.connect_timeout == 10 and config.read_timeout == 60
-    assert config.retries == {"mode": "standard", "max_attempts": 3}
+    assert config.connect_timeout == 10 and config.read_timeout == 30
+    assert config.retries == {"mode": "standard", "total_max_attempts": 3}
 
 
 def test_azure_detail_failures_are_incomplete_coverage_not_fatal(index):
@@ -117,7 +117,7 @@ def test_azure_foundry_projects_inherit_subscription_and_location(index, monkeyp
         "location": "eastus", "subscriptionId": "s1", "properties": {},
     }]}
 
-    def fake_list(path, api):
+    def fake_list(path, api, **kwargs):
         return [{"id": f"{account_id}/projects/p1", "name": "p1", "properties": {}}] if path.endswith("/projects") else []
 
     monkeypatch.setattr(connector, "_auth", lambda: setattr(connector, "http", http))
@@ -142,7 +142,7 @@ def test_oci_clients_are_cached_per_region_with_timeouts(index):
     assert connector._client(Client, "r1") is first
     other = connector._client(Client, "r2")
     assert other is not first and other.config["region"] == "r2"
-    assert first.kwargs["timeout"] == (10, 60)
+    assert first.kwargs["timeout"] == (10, 30)
 
 
 def test_oci_function_reads_environment_and_legacy_config_keys(index):
@@ -163,11 +163,11 @@ def test_salesforce_never_requests_token_values_and_survives_expired_locators(in
     monkeypatch.setattr(connector, "_auth", lambda: None)
     connector.http = Mock()
     connector.http.get_json.side_effect = [
-        {"records": [{"Id": "1"}], "nextRecordsUrl": "/services/data/v62.0/query/01g-2000"},
+        {"records": [{"Id": "1"}], "done": False, "nextRecordsUrl": "/services/data/v62.0/query/01g-2000"},
         HttpError(400, "https://acme.my.salesforce.com/services/data/v62.0/query/01g-2000"),
     ]
     assert list(connector.collect()) == [{"Id": "1", "_kind": "BotDefinition"}]
-    assert ctx.stats.incomplete and any("pagination incomplete (400)" in w for w in ctx.stats.warnings)
+    assert ctx.stats.incomplete and any("collection incomplete (HTTP 400)" in w for w in ctx.stats.warnings)
 
 
 def test_servicenow_pagination_stops_on_a_repeated_page(index, monkeypatch):
@@ -177,11 +177,11 @@ def test_servicenow_pagination_stops_on_a_repeated_page(index, monkeypatch):
     monkeypatch.setattr(connector, "_auth", lambda: None)
     connector.http = Mock()
     # Every response is a fresh object, as it would be from the transport.
-    connector.http.get_json.side_effect = lambda *args, **kwargs: {"result": [{"sys_id": str(i)} for i in range(servicenow_module._PAGE_SIZE)]}
+    connector.http.get_json.side_effect = lambda *args, **kwargs: {"result": [{"sys_id": str(i)} for i in range(500)]}
     records = list(connector.collect())
-    assert len(records) == servicenow_module._PAGE_SIZE
+    assert len(records) == 500
     assert connector.http.get_json.call_count == 2
-    assert any("repeated a page" in warning for warning in ctx.stats.warnings)
+    assert any("repeated pagination page" in warning for warning in ctx.stats.warnings)
 
 
 def test_github_apps_pat_inventory_is_optional(index, monkeypatch):
@@ -203,4 +203,4 @@ def test_github_apps_pat_inventory_is_optional(index, monkeypatch):
     monkeypatch.setattr(github_apps_module, "HttpClient", FakeHttp)
     records = list(connector.collect())
     assert [r["_kind"] for r in records] == ["installation"]
-    assert ctx.stats.incomplete and any("PAT inventory unavailable" in warning for warning in ctx.stats.warnings)
+    assert ctx.stats.incomplete and any("PAT inventory unavailable" in error for error in ctx.stats.errors)

@@ -12,6 +12,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
+from requests import RequestException
+
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app
@@ -48,10 +50,17 @@ class AtlassianConnector(BaseConnector):
             path = "/rest/plugins/1.0/" if product == "jira" else "/wiki/rest/plugins/1.0/"
             try:
                 data = http.get_json(path, params={"os_authType": "basic"}) or {}
-            except HttpError as exc:
-                self.ctx.warn(f"saas.atlassian: {product} UPM not readable ({exc.status})")
+            except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+                reason = str(exc.status) if isinstance(exc, HttpError) else type(exc).__name__
+                self.ctx.warn(f"saas.atlassian: {product} UPM not readable ({reason})")
                 continue
-            for p in data.get("plugins", []) or []:
+            if not isinstance(data, dict) or not isinstance(data.get("plugins"), list):
+                self.ctx.warn(f"saas.atlassian: {product} UPM returned an invalid collection")
+                continue
+            for p in data["plugins"]:
+                if not isinstance(p, dict):
+                    self.ctx.warn(f"saas.atlassian: {product} UPM returned an invalid plugin entry")
+                    continue
                 p["_product"] = product
                 yield p
 

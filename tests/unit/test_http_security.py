@@ -164,6 +164,7 @@ def test_github_api_download_rejects_traversal_before_request(tmp_path, index):
 def test_gitlab_api_download_rejects_traversal_before_request(tmp_path, index):
     connector = GitLabConnector(ConnectorContext(index=index))
     connector.http = Mock()
+    connector.http.try_get_json.return_value = {"id": "a" * 40}
     connector.http.paginate_link.return_value = [{"path": "../escape.py", "type": "blob"}]
     with pytest.raises(RuntimeError):
         connector._fetch_via_api({"id": 1}, str(tmp_path))

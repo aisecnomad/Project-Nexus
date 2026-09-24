@@ -55,7 +55,7 @@ class GitHubAppsConnector(BaseConnector):
                 raise
             # The token lacks organization_personal_access_tokens:read; the
             # installation inventory above is still valid, with partial coverage.
-            self.ctx.warn(f"saas.github-apps: fine-grained PAT inventory unavailable (HTTP {exc.status})", incomplete=True)
+            self.ctx.error(f"saas.github-apps: fine-grained PAT inventory unavailable (HTTP {exc.status})")
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:

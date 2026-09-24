@@ -28,6 +28,7 @@ from shadowscan.connectors.code.github import (
     GitHubConnector,
     _OfflineRepository,
     _remote_record,
+    repository_blob_id,
     repository_target,
 )
 from shadowscan.connectors.common import apply_matches, finalize, name_matches
@@ -268,10 +269,29 @@ class GitLabConnector(BaseConnector):
         if ref is None:
             self.ctx.warn("code.gitlab: unsupported default branch; repository content skipped", incomplete=True)
             return None
-        paths: list[str] = []
-        for item in self.http.paginate_link(f"/projects/{pid}/repository/tree", params={"recursive": "true", "per_page": 100, "ref": ref}):
+        # Tree pages must describe one snapshot. Pin the branch before the
+        # first page; pinning only blobs cannot prevent drift between pages.
+        commit = self.http.try_get_json(
+            f"/projects/{pid}/repository/commits/{quote(ref, safe='')}", params={"stats": "false"},
+        )
+        try:
+            if not isinstance(commit, dict) or self._is_error_record(commit):
+                raise ConnectorError("invalid commit response")
+            snapshot = repository_blob_id(commit.get("id"))
+        except ConnectorError:
+            self.ctx.warn("code.gitlab: cannot resolve immutable commit; repository content skipped", incomplete=True)
+            return None
+        blobs: dict[str, dict[str, Any]] = {}
+        skipped_links = False
+        for item in self.http.paginate_link(f"/projects/{pid}/repository/tree", params={"recursive": "true", "per_page": 100, "ref": snapshot}):
+            if item.get("type") == "commit" or item.get("mode") in {"120000", "160000"}:
+                if not skipped_links:
+                    self.ctx.warn("code.gitlab: symbolic links or submodules skipped; source coverage partial", incomplete=True)
+                    skipped_links = True
+                continue
             if item.get("type") == "blob":
-                paths.append(item["path"])
+                blobs[item["path"]] = item
+        paths = list(blobs)
         selected = GitHubConnector._select_paths(paths)
         if len(selected) < len(paths):
             self.ctx.warn("code.gitlab: API mode samples repository; source coverage partial", incomplete=True)
@@ -280,9 +300,15 @@ class GitLabConnector(BaseConnector):
         for p in selected:
             target = repository_target(dest, p)
             try:
+                blob_id = repository_blob_id(blobs[p].get("id"))
+            except ConnectorError:
+                self.ctx.warn("code.gitlab: invalid blob object ID; content skipped", incomplete=True)
+                continue
+            try:
+                # Fetch the exact enumerated object, even if its branch has
+                # advanced between listing the tree and downloading content.
                 resp = self.http.get(
-                    f"/projects/{pid}/repository/files/{quote(p, safe='')}/raw",
-                    params={"ref": ref},
+                    f"/projects/{pid}/repository/blobs/{blob_id}/raw",
                     stream=True,
                 )
                 content = self.http.read_response_bytes(resp, max_bytes=512_000)

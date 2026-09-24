@@ -79,7 +79,7 @@ def test_entra_resolves_requested_delegated_permission_ids_in_live_collection(mo
 
 def test_google_token_denial_marks_scan_incomplete_and_preserves_other_users(monkeypatch, run_connector):
     class Directory:
-        def paginate_token(self, path, params=None, items_key=None):
+        def paginate_token(self, path, params=None, items_key=None, expected_empty_kind=None):
             assert path == "/admin/directory/v1/users"
             yield {"primaryEmail": "first@example.test"}
             yield {"primaryEmail": "second@example.test"}

@@ -1,0 +1,52 @@
+# Disposable ShadowScan Job. Keep live tenant credentials off any Job that
+# mounts an untrusted repository. Pin the image digest before rollout.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: shadowscan
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1200
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: shadowscan
+          image: shadowscan:reviewed
+          imagePullPolicy: IfNotPresent
+          args: ["code", "/input", "--format", "sarif", "-o", "/output/shadowscan.sarif"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: input
+              mountPath: /input
+              readOnly: true
+            - name: output
+              mountPath: /output
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: input
+          emptyDir: {}
+        - name: output
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

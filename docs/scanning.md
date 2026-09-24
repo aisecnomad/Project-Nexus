@@ -95,13 +95,13 @@ override and private-endpoint policies, output changes and rollout checks.
 
 ## Connector deadlines and parallelism
 
-`options.connector_timeout` (or `--connector-timeout`) is the number of seconds
-one connector may run. A connector that exceeds it is abandoned: its statistics
-record `skipped`, `incomplete` and the reason, the other connectors' findings
-are kept, and the scan exits 3. Python cannot interrupt a thread blocked in a
-vendor SDK call, so the CLI exits without waiting for the abandoned worker;
-library callers keep the thread until the call returns. There is no default
-deadline; set one in CI.
+`options.connector_timeout_seconds` (or `--connector-timeout-seconds`, default
+120) is the number of seconds one connector may run from the moment its worker
+starts. A connector that exceeds it is marked `incomplete` with the reason, its
+results are discarded, the other connectors' findings are kept, and the scan
+exits 3. Python cannot interrupt a thread blocked in a vendor SDK call, so the
+CLI exits without waiting for the abandoned worker; library callers keep the
+thread until the call returns. Also set a host job deadline in CI.
 
 `options.parallel` (default 4) is the number of worker threads. Only connectors
 that wait on network APIs benefit from it. Offline exports and repository scans
