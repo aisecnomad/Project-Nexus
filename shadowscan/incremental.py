@@ -331,7 +331,7 @@ class IncrementalCache:
                 warnings=sanitize(payload["warnings"]), cached=True, cache_key=snapshot.fingerprint,
             )
             return findings, stats
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
             return None
 
     def save(self, snapshot: Snapshot, findings: list[Finding], stats: ScanStats) -> None:

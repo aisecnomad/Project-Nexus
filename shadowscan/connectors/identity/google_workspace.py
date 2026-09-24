@@ -68,7 +68,11 @@ class GoogleWorkspaceConnector(BaseConnector):
         count = 0
         token_errors: dict[str, int] = {}
         try:
-            for user in self.http.paginate_token("/admin/directory/v1/users", params={"customer": self.customer, "maxResults": 500, "projection": "basic"}, items_key="users"):
+            for user in self.http.paginate_token(
+                "/admin/directory/v1/users",
+                params={"customer": self.customer, "maxResults": 500, "projection": "basic"},
+                items_key="users", expected_empty_kind="admin#directory#users",
+            ):
                 count += 1
                 if count > self.max_users:
                     self.ctx.warn("identity.google-workspace: max_users reached")
@@ -88,7 +92,12 @@ class GoogleWorkspaceConnector(BaseConnector):
                     status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
                     token_errors[status] = token_errors.get(status, 0) + 1
                     continue
-                if not isinstance(data, dict) or "error" in data or not isinstance(data.get("items", []), list):
+                # Google may omit empty repeated fields. Only recognize that
+                # shape when the response identifies the expected collection;
+                # an arbitrary 2xx object must not establish an empty inventory.
+                if (not isinstance(data, dict) or "error" in data
+                        or ("items" not in data and data.get("kind") != "admin#directory#tokenList")
+                        or not isinstance(data.get("items", []), list)):
                     self.ctx.warn(f"identity.google-workspace: invalid token response for {email}")
                     continue
                 for tok in data.get("items", []):

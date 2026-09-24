@@ -1,5 +1,50 @@
 # Deployment and migration
 
+## Collection and aggregation follow-up (24 September 2026)
+
+The follow-up review builds on the existing hardening described below. It does
+not change the finding identity schema or declare a new release version.
+
+- Shared HTTP responses default to a 16 MiB decoded-body limit, including raw
+  non-streaming GET/POST, JSON and pagination calls. JSON callers may specify a
+  smaller per-request `max_bytes`; trusted integrations may configure
+  `HttpClient(max_response_bytes=...)`. Raw `stream=True` callers must bound reads
+  themselves and close responses. Compressed bodies are checked after decoding.
+  Errors, retries and redirects do not require buffering their response bodies.
+- Collection envelopes must contain the expected array and valid continuation
+  fields. An arbitrary HTTP 200 object no longer establishes an empty inventory.
+  Google Directory may omit an empty repeated field only when its response
+  identifies the expected collection kind and has no error or continuation.
+- AWS preserves already collected pages after later request failures and marks
+  coverage incomplete. AWS clients use 10-second connect and 30-second read
+  timeouts with at most three attempts. OCI uses the same socket timeouts,
+  at most three attempts and a 120-second retry budget. These settings are per
+  request/retry operation, not a total connector deadline; retain worker job
+  deadlines and resource limits.
+- Malformed Azure Resource Graph responses are incomplete. GCP audit callers
+  remain separated by resource project, including when the same principal
+  accesses several projects.
+- Parallel connector results are merged in configuration order, so network
+  timing no longer chooses ownership or metadata precedence. Duplicate evidence
+  cannot be appended repeatedly from a merged record. Gateway observation
+  deduplication uses structural hashing while retaining distinct source records.
+  Review configured connector precedence when sources disagree.
+- Malformed, deeply nested cache JSON triggers a full scan. Cache files already
+  use atomic replacement and fingerprint validation; concurrent writers can
+  duplicate work or evict one another's cache hits without mixing their payloads.
+
+Configuration migration: `${VAR}` now requires a nonempty value, including in
+disabled connector declarations. Set required values or use `${VAR:-default}`
+for a deliberate fallback; `${VAR:-}` explicitly permits an empty optional value.
+Do not use empty fallbacks for required policy or credentials. Configuration
+rejects unknown top-level/options fields, duplicate authored YAML keys, invalid
+container types, invalid `fail_on` levels and nonpositive/nonintegral `parallel`.
+YAML merge overrides remain supported. Error messages identify validation
+problems without echoing configuration values. Review previously accepted
+configuration before rollout; these errors now stop before collection.
+
+## Earlier production review
+
 This hardening change addresses all nine findings in the review of `main` at
 `b13753df3199242c9e13cbfd04aefc18dd31a735`. It closes unsafe Git metadata execution,
 Python credential redaction gaps and falsely complete export scans; corrects

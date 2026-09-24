@@ -24,7 +24,8 @@ Example ``shadowscan.yaml``::
         regions: [us-east-1, eu-west-1]
         cloudtrail_days: 7
 
-``${VAR}`` / ``${VAR:-default}`` references are expanded from the environment.
+``${VAR}`` requires a nonempty environment value. ``${VAR:-default}`` uses its
+explicit default when the variable is missing or empty.
 """
 
 from __future__ import annotations
@@ -36,17 +37,38 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from shadowscan.utils.files import read_policy_text
-from shadowscan.utils.safe_yaml import bounded_safe_load
+from shadowscan.utils.redaction import sanitize_text
+from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 PATH_KEYS = ("input", "path", "paths", "service_account_file", "config_file", "token_file")
+_CONFIG_FIELDS = {"connectors", "inventory", "signatures", "options"}
+_OPTION_FIELDS = {
+    "min_confidence", "fail_on", "dump_records", "workdir", "parallel", "incremental",
+    "state_dir", "plugins", "allow_signature_override", "allow_private_origin",
+}
+_RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
+
+
+class ConfigValidationError(ValueError):
+    """An actionable configuration error whose message contains no config values."""
 
 
 def expand_env(value: Any) -> Any:
     if isinstance(value, str):
         def repl(m: re.Match[str]) -> str:
-            return os.environ.get(m.group(1), m.group(2) if m.group(2) is not None else "")
+            name, default = m.group(1), m.group(2)
+            resolved = os.environ.get(name)
+            if resolved:
+                return resolved
+            if default is not None:
+                return default
+            raise ConfigValidationError(
+                sanitize_text(f"environment variable {name} is missing or empty; set it or use an explicit ${{VAR:-default}}")
+            )
 
         return _ENV_RX.sub(repl, value)
     if isinstance(value, list):
@@ -92,26 +114,39 @@ class ScanConfig:
         self.plugins = validate_plugins(self.plugins)
         self.allow_signature_override = _boolean_option(self.allow_signature_override, "allow_signature_override")
         self.allow_private_origin = _boolean_option(self.allow_private_origin, "allow_private_origin")
+        self.incremental = _boolean_option(self.incremental, "incremental")
+        if self.fail_on is not None and (not isinstance(self.fail_on, str) or self.fail_on not in _RISK_LEVELS):
+            raise ConfigValidationError("options.fail_on must be critical, high, medium, low, info, or null")
+        self.parallel = _positive_integer(self.parallel, "options.parallel")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], source: str | None = None) -> ScanConfig:
         if not isinstance(data, dict):
-            raise ValueError("scan configuration must be a mapping")
-        data = expand_env(data or {})
-        opts = data.get("options") or {}
+            raise ConfigValidationError("scan configuration must be a mapping")
+        _check_fields(data, _CONFIG_FIELDS, "scan configuration")
+        data = expand_env(data)
+        opts = data.get("options", {})
         if not isinstance(opts, dict):
-            raise ValueError("options must be a mapping")
+            raise ConfigValidationError("options must be a mapping")
+        _check_fields(opts, _OPTION_FIELDS, "options")
+        connectors = data.get("connectors", [])
+        if not isinstance(connectors, list):
+            raise ConfigValidationError("connectors must be a list")
         specs: list[ConnectorSpec] = []
-        for item in data.get("connectors") or []:
+        for item in connectors:
             if isinstance(item, str):
-                specs.append(ConnectorSpec(name=item))
+                specs.append(ConnectorSpec(name=_nonempty_string(item, "connector name")))
                 continue
-            if not isinstance(item, dict) or not item.get("name"):
-                raise ValueError("each connector entry needs a 'name'")
+            if not isinstance(item, dict):
+                raise ConfigValidationError("each connector entry must be a name or mapping")
             item = dict(item)
-            name = str(item.pop("name"))
+            name = _nonempty_string(item.pop("name", None), "connector name")
             enabled = _connector_enabled(item.pop("enabled", True))
             label = item.pop("label", None)
+            if label is not None:
+                label = _nonempty_string(label, "connector label")
+            if "config" in item and not isinstance(item["config"], dict):
+                raise ConfigValidationError("connector config must be a mapping")
             cfg = item.pop("config", None)
             if isinstance(cfg, dict):
                 item.update(cfg)
@@ -126,15 +161,15 @@ class ScanConfig:
                     spec.config[key] = [_resolve(base, v) if isinstance(v, str) else v for v in val]
         return cls(
             connectors=specs,
-            inventory=[_resolve(base, p) for p in (data.get("inventory") or [])],
-            signature_dirs=[_resolve(base, p) for p in (data.get("signatures") or [])],
+            inventory=[_resolve(base, p) for p in _path_list(data.get("inventory", []), "inventory")],
+            signature_dirs=[_resolve(base, p) for p in _path_list(data.get("signatures", []), "signatures")],
             min_confidence=validate_min_confidence(opts.get("min_confidence", 0.0)),
             fail_on=opts.get("fail_on"),
-            dump_records=_resolve(base, opts["dump_records"]) if opts.get("dump_records") else None,
-            workdir=opts.get("workdir"),
-            parallel=int(opts.get("parallel", 4)),
+            dump_records=_optional_path(base, opts.get("dump_records"), "options.dump_records"),
+            workdir=_optional_path(base, opts.get("workdir"), "options.workdir"),
+            parallel=_positive_integer(opts.get("parallel", 4), "options.parallel"),
             incremental=_boolean_option(opts.get("incremental", False), "incremental"),
-            state_dir=_resolve(base, opts["state_dir"]) if opts.get("state_dir") else None,
+            state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
             plugins=validate_plugins(opts.get("plugins", [])),
             allow_signature_override=_boolean_option(opts.get("allow_signature_override", False), "allow_signature_override"),
             allow_private_origin=_boolean_option(opts.get("allow_private_origin", False), "allow_private_origin"),
@@ -144,7 +179,11 @@ class ScanConfig:
     @classmethod
     def from_yaml(cls, path: str | Path) -> ScanConfig:
         p = Path(path)
-        data = bounded_safe_load(read_policy_text(p))
+        try:
+            data = yaml.load(read_policy_text(p), Loader=_ConfigLoader)
+        except yaml.YAMLError:
+            # YAML exception text can contain literal credentials from the file.
+            raise ConfigValidationError("invalid YAML syntax or structural limits exceeded") from None
         if data is None:
             data = {}
         return cls.from_dict(data, source=str(p))
@@ -162,14 +201,14 @@ def _resolve(base: Path, p: str) -> str:
 
 def _boolean_option(value: Any, name: str) -> bool:
     if not isinstance(value, bool):
-        raise ValueError(f"options.{name} must be a YAML boolean")
+        raise ConfigValidationError(f"options.{name} must be a YAML boolean")
     return value
 
 
 def validate_plugins(value: Any) -> list[str]:
     """Loading a connector imports arbitrary code, so approvals must be explicit names."""
     if not isinstance(value, list) or any(not isinstance(name, str) or not name.strip() for name in value):
-        raise ValueError("options.plugins must be a list of nonempty connector names")
+        raise ConfigValidationError("options.plugins must be a list of nonempty connector names")
     return list(dict.fromkeys(name.strip() for name in value))
 
 
@@ -183,7 +222,59 @@ def _connector_enabled(value: Any) -> bool:
             return True
         if normalized in {"false", "no", "off", "0"}:
             return False
-    raise ValueError("connector enabled must be a boolean (true or false)")
+    raise ConfigValidationError("connector enabled must be a boolean (true or false)")
+
+
+def _check_fields(value: dict, allowed: set[str], location: str) -> None:
+    if any(not isinstance(key, str) or key not in allowed for key in value):
+        raise ConfigValidationError(f"{location} contains an unsupported field; allowed fields: " + ", ".join(sorted(allowed)))
+
+
+def _nonempty_string(value: Any, location: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigValidationError(f"{location} must be a nonempty string")
+    return value
+
+
+def _path_list(value: Any, location: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ConfigValidationError(f"{location} must be a list of nonempty paths")
+    return [_nonempty_string(path, location) for path in value]
+
+
+def _optional_path(base: Path, value: Any, location: str) -> str | None:
+    return None if value is None else _resolve(base, _nonempty_string(value, location))
+
+
+def _positive_integer(value: Any, location: str) -> int:
+    if isinstance(value, str) and re.fullmatch(r"[0-9]+", value):
+        try:
+            value = int(value)
+        except ValueError:
+            raise ConfigValidationError(f"{location} must be a positive integer") from None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigValidationError(f"{location} must be a positive integer")
+    return value
+
+
+class _ConfigLoader(BoundedSafeLoader):
+    def flatten_mapping(self, node: yaml.MappingNode) -> None:
+        # Check authored keys before flattening merges: intentional YAML merge
+        # overrides remain supported, repeated keys in one mapping do not.
+        if node in self._flattened:
+            return
+        seen: set[str] = set()
+        for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                key = "<<"
+            elif key_node.tag == "tag:yaml.org,2002:str":
+                key = key_node.value
+            else:
+                raise ConfigValidationError("configuration mapping keys must be strings")
+            if key in seen:
+                raise ConfigValidationError("duplicate configuration mapping key")
+            seen.add(key)
+        super().flatten_mapping(node)
 
 
 def validate_min_confidence(value: Any) -> float:

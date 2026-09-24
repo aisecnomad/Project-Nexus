@@ -29,9 +29,13 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   API requires `options.allow_private_origin: true` or `--allow-private-origin`.
   This exception does not relax origin or TLS checks. HTTP proxies, including
   environment proxy settings, are unsupported by this transport.
+* Default shared HTTP responses and JSON/pagination helpers are limited to 16 MiB
+  of decoded bytes; oversized and malformed collection responses fail collection.
+  Explicit raw streaming callers are responsible for bounded reads and closure.
+  Injected Requests sessions have their adapters replaced by destination policy.
 * Cloud SDKs and Git use separate transports. Network egress rules remain needed
   for those paths. URL preflight checks alone do not pin Git's later DNS lookup.
-  Custom injected HTTP sessions/adapters are trusted extension/test mechanisms.
+  Custom non-Requests transport doubles remain trusted extension/test mechanisms.
 * JWT classification remains unverified by default. Optional `jwks_url` signature
   verification uses the shared transport with a bounded JWKS body and key count.
   Only allowlisted asymmetric algorithms and unambiguous eligible public keys
@@ -66,6 +70,9 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
   provider and account restrictions still apply; ambiguous matches do not approve.
+* Configuration rejects missing or empty required environment substitutions,
+  duplicate YAML keys, unknown top-level/options fields and invalid gate levels.
+  Explicit `${VAR:-default}` fallbacks remain an operator policy decision.
 * Incomplete scans exit 3 and set SARIF executionSuccessful=false. Only complete
   results qualify for incremental reuse. Comparisons infer resolution only for
   complete scans with matching collection, detection and finding-identity schemas.

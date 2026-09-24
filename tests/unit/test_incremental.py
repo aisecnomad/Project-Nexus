@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,8 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.engine import Engine
-from shadowscan.incremental import IncrementalCache
-from shadowscan.models import Finding, Kind, Surface
+from shadowscan.incremental import IncrementalCache, Snapshot
+from shadowscan.models import Finding, Kind, ScanStats, Surface
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.loader import signature_from_dict
 
@@ -169,7 +170,7 @@ def test_inventory_and_confidence_are_reapplied_even_with_same_engine(tmp_path, 
     assert filtered.stats[0].cached and not filtered.findings
 
 
-@pytest.mark.parametrize("damage", ["garbage", "missing", "unsafe_permissions", "payload_modified"])
+@pytest.mark.parametrize("damage", ["garbage", "missing", "unsafe_permissions", "payload_modified", "deep_json"])
 def test_unusable_cache_falls_back_to_scan(tmp_path, index, monkeypatch, damage):
     cfg = config(tmp_path)
     calls = count_runs(monkeypatch)
@@ -183,11 +184,39 @@ def test_unusable_cache_falls_back_to_scan(tmp_path, index, monkeypatch, damage)
         data = json.loads(entry.read_text())
         data["payload"]["findings"] = []
         entry.write_text(json.dumps(data))
+    elif damage == "deep_json":
+        entry.write_text("[" * 2000 + "0" + "]" * 2000)
     else:
         entry.write_text("invalid json")
     result = Engine(cfg, index).run()
     assert result.findings and result.complete and not result.stats[0].cached
     assert len(calls) == 2
+
+
+def test_concurrent_cache_writers_publish_only_complete_matching_entries(tmp_path, index):
+    cfg = config(tmp_path)
+    cache = IncrementalCache(cfg, index)
+    assert cache.enabled
+
+    def write_and_read(writer):
+        snapshot = Snapshot(slot="a" * 64, fingerprint=f"writer-{writer}")
+        item = Finding(Surface.CODE, "code.filesystem", Kind.AGENT,
+                       f"Writer {writer}", f"repo:{writer}", "repository")
+        stats = ScanStats(connector="code.filesystem", started_at="now", warnings=[f"writer-{writer}"])
+        for _ in range(20):
+            cache.save(snapshot, [item], stats)
+            loaded = cache.load(cfg.connectors[0], snapshot)
+            if loaded is not None:
+                findings, saved_stats = loaded
+                assert len(findings) == 1 and findings[0].resource == f"repo:{writer}"
+                assert saved_stats.warnings == [f"writer-{writer}"]
+        return snapshot
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        snapshots = list(pool.map(write_and_read, range(6)))
+    # The last complete replace wins; all other fingerprints must miss safely.
+    assert sum(cache.load(cfg.connectors[0], snapshot) is not None for snapshot in snapshots) == 1
+    assert not list(cache.directory.glob(".pending-*"))
 
 
 def test_cache_is_private_sanitized_and_never_written_inside_repository(tmp_path, index):

@@ -204,7 +204,7 @@ class GcpConnector(BaseConnector):
 
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
-        callers: dict[str, dict[str, Any]] = {}
+        callers: dict[tuple[str | None, str], dict[str, Any]] = {}
         handlers = {name[3:].replace("_", "-"): getattr(self, name) for name in dir(type(self)) if name.startswith("_h_")}
         for rec in records:
             self.ctx.examined()
@@ -217,7 +217,9 @@ class GcpConnector(BaseConnector):
                     for field in ("principal", "method", "resource", "userAgent", "timestamp", "_project"):
                         if rec.get(field) is not None and not isinstance(rec[field], str):
                             raise ValueError("event field")
-                    key = rec.get("principal") or "unknown"
+                    # One principal may call multiple projects. Preserve the
+                    # resource project as part of each observation's identity.
+                    key = (rec.get("_project"), rec.get("principal") or "unknown")
                     agg = callers.setdefault(key, {"events": 0, "methods": {}, "resources": {}, "agents": {}, "first": None, "last": None, "project": rec.get("_project"), "delegated": False})
                     agg["events"] += 1
                     agg["methods"][rec.get("method")] = agg["methods"].get(rec.get("method"), 0) + 1
@@ -239,7 +241,7 @@ class GcpConnector(BaseConnector):
                     yield from result
             except (ValueError, TypeError, KeyError, AttributeError):
                 self.ctx.warn("cloud.gcp: record has invalid fields for its _kind")
-        for principal, agg in callers.items():
+        for (_, principal), agg in callers.items():
             try:
                 yield self._caller_finding(principal, agg)
             except (ValueError, TypeError, KeyError, AttributeError):

@@ -61,7 +61,7 @@ def test_server_retry_after_is_bounded(monkeypatch):
 
 @pytest.mark.parametrize("paginator", ["paginate_link", "paginate_odata"])
 def test_pagination_refuses_cross_origin_links(paginator):
-    http, session = client(response({"value": []}, headers={"Link": '<https://evil.example/next>; rel="next"'}))
+    http, session = client(response([], headers={"Link": '<https://evil.example/next>; rel="next"'}))
     if paginator == "paginate_odata":
         session.request.side_effect = [response({"value": [], "@odata.nextLink": "https://evil.example/next"})]
     with pytest.raises(ValueError):
