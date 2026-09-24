@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from time import monotonic
 
 import pytest
 
@@ -55,10 +54,27 @@ def test_go_import_strings_remain_visible_but_ordinary_literals_are_ignored(tmp_
 def test_long_go_line_with_many_quotes_and_import_tokens_stays_bounded():
     # Hostile source need not parse as Go. Each quote and import-like token
     # previously copied/scanned the whole prefix or suffix of this line.
-    source = 'import "github.com/tmc/langchaingo/agents"\nvar _ = ' + ('""+import ""+' * 40_000)
-    started = monotonic()
+    class WorkBoundedText(str):
+        copied = 0
+        searched = 0
+
+        def __getitem__(self, item):
+            if isinstance(item, slice):
+                self.copied += len(range(*item.indices(len(self))))
+                # Two literals per 13-character unit with bounded lookbehind
+                # need less than this linear allowance. A full prefix/suffix
+                # copy per token exceeds it, independent of runner speed.
+                assert self.copied <= 1024 * len(self), "source copies exceeded linear work budget"
+            return super().__getitem__(item)
+
+        def rfind(self, sub, start=0, end=None):
+            begin, stop, _ = slice(start, end).indices(len(self))
+            self.searched += max(0, stop - begin)
+            assert self.searched <= len(self), "source searches rescanned earlier prefixes"
+            return super().rfind(sub, start, end)
+
+    source = WorkBoundedText('import "github.com/tmc/langchaingo/agents"\nvar _ = ' + ('""+import ""+' * 40_000))
     spans, incomplete = noncode_ranges(source, "go", ".go")
-    assert monotonic() - started < 5
     assert not incomplete
     imported = source.index("github.com/")
     literal = source.index('""+import')
