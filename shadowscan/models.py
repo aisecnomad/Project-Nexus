@@ -96,6 +96,34 @@ def _validate_number(value: Any, name: str, *, minimum: float | None = None, max
         raise ValueError(f"finding {name} is outside its allowed range")
 
 
+_TEXT_FIELDS = (
+    "provider", "account", "region", "owner", "registry_match", "first_seen", "last_seen",
+    "id", "identity_discriminator", "identity_schema",
+)
+_TEXT_LIST_FIELDS = ("frameworks", "model_providers", "models", "capabilities", "permissions", "tags")
+
+
+def _validate_shapes(d: dict[str, Any]) -> None:
+    """Reject imported field shapes the pipeline cannot process, without reflecting values.
+
+    The dataclass does not check types, while merging, registry matching and
+    risk scoring index these fields directly. A report or cache entry with the
+    wrong shape must fail at import, where callers already handle ValueError,
+    rather than abort a later scan.
+    """
+    for name in _TEXT_FIELDS:
+        if d.get(name) is not None and not isinstance(d[name], str):
+            raise ValueError(f"finding {name} must be a string or null")
+    for name in _TEXT_LIST_FIELDS:
+        value = d.get(name, [])
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise ValueError(f"finding {name} must be a list of strings")
+    if d.get("shadow") is not None and not isinstance(d["shadow"], bool):
+        raise ValueError("finding shadow must be a boolean or null")
+    if not isinstance(d.get("metadata", {}), dict):
+        raise ValueError("finding metadata must be an object")
+
+
 class Surface(str, Enum):
     """Where an agent (or agent enabler) was discovered."""
 
@@ -399,6 +427,7 @@ class Finding:
             if not isinstance(d.get(name), str) or not d[name].strip():
                 raise ValueError(f"finding {name} is required")
         d = {name: d[name] for name in _FINDING_FIELDS if name in d}
+        _validate_shapes(d)
         # Reading an old report preserves its identity rather than silently
         # relabeling old ids as v2. Upgrades require a freshly collected baseline.
         d.setdefault("identity_schema", LEGACY_FINDING_IDENTITY_SCHEMA)
@@ -416,6 +445,8 @@ class Finding:
         if not isinstance(factors, list) or any(not isinstance(factor, dict) for factor in factors):
             raise ValueError("finding risk factors must be objects")
         for factor in factors:
+            if not isinstance(factor.get("id"), str) or not isinstance(factor.get("description"), str):
+                raise ValueError("finding risk factors must have a string id and description")
             _validate_number(factor.get("weight"), "risk factor weight")
         d["risk"] = Risk(
             score=risk.get("score", 0),
@@ -427,6 +458,8 @@ class Finding:
         if not isinstance(evidence, list) or any(not isinstance(item, dict) for item in evidence):
             raise ValueError("finding evidence must be objects")
         for item in evidence:
+            if not isinstance(item.get("signal"), str) or not isinstance(item.get("description"), str):
+                raise ValueError("finding evidence must have a string signal and description")
             _validate_number(item.get("weight", 0.5), "evidence weight", minimum=0, maximum=1)
         d["evidence"] = [Evidence(**{name: value for name, value in item.items() if name in _EVIDENCE_FIELDS})
                          for item in evidence]

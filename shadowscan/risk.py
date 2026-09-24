@@ -10,6 +10,9 @@ Scores map to levels: >=75 critical, >=50 high, >=25 medium, >0 low.
 
 from __future__ import annotations
 
+import math
+from typing import Any
+
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel
 from shadowscan.signatures import SignatureIndex
 
@@ -116,7 +119,49 @@ PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
 }
 
 
+def _as_int(value: Any, default: int = 0) -> int:
+    """Coerce a loosely typed metadata value to an int, or return ``default``.
+
+    Metadata can come from a loaded report, an incremental cache entry or a
+    third-party plugin, so scoring must never abort on its shape. Booleans are
+    flags rather than counts, and non-finite floats have no integer value.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if math.isfinite(value) else default
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
+def _records(value: Any) -> list[dict[str, Any]]:
+    """Return the object-shaped entries of a list-like metadata value."""
+    if isinstance(value, (list, tuple)):
+        return [entry for entry in value if isinstance(entry, dict)]
+    return []
+
+
+def _strings(values: Any) -> list[str]:
+    """Return the string items of a list-like field, ignoring any other shape."""
+    if isinstance(values, (list, tuple)):
+        return [value for value in values if isinstance(value, str)]
+    return []
+
+
 def assess(finding: Finding, index: SignatureIndex | None = None, inventory_present: bool = False) -> Risk:
+    """Score one finding, recording every contribution as a :class:`RiskFactor`.
+
+    Scoring is total: a field or metadata value of an unexpected shape (from a
+    loaded report, an incremental cache entry or a plugin) contributes nothing
+    instead of aborting the scan, and well-formed input scores exactly as
+    documented in the module docstring.
+    """
     factors: list[RiskFactor] = []
     raw = KIND_BASE.get(finding.kind, 5)
     factors.append(RiskFactor("kind", f"{finding.kind.value} finding", raw))
@@ -130,57 +175,61 @@ def assess(finding: Finding, index: SignatureIndex | None = None, inventory_pres
         factors.append(RiskFactor("no-owner", "no identifiable owner", 10))
 
     seen_caps = set()
-    for cap in finding.capabilities:
+    for cap in _strings(finding.capabilities):
         if cap in CAPABILITY_WEIGHTS and cap not in seen_caps:
             seen_caps.add(cap)
             w, d = CAPABILITY_WEIGHTS[cap]
             factors.append(RiskFactor(f"capability:{cap}", d, w))
 
-    for tag in finding.tags:
+    for tag in _strings(finding.tags):
         if tag in TAG_WEIGHTS:
             w, d = TAG_WEIGHTS[tag]
             if w:
                 factors.append(RiskFactor(f"tag:{tag}", d, w))
 
-    for pid in finding.model_providers:
+    for pid in _strings(finding.model_providers):
         if pid in PROVIDER_WEIGHTS:
             w, d = PROVIDER_WEIGHTS[pid]
             factors.append(RiskFactor(f"provider:{pid}", d, w))
 
     if index is not None:
         notes = []
-        for sid in finding.frameworks + finding.model_providers:
+        for sid in _strings(finding.frameworks) + _strings(finding.model_providers):
             sig = index.get(sid)
             if sig and sig.risk_notes:
                 notes.extend(sig.risk_notes)
         if notes:
             factors.append(RiskFactor("vendor-notes", "; ".join(dict.fromkeys(notes))[:300], 5))
 
-    if finding.kind == Kind.SECRET and finding.metadata.get("count", 1) and int(finding.metadata.get("count", 1)) > 1:
-        factors.append(RiskFactor("multiple-secrets", f"{finding.metadata['count']} credentials in one place", 5))
+    metadata: dict[str, Any] = finding.metadata if isinstance(finding.metadata, dict) else {}
+    if finding.kind == Kind.SECRET:
+        count = _as_int(metadata.get("count", 1), 1)
+        if count > 1:
+            factors.append(RiskFactor("multiple-secrets", f"{count} credentials in one place", 5))
     if finding.kind == Kind.MCP_SERVER:
-        servers = finding.metadata.get("servers") or []
+        servers = _records(metadata.get("servers"))
         if any(s.get("transport") == "stdio" for s in servers):
             factors.append(RiskFactor("mcp-stdio", "local stdio MCP servers run with the user's full privileges", 5))
         if any(s.get("auto_approve") for s in servers):
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
         if any(s.get("url") and str(s.get("url")).startswith("http://") for s in servers):
             factors.append(RiskFactor("mcp-plain-http", "remote MCP server over plain HTTP", 10))
-    if finding.kind == Kind.AGENT_CONFIG and finding.metadata.get("agent_definitions"):
-        n = len(finding.metadata["agent_definitions"])
-        factors.append(RiskFactor("sub-agents", f"{n} sub-agent definition(s)", min(10, 3 * n)))
+    if finding.kind == Kind.AGENT_CONFIG:
+        definitions = metadata.get("agent_definitions")
+        n = len(definitions) if isinstance(definitions, (list, tuple)) else 0
+        if n:
+            factors.append(RiskFactor("sub-agents", f"{n} sub-agent definition(s)", min(10, 3 * n)))
     if finding.kind == Kind.GATEWAY_CALLER:
-        events = int(finding.metadata.get("events") or 0)
+        events = _as_int(metadata.get("events"), 0)
         if events >= 10_000:
             factors.append(RiskFactor("volume", f"very high call volume ({events})", 10))
         elif events >= 1_000:
             factors.append(RiskFactor("volume", f"high call volume ({events})", 5))
     if finding.kind in {Kind.OAUTH_GRANT, Kind.BOT_APP}:
-        users = finding.metadata.get("user_count") or finding.metadata.get("consenting_users") or finding.metadata.get("users") or finding.metadata.get("install_count") or 0
-        try:
-            users = int(users)
-        except (TypeError, ValueError):
-            users = 0
+        users = _as_int(
+            metadata.get("user_count") or metadata.get("consenting_users") or metadata.get("users") or metadata.get("install_count") or 0,
+            0,
+        )
         if users >= 100:
             factors.append(RiskFactor("blast-radius", f"{users} users / installations", 10))
         elif users >= 10:
@@ -191,5 +240,12 @@ def assess(finding: Finding, index: SignatureIndex | None = None, inventory_pres
     scale = 0.6 + 0.4 * max(0.0, min(1.0, finding.confidence))
     score = int(round(max(0, min(100, total * scale))))
     if scale < 1.0:
-        factors.append(RiskFactor("confidence-scaling", f"scaled by confidence {finding.confidence:.2f}", int(round(total * scale - total))))
+        # Scaling lowers a positive subtotal. A subtotal at or below zero is
+        # already clamped to 0, so the adjustment must never read as added risk.
+        adjustment = min(0, int(round(total * scale - total)))
+        factors.append(RiskFactor(
+            "confidence-scaling",
+            f"score multiplied by {scale:.2f} because confidence is {finding.confidence:.2f}; this only ever lowers risk",
+            adjustment,
+        ))
     return Risk(score=score, level=RiskLevel.from_score(score), factors=factors)
