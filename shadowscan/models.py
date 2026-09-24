@@ -47,27 +47,27 @@ class Surface(str, Enum):
 class Kind(str, Enum):
     """What kind of thing the finding describes."""
 
-    AGENT = "agent"  # an actual agent (orchestrator use, cloud agent resource, bot...)
-    FRAMEWORK_USAGE = "framework-usage"  # a project using an agent framework / LLM SDK
-    MCP_SERVER = "mcp-server"  # Model Context Protocol server or client config
-    AGENT_CONFIG = "agent-config"  # coding-agent / declarative agent configuration file
-    OAUTH_GRANT = "oauth-grant"  # an OAuth grant / consented application
-    SERVICE_IDENTITY = "service-identity"  # service principal, service account, M2M client
-    TOKEN = "token"  # analysed JWT / API token
-    GATEWAY_CALLER = "gateway-caller"  # principal calling an LLM API observed in logs
-    WORKFLOW = "workflow"  # low-code flow / scenario / recipe with AI steps
-    BOT_APP = "bot-app"  # SaaS bot / app installation
-    CLOUD_RESOURCE = "cloud-resource"  # managed AI resource (endpoint, deployment, function...)
-    IAM_GRANT = "iam-grant"  # IAM role / policy enabling LLM or agent access
-    SECRET = "secret"  # credential for an LLM provider found in code / config
-    INFRA = "infra"  # IaC or container definitions provisioning AI agents
+    AGENT = "agent"
+    FRAMEWORK_USAGE = "framework-usage"
+    MCP_SERVER = "mcp-server"
+    AGENT_CONFIG = "agent-config"
+    OAUTH_GRANT = "oauth-grant"
+    SERVICE_IDENTITY = "service-identity"
+    TOKEN = "token"
+    GATEWAY_CALLER = "gateway-caller"
+    WORKFLOW = "workflow"
+    BOT_APP = "bot-app"
+    CLOUD_RESOURCE = "cloud-resource"
+    IAM_GRANT = "iam-grant"
+    SECRET = "secret"
+    INFRA = "infra"
 
 
 class Likelihood(str, Enum):
-    CONFIRMED = "confirmed"  # >= 0.85
-    LIKELY = "likely"  # >= 0.6
-    POSSIBLE = "possible"  # >= 0.3
-    WEAK = "weak"  # < 0.3
+    CONFIRMED = "confirmed"
+    LIKELY = "likely"
+    POSSIBLE = "possible"
+    WEAK = "weak"
 
     @classmethod
     def from_confidence(cls, confidence: float) -> Likelihood:
@@ -78,6 +78,34 @@ class Likelihood(str, Enum):
         if confidence >= 0.3:
             return cls.POSSIBLE
         return cls.WEAK
+
+
+class EvidenceTier(str, Enum):
+    """How much collected evidence can support. Never equals execution by itself."""
+
+    STATIC_CANDIDATE = "static_candidate"
+    CONFIGURED_RESOURCE = "configured_resource"
+    RUNTIME_OBSERVED = "runtime_observed"
+    CORROBORATED = "corroborated"
+
+    @property
+    def rank(self) -> int:
+        return {
+            EvidenceTier.STATIC_CANDIDATE: 0,
+            EvidenceTier.CONFIGURED_RESOURCE: 1,
+            EvidenceTier.RUNTIME_OBSERVED: 2,
+            EvidenceTier.CORROBORATED: 3,
+        }[self]
+
+
+class ExecutionStatus(str, Enum):
+    """Whether this scan established execution. Static hits stay not_established."""
+
+    NOT_ESTABLISHED = "not_established"
+    CONFIGURED = "configured"
+    OBSERVED = "observed"
+    CORROBORATED = "corroborated"
+    UNKNOWN = "unknown"
 
 
 class RiskLevel(str, Enum):
@@ -104,12 +132,12 @@ class RiskLevel(str, Enum):
 class Evidence:
     """A single observation supporting a finding."""
 
-    signal: str  # machine readable id, e.g. "dependency:pypi:langchain"
-    description: str  # human readable explanation
-    location: str | None = None  # file:line, ARN, URL, object id...
-    snippet: str | None = None  # short excerpt (secrets must be redacted before storing)
-    weight: float = 0.5  # 0..1 contribution to confidence
-    signature: str | None = None  # signature id that produced it, if any
+    signal: str
+    description: str
+    location: str | None = None
+    snippet: str | None = None
+    weight: float = 0.5
+    signature: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -141,44 +169,46 @@ class Finding:
     connector: str
     kind: Kind
     title: str
-    resource: str  # canonical, stable identifier of the discovered object
-    resource_type: str  # e.g. "repository", "lambda-function", "oauth-app"
-    provider: str | None = None  # platform / vendor hosting it (aws, okta, slack, github...)
-    account: str | None = None  # tenant / org / account / project id
+    resource: str
+    resource_type: str
+    provider: str | None = None
+    account: str | None = None
     region: str | None = None
-    owner: str | None = None  # best-effort owner (user, team, email)
-    frameworks: list[str] = field(default_factory=list)  # signature ids (framework.langchain...)
-    model_providers: list[str] = field(default_factory=list)  # signature ids (provider.openai...)
-    models: list[str] = field(default_factory=list)  # concrete model ids seen
-    capabilities: list[str] = field(default_factory=list)  # tool-use, code-exec, memory, browsing...
-    permissions: list[str] = field(default_factory=list)  # scopes / IAM actions / roles
+    owner: str | None = None
+    frameworks: list[str] = field(default_factory=list)
+    model_providers: list[str] = field(default_factory=list)
+    models: list[str] = field(default_factory=list)
+    capabilities: list[str] = field(default_factory=list)
+    permissions: list[str] = field(default_factory=list)
     evidence: list[Evidence] = field(default_factory=list)
     confidence: float = 0.0
     likelihood: Likelihood = Likelihood.WEAK
     risk: Risk = field(default_factory=Risk)
-    shadow: bool | None = None  # None: no inventory supplied; True: unregistered
-    registry_match: str | None = None  # agent_id from the sanctioned inventory
+    shadow: bool | None = None
+    registry_match: str | None = None
     tags: list[str] = field(default_factory=list)
     first_seen: str | None = None
     last_seen: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     id: str = ""
-    # Stable observation type, independent of inferred kind. Connectors emitting
-    # several observations of one resource/type must supply distinct values.
     identity_discriminator: str = ""
     identity_schema: str = FINDING_IDENTITY_SCHEMA
+    evidence_tier: EvidenceTier = EvidenceTier.STATIC_CANDIDATE
+    execution_status: ExecutionStatus = ExecutionStatus.NOT_ESTABLISHED
+    gate_eligible: bool = False
 
     def __post_init__(self) -> None:
         if not self.identity_discriminator:
-            # Suffixes describe mutable platform classifications (for example
-            # service-principal/ManagedIdentity and auth0-client/non_interactive).
             self.identity_discriminator = self.resource_type.split("/", 1)[0]
         if not self.id:
             self.id = self.compute_id()
         self.likelihood = Likelihood.from_confidence(self.confidence)
+        if not isinstance(self.evidence_tier, EvidenceTier):
+            self.evidence_tier = EvidenceTier(self.evidence_tier)
+        if not isinstance(self.execution_status, ExecutionStatus):
+            self.execution_status = ExecutionStatus(self.execution_status)
         self.sanitize()
 
-    # ------------------------------------------------------------------ helpers
     def compute_id(self) -> str:
         if self.identity_schema == LEGACY_FINDING_IDENTITY_SCHEMA:
             raw = f"{self.surface.value}|{self.connector}|{self.kind.value}|{self.provider}|{self.account}|{self.resource}"
@@ -190,10 +220,9 @@ class Finding:
         return "ss-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def sanitize(self) -> None:
-        """Remove credentials from every persisted/reportable field in place."""
         values = {
             attr.name: getattr(self, attr.name) for attr in fields(self)
-            if attr.name not in {"surface", "kind", "likelihood", "risk", "evidence"}
+            if attr.name not in {"surface", "kind", "likelihood", "risk", "evidence", "evidence_tier", "execution_status"}
         }
         values["evidence"] = [{attr.name: getattr(ev, attr.name) for attr in fields(ev)} for ev in self.evidence]
         values["risk_factors"] = [asdict(factor) for factor in self.risk.factors]
@@ -229,10 +258,6 @@ class Finding:
             self.tags.append(tag)
 
     def recompute_confidence(self) -> None:
-        """Noisy-OR combination of evidence weights.
-
-        Independent weak signals reinforce each other but never exceed 1.0.
-        """
         p_none = 1.0
         for ev in self.evidence:
             w = max(0.0, min(1.0, ev.weight))
@@ -246,6 +271,8 @@ class Finding:
         d["surface"] = self.surface.value
         d["kind"] = self.kind.value
         d["likelihood"] = self.likelihood.value
+        d["evidence_tier"] = self.evidence_tier.value
+        d["execution_status"] = self.execution_status.value
         d["risk"]["level"] = self.risk.level.value
         return d
 
@@ -253,18 +280,18 @@ class Finding:
     def from_dict(cls, d: dict[str, Any]) -> Finding:
         if not isinstance(d, dict):
             raise TypeError("finding must be an object")
-        # Reports can carry newer display fields. Only accept known model
-        # fields, while requiring the fields that define a usable identity.
         for name in ("surface", "connector", "kind", "title", "resource", "resource_type"):
             if not isinstance(d.get(name), str) or not d[name].strip():
                 raise ValueError(f"finding {name} is required")
         d = {name: d[name] for name in (attr.name for attr in fields(cls)) if name in d}
-        # Reading an old report preserves its identity rather than silently
-        # relabeling old ids as v2. Upgrades require a freshly collected baseline.
         d.setdefault("identity_schema", LEGACY_FINDING_IDENTITY_SCHEMA)
         d["surface"] = Surface(d["surface"])
         d["kind"] = Kind(d["kind"])
         d["likelihood"] = Likelihood(d.get("likelihood", "weak"))
+        if "evidence_tier" in d:
+            d["evidence_tier"] = EvidenceTier(d["evidence_tier"])
+        if "execution_status" in d:
+            d["execution_status"] = ExecutionStatus(d["execution_status"])
         _validate_number(d.get("confidence", 0.0), "confidence", minimum=0, maximum=1)
         risk = d.get("risk")
         if risk is None:
@@ -326,7 +353,6 @@ class ScanResult:
 
     @property
     def complete(self) -> bool:
-        """Only a scan whose requested connectors all completed is successful."""
         return bool(self.stats) and not any(s.errors or s.skipped or s.incomplete for s in self.stats)
 
     def summary(self) -> dict[str, Any]:
