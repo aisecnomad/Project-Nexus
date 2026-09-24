@@ -13,6 +13,14 @@ While this review was in progress, PR #31 merged into `main` as
 that updated base, retaining the reviewed controls and the integration decisions
 below. This review did not merge or close the existing PRs.
 
+PR #33 subsequently merged this candidate through `fb366e4` into `main` as
+`755ad3d2dd8fe1c8aafae7d8fee59c3d1b44a8c5`, while final CodeQL findings were
+being investigated. The follow-up is based on that new main and retains its
+additional HTTP, webhook-redaction, SARIF and CLI corrections. It addresses
+diagnostic logging, configured credential redaction and exact Kubernetes claim
+classification as described below. The external merge was not performed by this
+review.
+
 The candidate materially improves security and production reliability. It remains
 a release candidate: passing automated checks cannot establish actual tenant
 coverage, operational acceptance, or field detection precision. Refer to
@@ -27,6 +35,8 @@ and provider responses used for regression testing were synthetic or mocked.
 |---|---|---|
 | High | Malformed HTTP headers could expose token values through library error messages. | Validate constructor, injected session, mutated session and per-request headers; diagnostics omit both header names and values. Catch authentication-handler `InvalidHeader` safely. |
 | High | Credentials could survive source excerpt truncation or appear as escaped diagnostic values. | Redact before truncation, expand provider-format coverage, redact SSWS authorization and known credentials' escaped representations. |
+| High | Application logging accepted upstream diagnostic payloads after heuristic redaction, which cannot recognize every opaque secret. | Log fixed summaries only; retain bounded, sanitized details in access-controlled report artifacts. |
+| High | Opaque Atlassian API and Azure Foundry tokens were not recognized by credential field names; GitHub's fallback token bypassed resolved configuration. | Recognize those credential fields and track the fallback token for diagnostic redaction; remove configured short secrets from diagnostics. |
 | High | Azure/OCI configuration exports retained opaque values under ordinary mapping keys. | Store live configuration as `environment`, applying value-wide redaction; continue reading legacy export keys. |
 | Medium | Imported risk/evidence numeric fields accepted strings and non-finite values. | Validate numeric types/ranges at import; escape numeric HTML slots and authorize only the shipped JavaScript hash through CSP. |
 | Medium | Scalar cloud scopes were iterated as characters; unknown AWS services could produce apparently complete empty scans. | Normalize string/list options and reject malformed values and service names. |
@@ -41,6 +51,13 @@ and provider responses used for regression testing were synthetic or mocked.
 
 Also corrected AWS Lambda layer parsing, SSM parameter ARN construction, Foundry
 project scope inheritance, nested GitLab group attribution and timestamp parsing.
+
+Final CodeQL inspection also flagged broad `kubernetes.io/` matching. This
+expression classified JWT claim names, not trusted issuer URLs or authorization.
+Replaced broad claim-prefix inference with recognized Kubernetes service-account
+claim names and a structured `kubernetes.io` object, rejecting arbitrary namespace
+suffixes and URL lookalikes. Regression tests cover the supported forms and
+unrecognized claims. No alert suppression or security-gate bypass was introduced.
 
 ## Deliberate integration decisions
 

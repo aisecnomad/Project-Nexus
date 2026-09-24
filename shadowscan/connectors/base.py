@@ -142,7 +142,9 @@ class ConnectorContext:
     def sanitize_message(self, msg: str) -> str:
         """Remove configured credentials even when an upstream error echoes them."""
         try:
-            return sanitize({"config": {**self.config, **self._resolved_config}, "message": msg})["message"]
+            # Use positional extraction: a short secret can also occur in a
+            # wrapper key such as 'message', which the sanitizer must redact.
+            return sanitize([{**self.config, **self._resolved_config}, msg], redact_short_secrets=True)[1]
         except SanitizationLimitError:
             if self.stats is not None:
                 self.stats.incomplete = True
@@ -168,7 +170,14 @@ class ConnectorContext:
             msg = f"additional connector {channel} omitted: diagnostic limit reached"
         else:
             msg = self.sanitize_message(msg)
-        (self.log.warning if warning else self.log.error)(msg)
+        # Upstream errors can echo credentials fetched inside an SDK, including
+        # opaque values that neither our configuration nor regexes identify.
+        # Application logs are often forwarded beyond the private scan report:
+        # keep that sink independent of diagnostic text, even after redaction.
+        if warning:
+            self.log.warning("Connector warning recorded; inspect scan report for sanitized details")
+        else:
+            self.log.error("Connector error recorded; inspect scan report for sanitized details")
         if self.stats is not None:
             getattr(self.stats, channel).append(msg)
 
