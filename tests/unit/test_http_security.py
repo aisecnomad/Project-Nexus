@@ -32,7 +32,7 @@ def client(*responses, **kwargs):
 def test_invalid_custom_header_does_not_echo_credential():
     credential = "synthetic-header-credential"
     with pytest.raises(ValueError) as exc:
-        HttpClient("https://api.example.com/v1", headers={"Authorization": f"Bearer {credential}\\nInjected: yes"})
+        HttpClient("https://api.example.com/v1", headers={"Authorization": f"Bearer {credential}\nInjected: yes"})
     assert credential not in str(exc.value)
     assert "invalid characters" in str(exc.value)
 
