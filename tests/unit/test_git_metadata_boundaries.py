@@ -15,7 +15,13 @@ from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
 from shadowscan.models import ScanStats
-from shadowscan.utils.git import clone_environment, metadata_git_argv_prefix, metadata_git_env
+from shadowscan.utils.git import (
+    clone_environment,
+    metadata_git_argv_prefix,
+    metadata_git_env,
+    read_git_snapshot,
+    safe_git_env,
+)
 
 
 def _context(index, **config):
@@ -47,6 +53,46 @@ def test_metadata_policy_is_distinct_from_clone_policy(monkeypatch):
     clone = clone_environment("https://github.com", "synthetic-token", "x-access-token")
     assert "GIT_ALLOW_PROTOCOL" not in clone
     assert "GIT_NO_LAZY_FETCH" not in clone
+
+
+def test_read_git_snapshot_returns_checked_out_commit_and_tree_without_inherited_config(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = safe_git_env()
+    for args in (
+        ["init", "--quiet"],
+        ["config", "user.email", "scanner@example.test"],
+        ["config", "user.name", "Scanner Test"],
+    ):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, env=env)
+    (repo / "requirements.txt").write_text("langchain\n")
+    subprocess.run(["git", "-C", str(repo), "add", "requirements.txt"], check=True, capture_output=True, env=env)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "source"],
+        check=True, capture_output=True, env=env,
+    )
+    expected = {
+        "commit_sha": subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD^{commit}"], check=True, capture_output=True, text=True, env=env,
+        ).stdout.strip(),
+        "tree_sha": subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"], check=True, capture_output=True, text=True, env=env,
+        ).stdout.strip(),
+    }
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "wrong.git"))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.repositoryformatversion")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "9999")
+    assert read_git_snapshot(repo) == expected
+
+
+@pytest.mark.parametrize("output", ["main\n", "../outside\n", "a" * 39 + "\n"])
+def test_read_git_snapshot_rejects_non_object_ids(monkeypatch, tmp_path, output):
+    monkeypatch.setattr(
+        "shadowscan.utils.git.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=output),
+    )
+    assert read_git_snapshot(tmp_path) is None
 
 
 @pytest.mark.parametrize("connector_type", [FilesystemConnector, GitHubConnector, GitLabConnector])

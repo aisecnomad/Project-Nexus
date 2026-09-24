@@ -291,12 +291,17 @@ finding fields and excessive nesting fail validation. All records are checked
 before stub generation writes files; this does not make multiple file writes
 transactional if a later filesystem operation fails.
 
-GitHub and GitLab API source downloads use the immutable blob IDs returned by
-tree enumeration. Symlinks and submodules are skipped with incomplete coverage;
-malformed Base64 is rejected. GitLab resolves a branch to one immutable commit
-before tree pagination; all tree pages use that commit and content reads use
-the enumerated blob IDs. Missing or malformed commit resolution marks coverage
-incomplete. Provider metadata collected separately is not part of that snapshot.
+GitHub and GitLab API source downloads use immutable blob IDs returned by tree
+enumeration and verify each downloaded file against its Git object ID before
+scanning it. GitHub API findings include the tree SHA; GitLab API findings
+include the commit SHA resolved before pagination. Clone-mode findings include
+the checked-out commit and tree SHAs. These appear in each code finding's
+`metadata.source_snapshot`, alongside the provider, capture method and validated
+branch name when available. Missing or malformed snapshot identities and blob
+mismatches mark the scan incomplete; valid neighboring files remain usable.
+Symlinks and submodules are skipped with incomplete coverage. Provider settings,
+CI variable names and other metadata collected separately are not part of the
+source snapshot.
 
 Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
 Filesystem scans reject selected roots whose paths traverse a symbolic link.

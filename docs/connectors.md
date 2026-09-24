@@ -54,7 +54,9 @@ content by shallow clone (default) or the contents API (`mode: api`, bounded
 file sample) and runs the filesystem scanner. Adds CI secret/variable *names*
 matching LLM providers. Token: fine-grained PAT or GitHub App token with
 `contents:read`, `metadata:read`; `secrets:read` for secret names. Offline
-input: a directory of clones.
+input: a directory of clones. Code findings retain the scanned Git tree/commit
+identity in `metadata.source_snapshot`; API blob bytes are checked against their
+enumerated Git object IDs.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 
@@ -63,7 +65,10 @@ Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
 clone or API mode; also CI/CD variable names (masked flag), group service
 accounts, group/project access tokens, project bots and GitLab Duo enablement.
 Token: PAT with `read_api` + `read_repository`.
-Live API records cannot choose internal offline paths or dispatch fields.
+Live API records cannot choose internal offline paths or dispatch fields. Code
+findings retain the scanned Git tree/commit identity in
+`metadata.source_snapshot`, and API mode pins tree pagination to an immutable
+commit before downloading files.
 
 ## Identity
 
