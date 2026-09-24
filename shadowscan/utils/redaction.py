@@ -89,6 +89,15 @@ _MAX_SANITIZATION_NODES = 100_000
 _MAX_SANITIZATION_CHARS = 64 * 1024 * 1024
 _MAX_REDACTION_WORK = 128 * 1024 * 1024
 _KEY_NORMALISE = re.compile(r"[^a-z0-9]")
+# Environment-style credential names: an underscore-separated identifier ending
+# in KEY/TOKEN/SECRET/... names a credential by convention (AZURE_OPENAI_KEY,
+# DATABRICKS_TOKEN, MODAL_TOKEN_SECRET, LITELLM_MASTER_KEY) even though the bare
+# suffixes are too broad for arbitrary record fields (S3 object keys, pagination
+# tokens, tag "Key" members). Applied to assignments in text excerpts only, where
+# over-redaction of a sort key or a page token costs nothing.
+_ASSIGNMENT_CREDENTIAL_NAME = re.compile(
+    r"(?i)[a-z][a-z0-9]*(?:_[a-z0-9]+)*_(?:key|token|secret|password|passwd|credentials?)"
+)
 
 
 class SanitizationLimitError(ValueError):
@@ -106,7 +115,7 @@ def _redact_yaml_multiline_values(text: str) -> str:
     pieces: list[str] = []
     cursor = 0
     for match in _YAML_MAPPING_LINE.finditer(text):
-        if match.start() < cursor or not _sensitive_key(match.group("quoted") or match.group("plain")):
+        if match.start() < cursor or not _sensitive_assignment_key(match.group("quoted") or match.group("plain")):
             continue
         value = match.group("value").strip()
         # Quoted and flow-style values are consumed by the mapping lexer.
@@ -197,7 +206,7 @@ def _redact_mapping_values(text: str) -> str:
     pieces: list[str] = []
     cursor = 0
     for match in _MAPPING_VALUE.finditer(text):
-        if match.start() < cursor or not _sensitive_key(match.group("quoted") or match.group("plain")):
+        if match.start() < cursor or not _sensitive_assignment_key(match.group("quoted") or match.group("plain")):
             continue
         start = match.start("value")
         end = _mapping_expression_end(text, start)
@@ -231,7 +240,7 @@ def _redact_python_assignments(text: str) -> str:
     urls = _URL.finditer(text)
     url = next(urls, None)
     for match in _PYTHON_ASSIGNMENT_KEY.finditer(text):
-        if match.start() < cursor or not _sensitive_key(match.group("key")):
+        if match.start() < cursor or not _sensitive_assignment_key(match.group("key")):
             continue
         annotated = match.group("separator") == ":"
         assigned_at: int | None = None if annotated else match.end()
@@ -329,6 +338,11 @@ def _sensitive_key(key: str) -> bool:
     return normalized in _SENSITIVE_NAMES or normalized.endswith(_SENSITIVE_SUFFIXES)
 
 
+def _sensitive_assignment_key(key: str) -> bool:
+    """Sensitive-key test for assignments and mapping entries inside text."""
+    return _sensitive_key(key) or _ASSIGNMENT_CREDENTIAL_NAME.fullmatch(key.strip()) is not None
+
+
 def credential_id(value: Any) -> str:
     """Stable opaque identity for raw credentials; never retain prefix/suffix."""
     value = str(value)
@@ -388,7 +402,7 @@ def _sanitize_url(match: re.Match[str]) -> str:
         if not equals:
             return field
         decoded = unquote(key).lower()
-        sensitive = _sensitive_key(decoded) or decoded in {"key", "sig", "signature", "code", "x-amz-signature", "x-goog-signature"}
+        sensitive = _sensitive_assignment_key(decoded) or decoded in {"key", "sig", "signature", "code", "x-amz-signature", "x-goog-signature"}
         return key + equals + (REDACTED if sensitive else value)
 
     # Consume each field once. A regex that retries an unbounded key after every
@@ -430,7 +444,7 @@ def sanitize_text(text: str) -> str:
             raw = m.group("value")
             quote = raw[0] if raw.startswith(('"', "'")) else ""
             bare = raw[1:-1] if quote else raw
-            if _sensitive_key(m.group("key")):
+            if _sensitive_assignment_key(m.group("key")):
                 clean = _redact_value(bare)
             elif "=" in bare or ":" in bare:
                 # Do not let an ordinary assignment swallow a nested credential,

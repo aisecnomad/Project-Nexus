@@ -66,7 +66,14 @@ class SlackConnector(BaseConnector):
             data = self._api(http, "/team.integrationLogs", {"count": 1000, "page": page})
             if data is None:
                 return
-            for entry in data.get("logs", []) or []:
+            logs = data.get("logs", []) or []
+            if not isinstance(logs, list):
+                self.ctx.warn("saas.slack: /team.integrationLogs: invalid collection; coverage unknown", incomplete=True)
+                return
+            for entry in logs:
+                if not isinstance(entry, dict):
+                    self.ctx.warn("saas.slack: /team.integrationLogs: invalid record skipped; coverage incomplete", incomplete=True)
+                    continue
                 yield {"_kind": "integration_log", **entry}
             paging = data.get("paging") or {}
             if page >= int(paging.get("pages", 1)):
@@ -93,7 +100,16 @@ class SlackConnector(BaseConnector):
             data = self._api(http, path, params)
             if data is None:
                 return
-            yield from data.get(key, []) or []
+            items = data.get(key, []) or []
+            if not isinstance(items, list):
+                self.ctx.warn(f"saas.slack: {path}: invalid collection; coverage unknown", incomplete=True)
+                return
+            for item in items:
+                # One malformed entry must not abort the whole inventory.
+                if not isinstance(item, dict):
+                    self.ctx.warn(f"saas.slack: {path}: invalid record skipped; coverage incomplete", incomplete=True)
+                    continue
+                yield item
             cursor = str((data.get("response_metadata") or {}).get("next_cursor") or "").strip()
             if not cursor:
                 return

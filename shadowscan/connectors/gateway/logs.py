@@ -35,7 +35,7 @@ import secrets
 from collections import Counter, OrderedDict
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -58,6 +58,13 @@ _MAX_CACHED_USER_AGENT_CHARS = 1024
 _OPAQUE_SCOPE_PREFIX = "scope:hmac-sha256:"
 _LEGACY_SCOPE_PREFIX = "scope:sha256:"
 _PUBLIC_CREDENTIAL_ID = re.compile(r"credential:sha256:[0-9a-f]{64}\Z")
+_OPAQUE_CALLER_PREFIX = "caller:hmac-sha256:"
+_OPAQUE_LABEL_PREFIXES = ("credential:hmac-sha256:", _OPAQUE_CALLER_PREFIX)
+# Retained labels are bounded only after sanitization, so a report never
+# embeds an attacker-sized model, host, owner or sample string.
+_MAX_CALLER_LABEL_CHARS = 120
+_MAX_LABEL_CHARS = 160
+_MAX_SAMPLE_CHARS = 300
 
 # ---------------------------------------------------------------- schemas
 
@@ -132,6 +139,13 @@ def _f(v: Any) -> float:
     return number if math.isfinite(number) else 0.0
 
 
+def _scalar(value: Any) -> str | int | None:
+    """Identity candidates must be scalars: an object's repr is not a caller."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    return value
+
+
 def _has_tools(obj: Any) -> bool | None:
     if obj is None:
         return None
@@ -143,6 +157,10 @@ def _has_tools(obj: Any) -> bool | None:
         except json.JSONDecodeError:
             return None
     if isinstance(obj, dict):
+        if not obj:
+            # An empty body (LiteLLM stores "{}" when prompt logging is off)
+            # was not inspected; it must not count as a request without tools.
+            return None
         choice = obj.get("tool_choice")
         if choice == "none" or isinstance(choice, dict) and choice.get("type") == "none":
             return False
@@ -215,7 +233,7 @@ def _has_tool_calls(obj: Any) -> bool | None:
                 return True
             if "tool_calls" in item and calls in (None, [], {}, "", False):
                 explicit_empty = True
-            for key in ("function_call", "functionCall", "tool_use"):
+            for key in ("function_call", "functionCall", "tool_use", "toolUse"):
                 value = item.get(key)
                 if isinstance(value, str) and value.strip().startswith(("[", "{")):
                     try:
@@ -228,17 +246,35 @@ def _has_tool_calls(obj: Any) -> bool | None:
                     explicit_empty = True
             if item.get("type") in {"tool_use", "function_call"}:
                 return True
-            if item.get("stop_reason") == "tool_use" or item.get("finish_reason") in {"tool_calls", "function_call"}:
+            if item.get("stop_reason") == "tool_use" or item.get("stopReason") == "tool_use" or item.get("finish_reason") in {"tool_calls", "function_call"}:
                 finish_marker = True
             pending.extend(value for value in item.values() if isinstance(value, (dict, list)))
     return finish_marker and not explicit_empty
 
 
+def _is_vertex_payload(payload: Any) -> bool:
+    """Identify Vertex AI audit entries by service or method, not a serialized prefix."""
+    if not isinstance(payload, dict):
+        return False
+    service, method = payload.get("serviceName"), payload.get("methodName")
+    return (isinstance(service, str) and "aiplatform" in service) or (
+        isinstance(method, str) and method.startswith("google.cloud.aiplatform.")
+    )
+
+
 def detect_schema(rec: dict[str, Any]) -> str:
     keys = set(rec.keys())
+    # The structural access-log shape is decided before any free-text vendor
+    # sniff, so a user agent or path mentioning a gateway vendor cannot
+    # reclassify a proxy line and collapse its callers.
+    access_log = (
+        ("request" in rec and isinstance(rec.get("request"), str))
+        or ("http_user_agent" in keys or "user_agent" in keys or "userAgent" in keys or "http.user_agent" in keys) and ("model" not in keys)
+        or bool({"remote_addr", "request_uri"} & keys or {"clientIp", "requestUri"} & keys or "c-ip" in keys or "elb" in keys)
+    )
     if "schemaType" in rec and rec.get("schemaType") == "ModelInvocationLog" or ("modelId" in rec and "identity" in rec and "input" in rec):
         return "bedrock"
-    if "protoPayload" in rec and "aiplatform" in json.dumps(rec.get("protoPayload", {}))[:500]:
+    if "protoPayload" in rec and (_is_vertex_payload(rec.get("protoPayload")) or "aiplatform" in json.dumps(rec.get("protoPayload", {}))[:500]):
         return "vertex"
     if rec.get("category") in {"RequestResponse", "Audit", "Trace"} and ("properties" in rec or "callerIpAddress" in rec) and ("resourceId" in rec or "ResourceId" in rec):
         return "azure-openai"
@@ -248,9 +284,9 @@ def detect_schema(rec: dict[str, Any]) -> str:
         return "kong"
     if "gateway_id" in rec or ("provider" in rec and "request_type" in rec and "tokens_in" in rec) or "ai_gateway" in rec:
         return "cloudflare"
-    if "trace_id" in rec and "virtual_key" in rec or "portkey" in json.dumps(rec)[:500].lower() or "x-portkey" in json.dumps(rec)[:2000].lower():
+    if "trace_id" in rec and "virtual_key" in rec or not access_log and ("portkey" in json.dumps(rec)[:500].lower() or "x-portkey" in json.dumps(rec)[:2000].lower()):
         return "portkey"
-    if "helicone" in json.dumps(rec)[:1000].lower() or "request_properties" in rec and "helicone-request-id" in json.dumps(rec)[:5000].lower():
+    if not access_log and "helicone" in json.dumps(rec)[:1000].lower() or "request_properties" in rec and "helicone-request-id" in json.dumps(rec)[:5000].lower():
         return "helicone"
     if "observation_id" in rec or ("traceId" in rec and "usageDetails" in rec) or ("type" in rec and rec.get("type") == "GENERATION" and "model" in rec) or ("project_id" in rec and "trace_id" in rec and "model" in rec):
         return "langfuse"
@@ -258,9 +294,7 @@ def detect_schema(rec: dict[str, Any]) -> str:
         return "openai-usage"
     if "workspace_id" in rec and "api_key_id" in rec and "uncached_input_tokens" in rec or ("uncached_input_tokens" in rec and "model" in rec):
         return "anthropic-usage"
-    if ("request" in rec and isinstance(rec.get("request"), str)) or ("http_user_agent" in keys or "user_agent" in keys or "userAgent" in keys or "http.user_agent" in keys) and ("model" not in keys):
-        return "access-log"
-    if {"remote_addr", "request_uri"} & keys or {"clientIp", "requestUri"} & keys or "c-ip" in keys or "elb" in keys:
+    if access_log:
         return "access-log"
     return "generic"
 
@@ -409,10 +443,18 @@ def normalise_with_record(
             cleaned["caller"] = ev.caller
         else:
             material = json.dumps(["shadowscan.gateway.caller.v1", ev.caller], separators=(",", ":"))
-            cleaned["caller"] = f"{ev.caller_kind}:caller:hmac-sha256:{hmac.digest(scope_key, material.encode(), 'sha256').hex()}"
+            digest = hmac.digest(scope_key, material.encode(), "sha256").hex()
+            cleaned["caller"] = f"{ev.caller_kind}:{_OPAQUE_CALLER_PREFIX}{digest}"
             cleaned["caller_redacted"] = True
+            if cleaned["caller_label"] != ev.caller_label:
+                # The label carried the same credential-like value; a stable
+                # opaque label keeps callers distinguishable without it.
+                cleaned["caller_label"] = _OPAQUE_CALLER_PREFIX + digest
     if opaque_id and ev.caller_label == opaque_id:
         cleaned["caller_label"] = opaque_id
+    # Bound the label only after sanitization: truncating first can cut a
+    # token below the length its redaction pattern recognises.
+    cleaned["caller_label"] = cleaned["caller_label"][:_MAX_CALLER_LABEL_CHARS]
     cleaned["binding_caller"] = ev.binding_caller
     return Event(**cleaned), clean_record
 
@@ -425,10 +467,15 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
         user = rec.get("user") or rec.get("end_user") or get_path(rec, "metadata.user_api_key_user_id", "metadata.user_api_key_user_email")
         ua = get_path(rec, "metadata.user_agent", "metadata.headers.user-agent", "request_tags.user_agent", "metadata.requester_metadata.user_agent")
         tools = _has_tools(rec.get("proxy_server_request") or rec.get("request") or get_path(rec, "metadata.proxy_server_request.body"))
-        caller = f"litellm-key:{key or alias or 'anonymous'}"
+        if key:
+            caller, kind = f"litellm-key:{key}", "api-key"
+        else:
+            # An alias (or a missing key) is not credential material: it is
+            # neither registered as a secret nor pseudonymised as one.
+            caller, kind = f"litellm-alias:{alias or 'anonymous'}", "service"
         return Event(
             caller=caller,
-            caller_kind="api-key",
+            caller_kind=kind,
             caller_label=alias or str(key or "anonymous"),
             timestamp=parse_timestamp(rec.get("startTime") or rec.get("start_time") or rec.get("endTime") or rec.get("timestamp")),
             model=rec.get("model") or rec.get("model_group"),
@@ -711,7 +758,7 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
         return Event(
             caller=f"access:{caller}",
             caller_kind=kind,
-            caller_label=str(caller)[:120],
+            caller_label=str(caller),
             timestamp=parse_timestamp(get_path(rec, "time", "timestamp", "@timestamp", "time_local", "time_iso8601", "start_time", "date", "ts", "datetime")),
             model=get_path(rec, "model", "x_model", "request_model", "llm_model"),
             host=host,
@@ -724,8 +771,8 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
             schema=schema,
         )
     # generic
-    key = get_path(rec, "api_key", "apiKey", "api_key_id", "key", "key_id", "key_alias", "virtual_key", "token_id", "client_id", "clientId")
-    principal = get_path(rec, "principal", "principal_id", "identity", "identity.arn", "caller", "service", "service_name", "app", "application", "app_name", "source", "team", "team_id", "org", "project")
+    key = _scalar(get_path(rec, "api_key", "apiKey", "api_key_id", "key", "key_id", "key_alias", "virtual_key", "token_id", "client_id", "clientId"))
+    principal = _scalar(get_path(rec, "principal", "principal_id", "identity.arn", "identity", "caller", "service", "service_name", "app", "application", "app_name", "source", "team", "team_id", "org", "project"))
     user = get_path(rec, "user", "user_id", "userId", "username", "email", "end_user", "sub", "actor")
     ua = get_path(rec, "user_agent", "userAgent", "http_user_agent", "headers.user-agent", "request.headers.user-agent", "metadata.user_agent")
     ip = get_path(rec, "ip", "client_ip", "source_ip", "remote_addr", "callerIp")
@@ -744,7 +791,7 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
     return Event(
         caller=f"{kind}:{who}",
         caller_kind=kind,
-        caller_label=str(who)[:120],
+        caller_label=str(who),
         timestamp=parse_timestamp(get_path(rec, "timestamp", "time", "@timestamp", "ts", "created_at", "createdAt", "start_time", "startTime", "date", "datetime", "event_time")),
         model=get_path(rec, "model", "model_id", "modelId", "model_name", "deployment", "engine", "llm", "response.model", "request.model"),
         provider=get_path(rec, "provider", "llm_provider", "custom_llm_provider", "vendor", "platform"),
@@ -893,7 +940,12 @@ def _count(counter: Counter, key: str, amount: int, dropped: Counter, dimension:
            budget: _DetailBudget | None = None) -> None:
     """Bound retained labels, counting lost requests without inventing a label."""
     if key not in counter:
-        if len(counter) >= _MAX_DISTINCT_KEYS or (budget is not None and budget.used >= _MAX_TOTAL_DETAIL_KEYS):
+        # The first label of a distribution is always retained (bounded by
+        # callers x dimensions), so an exhausted shared budget degrades detail
+        # rather than a caller's basic classification.
+        if len(counter) >= _MAX_DISTINCT_KEYS or (
+            counter and budget is not None and budget.used >= _MAX_TOTAL_DETAIL_KEYS
+        ):
             # Count requests, never distinct attacker-provided labels.
             dropped[dimension] += amount
             return
@@ -1039,10 +1091,17 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 yield from self._expand_record({**self._envelope_context(rec), **body}, depth + 1)
                 return
             if isinstance(body, str):
-                parsed = self._parse_line(body, key)
+                try:
+                    parsed = parse_text_line(body)
+                except (ValueError, TypeError, RecursionError):
+                    self.ctx.warn(f"gateway.logs: invalid JSON/text record at {key}")
+                    return
                 if parsed is not None:
                     yield from self._expand_record({**self._envelope_context(rec), **parsed}, depth + 1)
-                return
+                    return
+                # A descriptive message is not a wrapped log line: the event's
+                # own structured fields still identify the caller.
+                break
             self.ctx.warn(f"gateway.logs: {key} must be an object or string")
             return
         yield rec
@@ -1323,7 +1382,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         if ev.path and re.search(r"/v1/(?:chat/completions|completions|responses|messages|embeddings|models|assistants|threads|runs|audio|images|files|batches|realtime)|/openai/deployments/|/generateContent|:generateContent|:streamGenerateContent|/invoke(?:-with-response-stream)?|/converse|/mcp\b|/sse\b|/a2a\b|/agents?/|/predict\b|/api/(?:chat|generate|tags)\b", text):
             return True
         if ev.schema == "access-log" and ev.path:
-            return False
+            # A known provider/agent host identifies inference traffic even
+            # when the operation is not an enumerated endpoint; static assets
+            # and health probes were excluded above.
+            return bool(ev.host and self.index.match_domain(ev.host))
         if ev.model:
             return True
         if ev.schema == "generic" and _provider_signature(self.index, ev.provider):
@@ -1361,8 +1423,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             end = ev.interval_end or ev.timestamp
             c.last = end if not c.last or end > c.last else c.last
             if not ev.aggregated:
-                c.hours[ev.timestamp.hour] += 1
-                c.weekdays[ev.timestamp.weekday()] += 1
+                # Exporters write one instant with different offsets; bucket
+                # in UTC so the temporal shape is offset-independent.
+                moment = ev.timestamp.astimezone(UTC)
+                c.hours[moment.hour] += 1
+                c.weekdays[moment.weekday()] += 1
         interval_stored = False
         if ev.aggregated:
             if retain_interval and len(c.usage_intervals) < min(_MAX_USAGE_INTERVALS, _MAX_DISTINCT_KEYS):
@@ -1373,19 +1438,19 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 c.usage_intervals_dropped += 1
                 c.usage_interval_requests_dropped += ev.request_count
         if ev.model:
-            _count(c.models, str(ev.model), ev.request_count, c.distribution_events_dropped, "models", detail_budget)
+            _count(c.models, str(ev.model)[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "models", detail_budget)
         if ev.provider:
-            _count(c.providers, str(ev.provider), ev.request_count, c.distribution_events_dropped, "providers", detail_budget)
+            _count(c.providers, str(ev.provider)[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "providers", detail_budget)
         if ev.host:
-            _count(c.hosts, ev.host, ev.request_count, c.distribution_events_dropped, "hosts", detail_budget)
+            _count(c.hosts, ev.host[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "hosts", detail_budget)
         if ev.user_agent:
-            _count(c.user_agents, str(ev.user_agent)[:160], ev.request_count, c.distribution_events_dropped, "user_agents", detail_budget)
+            _count(c.user_agents, str(ev.user_agent)[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "user_agents", detail_budget)
         if ev.ip:
-            _count(c.ips, ev.ip, ev.request_count, c.distribution_events_dropped, "source_ips", detail_budget)
+            _count(c.ips, ev.ip[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "source_ips", detail_budget)
         if ev.user:
-            _count(c.users, ev.user, ev.request_count, c.distribution_events_dropped, "end_users", detail_budget)
+            _count(c.users, ev.user[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "end_users", detail_budget)
         if ev.team:
-            _count(c.teams, str(ev.team), ev.request_count, c.distribution_events_dropped, "teams", detail_budget)
+            _count(c.teams, str(ev.team)[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "teams", detail_budget)
         if ev.path:
             # Query strings carry per-request identifiers; the operation is the path.
             _count(
@@ -1405,7 +1470,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             c.errors += 1
         for k, v in ev.metadata.items():
             if v not in (None, "", {}, []) and k not in c.metadata_samples:
-                c.metadata_samples[k] = v if isinstance(v, (str, int, float, bool)) else json.dumps(v, default=str)[:300]
+                if isinstance(v, str):
+                    c.metadata_samples[k] = v[:_MAX_SAMPLE_CHARS]
+                else:
+                    c.metadata_samples[k] = v if isinstance(v, (int, float, bool)) else json.dumps(v, default=str)[:_MAX_SAMPLE_CHARS]
         bucket = json.dumps([ev.code_resources, ev.runtime_frameworks, ev.environment, ev.identity_assurance])
         if bucket not in c.observations:
             if len(c.observations) >= _MAX_DISTINCT_KEYS or (detail_budget is not None and detail_budget.used >= _MAX_TOTAL_DETAIL_KEYS):
@@ -1464,7 +1532,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             sid = _provider_signature(self.index, p)
             if sid:
                 f.add_model_provider(sid)
-        apply_matches(f, self.index.match_name(c.label), weight_scale=0.6)
+        if c.label != REDACTED and not c.label.startswith(_OPAQUE_LABEL_PREFIXES):
+            # An opaque pseudonym cannot carry a display name; skip the pass.
+            apply_matches(f, self.index.match_name(c.label), weight_scale=0.6)
         for u, _ in c.users.most_common(3):
             apply_matches(f, self.index.match_name(str(u)), weight_scale=0.4)
 
@@ -1476,7 +1546,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             f.add_capability("tool-use")
             f.add_evidence(Evidence(signal="gateway:tool-use", description=f"{c.tools_requests}/{c.tool_known} inspected requests carried tool/function definitions ({tool_ratio:.0%}); {c.tool_call_responses} responses invoked tools", weight=min(0.9, 0.4 + tool_ratio * 0.5)))
             f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
-        if c.tool_call_responses and tool_ratio is None:
+        if c.tool_call_responses and not (tool_ratio is not None and tool_ratio > 0):
+            # Responses that invoked tools are agentic even when every
+            # inspected request body was empty or carried no definitions.
             f.add_capability("tool-use")
             f.add_evidence(Evidence(signal="gateway:tool-calls", description=f"{c.tool_call_responses} responses contained tool calls", weight=0.6))
             f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1

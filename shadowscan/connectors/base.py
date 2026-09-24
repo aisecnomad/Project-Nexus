@@ -792,7 +792,14 @@ class BaseConnector(ABC):
                 f.connector = self.name
                 if f.provider is None:
                     f.provider = self.provider
-                f.sanitize()
+                try:
+                    f.sanitize()
+                except SanitizationLimitError:
+                    # One oversized finding must not discard the others (for
+                    # example a credential finding emitted after an aggregate
+                    # that exceeds the sanitizer's output budget).
+                    self.ctx.error(f"{self.name}: finding omitted: sanitization safety limit exceeded")
+                    continue
                 findings.append(f)
             self.ctx.check_deadline()
         except ConnectorError as exc:

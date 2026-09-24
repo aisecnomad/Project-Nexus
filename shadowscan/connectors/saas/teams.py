@@ -20,6 +20,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path
 
@@ -88,7 +89,10 @@ class TeamsConnector(BaseConnector):
         apps: dict[str, dict[str, Any]] = {}
         installs: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
-            kind = rec.get("_kind") or ("installedApp" if "teamsApp" in rec or "teamsAppDefinition" in rec else "teamsApp")
+            kind = self._record_kind(rec)
+            if kind is None:
+                self.ctx.warn("saas.microsoft-teams: unsupported or malformed provider record; coverage incomplete")
+                continue
             if kind == "teamsApp":
                 apps[str(rec.get("id"))] = rec
             else:
@@ -99,9 +103,48 @@ class TeamsConnector(BaseConnector):
                     apps[app_id] = {**app, "appDefinitions": [rec.get("teamsAppDefinition")] if rec.get("teamsAppDefinition") else [], "_from_install": True}
         for app_id, app in apps.items():
             self.ctx.examined()
-            f = self._app_finding(app_id, app, installs.get(app_id, []))
+            try:
+                f = self._app_finding(app_id, app, installs.get(app_id, []))
+            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"saas.microsoft-teams: skipped a malformed app record ({type(exc).__name__}){detail}")
+                continue
             if f:
                 yield f
+
+    def _record_kind(self, rec: Any) -> str | None:
+        """Check the fields analysis consumes without disclosing rejected values."""
+        if not self._record_fields_valid(
+            rec, strings=("_kind", "id", "displayName", "distributionMethod", "externalId", "_team"),
+            mappings=("teamsApp", "teamsAppDefinition"), arrays=("appDefinitions",),
+        ):
+            return None
+        kind = rec.get("_kind") or ("installedApp" if "teamsApp" in rec or "teamsAppDefinition" in rec else "teamsApp")
+        if kind == "teamsApp":
+            if not self._record_fields_valid(rec, required=("id",)):
+                return None
+            definitions = list(rec.get("appDefinitions") or [])
+        elif kind == "installedApp":
+            app = rec.get("teamsApp") or {}
+            if not self._record_fields_valid(app, strings=("id", "displayName", "distributionMethod", "externalId")):
+                return None
+            identifiers = (app.get("id"), get_path(rec, "teamsAppDefinition.teamsAppId"), rec.get("id"))
+            if not any(isinstance(value, str) and value.strip() for value in identifiers):
+                return None
+            definitions = [rec["teamsAppDefinition"]] if rec.get("teamsAppDefinition") else []
+        else:
+            return None
+        return kind if all(self._definition_valid(definition) for definition in definitions) else None
+
+    def _definition_valid(self, definition: Any) -> bool:
+        if not self._record_fields_valid(
+            definition,
+            strings=("teamsAppId", "displayName", "description", "shortDescription", "version", "publishingState", "lastModifiedDateTime"),
+            mappings=("bot", "authorization", "createdBy"),
+        ):
+            return False
+        permissions = get_path(definition, "authorization.requiredPermissionSet.resourceSpecificPermissions")
+        return permissions is None or (isinstance(permissions, list) and all(isinstance(item, dict) for item in permissions))
 
     def _app_finding(self, app_id: str, app: dict[str, Any], installs: list[dict[str, Any]]) -> Finding | None:
         defs = [d for d in app.get("appDefinitions") or [] if isinstance(d, dict)]
