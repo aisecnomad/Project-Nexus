@@ -372,7 +372,10 @@ def list_connectors(surface: str | None, as_json: bool) -> None:
         except Exception as exc:  # noqa: BLE001
             rows.append({"name": n, "error": str(exc)})
             continue
-        rows.append({"name": n, "surface": cls.surface.value, "description": cls.description, "config": cls.config_keys, "requires": cls.requires, "offline": cls.offline_formats})
+        config = dict(cls.config_keys)
+        for key, text in cls.shared_config_keys.items():
+            config.setdefault(key, text)
+        rows.append({"name": n, "surface": cls.surface.value, "description": cls.description, "config": config, "requires": cls.requires, "offline": cls.offline_formats})
     if as_json:
         click.echo(json.dumps(rows, indent=2))
         return

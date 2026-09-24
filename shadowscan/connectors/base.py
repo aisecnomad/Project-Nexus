@@ -225,6 +225,14 @@ class BaseConnector(ABC):
     provider: ClassVar[str | None] = None
     requires: ClassVar[list[str]] = []  # optional python packages for live mode
     config_keys: ClassVar[dict[str, str]] = {}  # documentation: key -> description
+    # Offline export limits that __init__ reads for every connector. The
+    # `connectors` command lists them after config_keys; a connector whose
+    # offline input is a code checkout rather than an export overrides with {}.
+    shared_config_keys: ClassVar[dict[str, str]] = {
+        "max_input_bytes": "offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB)",
+        "max_input_file_bytes": "offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB)",
+        "max_input_files": "offline: maximum files read from a directory input (default 10,000)",
+    }
     offline_formats: ClassVar[str] = "JSON / JSONL / YAML / CSV export"
     _OFFLINE_COLLECTION_KINDS: ClassVar[dict[str, str]] = {}
 

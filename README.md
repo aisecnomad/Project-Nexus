@@ -194,12 +194,14 @@ connectors:
     service_account_file: ./sa.json
     admin_email: admin@acme.com
   - name: gateway.logs
+    label: litellm-prod                # names this entry in --only, progress and exports
     input: ./exports/litellm-spend.jsonl
   - name: lowcode.power-platform
     tenant_id: ${AZURE_TENANT_ID}
     client_id: ${AZURE_CLIENT_ID}
     client_secret: ${AZURE_CLIENT_SECRET}
   - name: saas.slack
+    enabled: false                     # keep the entry, skip it on this run
     token: ${SLACK_TOKEN}
   - name: cloud.aws
     regions: [us-east-1, eu-west-1]
@@ -208,8 +210,10 @@ connectors:
 
 `shadowscan connectors` lists every connector with its configuration keys and
 required extras; `shadowscan connectors --json` also includes each connector's
-offline export formats. See [docs/connectors.md](docs/connectors.md)
-for credentials and least-privilege scopes per connector. Run repository scans in
+offline export formats. Every entry also accepts `enabled` (default true) and
+`label` (a distinct id when a connector runs more than once). See
+[docs/connectors.md](docs/connectors.md) for entry keys, credentials and
+least-privilege scopes per connector. Run repository scans in
 a separate job/configuration from live tenant collection. Mixing these credential
 boundaries requires an explicit `allow_credential_mixing` exception; keep the
 separation for untrusted repositories. Cloud instance-metadata credentials require

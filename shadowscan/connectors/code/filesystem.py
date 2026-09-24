@@ -310,6 +310,7 @@ class FilesystemConnector(BaseConnector):
     description: ClassVar[str] = "Scan a local directory / repository checkout for agent frameworks, MCP, coding agents, IaC and secrets."
     config_keys: ClassVar[dict[str, str]] = {
         "path": "directory to scan (or `paths`: list)",
+        "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "extra directory names / glob patterns to skip",
         "max_file_size": "bytes; larger files are skipped (default 1 MiB)",
         "max_files": "stop after this many files (default 100000)",
@@ -318,7 +319,12 @@ class FilesystemConnector(BaseConnector):
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
+        "account": "account label recorded on every finding (default none)",
+        "owner": "owner recorded on every finding; overrides CODEOWNERS and inventory attribution (default: CODEOWNERS, then git author when use_git, then inventory)",
+        "provider": "provider label recorded on findings (default filesystem)",
+        "metadata": "mapping merged into every finding's metadata",
     }
+    shared_config_keys: ClassVar[dict[str, str]] = {}  # scans a checkout, not an export file
     offline_formats: ClassVar[str] = "n/a (path is the input)"
 
     def __init__(self, ctx):

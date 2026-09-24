@@ -919,9 +919,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         "min_events": "ignore callers with fewer events (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
         "max_records": "stop after N records (default 5,000,000)",
-        "max_input_bytes": "maximum expanded bytes read across offline files (default 256 MiB)",
-        "max_input_file_bytes": "maximum expanded bytes read from one offline file (default 32 MiB)",
-        "max_input_files": "maximum offline files in a directory input (default 10,000)",
+        "label": "gateway name recorded as the finding provider and as the account of unscoped callers (defaults to the entry's `label`)",
+        "gateway_name": "fallback for `label` when the connector entry has none",
         "correlation_bindings": "explicit [{code_resource, caller, scope}] mappings to workload identities; scope must exactly match log tenant/account/project/workspace fields ({} for unscoped exports)",
     }
     offline_formats: ClassVar[str] = "JSONL / JSON / CSV / text access logs"
