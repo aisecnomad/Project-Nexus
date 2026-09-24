@@ -22,7 +22,7 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
  CRITICAL 95  SHADOW  code      mcp-server   MCP configuration: .mcp.json (inline GitHub PAT, Zapier remote MCP, docker/postgres)
  CRITICAL 90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
  HIGH     73  SHADOW  lowcode   agent        Copilot Studio agent: HR Helper
- MEDIUM   33  ops-provisioning-04  cloud  agent  Bedrock Agent: ops-provisioning-04   ← registered, owner inherited from its card
+ MEDIUM   33  ops-provisioning-04  cloud  agent  Bedrock Agent: ops-provisioning-04   ← registered via its card's resource binding; owner from the AWS resource tag
 ```
 
 ## Why
@@ -79,6 +79,26 @@ Offline analysis can run in CI, on an analyst laptop or against a SIEM export.
 
 `shadowscan signatures list` shows everything; `shadowscan signatures test <value>`
 tells you what a package, host, user agent, model id, scope or file path maps to.
+
+## Project status
+
+* **Unreleased.** The `0.1.1` version string is a candidate: there is no tag,
+  no published package and no signed artifact. The package classifier is
+  `Development Status :: 3 - Alpha`.
+* **Single maintainer, AI-assisted development.** One account merges every
+  change; apart from Dependabot updates, every commit was authored by that
+  account or generated with its AI assistant. Much of the code, and the
+  hardening logs under [docs/hardening-logs/](docs/hardening-logs/), were
+  produced with AI assistance and reviewed by that same maintainer.
+* **What is independently reviewed: nothing yet.** Every pull request runs
+  CI, CodeQL and a dependency audit, but no pull request has been approved by a
+  second person, and the hardening logs are not third-party reviews.
+  Independent human review is required before any tagged release; see the
+  [review and merge policy](CONTRIBUTING.md#review-and-merge-policy).
+* **Recommendation.** Review the revision yourself or have it reviewed, then
+  pin that full commit SHA as shown below. Repository review state cannot be
+  established from a checkout; verify it with the commands in
+  [merge gate and review status](docs/production.md#merge-gate-and-review-status).
 
 ## Install
 
@@ -142,6 +162,12 @@ shadowscan inventory stubs report.json -o inventory/pending/    # capability-car
 shadowscan diff last-week.json today.json                        # what is new / resolved/changed
 ```
 
+Steps 1 and 2 need a repository checkout: `agent-card.yaml`, `examples/` and
+the sample exports under `tests/fixtures/` are not shipped in the wheel. Steps
+5 and 6 use your own logs, token and an earlier JSON report
+(`--format json -o report.json`); sample gateway logs live under
+`tests/fixtures/gateway/` in a checkout.
+
 ### Configuration
 
 ```yaml
@@ -180,8 +206,9 @@ connectors:
     cloudtrail_days: 7
 ```
 
-`shadowscan connectors` lists every connector with its configuration keys,
-required extras, and offline format. See [docs/connectors.md](docs/connectors.md)
+`shadowscan connectors` lists every connector with its configuration keys and
+required extras; `shadowscan connectors --json` also includes each connector's
+offline export formats. See [docs/connectors.md](docs/connectors.md)
 for credentials and least-privilege scopes per connector. Run repository scans in
 a separate job/configuration from live tenant collection. Mixing these credential
 boundaries requires an explicit `allow_credential_mixing` exception; keep the
@@ -284,14 +311,18 @@ turns shadow findings into card skeletons for review. See
 ## Development
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
-ruff check shadowscan tests
-mypy shadowscan
+ruff check shadowscan tests tools
+mypy shadowscan tools/evaluation
 pip-audit --progress-spinner off
 pytest -q --cov=shadowscan --cov-fail-under=80
 shadowscan scan -c examples/shadowscan.offline.yaml
 ```
+
+The test suite needs the `cloud` extra: one OCI test module imports the SDK at
+collection time, so without it pytest stops with a collection error before any
+test runs. See [CONTRIBUTING.md](CONTRIBUTING.md#development).
 
 ## Safety notes
 
