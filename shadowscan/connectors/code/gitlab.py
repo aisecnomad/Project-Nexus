@@ -24,11 +24,24 @@ from urllib.parse import quote, urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
-from shadowscan.connectors.code.github import GitHubConnector, repository_target
+from shadowscan.connectors.code.github import (
+    GitHubConnector,
+    _OfflineRepository,
+    _remote_record,
+    repository_target,
+)
 from shadowscan.connectors.common import apply_matches, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.git import clone_environment, git_argv_prefix, validate_git_ref
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
+
+
+class _GitLabMetadata(dict[str, Any]):
+    """Provider payload with a dispatch kind assigned by the collector."""
+
+    def __init__(self, kind: str, data: dict[str, Any]):
+        super().__init__({**_remote_record(data), "_kind": kind})
+        self.kind = kind
 
 
 class GitLabConnector(BaseConnector):
@@ -44,6 +57,7 @@ class GitLabConnector(BaseConnector):
         "include_archived": "default false",
         "max_projects": "default 500",
         "scan_timeout": "matching budget in seconds per file (default 2)",
+        "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "input": "offline: directory of cloned projects",
     }
     offline_formats: ClassVar[str] = "directory of cloned projects"
@@ -77,7 +91,7 @@ class GitLabConnector(BaseConnector):
             data = self.http.try_get_json(f"/projects/{quote(str(p), safe='')}")
             if data and data["id"] not in seen:
                 seen.add(data["id"])
-                yield data
+                yield _remote_record(data)
         if group:
             gid = quote(str(group), safe="")
             yield from self._group_identities(gid)
@@ -90,19 +104,19 @@ class GitLabConnector(BaseConnector):
                     self.ctx.warn(f"code.gitlab: max_projects ({self.max_projects}) reached", incomplete=True)
                     return
                 seen.add(p["id"])
-                yield p
+                yield _remote_record(p)
 
     def _group_identities(self, gid: str) -> Iterator[dict[str, Any]]:
         for sa in self._optional_list(f"/groups/{gid}/service_accounts"):
-            yield {"_kind": "service_account", **sa}
+            yield _GitLabMetadata("service_account", {**sa, "group": gid})
         for tok in self._optional_list(f"/groups/{gid}/access_tokens"):
-            yield {"_kind": "group_access_token", **tok}
+            yield _GitLabMetadata("group_access_token", {**tok, "group": gid})
         variables = [{k: v for k, v in var.items() if k != "value"} for var in self._optional_list(f"/groups/{gid}/variables")]
         if variables:
-            yield {"_kind": "group_variables", "group": gid, "variables": variables}
+            yield _GitLabMetadata("group_variables", {"group": gid, "variables": variables})
         group = self.http.try_get_json(f"/groups/{gid}")
         if isinstance(group, dict) and (group.get("duo_features_enabled") is not None):
-            yield {"_kind": "duo", "group": group.get("full_path"), "duo_features_enabled": group.get("duo_features_enabled"), "lock_duo_features_enabled": group.get("lock_duo_features_enabled")}
+            yield _GitLabMetadata("duo", {"group": group.get("full_path"), "duo_features_enabled": group.get("duo_features_enabled"), "lock_duo_features_enabled": group.get("lock_duo_features_enabled")})
 
     def _optional_list(self, path: str) -> Iterator[dict[str, Any]]:
         try:
@@ -132,7 +146,7 @@ class GitLabConnector(BaseConnector):
                     self.ctx.warn("code.gitlab: offline clone path escaped its input directory")
                     continue
                 count += 1
-                yield {"path_with_namespace": child.name, "_local_path": str(child)}
+                yield _OfflineRepository({"path_with_namespace": child.name}, str(child))
         except OSError:
             self.ctx.warn("code.gitlab: could not enumerate offline clones")
 
@@ -140,7 +154,7 @@ class GitLabConnector(BaseConnector):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         group_variables: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
-            kind = rec.get("_kind")
+            kind = rec.kind if isinstance(rec, _GitLabMetadata) else None
             if kind == "service_account" or kind == "group_access_token":
                 yield self._identity_finding(rec)
                 continue
@@ -156,7 +170,8 @@ class GitLabConnector(BaseConnector):
                 continue
             full = rec.get("path_with_namespace") or rec.get("name")
             self.ctx.examined()
-            local = rec.get("_local_path")
+            offline = isinstance(rec, _OfflineRepository)
+            local = rec.local_path if isinstance(rec, _OfflineRepository) else None
             tmp: str | None = None
             try:
                 if not local:
@@ -165,7 +180,7 @@ class GitLabConnector(BaseConnector):
                     if not local:
                         continue
                 yield from self._scan_local(rec, local)
-                if not rec.get("_local_path"):
+                if not offline:
                     yield from self._project_level(rec)
             except HttpError as exc:
                 self.ctx.warn(f"code.gitlab: {full}: {exc}", incomplete=True)
@@ -256,15 +271,20 @@ class GitLabConnector(BaseConnector):
         for p in selected:
             target = repository_target(dest, p)
             try:
-                resp = self.http.get(f"/projects/{pid}/repository/files/{quote(p, safe='')}/raw", params={"ref": ref})
+                resp = self.http.get(
+                    f"/projects/{pid}/repository/files/{quote(p, safe='')}/raw",
+                    params={"ref": ref},
+                    stream=True,
+                )
+                content = self.http.read_response_bytes(resp, max_bytes=512_000)
             except HttpError as exc:
                 self.ctx.warn(f"code.gitlab: repository content HTTP {exc.status}; coverage partial", incomplete=True)
                 continue
-            if len(resp.content) > 512_000:
-                self.ctx.warn("code.gitlab: oversized API content skipped", incomplete=True)
+            except ValueError:
+                self.ctx.warn("code.gitlab: oversized or invalid API content skipped", incomplete=True)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(resp.content)
+            target.write_bytes(content)
         return dest
 
     # --------------------------------------------------- project-level extra
@@ -276,10 +296,10 @@ class GitLabConnector(BaseConnector):
         if f:
             yield f
         for tok in self._optional_list(f"/projects/{pid}/access_tokens"):
-            yield self._identity_finding({"_kind": "project_access_token", "project": full, **tok})
+            yield self._identity_finding(_GitLabMetadata("project_access_token", {**tok, "project": full}))
         for member in self._optional_list(f"/projects/{pid}/members"):
             if member.get("bot") or str(member.get("username", "")).startswith(("project_", "group_")) and "_bot" in str(member.get("username", "")):
-                yield self._identity_finding({"_kind": "project_bot", "project": full, **member})
+                yield self._identity_finding(_GitLabMetadata("project_bot", {**member, "project": full}))
 
     def _variables_finding(self, scope_name: str, variables: list[dict[str, Any]], scope: str) -> Finding | None:
         names = [name for v in variables if isinstance(name := v.get("key"), str) and name]

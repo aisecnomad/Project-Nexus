@@ -27,12 +27,21 @@ from shadowscan.utils.redaction import sanitize_text
 log = logging.getLogger("shadowscan.http")
 
 DEFAULT_TIMEOUT = 30
+DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_RETRY_DELAY = 120
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 _allow_private_origin: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "shadowscan_allow_private_origin", default=False
 )
+
+
+def _positive_byte_limit(value: int | None, default: int) -> int:
+    limit = default if value is None else value
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        raise ValueError("max_bytes must be a positive integer")
+    return limit
+
 
 METADATA_HOSTS = frozenset(
     {
@@ -236,6 +245,7 @@ class HttpClient:
         auth: Any = None,
         on_warning: Callable[[str], None] | None = None,
         allow_private_origin: bool | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     ):
         self.base_url = base_url.rstrip("/")
         self.allow_private_origin = _allow_private_origin.get() if allow_private_origin is None else allow_private_origin
@@ -253,6 +263,7 @@ class HttpClient:
             self.session.auth = auth
         self.timeout = timeout
         self.max_retries = max_retries
+        self.max_response_bytes = _positive_byte_limit(max_response_bytes, DEFAULT_MAX_RESPONSE_BYTES)
         self.requests_made = 0
         self.on_warning = on_warning
 
@@ -269,6 +280,9 @@ class HttpClient:
             raise ValueError("TLS certificate verification cannot be disabled")
         if kwargs.get("proxies") or (isinstance(self.session, requests.Session) and self.session.proxies):
             raise ValueError("Proxies are unsupported by the destination-enforcing HTTP client")
+        if kwargs.get("stream") is False:
+            raise ValueError("Streaming cannot be disabled for HTTP responses")
+        kwargs["stream"] = True
         kwargs.setdefault("timeout", self.timeout)
         # requests strips Authorization for some redirects, but not custom API-key
         # headers, cookies or credential-bearing POST bodies. Validate before sending.
@@ -318,39 +332,55 @@ class HttpClient:
     def post(self, path: str, **kwargs: Any) -> requests.Response:
         return self.request("POST", path, **kwargs)
 
-    def get_json(self, path: str, *, max_bytes: int | None = None, **kwargs: Any) -> Any:
-        if max_bytes is None:
-            resp = self.get(path, **kwargs)
-            if not resp.content:
-                return None
-            return resp.json()
-        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
-            raise ValueError("max_bytes must be a positive integer")
-        kwargs["stream"] = True
-        resp = self.get(path, **kwargs)
+    def read_response_bytes(self, resp: requests.Response, *, max_bytes: int | None = None) -> bytes:
+        """Read a streamed response within the configured decoded-byte limit.
+
+        Iteration counts bytes after HTTP content decoding, so compressed
+        responses cannot expand past the limit unnoticed. The response is closed
+        on success and on every parse, transport, or size error.
+        """
+        limit = _positive_byte_limit(max_bytes, self.max_response_bytes)
         try:
             length = resp.headers.get("Content-Length")
-            if length is not None and (not length.isdigit() or int(length) > max_bytes):
-                raise ValueError("JSON response exceeds the byte limit or has an invalid length")
+            if length is not None:
+                if not isinstance(length, str) or not length.isascii() or not length.isdecimal():
+                    raise ValueError("Invalid Content-Length on HTTP response")
+                if int(length) > limit:
+                    raise ValueError("HTTP response exceeds the byte limit")
             body = bytearray()
-            for chunk in resp.iter_content(chunk_size=min(65536, max_bytes + 1)):
-                if len(body) + len(chunk) > max_bytes:
-                    raise ValueError("JSON response exceeds the byte limit")
+            for chunk in resp.iter_content(chunk_size=min(65536, limit + 1)):
+                if not chunk:
+                    continue
+                if not isinstance(chunk, bytes):
+                    raise ValueError("Invalid HTTP response chunk")
+                if len(body) + len(chunk) > limit:
+                    raise ValueError("HTTP response exceeds the byte limit")
                 body.extend(chunk)
-            if not body:
-                return None
-            try:
-                return json.loads(body)
-            except (ValueError, RecursionError) as exc:
-                raise ValueError("Invalid JSON response") from exc
+            return bytes(body)
         finally:
             resp.close()
 
-    def post_json(self, path: str, **kwargs: Any) -> Any:
-        resp = self.post(path, **kwargs)
-        if not resp.content:
+    def read_json_response(self, resp: requests.Response, *, max_bytes: int | None = None) -> Any:
+        """Decode one JSON response while enforcing the configured body limit."""
+        body = self.read_response_bytes(resp, max_bytes=max_bytes)
+        if not body:
             return None
-        return resp.json()
+        try:
+            return json.loads(body)
+        except (ValueError, RecursionError) as exc:
+            raise ValueError("Invalid JSON response") from exc
+
+    def get_json(self, path: str, *, max_bytes: int | None = None, **kwargs: Any) -> Any:
+        limit = _positive_byte_limit(max_bytes, self.max_response_bytes)
+        kwargs["stream"] = True
+        resp = self.get(path, **kwargs)
+        return self.read_json_response(resp, max_bytes=limit)
+
+    def post_json(self, path: str, *, max_bytes: int | None = None, **kwargs: Any) -> Any:
+        limit = _positive_byte_limit(max_bytes, self.max_response_bytes)
+        kwargs["stream"] = True
+        resp = self.post(path, **kwargs)
+        return self.read_json_response(resp, max_bytes=limit)
 
     def try_get_json(self, path: str, default: Any = None, ok_statuses: set[int] | None = None, **kwargs: Any) -> Any:
         """Optional GET; denied or unknown coverage is never silently discarded.
@@ -370,8 +400,20 @@ class HttpClient:
             raise
 
     # ------------------------------------------------------------ paginators
+    @staticmethod
+    def _require_page_items(data: Any, key: str | None, paginator: str) -> list[dict[str, Any]]:
+        if key is None:
+            items = data
+        elif not isinstance(data, dict) or key not in data:
+            raise RuntimeError(f"{paginator} response is missing collection '{key}'; collection incomplete")
+        else:
+            items = data[key]
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            raise RuntimeError(f"{paginator} response has an invalid collection; collection incomplete")
+        return items
+
     def paginate_link(self, path: str, params: dict[str, Any] | None = None, item_key: str | None = None, max_pages: int = 1000) -> Iterator[Any]:
-        """RFC 5988 ``Link: rel=next`` pagination (GitHub, GitLab)."""
+        """RFC 5988 Link-header pagination for GitHub and GitLab."""
         origin = self._url(path)
         url: str | None = origin
         pages = 0
@@ -381,20 +423,20 @@ class HttpClient:
             if url in seen:
                 raise RuntimeError("Repeated pagination link; collection incomplete")
             seen.add(url)
-            resp = self.get(url, params=params if pages == 0 else None)
-            data = resp.json()
-            items = data.get(item_key, []) if item_key and isinstance(data, dict) else data
-            if isinstance(items, list):
-                yield from items
-            else:
-                yield items
-            url = resp.links.get("next", {}).get("url")
+            resp = self.get(url, params=params if pages == 0 else None, stream=True)
+            data = self.read_json_response(resp)
+            items = self._require_page_items(data, item_key, "Link pagination")
+            next_url = resp.links.get("next", {}).get("url")
+            if next_url is not None and not isinstance(next_url, str):
+                raise RuntimeError("Invalid pagination link; collection incomplete")
+            yield from items
+            url = next_url
             pages += 1
         if url:
             raise RuntimeError("Pagination limit reached; collection incomplete")
 
     def paginate_odata(self, path: str, params: dict[str, Any] | None = None, max_pages: int = 1000) -> Iterator[dict[str, Any]]:
-        """Microsoft Graph / OData ``@odata.nextLink`` pagination."""
+        """Microsoft Graph and OData next-link pagination."""
         origin = self._url(path)
         url: str | None = origin
         pages = 0
@@ -407,8 +449,12 @@ class HttpClient:
             data = self.get_json(url, params=params if pages == 0 else None)
             if not isinstance(data, dict):
                 raise RuntimeError("Invalid paginated API response; collection incomplete")
-            yield from data.get("value", [])
-            url = data.get("@odata.nextLink") or data.get("nextLink")
+            items = self._require_page_items(data, "value", "OData pagination")
+            next_url = data.get("@odata.nextLink") or data.get("nextLink")
+            if next_url is not None and not isinstance(next_url, str):
+                raise RuntimeError("Invalid OData continuation link; collection incomplete")
+            yield from items
+            url = next_url or None
             pages += 1
         if url:
             raise RuntimeError("Pagination limit reached; collection incomplete")
@@ -438,13 +484,16 @@ class HttpClient:
                 data = self.get_json(path, params=params)
             if not isinstance(data, dict):
                 raise RuntimeError("Invalid paginated API response; collection incomplete")
-            yield from data.get(items_key, []) or []
+            items = self._require_page_items(data, items_key, "Token pagination")
             token = data.get(token_key)
+            if token not in (None, "") and not isinstance(token, str):
+                raise RuntimeError("Invalid pagination token; collection incomplete")
+            yield from items
             if not token:
                 return
-            if str(token) in seen:
+            if token in seen:
                 raise RuntimeError("Repeated pagination token; collection incomplete")
-            seen.add(str(token))
+            seen.add(token)
             params[token_param] = token
             pages += 1
         raise RuntimeError("Pagination limit reached; collection incomplete")
@@ -458,7 +507,7 @@ class HttpClient:
         cursor_param: str = "cursor",
         max_pages: int = 1000,
     ) -> Iterator[dict[str, Any]]:
-        """Slack style ``response_metadata.next_cursor`` pagination (configurable)."""
+        """Slack-style response-metadata cursor pagination."""
         params = dict(params or {})
         pages = 0
         seen: set[str] = set()
@@ -469,13 +518,20 @@ class HttpClient:
                 raise RuntimeError("Invalid paginated API response; collection incomplete")
             if data.get("ok") is False:
                 raise RuntimeError(f"API collection failed: {data.get('error', 'unknown error')}")
-            yield from data.get(items_key, []) or []
-            cursor = cursor_path(data)
+            items = self._require_page_items(data, items_key, "Cursor pagination")
+            try:
+                cursor = cursor_path(data)
+            except (AttributeError, TypeError) as exc:
+                raise RuntimeError("Invalid pagination cursor; collection incomplete") from exc
+            if cursor not in (None, "") and not isinstance(cursor, str):
+                raise RuntimeError("Invalid pagination cursor; collection incomplete")
+            yield from items
             if not cursor:
                 return
-            if str(cursor) in seen:
+            if cursor in seen:
                 raise RuntimeError("Repeated pagination cursor; collection incomplete")
-            seen.add(str(cursor))
+            seen.add(cursor)
             params[cursor_param] = cursor
             pages += 1
         raise RuntimeError("Pagination limit reached; collection incomplete")
+

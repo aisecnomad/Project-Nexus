@@ -78,11 +78,12 @@ class PowerPlatformConnector(BaseConnector):
             return self._tokens[scope]
         if not (self.tenant and self.client_id and self.client_secret):
             raise ConnectorError("lowcode.power-platform: tenant_id, client_id, client_secret required")
-        resp = HttpClient().post(
+        client = HttpClient()
+        resp = client.post(
             f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token",
             data={"grant_type": "client_credentials", "client_id": self.client_id, "client_secret": self.client_secret, "scope": scope},
         )
-        tok = resp.json()["access_token"]
+        tok = client.read_json_response(resp)["access_token"]
         self._tokens[scope] = tok
         return tok
 
@@ -135,7 +136,10 @@ class PowerPlatformConnector(BaseConnector):
         bots: dict[str, dict[str, Any]] = {}
         components: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
-            kind = rec.get("_kind") or _infer(rec)
+            kind = self._record_kind(rec)
+            if kind is None:
+                self.ctx.warn("lowcode.power-platform: unsupported or malformed provider record; coverage incomplete")
+                continue
             if kind == "flow":
                 self.ctx.examined()
                 f = self._flow_finding(rec)
@@ -147,12 +151,37 @@ class PowerPlatformConnector(BaseConnector):
                 if f:
                     yield f
             elif kind == "bot":
-                bots[str(rec.get("botid") or rec.get("id") or rec.get("name"))] = rec
+                bots[str(rec.get("botid") or rec.get("id") or rec.get("schemaname"))] = rec
             elif kind == "botcomponent":
                 components.setdefault(str(rec.get("_parentbotid_value") or rec.get("parentbotid") or ""), []).append(rec)
         for bid, bot in bots.items():
             self.ctx.examined()
             yield self._bot_finding(bot, components.get(bid, []))
+
+    def _record_kind(self, rec: dict[str, Any]) -> str | None:
+        if not self._record_fields_valid(
+            rec, strings=("_kind", "id", "name", "type", "botid", "botcomponentid", "schemaname", "_parentbotid_value", "parentbotid", "_environment"),
+            mappings=("properties",),
+        ):
+            return None
+        kind = rec.get("_kind") or _infer(rec)
+        identifiers = {
+            "environment": ("name", "id"), "flow": ("name", "id"), "app": ("name", "id"),
+            "bot": ("botid", "id", "schemaname"), "botcomponent": ("botcomponentid", "id"),
+        }
+        if kind not in identifiers or not any(isinstance(rec.get(key), str) and rec[key].strip() for key in identifiers[kind]):
+            return None
+        if kind == "botcomponent" and not (rec.get("_parentbotid_value") or rec.get("parentbotid")):
+            return None
+        props = rec.get("properties") or {}
+        if not self._record_fields_valid(props, strings=("displayName",), mappings=("definitionSummary",)):
+            return None
+        summary = props.get("definitionSummary") or {}
+        if not self._record_fields_valid(summary, arrays=("triggers", "actions")):
+            return None
+        if any(not self._record_fields_valid(item, strings=("type", "kind", "swaggerOperationId")) for field in ("triggers", "actions") for item in summary.get(field) or []):
+            return None
+        return kind
 
     # ---------------------------------------------------------------- flows
     def _ai_refs(self, blob: str) -> list[tuple[str, str]]:
@@ -243,7 +272,7 @@ class PowerPlatformConnector(BaseConnector):
             connector=self.name,
             kind=Kind.AGENT,
             title=f"Copilot Studio agent: {name}",
-            resource=f"power-platform:bot:{bot.get('botid') or bot.get('schemaname') or name}",
+            resource=f"power-platform:bot:{bot.get('botid') or bot.get('id') or bot.get('schemaname')}",
             resource_type="copilot-studio-agent",
             provider="power-platform",
             account=env,
