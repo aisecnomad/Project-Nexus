@@ -9,7 +9,7 @@ import os
 import re
 import threading
 import time
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -41,11 +41,7 @@ def _remaining_timeout() -> float:
 
 
 def pattern_timeout(default: float = REGEX_TIMEOUT_SECONDS) -> float:
-    """Per-pattern timeout for regex calls made outside the matcher.
-
-    Callers such as manifest parsers pass their own ceiling; an open per-input
-    deadline (``scan_budget``) always caps it, and an elapsed deadline raises.
-    """
+    """Cap external pattern calls by the active per-input execution budget."""
     deadline = _SCAN_DEADLINE.get()
     if deadline is None:
         return default
@@ -53,7 +49,6 @@ def pattern_timeout(default: float = REGEX_TIMEOUT_SECONDS) -> float:
     if remaining <= 0:
         raise MatchTimeoutError("signature matching exceeded the input execution budget")
     return min(default, remaining)
-
 
 
 def _run_regex(operation: Callable[[float], Any], context: str) -> Any:
@@ -312,11 +307,7 @@ class SignatureIndex:
 
     @contextmanager
     def _input_budget(self):
-        """Use the caller's deadline when one is open; otherwise open the default.
-
-        Nesting the default budget under an explicit one previously capped
-        every file at the default two seconds, whatever ``scan_timeout`` said.
-        """
+        """Preserve a caller's explicit budget or open the default input budget."""
         if _SCAN_DEADLINE.get() is not None:
             _remaining_timeout()
             yield
@@ -340,6 +331,7 @@ class SignatureIndex:
         out: list[Match] = []
         # Ignore matches beginning inside comments and literals before applying
         # the per-signal quota. A file with many examples must not hide live code.
+        newlines: list[int] | None = None
         starts = [start for start, _ in ignore_spans]
         ends = [end for _, end in ignore_spans]
 
@@ -347,9 +339,6 @@ class SignatureIndex:
             previous = bisect_right(starts, offset) - 1
             return previous >= 0 and offset < ends[previous]
 
-        # Counting newlines from the start of the text for every hit is
-        # quadratic on large inputs with many signals; index them once.
-        newlines: list[int] | None = None
         for sig, s in self._by_type.get(signal_type, []):
             if language and s.languages and language not in s.languages:
                 continue
@@ -358,7 +347,7 @@ class SignatureIndex:
                 for m in _finditer(rx, text, sig.id, max_per_signal - hits, excluded if starts else None):
                     if newlines is None:
                         newlines = [newline.start() for newline in re.finditer("\n", text)]
-                    line = bisect_right(newlines, m.start()) + 1
+                    line = bisect_left(newlines, m.start()) + 1
                     excerpt = m.group(0)
                     # Never cut away a credential's recognizable context before
                     # redaction. Dedicated secret detectors need the raw match

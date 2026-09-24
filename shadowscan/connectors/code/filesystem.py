@@ -210,7 +210,7 @@ class _Project:
     coding_agent_files: dict[str, list[str]] = field(default_factory=dict)  # sig id -> files
     coding_agent_matches: dict[str, list[tuple[Match, str, str | None]]] = field(default_factory=dict)
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
-    seen: set[tuple[str, str, str, str, int | None]] = field(default_factory=set)
+    seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
 
 
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
@@ -494,6 +494,7 @@ class FilesystemConnector(BaseConnector):
 
                     def excerpt(line_number: int | None, secret: str | None = None) -> str:
                         return _excerpt(safe_lines, line_number or 1, secret)
+
                     is_mcp = self._looks_like_mcp_config(rel, name, text) or (
                         lower == "server.json" and '"mcpServers"' in text
                     )
@@ -602,7 +603,7 @@ class FilesystemConnector(BaseConnector):
         for proj in projects.values():
             try:
                 yield from self._emit_project(label, root, proj)
-            except Exception as exc:  # noqa: BLE001 - one project must not discard the root's other findings
+            except Exception as exc:  # noqa: BLE001 - retain findings from other projects
                 self.ctx.error(f"code.filesystem: {proj.root}: project analysis incomplete ({type(exc).__name__})")
         for rel, servers in mcp_files:
             try:
@@ -642,7 +643,9 @@ class FilesystemConnector(BaseConnector):
         # A manifest artifact and the generic text pass can observe the same
         # token on the same line. Confidence combines evidence as independent
         # signals, so a duplicate observation must not count twice.
-        key = (m.signature_id, m.signal.type, m.value, rel, m.line)
+        # Distinct signals may attach different authority/capabilities to the
+        # same text. Deduplicate repeated passes of the same signal only.
+        key = (m.signature_id, id(m.signal), m.value, rel, m.line)
         if key in proj.seen:
             return
         proj.seen.add(key)

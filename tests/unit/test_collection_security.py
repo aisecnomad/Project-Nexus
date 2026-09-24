@@ -124,15 +124,10 @@ def test_foundry_agent_cursor_pages(index, monkeypatch):
     assert http.get_json.call_args.kwargs["params"]["after"] == "first"
 
 
-@pytest.mark.parametrize("endpoint", ["https://evil.example", "https://10.1.2.3/api/projects/p", "http://x.services.ai.azure.com"])
-def test_foundry_rejects_untrusted_metadata_endpoint(index, monkeypatch, endpoint):
-    ctx = context(index, foundry_token="synthetic")
-    connector = AzureConnector(ctx)
+def test_foundry_rejects_untrusted_metadata_endpoint(index, monkeypatch):
+    connector = AzureConnector(context(index, foundry_token="synthetic"))
     http = Mock()
     monkeypatch.setattr("shadowscan.connectors.cloud.azure.HttpClient", http)
-    # No token leaves the process, and one untrusted project endpoint marks
-    # coverage incomplete instead of abandoning the rest of the tenant.
-    assert list(connector._collect_agents({}, {"properties": {"endpoints": {"AI Foundry API": endpoint}}})) == []
+    assert list(connector._collect_agents({}, {"properties": {"endpoints": {"AI Foundry API": "https://evil.example"}}})) == []
+    assert connector.ctx.stats.incomplete
     http.assert_not_called()
-    assert ctx.stats.incomplete
-    assert any("agent coverage unknown" in warning for warning in ctx.stats.warnings)

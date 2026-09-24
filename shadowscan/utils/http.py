@@ -9,9 +9,11 @@ import contextvars
 import ipaddress
 import json
 import logging
+import random
+import re
 import socket
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -32,10 +34,37 @@ DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_RETRY_DELAY = 120
 RETRY_STATUSES = {429, 500, 502, 503, 504}
+_HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
 
 _allow_private_origin: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "shadowscan_allow_private_origin", default=False
 )
+
+
+def _validate_headers(headers: Any, *, allow_removal: bool = False) -> None:
+    """Reject malformed headers without putting their names or values in errors.
+
+    requests and the underlying HTTP transport quote invalid input in errors.
+    Header names can contain credentials too, so diagnostics are deliberately
+    independent of both. Per-request None retains requests' removal semantics.
+    """
+    if headers is None:
+        return
+    if not isinstance(headers, Mapping):
+        raise ValueError("HTTP headers must be a mapping")
+    for name, value in headers.items():
+        try:
+            encoded_name = name.encode("ascii") if isinstance(name, str) else name
+            if not isinstance(encoded_name, bytes) or not _HEADER_NAME.fullmatch(encoded_name):
+                raise ValueError
+            if allow_removal and value is None:
+                continue
+            check_header_validity((name, value))
+            encoded_value = value.encode("latin-1") if isinstance(value, str) else value
+            if any(byte < 32 and byte != 9 or byte == 127 for byte in encoded_value):
+                raise ValueError
+        except (InvalidHeader, TypeError, ValueError, UnicodeError):
+            raise ValueError("HTTP header contains invalid characters or types") from None
 
 
 def _positive_byte_limit(value: int | None, default: int) -> int:
@@ -218,6 +247,31 @@ class _DestinationPolicyAdapter(HTTPAdapter):
         raise ValueError("Proxies are unsupported by the destination-enforcing HTTP client")
 
 
+def _rate_limited(resp: requests.Response) -> bool:
+    """GitHub reports primary and secondary rate limits with 403 as well as 429."""
+    return resp.status_code == 403 and (
+        resp.headers.get("X-RateLimit-Remaining") == "0" or bool(resp.headers.get("Retry-After"))
+    )
+
+
+def _retry_delay(resp: requests.Response, attempt: int) -> float:
+    """Honor server hints; otherwise back off exponentially with jitter.
+
+    Jitter keeps parallel connectors (and scanner fleets) from retrying in
+    lockstep against the same API. Every delay is capped at MAX_RETRY_DELAY.
+    """
+    retry_after = resp.headers.get("Retry-After")
+    if retry_after and retry_after.isascii() and retry_after.isdigit():
+        delay = float(retry_after) + random.uniform(0, 1)
+    else:
+        step = min(2 ** attempt, 30)
+        delay = step / 2 + random.uniform(0, step / 2)
+    reset = resp.headers.get("X-RateLimit-Reset")
+    if resp.headers.get("X-RateLimit-Remaining") == "0" and reset and reset.isascii() and reset.isdigit():
+        delay = max(delay, float(reset) - time.time() + 1)
+    return max(0.0, min(delay, MAX_RETRY_DELAY))
+
+
 def diagnostic_url(url: str) -> str:
     """Drop query/fragment and userinfo before URLs enter errors or logs."""
     parsed = urlsplit(url)
@@ -254,6 +308,8 @@ class HttpClient:
         if not isinstance(self.allow_private_origin, bool):
             raise TypeError("allow_private_origin must be a boolean")
         self.session = session or requests.Session()
+        _validate_headers(self.session.headers)
+        _validate_headers(headers)
         # Environment proxies can resolve destinations outside our socket policy.
         # Explicit proxies are refused by the adapter as well.
         self.session.trust_env = False
@@ -269,15 +325,6 @@ class HttpClient:
         self.session.mount("https://", self._policy_adapter)
         self.session.headers.update({"User-Agent": f"shadowscan/{__version__}", "Accept": "application/json"})
         if headers:
-            for name, value in headers.items():
-                # requests rejects control characters later, quoting the whole
-                # header (credential included) in the exception. Fail here
-                # without echoing the value; a trailing newline from a secret
-                # file is the usual cause.
-                try:
-                    check_header_validity((name, value))
-                except InvalidHeader:
-                    raise ValueError(f"HTTP header {name!r} contains invalid characters") from None
             self.session.headers.update(headers)
         if auth is not None:
             self.session.auth = auth
@@ -297,6 +344,8 @@ class HttpClient:
     def request(self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any) -> requests.Response:
         if not isinstance(raise_for_status, bool):
             raise TypeError("raise_for_status must be a boolean")
+        _validate_headers(self.session.headers)
+        _validate_headers(kwargs.get("headers"), allow_removal=True)
         url = self._url(path)
         # requests treats any falsy effective setting as CERT_NONE, including
         # 0, an empty CA path and a session-level None. Per-request None inherits
@@ -325,7 +374,11 @@ class HttpClient:
                 raise ValueError("HTTP destination policy adapter was replaced")
             attempt += 1
             self.requests_made += 1
-            resp = self.session.request(method, url, **kwargs)
+            try:
+                resp = self.session.request(method, url, **kwargs)
+            except InvalidHeader:
+                # Auth handlers can add headers after our preflight validation.
+                raise ValueError("HTTP header contains invalid characters or types") from None
             if resp.status_code in {301, 302, 303, 307, 308}:
                 location = resp.headers.get("Location")
                 resp.close()
@@ -340,15 +393,9 @@ class HttpClient:
                     kwargs.pop("json", None)
                     kwargs.pop("data", None)
                 continue
-            if resp.status_code in RETRY_STATUSES and attempt <= self.max_retries:
+            if (resp.status_code in RETRY_STATUSES or _rate_limited(resp)) and attempt <= self.max_retries:
                 resp.close()
-                retry_after = resp.headers.get("Retry-After")
-                delay = min(float(retry_after), MAX_RETRY_DELAY) if retry_after and retry_after.isascii() and retry_after.isdigit() else min(2 ** attempt, 30)
-                # GitHub style secondary rate limit
-                reset = resp.headers.get("X-RateLimit-Reset")
-                remaining = resp.headers.get("X-RateLimit-Remaining")
-                if remaining == "0" and reset and reset.isascii() and reset.isdigit():
-                    delay = max(delay, min(float(reset) - time.time() + 1, MAX_RETRY_DELAY))
+                delay = _retry_delay(resp, attempt)
                 log.warning("HTTP %s from %s; retrying in %.0fs (attempt %d)", resp.status_code, diagnostic_url(url), delay, attempt)
                 time.sleep(delay)
                 continue

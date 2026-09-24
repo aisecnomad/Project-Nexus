@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from enum import Enum
@@ -20,21 +21,16 @@ from shadowscan.utils.redaction import sanitize
 
 FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v2"
 LEGACY_FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v1"
-# Fields that are enums, numbers or handled separately by Finding.sanitize().
-_UNSANITIZED_FINDING_FIELDS = frozenset({"surface", "kind", "likelihood", "risk", "evidence", "_clean_digest"})
 
 
-def _state_digest(values: dict[str, Any]) -> bytes | None:
-    """Cheap content digest used to skip re-sanitizing unchanged findings.
-
-    Any state the digest cannot represent (for example non-string mapping keys)
-    yields ``None``, which never matches, so such findings are always sanitized.
-    """
-    try:
-        encoded = json.dumps(values, sort_keys=True, default=str, ensure_ascii=False, separators=(",", ":"))
-    except (TypeError, ValueError):
-        return None
-    return hashlib.blake2b(encoded.encode("utf-8", "surrogatepass"), digest_size=16).digest()
+def _validate_number(value: Any, name: str, *, minimum: float | None = None, maximum: float | None = None) -> None:
+    """Validate imported numeric fields without reflecting untrusted values."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"finding {name} must be a finite number")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"finding {name} must be a finite number")
+    if (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
+        raise ValueError(f"finding {name} is outside its allowed range")
 
 
 class Surface(str, Enum):
@@ -171,10 +167,6 @@ class Finding:
     # several observations of one resource/type must supply distinct values.
     identity_discriminator: str = ""
     identity_schema: str = FINDING_IDENTITY_SCHEMA
-    # Digest of the state last verified clean; never serialized. A finding is
-    # sanitized many times between collection and reporting, and most of those
-    # passes see unchanged content. Any mutation changes the digest.
-    _clean_digest: bytes | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.identity_discriminator:
@@ -197,37 +189,24 @@ class Finding:
             ], separators=(",", ":"), ensure_ascii=True)
         return "ss-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
-    def _sanitizable_state(self) -> dict[str, Any]:
+    def sanitize(self) -> None:
+        """Remove credentials from every persisted/reportable field in place."""
         values = {
             attr.name: getattr(self, attr.name) for attr in fields(self)
-            if attr.name not in _UNSANITIZED_FINDING_FIELDS
+            if attr.name not in {"surface", "kind", "likelihood", "risk", "evidence"}
         }
         values["evidence"] = [{attr.name: getattr(ev, attr.name) for attr in fields(ev)} for ev in self.evidence]
         values["risk_factors"] = [asdict(factor) for factor in self.risk.factors]
-        return values
-
-    def sanitize(self) -> None:
-        """Remove credentials from every persisted/reportable field in place.
-
-        Sanitization is idempotent; a pass over state already verified clean is
-        skipped by digest so repeated defence-in-depth calls stay cheap.
-        """
-        values = self._sanitizable_state()
-        digest = _state_digest(values)
-        if digest is not None and digest == self._clean_digest:
-            return
-        cleaned = sanitize(values)
-        unchanged = cleaned == values
-        for name, value in cleaned.items():
+        values = sanitize(values)
+        for name, value in values.items():
             if name not in {"evidence", "risk_factors"}:
                 setattr(self, name, value)
-        for ev, clean in zip(self.evidence, cleaned["evidence"], strict=True):
+        for ev, clean in zip(self.evidence, values["evidence"], strict=True):
             for name, value in clean.items():
                 setattr(ev, name, value)
-        for factor, clean in zip(self.risk.factors, cleaned["risk_factors"], strict=True):
+        for factor, clean in zip(self.risk.factors, values["risk_factors"], strict=True):
             factor.id = clean["id"]
             factor.description = clean["description"]
-        self._clean_digest = digest if unchanged else _state_digest(self._sanitizable_state())
 
     def add_evidence(self, ev: Evidence) -> None:
         ev.sanitize()
@@ -264,7 +243,6 @@ class Finding:
     def to_dict(self) -> dict[str, Any]:
         self.sanitize()
         d = asdict(self)
-        d.pop("_clean_digest", None)
         d["surface"] = self.surface.value
         d["kind"] = self.kind.value
         d["likelihood"] = self.likelihood.value
@@ -287,12 +265,18 @@ class Finding:
         d["surface"] = Surface(d["surface"])
         d["kind"] = Kind(d["kind"])
         d["likelihood"] = Likelihood(d.get("likelihood", "weak"))
-        risk = d.get("risk") or {}
+        _validate_number(d.get("confidence", 0.0), "confidence", minimum=0, maximum=1)
+        risk = d.get("risk")
+        if risk is None:
+            risk = {}
         if not isinstance(risk, dict):
             raise ValueError("finding risk must be an object")
+        _validate_number(risk.get("score", 0), "risk score", minimum=0, maximum=100)
         factors = risk.get("factors", [])
         if not isinstance(factors, list) or any(not isinstance(factor, dict) for factor in factors):
             raise ValueError("finding risk factors must be objects")
+        for factor in factors:
+            _validate_number(factor.get("weight"), "risk factor weight")
         d["risk"] = Risk(
             score=risk.get("score", 0),
             level=RiskLevel(risk.get("level", "info")),
@@ -302,6 +286,8 @@ class Finding:
         evidence = d.get("evidence", [])
         if not isinstance(evidence, list) or any(not isinstance(item, dict) for item in evidence):
             raise ValueError("finding evidence must be objects")
+        for item in evidence:
+            _validate_number(item.get("weight", 0.5), "evidence weight", minimum=0, maximum=1)
         evidence_fields = {attr.name for attr in fields(Evidence)}
         d["evidence"] = [Evidence(**{name: value for name, value in item.items() if name in evidence_fields})
                          for item in evidence]

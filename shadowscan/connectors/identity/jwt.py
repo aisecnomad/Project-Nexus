@@ -139,13 +139,16 @@ class JwtConnector(BaseConnector, _NoDump):
             except (ValueError, TypeError, OverflowError, RecursionError, KeyError, MatchTimeoutError) as exc:
                 # Hostile claims (huge numbers, odd types) must not stop the
                 # analysis of every later token in the input.
-                self.ctx.warn(f"identity.jwt: token analysis failed ({type(exc).__name__})")
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"identity.jwt: token analysis failed ({type(exc).__name__}){detail}")
                 continue
             if f:
                 yield f
 
     def _jwks_document(self, jwks_url: str) -> dict[str, Any]:
         """Fetch each configured key set once per run, including its failure."""
+        if not hasattr(self, "_jwks_cache"):
+            self._jwks_cache = {}
         cached = self._jwks_cache.get(jwks_url)
         if cached is None:
             try:
@@ -154,7 +157,9 @@ class JwtConnector(BaseConnector, _NoDump):
                 cached = exc
             self._jwks_cache[jwks_url] = cached
         if isinstance(cached, BaseException):
-            raise cached
+            # Re-raising one cached exception otherwise retains a traceback
+            # frame for every token analyzed after an unavailable key set.
+            raise cached.with_traceback(None)
         return cached
 
     # -------------------------------------------------------------- analysis
@@ -179,7 +184,7 @@ class JwtConnector(BaseConnector, _NoDump):
                     header,
                     expected_issuer=self.ctx.get("expected_issuer"),
                     allowed_algorithms=self.ctx.get("allowed_algorithms"),
-                    document=self._jwks_document(jwks_url),
+                    document_loader=self._jwks_document,
                 )
             except Exception as exc:  # noqa: BLE001
                 verified = False
@@ -227,7 +232,10 @@ class JwtConnector(BaseConnector, _NoDump):
             identity_type = "workload"
             reasons.append("SPIFFE workload identity")
             f.add_tag("spiffe")
-        if family == "keycloak" and str(sub).startswith("service-account-") or str(claims.get("preferred_username", "")).startswith("service-account-"):
+        if family == "keycloak" and (
+            str(sub).startswith("service-account-")
+            or str(claims.get("preferred_username", "")).startswith("service-account-")
+        ):
             identity_type = "service"
             reasons.append("Keycloak service account")
         if "act" in claims or "may_act" in claims:

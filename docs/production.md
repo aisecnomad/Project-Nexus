@@ -357,21 +357,6 @@ Google Workspace per-user token envelopes preserve the parent user in both
 single-object and array forms. Regenerate earlier offline analyses affected by
 lost user attribution before using their counts as governance evidence.
 
-Azure per-resource detail failures (throttling after retries, transport errors,
-Private Link or unrecognised Foundry endpoints) are incomplete coverage for that
-resource; the rest of the subscription inventory is retained. Foundry projects
-carry their account's subscription and location. List-typed settings such as
-`regions`, `services`, `subscriptions`, `locations`, `projects` and
-`compartments` accept a single string as one value; unknown AWS `services`
-names are rejected at configuration time. Azure `appsettings` and OCI `function`
-records place values under an `environment` key so record dumps redact them.
-Salesforce continuation failures and ServiceNow repeated or unbounded pages keep
-the collected records and mark coverage incomplete.
-
-SSM parameter findings use the real `...:parameter/<name>` ARN, and GitLab
-group-scoped findings carry the plain group path rather than its URL encoding.
-Both change finding identity for those objects: rebuild comparison baselines.
-
 ## Release verification
 
 ### Protect the merge gate
@@ -447,3 +432,43 @@ Before broad deployment, retain evidence for each intended connector instance:
 
 These checks require operator-specific tenant access and operational decisions.
 Until completed, describe deployment status as pending tenant and container acceptance.
+
+## Consolidated candidate compatibility
+
+The consolidated review preserves the PR #30 runtime policies and reconciles
+verified additional fixes with PR #31, which merged during the review. The
+canonical deadline setting is `options.connector_timeout_seconds` /
+`--connector-timeout-seconds` (default 120). Legacy `options.connector_timeout`
+and `--connector-timeout` remain deprecated compatibility aliases. Configure only
+one YAML key; supplying both is rejected. Legacy YAML `connector_timeout: null`
+uses the 120-second default rather than disabling it.
+Workers are not replaced after all capacity is occupied by blocked calls; the
+remaining queue is reported incomplete. The CLI does not forcibly exit from a
+library call. Continue to enforce the disposable worker's external job deadline.
+
+New Azure App Service settings and OCI Function exports store configuration under
+`environment`, which redacts every value even when a credential has an unusual
+name. Analyzers still accept older `settings` / `config` exports. GCP service-account
+exports include `key_coverage`; denied or malformed key listings carry an unknown
+count rather than an observed zero. Consumers must preserve that distinction.
+
+Corrected SSM parameter ARNs and nested GitLab group account paths can change the
+identity of affected findings. Duplicate source observations no longer inflate
+confidence. Review changed classifications and rebuild comparison baselines when
+adopting this candidate; the collection-scope digest already prevents automatic
+resolution across different scanner implementations.
+
+Offline export diagnostics are capped at 20 detailed messages plus a suppression
+message per file; context-generated errors and warnings are separately capped at
+1,000 plus a suppression message per connector. Suppression never clears incomplete
+coverage, and later valid records continue to be analyzed. Gateway detail caps
+also mark missing detail incomplete while preserving supported aggregate totals.
+
+JWKS documents are fetched lazily and cached only within a JWT analysis. Tokens
+with rejected algorithms do not trigger a lookup, and each token is still checked
+against its expected issuer and allowed keys. This is signature evidence, not an
+authorization or token-acceptance decision. Key rotation during the same analysis
+requires a new scan.
+
+See [the consolidated review](consolidated-review-2026-09-24.md) for verification
+evidence and implementation choices.

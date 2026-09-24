@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import tomllib
 import xml.etree.ElementTree as ET
-from bisect import bisect_right
+from bisect import bisect_left
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
@@ -20,7 +20,7 @@ from typing import Any
 import regex as re
 import yaml
 
-from shadowscan.signatures.matcher import pattern_timeout
+from shadowscan.signatures.matcher import _run_regex, pattern_timeout
 from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
 
 # Regex execution here runs outside the signature matcher. A per-pattern
@@ -465,7 +465,7 @@ class _LineIndex:
     def at(self, position: int) -> int:
         if self._offsets is None:
             self._offsets = [match.start() for match in re.finditer("\n", self._text)]
-        return bisect_right(self._offsets, position) + 1
+        return bisect_left(self._offsets, position) + 1
 
 
 def _unique_artifacts(artifacts: list[Artifact]) -> list[Artifact]:
@@ -535,30 +535,39 @@ def _yaml_line_matches(pattern: re.Pattern[str], text: str, deadline: float) -> 
             if newline < start:
                 newline = text.find("\n", end)
             end = len(text) if newline < 0 else newline + 1
-        remaining = deadline - monotonic()
+        remaining = min(deadline - monotonic(), _pattern_timeout())
         if remaining <= 0:
             raise TimeoutError("YAML manifest matching exceeded its time budget")
-        yield from pattern.finditer(text, start, end, timeout=min(0.1, remaining), concurrent=False)
+        # Materialize only this bounded line chunk before caller processing;
+        # regex iterators otherwise charge artifact construction and unrelated
+        # worker CPU to matching. Reuse the matcher contention retry budget.
+        matches = _run_regex(
+            lambda timeout: list(pattern.finditer(text, start, end, timeout=min(timeout, remaining), concurrent=False)),
+            "YAML manifest",
+        )
+        if monotonic() > deadline:
+            raise TimeoutError("YAML manifest matching exceeded its time budget")
+        yield from matches
         start = end
 
 
 def parse_compose_or_k8s(text: str) -> ManifestResult:
     """docker-compose, Kubernetes manifests, Helm values, CI configs: images + env keys."""
     res = ManifestResult()
-    deadline = monotonic() + 1.0
-    line_starts = [0, *(i + 1 for i, char in enumerate(text) if char == "\n")]
+    deadline = monotonic() + _pattern_timeout()
+    lines = _LineIndex(text)
     for m in _yaml_line_matches(_YAML_IMAGE, text, deadline):
-        res.artifacts.append(Artifact("image", m.group(1), bisect_right(line_starts, m.start())))
+        res.artifacts.append(Artifact("image", m.group(1), lines.at(m.start())))
     for m in _yaml_line_matches(_YAML_REPO, text, deadline):
         val = m.group(1)
         if "/" in val and not val.startswith(("http", "git@")):
-            res.artifacts.append(Artifact("image", val, bisect_right(line_starts, m.start())))
+            res.artifacts.append(Artifact("image", val, lines.at(m.start())))
     for m in _yaml_line_matches(_YAML_ENV_KEY, text, deadline):
-        res.artifacts.append(Artifact("env", m.group(1), bisect_right(line_starts, m.start())))
+        res.artifacts.append(Artifact("env", m.group(1), lines.at(m.start())))
     for m in _yaml_line_matches(_YAML_USES, text, deadline):
-        res.artifacts.append(Artifact("action", m.group(1), bisect_right(line_starts, m.start())))
+        res.artifacts.append(Artifact("action", m.group(1), lines.at(m.start())))
     for m in _SECRETS_REF.finditer(text, timeout=_pattern_timeout(), concurrent=False):
-        res.artifacts.append(Artifact("secret_ref", m.group(1), bisect_right(line_starts, m.start())))
+        res.artifacts.append(Artifact("secret_ref", m.group(1), lines.at(m.start())))
     return res
 
 

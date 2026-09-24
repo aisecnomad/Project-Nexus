@@ -2,37 +2,16 @@
 
 ## 0.1.1 — Unreleased
 
-### Production review round 2 (2026-09-24)
-
-#### Security
-- Configured HTTP header values are validated before a request is built; a credential with a trailing newline no longer reaches a library error message. The Okta `SSWS` scheme and `repr()`-escaped known values are redacted like `Bearer` values.
-- Secret excerpts are redacted before truncation, and the text sanitizer now recognises every credential format the secret signatures detect (Groq, xAI, NVIDIA, Perplexity, Replicate, Cerebras, Together, E2B, LangSmith, Pinecone, Tavily, Firecrawl, Dify, Langfuse, LiteLLM).
-- Azure App Service settings and OCI Function configuration are exported under an env-style key so record dumps redact every value.
-- Self-contained HTML reports declare a Content-Security-Policy that forbids network access, navigation and form submission.
-
-#### Reliability
-- Azure: a failed per-resource detail call, transport error, Private Link or unrecognised Foundry endpoint is incomplete coverage for that resource instead of discarding the whole subscription inventory. Foundry projects inherit their account's subscription and location.
-- List-typed connector settings (`regions`, `services`, `locations`, `projects`, `subscriptions`, `compartments`) accept a bare string as one value; `--set services=lambda` previously scanned nothing and reported completion. Unknown AWS services are rejected.
-- GitHub fine-grained PAT inventory is optional coverage.
-- Gateway: linear access-log/logfmt parsing, finite-number hygiene (NaN/Infinity), fractional epoch timestamps, bounded per-caller distributions and observation buckets, and one diagnostic for a corrupt JSON export instead of one per line.
-- Identity: Okta and Auth0 isolate malformed records; JWT analysis isolates hostile claims and fetches each JWKS once per run; Okta optional lookups no longer abort the inventory.
-- Code: git author bytes that are not UTF-8 no longer abort a project; every emit phase is isolated; duplicate manifest/text observations count once; `scan_timeout` above 2 seconds is honoured; manifest regexes honour the per-file budget; clone temp directories tolerate a symlinked temp root; CODEOWNERS budgets are per lookup and cheap for non-matching anchored rules.
-- Report output no longer depends on the hash seed (set-ordered permissions).
-- The CLI exits without joining a timed-out connector worker so a blocked SDK call cannot hold the job open after the report is written.
-
-#### Performance
-- Findings are sanitized once per state change instead of about seven times end to end; the signature index is loaded once per first run; signature patterns compile once; line numbers use a newline index; inventory name patterns are cached; plain JSON files skip the JSONC comment stripper; OCI clients are cached per region.
-
-#### Migration
-- SSM parameter findings now use the real `...:parameter/<name>` ARN and GitLab group-scoped findings carry the plain group path; rebuild comparison baselines for those.
-- Azure `appsettings` and OCI `function` record dumps now use an `environment` key; older dumps with `settings` / `config` still analyse.
-
-
 Package version: 0.1.1. No release tag or published artifact is implied by this
 entry. Tenant canaries and container runtime acceptance are still required.
 
 ### Security
 
+- Withhold the credential-bearing path of webhook capability URLs (Slack, Discord, Teams, Zapier, Make, IFTTT, Telegram, n8n) in evidence, reports and record exports; `webhookUrl`/`webhookUri`/`webhookId`/`hookUrl`, `AccountKey`, `SharedAccessKey` and `sas_token` fields are sensitive.
+- Apply the Keycloak service-account rule to Keycloak issuers only; a `preferred_username` starting with `service-account-` no longer relabels tokens from other issuers.
+- Match the Kubernetes JWT claim namespace on the exact `kubernetes.io` prefix.
+- Validate headers before requests can echo credential-bearing invalid values; redact additional provider formats and escaped credentials before source excerpts are shortened.
+- Redact opaque Azure app settings and OCI Function configuration in record exports. Reject malformed numeric fields in imported findings and restrict HTML scripts to the shipped script's SHA-256 hash.
 - Redact multiline YAML credentials before evidence excerpts, and pin GitLab API tree pagination to an immutable commit.
 - Route GCP token refresh through bounded response and redirect policy.
 - Classify JWT issuer families by parsed hostname labels rather than substring matches.
@@ -44,12 +23,21 @@ entry. Tenant canaries and container runtime acceptance are still required.
 
 ### Reliability
 
+- Render inventory, signature and connector text literally in CLI tables: Rich markup in an approval card no longer crashes `inventory check` or restyles the review screen.
+- Retry GitHub 403 rate-limit responses (`X-RateLimit-Remaining: 0` or `Retry-After`) but not plain permission denials; all HTTP backoff is jittered and capped at 120 seconds.
+- SARIF artifact URIs are percent-encoded, made root-relative only on path boundaries, absolute outside the scan root, and each rule reports its most severe result.
+- Preserve valid cloud, identity and SaaS records after individual collection/analysis failures. GCP service-account key coverage now distinguishes unknown inventory from observed zero keys.
+- Normalize scalar cloud scope options and reject unknown AWS service selections instead of reporting an empty successful scan.
+- Bound diagnostic streams, gateway detail cardinality and numeric aggregates; isolate failures without losing later valid records.
+- Deduplicate repeated source observations without dropping distinct custom signal capabilities. Preserve caller scan budgets and bound concurrent manifest matching by both CPU and wall time.
 - Add a default 120-second connector deadline with incomplete-scan reporting. This is a soft thread deadline; host job timeouts remain necessary for blocked SDK/plugin calls.
 - Protect incremental cache slots with nonblocking POSIX advisory locks. Contention or missing platform locking falls back to full scans without unsafe cache reuse or saves.
 - Preserve the required CodeQL check name `analyze` and test hash-locked runtime installation in the Python 3.11/3.12 CI matrix.
 
 ### Operations
 
+- Reuse bounded inventory patterns and per-analysis JWKS documents; index source newlines, avoid unnecessary JSONC parsing and reuse OCI clients within one collection session.
+- Consolidate additional verified fixes from PR #31 on top of the PR #30 candidate; preserve PR #30's credential isolation, default deadlines and release gates.
 - Explain how to select and verify the final reviewed full commit SHA; avoid an install example that silently falls behind later candidate fixes.
 - Raise the development Ruff requirement to 0.16.8 and validate wheel installations against the runtime lock.
 - Correct README commands, formatting and discovery claims; document the active required checks and independent-review merge gate.

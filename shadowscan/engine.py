@@ -49,37 +49,22 @@ class Engine:
         self.config = config
         config.validate_security_options()
         self._index_supplied = index is not None
-        self.index = index if index is not None else self._load_index()
-        # The index built here serves the first run; later runs reload so a
-        # reusable Engine notices signature pack edits between runs.
-        self._index_used = False
+        self.index = index if index is not None else get_index(
+            extra_dirs=config.signature_dirs or None, reload=True, allow_override=config.allow_signature_override,
+        )
         self.progress = progress or (lambda cid, msg: None)
         self.inventory: Inventory | None = None
-        # Connector ids whose worker threads outlived ``connector_timeout_seconds`` in
-        # the last run. Their threads may still be blocked inside an SDK call;
-        # a process that must exit promptly has to use ``os._exit``.
-        self.abandoned_workers: list[str] = []
         if config.inventory:
             self.inventory = Inventory.load(config.inventory)
-
-    def _index_settings(self) -> tuple[tuple[str, ...], bool]:
-        return tuple(self.config.signature_dirs), self.config.allow_signature_override
-
-    def _load_index(self) -> SignatureIndex:
-        self._index_settings_loaded = self._index_settings()
-        return get_index(
-            extra_dirs=self.config.signature_dirs or None, reload=True,
-            allow_override=self.config.allow_signature_override,
-        )
 
     # ------------------------------------------------------------------ run
     def run(self, only: list[str] | None = None) -> ScanResult:
         self.config.min_confidence = validate_min_confidence(self.config.min_confidence)
         self.config.validate_security_options()
-        if not self._index_supplied and (self._index_used or self._index_settings() != self._index_settings_loaded):
-            self.index = self._load_index()
-        self._index_used = True
-        self.abandoned_workers = []
+        # A reusable Engine must notice signature pack edits between runs.
+        if not self._index_supplied:
+            self.index = get_index(extra_dirs=self.config.signature_dirs or None, reload=True,
+                                   allow_override=self.config.allow_signature_override)
         # Registry approval can change independently of source inputs or an Engine
         # instance's lifetime. It is never persisted in connector cache entries.
         self.inventory = Inventory.load(self.config.inventory) if self.config.inventory else None
@@ -355,9 +340,6 @@ class Engine:
                             pending.remove(future)
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
-        # Threads that were running when their deadline expired may still be
-        # blocked inside an SDK call; the CLI must not join them at exit.
-        self.abandoned_workers = [spec.id for number, spec in jobs if number in timed_out and states[number].started_at is not None]
         # Merge uses first-observed owner and metadata as precedence.
         # Preserve configured order regardless of request completion.
         for number, _ in jobs:

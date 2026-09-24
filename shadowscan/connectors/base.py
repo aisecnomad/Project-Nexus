@@ -84,6 +84,8 @@ def _positive_limit(value: Any, name: str) -> int:
 class ConnectorContext:
     """Runtime context handed to a connector."""
 
+    _MAX_DIAGNOSTICS = 1000
+
     def __init__(
         self,
         config: dict[str, Any] | None = None,
@@ -104,6 +106,7 @@ class ConnectorContext:
         self.stats: ScanStats | None = None
         self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
+        self._diagnostic_counts: dict[str, int] = {}
 
     def check_deadline(self) -> None:
         """Cooperative cancellation; cannot interrupt an in-flight SDK or plugin call."""
@@ -146,18 +149,28 @@ class ConnectorContext:
             return f"diagnostic omitted: sanitization safety limit exceeded {REDACTED}"
 
     def warn(self, msg: str, incomplete: bool = True) -> None:
-        msg = self.sanitize_message(msg)
-        self.log.warning(msg)
         if self.stats is not None:
-            self.stats.warnings.append(msg)
             self.stats.incomplete = self.stats.incomplete or incomplete
+        self._diagnostic(msg, warning=True)
 
     def error(self, msg: str) -> None:
-        msg = self.sanitize_message(msg)
-        self.log.error(msg)
         if self.stats is not None:
-            self.stats.errors.append(msg)
             self.stats.incomplete = True
+        self._diagnostic(msg, warning=False)
+
+    def _diagnostic(self, msg: str, *, warning: bool) -> None:
+        channel = "warnings" if warning else "errors"
+        count = self._diagnostic_counts.get(channel, 0) + 1
+        self._diagnostic_counts[channel] = count
+        if count > self._MAX_DIAGNOSTICS + 1:
+            return
+        if count == self._MAX_DIAGNOSTICS + 1:
+            msg = f"additional connector {channel} omitted: diagnostic limit reached"
+        else:
+            msg = self.sanitize_message(msg)
+        (self.log.warning if warning else self.log.error)(msg)
+        if self.stats is not None:
+            getattr(self.stats, channel).append(msg)
 
     def examined(self, n: int = 1) -> None:
         self.check_deadline()
@@ -449,8 +462,7 @@ class BaseConnector(ABC):
 
     def _load_offline_file(self, source: Path, budget: _OfflineInputBudget) -> Iterator[dict[str, Any]]:
         suffix = source.suffix.lower()
-        def report(message: str) -> None:
-            self.ctx.error(f"{self.name}: {message}")
+        report = self._bounded_diagnostics(lambda message: self.ctx.error(f"{self.name}: {message}"))
 
         if suffix in {".jsonl", ".ndjson"}:
             saw_record = False
@@ -511,33 +523,40 @@ class BaseConnector(ABC):
     _MAX_INVALID_LINE_ERRORS = 20
 
     @classmethod
+    def _bounded_diagnostics(cls, report: Callable[[str], None]) -> Callable[[str], None]:
+        """Bound diagnostics per export while continuing to inspect later records."""
+        errors = 0
+
+        def limited(message: str) -> None:
+            nonlocal errors
+            errors += 1
+            if errors <= cls._MAX_INVALID_LINE_ERRORS:
+                report(message)
+            elif errors == cls._MAX_INVALID_LINE_ERRORS + 1:
+                report("further invalid records in this export are not listed individually")
+
+        return limited
+
+    @classmethod
     def _json_lines(cls, text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:
         lines = text.splitlines()
-        first = next((line for line in lines if line.strip()), "")
-        try:
-            first_is_object = first.lstrip().startswith("{") and isinstance(json.loads(first), dict)
-        except (json.JSONDecodeError, RecursionError, ValueError):
-            first_is_object = False
-        if not first_is_object:
-            # A corrupted pretty-printed document is not a JSON-lines export;
-            # one diagnostic is enough instead of one per line.
+        first = next((line.strip() for line in lines if line.strip()), "")
+        if first in {"[", "{"}:
+            # A broken pretty-printed document is not a JSONL stream. Do not
+            # amplify a single parse failure into one diagnostic per line.
             report("invalid JSON export")
             return
-        invalid = 0
+        report = cls._bounded_diagnostics(report)
         for number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
             try:
                 data = json.loads(line)
-                if not isinstance(data, dict):
-                    raise TypeError("JSONL records must be objects")
-            except (json.JSONDecodeError, RecursionError, ValueError, TypeError) as exc:
-                invalid += 1
-                if invalid <= cls._MAX_INVALID_LINE_ERRORS:
-                    detail = "JSONL records must be objects" if isinstance(exc, TypeError) else "invalid JSON record"
-                    report(f"line {number}: {detail}")
-                elif invalid == cls._MAX_INVALID_LINE_ERRORS + 1:
-                    report("further invalid records in this export are not listed individually")
+            except (json.JSONDecodeError, RecursionError, ValueError):
+                report(f"invalid JSON record at line {number}")
+                continue
+            if not isinstance(data, dict):
+                report(f"line {number}: JSONL records must be objects")
                 continue
             yield from cls._unwrap(data, lambda message: report(f"line {number}: {message}"))
 

@@ -30,6 +30,7 @@ import csv
 import fnmatch
 import json
 import re
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +45,7 @@ from shadowscan.utils.redaction import REDACTED, sanitize_text
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
 NAME_FIELDS = ("agent_name", "name", "names", "display_name", "displayName", "app_slug", "okta_name", "developer_name", "schema_name", "caller", "principal", "function_name", "repository", "project", "agents", "agent_definitions")
+_MAX_NAME_PATTERNS = 4096
 
 
 def _has_usable_resource_identity(finding: Finding) -> bool:
@@ -115,9 +117,8 @@ class Inventory:
     def __init__(self, entries: list[InventoryEntry] | None = None):
         self.entries: list[InventoryEntry] = entries or []
         self.sources: list[str] = []
-        # Name patterns are rebuilt per finding otherwise; large inventories
-        # would exhaust the ``re`` module cache and recompile on every match.
-        self._name_patterns: dict[str, re.Pattern[str]] = {}
+        # Bound the cache even when callers repeatedly replace inventory entries.
+        self._name_patterns: OrderedDict[str, re.Pattern[str]] = OrderedDict()
 
     def __len__(self) -> int:
         return len(self.entries)
@@ -330,6 +331,10 @@ class Inventory:
         pattern = self._name_patterns.get(name)
         if pattern is None:
             pattern = self._name_patterns[name] = re.compile(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])")
+            if len(self._name_patterns) > _MAX_NAME_PATTERNS:
+                self._name_patterns.popitem(last=False)
+        else:
+            self._name_patterns.move_to_end(name)
         return pattern
 
     def suggest(self, finding: Finding) -> list[InventoryEntry]:

@@ -132,7 +132,7 @@ class AzureConnector(BaseConnector):
         return self._foundry_token
 
     def _get(self, path: str, api: str, **params: Any) -> Any:
-        """One failed detail call is unknown coverage for that resource, never a lost subscription."""
+        """One failed detail call must not discard the remaining subscription."""
         assert self.http
         try:
             if "api-version" not in parse_qs(urlsplit(path).query):
@@ -189,7 +189,7 @@ class AzureConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        subs = self.subscriptions or [s["subscriptionId"] for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or [] if isinstance(s, dict) and isinstance(s.get("subscriptionId"), str)]
+        subs = self.subscriptions or [s["subscriptionId"] for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or [] if isinstance(s.get("subscriptionId"), str)]
         if not subs:
             raise ConnectorError("cloud.azure: no subscriptions visible")
         rows: list[dict[str, Any]] = []
@@ -242,14 +242,10 @@ class AzureConnector(BaseConnector):
                 diag = self._list(f"{rid}/providers/Microsoft.Insights/diagnosticSettings", "2021-05-01-preview", allow_partial=False)
                 yield {"_kind": "diagnostics", "_account": rid, "settings": diag, "coverage": "unknown" if diag is None else "observed"}
                 for p in self._list(f"{rid}/projects", "2025-04-01-preview", allow_partial=True) or []:
-                    if not isinstance(p, dict):
-                        self.ctx.warn("cloud.azure: invalid Foundry project record; coverage unknown", incomplete=True)
-                        continue
                     p["_kind"] = "resource"
                     p["type"] = "microsoft.cognitiveservices/accounts/projects"
                     p["_account"] = rid
-                    # ARM payloads carry no subscriptionId column; Resource
-                    # Graph rows do. Attribute the project like its account.
+                    # ARM payloads omit the Resource Graph scope columns.
                     p.setdefault("subscriptionId", r.get("subscriptionId") or rid.split("/subscriptions/")[-1].split("/")[0])
                     p.setdefault("location", r.get("location"))
                     yield p
@@ -259,10 +255,13 @@ class AzureConnector(BaseConnector):
                 yield {"_kind": "logicapp-definition", "id": rid, "name": r.get("name"), "definition": get_path(wf, "properties.definition"), "connections": get_path(wf, "properties.parameters.$connections.value"), "state": get_path(wf, "properties.state")}
             elif t == "microsoft.web/sites" and self.include_app_settings:
                 try:
-                    settings = self.http.post_json(f"{rid}/config/appsettings/list", params={"api-version": "2022-03-01"}) or {}
-                    # Under an env-style key every value is redacted in record
-                    # dumps; live analysis still sees the values for credential detection.
-                    yield {"_kind": "appsettings", "id": rid, "name": r.get("name"), "kind": r.get("kind"), "environment": settings.get("properties") or {}}
+                    settings = self.http.post_json(f"{rid}/config/appsettings/list", params={"api-version": "2022-03-01"})
+                    if not isinstance(settings, dict) or "error" in settings or not isinstance(settings.get("properties"), dict):
+                        self.ctx.warn(f"cloud.azure: invalid appsettings response for {rid}; coverage unknown", incomplete=True)
+                        continue
+                    # The env-style key ensures dumps redact every value,
+                    # including opaque credentials under nonstandard names.
+                    yield {"_kind": "appsettings", "id": rid, "name": r.get("name"), "kind": r.get("kind"), "environment": settings["properties"]}
                 except (HttpError, RequestException, ValueError) as exc:
                     status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
                     self.ctx.warn(f"cloud.azure: appsettings {status} for {rid}", incomplete=True)
@@ -281,8 +280,6 @@ class AzureConnector(BaseConnector):
         try:
             validate_url(str(endpoint))
         except ValueError:
-            # Private Link endpoints resolve to private addresses; that project's
-            # agents are unknown coverage, not a reason to abandon the tenant.
             self.ctx.warn("cloud.azure: Foundry endpoint refused by the destination policy; agent coverage unknown", incomplete=True)
             return
         host = urlsplit(str(endpoint)).hostname or ""
@@ -503,7 +500,7 @@ class AzureConnector(BaseConnector):
     def _h_appsettings(self, rec: dict[str, Any]) -> Finding | None:
         rid = rec.get("id", "")
         f = cloud_finding(self.name, "azure", kind=Kind.CLOUD_RESOURCE, title=f"{'Function' if 'functionapp' in str(rec.get('kind', '')).lower() else 'Web'} app: {rec.get('name')}", resource=rid, resource_type=f"web-site/{rec.get('kind')}", account=rid.split("/subscriptions/")[-1].split("/")[0] if "/subscriptions/" in rid else None)
-        # Older exports used "settings"; live records now use the env-style key.
+        # Backward-compatible analysis of exports written before environment.
         settings = rec.get("environment") if isinstance(rec.get("environment"), dict) else rec.get("settings")
         scan_env(self.index, f, settings, location=rid)
         name_hint(self.index, f, rec.get("name"))

@@ -157,8 +157,6 @@ options:
   connector_timeout_seconds: 120    # soft deadline; also enforce a host job timeout
   min_confidence: 0.3
   fail_on: high
-  connector_timeout_seconds: 900     # per-connector completion deadline (default 120)
-  parallel: 4                        # worker threads; use 1-2 for CPU-bound offline scans
   dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs
 connectors:
   - name: identity.entra
@@ -198,13 +196,6 @@ and any production label claimed in the logs. Treat caller and environment
 fields according to the export's provenance; ShadowScan does not authenticate
 the source of an imported log. See [scan state and runtime correlation](docs/scanning.md)
 for configuration, limitations, and migration guidance.
-
-`--connector-timeout-seconds` / `options.connector_timeout_seconds` (default 120)
-is the per-connector completion deadline; an expired connector is reported
-incomplete and its results are discarded. A blocked thread cannot be
-interrupted, so the CLI then exits without waiting for it. `options.parallel` only helps connectors that wait on network APIs;
-offline exports and repository scans are CPU-bound under the interpreter lock,
-so keep it at 1-2 for those.
 
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete

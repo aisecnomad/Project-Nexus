@@ -123,9 +123,9 @@ class Auth0Connector(BaseConnector):
             self.ctx.examined()
             try:
                 f = self._client_finding(c, grants.get(c.get("client_id", ""), []))
-            except (AttributeError, TypeError, ValueError, KeyError, MatchTimeoutError) as exc:
-                # One malformed export record must not discard every later client.
-                self.ctx.warn(f"identity.auth0: skipped a malformed client record ({type(exc).__name__})")
+            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"identity.auth0: skipped a malformed client record ({type(exc).__name__}){detail}")
                 continue
             if f:
                 yield f

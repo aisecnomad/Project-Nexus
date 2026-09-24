@@ -39,13 +39,15 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   without being echoed. The Okta `SSWS` scheme is redacted like `Bearer` and
   `Basic`, and known configuration values are also redacted in their
   `repr()`-escaped spelling, which library errors use.
-* `options.connector_timeout_seconds` / `--connector-timeout-seconds` (default
-  120) is the per-connector completion deadline; an expired connector is
-  reported incomplete. Python threads cannot be interrupted: the CLI exits
-  without joining the abandoned worker, and library callers must expect the
-  thread to outlive `Engine.run()`.
+* `options.connector_timeout_seconds` / `--connector-timeout-seconds` defaults
+  to a 120-second cooperative completion deadline. Late connector results are
+  discarded and coverage is incomplete. Legacy `connector_timeout` /
+  `--connector-timeout` remain compatibility aliases; legacy YAML null uses the
+  default. Python cannot forcibly interrupt blocked threads: calls may outlive
+  `Engine.run()` and delay CLI shutdown. Worker concurrency remains bounded;
+  enforce an external process or job deadline when a hard runtime limit is needed.
 * Azure App Service settings and OCI Function configuration are exported under
-  an env-style key, so record dumps redact every value; Salesforce token
+  `environment`, so record dumps redact every value; Salesforce token
   values are never requested.
 * Cloud SDKs and Git use separate transports. Network egress rules remain needed
   for those paths. URL preflight checks alone do not pin Git's later DNS lookup.

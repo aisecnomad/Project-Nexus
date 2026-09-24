@@ -8,7 +8,7 @@ acceptance service.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 ALLOWED_JWT_ALGS = ("RS256", "ES256", "EdDSA", "PS256")
@@ -80,15 +80,15 @@ def verify_against_jwks(
     *,
     expected_issuer: str | None = None,
     allowed_algorithms: Sequence[str] | None = None,
-    document: dict[str, Any] | None = None,
+    document_loader: Callable[[str], dict[str, Any]] | None = None,
 ) -> bool:
     """Verify a signature with exactly one eligible public key.
 
     ``expected_issuer`` is an explicit operator-supplied claim value. It need
     not share a host with the configured JWKS endpoint (CDN and central IdP key
     endpoints are valid). Without it, success establishes a signature only.
-    ``document`` is a JWKS already returned by :func:`fetch_jwks`, so callers
-    analysing many tokens fetch the key set once.
+    ``document_loader`` may provide a per-analysis cache. It is invoked only
+    after header validation, so rejected algorithms never trigger network IO.
     """
     import jwt as pyjwt
     from jwt import PyJWK
@@ -104,8 +104,7 @@ def verify_against_jwks(
         raise ValueError("JWT key ID must be a nonempty string")
     if expected_issuer is not None and (not isinstance(expected_issuer, str) or not expected_issuer):
         raise ValueError("JWT expected_issuer must be a nonempty string")
-    if document is None:
-        document = fetch_jwks(jwks_url)
+    document = (document_loader or fetch_jwks)(jwks_url)
     if not isinstance(document, dict) or not isinstance(document.get("keys"), list):
         raise ValueError("JWKS document is not a key set")
     keys = document["keys"]

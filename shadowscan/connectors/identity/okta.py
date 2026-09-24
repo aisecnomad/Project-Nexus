@@ -48,11 +48,7 @@ class OktaConnector(BaseConnector):
             headers["Authorization"] = f"Bearer {bearer}"
         elif token:
             headers["Authorization"] = f"SSWS {token}"
-        # Denied optional lookups (grants/tokens) are incomplete coverage for
-        # one app, not a reason to abandon the whole application inventory.
-        self.http = HttpClient(
-            self.org_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True),
-        ) if self.org_url else None
+        self.http = HttpClient(self.org_url, headers=headers) if self.org_url else None
         self.include_inactive = bool(ctx.get("include_inactive", False))
         self.fetch_tokens = bool(ctx.get("fetch_tokens", True))
 
@@ -109,9 +105,9 @@ class OktaConnector(BaseConnector):
             self.ctx.examined()
             try:
                 f = self._app_finding(app)
-            except (AttributeError, TypeError, ValueError, KeyError, MatchTimeoutError) as exc:
-                # One malformed export record must not discard every later app.
-                self.ctx.warn(f"identity.okta: skipped a malformed application record ({type(exc).__name__})")
+            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"identity.okta: skipped a malformed application record ({type(exc).__name__}){detail}")
                 continue
             if f:
                 yield f

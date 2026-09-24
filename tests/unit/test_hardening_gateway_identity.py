@@ -49,7 +49,7 @@ def test_text_line_parsers_are_linear_on_hostile_input():
     assert parse_text_line(without_protocol)["request_uri"] == "/v1/models"
 
 
-def test_gateway_strips_query_strings_from_operations(index, tmp_path):
+def test_gateway_memoizes_user_agents_and_strips_query_strings(index, tmp_path):
     export = tmp_path / "gateway.jsonl"
     with export.open("w") as stream:
         for i in range(60):
@@ -140,7 +140,9 @@ def test_jwks_is_fetched_once_per_run(index, monkeypatch):
         return {"keys": []}
 
     monkeypatch.setattr(jwt_module, "fetch_jwks", fake_fetch)
-    tokens = [_unsigned({"sub": f"svc-{i}", "iss": "https://issuer.example"}) for i in range(3)]
+    def encoded(data):
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+    tokens = [f"{encoded({'alg': 'RS256'})}.{encoded({'sub': f'svc-{i}', 'iss': 'https://issuer.example'})}.AAAA" for i in range(3)]
     ctx = _ctx(index, tokens=tokens, jwks_url="https://keys.example/jwks")
     findings = JwtConnector(ctx).run()
     assert len(findings) == 3 and fetches == ["https://keys.example/jwks"]
@@ -175,7 +177,7 @@ def test_auth0_isolates_a_malformed_client_record(index):
     bad = {**good, "client_id": "c2", "name": "broken", "client_metadata": ["x"]}
     findings = list(connector.analyze([good, bad, {**good, "client_id": "c3", "name": "other-m2m"}]))
     assert len(findings) == 2
-    assert ctx.stats.incomplete and any("record" in w for w in ctx.stats.warnings)
+    assert ctx.stats.incomplete and any("malformed client or grant record" in w for w in ctx.stats.warnings)
 
 
 def test_gitlab_group_records_keep_the_plain_group_path(index):

@@ -56,12 +56,19 @@ class OciConnector(BaseConnector):
         self._config: dict[str, Any] = {}
         self._signer: Any = None
         self._clients: dict[tuple[Any, str | None], Any] = {}
+        try:
+            self.compartments = string_list(ctx.get("compartments"), "compartments") or []
+            self.regions = string_list(ctx.get("regions"), "regions", pattern=r"[a-z0-9-]+") or []
+        except ValueError as exc:
+            raise ConnectorError(f"cloud.oci: {exc}") from None
         self.tenancy: str | None = ctx.get("tenancy")
 
     # ------------------------------------------------------------- session
     def _init(self) -> None:
         import oci
 
+        # A reused connector must not retain clients signed by an old session.
+        self._clients.clear()
         auth = str(self.ctx.get("auth", "config"))
         if auth not in {"config", "instance_principal", "resource_principal"}:
             raise ConnectorError("cloud.oci: auth must be config, instance_principal or resource_principal")
@@ -94,20 +101,19 @@ class OciConnector(BaseConnector):
         ).get_retry_strategy()
 
     def _client(self, cls: Any, region: str | None = None) -> Any:
-        """One SDK client per (service, region); construction parses the signing key each time."""
         key = (cls, region)
-        client = self._clients.get(key)
-        if client is None:
-            cfg = dict(self._config)
-            if region:
-                cfg["region"] = region
-            kwargs: dict[str, Any] = {
-                "timeout": (10, 30),
-                "retry_strategy": self._retry_strategy(),
-            }
-            if self._signer:
-                kwargs["signer"] = self._signer
-            client = self._clients[key] = cls(cfg, **kwargs)
+        if key in self._clients:
+            return self._clients[key]
+        cfg = dict(self._config)
+        if region:
+            cfg["region"] = region
+        kwargs: dict[str, Any] = {
+            "timeout": (10, 30),
+            "retry_strategy": self._retry_strategy(),
+        }
+        if self._signer:
+            kwargs["signer"] = self._signer
+        client = self._clients[key] = cls(cfg, **kwargs)
         return client
 
     def _all(self, fn: Any, *args: Any, **kwargs: Any) -> list[Any]:
@@ -162,15 +168,10 @@ class OciConnector(BaseConnector):
 
         self._init()
         identity = self._client(oci.identity.IdentityClient)
-        try:
-            compartments = string_list(self.ctx.get("compartments"), "compartments") or []
-            regions = string_list(self.ctx.get("regions"), "regions", pattern=r"[a-z0-9-]+") or []
-        except ValueError as exc:
-            raise ConnectorError(f"cloud.oci: {exc}") from None
+        compartments = list(self.compartments)
         if not compartments:
             compartments = [c for c in [self.tenancy] if c] + [c.id for c in self._all(identity.list_compartments, self.tenancy, compartment_id_in_subtree=True, lifecycle_state="ACTIVE")]
-        if not regions:
-            regions = [r.region_name for r in self._all(identity.list_region_subscriptions, self.tenancy)]
+        regions = self.regions or [r.region_name for r in self._all(identity.list_region_subscriptions, self.tenancy)]
         yield {"_kind": "tenancy", "tenancy": self.tenancy, "compartments": len(compartments), "regions": regions}
         for pol in self._iter_policies(identity, compartments):
             yield pol
@@ -299,7 +300,7 @@ class OciConnector(BaseConnector):
                     continue
                 detail, overrides, function_complete = self._function_detail(client, "function", summary)
                 # OCI passes application settings to every function; function settings win.
-                # The env-style key makes record dumps redact every value.
+                # Environment-style storage redacts all configuration values in dumps.
                 yield {**{k: v for k, v in detail.items() if k != "config"}, "environment": {**inherited, **overrides}, "_kind": "function", "_region": region,
                        "_compartment": comp, "_application": application.get("display_name"),
                        "_application_id": app_summary["id"],
@@ -423,7 +424,6 @@ class OciConnector(BaseConnector):
 
     def _h_function(self, rec: dict[str, Any]) -> Finding | None:
         f = cloud_finding(self.name, "oci", kind=Kind.CLOUD_RESOURCE, title=f"OCI Function: {rec.get('_application')}/{rec.get('display_name')}", resource=_resource_id(rec.get("id") or rec.get("display_name")), resource_type="function", **self._base(rec))
-        # Older exports used "config"; live records now use the env-style key.
         config = rec.get("environment") if isinstance(rec.get("environment"), dict) else rec.get("config")
         scan_env(self.index, f, config, location=rec.get("id"))
         # New SDKs expose source_details.image; older SDKs / exports use image.

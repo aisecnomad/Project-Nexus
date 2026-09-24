@@ -6,11 +6,11 @@ inventory:
   - ./inventory
 options:
   min_confidence: 0.2
-  # Offline connectors are CPU-bound; more threads than two mostly contend for
-  # the interpreter lock. Raise this for scans dominated by live API calls.
+  # Start with two workers for offline parsing and matching; measure contention
+  # before increasing this. Live API workloads may benefit from more workers.
   parallel: 2
-  # Per-connector completion deadline in seconds (default 120); an expired
-  # connector is reported incomplete instead of blocking the job indefinitely.
+  # Soft completion deadline: late results are discarded and coverage is incomplete.
+  # Blocked SDK calls can delay shutdown; enforce an external process/job timeout.
   connector_timeout_seconds: 600
 connectors:
   - name: code.filesystem

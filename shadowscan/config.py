@@ -26,6 +26,10 @@ Example ``shadowscan.yaml``::
 
 ``${VAR}`` requires a nonempty environment value. ``${VAR:-default}`` uses its
 explicit fallback when the variable is missing or empty.
+
+``options.connector_timeout`` is a deprecated alias for
+``options.connector_timeout_seconds``. Legacy null selects the bounded
+120-second default; it never disables the completion deadline. Specify one key.
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ from __future__ import annotations
 import math
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +53,7 @@ _CONFIG_FIELDS = {"connectors", "inventory", "signatures", "options"}
 _OPTION_FIELDS = {
     "min_confidence", "fail_on", "dump_records", "workdir", "parallel", "incremental",
     "state_dir", "plugins", "allow_signature_override", "allow_private_origin",
-    "allow_instance_credentials", "allow_credential_mixing", "connector_timeout_seconds",
+    "allow_instance_credentials", "allow_credential_mixing", "connector_timeout_seconds", "connector_timeout",
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 
@@ -111,8 +115,15 @@ class ScanConfig:
     allow_credential_mixing: bool = False
     connector_timeout_seconds: float = 120.0
     source: str | None = None
+    # Constructor-only compatibility: never retain stale alias state that could
+    # overwrite a later CLI or library update to the canonical setting.
+    connector_timeout: InitVar[float | None] = field(default=None, kw_only=True)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, connector_timeout: float | None) -> None:
+        if connector_timeout is not None:
+            if self.connector_timeout_seconds != 120.0:
+                raise ConfigValidationError("specify connector_timeout_seconds or connector_timeout, not both")
+            self.connector_timeout_seconds = connector_timeout
         self.validate_security_options()
 
     def validate_security_options(self) -> None:
@@ -154,6 +165,13 @@ class ScanConfig:
         if not isinstance(opts, dict):
             raise ConfigValidationError("options must be a mapping")
         _check_fields(opts, _OPTION_FIELDS, "options")
+        if "connector_timeout_seconds" in opts and "connector_timeout" in opts:
+            raise ConfigValidationError("specify options.connector_timeout_seconds or options.connector_timeout, not both")
+        timeout = opts.get("connector_timeout_seconds", 120.0)
+        if "connector_timeout" in opts:
+            # Older configurations used null for no deadline. Keep them usable
+            # while enforcing the safe default instead of permitting infinity.
+            timeout = 120.0 if opts["connector_timeout"] is None else opts["connector_timeout"]
         connectors = data.get("connectors", [])
         if not isinstance(connectors, list):
             raise ConfigValidationError("connectors must be a list")
@@ -200,7 +218,7 @@ class ScanConfig:
             allow_private_origin=_boolean_option(opts.get("allow_private_origin", False), "allow_private_origin"),
             allow_instance_credentials=_boolean_option(opts.get("allow_instance_credentials", False), "allow_instance_credentials"),
             allow_credential_mixing=_boolean_option(opts.get("allow_credential_mixing", False), "allow_credential_mixing"),
-            connector_timeout_seconds=validate_connector_timeout(opts.get("connector_timeout_seconds", 120.0)),
+            connector_timeout_seconds=validate_connector_timeout(timeout),
             source=source,
         )
 

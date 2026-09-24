@@ -95,18 +95,28 @@ override and private-endpoint policies, output changes and rollout checks.
 
 ## Connector deadlines and parallelism
 
-`options.connector_timeout_seconds` (or `--connector-timeout-seconds`, default
-120) is the number of seconds one connector may run from the moment its worker
-starts. A connector that exceeds it is marked `incomplete` with the reason, its
-results are discarded, the other connectors' findings are kept, and the scan
-exits 3. Python cannot interrupt a thread blocked in a vendor SDK call, so the
-CLI exits without waiting for the abandoned worker; library callers keep the
-thread until the call returns. Also set a host job deadline in CI.
+`options.connector_timeout_seconds` (or `--connector-timeout-seconds`) sets a
+positive, finite completion deadline for each connector, defaulting to 120 seconds.
+It starts when the connector worker begins; split filesystem roots share that
+connector's deadline. Legacy `options.connector_timeout` and `--connector-timeout`
+are deprecated compatibility aliases. Configure only one YAML key; supplying
+both is rejected. Legacy YAML `connector_timeout: null` uses the 120-second
+default; it does not disable the deadline.
 
-`options.parallel` (default 4) is the number of worker threads. Only connectors
-that wait on network APIs benefit from it. Offline exports and repository scans
-are CPU-bound signature matching that holds the interpreter lock, and more
-threads than about two make such scans slower, not faster.
+On expiry, the engine discards that connector's results, records incomplete
+coverage and the reason, retains other completed connectors' findings, and
+returns an incomplete scan (CLI exit 3). Cancellation is cooperative: Python
+cannot forcibly interrupt a thread blocked in a vendor SDK or plugin call. Such
+a call may outlive `Engine.run()` and delay CLI process shutdown. No replacement
+workers are created beyond the configured parallelism; if all slots remain
+occupied by timed-out calls, queued connectors are skipped with incomplete
+coverage. Enforce an external process or CI job deadline for a hard runtime limit.
+
+`options.parallel` (default 4) is the maximum number of worker threads. Additional
+workers can improve throughput when connectors wait on network APIs. Offline
+exports and repository scans also perform CPU-intensive parsing and matching;
+extra threads can add contention. The offline example uses two workers as a
+starting point; measure representative workloads before increasing parallelism.
 
 ## Link code to gateway activity
 

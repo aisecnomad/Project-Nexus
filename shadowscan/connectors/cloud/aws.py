@@ -85,13 +85,15 @@ class AwsConnector(BaseConnector):
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         try:
-            self.regions = string_list(ctx.get("regions"), "regions", pattern=r"[a-z0-9-]+|all") or DEFAULT_REGIONS
+            self.regions = string_list(ctx.get("regions"), "regions", pattern=r"[a-z0-9-]+") or DEFAULT_REGIONS
             services = string_list(ctx.get("services"), "services") or sorted(KNOWN_SERVICES)
         except ValueError as exc:
             raise ConnectorError(f"cloud.aws: {exc}") from None
         unknown = sorted(set(services) - KNOWN_SERVICES)
         if unknown:
             raise ConnectorError(f"cloud.aws: unknown services {', '.join(unknown)}; choose from {', '.join(sorted(KNOWN_SERVICES))}")
+        if "all" in self.regions and self.regions != ["all"]:
+            raise ConnectorError("cloud.aws: regions 'all' cannot be combined with explicit regions")
         self.services = set(services)
         self.cloudtrail_days = int(ctx.get("cloudtrail_days", 7))
         self.max_lambda = int(ctx.get("max_lambda", 2000))
@@ -138,11 +140,11 @@ class AwsConnector(BaseConnector):
             reject_instance_profile_sources(sdk_session, profile)
         session = boto3.Session(botocore_session=sdk_session)
         role = self.ctx.get("role_arn")
-        if role:
-            sts = session.client("sts", config=self._sdk_config())
-            creds = sts.assume_role(RoleArn=role, RoleSessionName="shadowscan")["Credentials"]
-            session = boto3.Session(aws_access_key_id=creds["AccessKeyId"], aws_secret_access_key=creds["SecretAccessKey"], aws_session_token=creds["SessionToken"])
         try:
+            if role:
+                sts = session.client("sts", config=self._sdk_config())
+                creds = sts.assume_role(RoleArn=role, RoleSessionName="shadowscan")["Credentials"]
+                session = boto3.Session(aws_access_key_id=creds["AccessKeyId"], aws_secret_access_key=creds["SecretAccessKey"], aws_session_token=creds["SessionToken"])
             account = session.client("sts", config=self._sdk_config()).get_caller_identity()["Account"]
             if not isinstance(account, str) or len(account) != 12 or not account.isascii() or not account.isdigit():
                 raise ValueError("invalid STS account identifier")
@@ -933,7 +935,6 @@ class AwsConnector(BaseConnector):
         return self._name_only_secret(rec, "secretsmanager-secret", rec.get("ARN"))
 
     def _h_ssm_parameter(self, rec: dict[str, Any]) -> Finding | None:
-        # Real parameter ARNs always carry a slash before the name.
         return self._name_only_secret(rec, "ssm-parameter", f"arn:aws:ssm:{rec.get('_region')}:{self.account}:parameter/{str(rec.get('Name') or '').lstrip('/')}")
 
     def _name_only_secret(self, rec: dict[str, Any], rtype: str, arn: str | None) -> Finding | None:

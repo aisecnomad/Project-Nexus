@@ -1,4 +1,4 @@
-"""Regressions for the production-review round: cloud, low-code and SaaS connectors."""
+"""Consolidated cloud regression coverage with credential and scope policies retained."""
 
 from __future__ import annotations
 
@@ -12,13 +12,8 @@ from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.cloud.aws import AwsConnector
 from shadowscan.connectors.cloud.azure import AzureConnector
 from shadowscan.connectors.cloud.common import string_list
+from shadowscan.connectors.cloud.gcp import GcpConnector
 from shadowscan.connectors.cloud.oci import OciConnector
-from shadowscan.connectors.lowcode import salesforce as salesforce_module
-from shadowscan.connectors.lowcode import servicenow as servicenow_module
-from shadowscan.connectors.lowcode.salesforce import SalesforceConnector
-from shadowscan.connectors.lowcode.servicenow import ServiceNowConnector
-from shadowscan.connectors.saas import github_apps as github_apps_module
-from shadowscan.connectors.saas.github_apps import GitHubAppsConnector
 from shadowscan.models import ScanStats
 from shadowscan.utils.http import HttpError
 from shadowscan.utils.redaction import REDACTED, sanitize
@@ -154,54 +149,95 @@ def test_oci_function_reads_environment_and_legacy_config_keys(index):
     assert current.metadata["config_keys"] == legacy.metadata["config_keys"] == ["OPENAI_API_KEY"]
 
 
-def test_salesforce_never_requests_token_values_and_survives_expired_locators(index, monkeypatch):
-    assert "DeleteToken" not in salesforce_module.QUERIES["OauthToken"][1]
-    assert "AccessToken" not in salesforce_module.QUERIES["OauthToken"][1]
-    ctx = context(index, instance_url="https://acme.my.salesforce.com", access_token="synthetic")
-    connector = SalesforceConnector(ctx)
-    monkeypatch.setattr(salesforce_module, "QUERIES", {"BotDefinition": ("data", "SELECT Id FROM BotDefinition")})
-    monkeypatch.setattr(connector, "_auth", lambda: None)
+def test_gcp_and_oci_scalar_scope_does_not_expand_to_characters(index):
+    gcp = GcpConnector(context(index, projects="project-one", locations="us-central1"))
+    assert gcp.projects == ["project-one"] and gcp.locations == ["us-central1"]
+    gcp._auth = Mock()
+    gcp._collect_project = Mock(return_value=[])
+    list(gcp.collect())
+    gcp._collect_project.assert_called_once_with("project-one")
+    oci = OciConnector(context(index, compartments="ocid1.compartment.oc1..abc", regions="us-ashburn-1"))
+    assert oci.compartments == ["ocid1.compartment.oc1..abc"]
+    assert oci.regions == ["us-ashburn-1"]
+
+
+@pytest.mark.parametrize("connector,config", [
+    (GcpConnector, {"locations": "evil.example/path"}),
+    (GcpConnector, {"projects": "project/../../elsewhere"}),
+    (OciConnector, {"regions": 42}),
+    (AwsConnector, {"regions": ["all", "us-east-1"]}),
+])
+def test_malformed_cloud_scope_is_rejected_before_authentication(index, connector, config):
+    with pytest.raises(ConnectorError):
+        connector(context(index, **config))
+
+
+def test_scope_values_are_deduplicated_without_reordering():
+    assert string_list(["us-east-1", "us-west-2", " us-east-1 "], "regions") == ["us-east-1", "us-west-2"]
+
+
+@pytest.mark.parametrize("failed", [None, [], {"error": {}}, {"properties": []}, RequestsConnectionError()])
+def test_azure_invalid_or_failed_appsettings_preserves_later_resources(index, failed):
+    connector = AzureConnector(context(index, subscriptions="s1"))
+    connector._auth = Mock()
+    connector._list = Mock(return_value=[])
     connector.http = Mock()
-    connector.http.get_json.side_effect = [
-        {"records": [{"Id": "1"}], "done": False, "nextRecordsUrl": "/services/data/v62.0/query/01g-2000"},
-        HttpError(400, "https://acme.my.salesforce.com/services/data/v62.0/query/01g-2000"),
+    rows = [{"id": f"/subscriptions/s1/providers/Microsoft.Web/sites/{name}", "type": "microsoft.web/sites", "name": name}
+            for name in ("failed", "good")]
+    connector.http.post_json.side_effect = [
+        {"data": rows}, failed,
+        {"properties": {"OPENAI_API_KEY": "sk-proj-" + "b" * 40, "CUSTOM": "opaque-secret-value"}},
     ]
-    assert list(connector.collect()) == [{"Id": "1", "_kind": "BotDefinition"}]
-    assert connector.http.get_json.call_count == 2
-    assert ctx.stats.incomplete and any("collection incomplete (HTTP 400)" in w for w in ctx.stats.warnings)
+    records = list(connector.collect())
+    assert [r["name"] for r in records if r["_kind"] == "resource"] == ["failed", "good"]
+    settings = [r for r in records if r["_kind"] == "appsettings"]
+    assert len(settings) == 1 and settings[0]["name"] == "good"
+    assert set(sanitize(settings[0])["environment"].values()) == {REDACTED}
+    assert connector.ctx.stats.incomplete
 
 
-def test_servicenow_pagination_stops_on_a_repeated_page(index, monkeypatch):
-    ctx = context(index, instance="https://acme.service-now.com", token="synthetic")
-    connector = ServiceNowConnector(ctx)
-    monkeypatch.setattr(servicenow_module, "TABLES", {"sn_aia_agent": "sys_id,name"})
-    monkeypatch.setattr(connector, "_auth", lambda: None)
+def test_oci_function_collection_dumps_withhold_opaque_config_values(index):
+    from types import SimpleNamespace
+
+    connector = OciConnector(context(index))
+    connector._d = lambda obj: obj
+    client = Mock()
+    client.list_applications.return_value = SimpleNamespace(data=[{"id": "app", "display_name": "app"}], has_next_page=False)
+    client.list_functions.return_value = SimpleNamespace(data=[{"id": "fn", "display_name": "fn"}], has_next_page=False)
+    client.get_application.return_value = SimpleNamespace(data={"id": "app", "config": {"INHERITED": "opaque-app-secret"}})
+    client.get_function.return_value = SimpleNamespace(data={"id": "fn", "config": {"ARBITRARY": "opaque-function-secret"}})
+    record, = connector._collect_functions(client, "r", "c")
+    assert "config" not in record
+    assert set(sanitize(record)["environment"].values()) == {REDACTED}
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("keys", [None, [], {"error": {}}, {"keys": None}, {"keys": [1]}])
+def test_gcp_unknown_key_inventory_is_not_zero_keys(index, keys):
+    connector = GcpConnector(context(index, projects="project-one"))
+    account = {"name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com", "email": "crew@project-one.iam.gserviceaccount.com", "displayName": "n8n agent runner"}
+    connector._pages = lambda url, *a, **kw: iter([account]) if url.endswith("/serviceAccounts") else iter([])
+    connector._get = Mock(return_value=keys)
     connector.http = Mock()
-    # Every response is a fresh object, as it would be from the transport.
-    connector.http.get_json.side_effect = lambda *args, **kwargs: {"result": [{"sys_id": str(i)} for i in range(kwargs["params"]["sysparm_limit"])]}
-    records = list(connector.collect())
-    assert len(records) == 500
-    assert connector.http.get_json.call_count == 2
-    assert ctx.stats.incomplete and any("repeated pagination page" in warning for warning in ctx.stats.warnings)
+    connector.http.post_json.return_value = {"bindings": []}
+    records = list(connector._collect_project("project-one"))
+    record = next(r for r in records if r["_kind"] == "service-account")
+    assert record["user_managed_keys"] is None and record["key_coverage"] == "unknown"
+    finding = connector._h_service_account(record)
+    assert finding is not None and finding.metadata["keys"] is None
+    assert finding.metadata["key_coverage"] == "unknown"
+    assert any("unknown user-managed key inventory" in evidence.description for evidence in finding.evidence)
+    assert connector.ctx.stats.incomplete
 
 
-def test_github_apps_pat_inventory_is_optional(index, monkeypatch):
-    ctx = context(index, org="acme", token="synthetic")
-    connector = GitHubAppsConnector(ctx)
-
-    class FakeHttp:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def paginate_link(self, path, params=None, item_key=None):
-            if "personal-access-tokens" in path:
-                raise HttpError(403, "https://api.github.com" + path)
-            yield {"id": 101, "app_slug": "coderabbitai", "permissions": {}}
-
-        def try_get_json(self, path, default=None, ok_statuses=None, **kwargs):
-            return None
-
-    monkeypatch.setattr(github_apps_module, "HttpClient", FakeHttp)
-    records = list(connector.collect())
-    assert [r["_kind"] for r in records] == ["installation"]
-    assert ctx.stats.incomplete and any("PAT inventory unavailable" in warning for warning in ctx.stats.warnings)
+@pytest.mark.parametrize("keys,count", [({}, 0), ({"keys": []}, 0), ({"keys": [{"name": "key-one"}]}, 1)])
+def test_gcp_observed_key_inventory_keeps_true_count(index, keys, count):
+    connector = GcpConnector(context(index))
+    account = {"name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com", "displayName": "CrewAI agent runner"}
+    connector._pages = lambda url, *a, **kw: iter([account]) if url.endswith("/serviceAccounts") else iter([])
+    connector._get = Mock(return_value=keys)
+    connector.http = Mock()
+    connector.http.post_json.return_value = {"bindings": []}
+    record = next(r for r in connector._collect_project("project-one") if r["_kind"] == "service-account")
+    assert record["user_managed_keys"] == count and record["key_coverage"] == "observed"
+    assert not connector.ctx.stats.incomplete

@@ -168,7 +168,7 @@ def classify_permissions(index: SignatureIndex, finding: Finding, scopes: Iterab
     unordered = isinstance(scopes, (set, frozenset))
     scopes = [str(s) for s in scopes if s]
     if unordered:
-        # Set iteration order depends on the hash seed; reports must not.
+        # Sets depend on the process hash seed; keep reports reproducible.
         scopes.sort()
     for s in scopes:
         if s not in finding.permissions:

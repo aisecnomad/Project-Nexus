@@ -59,10 +59,25 @@ class ZoomConnector(BaseConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for app in records:
+            if not self._valid_provider_record(app):
+                self.ctx.warn("saas.zoom: unsupported or malformed app record; coverage incomplete")
+                continue
             self.ctx.examined()
             f = self._app_finding(app)
             if f:
                 yield f
+
+    def _valid_provider_record(self, app: Any) -> bool:
+        if not self._record_fields_valid(
+            app,
+            strings=("app_id", "app_name", "name", "developer_name", "created_by", "owner", "publisher", "created_at", "install_date", "app_description", "description", "app_directory_url", "app_url", "landing_page", "redirect_url", "_type"),
+        ):
+            return False
+        return (
+            bool((app.get("app_id") or app.get("app_name") or app.get("name") or "").strip())
+            and (app.get("id") is None or isinstance(app["id"], str) or type(app["id"]) is int)
+            and all(app.get(key) is None or (type(app[key]) is int and app[key] >= 0) for key in ("installed_users_count", "users_count"))
+        )
 
     def _app_finding(self, app: dict[str, Any]) -> Finding | None:
         name = app.get("app_name") or app.get("name") or app.get("app_id")
