@@ -31,6 +31,7 @@ ALWAYS_GATE_KINDS = frozenset({Kind.SECRET})
 LEVELS = ["critical", "high", "medium", "low", "info"]
 
 _SURFACE_CONFIGURED = frozenset({"identity", "saas", "lowcode", "cloud"})
+_UNOBSERVED = frozenset({"", "unobserved", "unknown", "not_established", "none", "absent"})
 
 
 def _enum_value(value: Any, default: str) -> str:
@@ -39,10 +40,26 @@ def _enum_value(value: Any, default: str) -> str:
     return value.value if hasattr(value, "value") else str(value)
 
 
+def _activity_is_observed(activity: Any) -> bool:
+    if not isinstance(activity, dict) or not activity:
+        return False
+    if activity.get("production_observed") is True:
+        return True
+    status = str(activity.get("status") or "").strip().lower()
+    events = activity.get("events", 0)
+    try:
+        events = int(events)
+    except (TypeError, ValueError):
+        events = 0
+    if status in _UNOBSERVED:
+        return events > 0
+    return status in {"observed", "runtime", "active"} or events > 0
+
+
 def infer_evidence_tier(finding: Finding) -> str:
     """Best-effort tier when the engine has not yet stamped evidence_tier."""
     activity = finding.metadata.get("runtime_activity") if finding.metadata else None
-    if isinstance(activity, dict) and activity.get("status") == "observed":
+    if _activity_is_observed(activity):
         related = finding.metadata.get("related") if finding.metadata else None
         if related:
             return CORROBORATED
@@ -53,14 +70,12 @@ def infer_evidence_tier(finding: Finding) -> str:
         return STATIC_CANDIDATE
     if finding.surface.value in _SURFACE_CONFIGURED and finding.kind != Kind.FRAMEWORK_USAGE:
         return CONFIGURED_RESOURCE
-    if finding.kind in {Kind.INFRA, Kind.MCP_SERVER, Kind.AGENT_CONFIG}:
-        return STATIC_CANDIDATE
     return STATIC_CANDIDATE
 
 
 def infer_execution_status(finding: Finding) -> str:
     activity = finding.metadata.get("runtime_activity") if finding.metadata else None
-    if isinstance(activity, dict) and activity.get("status") == "observed":
+    if _activity_is_observed(activity):
         related = finding.metadata.get("related") if finding.metadata else None
         return CORROBORATED if related else OBSERVED
     if finding.kind == Kind.GATEWAY_CALLER:
@@ -119,12 +134,7 @@ def scan_exit_code(result: ScanResult, fail_on: str | None, allow_static_gates: 
 
 
 def apply_control_mode(min_confidence: float, fail_on: str | None) -> tuple[float, str, bool]:
-    """Conservative production-control defaults.
-
-    ``fail_on=high`` so a configured unregistered Bedrock agent still fails the
-    gate. Static-only candidates stay excluded. Confidence floor 0.6 drops
-    weak lexical hits.
-    """
+    """Conservative production-control defaults."""
     return (max(min_confidence, 0.6), fail_on or "high", False)
 
 
@@ -138,5 +148,5 @@ def gate_summary(result: ScanResult, *, allow_static_gates: bool = False) -> dic
     return {
         "gate_eligible": len(eligible),
         "gate_excluded_static": excluded,
-        "by_evidence_tier": by_tier,
+        "by_evidence_tier": by_tier,  # type: ignore[dict-item]
     }
