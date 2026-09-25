@@ -21,17 +21,25 @@ Open `report.html` to explore findings with evidence drill-down.
 
 ## 3. Scan with live connectors
 
-Create a configuration file with your credentials:
+Repository scans and live tenant collection run as separate scans: the scanner
+rejects a configuration that mixes a live code connector with credentialed
+tenant connectors unless `options.allow_credential_mixing` is set for reviewed
+inputs (see [production deployment](../production.md#explicit-security-policy)).
+Create one configuration per boundary:
 
 ```yaml
-# shadowscan.yaml
+# shadowscan-code.yaml: repository scan
 inventory: [./inventory]
-options:
-  fail_on: high
 connectors:
   - name: code.github
     org: acme
     token: ${GITHUB_TOKEN}
+```
+
+```yaml
+# shadowscan-tenants.yaml: live tenant collection
+inventory: [./inventory]
+connectors:
   - name: identity.entra
     tenant_id: ${AZURE_TENANT_ID}
     client_id: ${AZURE_CLIENT_ID}
@@ -40,18 +48,23 @@ connectors:
     token: ${SLACK_TOKEN}
 ```
 
-Then run:
+Then run each:
 
 ```bash
-shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif --fail-on high
+shadowscan scan -c shadowscan-code.yaml --format sarif -o shadowscan-code.sarif
+shadowscan scan -c shadowscan-tenants.yaml --format json -o shadowscan-tenants.json
 ```
+
+Add `--fail-on high` only once a validated threshold exists for your
+environment; see [production deployment](../production.md#rollout-acceptance).
 
 ## 4. Analyze a single connector
 
 ```bash
 shadowscan run identity.entra --set tenant_id=$AZURE_TENANT_ID
 shadowscan run cloud.aws --set regions=us-east-1,eu-west-1 --dump-records ./exports
-shadowscan run cloud.aws --input ./exports/cloud_aws.jsonl    # re-analyse later
+# Read exports/manifest.json and use the exported filename for this instance:
+shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # re-analyse later, offline
 ```
 
 ## 5. Analyze tokens and logs

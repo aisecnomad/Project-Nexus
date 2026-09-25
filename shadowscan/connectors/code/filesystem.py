@@ -447,7 +447,7 @@ class FilesystemConnector(BaseConnector):
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "extra directory names / glob patterns to skip",
-        "max_file_size": "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs matches it (default 1 MiB)",
+        "max_file_size": "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs matches it (default 1,000,000 bytes)",
         "oversize_skip_globs": "case-insensitive file name globs; a file over max_file_size matching one is skipped with a warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts)",
         "max_files": "stop after this many files (default 100000)",
         "scan_timeout": "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan_timeout when higher",

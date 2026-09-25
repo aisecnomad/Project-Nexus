@@ -11,7 +11,7 @@ Two situations are deliberately outside a repository's own content:
   Directory links are incomplete because files under the alias path are not
   inspected. File links into excluded or unread content, links outside the
   root, and unresolved links also make the scan incomplete (exit code 3).
-* **Oversize files** (`max_file_size`, default 1 MiB) that the scanner would
+* **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.

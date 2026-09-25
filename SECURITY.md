@@ -33,7 +33,7 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   of decoded bytes; oversized and malformed collection responses fail collection.
   Explicit raw streaming callers are responsible for bounded reads and closure.
   Injected Requests sessions have their adapters replaced by destination policy.
-  GitLab source-file downloads have a stricter 512 KiB per-file cap.
+  GitLab source-file downloads have a stricter 512 KB (512,000 bytes) per-file cap.
 * Configured header values are validated before any request is built; a value
   with control characters (typically a secret file's trailing newline) fails
   without being echoed. The Okta `SSWS` scheme is redacted like `Bearer` and

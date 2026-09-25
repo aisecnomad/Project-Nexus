@@ -168,7 +168,7 @@ Python 3.12.14 and all development/cloud extras:
 | Dependency audit | No known vulnerabilities in the resolved environment |
 | Wheel build and installed-wheel checks outside checkout | Passed |
 | Three offline scans, six parallel connectors | Each complete with 101 findings and zero errors |
-| Independent integration review | No blocking HTTP, identity, aggregation or cloud regression identified |
+| Same-author integration re-check | No blocking HTTP, identity, aggregation or cloud regression identified |
 | Docker image execution | Not run; Docker/Podman unavailable |
 
 Regressions reproduce scheduler contention using real regex execution and verify

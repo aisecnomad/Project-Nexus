@@ -18,6 +18,11 @@
 - Accept GitHub's actual workflow-run path in the release evidence gate and
   require successful exact-commit CI and CodeQL before building a candidate.
 
+### Markdown report safety
+
+- Defang bare HTTP(S) and `www.` URLs in untrusted report text so copied Markdown
+  does not automatically turn attacker-controlled values into clickable links.
+
 ### Community policy consistency
 
 - Add a documentation issue form, keep detection reports and private security
@@ -27,6 +32,45 @@
 - Validate workflow and issue-form safety policies. Label synchronization creates
   or updates declared labels without deleting labels; inactive issues and pull
   requests remain open for maintainer review.
+- `tests/test_repository_consistency.py` (run by `make policy`) fails CI when a
+  relative Markdown link or heading anchor is broken, a community file is
+  missing, `CITATION.cff` disagrees with `pyproject.toml`, the CI matrix
+  differs from the classifiers, the Makefile or pre-commit hooks drift from the
+  CI gates, the docs toolchain is installed outside its lock, CodeQL steps are
+  pinned to different releases, or a documented signature, signal or connector
+  count is stale. The CI docs job now installs from `requirements-docs.lock`;
+  the install guide states that CI validates Python 3.13; the detection quality
+  report asks for the signature involved and a sanitization acknowledgement;
+  README's community table links the detection form, maintainers, roadmap,
+  changelog and citation.
+- A verified repository hygiene audit fixed the drift it found. Pre-commit: the
+  secret hook used `types: [python, yaml]`, an AND filter that selected no file,
+  so it had never run; it now uses `types_or`, recognises current OpenAI and
+  Anthropic key formats and excludes the tests that hold synthetic tokens;
+  `check-yaml` skips `mkdocs.yml`, whitespace fixers skip fixtures and the
+  digest-bound retained licences, and `detect-private-key` skips the redaction
+  tests, so `pre-commit run --all-files` passes. The `pre-commit` dependency
+  closure is pinned in `requirements-ci-constraints.txt`. Documentation: the
+  production guide, constraints header and contributor guide state that Linux
+  x86_64 is the only validated target, that Python 3.11 to 3.13 are all
+  covered, that Windows is unsupported by design, and that the `main` ruleset's
+  enforcement has changed during 2026-09 and must be checked live; the quick
+  start no longer mixes a live code connector with credentialed tenant
+  connectors in one configuration; the replay example uses the exported
+  filename; the risk table, GitLab per-file cap (512,000 bytes), default
+  `max_file_size`, evaluation corpora count and code connector modes match the
+  code; two hardening logs no longer describe same-author passes as independent
+  reviews and the two remaining 2026-09-24 review documents carry the internal
+  work-log banner. Packaging: PEP 639 `license = "Apache-2.0"` with
+  `license-files`, and the `Operating System :: POSIX :: Linux` classifier
+  replaces `OS Independent`. Examples: the consumer workflow pins
+  `upload-sarif` to a commit rather than a tag object and grants `actions:
+  read` for private repositories. HTML report: sorting and evidence drill-down
+  are real buttons reachable by keyboard with `aria-expanded`/`aria-sort`, the
+  filters have accessible names, the result count is a live region, an `info`
+  tile is shown, and pill and light-scheme colours meet WCAG AA contrast. The
+  bug report form asks for the full commit SHA and describes exit codes
+  accurately; the CSV reporter's formula-quoting is documented in README.
 
 ### Private holdout and CLI job deadline gates
 
@@ -165,12 +209,12 @@ Fixes and additions:
 - The gateway log normaliser is split into `shadowscan/connectors/gateway/normalise.py` with one small function per export format behind a registry; goldens generated from the previous code replay byte-for-byte under `tests/fixtures/gateway_golden/`.
 
 - `Engine.run` is decomposed into named seams (`_prepare_run`, `_ConnectorRunner`, `_Supervisor`, `_ExportLedger`, `_postprocess`, `_write_manifest`) with identical ordering, thread-safety and deadline semantics.
-- Signature packs are parsed once per `Engine` instead of twice, inventory is loaded once, and `Finding.sanitize()` skips objects unchanged since the last pass under the current redaction policy, so redaction runs once per finding instead of seven times while every call site keeps its defence in depth.
+- Signature packs are parsed once per `Engine` instead of twice, inventory is loaded once, and `Finding.sanitize()` skips objects unchanged since the last pass under the current redaction policy, so redaction runs once per finding instead of seven times while every call site keeps its defence in depth. Rendering 5,000 findings to JSON drops from about 18 s to under 2 s; sanitization semantics are unchanged.
 - `Signal.compiled` is a lazy property; the scanner-source digest used by comparison and incremental caching is one shared helper; helpers with no callers are removed from the connector base, `utils.text`, `utils.safe_yaml` and the identity connectors.
 
 #### Tests and tooling
 
-- The suite collects on a core-only install (optional SDKs are imported with `importorskip`), git-dependent tests skip with a reason on hosts older than Git 2.45, deadline tests no longer depend on host speed, byte-identical duplicate tests are collapsed, and index-less `Engine()` constructions in tests reuse the session signature index.
+- The suite collects on a core-only install (optional SDKs are imported with `importorskip`), deadline tests no longer depend on host speed, byte-identical duplicate tests are collapsed, and index-less `Engine()` constructions in tests reuse the session signature index.
 - Every configuration key a connector reads is declared in its `config_keys`, shared offline-limit keys are surfaced through one `BaseConnector` list, `enabled` and `label` are documented, and a test parses each connector module so an undeclared key cannot reappear.
 
 #### Governance and documentation
@@ -199,13 +243,10 @@ Fixes and additions:
 
 - Stop treating every environment value of a cloud inventory record as a credential to remove from sibling fields: a benign setting such as `STAGE=prod` or `WORKERS=4` no longer redacts ARNs, account IDs and names out of SageMaker findings and `--dump-records` exports, which also restores stable finding IDs when an export is re-analysed offline. Environment values remain withheld in exports, and values under sensitive names or in recognizable credential formats are still removed everywhere. SageMaker findings now record environment variable names only, like Lambda findings.
 - Snapshot Bedrock agent DRAFT details instead of storing the agent record inside itself; the previous self-reference collapsed to a redaction marker in record exports and marked every re-analysed agent incomplete. Older exports with the collapsed entry are read without a coverage warning.
-- Evaluate IAM `NotAction` allow statements (everything not listed is granted) and treat `sagemaker:*` as an LLM invoke grant during live collection, matching the offline analysis.
+- Identify potential grants from IAM `NotAction` allow statements against a representative AI-action list, recorded with a `notaction-partially-evaluated` limitation (the wildcard treatment first described here was superseded before it shipped), and treat `sagemaker:*` as an LLM invoke grant during live collection, matching the offline analysis.
 - Report OCI custom (fine-tuned) models by `type: CUSTOM` / base model reference instead of a vendor test that excluded every real custom model.
 - A `bedrock-logging` export record without a `loggingConfig` key, or carrying an error body, is unknown coverage rather than a "logging DISABLED" finding.
-- Verify unchanged findings by digest instead of re-running the full credential sanitizer on every engine stage and reporter; rendering 5,000 findings to JSON drops from about 18 s to under 2 s, and sanitization semantics are unchanged (any later mutation is re-sanitized in full).
-- Load signature packs once per CLI invocation instead of twice (a reused `Engine` still reloads packs between runs).
 - Show the configuration policy reason when scan setup is rejected (for example the code-scan and live-credential separation rule) instead of a generic message; the rule's message now names `--allow-credential-mixing`.
-- Render `shadowscan connectors` config keys with real styling instead of literal `[bold]`/`[dim]` markup.
 - Sort Entra delegated scopes so `permissions` are reproducible across runs.
 - JWT classification: `client_name`, `app_displayname` and `azp_name` count as agent hints only when their value matches an AI product or agent name signature (every Entra v1 delegated token carries `app_displayname`, so ordinary user tokens were reported as agents); a user-subject token with an RFC 8693 actor and agent claims is `delegated-agent`, never weaker than the same token without `act`; nested claim values are sanitized before truncation so no token prefix is persisted.
 - Entra service-principal findings use the scanned tenant as `account` (the publisher tenant is kept as `metadata.owner_tenant`); Google Workspace accepts the Admin SDK `tokenList` envelope and URL-encodes user keys; Atlassian validates `products`; Make pagination isolates invalid pages.

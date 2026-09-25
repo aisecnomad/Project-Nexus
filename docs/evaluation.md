@@ -8,8 +8,10 @@ scanning enabled. A warning, partial scan, skipped connector, or unstable
 repeated scan stops evaluation instead of counting missing detections as true
 negatives.
 
-All three bundled corpora are written or selected by the maintainers. Their
-scores are regression checks on known inputs. None of them is a random or
+The five bundled corpora (synthetic, public, realistic, review and independent)
+are regression checks on known inputs. The synthetic, realistic, review and
+public sets were written or selected by the maintainers; the independent corpus
+was labeled separately, as described below. None of them is a random or
 representative sample of repositories, so none estimates field precision,
 recall or calibration; see the held-out procedure below for that.
 
@@ -131,13 +133,6 @@ the defects and is not a fresh holdout. The existing independent corpus and its
 annotation ledger remain frozen; adding regression cases does not refresh their
 independence. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) requires
 separate declared human-reviewed holdout evidence for deployment decisions.
-
-Source masking is a bounded lexical filter. Ruby regular expressions and `%q`
-literals, PHP heredoc interpolation, C# raw strings with multiple interpolation
-delimiters, and Scala interpolation need more dialect-specific handling. Such
-constructs can be missed or misclassified; an identified unterminated literal
-or ambiguous heredoc marks the scan incomplete. Review source evidence before
-using these languages to enforce a production policy gate.
 
 `tools/evaluation/public_corpus.json` contains **five complete, pinned public
 files** from two external repositories: a LangGraph example and README at

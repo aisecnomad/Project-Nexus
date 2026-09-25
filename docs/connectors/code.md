@@ -5,9 +5,11 @@ usage, MCP configurations, coding-agent configs, and infrastructure-as-code
 that provisions agent resources.
 
 !!! info "Live and offline"
-    All code connectors support both live (API) and offline (local checkout
-    or export) modes. Use `--dump-records` to save sanitized records for later
-    re-analysis.
+    `code.filesystem` scans a local checkout and has no live API mode.
+    `code.github` and `code.gitlab` collect live through the provider API
+    (clone or API mode); their offline `input` is a directory of clones, not
+    an export file. For code connectors `--dump-records` records repository
+    listings and scan roots only, so those records are not replayable.
 
 ### `code.filesystem`
 Scans a directory tree. Project roots are detected from manifests

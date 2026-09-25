@@ -66,9 +66,9 @@ Examples of representing our community include using an official e-mail
 address, posting via an official social media account, or acting as an
 appointed representative at an online or offline event.
 
-Community spaces include this GitHub repository (issues, pull requests,
-discussions, wikis, Actions logs), the documentation site, and any future
-chat, mailing list, or event the maintainers designate.
+Community spaces include this GitHub repository (issues, pull requests and
+Actions logs) and any future documentation site, discussion forum, wiki, chat,
+mailing list, or event the maintainers designate.
 
 ## Reporting a concern
 
