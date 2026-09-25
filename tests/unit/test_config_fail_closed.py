@@ -32,11 +32,11 @@ def test_explicit_environment_default_is_used_for_missing_or_empty_variable(monk
         "connectors": [{
             "name": "code.github",
             "token": "${SHADOWSCAN_OPTIONAL_TEST:-fallback}",
-            "client_secret": "${SHADOWSCAN_OPTIONAL_TEST:-}",
+            "api_url": "${SHADOWSCAN_OPTIONAL_TEST:-}",
         }],
     })
     assert cfg.connectors[0].config["token"] == "fallback"
-    assert cfg.connectors[0].config["client_secret"] == ""
+    assert cfg.connectors[0].config["api_url"] == ""
 
 
 def test_present_environment_reference_expands_without_coercing_connector_secret(monkeypatch):

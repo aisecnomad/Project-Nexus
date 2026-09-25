@@ -9,7 +9,7 @@ from shadowscan.engine import Engine
 
 
 @pytest.mark.parametrize("connector", ["code.github", "code.gitlab"])
-def test_offline_provider_finding_identity_matches_final_connector(tmp_path, connector):
+def test_offline_provider_finding_identity_matches_final_connector(tmp_path, index, connector):
     clones = tmp_path / "clones"
     repo = clones / "agent-repository"
     repo.mkdir(parents=True)
@@ -21,8 +21,8 @@ def test_offline_provider_finding_identity_matches_final_connector(tmp_path, con
         parallel=1,
     )
 
-    first = Engine(config).run()
-    second = Engine(config).run()
+    first = Engine(config, index).run()
+    second = Engine(config, index).run()
     for result in (first, second):
         assert result.complete
         assert len(result.findings) == 1

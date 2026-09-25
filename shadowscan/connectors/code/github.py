@@ -93,19 +93,27 @@ class GitHubConnector(BaseConnector):
     provider: ClassVar[str | None] = "github"
     description: ClassVar[str] = "Enumerate GitHub org/user repositories and scan their contents (clone or API mode)."
     config_keys: ClassVar[dict[str, str]] = {
-        "org": "organisation login to enumerate (or `user`, or `repos: [owner/name, ...]`)",
+        "org": "organisation login to enumerate (env GITHUB_ORG); or `user`, or `repos`",
+        "user": "user login to enumerate instead of `org`",
+        "repos": "explicit list of owner/name repositories to scan",
         "token": "PAT / app token (env GITHUB_TOKEN); needs repo read, org read",
-        "api_url": "API base URL (default https://api.github.com; GHES: https://ghe.example.com/api/v3)",
+        "github_token": "fallback token key (env GH_TOKEN) used when `token` is unset",
+        "api_url": "API base URL (default https://api.github.com, env GITHUB_API_URL; GHES: https://ghe.example.com/api/v3)",
         "mode": "clone | api (default clone when git is available)",
         "include_archived": "scan archived repositories (default false)",
         "include_forks": "scan forks (default false)",
         "max_repos": "cap on repositories (default 500)",
         "scan_timeout": "matching budget in seconds per file (default 2)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
+        "exclude": "forwarded to the filesystem scanner (see code.filesystem)",
+        "max_file_size": "forwarded to the filesystem scanner (see code.filesystem)",
+        "max_files": "forwarded to the filesystem scanner (see code.filesystem)",
+        "scan_secrets": "forwarded to the filesystem scanner (see code.filesystem)",
         "clone_depth": "git clone depth (default 1)",
         "topics": "only repositories with any of these topics",
         "input": "offline: directory containing cloned repositories",
     }
+    shared_config_keys: ClassVar[dict[str, str]] = {}  # clones are bounded by max_repos, not export limits
     offline_formats: ClassVar[str] = "directory of cloned repositories"
 
     def __init__(self, ctx: ConnectorContext):

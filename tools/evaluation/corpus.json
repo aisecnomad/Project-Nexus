@@ -332,6 +332,84 @@
       "files": {"README.md": "Our CI verifies source formatting.\n"},
       "target": {"kind": "agent-config", "signature": "coding-agent.claude-code"},
       "present": false
+    },
+    {
+      "id": "env-sample-placeholder-key",
+      "family": "secret",
+      "description": "A placeholder key in .env.sample is an example credential, not a leaked secret",
+      "files": {".env.sample": "ANTHROPIC_API_KEY=sk-ant-api03-REPLACE_ME_WITH_REAL_KEY\nOPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"},
+      "target": {"kind": "secret"},
+      "present": false,
+      "assertions": {"max_agent_findings": 0}
+    },
+    {
+      "id": "config-hardcoded-key",
+      "family": "secret",
+      "description": "A synthetic but well-formed provider key assigned in source is a secret finding",
+      "files": {"config.py": "OPENAI_API_KEY = \"sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h\"\n"},
+      "target": {"kind": "secret", "signature": "provider.openai"},
+      "present": true
+    },
+    {
+      "id": "readme-key-only-usage",
+      "family": "framework-usage",
+      "description": "A README containing only a provider key does not establish LLM usage in the repository",
+      "files": {"README.md": "# Demo\nExport your key before running: sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h\n"},
+      "target": {"kind": "framework-usage", "signature": "provider.openai"},
+      "present": false,
+      "assertions": {"max_agent_findings": 0}
+    },
+    {
+      "id": "env-names-only-usage",
+      "family": "framework-usage",
+      "description": "Provider environment variable names in .env.example establish likely, not confirmed, LLM usage",
+      "files": {".env.example": "OPENAI_API_KEY=\nANTHROPIC_API_KEY=\nGEMINI_API_KEY=\n"},
+      "target": {"kind": "framework-usage", "signature": "provider.openai"},
+      "present": true,
+      "assertions": {"max_agent_findings": 0}
+    },
+    {
+      "id": "devops-heuristics-only-agent",
+      "family": "agent",
+      "description": "Vendor-neutral automation idioms without any AI dependency are not an agent",
+      "files": {"deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
+      "target": {"kind": "agent"},
+      "present": false,
+      "assertions": {"max_agent_findings": 0}
+    },
+    {
+      "id": "devops-heuristics-only-usage",
+      "family": "framework-usage",
+      "description": "Vendor-neutral automation idioms without any AI dependency are not LLM usage either",
+      "files": {"deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
+      "target": {"kind": "framework-usage"},
+      "present": false
+    },
+    {
+      "id": "py-langgraph-agent-with-heuristics",
+      "family": "agent",
+      "description": "The same automation idioms next to a LangGraph import describe a real agent",
+      "files": {"agent.py": "import subprocess\nfrom langgraph.graph import StateGraph\n\ngraph = StateGraph(dict)\nwhile True:\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
+      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "present": true
+    },
+    {
+      "id": "env-names-with-heuristics-agent",
+      "family": "agent",
+      "description": "Provider environment variable names next to vendor-neutral automation idioms are not an agent",
+      "files": {".env.example": "OPENAI_API_KEY=\n", "deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
+      "target": {"kind": "agent"},
+      "present": false,
+      "assertions": {"max_agent_findings": 0}
+    },
+    {
+      "id": "env-names-import-with-heuristics-agent",
+      "family": "agent",
+      "description": "An OpenAI import next to the same idioms establishes LLM usage; vendor-neutral loops and subprocess calls still cannot confirm an agent",
+      "files": {".env.example": "OPENAI_API_KEY=\n", "app.py": "from openai import OpenAI\n", "deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
+      "target": {"kind": "framework-usage", "signature": "provider.openai"},
+      "present": true,
+      "assertions": {"max_agent_findings": 0}
     }
   ]
 }

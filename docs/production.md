@@ -73,7 +73,7 @@ From the reviewed checkout, in a clean virtual environment:
 
 ```bash
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-python -m pip install --only-binary=:all: setuptools==84.0.0 wheel==0.48.0
+python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 python -m pip install --no-deps dist/shadowscan-0.1.1-*.whl
 python -m pip check
@@ -82,9 +82,14 @@ shadowscan --help
 ```
 
 The runtime lock deliberately includes all cloud extras, even for a code-only
-worker. Development tools and isolated wheel build tooling are not part of this
-runtime lock. The build backend versions are fixed in `pyproject.toml`, and CI
-uses a separate exact-version constraints file for development tools. Build the
+worker. Development tools are not part of it; CI uses a separate exact-version
+constraints file for them. The build backend is locked separately:
+`requirements-build.lock` carries the exact `[build-system]` requirements from
+`pyproject.toml` (setuptools and wheel) with the SHA-256 hash of every artifact
+PyPI publishes for those releases. Install it under `--require-hashes` and build
+with `--no-build-isolation`, as above; an isolated build would let pip resolve
+the backend from the live index on a version pin alone. CI fails when the two
+files disagree, so refresh them together. Build the
 wheel in a controlled builder, retain its SHA-256, and install that reviewed
 artifact into workers. Capture the builder image digest, Python/pip/build-backend
 versions and wheel hash: matching runtime dependencies alone does not ensure
@@ -105,13 +110,25 @@ pip-compile --extra cloud --generate-hashes --strip-extras \
 Use `--upgrade` only for an intentional dependency refresh. Preserve the lock's
 supported-platform comment when regenerating. Do not bypass failed hash checks.
 
-The Dockerfile uses this runtime lock and UID/GID 65532. Supply an approved base
-image digest through `--build-arg PYTHON_IMAGE=python@sha256:<approved-digest>`
-and retain the built image digest. The default base tag and distribution packages
-and isolated build tooling are mutable; the Dockerfile alone does not promise
-byte-for-byte reproducible images. CI smoke-tests a non-root, read-only and
-network-isolated image; build and test the deployment image at its approved base
-digest, including resource limits and output-directory permissions, before rollout.
+The Dockerfile installs the runtime lock and the build lock under
+`--require-hashes`, builds the package with `--no-build-isolation`, and runs as
+UID/GID 65532. Its default base is `python:3.12-slim-bookworm` pinned to the
+multi-arch image index digest on the `FROM` line, with the resolution date and
+refresh procedure in the comment above it; the weekly `docker` entry in
+`.github/dependabot.yml` proposes digest refreshes, which are reviewed like any
+dependency change. To build at a digest your own review approved instead, pass
+`--build-arg PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:<approved-digest>`
+and retain the built image digest. The build context is an allowlist
+(`.dockerignore`) of package sources, signature data, packaging inputs and the
+two locks, so local bytecode, exports and credentials never enter the image.
+Distribution packages installed with apt stay unpinned because Debian removes
+superseded package versions from its mirrors and an exact pin fails at the next
+security update; the base digest fixes the starting package set, but
+`apt-get update` still reads the live archive, so the Dockerfile alone does not
+promise byte-for-byte reproducible images. CI smoke-tests a non-root, read-only
+and network-isolated image; build and test the deployment image at its approved
+base digest, including resource limits and output-directory permissions, before
+rollout.
 Opt-in Git history enrichment requires Git 2.45+;
 verify the distribution Git version if that feature is needed. Keep runtime
 secrets out of the build context.
@@ -403,7 +420,7 @@ lost user attribution before using their counts as governance evidence.
 
 ## Release verification
 
-### Protect the merge gate
+### Merge gate and review status
 
 At this follow-up review on 2026-09-24, ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
@@ -413,10 +430,34 @@ bypass actors configured on this required-check ruleset. `Protect main` is also
 active. Earlier review notes describing disabled enforcement are historical.
 Keep the CodeQL job's displayed name `analyze` consistent with the required check.
 
-A successful workflow is necessary but does not supply independent approval.
-Obtain an eligible review on the final changes. Recheck live ruleset and PR status
-at release time because repository settings can change; do not weaken the rules
-to self-merge.
+At the 2026-09-24 review, the repository had a single maintainer and no merged
+change carried an approving review from a second person. A merged pull request,
+the version string, and the internal AI-assisted hardening logs are not evidence
+of independent review. The review and merge policy is in
+[CONTRIBUTING.md](../CONTRIBUTING.md#review-and-merge-policy).
+
+Rulesets, branch protection and pull request approvals are repository settings
+that can change at any time, so an
+operator who needs an independently reviewed revision must inspect the live
+state when selecting the commit and retain the output with the deployment
+evidence:
+
+```bash
+# Rules currently enforced on main; an empty list means nothing is enforced
+gh api repos/aisecnomad/Project-Nexus/rules/branches/main
+# The ruleset itself, including its enforcement state
+gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 --jq '{name, enforcement, rules: [.rules[].type]}'
+# Classic branch protection; HTTP 404 means none is configured
+gh api repos/aisecnomad/Project-Nexus/branches/main/protection
+# Who authored, reviewed and merged the pull request that introduced a change
+gh pr view <number> --repo aisecnomad/Project-Nexus --json author,mergedBy,reviews
+```
+
+An approving review counts only when it comes from an account other than the
+author's and was submitted on the final commit of the pull request. A successful
+workflow run is necessary but does not supply that approval. Recheck the live
+ruleset and pull request status at release time. Do not weaken the rules to
+self-merge.
 
 The CI workflow installs the hash-locked core/cloud runtime dependency set and validates signatures, lint, typing, dependency advisories, tests
 with a minimum 80% statement coverage, wheel creation, installed-wheel validation
@@ -480,8 +521,8 @@ Until completed, describe deployment status as pending tenant and container acce
 
 ## Consolidated candidate compatibility
 
-The consolidated review preserves the PR #30 runtime policies and reconciles
-verified additional fixes with PR #31, which merged during the review. The
+The consolidated candidate preserves the PR #30 runtime policies and reconciles
+verified additional fixes with PR #31, which merged during that work. The
 canonical deadline setting is `options.connector_timeout_seconds` /
 `--connector-timeout-seconds` (default 120). Legacy `options.connector_timeout`
 and `--connector-timeout` remain deprecated compatibility aliases. Configure only
@@ -520,5 +561,6 @@ against its expected issuer and allowed keys. This is signature evidence, not an
 authorization or token-acceptance decision. Key rotation during the same analysis
 requires a new scan.
 
-See [the consolidated review](consolidated-review-2026-09-24.md) for verification
-evidence and implementation choices.
+See the [consolidated hardening log](hardening-logs/consolidated-review-2026-09-24.md)
+for the maintainer's verification notes and implementation choices. It is an
+internal, AI-assisted work log, not an independent review.

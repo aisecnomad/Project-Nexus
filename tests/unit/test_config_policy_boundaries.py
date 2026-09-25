@@ -130,7 +130,13 @@ def test_connector_specific_fields_and_nested_overrides_remain_supported(monkeyp
     config = ScanConfig.from_dict({
         "options": {"parallel": "${NEXUS_PARALLEL}"},
         "connectors": [{"name": "cloud.aws", "regions": ["us-east-1"],
-                        "config": {"regions": ["eu-west-1"], "custom_plugin_setting": True}}],
+                        "config": {"regions": ["eu-west-1"], "cloudtrail_days": 3}}],
     })
     assert config.parallel == 2
-    assert config.connectors[0].config == {"regions": ["eu-west-1"], "custom_plugin_setting": True}
+    assert config.connectors[0].config == {"regions": ["eu-west-1"], "cloudtrail_days": 3}
+
+
+def test_unknown_built_in_connector_key_fails_closed_without_echoing_its_value():
+    with pytest.raises(ConfigValidationError, match=r"connector 'cloud\.aws' does not accept 'custom_plugin_setting'") as failure:
+        ScanConfig.from_dict({"connectors": [{"name": "cloud.aws", "config": {"custom_plugin_setting": "arbitrary-private-value"}}]})
+    assert "arbitrary-private-value" not in str(failure.value)

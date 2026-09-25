@@ -53,16 +53,22 @@ class GitLabConnector(BaseConnector):
     provider: ClassVar[str | None] = "gitlab"
     description: ClassVar[str] = "Enumerate GitLab group projects and scan their contents; report CI variables and bot identities."
     config_keys: ClassVar[dict[str, str]] = {
-        "group": "group path or id (subgroups included); or `projects: [path/with/namespace, ...]`",
+        "group": "group path or id (env GITLAB_GROUP; subgroups included); or `projects`",
+        "projects": "explicit list of path/with/namespace projects to scan",
         "token": "personal / group access token (env GITLAB_TOKEN) with read_api + read_repository",
-        "api_url": "API base (default https://gitlab.com/api/v4)",
+        "api_url": "API base (default https://gitlab.com/api/v4; env GITLAB_API_URL)",
         "mode": "clone | api",
         "include_archived": "default false",
         "max_projects": "default 500",
         "scan_timeout": "matching budget in seconds per file (default 2)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
+        "exclude": "forwarded to the filesystem scanner (see code.filesystem)",
+        "max_file_size": "forwarded to the filesystem scanner (see code.filesystem)",
+        "max_files": "forwarded to the filesystem scanner (see code.filesystem)",
+        "scan_secrets": "forwarded to the filesystem scanner (see code.filesystem)",
         "input": "offline: directory of cloned projects",
     }
+    shared_config_keys: ClassVar[dict[str, str]] = {}  # clones are bounded by max_projects, not export limits
     offline_formats: ClassVar[str] = "directory of cloned projects"
 
     def __init__(self, ctx: ConnectorContext):

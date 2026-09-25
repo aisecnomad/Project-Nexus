@@ -76,9 +76,9 @@ signatures:
 
   - id: platform.helicone
     name: Helicone
-    category: observability
+    category: platform
     vendor: Helicone
-    description: LLM observability proxy / gateway.
+    description: LLM observability proxy / AI gateway (requests are routed through Helicone).
     signals:
       - type: dependency
         ecosystem: pypi
@@ -234,9 +234,7 @@ signatures:
       - type: domain
         values: ["re:.*\\.app\\.n8n\\.cloud$", "re:.*\\.n8n\\.cloud$"]
         weight: 0.8
-      - type: name
-        patterns: ['(?i)\bn8n\b']
-        weight: 0.5
+      # The n8n display name is owned by identity-app.automation-agents.
 
   - id: platform.make
     name: Make (Integromat)
@@ -254,9 +252,7 @@ signatures:
       - type: env
         names: [MAKE_API_KEY, MAKE_API_TOKEN]
         weight: 0.6
-      - type: name
-        patterns: ['(?i)\bmake\.com\b', '(?i)\bintegromat\b']
-        weight: 0.6
+      # The Make / Integromat display names are owned by identity-app.automation-agents.
 
   - id: platform.zapier
     name: Zapier
@@ -279,9 +275,7 @@ signatures:
       - type: env
         names: [ZAPIER_NLA_API_KEY, ZAPIER_API_KEY, ZAPIER_MCP_URL]
         weight: 0.7
-      - type: name
-        patterns: ['(?i)\bzapier\b']
-        weight: 0.6
+      # The Zapier display name is owned by identity-app.automation-agents.
 
   - id: platform.workato
     name: Workato
@@ -296,9 +290,7 @@ signatures:
         patterns: ['"provider"\s*:\s*"workato_genai"', '"provider"\s*:\s*"(?:openai|azure_openai|anthropic|google_vertex|amazon_bedrock|cohere|gemini)"', 'workato_agentic', '"provider"\s*:\s*"workato_agent']
         weight: 0.85
         agent_indicator: true
-      - type: name
-        patterns: ['(?i)\bworkato\b']
-        weight: 0.5
+      # The Workato display name is owned by identity-app.automation-agents.
 
   - id: platform.copilot-studio
     name: Microsoft Copilot Studio
@@ -397,7 +389,9 @@ signatures:
         values: [api.salesforce.com, "re:.*\\.my\\.salesforce\\.com$", "re:.*\\.my\\.salesforce-setup\\.com$"]
         weight: 0.4
       - type: name
-        patterns: ['(?i)\bagentforce\b', '(?i)\beinstein\b', '(?i)\bcopilot for (?:sales|service)\b']
+        # "Agentforce" is owned by identity-app.automation-agents; "Copilot for
+        # Sales / Service" is Microsoft's Dynamics 365 Copilot, not Salesforce.
+        patterns: ['(?i)\beinstein (?:bots?|copilot|gpt|ai|trust layer|prompt)\b', '(?i)\bagentforce (?:agent|sdr|service agent|builder)\b']
         weight: 0.8
 
   - id: platform.servicenow-now-assist
@@ -471,5 +465,38 @@ signatures:
         names: [VELLUM_API_KEY, HUMANLOOP_API_KEY, RELEVANCE_API_KEY, COZE_API_TOKEN, VOICEFLOW_API_KEY, DUST_API_KEY, LINDY_API_KEY]
         weight: 0.7
       - type: name
-        patterns: ['(?i)\bsuperagi\b', '(?i)\bagentgpt\b', '(?i)\bcoze\b', '(?i)relevance ai', '(?i)\blindy\b', '(?i)stack ai', '(?i)\bvellum\b', '(?i)\bhumanloop\b', '(?i)\bvoiceflow\b', '(?i)\bkore\.ai\b', '(?i)\bmoveworks\b', '(?i)\bdust\.tt\b']
+        # Lindy, Kore.ai, Moveworks and Dust display names are owned by
+        # identity-app.automation-agents.
+        patterns: ['(?i)\bsuperagi\b', '(?i)\bagentgpt\b', '(?i)\bcoze\b', '(?i)relevance ai', '(?i)stack ai', '(?i)\bvellum\b', '(?i)\bhumanloop\b', '(?i)\bvoiceflow\b']
         weight: 0.7
+
+  - id: platform.ibm-watsonx-orchestrate
+    name: IBM watsonx Orchestrate
+    category: platform
+    vendor: IBM
+    homepage: https://www.ibm.com/products/watsonx-orchestrate
+    description: IBM's hosted agent platform (agents, tools, skills and flows) and its Agent Development Kit (ADK).
+    capabilities: [tool-use, saas-actions, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [ibm-watsonx-orchestrate]
+        prefixes: [ibm-watsonx-orchestrate]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+ibm_watsonx_orchestrate\b']
+        weight: 0.95
+      - type: code
+        patterns: ['\borchestrate\s+(?:agents|tools|knowledge-bases|connections|toolkits)\s+(?:import|deploy|list|remove)\b', '^[^\S\r\n]*llm:\s*watsonx/', '^[^\S\r\n]*agent_style:\s*(?:default|react|planner)\s*$', '\bwatsonx[- ]orchestrate\b']
+        weight: 0.85
+      - type: env
+        names: [WO_API_KEY, WO_INSTANCE, WO_DEVELOPER_EDITION_SOURCE, WO_ENTITLEMENT_KEY]
+        weight: 0.7
+      - type: domain
+        values: [api.watson-orchestrate.cloud.ibm.com, "re:.*\\.watson-orchestrate\\.cloud\\.ibm\\.com$", "re:.*\\.watson-orchestrate\\.ibm\\.com$"]
+        weight: 0.9
+      - type: name
+        patterns: ['(?i)\bwatsonx orchestrate\b']
+        weight: 0.8

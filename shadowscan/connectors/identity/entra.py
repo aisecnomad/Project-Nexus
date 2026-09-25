@@ -31,7 +31,6 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 
 GRAPH = "https://graph.microsoft.com/v1.0"
-MS_GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000"
 FIRST_PARTY_OWNER = "f8cdef31-a31e-4b4a-93e4-5f571e91255a"  # Microsoft services tenant
 
 

@@ -84,14 +84,13 @@ signatures:
           - secrets:write
           - actions:write
           - organization_secrets:write
-          # GitLab
+          # GitLab (api is also the Salesforce full-API scope)
           - api
           - sudo
           - admin_mode
           - write_repository
           # Salesforce
           - full
-          - api
           - web
           - refresh_token
           - offline_access

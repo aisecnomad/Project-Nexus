@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
 
 from shadowscan.connectors.common import apply_matches, classify_permissions, domain_matches, name_matches
 from shadowscan.models import Evidence, Finding, Kind
@@ -57,7 +56,3 @@ def identity_kind_for(*, user_consented: bool, machine: bool) -> Kind:
 def summarize_scopes(scopes: Iterable[str], limit: int = 25) -> list[str]:
     out = sorted({str(s) for s in scopes if s})
     return out[:limit] + ([f"... +{len(out) - limit} more"] if len(out) > limit else [])
-
-
-def app_identity_summary(rec: dict[str, Any], *keys: str) -> dict[str, Any]:
-    return {k: rec[k] for k in keys if k in rec and rec[k] not in (None, "", [], {})}

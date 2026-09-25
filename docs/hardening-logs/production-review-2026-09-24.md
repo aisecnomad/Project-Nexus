@@ -1,4 +1,20 @@
-# Production assurance review — 24 September 2026
+# Production hardening log, 24 September 2026
+
+> **Internal, AI-assisted hardening log. Not an independent review.**
+> This document was produced by the project's single maintainer with AI
+> assistance on 2026-09-24 while hardening the code it describes. The author of
+> the changes also wrote this assessment; no second person or third party has
+> verified its findings, its regression claims or its disposition, and it must
+> not be cited as an external security or production review. An independent
+> review would need to cover, at minimum: the trust boundary and HTTP transport
+> policy in `shadowscan/utils/http.py`; credential redaction in findings,
+> reports and record dumps; the fail-closed and incomplete-coverage semantics in
+> the engine and every connector; the cloud, identity and low-code collectors
+> against real tenant permissions rather than mocked responses; the dependency
+> lock, wheel build and container process; and the repository and CI settings
+> that this log takes as given. See [CONTRIBUTING.md](../../CONTRIBUTING.md)
+> for the review policy and [deployment and migration](../production.md) for
+> the current rollout guide.
 
 Base reviewed: `5486827cb478dc476412a6758c5897dd92d9b7ca` (`main`, including PR #25).
 Disposition: implementation hardened; production rollout remains subject to tenant acceptance and an enforced merge gate.
@@ -6,7 +22,7 @@ Disposition: implementation hardened; production rollout remains subject to tena
 **Historical review.** The version, ruleset and installation-pin observations below
 describe that reviewed base and the follow-up available at the time. For the
 current release candidate, required checks and rollout gates, use
-[deployment and migration](production.md) and verify the live repository ruleset.
+[deployment and migration](../production.md) and verify the live repository ruleset.
 
 This review examined the current implementation rather than replaying the older
 findings against `b13753d`. It preserved the intervening main-branch protections
@@ -90,7 +106,7 @@ actual expensive regex preemption.
 
 At the reviewed base, the package version remained `0.1.0`; this review did not
 publish a release or certify the deployment environment. See
-[production.md](production.md) for migration and
+[production.md](../production.md) for migration and
 acceptance details. The older conflicting PR #23 should not be merged wholesale
 over the newer protections retained here.
 README and example workflow installation pins now point to the verified code
