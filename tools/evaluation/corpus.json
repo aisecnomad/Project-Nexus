@@ -10,327 +10,782 @@
       "id": "py-langgraph-agent",
       "family": "agent",
       "description": "A Python LangGraph import and active StateGraph construction",
-      "files": {"agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": true
     },
     {
       "id": "py-langchain-agent",
       "family": "agent",
       "description": "A Python LangChain import and active agent construction",
-      "files": {"agent.py": "from langchain.agents import create_agent\nagent = create_agent(model, tools)\n"},
-      "target": {"kind": "agent", "signature": "framework.langchain"},
+      "files": {
+        "agent.py": "from langchain.agents import create_agent\nagent = create_agent(model, tools)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchain"
+      },
       "present": true
     },
     {
       "id": "py-fstring-interpolated-agent",
       "family": "agent",
       "description": "A StateGraph call inside a Python f-string interpolation is executable",
-      "files": {"agent.py": "from langgraph.graph import StateGraph\nmessage = f'graph: {StateGraph(dict)}'\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.py": "from langgraph.graph import StateGraph\nmessage = f'graph: {StateGraph(dict)}'\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": true
     },
     {
       "id": "ts-langgraph-agent",
       "family": "agent",
       "description": "A TypeScript LangGraph import and active StateGraph construction",
-      "files": {"agent.ts": "import { StateGraph } from '@langchain/langgraph';\nconst graph = new StateGraph();\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.ts": "import { StateGraph } from '@langchain/langgraph';\nconst graph = new StateGraph();\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": true
     },
     {
       "id": "js-regex-then-agent",
       "family": "agent",
       "description": "A JavaScript regex literal does not hide a subsequent real StateGraph invocation",
-      "files": {"agent.js": "import { StateGraph } from '@langchain/langgraph';\nconst pattern = /StateGraph\\(/;\nconst graph = new StateGraph();\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.js": "import { StateGraph } from '@langchain/langgraph';\nconst pattern = /StateGraph\\(/;\nconst graph = new StateGraph();\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": true
     },
     {
       "id": "py-comment-agent",
       "family": "agent",
       "description": "Commented out Python LangGraph calls do not create an agent",
-      "files": {"agent.py": "# StateGraph(\n# create_react_agent(model, tools)\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.py": "# StateGraph(\n# create_react_agent(model, tools)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": false
     },
     {
       "id": "py-string-agent",
       "family": "agent",
       "description": "Python string mentioning a LangGraph call does not create an agent",
-      "files": {"agent.py": "example = 'StateGraph('\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.py": "example = 'StateGraph('\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": false
     },
     {
       "id": "py-fstring-literal-agent",
       "family": "agent",
       "description": "A doubled brace f-string contains literal example text, not a call",
-      "files": {"agent.py": "from langgraph.graph import StateGraph\nmessage = f'Literal {{StateGraph(dict)}}'\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.py": "from langgraph.graph import StateGraph\nmessage = f'Literal {{StateGraph(dict)}}'\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": false
     },
     {
       "id": "py-docstring-agent",
       "family": "agent",
       "description": "Python docstring with illustrative agent calls is inert",
-      "files": {"agent.py": "\"\"\"Example: StateGraph(dict) and create_react_agent(model, tools).\"\"\"\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.py": "\"\"\"Example: StateGraph(dict) and create_react_agent(model, tools).\"\"\"\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": false
     },
     {
       "id": "ts-line-comment-agent",
       "family": "agent",
       "description": "TypeScript line comment mentioning a constructor is inert",
-      "files": {"agent.ts": "// import { StateGraph } from '@langchain/langgraph';\n// new StateGraph();\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.ts": "// import { StateGraph } from '@langchain/langgraph';\n// new StateGraph();\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": false
     },
     {
       "id": "ts-block-comment-agent",
       "family": "agent",
       "description": "TypeScript block comment mentioning a constructor is inert",
-      "files": {"agent.ts": "/* import { StateGraph } from '@langchain/langgraph';\n   const graph = new StateGraph(); */\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.ts": "/* import { StateGraph } from '@langchain/langgraph';\n   const graph = new StateGraph(); */\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": false
     },
     {
       "id": "ts-string-agent",
       "family": "agent",
       "description": "TypeScript string containing an apparent StateGraph call is inert",
-      "files": {"agent.ts": "const example = 'StateGraph(';\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.ts": "const example = 'StateGraph(';\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": false
     },
     {
       "id": "jsx-text-agent",
       "family": "agent",
       "description": "A JSX text node with a StateGraph example is inert",
-      "files": {"Example.jsx": "export default function Example() { return <div>StateGraph(dict)</div>; }\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "Example.jsx": "export default function Example() { return <div>StateGraph(dict)</div>; }\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": false
     },
     {
       "id": "readme-example-agent",
       "family": "agent",
       "description": "A README code fence documents agent code but is not active source",
-      "files": {"README.md": "Example:\n```python\nfrom langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n```\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "README.md": "Example:\n```python\nfrom langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n```\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": false
     },
     {
       "id": "dependency-only-agent",
       "family": "agent",
       "description": "A dependency on LangGraph alone does not establish an active agent",
-      "files": {"pyproject.toml": "[project]\nname = 'package-only'\nversion = '0.1.0'\ndependencies = ['langgraph']\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "pyproject.toml": "[project]\nname = 'package-only'\nversion = '0.1.0'\ndependencies = ['langgraph']\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": false
     },
     {
       "id": "dependency-framework-usage",
       "family": "framework-usage",
       "description": "A declared LangGraph dependency is framework usage, even without an agent",
-      "files": {"pyproject.toml": "[project]\nname = 'package-only'\nversion = '0.1.0'\ndependencies = ['langgraph']\n"},
-      "target": {"kind": "framework-usage", "signature": "framework.langgraph"},
+      "files": {
+        "pyproject.toml": "[project]\nname = 'package-only'\nversion = '0.1.0'\ndependencies = ['langgraph']\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.langgraph"
+      },
       "present": true
     },
     {
       "id": "plain-code-framework-usage",
       "family": "framework-usage",
       "description": "A plain Python service has no LangGraph usage",
-      "files": {"service.py": "def serve():\n    return 'hello'\n"},
-      "target": {"kind": "framework-usage", "signature": "framework.langgraph"},
+      "files": {
+        "service.py": "def serve():\n    return 'hello'\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.langgraph"
+      },
       "present": false
     },
     {
       "id": "mcp-stdio-active",
       "family": "mcp-server",
       "description": "A configured MCP stdio server is discoverable",
-      "files": {".mcp.json": "{\"mcpServers\":{\"tools\":{\"command\":\"npx\",\"args\":[\"-y\",\"@modelcontextprotocol/server-filesystem\"]}}}\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        ".mcp.json": "{\"mcpServers\":{\"tools\":{\"command\":\"npx\",\"args\":[\"-y\",\"@modelcontextprotocol/server-filesystem\"]}}}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": true,
-      "assertions": {"server_count": 1, "server_names": ["tools"]}
+      "assertions": {
+        "server_count": 1,
+        "server_names": [
+          "tools"
+        ]
+      }
     },
     {
       "id": "mcp-remote-active",
       "family": "mcp-server",
       "description": "A configured remote MCP server is discoverable",
-      "files": {".vscode/mcp.json": "{\"servers\":{\"remote\":{\"type\":\"http\",\"url\":\"https://tools.example.test/mcp\"}}}\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        ".vscode/mcp.json": "{\"servers\":{\"remote\":{\"type\":\"http\",\"url\":\"https://tools.example.test/mcp\"}}}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": true
     },
     {
       "id": "mcp-toml-table-active",
       "family": "mcp-server",
       "description": "Codex TOML inline server table under mcp_servers is active",
-      "files": {".codex/config.toml": "[mcp_servers]\nactive = {command = 'npx'}\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        ".codex/config.toml": "[mcp_servers]\nactive = {command = 'npx'}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": true,
-      "assertions": {"server_count": 1, "server_names": ["active"]}
+      "assertions": {
+        "server_count": 1,
+        "server_names": [
+          "active"
+        ]
+      }
     },
     {
       "id": "mcp-toml-dotted-active",
       "family": "mcp-server",
       "description": "Codex TOML dotted key mcp_servers.active is an active server",
-      "files": {".codex/config.toml": "mcp_servers.active = {command = 'npx'}\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        ".codex/config.toml": "mcp_servers.active = {command = 'npx'}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": true,
-      "assertions": {"server_count": 1, "server_names": ["active"]}
+      "assertions": {
+        "server_count": 1,
+        "server_names": [
+          "active"
+        ]
+      }
     },
     {
       "id": "mcp-registry-active",
       "family": "mcp-server",
       "description": "An MCP registry manifest with an actual package is discoverable",
-      "files": {"server.json": "{\"name\":\"io.github.example/tools\",\"packages\":[{\"registryType\":\"npm\",\"identifier\":\"@example/mcp-tools\"}]}\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        "server.json": "{\"name\":\"io.github.example/tools\",\"packages\":[{\"registryType\":\"npm\",\"identifier\":\"@example/mcp-tools\"}]}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": true
     },
     {
       "id": "mcp-empty-json",
       "family": "mcp-server",
       "description": "An empty MCP JSON mapping configures no server",
-      "files": {".mcp.json": "{\"mcpServers\":{}}\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        ".mcp.json": "{\"mcpServers\":{}}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": false,
-      "assertions": {"server_count": 0, "max_agent_findings": 0}
+      "assertions": {
+        "server_count": 0,
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "mcp-empty-jsonc",
       "family": "mcp-server",
       "description": "An empty MCP JSONC mapping configures no server",
-      "files": {".vscode/mcp.json": "{\n // A placeholder for later\n \"servers\": {}\n}\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        ".vscode/mcp.json": "{\n // A placeholder for later\n \"servers\": {}\n}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": false,
-      "assertions": {"server_count": 0, "max_agent_findings": 0}
+      "assertions": {
+        "server_count": 0,
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "mcp-empty-toml",
       "family": "mcp-server",
       "description": "An empty Codex TOML MCP table configures no server",
-      "files": {".codex/config.toml": "[mcp_servers]\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        ".codex/config.toml": "[mcp_servers]\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": false,
-      "assertions": {"server_count": 0, "max_agent_findings": 0}
+      "assertions": {
+        "server_count": 0,
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "mcp-empty-yaml",
       "family": "mcp-server",
       "description": "An empty MCP YAML mapping configures no server",
-      "files": {"smithery.yaml": "mcpServers: {}\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        "smithery.yaml": "mcpServers: {}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": false,
-      "assertions": {"server_count": 0, "max_agent_findings": 0}
+      "assertions": {
+        "server_count": 0,
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "mcp-disabled-json",
       "family": "mcp-server",
       "description": "A disabled only MCP JSON mapping configures no active server",
-      "files": {".mcp.json": "{\"mcpServers\":{\"disabled\":{\"command\":\"npx\",\"disabled\":true}}}\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        ".mcp.json": "{\"mcpServers\":{\"disabled\":{\"command\":\"npx\",\"disabled\":true}}}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": false,
-      "assertions": {"server_count": 0, "max_agent_findings": 0}
+      "assertions": {
+        "server_count": 0,
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "mcp-disabled-toml",
       "family": "mcp-server",
       "description": "A disabled only Codex MCP server configures no active server",
-      "files": {".codex/config.toml": "[mcp_servers.disabled]\ncommand = 'npx'\nenabled = false\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        ".codex/config.toml": "[mcp_servers.disabled]\ncommand = 'npx'\nenabled = false\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": false,
-      "assertions": {"server_count": 0, "max_agent_findings": 0}
+      "assertions": {
+        "server_count": 0,
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "mcp-disabled-yaml",
       "family": "mcp-server",
       "description": "A disabled only MCP YAML mapping configures no active server",
-      "files": {"smithery.yaml": "mcpServers:\n  disabled:\n    command: npx\n    disabled: true\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        "smithery.yaml": "mcpServers:\n  disabled:\n    command: npx\n    disabled: true\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": false,
-      "assertions": {"server_count": 0, "max_agent_findings": 0}
+      "assertions": {
+        "server_count": 0,
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "mcp-mixed-json",
       "family": "mcp-server",
       "description": "Only the enabled MCP JSON server is counted",
-      "files": {".mcp.json": "{\"mcpServers\":{\"enabled\":{\"command\":\"npx\"},\"disabled\":{\"command\":\"npx\",\"disabled\":true}}}\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        ".mcp.json": "{\"mcpServers\":{\"enabled\":{\"command\":\"npx\"},\"disabled\":{\"command\":\"npx\",\"disabled\":true}}}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": true,
-      "assertions": {"server_count": 1, "server_names": ["enabled"]}
+      "assertions": {
+        "server_count": 1,
+        "server_names": [
+          "enabled"
+        ]
+      }
     },
     {
       "id": "mcp-mixed-yaml",
       "family": "mcp-server",
       "description": "Only the enabled MCP YAML server is counted",
-      "files": {"smithery.yaml": "mcpServers:\n  enabled:\n    command: npx\n  disabled:\n    command: npx\n    disabled: true\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        "smithery.yaml": "mcpServers:\n  enabled:\n    command: npx\n  disabled:\n    command: npx\n    disabled: true\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": true,
-      "assertions": {"server_count": 1, "server_names": ["enabled"]}
+      "assertions": {
+        "server_count": 1,
+        "server_names": [
+          "enabled"
+        ]
+      }
     },
     {
       "id": "mcp-mixed-toml",
       "family": "mcp-server",
       "description": "Only the enabled Codex MCP TOML server is counted",
-      "files": {".codex/config.toml": "[mcp_servers.enabled]\ncommand = 'npx'\n[mcp_servers.disabled]\ncommand = 'npx'\nenabled = false\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        ".codex/config.toml": "[mcp_servers.enabled]\ncommand = 'npx'\n[mcp_servers.disabled]\ncommand = 'npx'\nenabled = false\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": true,
-      "assertions": {"server_count": 1, "server_names": ["enabled"]}
+      "assertions": {
+        "server_count": 1,
+        "server_names": [
+          "enabled"
+        ]
+      }
     },
     {
       "id": "mcp-generic-server-json",
       "family": "mcp-server",
       "description": "Generic web service metadata is not an MCP registry manifest",
-      "files": {"server.json": "{\"name\":\"ordinary web service\",\"remotes\":[{\"url\":\"https://replica.example.test\"}]}\n"},
-      "target": {"kind": "mcp-server", "signature": "protocol.mcp"},
+      "files": {
+        "server.json": "{\"name\":\"ordinary web service\",\"remotes\":[{\"url\":\"https://replica.example.test\"}]}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
       "present": false
     },
     {
       "id": "go-comment-string-agent",
       "family": "agent",
       "description": "Go source comments and quoted examples do not create an agent",
-      "files": {"agent.go": "package main\n// agents.NewExecutor(ctx, model)\nvar example = \"agents.NewExecutor(\"\n"},
-      "target": {"kind": "agent", "signature": "framework.langchaingo"},
+      "files": {
+        "agent.go": "package main\n// agents.NewExecutor(ctx, model)\nvar example = \"agents.NewExecutor(\"\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchaingo"
+      },
       "present": false,
-      "assertions": {"max_agent_findings": 0}
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "go-executable-agent",
       "family": "agent",
       "description": "A Go agent construction remains visible after commented and quoted examples",
-      "files": {"agent.go": "package main\nimport \"github.com/tmc/langchaingo/agents\"\n// agents.NewExecutor(ctx, model)\nvar example = \"agents.NewExecutor(\"\nfunc run() { agents.NewExecutor(ctx, model) }\n"},
-      "target": {"kind": "agent", "signature": "framework.langchaingo"},
+      "files": {
+        "agent.go": "package main\nimport \"github.com/tmc/langchaingo/agents\"\n// agents.NewExecutor(ctx, model)\nvar example = \"agents.NewExecutor(\"\nfunc run() { agents.NewExecutor(ctx, model) }\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchaingo"
+      },
       "present": true
     },
     {
       "id": "php-html-only-template-agent",
       "family": "agent",
       "description": "An HTML-only PHP template has no executable agent call",
-      "files": {"template.php": "<p>create_agent($model, $tools)</p>\n"},
-      "target": {"kind": "agent", "signature": "framework.langchain"},
+      "files": {
+        "template.php": "<p>create_agent($model, $tools)</p>\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchain"
+      },
       "present": false,
-      "assertions": {"max_agent_findings": 0}
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "php-unbound-echo-helper",
       "family": "agent",
       "description": "A short PHP echo tag calls an unbound helper; its name alone does not establish a LangChain agent",
-      "files": {"template.php": "<p>create_agent($model, $tools)</p>\n<?= create_agent($model, $tools) ?>\n"},
-      "target": {"kind": "agent", "signature": "framework.langchain"},
+      "files": {
+        "template.php": "<p>create_agent($model, $tools)</p>\n<?= create_agent($model, $tools) ?>\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchain"
+      },
       "present": false
     },
     {
       "id": "coding-agent-config",
       "family": "agent-config",
       "description": "A Claude Code instructions file is a coding agent configuration",
-      "files": {"CLAUDE.md": "# Instructions\nReview diffs before changing files.\n"},
-      "target": {"kind": "agent-config", "signature": "coding-agent.claude-code"},
+      "files": {
+        "CLAUDE.md": "# Instructions\nReview diffs before changing files.\n"
+      },
+      "target": {
+        "kind": "agent-config",
+        "signature": "coding-agent.claude-code"
+      },
       "present": true
     },
     {
       "id": "ordinary-readme-config",
       "family": "agent-config",
       "description": "Ordinary documentation is not a coding agent configuration",
-      "files": {"README.md": "Our CI verifies source formatting.\n"},
-      "target": {"kind": "agent-config", "signature": "coding-agent.claude-code"},
+      "files": {
+        "README.md": "Our CI verifies source formatting.\n"
+      },
+      "target": {
+        "kind": "agent-config",
+        "signature": "coding-agent.claude-code"
+      },
+      "present": false
+    },
+    {
+      "id": "raw-anthropic-tool-loop",
+      "family": "agent",
+      "description": "A hand-written Anthropic tool-use loop that executes tool input and feeds results back",
+      "files": {
+        "bot.py": "import anthropic, subprocess\nclient = anthropic.Anthropic()\ntools = [{\"name\": \"bash\", \"input_schema\": {\"type\": \"object\"}}]\nmessages = [{\"role\": \"user\", \"content\": \"clean up\"}]\nwhile True:\n    resp = client.messages.create(model=\"m\", max_tokens=10, tools=tools, messages=messages)\n    if resp.stop_reason != \"tool_use\":\n        break\n    for block in resp.content:\n        if block.type == \"tool_use\":\n            out = subprocess.run(block.input[\"cmd\"], shell=True, capture_output=True, text=True).stdout\n            messages.append({\"role\": \"user\", \"content\": [{\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": out}]})\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.anthropic"
+      },
+      "present": true
+    },
+    {
+      "id": "raw-openai-tool-loop",
+      "family": "agent",
+      "description": "An OpenAI chat completion tool loop that dispatches the selected tool and feeds its result back",
+      "files": {
+        "agent.py": "import json\nfrom openai import OpenAI\nclient = OpenAI()\ntools = [{\"type\": \"function\", \"function\": {\"name\": \"lookup\", \"parameters\": {\"type\": \"object\"}}}]\nmessages = [{\"role\": \"user\", \"content\": \"find the order\"}]\nwhile True:\n    r = client.chat.completions.create(model=\"m\", messages=messages, tools=tools)\n    msg = r.choices[0].message\n    if not msg.tool_calls:\n        break\n    messages.append(msg)\n    for call in msg.tool_calls:\n        result = lookup(**json.loads(call.function.arguments))\n        messages.append({\"role\": \"tool\", \"tool_call_id\": call.id, \"content\": json.dumps(result)})\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.openai"
+      },
+      "present": true
+    },
+    {
+      "id": "single-completion-without-tools",
+      "family": "agent",
+      "description": "One completion call without tools is LLM usage, not an agent",
+      "files": {
+        "summarize.py": "from openai import OpenAI\nclient = OpenAI()\ndef summarize(text):\n    return client.chat.completions.create(model=\"m\", messages=[])\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.openai"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "anthropic-tool-schema-only",
+      "family": "agent",
+      "description": "Offering tools to Anthropic without executing a selected tool is tool-enabled LLM usage, not an agent",
+      "files": {
+        "app.py": "import anthropic\nclient = anthropic.Anthropic()\ntools = [{\"name\": \"bash\", \"input_schema\": {\"type\": \"object\"}}]\nresp = client.messages.create(model=\"m\", max_tokens=10, tools=tools, messages=[])\nfor block in resp.content:\n    print(block.type, block.input)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.anthropic"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "langgraph-with-langchain-openai",
+      "family": "agent",
+      "description": "Provider attributed through the langchain-openai integration package",
+      "files": {
+        "agent.py": "from langchain_openai import ChatOpenAI\nfrom langgraph.prebuilt import create_react_agent\nagent = create_react_agent(ChatOpenAI(model=\"m\"), tools=[])\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.openai"
+      },
+      "present": true
+    },
+    {
+      "id": "vercel-ai-sdk-anthropic-provider",
+      "family": "agent",
+      "description": "Provider attributed through @ai-sdk/anthropic",
+      "files": {
+        "package.json": "{\"name\": \"t\", \"dependencies\": {\"ai\": \"^4.0.0\", \"@ai-sdk/anthropic\": \"^1.0.0\"}}\n",
+        "agent.ts": "import { generateText, tool } from 'ai';\nimport { anthropic } from '@ai-sdk/anthropic';\nconst r = await generateText({ model: anthropic('m'), tools: { t: tool({}) }, prompt: 'x' });\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.anthropic"
+      },
+      "present": true
+    },
+    {
+      "id": "agent-only-in-library-tests",
+      "family": "agent",
+      "description": "A library whose test suite builds an agent is not itself an agent",
+      "files": {
+        "src/wrapper.py": "import crewai\n",
+        "requirements.txt": "crewai\n",
+        "tests/test_crew.py": "from crewai import Agent, Crew\nresearcher = Agent(role=\"r\", goal=\"g\", backstory=\"b\")\nCrew(agents=[researcher], tasks=[])\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.crewai"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "reinforcement-learning-agent",
+      "family": "agent",
+      "description": "An RL policy called 'agent' is not an AI agent",
+      "files": {
+        "train.py": "import gymnasium as gym\nfrom stable_baselines3 import PPO\nagent = PPO(\"MlpPolicy\", gym.make(\"CartPole-v1\"))\nagent.learn(total_timesteps=10)\n",
+        "requirements.txt": "gymnasium\nstable-baselines3\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchain"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "infrastructure-agent-words",
+      "family": "agent",
+      "description": "Jenkins/Datadog/Consul 'agent' configuration is not an AI agent",
+      "files": {
+        "Jenkinsfile": "pipeline { agent { label 'linux' } stages { stage('b') { steps { sh 'make' } } } }\n",
+        "deploy.yaml": "datadog:\n  agent:\n    enabled: true\nconsul:\n  agent: true\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchain"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "a2a-card-single-finding",
+      "family": "agent",
+      "description": "An A2A agent card yields one agent finding, not a duplicate project finding",
+      "files": {
+        ".well-known/agent-card.json": "{\"name\": \"Travel Agent\", \"description\": \"Books travel\", \"url\": \"https://agents.example.com/travel\", \"version\": \"1.0.0\", \"capabilities\": {}, \"defaultInputModes\": [\"text\"], \"defaultOutputModes\": [\"text\"], \"skills\": [{\"id\": \"book\", \"name\": \"Book\", \"description\": \"Books flights\", \"tags\": [\"travel\"]}]}"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "protocol.a2a"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 1
+      }
+    },
+    {
+      "id": "terraform-bedrock-agent-model",
+      "family": "infra",
+      "description": "Terraform Bedrock agent with a declared Anthropic model",
+      "files": {
+        "main.tf": "resource \"aws_bedrockagent_agent\" \"ops\" {\n  agent_name = \"ops\"\n  foundation_model = \"anthropic.claude-3-5-sonnet-20240620-v1:0\"\n}\n"
+      },
+      "target": {
+        "kind": "infra",
+        "signature": "provider.anthropic"
+      },
+      "present": true
+    },
+    {
+      "id": "terraform-without-ai",
+      "family": "infra",
+      "description": "Ordinary Terraform provisions no agent",
+      "files": {
+        "main.tf": "resource \"aws_s3_bucket\" \"logs\" {\n  bucket = \"logs\"\n}\n"
+      },
+      "target": {
+        "kind": "infra",
+        "signature": "provider.anthropic"
+      },
+      "present": false
+    },
+    {
+      "id": "n8n-agent-with-openai-node",
+      "family": "workflow",
+      "description": "n8n AI Agent export attributes its OpenAI model node",
+      "files": {
+        "workflow.json": "{\"name\": \"triage\", \"nodes\": [{\"parameters\": {}, \"name\": \"AI Agent\", \"type\": \"@n8n/n8n-nodes-langchain.agent\", \"typeVersion\": 1.7, \"position\": [0, 0]}, {\"parameters\": {}, \"name\": \"Model\", \"type\": \"@n8n/n8n-nodes-langchain.lmChatOpenAi\", \"typeVersion\": 1, \"position\": [0, 1]}], \"connections\": {}}"
+      },
+      "target": {
+        "kind": "workflow",
+        "signature": "provider.openai"
+      },
+      "present": true
+    },
+    {
+      "id": "n8n-without-ai-nodes",
+      "family": "workflow",
+      "description": "An n8n export without AI nodes is not an AI workflow",
+      "files": {
+        "workflow.json": "{\"name\": \"sync\", \"nodes\": [{\"parameters\": {}, \"name\": \"Cron\", \"type\": \"n8n-nodes-base.cron\", \"typeVersion\": 1, \"position\": [0, 0]}, {\"parameters\": {}, \"name\": \"HTTP\", \"type\": \"n8n-nodes-base.httpRequest\", \"typeVersion\": 1, \"position\": [0, 1]}], \"connections\": {}}"
+      },
+      "target": {
+        "kind": "workflow",
+        "signature": "provider.openai"
+      },
       "present": false
     },
     {

@@ -183,13 +183,18 @@ def test_oversize_lockfile_is_a_warning_and_the_scan_stays_complete(tmp_path, in
     assert all("over max_file_size" in warning for warning in stats.warnings)
 
 
-def test_oversize_source_file_stays_an_error(tmp_path, index):
+def test_oversize_source_file_is_a_warning_unless_strict_coverage(tmp_path, index):
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     (tmp_path / "big.py").write_text("x" * 200)
     result = Engine(_engine_config(tmp_path), index).run()
-    assert not result.complete and result.findings
-    assert any("big.py: file exceeds max_file_size" in error for error in result.stats[0].errors)
-    assert not result.stats[0].warnings
+    assert result.complete and result.findings
+    assert not result.stats[0].errors
+    assert any("big.py: skipped, file exceeds max_file_size" in warning for warning in result.stats[0].warnings)
+    # Enforcement gates opt back into fail-closed coverage.
+    strict = Engine(_engine_config(tmp_path, strict_coverage=True), index).run()
+    assert not strict.complete and strict.findings
+    assert any("big.py: file exceeds max_file_size" in error for error in strict.stats[0].errors)
+    assert not strict.stats[0].warnings
 
 
 def test_oversize_skip_globs_is_configurable_and_validated(tmp_path, index, run_connector):
@@ -201,6 +206,9 @@ def test_oversize_skip_globs_is_configurable_and_validated(tmp_path, index, run_
     assert sorted(warning.split(": ")[1] for warning in ctx.stats.warnings) == ["big.py", "data.csv"]
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=100,
                            oversize_skip_globs=[])
+    assert not ctx.stats.incomplete and not ctx.stats.errors and len(ctx.stats.warnings) == 2
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=100,
+                           oversize_skip_globs=[], strict_coverage=True)
     assert ctx.stats.incomplete and not ctx.stats.warnings
     assert sorted(error.split(": ")[1] for error in ctx.stats.errors) == ["big.py", "data.csv"]
     with pytest.raises(ConnectorError, match="oversize_skip_globs"):
@@ -504,7 +512,7 @@ def test_unreadable_entries_reserve_no_deadline_budget(tmp_path, index, monkeypa
     for number in range(3):
         (tmp_path / f"z_agent_{number}.py").write_text(LANGCHAIN)
     clock = _fake_clock(monkeypatch, step=1.0)
-    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 5.5)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False, "strict_coverage": True}, index=index, deadline=clock[0] + 5.5)
     findings = FilesystemConnector(ctx).run()
     assert ctx.stats.objects_examined >= 2
     assert any("a_big.py" in error and "max_file_size" in error for error in ctx.stats.errors)

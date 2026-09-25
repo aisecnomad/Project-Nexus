@@ -16,6 +16,54 @@
 - Bound evaluation corpus reads, reject the reserved aggregate family name,
   and bind annotation checks to the exact corpus snapshot being evaluated.
 
+### Detection precision, coverage policy and risk explainability
+
+Behavior changes (review before upgrading an enforcement gate):
+
+- Oversize files and symbolic links leaving the scan root are skipped with a
+  warning instead of making the scan incomplete. `strict_coverage: true` /
+  `--strict-coverage` restores the previous fail-closed behavior. Links that stay
+  inside the scan root no longer affect coverage in either mode.
+- Evidence found only in test or fixture code no longer establishes an agent
+  (half weight, `test-code-only` tag); `include_tests` / `--include-tests` opts out.
+- Project findings built only from evidence already reported by an MCP config,
+  agent manifest, exported workflow, IaC or credential finding are no longer
+  emitted as duplicates.
+- Signature-level capabilities are narrower: LangGraph no longer implies memory,
+  the OpenAI Agents SDK implies multi-agent only with hand-offs, and Bedrock
+  AgentCore memory, code interpreter and browser come from their own resources.
+
+Fixes and additions:
+
+- The Python/JavaScript import binder counts only calls into modules that a
+  signature describes. Ordinary large files (e.g. psf/requests' test suite) no
+  longer fail with `source binding call limit exceeded`; diagnostics now include
+  the scanner's own limit message.
+- Provider SDK requests that pass tools (`tools=`, `toolConfig=`) record
+  import-bound tool-use capability and provider attribution. The agent verdict
+  still requires the model-selected dispatch and feedback loop, which is now
+  recognized for Anthropic `messages.create` as well as OpenAI chat
+  completions, including process or code execution sinks fed with the model's
+  tool input, collected `tool_result` lists and dispatch inside `if` branches.
+  Anthropic, OpenAI, Bedrock Converse and Gemini tool-call shapes are matched
+  when written as dict keys or compared strings; loop checks accept `!=` as
+  well as `==`.
+- Shell, process and dynamic-code sinks count as code execution when the same
+  file invokes a model, framework or tool-calling protocol.
+- Model providers are attributed through LangChain, LlamaIndex and Vercel AI SDK
+  integration packages and n8n model nodes (18 providers), and through model IDs
+  declared in IaC. IaC projects with wildcard IAM statements are tagged
+  `wildcard-permissions`.
+- Placeholder credentials (repeated characters, marker words such as `EXAMPLE`,
+  very low character diversity) are ignored; Azure OpenAI keys are recognized by
+  their standard variable name. MCP inline-secret evidence names its location.
+- Risk factors always add up to the score (explicit `confidence-scaling` and
+  `bounds` factors). New `risk.danger_score` excludes governance factors;
+  `options.risk_basis` (`combined` | `danger`) and validated `options.risk_weights`
+  configure the model.
+- Tests that need optional cloud SDKs or Git 2.45+ skip cleanly; the container
+  base moves to Debian 13 (Git 2.47) and the build fails if Git is older than 2.45.
+
 ### Quality, precision and governance pass (2026-09-24)
 
 #### Security

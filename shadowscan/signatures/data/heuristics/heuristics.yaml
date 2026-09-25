@@ -29,7 +29,7 @@ signatures:
     capabilities: [autonomous]
     signals:
       - type: code
-        patterns: ['\bmax_iterations\s*=', '\bmax_steps\s*=', '\bmaxSteps\s*:', '\bmax_turns\s*=', '\bmaxTurns\s*:', '\bmax_tool_calls\b', '\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\bReAct\b', '\breact_agent\b', '\bscratchpad\b', '\bwhile\s+(?:True|not\s+done|not\s+finished|iterations?\s*<)', '\bfor\s+_?\s*(?:step|iteration|turn)\s+in\s+range\(', '\bstop_reason\s*==\s*["'']tool_use["'']', '\bfinish_reason\s*==\s*["'']tool_calls["'']', '\bthought\s*[:=]\s*', '(?i)\bchain[- ]of[- ]thought\b', '\bhandoff\b', '\bsubagent\b', '\bsub_agents?\b', '\bsupervisor\b']
+        patterns: ['\bmax_iterations\s*=', '\bmax_steps\s*=', '\bmaxSteps\s*:', '\bmax_turns\s*=', '\bmaxTurns\s*:', '\bmax_tool_calls\b', '\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\bReAct\b', '\breact_agent\b', '\bscratchpad\b', '\bwhile\s+(?:True|not\s+done|not\s+finished|iterations?\s*<)', '\bfor\s+_?\s*(?:step|iteration|turn)\s+in\s+range\(', '\bstop_reason\s*[!=]=\s*["'']tool_use["'']', '\bfinish_reason\s*[!=]=\s*["'']tool_calls["'']', '\bthought\s*[:=]\s*', '(?i)\bchain[- ]of[- ]thought\b', '\bhandoff\b', '\bsubagent\b', '\bsub_agents?\b', '\bsupervisor\b']
         weight: 0.35
         agent_indicator: true
 
@@ -87,6 +87,18 @@ signatures:
       - type: code
         patterns: ['^[^\S\r\n]*(?:cron|schedule):\s*["'']?[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+', '\bschedule\.every\(', '\b@(?:app\.)?(?:cron|scheduled|periodic_task|repeat_every)\b', '\bCronTrigger\b', '\bAPScheduler\b', '\bBackgroundScheduler\b', '\bcelery\.(?:beat|task)\b', '\b@celery\.task\b', '\baws_events\.Rule\b', '\bschedule_expression\s*=', '\bScheduleExpression\b', '\bcron\(\s*[0-9*]', '\brate\(\s*\d+\s+(?:minute|hour|day)s?\s*\)', 'triggers:\s*\n\s*-?\s*schedule', '\bon:\s*\n\s*schedule:', '\bsqs_trigger\b', '\bEventBridge\b', '\bPubSub\b[^\n]*\bagent\b', '\b@functions_framework\b', '\btemporalio\b', '\bworkflow\.run\b']
         weight: 0.2
+
+  - id: heuristic.llm-command-execution
+    name: Command / code execution in a file that calls a model
+    category: heuristic
+    vendor: null
+    description: Shell, process and dynamic-code sinks. The code scanner records them only when the same file invokes an LLM provider, agent framework or tool-calling protocol.
+    capabilities: [code-exec]
+    risk_notes: ["Model output that reaches a shell or interpreter enables full compromise through prompt injection."]
+    signals:
+      - type: code
+        patterns: ['\bsubprocess\.(?:run|Popen|call|check_output|check_call)\s*\([^\n]*\bshell\s*=\s*True', '\bos\.(?:system|popen)\s*\(\s*(?!["''])', '(?<![\w.])(?:exec|eval)\s*\(\s*(?!["''\)])', '\bchild_process\b[^\n]*\b(?:exec|execSync|spawn|spawnSync)\b', '\b(?:execSync|spawnSync)\s*\(\s*(?!["''`])', '\bexec\.Command(?:Context)?\s*\(', '\bRuntime\.getRuntime\(\)\s*\.exec\s*\(', '\bnew\s+ProcessBuilder\s*\(']
+        weight: 0.5
 
   - id: heuristic.llm-env-names
     name: Generic LLM / agent environment variables
