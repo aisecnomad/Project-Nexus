@@ -532,6 +532,45 @@ _RUBY_HEREDOC = re.compile(r"<<[-~]?(['\"]?)([A-Za-z_]\w*)\1")
 _PHP_HEREDOC = re.compile(r"<<<[ \t]*(['\"]?)([A-Za-z_]\w*)\1")
 _GO_IMPORT_BLOCK = re.compile(r"import\s*\(")
 _MAX_GO_IMPORT_PREFIX = 4096
+_RUBY_PERCENT_PAIRS = {"{": "}", "[": "]", "(": ")", "<": ">"}
+
+
+def _ruby_percent_delimiter(text: str, start: int) -> bool:
+    if start + 2 >= len(text) or not text.startswith(("%q", "%Q"), start):
+        return False
+    delimiter = text[start + 2]
+    # Ruby's percent strings need an immediately following non-alphanumeric
+    # delimiter. Do not interpret an adjacent identifier/modulo as a string.
+    if start and (text[start - 1].isalnum() or text[start - 1] in "_$.)]}"):
+        return False
+    return delimiter.isascii() and not delimiter.isalnum() and not delimiter.isspace() and delimiter != "\\"
+
+
+def _ruby_percent_string_end(text: str, start: int) -> tuple[int, bool]:
+    """Return end and certainty for delimited %q/%Q Ruby strings.
+
+    %q is inert even when it contains interpolation syntax. %Q can contain
+    executable interpolation; mask through EOF and mark incomplete instead of
+    claiming a code finding or a complete scan without parsing that expression.
+    """
+    opener = text[start + 2]
+    closer = _RUBY_PERCENT_PAIRS.get(opener, opener)
+    depth = 1
+    i = start + 3
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text.startswith("#{", i) and text[start + 1] == "Q":
+            return len(text), False
+        if opener != closer and text[i] == opener:
+            depth += 1
+        elif text[i] == closer:
+            depth -= 1
+            if depth == 0:
+                return i + 1, True
+        i += 1
+    return len(text), False
 
 
 def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple[list[tuple[int, int]], bool]:
@@ -666,6 +705,14 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
                 heredocs.append(heredoc.group(2))
                 i = heredoc.end()
                 continue
+
+        if language == "ruby" and _ruby_percent_delimiter(text, i):
+            end, certain = _ruby_percent_string_end(text, i)
+            spans.append((i, end))
+            if not certain:
+                return spans, True
+            i = end
+            continue
 
         if language == "php" and text.startswith("<<<", i):
             heredoc = _PHP_HEREDOC.match(text, i)

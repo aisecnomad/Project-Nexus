@@ -170,7 +170,7 @@ shadowscan code . --inventory agent-card.yaml
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 
 # 3. Real estate: one config, live connectors, secrets from the environment
-shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif --fail-on high
+shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif
 
 # 4. Single connector, ad-hoc
 shadowscan run identity.entra --set tenant_id=$AZURE_TENANT_ID
@@ -208,7 +208,6 @@ options:
   connector_timeout_seconds: 120    # soft deadline; also enforce a host job timeout
   parallel: 4                        # worker threads; use 1-2 for CPU-bound offline scans
   min_confidence: 0.3
-  fail_on: high
   dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs
 connectors:
   - name: identity.entra
@@ -263,6 +262,10 @@ cannot establish an agent unless `--include-tests` is set.
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
 scans as unsuccessful, while preserving findings from successfully assessed inputs.
+Enable `--fail-on` only after a [frozen, independently adjudicated holdout](docs/evaluation.md#gate-a-frozen-holdout)
+and [read-only tenant canary](docs/evaluation.md#read-only-tenant-canary-procedure)
+establish an acceptable threshold for that environment. A complete static scan
+does not prove that an agent executed or that every eligible resource was collected.
 The CLI normally exits promptly after a connector deadline even when a blocked
 worker cannot be joined. A filesystem publication already in progress can still
 delay timeout handling; enforce a host job timeout for hard limits.

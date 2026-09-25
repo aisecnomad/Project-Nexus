@@ -19,7 +19,6 @@ import hashlib
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 from collections.abc import Iterable, Iterator
@@ -32,7 +31,17 @@ from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.git import clone_environment, git_argv_prefix, read_git_snapshot, validate_git_ref
+from shadowscan.utils.git import (
+    CloneTimeoutError,
+    clone_environment,
+    clone_limits,
+    exceeds_clone_size,
+    git_argv_prefix,
+    has_clone_size_estimate,
+    read_git_snapshot,
+    run_bounded_clone,
+    validate_git_ref,
+)
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 
 INTERESTING_DIRS = (".github/", ".claude/", ".cursor/", ".vscode/", ".windsurf/", ".codex/", ".gemini/", ".kiro/", ".amazonq/", ".continue/", ".roo/", ".well-known/", "config/", "infra/", "terraform/", "deploy/", "k8s/", "helm/", "flows/", "workflows/", "agents/", "prompts/")
@@ -112,6 +121,8 @@ class GitHubConnector(BaseConnector):
         "max_files": "forwarded to the filesystem scanner (see code.filesystem)",
         "scan_secrets": "forwarded to the filesystem scanner (see code.filesystem)",
         "clone_depth": "git clone depth (default 1)",
+        "clone_max_bytes": "preflight repository size cap (default 268435456); requires a disk quota for hard limits",
+        "clone_timeout_seconds": "per-repository git clone deadline (default 120)",
         "topics": "only repositories with any of these topics",
         "input": "offline: directory containing cloned repositories",
     }
@@ -123,10 +134,15 @@ class GitHubConnector(BaseConnector):
         self.api_url = str(ctx.get("api_url", "https://api.github.com", env="GITHUB_API_URL")).rstrip("/")
         self.token = ctx.get("token", env="GITHUB_TOKEN") or ctx.get("github_token", env="GH_TOKEN")
         self.mode = str(ctx.get("mode", "clone" if shutil.which("git") else "api"))
+        if self.mode not in {"clone", "api"}:
+            raise ConnectorError("code.github: mode must be 'clone' or 'api'")
         self.max_repos = int(ctx.get("max_repos", 500))
         if self.max_repos < 1:
             raise ConnectorError("code.github: max_repos must be positive")
         self.depth = int(ctx.get("clone_depth", 1))
+        self.clone_max_bytes, self.clone_timeout_seconds = clone_limits(
+            ctx.get("clone_max_bytes", 256 * 1024 * 1024), ctx.get("clone_timeout_seconds", 120),
+        )
         self.include_archived = bool(ctx.get("include_archived", False))
         self.include_forks = bool(ctx.get("include_forks", False))
         self.topics = set(ctx.get("topics", []) or [])
@@ -285,10 +301,26 @@ class GitHubConnector(BaseConnector):
         repo.pop("source_snapshot", None)
         if self.mode == "clone" and shutil.which("git"):
             dest = os.path.join(tmp, "repo")
-            if self._clone(repo, dest):
-                self._set_clone_snapshot(repo, dest)
-                return dest
-            self.ctx.warn(f"code.github: clone failed for {full}; falling back to API mode")
+            size = repo.get("size")
+            if exceeds_clone_size(size, 1024, self.clone_max_bytes):
+                self.ctx.warn(f"code.github: repository {full} exceeds clone_max_bytes; using sampled API mode", incomplete=True)
+            elif not has_clone_size_estimate(size):
+                self.ctx.warn(
+                    f"code.github: size metadata unavailable for {full}; using sampled API mode",
+                    incomplete=True,
+                )
+            else:
+                if self._clone(repo, dest):
+                    self._set_clone_snapshot(repo, dest)
+                    return dest
+                self.ctx.warn(f"code.github: clone failed for {full}; using sampled API mode", incomplete=True)
+                # Never mix bytes from a partial clone into the API checkout.
+                if os.path.lexists(dest):
+                    if os.path.islink(dest):
+                        raise ConnectorError("code.github: partial clone destination is a symlink")
+                    shutil.rmtree(dest)
+        elif self.mode == "clone":
+            self.ctx.warn(f"code.github: git is unavailable for {full}; using sampled API mode", incomplete=True)
         self.ctx.check_deadline()
         return self._fetch_via_api(repo, tmp)
 
@@ -321,17 +353,10 @@ class GitHubConnector(BaseConnector):
             self.ctx.warn("code.github: unsupported default branch; cloned remote HEAD, requested branch coverage unknown", incomplete=True)
         cmd += ["--", url, dest]
         try:
-            self.ctx.check_deadline()
-            timeout = min(600.0, max(0.001, self.ctx.deadline - time.monotonic())) if self.ctx.deadline else 600.0
-            res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout, check=False)
-            self.ctx.check_deadline()
-        except (OSError, subprocess.SubprocessError) as exc:
-            self.log.debug("git clone error: %s", exc)
+            return run_bounded_clone(cmd, env, self.ctx, self.clone_timeout_seconds)
+        except (OSError, CloneTimeoutError) as exc:
+            self.log.debug("git clone failed: %s", type(exc).__name__)
             return False
-        if res.returncode != 0:
-            self.log.debug("git clone failed with status %s", res.returncode)
-            return False
-        return True
 
     def _fetch_via_api(self, repo: dict[str, Any], tmp: str) -> str | None:
         full = repo["full_name"]

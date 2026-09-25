@@ -73,6 +73,15 @@ that score means "no regression on the rules we already know about", not
 "accurate on real repositories". Its precision/recall values are **synthetic
 regression scores**, not independently measured field accuracy.
 
+Source masking is a bounded lexical filter. Ruby `%q` strings with supported
+delimiters are masked; `%Q` interpolation and unterminated percent strings mark
+the scan incomplete. Ruby regular expressions, PHP heredoc interpolation, C#
+raw strings with multiple interpolation delimiters, and Scala interpolation
+need more dialect-specific handling. Such constructs can be missed or
+misclassified; an identified unterminated literal or ambiguous heredoc marks
+the scan incomplete. Review source evidence before using these languages to
+enforce a production policy gate.
+
 `tools/evaluation/realistic_corpus.json` holds multi-file repository
 snapshots (3 to 8 files each) written from scratch to resemble real projects:
 a FastAPI service with a LangGraph agent, a Next.js app on the Vercel AI SDK
@@ -212,6 +221,77 @@ the tiny selected sample does not calibrate that score.
    signatures or classification logic. A zero-error small sample gives little
    information about uncommon production patterns.
 
+### Gate a frozen holdout
+
+The bundled synthetic and selected public cases are development regressions;
+the acceptance command refuses both as release evidence. After independent
+annotation, keep the adjudicated corpus outside the public repository. Record
+the sampling frame, sampling seed, snapshots, two blinded reviewers, disagreements,
+adjudication, exclusions and license/retention decisions in a restricted review
+record. `metadata.type: "adjudicated"` is a declaration, **not** verification of
+independence. A reviewer must check that record and approve the policy *before*
+the scanner scores or labels are revealed.
+
+Create a separate JSON policy using the SHA-256 of the exact corpus bytes. Include
+`all` and every `family` actually present in the corpus. For example, this is a
+**format illustration**, not a recommended threshold or a field result:
+
+```json
+{
+  "schema": 1,
+  "corpus_sha256": "REPLACE_WITH_LOWERCASE_64_CHARACTER_SHA256",
+  "groups": {
+    "all": {
+      "min_positive_cases": 60,
+      "min_negative_cases": 60,
+      "min_precision_lower95": 0.8,
+      "min_recall_lower95": 0.8,
+      "min_specificity_lower95": 0.8
+    },
+    "agent": {
+      "min_positive_cases": 60,
+      "min_negative_cases": 60,
+      "min_precision_lower95": 0.8,
+      "min_recall_lower95": 0.8,
+      "min_specificity_lower95": 0.8
+    }
+  }
+}
+```
+
+Set the digest, review the policy, then run this on a controlled worker with no
+live credentials:
+
+```bash
+sha256sum /restricted/holdout.json
+python -m tools.evaluation.accept \
+  --corpus /restricted/holdout.json \
+  --policy /restricted/acceptance-policy.json \
+  --annotations /restricted/holdout-annotations.json \
+  --output /restricted/acceptance-result.json
+```
+
+The command requires a SHA-256-bound, two-reviewer annotation ledger and rescans every case with complete, stable observations. The ledger records declarations; a reviewer still needs to verify the sampling and review process. It
+checks the frozen corpus digest, all required groups, minimum positive and
+negative counts, structural assertions and the predeclared precision, recall and
+specificity **lower endpoints of two-sided 95% Wilson intervals**. It accepts a
+bounded number of errors if the predeclared endpoints still pass; it does not
+silently demand perfect classification. Undefined rates fail the gate. Exit `0`
+passes, `1` fails a bound/assertion, and `2` means invalid inputs, incomplete
+coverage or an output error. The private `0600` summary will not overwrite an
+existing file; it contains counts and failures, not source content. Retain the
+scanner and signature commit, corpus/policy digests, the full labeled result
+from `tools.evaluation.evaluate`, reviewer decisions and CI logs in the
+restricted release record. Changing labels, exclusions, scanner signatures or
+sampling after seeing results requires a new blinded holdout and reviewed policy.
+
+This is a code-filesystem **case-level** gate. The sampled file units and
+framework/kind groups cannot prove whole-repository recall, a specific
+language's accuracy, credential safety, cloud/identity completeness or active
+runtime execution. Review per-language/framework error slices and a separate
+tenant canary before selecting `--fail-on`. A scanner can pass this gate and
+still miss a rare production pattern.
+
 The additional provider-loop recognizer currently covers linked Python OpenAI
 Chat Completions calls, model-returned tool-call arguments, dispatch and tool
 results appended to the same request history. Dispatch must target an explicitly
@@ -253,3 +333,18 @@ identity collision and incomplete coverage condition. Test rescanning an
 unchanged snapshot and one controlled change for stable IDs and state behavior.
 Set an operational error budget, alert volume, scan duration and release gates
 from these canary measurements, then sign off before enforcing a policy gate.
+
+Retain a proof packet **per connector instance**, with the following artifacts:
+
+| Artifact | Acceptance evidence |
+|---|---|
+| Frozen scope | Tenant/account ID, regions, granted API scopes, audit principal, collection period, snapshot/commit, scanner and signature revision, and SHA-256 of selected inputs. |
+| Full scan status | Access-controlled JSON report with `summary.complete=true`, all connector `stats` and zero uninvestigated errors, warnings, skips or truncations. Scanner exit `3` blocks acceptance. |
+| Independent denominator | Console or separately queried provider counts for eligible objects/pages and the explicit API or configuration filters that define inclusion. An empty scanner result is insufficient. |
+| Positive and negative traces | Resource IDs and analyst adjudication for known eligible agents, harmless frameworks, disabled servers and a deliberately denied permission; the denied case must report incomplete coverage. |
+| Runtime attribution | For runtime claims, bounded gateway event window with principal, resource identity, correlation outcome and retained false matches; source references alone remain static evidence. |
+| Operational result | Alert volume, misses, duplicates, scan duration and resource use under realistic load, plus reviewer sign-off, rollback revision and rerun procedure. |
+
+Sanitize and restrict these artifacts under the tenant's data-handling policy.
+This repository's automated checks do **not** run such a live canary or claim
+independent field precision/recall.

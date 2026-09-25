@@ -5,6 +5,15 @@
 # Set the repository variable SHADOWSCAN_REVISION to a reviewed full commit SHA.
 # This fails closed until the operator selects and verifies a scanner revision;
 # a floating branch would execute new scanner code without that review.
+# Leave SHADOWSCAN_FAIL_ON unset during analyst review. Set it to low, medium,
+# high or critical only after independent detection validation and a read-only
+# canary establish an acceptable gate for this repository. An incomplete scan
+# still exits 3 in either mode. See docs/evaluation.md and docs/production.md.
+# This example deliberately does not auto-load inventory/ from the checkout:
+# pull requests could change those approvals. Supply a separately reviewed,
+# pinned inventory from a trusted location if approval matching is required.
+# It scans the local checkout. If you add remote repository connectors, give
+# their disposable worker a writable disk quota as well as a job timeout.
 name: ShadowScan
 on:
   pull_request:
@@ -37,13 +46,26 @@ jobs:
           python -m pip install "git+https://github.com/aisecnomad/Project-Nexus.git@${SHADOWSCAN_REVISION}"
       - name: Scan checkout
         shell: bash
+        env:
+          SHADOWSCAN_FAIL_ON: ${{ vars.SHADOWSCAN_FAIL_ON }}
         run: |
-          args=(code . --format sarif -o shadowscan.sarif --fail-on critical)
-          if [ -d inventory ]; then
-            args+=(--inventory inventory/)
+          args=(code . --format sarif -o "$RUNNER_TEMP/shadowscan.sarif")
+          if [ -n "$SHADOWSCAN_FAIL_ON" ]; then
+            case "$SHADOWSCAN_FAIL_ON" in
+              low|medium|high|critical) args+=(--fail-on "$SHADOWSCAN_FAIL_ON") ;;
+              *) echo "SHADOWSCAN_FAIL_ON must be low, medium, high or critical" >&2; exit 1 ;;
+            esac
           fi
           shadowscan "${args[@]}"
+      - name: Check for SARIF report
+        id: report
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/shadowscan.sarif" ]; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          fi
       - uses: github/codeql-action/upload-sarif@e429ea58a9912cadc53f8132ad35562b54de1b30 # v3.38.1
-        if: always() && hashFiles('shadowscan.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: always() && steps.report.outputs.exists == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
-          sarif_file: shadowscan.sarif
+          sarif_file: ${{ runner.temp }}/shadowscan.sarif

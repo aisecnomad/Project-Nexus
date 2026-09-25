@@ -48,6 +48,25 @@ def test_malformed_pagination_preserves_observed_records(pagination):
     assert errors == ["offline export has invalid pagination metadata"]
 
 
+@pytest.mark.parametrize("key", [
+    "next_page_token", "nextPageToken", "nextToken", "NextToken", "NextMarker",
+    "@odata.nextLink", "nextLink", "nextCursor", "next_cursor", "next_page", "nextPage",
+])
+@pytest.mark.parametrize("value", [False, 0, [], {}])
+def test_falsey_malformed_cursors_cannot_attest_complete_collection(key, value):
+    errors = []
+    assert list(BaseConnector._unwrap({"items": [], key: value}, errors.append)) == []
+    assert errors == ["offline export has invalid pagination metadata"]
+
+
+@pytest.mark.parametrize("key", ["next_page", "nextPage"])
+@pytest.mark.parametrize("value", [2, "2", "https://example.test/items?page=2"])
+def test_page_number_and_link_continuations_remain_incomplete(key, value):
+    errors = []
+    assert list(BaseConnector._unwrap({"items": [], key: value}, errors.append)) == []
+    assert errors == ["offline export contains an uncollected next page"]
+
+
 @pytest.mark.parametrize("pagination", [
     {},
     {"response_metadata": {}},

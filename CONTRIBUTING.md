@@ -60,6 +60,8 @@ extras for users, but the test suite is gated with them installed, so use
 `requirements.lock`, which contains every cloud SDK. Offline fixtures cover the
 cloud connectors; do not commit live tenant exports.
 
+Do not commit private adjudicated evaluation corpora.
+
 ## Pull requests
 
 - Target `main`. Do not push reviewed security changes directly.
