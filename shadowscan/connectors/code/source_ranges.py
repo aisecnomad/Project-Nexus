@@ -192,7 +192,9 @@ def _python_ranges_from(
                 return False, None
             spans.append((start, end))
             return False, first_line + position[0]
-        spans.append((offset(position), len(text)))
+        start = offset(position)
+        if start < len(text):  # an error reported at EOF itself masks nothing
+            spans.append((start, len(text)))
         # An unterminated multi-line literal/statement is masked through EOF:
         # nothing after that opening can be executable Python. Any other
         # tokenizer error (Python 3.12+ raises for mid-file lexical errors that
