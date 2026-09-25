@@ -12,7 +12,7 @@ from typing import Any
 SIGNATURE_STRINGS = {"id", "name", "category", "vendor", "homepage", "description"}
 SIGNATURE_LISTS = {"tags", "capabilities", "risk_notes", "references"}
 SIGNAL_LISTS = {"languages", "names", "prefixes", "patterns", "globs", "values", "capabilities"}
-SIGNAL_COMMON = {"type", "weight", "capabilities", "agent_indicator", "description"}
+SIGNAL_COMMON = {"type", "weight", "capabilities", "agent_indicator", "bound_only", "description"}
 SIGNAL_FIELDS = {
     "dependency": {"ecosystem", "names", "prefixes"},
     "import": {"languages", "patterns"},
@@ -90,9 +90,11 @@ def validate_signal_shape(value: Any, context: str) -> dict[str, Any]:
         elif key == "weight":
             if type(item) not in (float, int) or not 0 <= item <= 1 or not math.isfinite(item):
                 raise ValueError(f"{context}.weight: expected a finite number between 0 and 1")
-        elif key == "agent_indicator":
+        elif key in {"agent_indicator", "bound_only"}:
             if type(item) is not bool:
                 raise ValueError(f"{context}.{key}: expected a boolean")
         else:
             _string(item, f"{context}.{key}")
+    if d.get("bound_only") and kind != "code":
+        raise ValueError(f"{context}.bound_only: only code signals can require import binding")
     return d

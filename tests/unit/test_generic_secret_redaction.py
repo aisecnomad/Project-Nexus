@@ -47,3 +47,11 @@ def test_minified_bundle_with_many_candidates_is_sanitized_in_linear_time():
     assert time.perf_counter() - started < 5.0
     assert "abc123" not in cleaned and "def456" not in cleaned
     assert "id:7" in cleaned
+
+
+def test_concatenated_python_secret_on_a_long_line_is_fully_redacted():
+    line = "x = 1; " * 2000 + 'api_key = "part1" + "part2secretvalue"; y = 2'
+    assert len(line) > 8192
+    cleaned = sanitize_text(line)
+    assert "part2secretvalue" not in cleaned and "part1" not in cleaned
+    assert cleaned.endswith("y = 2")

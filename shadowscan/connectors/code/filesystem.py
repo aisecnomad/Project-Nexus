@@ -195,12 +195,9 @@ _EXPLICIT_MCP_CONFIG_NAMES = {
 # A nested MCP block: {"mcp": {"servers": ...}} or a YAML "mcp:" mapping with
 # an indented "servers:" member. A bare "servers" key (OpenAPI, Docker, Nginx)
 # next to the substring "mcp" elsewhere in a document is not a configuration.
+# The expressions are fast paths; _has_nested_mcp_servers parses otherwise.
 _JSON_MCP_SERVERS = re.compile(r'"mcp"\s*:\s*\{[^{}]*"servers"\s*:')
 _YAML_MCP_SERVERS = re.compile(r"(?m)^[ \t]*mcp:[ \t]*(?:#.*)?$\n(?:[ \t]*(?:#.*)?\n)*[ \t]+servers:")
-# Signature categories whose source constructors are attributed only through
-# import binding in Python/JavaScript, and need corroborating library evidence
-# elsewhere: many libraries export an Agent, Task or ClientSession.
-_BOUND_CATEGORIES = frozenset({"framework", "protocol"})
 # Per-file budgets scale linearly above this size, up to the validated maximum.
 _BUDGET_SCALE_BYTES = 100_000
 MCP_CONFIG_NAMES = {
@@ -630,10 +627,7 @@ class FilesystemConnector(BaseConnector):
                                 )
                         for m in code_matches:
                             if bound is not None:
-                                # Library and protocol constructors are only
-                                # attributed through import binding: aiohttp
-                                # also exports a ClientSession.
-                                if m.signature.category in _BOUND_CATEGORIES:
+                                if m.signature.category == "framework":
                                     continue  # bound calls below establish the library
                                 m.extra["verified_agent"] = False
                             else:
@@ -677,10 +671,12 @@ class FilesystemConnector(BaseConnector):
                         card_files.append((rel, text, card_kind))
                     if ext in {".md", ".mdc"} and (".claude/agents/" in rel or ".github/agents/" in rel or ".cursor/rules/" in rel or ".windsurf/rules/" in rel):
                         proj.agent_defs.append(self._parse_agent_definition(rel, text))
-            except ConnectorError:
-                # Cooperative cancellation and deadline signals must stop the
-                # walk instead of being recorded as one more file diagnostic.
-                raise
+            except ConnectorError as exc:
+                # A deadline or cancellation must stop the walk rather than be
+                # recorded once per remaining file. Any other ConnectorError
+                # from a helper is this file's failure, like the branch below.
+                self.ctx.check_deadline()
+                self.ctx.error(f"code.filesystem: {rel}: file analysis incomplete ({type(exc).__name__})")
             except Exception as exc:  # noqa: BLE001 - isolate hostile files and retain other findings
                 self.ctx.error(f"code.filesystem: {rel}: file analysis incomplete ({type(exc).__name__})")
 
@@ -761,6 +757,9 @@ class FilesystemConnector(BaseConnector):
         elif art.kind in {"env", "secret_ref"}:
             for m in self.index.match_env(art.value):
                 m.line = art.line
+                # A declaration configures the workload, unlike a name that is
+                # merely mentioned in arbitrary text.
+                m.extra["declared"] = True
                 self._record(proj, m, rel, f"{art.kind}: {art.value}")
             val = art.extra.get("value") if art.extra else None
             if val and self.scan_secrets and not looks_like_placeholder(val):
@@ -834,8 +833,7 @@ class FilesystemConnector(BaseConnector):
                 or "[mcp_servers." in head
                 or re.search(r"(?m)^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$", head) is not None
                 or re.search(r"(?m)^[ \t]*mcp_servers\.[A-Za-z0-9_-]+[ \t]*=", head) is not None
-                or _JSON_MCP_SERVERS.search(head) is not None
-                or _YAML_MCP_SERVERS.search(head) is not None
+                or _has_nested_mcp_servers(rel, text, head)
             )
         return False
 
@@ -986,17 +984,17 @@ class FilesystemConnector(BaseConnector):
                     return False
                 if "verified_agent" in match.extra:
                     return bool(match.extra["verified_agent"])
-                if match.extra.get("lexical_source") and match.signature.category in _BOUND_CATEGORIES:
+                if match.extra.get("lexical_source") and match.signature.category == "framework":
                     return match.agent_indicator and match.signature_id in library_evidence
                 return match.agent_indicator
 
             f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
             uncorroborated = {m.signature_id for m, _, _ in tech_matches
-                              if m.extra.get("lexical_source") and m.signature.category in _BOUND_CATEGORIES
+                              if m.extra.get("lexical_source") and m.signature.category == "framework"
                               and m.signature_id not in library_evidence}
             # Decisive evidence must survive the per-signature report quota.
             for m, rel, snip in sorted(tech_matches, key=lambda item: not verified_indicator(item[0])):
-                if m.extra.get("lexical_source") and m.signature.category in _BOUND_CATEGORIES and m.signature_id not in library_evidence:
+                if m.extra.get("lexical_source") and m.signature.category == "framework" and m.signature_id not in library_evidence:
                     m.weight = min(m.weight, 0.6)
                 apply_matches(f, [m], location=rel, snippet=snip)
             # Repeated observations of one technology are correlated evidence.
@@ -1039,8 +1037,10 @@ class FilesystemConnector(BaseConnector):
             # A hostname or variable name quoted inside a data file (an egress
             # allowlist, a vendor inventory, this scanner's own signatures)
             # does not configure a coding agent. Require a configuration file,
-            # dependency, import, workflow action or code signal.
-            if not any(m.signal.type not in {"domain", "env"} for m, _, _ in coding_matches):
+            # dependency, import, workflow action, code signal or an environment
+            # variable declared in a Dockerfile, compose, workflow or .env file.
+            if not any(m.signal.type not in {"domain", "env"} or m.extra.get("declared")
+                       for m, _, _ in coding_matches):
                 continue
             sig = self.index.get(sig_id)
             f = self._base(
@@ -1344,6 +1344,32 @@ def _safe_source_text(rel: str, text: str) -> str:
         # Dedicated parsers report syntax/shape failures. Lexical redaction still
         # applies if this file cannot supply usable structured context.
         return sanitize_text(text)
+
+
+def _has_nested_mcp_servers(rel: str, text: str, head: str) -> bool:
+    """Whether a document holds a structural ``mcp.servers`` block.
+
+    VS Code settings list ``inputs`` before ``servers``; TOML uses
+    ``[mcp.servers.x]`` tables. The regular expressions cover the common
+    layouts; otherwise the document is parsed, which is rare because both
+    substrings must occur.
+    """
+    if "mcp" not in head or "servers" not in head:
+        return False
+    if _JSON_MCP_SERVERS.search(head) or _YAML_MCP_SERVERS.search(head):
+        return True
+    try:
+        if rel.endswith(".toml"):
+            data: Any = tomllib.loads(text)
+        elif rel.endswith((".yaml", ".yml")):
+            data = bounded_safe_load(text)
+        else:
+            data = _load_json_lenient(text)
+    except (ValueError, TypeError, RecursionError, yaml.YAMLError):
+        return False
+    mcp = data.get("mcp") if isinstance(data, dict) else None
+    servers = mcp.get("servers") if isinstance(mcp, dict) else None
+    return isinstance(servers, (dict, list)) and bool(servers)
 
 
 def _parse_mcp_servers(

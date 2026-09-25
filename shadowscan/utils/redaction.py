@@ -79,6 +79,9 @@ _ASSIGNMENT = re.compile(
 )
 _QUERY_SEPARATOR = re.compile(r"[&#]")
 _MAX_ASSIGNMENT_LINE = 8192
+# On longer physical lines each candidate's right-hand side is tokenized from a
+# bounded window, so a minified bundle costs O(candidates x window).
+_ASSIGNMENT_WINDOW = 4096
 _PYTHON_ASSIGNMENT_KEY = re.compile(
     r"(?<![\w-])(?P<key>[A-Za-z_][A-Za-z0-9_.]{0,100})[ \t]*(?P<separator>:|=(?!=))"
 )
@@ -247,11 +250,11 @@ def _redact_python_assignments(text: str) -> str:
             line_start = text.rfind("\n", 0, match.start()) + 1
             line_end = text.find("\n", match.start())
             line_end = len(text) if line_end < 0 else line_end
+        window_end: int | None = None
         if line_end - line_start > _MAX_ASSIGNMENT_LINE:
             # A minified bundle holds hundreds of candidates on one physical
-            # line; tokenizing the remainder for each is quadratic. The bounded
-            # assignment pass in sanitize_text still redacts their values.
-            continue
+            # line; tokenizing the remainder for each would be quadratic.
+            window_end = min(line_end, match.end() + _ASSIGNMENT_WINDOW)
         annotated = match.group("separator") == ":"
         assigned_at: int | None = None if annotated else match.end()
         # URL fields use URL boundaries, not Python statement boundaries,
@@ -265,11 +268,19 @@ def _redact_python_assignments(text: str) -> str:
         if not annotated:
             while value_start < len(text) and text[value_start] in " \t":
                 value_start += 1
-        if stream is None:
-            stream = io.StringIO(text)
-        stream.seek(match.end())
+        if window_end is not None:
+            # A bounded right-hand side: an unfinished expression is withheld
+            # to the window end; later text still passes the generic rules.
+            source = io.StringIO(text[match.end():window_end])
+            base = match.end()
+            end = window_end
+        else:
+            if stream is None:
+                stream = io.StringIO(text)
+            stream.seek(match.end())
+            source, base = stream, 0
+            end = len(text)
         offsets = [match.end()]
-        end = len(text)
         brackets: list[str] = []
         previous = match.start() - 1
         while previous >= 0 and text[previous] in " \t\r\n":
@@ -278,12 +289,11 @@ def _redact_python_assignments(text: str) -> str:
 
         def readline() -> str:
             nonlocal work
-            assert stream is not None
-            line = stream.readline()
+            line = source.readline()
             work += len(line)
             if work > _MAX_REDACTION_WORK:
                 raise SanitizationLimitError("Python assignment work limit exceeded")
-            offsets.append(stream.tell())
+            offsets.append(base + source.tell())
             return line
 
         try:

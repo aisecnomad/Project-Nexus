@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from conftest import requires_git_metadata
 
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
@@ -56,7 +55,6 @@ def test_metadata_policy_is_distinct_from_clone_policy(monkeypatch):
     assert "GIT_NO_LAZY_FETCH" not in clone
 
 
-@requires_git_metadata
 def test_read_git_snapshot_returns_checked_out_commit_and_tree_without_inherited_config(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()

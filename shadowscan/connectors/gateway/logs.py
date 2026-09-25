@@ -778,6 +778,15 @@ _LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=("[^"]*"|\S+)')
 _HOST_IN_LINE = re.compile(r"\b(?:host|authority|upstream_host|server_name)[=:]\s*\"?([A-Za-z0-9.-]+\.[a-z]{2,})", re.I)
 
 
+# Model inference endpoints; distinct from generic REST paths such as /sse.
+_INFERENCE_PATH = re.compile(
+    r"/v1/(?:chat/completions|completions|responses|messages|embeddings)\b"
+    r"|/openai/deployments/[^/]+/(?:chat/completions|completions|embeddings)\b"
+    r"|:(?:stream)?[Gg]enerateContent\b"
+    r"|/model/[^/]+/(?:invoke(?:-with-response-stream)?|converse(?:-stream)?)\b"
+)
+
+
 def _workload_matches(matches: list[Match]) -> list[Match]:
     """Drop identity-app signatures: they describe OAuth/SaaS products, not callers.
 
@@ -1339,10 +1348,14 @@ class GatewayLogConnector(BaseConnector, _NoDump):
     def _is_llm_traffic(self, ev: Event) -> bool:
         if ev.path and re.search(r"(?:^|/)(?:favicon\.ico|robots\.txt|healthz?|readyz?|livez?|metrics)(?:$|[/?#])|\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)(?:$|[?#])", ev.path, re.I):
             return False
+        if ev.path and _INFERENCE_PATH.search(ev.path):
+            # Inference endpoints are specific enough on any host, including a
+            # self-hosted OpenAI-compatible gateway behind an internal name.
+            return True
         if ev.host and not self.index.match_domain(ev.host):
-            # ``llm_hosts_only`` is a host filter. An internal dashboard that
-            # serves /sse or /v1/files is not inference traffic; only records
-            # that carry an explicit model or token usage qualify.
+            # Generic paths (/sse, /v1/files, /api/chat) count only on a known
+            # LLM or agent host: an internal dashboard serving /sse is not
+            # inference traffic unless the record carries a model or usage.
             return bool(ev.model) or ev.tokens_in > 0 or ev.tokens_out > 0
         text = " ".join(x for x in (ev.host, ev.path) if x)
         if ev.path and re.search(r"/v1/(?:chat/completions|completions|responses|messages|embeddings|models|assistants|threads|runs|audio|images|files|batches|realtime)|/openai/deployments/|/generateContent|:generateContent|:streamGenerateContent|/invoke(?:-with-response-stream)?|/converse|/mcp\b|/sse\b|/a2a\b|/agents?/|/predict\b|/api/(?:chat|generate|tags)\b", text):

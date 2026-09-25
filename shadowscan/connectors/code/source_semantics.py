@@ -32,6 +32,8 @@ MAX_AST_NODES = 400_000
 # Only calls to imported symbols are retained, each capped at MAX_CALL_TEXT,
 # so a hostile file can hold at most MAX_BOUND_CALLS * MAX_CALL_TEXT bytes.
 MAX_BOUND_CALLS = 4096
+# Total argument text retained across all bound calls in one file.
+MAX_CALL_TEXT_TOTAL = 2 * 1024 * 1024
 MAX_CALL_TEXT = 8192
 
 
@@ -97,6 +99,7 @@ def _symbol_tail(symbol: str) -> str:
 class _PythonBindings(ast.NodeVisitor):
     def __init__(self, text: str):
         self.text = text
+        self.captured = 0
         self.lines = text.splitlines(keepends=True)
         self.offsets = [0]
         for line in self.lines:
@@ -173,7 +176,11 @@ class _PythonBindings(ast.NodeVisitor):
                 raise MatchTimeoutError("source binding call limit exceeded")
             start = self._offset(node.func.end_lineno or node.lineno, node.func.end_col_offset or 0)
             end = self._offset(node.end_lineno or node.lineno, node.end_col_offset or 0)
-            self.calls.append(_Call(binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno))
+            arguments = self.text[start:min(end, start + MAX_CALL_TEXT)]
+            self.captured += len(arguments)
+            if self.captured > MAX_CALL_TEXT_TOTAL:
+                raise MatchTimeoutError("source binding call text limit exceeded")
+            self.calls.append(_Call(binding, arguments, node.lineno))
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
@@ -358,6 +365,10 @@ def _python_bindings(text: str) -> tuple[list[_Call], list[tuple[_Binding, int]]
 
 def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
     starts = [start for start, _ in ignored]
+    newlines = [match.start() for match in re.finditer("\n", text)]
+
+    def line_of(offset: int) -> int:
+        return bisect_right(newlines, offset - 1) + 1
 
     def excluded(offset: int) -> bool:
         pos = bisect_right(starts, offset) - 1
@@ -384,7 +395,7 @@ def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[lis
         if excluded(match.start()):
             continue
         spec, module = match.group(1), match.group(3)
-        line = text.count("\n", 0, match.start()) + 1
+        line = line_of(match.start())
         declaration_spans.append(match.span())
         namespace = re.search(r"\*\s+as\s+([\w$]+)", spec)
         if namespace:
@@ -404,7 +415,7 @@ def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[lis
         if excluded(match.start()):
             continue
         spec, module = match.group(1), match.group(3)
-        line = text.count("\n", 0, match.start()) + 1
+        line = line_of(match.start())
         declaration_spans.append(match.span())
         if spec.startswith("{"):
             for item in spec[1:-1].split(","):
@@ -435,6 +446,7 @@ def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[lis
             del bindings[name]
 
     calls: list[_Call] = []
+    captured = 0
     rx = regex.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?:<[^;(){}]{1,1000}>)?\s*\(")
     for match in rx.finditer(masked, timeout=pattern_timeout(), concurrent=False):
         parts = re.split(r"\s*\.\s*", match.group(1))
@@ -451,7 +463,10 @@ def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[lis
         if depth:
             continue
         symbol = ".".join(filter(None, (binding.symbol, *parts[1:])))
-        calls.append(_Call(_Binding(binding.module, symbol), text[opening:end], text.count("\n", 0, match.start()) + 1,
+        captured += 2 * (end - opening)
+        if captured > MAX_CALL_TEXT_TOTAL:
+            raise MatchTimeoutError("source binding call text limit exceeded")
+        calls.append(_Call(_Binding(binding.module, symbol), text[opening:end], line_of(match.start()),
                            masked[opening:end]))
     return calls, imports
 

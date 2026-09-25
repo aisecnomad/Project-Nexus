@@ -142,9 +142,10 @@ Auto-detects the schema per record: `litellm`, `portkey`, `kong`, `cloudflare`,
 `helicone`, `langfuse`, `bedrock` (model invocation logs, CloudWatch export or
 S3), `azure-openai` (diagnostic `RequestResponse`/`Audit`), `vertex` (Cloud
 Audit Logs), `openai-usage`, `anthropic-usage`, `access-log` (nginx/envoy/ALB
-combined or JSON; `llm_hosts_only`, on by default, keeps only requests whose
-host matches a provider or platform signature, or that carry a model or token
-usage, so set it to `false` for logs of an internal gateway host) or
+combined or JSON; `llm_hosts_only`, on by default, keeps inference endpoints
+such as `/v1/chat/completions` on any host, and generic paths such as `/sse`,
+`/v1/files` or `/api/chat` only when the host matches a provider or platform
+signature or the record carries a model or token usage) or
 `generic`. Each caller (API key, principal, service, user, user agent or IP)
 becomes a finding with models, providers, frameworks (user agent
 fingerprints), tool-use ratio, tool-call responses, temporal shape (24×7 /

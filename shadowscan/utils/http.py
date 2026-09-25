@@ -44,6 +44,21 @@ _cooperative_stop: contextvars.ContextVar[Callable[[], None] | None] = contextva
 )
 
 
+class CooperativeStop(Exception):  # noqa: N818 - a stop signal, not an error condition
+    """The current connector passed its deadline or was cancelled.
+
+    Deliberately not a RuntimeError: connectors catch RuntimeError around
+    HTTP calls to tolerate one failed endpoint, and must not tolerate this.
+    """
+
+
+def check_cooperative_stop() -> None:
+    """Raise if the connector that owns this thread must stop."""
+    check = _cooperative_stop.get()
+    if check is not None:
+        check()
+
+
 def set_cooperative_stop(check: Callable[[], None] | None) -> contextvars.Token[Callable[[], None] | None]:
     """Install a callable that raises when the current connector must stop."""
     return _cooperative_stop.set(check)
@@ -403,6 +418,8 @@ class HttpClient:
         redirects = 0
         origin = url
         while True:
+            # A worker abandoned after its deadline stops issuing requests.
+            check_cooperative_stop()
             if isinstance(self.session, requests.Session) and self.session.get_adapter(url) is not self._policy_adapter:
                 raise ValueError("HTTP destination policy adapter was replaced")
             attempt += 1

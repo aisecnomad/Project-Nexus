@@ -125,3 +125,70 @@ def test_large_source_files_complete_instead_of_timing_out(tmp_path, run_connect
     assert ctx.stats.errors == []
     assert ctx.stats.incomplete is False
     assert findings == []
+
+
+def test_bound_only_signals_never_match_lexically(index):
+    matches = index.match_code("async with ClientSession(r, w) as session:\n", "python")
+    assert not any(m.signal.bound_only for m in matches)
+    assert "protocol.mcp" not in {m.signature_id for m in matches}
+
+
+def test_bound_only_is_accepted_only_on_code_signals():
+    from shadowscan.signatures.loader import signature_from_dict
+
+    base = {"id": "x.test", "category": "protocol", "name": "X"}
+    signature_from_dict({**base, "signals": [{"type": "code", "patterns": ["Foo\\("], "bound_only": True}]})
+    with pytest.raises(ValueError, match="bound_only"):
+        signature_from_dict({**base, "signals": [{"type": "import", "patterns": ["foo"], "bound_only": True}]})
+    with pytest.raises(ValueError, match="boolean"):
+        signature_from_dict({**base, "signals": [{"type": "code", "patterns": ["Foo\\("], "bound_only": "yes"}]})
+
+
+def test_other_lexical_protocol_code_evidence_is_kept(tmp_path, run_connector):
+    (tmp_path / "server.py").write_text(
+        "from fastmcp import FastMCP\nmcp = FastMCP('tools')\n\n@mcp.tool\ndef add(a: int, b: int) -> int:\n    return a + b\n"
+    )
+    findings, _ = scan(run_connector, tmp_path)
+    descriptions = [e.description for f in findings for e in f.evidence if e.signal == "code:protocol.mcp"]
+    assert any("@mcp.tool" in d for d in descriptions)
+
+
+def test_per_file_connector_error_is_isolated_but_a_deadline_stops_the_walk(tmp_path, index, monkeypatch):
+    from shadowscan.connectors.base import ConnectorError
+    from shadowscan.connectors.code import filesystem
+    from shadowscan.models import ScanStats
+
+    (tmp_path / "a_bad.py").write_text("from crewai import Agent\n")
+    (tmp_path / "b_good.py").write_text(CREWAI_AGENT)
+    real = filesystem.read_text
+
+    def flaky(path, *args, **kwargs):
+        if path.name == "a_bad.py":
+            raise ConnectorError("hostile file")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(filesystem, "read_text", flaky)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    ctx.stats = ScanStats(connector="code.filesystem", started_at="2026-09-25T00:00:00Z")
+    findings = FilesystemConnector(ctx).run()
+    assert any(f.kind == Kind.AGENT for f in findings)
+    assert any("a_bad.py: file analysis incomplete (ConnectorError)" in e for e in ctx.stats.errors)
+
+
+def test_bound_call_text_is_capped_per_file(index, monkeypatch):
+    from shadowscan.connectors.code import source_semantics
+    from shadowscan.signatures.matcher import MatchTimeoutError
+
+    monkeypatch.setattr(source_semantics, "MAX_CALL_TEXT_TOTAL", 10_000)
+    source = "from crewai import Agent\n" + "".join(f'a{i} = Agent(role="{"x" * 200}")\n' for i in range(100))
+    with pytest.raises(MatchTimeoutError, match="call text"):
+        bound_source_matches(index, source, "python", [])
+    js = "import { Agent } from '@openai/agents';\n" + "".join(f'const a{i} = new Agent({{name: "{"x" * 200}"}});\n' for i in range(100))
+    with pytest.raises(MatchTimeoutError, match="call text"):
+        bound_source_matches(index, js, "javascript", [])
+
+
+def test_javascript_bound_calls_report_correct_line_numbers(index):
+    js = "import { Agent } from '@openai/agents';\n\n\nconst a = new Agent({ name: 'x', tools: [] });\n"
+    lines = {m.line for m in bound_source_matches(index, js, "javascript", []) if m.extra.get("verified_agent")}
+    assert lines == {4}

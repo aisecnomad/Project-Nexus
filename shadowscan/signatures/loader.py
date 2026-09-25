@@ -70,6 +70,9 @@ class Signal:
     values: list[str] = field(default_factory=list)  # domain / scope / iac
     capabilities: list[str] = field(default_factory=list)  # capabilities implied when matched
     agent_indicator: bool = False  # this signal by itself indicates an *agent* (not just LLM use)
+    # Lexical matches are ignored; only a call bound to an import of this
+    # signature's library counts (for ambiguous names such as ClientSession).
+    bound_only: bool = False
     description: str | None = None
     compiled: list[re.Pattern[str]] = field(default_factory=list, repr=False)
     bounded_compiled: list[Any] = field(default_factory=list, repr=False)
@@ -145,6 +148,7 @@ def _signal_from_dict(d: dict[str, Any]) -> Signal:
         values=[str(x) for x in d.get("values", []) or []],
         capabilities=list(d.get("capabilities", []) or []),
         agent_indicator=bool(d.get("agent_indicator", False)),
+        bound_only=bool(d.get("bound_only", False)),
         description=d.get("description"),
     )
 

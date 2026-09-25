@@ -29,6 +29,7 @@ from shadowscan.registry import Inventory
 from shadowscan.risk import assess
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.utils.http import (
+    CooperativeStop,
     reset_allow_private_origin,
     reset_cooperative_stop,
     set_allow_private_origin,
@@ -48,6 +49,18 @@ class _JobState:
     completed_at: float | None = None
     cancelled: Event = field(default_factory=Event)
     publication_lock: Lock = field(default_factory=Lock)
+
+
+def _cooperative_stop_for(ctx: ConnectorContext) -> Callable[[], None]:
+    """Translate the connector deadline into a signal RuntimeError handlers cannot absorb."""
+
+    def check() -> None:
+        try:
+            ctx.check_deadline()
+        except ConnectorError as exc:
+            raise CooperativeStop(str(exc)) from None
+
+    return check
 
 
 def _pending_expired(state: _JobState, now: float) -> bool:
@@ -170,7 +183,7 @@ class Engine:
             fs: list[Finding] = []
             started_at = now_iso()
             origin_token = set_allow_private_origin(self.config.allow_private_origin)
-            stop_token = set_cooperative_stop(ctx.check_deadline)
+            stop_token = set_cooperative_stop(_cooperative_stop_for(ctx))
             try:
                 ctx.check_deadline()
                 cls = _lookup(spec.name)

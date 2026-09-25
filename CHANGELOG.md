@@ -6,24 +6,27 @@
 
 Detection
 
-- Attribute library and protocol constructors in Python/JavaScript only through
-  import binding: `aiohttp.ClientSession(` and other same-named exports are no
-  longer MCP evidence, while an import-bound `mcp.ClientSession(` still is.
+- Add a `bound_only` code-signal flag: such patterns are ignored lexically and
+  count only as calls bound to an import of the signature's library. The MCP
+  `ClientSession(` constructor uses it, so `aiohttp.ClientSession(` is no longer
+  MCP evidence while an import-bound `mcp.ClientSession(` still is.
 - Fall back to lexical evidence, with a warning, when the scanner's interpreter
   cannot parse a source file (for example PEP 695 syntax on Python 3.11) instead
   of silently dropping its agent evidence.
-- Recognize MCP configurations by structure: a nested `mcp.servers` block or a
-  dedicated MCP file name. OpenAPI, Docker and proxy documents with a `servers`
-  member are not tool servers.
+- Recognize MCP configurations by structure: a nested `mcp.servers` block (VS
+  Code settings, TOML `[mcp.servers.*]`) or a dedicated MCP file name. OpenAPI,
+  Docker and proxy documents with a `servers` member are not tool servers.
 - Emit coding-agent configuration findings only from configuration files,
-  dependencies, imports, workflow actions or code; vendor hostnames and variable
+  dependencies, imports, workflow actions, code or variables declared in a
+  Dockerfile, compose, workflow or `.env` file; vendor hostnames and variable
   names quoted inside data files (an egress allowlist, a vendor inventory, the
   scanner's own signature packs) no longer configure Cursor, Windsurf, Goose,
   Copilot, Claude Code or Cody.
 - Gateway callers: a direct request to a provider API is LLM use, not an
   "agentic" caller. OAuth-app signatures no longer apply to hostnames or user
-  names, `llm_hosts_only` is a host filter (an internal dashboard serving `/sse`
-  is not inference traffic), and one observed host counts once even when a
+  names, and `llm_hosts_only` keeps inference endpoints (`/v1/chat/completions`
+  and similar) on any host but generic paths such as `/sse` only on known LLM
+  hosts. One observed host counts once even when a
   signal lists it both exactly and as a wildcard.
 - Low-code: the word "agent" in a flow, zap or record name is not an AI hint;
   Zapier agent objects are agents by themselves; n8n manual, chat and form
@@ -35,7 +38,8 @@ Detection
 Robustness
 
 - Large ordinary source files complete: the import binder accepts 400k AST
-  nodes and 4,096 bound calls, per-file and default matching budgets scale with
+  nodes and 4,096 bound calls (at most 2 MiB of retained call text), JavaScript
+  line numbers use a newline index, per-file and default matching budgets scale with
   input size (up to the validated 60-second maximum), and a minified bundle with
   hundreds of credential-like keys on one line is sanitized in linear time.
 - `exclude` names apply without an accompanying glob; cooperative cancellation
@@ -47,7 +51,9 @@ Robustness
   failures are reported once. CloudTrail LookupEvents still marks runtime
   visibility incomplete by design; set `cloudtrail_days: 0` for an inventory
   scan that can complete.
-- HTTP retry back-off sleeps in short slices and honours the connector deadline.
+- HTTP requests and retry back-off honour the connector deadline: a timed-out
+  worker issues no further requests, and the stop signal is not a
+  `RuntimeError`, so per-endpoint error handlers cannot absorb it.
 - OAuth token responses without an access token fail closed; the device
   authorization grant is not a machine-only grant; scalar `products` and
   `environments` settings are one item, not characters; Slack `first_seen` is

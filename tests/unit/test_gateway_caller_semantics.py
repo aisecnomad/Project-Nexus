@@ -72,3 +72,9 @@ def test_domain_signals_report_each_signature_once_per_host(index):
     keys = [(m.signature_id, id(m.signal)) for m in matches]
     assert len(keys) == len(set(keys))
     assert "provider.openai" in {m.signature_id for m in matches}
+
+
+def test_inference_paths_count_on_internal_gateway_hosts(tmp_path, run_connector):
+    rows = [{"method": "POST", "path": "/v1/chat/completions", "ua": "python-requests/2.32", "host": "llm-gateway.internal.corp"}] * 2
+    findings, _ = run_connector("gateway.logs", input=str(log(tmp_path, rows)))
+    assert len(findings) == 1 and findings[0].metadata["events"] == 2

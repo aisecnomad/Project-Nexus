@@ -142,8 +142,12 @@ def read_git_snapshot(path: str | os.PathLike[str], *, timeout: float = 10.0) ->
         if remaining <= 0:
             return None
         try:
+            # The scanner's own fresh, non-partial clone has no promisor remote,
+            # and the environment disables every transport, so lazy fetching is
+            # impossible here. Requiring --no-lazy-fetch (Git 2.45+) would make
+            # every clone-mode scan incomplete on Debian bookworm or Ubuntu 24.04.
             result = subprocess.run(
-                [*metadata_git_argv_prefix(), "-C", root, "rev-parse", "--verify", revision],
+                [*git_argv_prefix(), "-C", root, "rev-parse", "--verify", revision],
                 env=env,
                 capture_output=True,
                 text=True,

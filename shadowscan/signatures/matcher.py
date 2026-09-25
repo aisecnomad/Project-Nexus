@@ -354,6 +354,8 @@ class SignatureIndex:
         for sig, s in self._by_type.get(signal_type, []):
             if language and s.languages and language not in s.languages:
                 continue
+            if s.bound_only:
+                continue  # attributed only through import binding
             hits = 0
             for rx in s.bounded_compiled:
                 for m in _finditer(rx, text, sig.id, max_per_signal - hits, excluded if starts else None):

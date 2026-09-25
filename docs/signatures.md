@@ -43,6 +43,11 @@ signatures:
         weight: 0.9
         capabilities: [code-exec]     # signal-level capabilities (optional)
         agent_indicator: true         # signal-level indicator (optional)
+      - type: code
+        languages: [python]
+        bound_only: true              # ignore lexical matches; count only calls bound to an import of this library
+        patterns: ['\bLLM\s*\(']      # an ambiguous name that other libraries also export
+        weight: 0.7
       - type: file
         globs: ["**/config/agents.yaml"]
         weight: 0.75
@@ -99,6 +104,11 @@ noisy-OR of its evidence weights (`1 - Π(1 - w)`). Rules of thumb:
 
 `agent_indicator` (on the signature or a signal) is what promotes a code
 project from `framework-usage` to `agent`. Plain provider SDK usage never does.
+
+`bound_only: true` (code signals only) is for names that other libraries also
+export, such as `ClientSession` or `LLM`. The pattern never matches lexically;
+it counts only when the Python or JavaScript import binder resolves the call to
+an import of the signature's own library, so it is inert in other languages.
 
 ## Adding or overriding
 

@@ -70,9 +70,9 @@ signatures:
         weight: 0.9
       - type: code
         languages: [python]
-        # Only the import binder may attribute this constructor: aiohttp and
-        # other libraries export a ClientSession too. Lexical matches of
-        # protocol code in Python/JavaScript are skipped by the scanner.
+        # aiohttp and other libraries export a ClientSession too: only a call
+        # bound to an import from the mcp package is evidence.
+        bound_only: true
         patterns: ['\bClientSession\s*\(']
         weight: 0.9
         description: MCP Python client session (import-bound)

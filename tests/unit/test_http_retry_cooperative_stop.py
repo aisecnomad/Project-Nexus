@@ -45,3 +45,29 @@ def test_sleep_with_a_stop_check_is_sliced_so_the_deadline_is_consulted(monkeypa
         reset_cooperative_stop(token)
     assert slept and all(0 < s <= 1.0 for s in slept)
     assert len(checks) >= len(slept)
+
+
+def test_expired_connector_issues_no_further_requests_and_runtime_handlers_cannot_absorb_it():
+    from unittest.mock import Mock
+
+    import requests
+
+    from shadowscan.connectors import ConnectorContext
+    from shadowscan.engine import _cooperative_stop_for
+    from shadowscan.utils.http import CooperativeStop, HttpClient
+
+    ctx = ConnectorContext(config={}, index=None, deadline=time.monotonic() - 1)
+    session = requests.Session()
+    session.request = Mock()
+    client = HttpClient("https://api.example.com", session=session)
+    token = set_cooperative_stop(_cooperative_stop_for(ctx))
+    try:
+        with pytest.raises(CooperativeStop):
+            try:
+                client.get_json("/items")
+            except (RuntimeError, ValueError):  # the handlers connectors use around HTTP calls
+                pytest.fail("a deadline must not be absorbed as an ordinary HTTP failure")
+    finally:
+        reset_cooperative_stop(token)
+    session.request.assert_not_called()
+    assert not issubclass(CooperativeStop, RuntimeError)
