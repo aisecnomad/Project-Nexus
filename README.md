@@ -1,5 +1,11 @@
 # Project Nexus · ShadowScan
 
+[![CI](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://aisecnomad.github.io/Project-Nexus/)
+
 **ShadowScan is an Open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
 
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
@@ -146,7 +152,7 @@ include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
 
-For deployment on Linux x86_64 with Python 3.11 or 3.12, the checked-in
+For deployment on Linux x86_64 with Python 3.11 to 3.13, the checked-in
 `requirements.lock` pins and hashes the core and all cloud runtime dependencies.
 Build and retain a wheel from the selected commit; see
 [locked installs and release evidence](docs/production.md#install-from-a-reviewed-revision).
