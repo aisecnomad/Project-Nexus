@@ -213,7 +213,7 @@ def test_per_repository_contexts_share_the_diagnostic_cap(tmp_path, index):
         repo.mkdir()
         for i in range(1100):
             (repo / f"f{i}.py").write_text("ab")
-    ctx = ConnectorContext(config={"input": str(tmp_path), "max_file_size": 1}, index=index)
+    ctx = ConnectorContext(config={"input": str(tmp_path), "max_file_size": 1, "strict_coverage": True}, index=index)
     GitHubConnector(ctx).run()
     assert len(ctx.stats.errors) == ConnectorContext._MAX_DIAGNOSTICS + 1
     assert sum("diagnostic limit reached" in e for e in ctx.stats.errors) == 1

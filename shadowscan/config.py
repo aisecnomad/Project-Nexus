@@ -54,6 +54,7 @@ from typing import Any
 import yaml
 
 from shadowscan.errors import SetupError, yaml_error_position
+from shadowscan.risk import RiskPolicy
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
@@ -67,6 +68,7 @@ _OPTION_FIELDS = {
     "min_confidence", "fail_on", "dump_records", "workdir", "parallel", "incremental",
     "state_dir", "plugins", "allow_signature_override", "allow_private_origin",
     "allow_instance_credentials", "allow_credential_mixing", "connector_timeout_seconds", "connector_timeout",
+    "risk_basis", "risk_weights",
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 # Keys every connector accepts: BaseConnector / ConnectorContext read the input
@@ -216,6 +218,8 @@ class ScanConfig:
     allow_instance_credentials: bool = False
     allow_credential_mixing: bool = False
     connector_timeout_seconds: float = 120.0
+    risk_basis: str = "combined"
+    risk_weights: dict[str, Any] = field(default_factory=dict)
     source: str | None = None
     # Constructor-only compatibility: never retain stale alias state that could
     # overwrite a later CLI or library update to the canonical setting.
@@ -240,6 +244,12 @@ class ScanConfig:
         if self.fail_on is not None and (not isinstance(self.fail_on, str) or self.fail_on not in _RISK_LEVELS):
             raise ConfigValidationError("options.fail_on must be critical, high, medium, low, info, or null")
         self.parallel = _positive_integer(self.parallel, "options.parallel")
+        if self.risk_weights is None:
+            self.risk_weights = {}
+        try:
+            RiskPolicy.from_options(self.risk_weights, self.risk_basis)
+        except ValueError as exc:
+            raise ConfigValidationError(f"options.{exc}") from None
 
     def validate_connector_isolation(self, specs: list[ConnectorSpec]) -> None:
         """Do not expose live connector credentials to an unrelated source parser."""
@@ -325,6 +335,8 @@ class ScanConfig:
             allow_instance_credentials=_boolean_option(opts.get("allow_instance_credentials", False), "allow_instance_credentials"),
             allow_credential_mixing=_boolean_option(opts.get("allow_credential_mixing", False), "allow_credential_mixing"),
             connector_timeout_seconds=validate_connector_timeout(timeout),
+            risk_basis=opts.get("risk_basis", "combined"),
+            risk_weights=opts.get("risk_weights", {}),
             source=source,
         )
 

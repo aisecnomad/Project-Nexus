@@ -26,7 +26,7 @@ from shadowscan.correlation import correlate_runtime
 from shadowscan.incremental import IncrementalCache
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory
-from shadowscan.risk import assess
+from shadowscan.risk import RiskPolicy, assess
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
 from shadowscan.utils.http import reset_allow_private_origin, set_allow_private_origin
@@ -541,6 +541,7 @@ class Engine:
 
     # --------------------------------------------------------- postprocessing
     def _reconcile_and_score(self, findings: list[Finding]) -> None:
+        risk_policy = RiskPolicy.from_options(self.config.risk_weights, self.config.risk_basis)
         for f in findings:
             if self.inventory is not None:
                 entry = self.inventory.match(f)
@@ -548,7 +549,7 @@ class Engine:
                 f.shadow = entry is None
                 if entry and not f.owner:
                     f.owner = entry.owner
-            f.risk = assess(f, self.index, inventory_present=self.inventory is not None)
+            f.risk = assess(f, self.index, inventory_present=self.inventory is not None, policy=risk_policy)
 
     def _postprocess(self, findings: list[Finding]) -> tuple[list[Finding], list[str]]:
         """Merge, correlate, reconcile and score; report what had to be omitted."""

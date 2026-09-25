@@ -168,6 +168,11 @@ signatures:
     capabilities: [tool-use]
     signals:
       - type: code
+        description: Tool-calling request/response shapes (Anthropic, OpenAI, Bedrock Converse, Gemini) anchored on code syntax
+        patterns: ['[{,(]\s*["'']input_schema["'']\s*:', '[{,]\s*["'']type["'']\s*:\s*["'']tool_(?:use|result)["'']', '[{,]\s*["'']tool_use_id["'']\s*:', '\btool_use_id\s*=', '\.(?:stop_reason|type)\s*[!=]=\s*["'']tool_use["'']', '[{,]\s*["'']role["'']\s*:\s*["'']tool["'']', '[{,]\s*["'']tool_call_id["'']\s*:', '\.finish_reason\s*[!=]=\s*["'']tool_calls["'']', '[{,]\s*["'']toolConfig["'']\s*:', '\btoolConfig\s*=', '[{,]\s*["'']tool(?:Use|Result)["'']\s*:', '[{,]\s*["'']function_declarations["'']\s*:']
+        weight: 0.4
+        agent_indicator: true
+      - type: code
         patterns: ['\btool_choice\s*[=:]', '"tool_choice"\s*:', '\bparallel_tool_calls\b', '\btools\s*=\s*\[\s*\{?\s*["'']?type["'']?\s*[:=]\s*["'']function["'']', '"tools"\s*:\s*\[\s*\{\s*"type"\s*:\s*"function"', '"function_declarations"\s*:', '\bfunction_declarations\s*=', '"functions"\s*:\s*\[\s*\{\s*"name"', '\bfunction_call\s*=\s*["'']auto["'']', '"input_schema"\s*:\s*\{', '\btool_calls\b', '\btoolCalls\b', '\btool_use\b', '"type"\s*:\s*"tool_use"']
         weight: 0.4
         agent_indicator: true

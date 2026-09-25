@@ -1,5 +1,37 @@
 # Scan state and runtime correlation
 
+## Coverage policy
+
+A code scan is *complete* when every file it was asked to assess was assessed.
+Two situations are deliberately outside a repository's own content:
+
+* **Symbolic links** are never followed. A link whose target resolves inside the
+  scan root loses nothing (the target is scanned at its real path) and is
+  skipped silently. A link that leaves the root, or cannot be resolved, is
+  skipped with a warning.
+* **Oversize files** (`max_file_size`, default 1 MiB, e.g. recorded HTTP
+  cassettes) are skipped with a warning.
+
+With `strict_coverage: true` (`--strict-coverage`) both become errors and the
+scan is incomplete (exit code 3). Use strict mode for enforcement gates, and
+raise `max_file_size` or add `exclude` patterns for known data files.
+
+Analysis limits are reported with their reason, for example
+`file analysis incomplete (MatchTimeoutError: source binding call limit exceeded)`.
+The import binder only counts calls into modules that a signature describes,
+so large ordinary files (test suites, HTTP clients) no longer hit the limit.
+
+## Test and fixture code
+
+Library test suites often construct agents to exercise integrations. Evidence
+found only under test or fixture paths (`tests/`, `fixtures/`, `cassettes/`,
+`__mocks__/`, `test_*.py`, `*_test.go`, `*.spec.ts`, …) has half weight and cannot
+promote a project to an *agent*; a project whose evidence is entirely test code
+is tagged `test-code-only`. Set `include_tests: true` (`--include-tests`) to
+treat test code like any other source. Credentials are still reported from test
+paths unless they are recognisable placeholders (repeated characters, marker
+words such as `EXAMPLE`, or very low character diversity).
+
 ## Incremental scans
 
 Incremental mode reuses a completed connector result when the fingerprint of its
@@ -126,15 +158,18 @@ incomplete depends on what the file could hide:
   so the omission is visible. Lockfiles, minified bundles, source maps and
   bytecode below the limit are skipped silently because they are never analyzed.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
-  document, is an error and the scan is incomplete (exit 3), because the scanner
-  would otherwise claim coverage of content it never inspected. Raise
-  `max_file_size`, exclude the directory, or add the name to
-  `oversize_skip_globs` after confirming it carries no agent evidence.
+  document, is skipped with a warning by default (see the coverage policy
+  above). With `strict_coverage: true` (`--strict-coverage`) it is an error and
+  the scan is incomplete (exit 3), because an enforcement gate must not claim
+  coverage of content the scanner never inspected. Raise `max_file_size`,
+  exclude the directory, or add the name to `oversize_skip_globs` after
+  confirming it carries no agent evidence.
 
 `oversize_skip_globs` replaces the default list with case-insensitive file-name
 globs; a pattern containing `/` is matched against the path relative to the scan
-root. An empty list turns every oversize file that the scanner would read into an
-error. Oversize files that are never read at any size, such as executables or
+root. A matching file stays a warning even under `strict_coverage`; an empty
+list makes every oversize file that the scanner would read an error in strict
+mode. Oversize files that are never read at any size, such as executables or
 media in other formats, are skipped silently as before.
 
 The per-file matching budget also grows with size. `scan_timeout` (default 2
