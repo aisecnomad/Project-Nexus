@@ -33,11 +33,11 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ## Why
 
-Agents are no longer only Python scripts. 
+Agents are no longer only Python scripts.
 They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
-Bedrock Agents provisioned by Terraform, MCP servers wired into every 
-developer's editor, service principals with `Mail.ReadWrite` acting on behalf of nobody, and JWTs carrying an `act` claim. 
-Each surface has its own discovery API and its own vocabulary. 
+Bedrock Agents provisioned by Terraform, MCP servers wired into every
+developer's editor, service principals with `Mail.ReadWrite` acting on behalf of nobody, and JWTs carrying an `act` claim.
+Each surface has its own discovery API and its own vocabulary.
 ShadowScan normalizes these observations into one finding model with evidence,
 so investigators or auditors can ask: *Who owns this AI Agent? What can it do, and is it
 registered in the registry supplied for this scan?*
@@ -166,7 +166,7 @@ it fails until the variable is set.
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
 shadowscan code . --inventory agent-card.yaml
 
-# 2. Try every connector against the bundled fixtures (offline demo)
+# 2. Try every fixture-backed connector offline (demo; 25 of 27 connectors ship fixtures)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 
 # 3. Real estate: one config, live connectors, secrets from the environment
@@ -315,7 +315,10 @@ See [deployment and migration](docs/production.md) for the rollout checks.
 
 Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
 findings carry file: line locations), `csv`, `markdown`, `html` (self-contained,
-filterable, with evidence drill-down).
+filterable, with evidence drill-down). In `csv` output a cell that starts with
+`=`, `+`, `-`, `@`, a tab or a newline is prefixed with a literal `'` so
+spreadsheets treat it as text (common for `@team` owners); strip that prefix
+when consuming the file programmatically, or use `json`.
 
 ### Risk policy
 

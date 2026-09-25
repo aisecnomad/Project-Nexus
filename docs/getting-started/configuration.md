@@ -4,7 +4,12 @@ ShadowScan is configured through a YAML file passed with `-c` / `--config`.
 Environment variables are expanded using `${VAR}` syntax; missing required
 values fail closed.
 
-## Full reference
+## Common options
+
+This page shows the options most configurations use. `parallel`, `incremental`,
+`state_dir`, `workdir`, `job_deadline_seconds`, `risk_basis` and `risk_weights`
+are documented in the [README risk policy](https://github.com/aisecnomad/Project-Nexus/blob/main/README.md#risk-policy),
+[scan semantics](../scanning.md) and [production deployment](../production.md).
 
 ```yaml
 # shadowscan.yaml

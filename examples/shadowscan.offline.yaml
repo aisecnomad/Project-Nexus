@@ -1,5 +1,6 @@
-# Demo configuration: runs every connector in offline mode against the fixture
-# exports shipped with the repository. No credentials needed.
+# Demo configuration: runs every connector that ships an offline fixture (25 of
+# 27; code.github and code.gitlab need a directory of cloned repositories)
+# against the fixtures in the repository. No credentials needed.
 #   shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 inventory:
   - ../agent-card.yaml

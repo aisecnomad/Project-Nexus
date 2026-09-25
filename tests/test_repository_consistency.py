@@ -244,7 +244,8 @@ def test_citation_matches_the_package_metadata() -> None:
     citation = _load_yaml(ROOT / "CITATION.cff")
     project = _pyproject()["project"]
     assert citation["version"] == project["version"]
-    assert citation["license"] == project["license"]["text"]
+    license = project["license"]
+    assert citation["license"] == (license if isinstance(license, str) else license["text"])
     assert citation["repository-code"] == project["urls"]["Repository"]
     assert citation["url"] == project["urls"]["Documentation"]
 
@@ -332,6 +333,65 @@ def test_docs_toolchain_is_hash_locked_everywhere_it_is_installed() -> None:
         assert "mkdocs-material==" not in _read(workflow), f"{workflow.name} pins mkdocs outside the lock"
 
 
+_USES_LINE = re.compile(r"^\s*-?\s*uses:\s*(?P<ref>[^#\s]+)\s*(?P<comment>#.*)?$")
+_PINNED = re.compile(r"^[\w.-]+/[\w.-]+(?:/[\w./-]+)?@(?P<sha>[0-9a-f]{40})$")
+
+
+@pytest.mark.parametrize("example", sorted((ROOT / "examples").glob("*.yml")), ids=lambda path: path.name)
+def test_example_workflows_pin_actions_to_commit_shas(example: Path) -> None:
+    """Consumer examples are copied verbatim; Dependabot does not track examples/."""
+    problems: list[str] = []
+    for number, line in enumerate(_read(example).splitlines(), start=1):
+        match = _USES_LINE.match(line)
+        if match is None:
+            continue
+        ref = match.group("ref").strip("'\"")
+        if not _PINNED.match(ref):
+            problems.append(f"line {number}: {ref} is not pinned to a 40-character commit SHA")
+        if not re.search(r"#\s*v?\d", match.group("comment") or ""):
+            problems.append(f"line {number}: {ref} needs a version comment")
+    assert not problems, f"{_relative(example)}:\n  " + "\n  ".join(problems)
+
+
+def test_example_action_pins_match_the_repository_workflows() -> None:
+    """An action pinned in both places must point at the same commit."""
+    def pins(paths):
+        found: dict[str, set[str]] = {}
+        for path in paths:
+            for line in _read(path).splitlines():
+                match = _USES_LINE.match(line)
+                if match is None:
+                    continue
+                name, _, sha = match.group("ref").partition("@")
+                found.setdefault(name, set()).add(sha)
+        return found
+    repository = pins(WORKFLOWS)
+    for name, shas in pins(sorted((ROOT / "examples").glob("*.yml"))).items():
+        if name in repository:
+            assert shas <= repository[name], f"examples pin {name} to {sorted(shas)} but workflows use {sorted(repository[name])}"
+
+
+def test_pre_commit_hooks_select_files_with_types_or() -> None:
+    """`types` is an AND filter; a hook listing two types would never run."""
+    config = _load_yaml(ROOT / ".pre-commit-config.yaml")
+    for repo in config["repos"]:
+        for hook in repo.get("hooks", []):
+            types = hook.get("types") or []
+            assert len(types) <= 1, f"hook {hook['id']} lists {types} under `types`; use `types_or`"
+
+
+def test_dev_extra_is_fully_pinned_for_ci() -> None:
+    """CI installs [dev] under constraints; an unpinned name floats from the live index."""
+    pinned = {
+        name.lower().replace("_", "-")
+        for text in (_read(ROOT / "requirements-ci-constraints.txt"), _read(ROOT / "requirements.lock"))
+        for name in re.findall(r"^([A-Za-z0-9_.-]+)==", text, re.MULTILINE)
+    }
+    for requirement in _pyproject()["project"]["optional-dependencies"]["dev"]:
+        name = re.split(r"[<>=!\[; ]", requirement, maxsplit=1)[0].lower().replace("_", "-")
+        assert name in pinned, f"[dev] requirement {requirement} has no exact pin in the constraints or lock"
+
+
 def test_codeql_action_steps_share_one_release() -> None:
     """init, analyze and upload-sarif must run the same CodeQL Action release."""
     pins: dict[str, set[str]] = {}
@@ -347,11 +407,17 @@ def test_codeql_action_steps_share_one_release() -> None:
 # --- Documented counts match the code -----------------------------------------
 
 _COUNT_CLAIM = re.compile(r"(\d+) signatures / (\d+) signals")
+_BARE_SIGNATURE_CLAIM = re.compile(r"\b(\d+) signatures\b")
 _CONNECTOR_CLAIM = re.compile(r"\*\*(\d+) connectors\*\*")
 
 
 def _current_docs() -> list[Path]:
-    return [path for path in [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))] if "hardening-logs" not in path.parts]
+    """Documents that describe the current tree; dated review logs may quote old numbers."""
+    return [
+        path
+        for path in [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
+        if "hardening-logs" not in path.parts and not re.search(r"review-\d{4}-\d{2}-\d{2}", path.name)
+    ]
 
 
 def test_documented_signature_counts_match_the_shipped_packs(index) -> None:
@@ -362,6 +428,10 @@ def test_documented_signature_counts_match_the_shipped_packs(index) -> None:
     for path, match in claims:
         claimed = (int(match.group(1)), int(match.group(2)))
         assert claimed == actual, f"{_relative(path)} claims {claimed}, packs ship {actual}"
+    for path in _current_docs():
+        for _, line in _prose_lines(_read(path)):
+            for match in _BARE_SIGNATURE_CLAIM.finditer(line):
+                assert int(match.group(1)) == actual[0], f"{_relative(path)} says {match.group(0)}, packs ship {actual[0]}"
 
 
 def test_documented_connector_counts_match_the_registry() -> None:

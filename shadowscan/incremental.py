@@ -39,7 +39,7 @@ try:
     import fcntl as _fcntl
 
     fcntl = _fcntl
-except ImportError:  # pragma: no cover - non-POSIX: full scans remain available
+except ImportError:  # pragma: no cover - fcntl is absent only on platforms the confined reader already refuses
     fcntl = None
 
 

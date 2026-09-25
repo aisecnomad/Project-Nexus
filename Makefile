@@ -4,7 +4,7 @@ SHELL := /bin/bash
 # --- Development -----------------------------------------------------------
 
 .PHONY: install
-install: ## Install in editable mode with dev + cloud extras
+install: ## Install in editable mode with dev + cloud + docs extras
 	python -m pip install -e ".[all]"
 
 .PHONY: install-dev
@@ -122,7 +122,7 @@ policy: ## Check workflow and issue-form safety policies
 
 .PHONY: clean
 clean: ## Remove build artifacts and caches
-	rm -rf dist build *.egg-info .mypy_cache .pytest_cache .ruff_cache .coverage htmlcov
+	rm -rf dist build site *.egg-info .mypy_cache .pytest_cache .ruff_cache .coverage htmlcov
 	rm -f shadowscan.sarif
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
