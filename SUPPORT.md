@@ -13,7 +13,7 @@ does not establish production acceptance for your environment.
 | Usage question | [Usage question form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=question.yml) |
 | Reproducible bug, false positive or missed detection | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
 | Feature or connector proposal | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose); describe the use case and required permissions |
-| Vulnerability, credential disclosure or unsafe scanner behavior | [Security reporting policy](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md#reporting) and the [private advisory form](https://github.com/aisecnomad/Project-Nexus/security/advisories/new); keep exploit details private |
+| Vulnerability, credential disclosure or unsafe scanner behavior | [Security reporting policy](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md#reporting); keep exploit details private |
 | Participation or conduct concern | [Code of conduct](https://github.com/aisecnomad/Project-Nexus/blob/main/CODE_OF_CONDUCT.md#reporting-a-concern) |
 | Contribute a fix or review | [Contributor guide](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md) |
 

@@ -19,10 +19,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install the hash-locked documentation toolchain
+      - name: Install pinned docs tools
         run: |
-          python -m pip install --upgrade --only-binary=:all: pip==26.2.1
-          python -m pip install --require-hashes --only-binary=:all: -r requirements-docs.lock
+          python -m pip install --only-binary=:all: -c requirements-ci-constraints.txt \
+            "mkdocs-material==9.7.7"
       - name: Validate docs without deployment
         run: mkdocs build --strict
   test:
@@ -91,7 +91,17 @@ jobs:
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
-      - run: pip-audit --progress-spinner off
+      # Audit installed dependencies; the editable scanner is unpublished source,
+      # so querying its version on PyPI is not a dependency vulnerability check.
+      - run: pip-audit --skip-editable --progress-spinner off
+      - name: Audit hash-locked runtime and build dependencies
+        run: |
+          # Fail if a locked package cannot be checked, even when an installed
+          # environment audit permits an intentionally skipped editable package.
+          pip-audit --require-hashes --strict --progress-spinner off \
+            --disable-pip --no-deps -r requirements.lock
+          pip-audit --require-hashes --strict --progress-spinner off \
+            --disable-pip --no-deps -r requirements-build.lock
       - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
         run: |

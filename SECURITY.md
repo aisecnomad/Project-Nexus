@@ -123,83 +123,37 @@ the pinned revision you deployed, not against a version number.
 
 ## Reporting
 
-Report security problems through a
-[private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new).
-That is the only reporting channel; there is no security mailing list. Do not
-open a public issue, pull request or discussion for anything in scope below,
-and do not include credentials, private exports or exploit details anywhere
-public.
+Use a [private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new).
+Do not include credentials, private exports or exploit details in public issues.
 
-### What is in scope
+### What to report privately
 
-- Credentials, JWTs or other secrets that reach a report, a record dump, a log
-  line, an error message or incremental state despite redaction.
-- Reading files outside the scan root or following symlinks that the
-  documentation says are not followed.
-- Requests that leave the configured origin, downgrade TLS, or reach private,
-  loopback, link-local or metadata addresses without `allow_private_origin`.
-- A limit, malformed export, denied API or timeout that produces an empty,
-  complete-looking scan (exit 0) instead of an incomplete one (exit 3).
-- Plugin, signature-pack or inventory inputs that bypass the allowlist,
-  override built-in identifiers without opt-in, or approve a finding they
-  should not.
-- Integrity of the CI, Scorecard and release-evidence workflows, including an
-  unpinned action or a job with more permissions than it needs.
+Report credential or private-data disclosure, redaction failures, unexpected
+access outside the scan root or configured network origin, allowlist bypasses,
+and malformed inputs that make incomplete coverage look complete. Reports about
+CI or release-evidence integrity also belong in the private channel.
 
-### What is out of scope
-
-- Findings that are heuristically wrong (a false positive, a missed framework,
-  a misattributed provider). File a public
-  [detection report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml)
-  unless the report itself would expose a secret.
-- Vulnerabilities in third-party platforms that ShadowScan merely inspects.
-  Report those to the vendor.
-- Issues that require a compromised operator workstation, CI runner,
-  configuration file or installed Python package. These are trusted by the
-  [trust boundary](#trust-boundary).
-- Denial of service against your own scan through pathological inputs beyond
-  the documented resource limits.
+Ordinary false positives, missed integrations and incorrect attribution can use
+the [detection report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml)
+when the reproduction is safe to publish. A trusted component being compromised
+is outside the scanner's stated trust boundary; explain any demonstrated bypass
+rather than assuming the scanner protects a compromised host.
 
 ### What to include
 
-- The full commit SHA you tested (`shadowscan --version` prints the package
-  version only, which is not enough because no version has been released).
-- The connector, surface and collection mode involved.
-- A minimal, sanitized reproduction: a trimmed export record, a synthetic
-  token, or a public repository and commit. Replace real secrets with
-  placeholders that keep the shape (`sk-REDACTED`, `${REDACTED}`).
-- The impact as you understand it: what reaches which artifact, and who can
-  read it.
+- The full scanner commit SHA, connector and collection mode. The unreleased
+  package version alone does not identify the revision.
+- A minimal synthetic reproduction or public repository and commit, with
+  expected and observed behavior.
+- The security impact, affected artifacts and who could access them.
+- Any relevant sanitized diagnostics; do not attach real credentials, JWTs or
+  live tenant exports.
 
-### What to expect
+### Response and disclosure
 
-ShadowScan has a single maintainer, and response times are not guaranteed.
-Advisories are read before public issues. When a report is confirmed:
-
-1. The advisory is acknowledged and the affected code paths are identified.
-2. A fix lands on `main` with a regression test. There are no release branches
-   or backports; the fix is available at the merge commit.
-3. `CHANGELOG.md`, and `docs/production.md` when rollout or finding identity
-   changes, describe the fix without reproducing the exploit.
-4. The advisory is published with credit to the reporter, unless the reporter
-   asks otherwise, once the fix is on `main`.
-
-If you have not heard back within 14 days, comment on the advisory. If the
-advisory route is unavailable to you, open a public issue that says only that
-you need a private channel, with no details, and the maintainer will open an
-advisory and invite you.
-
-### Coordinated disclosure
-
-Please give the project the chance to fix the problem before publishing
-details. The default embargo is 90 days from the initial report, shorter if a
-fix is on `main` sooner and longer only by agreement. Operators install from a
-pinned commit, so "the fix is on `main`" is what unblocks them, not a tag.
-
-### Safe harbor
-
-Good-faith research against your own checkouts, your own tenants and the
-bundled fixtures is welcome. Do not test against tenants, repositories or
-accounts you are not authorized to assess, and do not access, modify or retain
-data that is not yours. The project will not pursue or support action against
-researchers who follow this policy and report through the advisory channel.
+This volunteer project has one maintainer and cannot guarantee response times.
+Use the advisory to coordinate reproduction, a fix and disclosure timing. Fixes
+land on `main`; there is no released-version backport commitment. A confirmed
+fix should include a regression test and any necessary rollout or migration
+notes. Reporter credit and publication timing should be agreed in the advisory.
+Only test repositories, accounts and tenants you are authorized to assess.

@@ -2,43 +2,15 @@
 
 ## 0.1.1 — Unreleased
 
-### Project and community (2026-09-25)
+### Community policy consistency
 
-No scanner behaviour changes. This pass reconciles the community profile work
-that landed through #62 with a second pass, and makes the result tested so it
-cannot silently regress:
-
-- `GOVERNANCE.md` states the historical review record plainly (every merge by
-  the maintainer's own account, no second-person approval on `main`), separates
-  automated gates from review, lists what changes when a second maintainer
-  joins, and gains a section on changing the document itself.
-- `SECURITY.md` gains a full reporting section under the existing `Reporting`
-  heading: scope in and out, what to include, what to expect from a single
-  maintainer, a 90-day coordinated-disclosure default and a safe-harbor
-  statement. No response SLA is invented.
-- Issue forms: `documentation.yml` (linked from SUPPORT.md since #62 but
-  missing) is added; the two detection forms are merged into one
-  `detection_report.yml` with a `detection` label and a mandatory sanitization
-  checkbox; the usage question form gets a `question` label.
-- Workflows: the stale bot and CodeQL grant write permissions per job rather
-  than per workflow; the Docs workflow and the CI docs job install from the new
-  hash-locked, wheel-only `requirements-docs.lock`; a new Labels workflow keeps
-  the tracker equal to `.github/labels.yml` using the runner's `gh` CLI, adding
-  no action to pin; the deprecated Dependabot `reviewers` key is removed in
-  favour of CODEOWNERS.
-- `tests/test_repository_policy.py` fails CI when a Markdown link or heading
-  anchor is broken, an action is not pinned to a full commit SHA with a version
-  comment, a checkout persists credentials, a workflow holds write permissions
-  at the top level or could publish a release, the stale bot could close a
-  pull request, an issue form uses an undefined label, the pre-commit ruff or
-  mypy revision drifts from the CI pin, the Makefile drifts from the CI gates,
-  `CITATION.cff` disagrees with `pyproject.toml`, or a documented signature,
-  signal or connector count is stale.
-- `make docs` builds strictly from the lock and `make policy` runs the policy
-  tests; `.editorconfig` and `.gitattributes` are added; pre-commit's mypy
-  revision matches the CI pin; README gains a fuller community table and a
-  License section; the install guide no longer says Python 3.13 awaits
-  validation, since CI has covered it.
+- Add a documentation issue form, keep detection reports and private security
+  reports on their existing routes, and document safe vulnerability report inputs.
+- Hash-lock the documentation toolchain, align local hooks with CI tool versions,
+  and scope CodeQL and stale-triage write permissions to their jobs.
+- Validate workflow and issue-form safety policies. Label synchronization creates
+  or updates declared labels without deleting labels; inactive issues and pull
+  requests remain open for maintainer review.
 
 ### Private holdout and CLI job deadline gates
 
@@ -48,6 +20,8 @@ cannot silently regress:
 - Add optional `--job-deadline-seconds` / `options.job_deadline_seconds` for CLI
   scans. The cancellable process watchdog exits `3` when setup, scanning or output
   exceeds the deadline; external process supervision remains required.
+- Start an explicit CLI deadline before reading JWTs from stdin, so an open,
+  silent input pipe cannot hold the process past its configured deadline.
 
 ### Follow-up trust-boundary review (2026-09-24)
 

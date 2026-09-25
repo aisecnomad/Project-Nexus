@@ -16,7 +16,7 @@ body:
       label: Where is the problem?
       options:
         - README
-        - Documentation site (aisecnomad.github.io/Project-Nexus)
+        - Documentation source under docs/ or a local MkDocs preview
         - docs/connectors.md or a connector page
         - docs/production.md (deployment, migration, review status)
         - docs/signatures.md or docs/inventory.md
@@ -31,7 +31,7 @@ body:
     attributes:
       label: Page or file
       description: Link to the page, or the repository path and heading.
-      placeholder: "docs/connectors.md#identity, or https://aisecnomad.github.io/Project-Nexus/production/"
+      placeholder: "docs/connectors.md#identity or docs/production.md"
     validations:
       required: true
 
@@ -65,9 +65,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: ShadowScan version or commit
-      description: Output of `shadowscan --version` or the commit SHA, if the problem is about behavior.
-      placeholder: "0.1.1 or commit abc1234"
+      label: Full scanner commit SHA, if relevant
+      description: The full commit SHA you tested if the problem is about behavior; an unreleased version string is not enough.
+      placeholder: "Full 40-character commit SHA"
 
   - type: checkboxes
     id: contribution

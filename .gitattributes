@@ -4,7 +4,7 @@
 
 # Offline fixtures and evaluation corpora mimic other projects' files; keep them
 # out of the repository's language statistics and collapse them in diffs.
-tests/fixtures/** linguist-vendored
+tests/fixtures/** -text linguist-vendored
 tools/evaluation/results/** linguist-generated
 tools/evaluation/*_corpus.json linguist-generated
 tools/evaluation/corpus.json linguist-generated

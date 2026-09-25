@@ -385,18 +385,14 @@ A small documentation fix or a reproducible false-positive report is useful.
 | I want to… | Start here |
 |---|---|
 | Learn, ask a question or troubleshoot a scan | [Support guide](SUPPORT.md) |
-| Report a bug, request a feature or a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
-| Report a false positive, a missed framework or a wrong score | [Detection quality report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml) |
-| Make a first contribution | [Contributor guide](CONTRIBUTING.md) and the [`good first issue`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label |
-| Understand decisions, review and release requirements | [Governance](GOVERNANCE.md), [Maintainers](MAINTAINERS.md), [Roadmap](ROADMAP.md) |
+| Report a bug or suggest a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
+| Make a first contribution | [Contributor guide](CONTRIBUTING.md) |
+| Understand decisions, review and release requirements | [Governance](GOVERNANCE.md) |
 | Report a vulnerability privately | [Security policy](SECURITY.md#reporting) |
 | Understand participation standards or report harmful conduct | [Code of conduct](CODE_OF_CONDUCT.md) |
-| See what changed, or cite the project | [Changelog](CHANGELOG.md), [CITATION.cff](CITATION.cff) |
 
 Use synthetic, minimal examples in public reports. Scan results can contain
-credentials, personal data and sensitive inventory even after redaction. The
-project has a single maintainer and is actively looking for reviewers and
-co-maintainers; see [MAINTAINERS.md](MAINTAINERS.md#becoming-a-reviewer-or-maintainer).
+credentials, personal data and sensitive inventory even after redaction.
 
 ## Safety notes
 
@@ -408,6 +404,4 @@ co-maintainers; see [MAINTAINERS.md](MAINTAINERS.md#becoming-a-reviewer-or-maint
 Deployment behavior, migration options, and limits are documented in
 [SECURITY.md](SECURITY.md) and [docs/production.md](docs/production.md).
 
-## License
-
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+License: Apache-2.0.

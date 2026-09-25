@@ -72,6 +72,41 @@ def test_disarmed_watchdog_cannot_kill_a_reused_process():
     exit_callback.assert_not_called()
 
 
+def test_jwt_reuses_watchdog_armed_before_stdin(monkeypatch):
+    watchdog = Mock()
+    arm = Mock(return_value=watchdog)
+    monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm)
+    monkeypatch.setattr("shadowscan.cli._run_and_emit_with_deadline", Mock(side_effect=SystemExit(0)))
+    result = CliRunner().invoke(main, ["jwt", "eyJhbGciOiJub25lIn0.e30.", "--job-deadline-seconds", "1"])
+    assert result.exit_code == 0, result.output
+    arm.assert_called_once_with(1.0)
+    watchdog.cancel.assert_called_once_with()
+
+
+def test_cli_deadline_cancels_when_command_preflight_fails(monkeypatch):
+    watchdog = Mock()
+    arm = Mock(return_value=watchdog)
+    monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm)
+    result = CliRunner().invoke(main, ["run", "no.such.connector", "--job-deadline-seconds", "1"])
+    assert result.exit_code == 2
+    arm.assert_called_once_with(1.0)
+    watchdog.cancel.assert_called_once_with()
+
+
+@pytest.mark.parametrize("args", [
+    ["run", "--job-deadline-seconds", "1"],
+    ["code", ".", "--job-deadline-seconds", "1", "--connector-timeout-seconds", "-3"],
+])
+def test_cli_deadline_cancels_when_subcommand_parsing_fails(monkeypatch, args):
+    watchdog = Mock()
+    arm = Mock(return_value=watchdog)
+    monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm)
+    result = CliRunner().invoke(main, args)
+    assert result.exit_code == 2, result.output
+    arm.assert_called_once_with(1.0)
+    watchdog.cancel.assert_called_once_with()
+
+
 def test_locked_stderr_cannot_block_watchdog_exit(monkeypatch):
     release = threading.Event()
     exited = threading.Event()
@@ -112,4 +147,39 @@ cli.main(['code', '.', '--job-deadline-seconds', '0.2'])
         capture_output=True, text=True, timeout=15, check=False,
     )
     assert marker.read_text() == "blocked"
+    assert result.returncode == 3, result.stderr
+
+
+def test_cli_deadline_exits_with_jwt_stdin_held_open():
+    process = subprocess.Popen(
+        [sys.executable, "-m", "shadowscan", "jwt", "--job-deadline-seconds", "0.2"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
+        # Keep stdin open and silent; before the fix, token collection waited
+        # for EOF indefinitely and the watchdog was never armed.
+        assert process.wait(timeout=8) == 3
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=3)
+
+
+def test_cli_deadline_exits_with_blocked_connector_discovery(tmp_path):
+    marker = tmp_path / "discovering"
+    script = """
+import sys, time
+from pathlib import Path
+import shadowscan.cli as cli
+def block():
+    Path(sys.argv[1]).write_text('discovering')
+    time.sleep(60)
+cli.available_connectors = block
+cli.main(['run', 'code.filesystem', '--job-deadline-seconds', '0.2'])
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(marker)],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert marker.read_text() == "discovering"
     assert result.returncode == 3, result.stderr

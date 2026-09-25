@@ -1,8 +1,5 @@
 name: Stale issues
 
-# Marks inactive issues and pull requests so triage can see them. Nothing is
-# closed by automation: a single maintainer's silence is not the reporter's
-# fault, and tests/test_repository_policy.py enforces that this stays so.
 on:
   schedule:
     - cron: "0 6 * * 1"  # Monday 06:00 UTC
