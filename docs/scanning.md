@@ -5,16 +5,24 @@
 A code scan is *complete* when every file it was asked to assess was assessed.
 Two situations are deliberately outside a repository's own content:
 
-* **Symbolic links** are never followed. A link whose target resolves inside the
-  scan root loses nothing (the target is scanned at its real path) and is
-  skipped silently. A link that leaves the root, or cannot be resolved, is
-  skipped with a warning.
-* **Oversize files** (`max_file_size`, default 1,000,000 bytes, e.g. recorded HTTP
-  cassettes) are skipped with a warning.
+* **Symbolic links** are never followed. A link is skipped silently when its
+  own name is one the scanner never reads (a lockfile, generated bundle or
+  image), or when it is a source file whose target is analyzed at its real path
+  in the same project, with the same test classification, extension and
+  file-name signals. Every other link makes the scan incomplete (exit code 3):
+  directory links, whose alias paths are not inspected; configuration and
+  document aliases, whose parsing can depend on their path; source aliases into
+  another project or test directory; links into excluded or unread content;
+  links outside the root; and unresolved links.
+* **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
+  inspect make the scan incomplete when skipped. Known generated, binary and
+  lockfile names in `oversize_skip_globs` are declared omissions and remain
+  warnings, including when `strict_coverage` is enabled.
 
-With `strict_coverage: true` (`--strict-coverage`) both become errors and the
-scan is incomplete (exit code 3). Use strict mode for enforcement gates, and
-raise `max_file_size` or add `exclude` patterns for known data files.
+By default, incomplete coverage is recorded as a warning and exits 3.
+`strict_coverage: true` (`--strict-coverage`) elevates the diagnostic to an
+error; it does not change the exit code. Raise `max_file_size`, explicitly
+exclude known data, or review `oversize_skip_globs` for the intended scope.
 
 Analysis limits are reported with their reason, for example
 `file analysis incomplete (MatchTimeoutError: source binding call limit exceeded)`.
@@ -158,18 +166,16 @@ incomplete depends on what the file could hide:
   so the omission is visible. Lockfiles, minified bundles, source maps and
   bytecode below the limit are skipped silently because they are never analyzed.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
-  document, is skipped with a warning by default (see the coverage policy
-  above). With `strict_coverage: true` (`--strict-coverage`) it is an error and
-  the scan is incomplete (exit 3), because an enforcement gate must not claim
-  coverage of content the scanner never inspected. Raise `max_file_size`,
+  document, is skipped and makes the scan incomplete (exit 3). With
+  `strict_coverage: true` (`--strict-coverage`) it is recorded as an error
+  instead of a warning. Raise `max_file_size`,
   exclude the directory, or add the name to `oversize_skip_globs` after
   confirming it carries no agent evidence.
 
 `oversize_skip_globs` replaces the default list with case-insensitive file-name
 globs; a pattern containing `/` is matched against the path relative to the scan
 root. A matching file stays a warning even under `strict_coverage`; an empty
-list makes every oversize file that the scanner would read an error in strict
-mode. Oversize files that are never read at any size, such as executables or
+list makes every oversize file that the scanner would read incomplete. Oversize files that are never read at any size, such as executables or
 media in other formats, are skipped silently as before.
 
 The per-file matching budget also grows with size. `scan_timeout` (default 2
