@@ -1,0 +1,202 @@
+{
+  "schema": 1,
+  "metadata": {
+    "name": "September 25 review regressions",
+    "type": "synthetic",
+    "provenance": "Authored after review findings, with source-based labels. A regression suite used during development; not independent annotation, a held-out set, or field accuracy."
+  },
+  "cases": [
+    {
+      "id": "local-agent-module",
+      "family": "agent",
+      "description": "An ordinary local module shadows the external agents package.",
+      "files": {
+        "agents.py": "class Agent:\n    def __init__(self, name):\n        self.name = name\n",
+        "app.py": "from agents import Agent\nworker = Agent(name=\"queue worker\")\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "local-agent-package",
+      "family": "agent",
+      "description": "An ordinary local package exports a non-AI Agent class.",
+      "files": {
+        "agents/__init__.py": "class Agent:\n    def __init__(self, name):\n        self.name = name\n",
+        "app.py": "from agents import Agent as Worker\nworker = Worker(name=\"queue worker\")\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "local-agent-qualified",
+      "family": "agent",
+      "description": "A qualified call still refers to the repository-local module.",
+      "files": {
+        "agents.py": "class Agent:\n    def __init__(self, name):\n        self.name = name\n",
+        "app.py": "import agents\nworker = agents.Agent(name=\"queue worker\")\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "agent-word-only",
+      "family": "agent",
+      "description": "A locally declared Agent is an ordinary class.",
+      "files": {
+        "app.py": "class Agent:\n    def __init__(self, name):\n        self.name = name\nworker = Agent(name=\"ordinary person\")\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "provider-call-only",
+      "family": "agent",
+      "description": "A provider completion without model-selected tool dispatch is not an agent.",
+      "files": {
+        "app.py": "from openai import OpenAI\nclient = OpenAI()\nanswer = client.chat.completions.create(model=\"example\", messages=[])\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "provider-polling-loop",
+      "family": "agent",
+      "description": "Repeated provider calls alone do not establish autonomous tool execution.",
+      "files": {
+        "app.py": "from openai import OpenAI\nclient = OpenAI()\nfor i in range(3):\n    response = client.chat.completions.create(model=\"example\", messages=[])\n    print(response)\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "provider-tool-schema-only",
+      "family": "agent",
+      "description": "Supplying a tool schema without executing a selected tool is not a tool loop.",
+      "files": {
+        "app.py": "from openai import OpenAI\nclient = OpenAI()\nresponse = client.chat.completions.create(model=\"example\", messages=[], tools=[{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}}])\nprint(response.choices[0].message.tool_calls)\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "tool-result-display",
+      "family": "agent",
+      "description": "Displaying tool-call arguments without dispatch or feedback is not an agent loop.",
+      "files": {
+        "app.py": "from openai import OpenAI\nclient = OpenAI()\nresponse = client.chat.completions.create(model=\"example\", messages=[], tools=tools)\nfor call in response.choices[0].message.tool_calls:\n    print(call.function.arguments)\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "external-agent-constructor",
+      "family": "agent",
+      "description": "An external OpenAI Agents SDK constructor remains recognized.",
+      "files": {
+        "app.py": "from agents import Agent\nagent = Agent(name=\"assistant\", instructions=\"Help the user\")\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": true,
+      "assertions": {}
+    },
+    {
+      "id": "external-agent-alias",
+      "family": "agent",
+      "description": "An alias for an external agent constructor remains recognized.",
+      "files": {
+        "app.py": "from agents import Agent as Assistant\nagent = Assistant(name=\"assistant\", instructions=\"Help the user\")\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": true,
+      "assertions": {}
+    },
+    {
+      "id": "provider-tool-feedback-loop",
+      "family": "agent",
+      "description": "A provider response selects a tool call whose arguments drive execution, with the result fed into the next model request.",
+      "files": {
+        "app.py": "from openai import OpenAI\nimport json\n\nclient = OpenAI()\nmessages = [{\"role\": \"user\", \"content\": \"Resolve pending tickets\"}]\nwhile True:\n    response = client.chat.completions.create(\n        model=\"example\", messages=messages,\n        tools=[{\"type\": \"function\", \"function\": {\n            \"name\": \"resolve_ticket\", \"parameters\": {\"type\": \"object\"}\n        }}],\n    )\n    msg = response.choices[0].message\n    if not msg.tool_calls:\n        break\n    messages.append(msg)\n    for call in msg.tool_calls:\n        result = resolve_ticket(**json.loads(call.function.arguments))\n        messages.append({\"role\": \"tool\", \"tool_call_id\": call.id,\n                         \"content\": json.dumps(result)})\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": true,
+      "assertions": {}
+    },
+    {
+      "id": "tool-arguments-truth-test",
+      "family": "agent",
+      "description": "Truth-testing model arguments and echoing the result does not execute the requested tool.",
+      "files": {
+        "app.py": "from openai import OpenAI\nimport json\n\nclient = OpenAI()\nmessages = [{\"role\": \"user\", \"content\": \"Resolve pending tickets\"}]\nwhile True:\n    response = client.chat.completions.create(\n        model=\"example\", messages=messages,\n        tools=[{\"type\": \"function\", \"function\": {\n            \"name\": \"resolve_ticket\", \"parameters\": {\"type\": \"object\"}\n        }}],\n    )\n    msg = response.choices[0].message\n    if not msg.tool_calls:\n        break\n    messages.append(msg)\n    for call in msg.tool_calls:\n        result = bool(call.function.arguments)\n        messages.append({\"role\": \"tool\", \"tool_call_id\": call.id,\n                         \"content\": json.dumps(result)})\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "tool-arguments-json-parser",
+      "family": "agent",
+      "description": "Decoding model arguments and echoing them does not execute the declared resolve_ticket tool.",
+      "files": {
+        "app.py": "from openai import OpenAI\nimport json\n\nclient = OpenAI()\nmessages = [{\"role\": \"user\", \"content\": \"Resolve pending tickets\"}]\nwhile True:\n    response = client.chat.completions.create(\n        model=\"example\", messages=messages,\n        tools=[{\"type\": \"function\", \"function\": {\n            \"name\": \"resolve_ticket\", \"parameters\": {\"type\": \"object\"}\n        }}],\n    )\n    msg = response.choices[0].message\n    if not msg.tool_calls:\n        break\n    messages.append(msg)\n    for call in msg.tool_calls:\n        result = json.JSONDecoder().decode(call.function.arguments)\n        messages.append({\"role\": \"tool\", \"tool_call_id\": call.id,\n                         \"content\": json.dumps(result)})\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    }
+  ]
+}

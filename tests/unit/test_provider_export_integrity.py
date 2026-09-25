@@ -62,7 +62,7 @@ def test_mixed_provider_records_keep_valid_neighbors(tmp_path, run_connector, co
     source = tmp_path / f"mixed.{suffix}"
     records = [{"error": {"message": "denied"}}, malformed, valid, {"_kind": "unsupported", "id": "x"}, informational]
     source.write_text(json.dumps(records) if suffix == "json" else "\n".join(json.dumps(record) for record in records), encoding="utf-8")
-    findings, ctx = run_connector(connector, input=str(source))
+    findings, ctx = run_connector(connector, input=str(source), **({"team_id": "T1"} if connector == "saas.slack" else {}))
     assert len(findings) == 1
     assert ctx.stats.objects_examined == 1
     assert ctx.stats.incomplete
@@ -75,7 +75,7 @@ def test_explicit_empty_and_informational_records_remain_complete(tmp_path, run_
     body = {"array": [], "native": empty, "informational": informational}[kind]
     source = tmp_path / "valid.json"
     source.write_text(json.dumps(body), encoding="utf-8")
-    findings, ctx = run_connector(connector, input=str(source))
+    findings, ctx = run_connector(connector, input=str(source), **({"team_id": "T1"} if connector == "saas.slack" else {}))
     assert not findings and not ctx.stats.incomplete
     assert not ctx.stats.errors and not ctx.stats.warnings
 
@@ -103,7 +103,7 @@ def test_malformed_provider_fields_do_not_abort_valid_neighbors(tmp_path, run_co
     valid = next(case[1] for case in CASES if case[0] == connector)
     source = tmp_path / "mixed.json"
     source.write_text(json.dumps([record, valid]), encoding="utf-8")
-    findings, ctx = run_connector(connector, input=str(source))
+    findings, ctx = run_connector(connector, input=str(source), **({"team_id": "T1"} if connector == "saas.slack" else {}))
     assert len(findings) == 1 and ctx.stats.incomplete
     assert ctx.stats.warnings and not ctx.stats.errors
 
@@ -112,7 +112,7 @@ def test_malformed_provider_fields_do_not_abort_valid_neighbors(tmp_path, run_co
 def test_slack_native_admin_envelopes_preserve_record_kind(tmp_path, run_connector, envelope, status):
     source = tmp_path / "slack.json"
     source.write_text(json.dumps({"ok": True, envelope: [{"app": {"id": "A1", "name": "Claude"}, "scopes": []}]}), encoding="utf-8")
-    findings, ctx = run_connector("saas.slack", input=str(source))
+    findings, ctx = run_connector("saas.slack", input=str(source), team_id="T1")
     assert len(findings) == 1 and not ctx.stats.incomplete
     assert findings[0].metadata["status"] == status
 

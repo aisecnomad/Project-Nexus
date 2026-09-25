@@ -25,6 +25,8 @@ python -m tools.evaluation.evaluate \
 python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/realistic_corpus.json \
   --output /tmp/nexus-realistic-eval.json
+  --corpus tools/evaluation/review_corpus.json \
+  --output /tmp/nexus-review-eval.json
 python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/independent_corpus.json \
   --annotations tools/evaluation/independent_annotations.json \
@@ -112,6 +114,13 @@ finding, and the CrewAI `agents.yaml` model names add an Azure OpenAI
 provider. Like the other corpora, this one is author-written: the authors
 chose the frameworks, the file layouts and the distractors, so its rates
 describe these 31 cases only and are not a field precision estimate.
+`review_corpus.json` is a separate authored regression set for the September 25
+findings: local-module collisions, ordinary provider calls, tool-schema-only
+requests, and supported agent construction/loops. It was written after observing
+the defects and is not a fresh holdout. The existing independent corpus and its
+annotation ledger remain frozen; adding regression cases does not refresh their
+independence. The [acceptance verifier](../tools/acceptance/README.md) requires
+separate declared human-reviewed holdout evidence for deployment decisions.
 
 Source masking is a bounded lexical filter. Ruby regular expressions and `%q`
 literals, PHP heredoc interpolation, C# raw strings with multiple interpolation
@@ -187,7 +196,7 @@ the tiny selected sample does not calibrate that score.
    limits the corpus to 500 cases, 20 text files per case, 32 KB per file, 1 MB
    combined case content, and 2 MB of JSON. Larger real repositories need a
    separate offline scan and a repository-level annotation protocol. Keep the
-   source and labels access controlled; the JSON report never prints file
+source and labels access controlled; the JSON report never prints file
    content or evidence snippets but may contain finding signature IDs and MCP
    server names.
 4. Freeze the holdout before tuning. Report counts and precision/recall with
@@ -198,6 +207,16 @@ the tiny selected sample does not calibrate that score.
    enter an analyst queue. Revalidate on a new holdout after changing the
    signatures or classification logic. A zero-error small sample gives little
    information about uncommon production patterns.
+
+The additional provider-loop recognizer currently covers linked Python OpenAI
+Chat Completions calls, model-returned tool-call arguments, dispatch and tool
+results appended to the same request history. Dispatch must target an explicitly
+declared inline tool name or a callable selected by the model-returned function
+name; parsing or converting arguments is insufficient. It does not resolve arbitrary
+helper functions, the Responses API, JavaScript provider loops or runtime imports.
+Unrecognized patterns can still produce integration findings; they are not proof
+that an agent is absent. A framework constructor alone also cannot establish that
+the configured graph makes autonomous model decisions at runtime.
 
 ## Read-only tenant canary procedure
 

@@ -1,6 +1,6 @@
 # Project Nexus · ShadowScan
 
-**ShadowScan discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
+**ShadowScan is an Open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
 
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps and cloud accounts. It fingerprints frameworks and
@@ -57,6 +57,16 @@ subsequent results on a frozen, independently AI-labeled corpus of 42 public
 files (30 negatives). [Read-only AWS and Slack canaries](docs/canaries.md)
 validate named tenant controls when approved credentials are supplied; offline
 replay does not establish live tenant acceptance.
+
+Deployment evidence can be checked with the offline
+[acceptance verifier](tools/acceptance/README.md). It requires current source and
+signature identities, declared human-reviewed holdout evidence, and live tenant
+receipts for supported live deployment scopes. It validates supplied evidence;
+it cannot authenticate reviewer independence or manufacture tenant acceptance.
+The [release-evidence workflow](.github/workflows/release.yml) builds a candidate
+wheel and retains hashes, a runtime dependency SBOM and provenance after the
+selected commit passes CI. Artifact provenance does not establish deployment
+acceptance, and the workflow does not publish a release.
 
 ## Surfaces & connectors
 

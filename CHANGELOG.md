@@ -50,6 +50,23 @@
 - `CONTRIBUTING.md` documents the actual single-maintainer, self-merge process with automated checks and requires independent human review before any tagged release; `docs/production.md` gives operators the commands to verify ruleset and review state themselves.
 - The three 2026-09-24 review documents are relabelled as internal AI-assisted hardening logs under `docs/hardening-logs/`; the package classifier drops from Beta to Alpha; README gains a Project status section and corrected claims; SECURITY.md states that no versions are released yet.
 
+### Production acceptance fixes (2026-09-25)
+
+- Redact opaque credentials assigned through indexed Python/JavaScript targets
+  before capturing source evidence, and escape terminal control characters in
+  verbose reports.
+- Bind Slack findings to immutable workspace IDs; preserve workspace names only
+  as display metadata. Legacy offline exports need a team envelope or explicit
+  `team_id`. Refresh Slack comparison baselines after this identity correction.
+- Reject Teams records with missing or malformed resource identity, retaining
+  valid neighboring observations while reporting incomplete coverage.
+- Distinguish repository-local Python modules from third-party agent SDKs and
+  recognize supported provider-driven tool loops through structural source
+  evidence. Static construction still does not establish runtime execution.
+- Add deployment evidence validation and a manually invoked release-evidence
+  workflow. Neither tool creates human review, live tenant results, a published
+  release, or a production acceptance claim from offline tests.
+
 ### Detection and collection assurance (2026-09-24)
 
 - Require corroborating AI evidence and bound source constructors to imported
