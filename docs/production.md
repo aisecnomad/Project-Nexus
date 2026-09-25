@@ -434,7 +434,7 @@ At the 2026-09-24 review, the repository had a single maintainer and no merged
 change carried an approving review from a second person. A merged pull request,
 the version string, and the internal AI-assisted hardening logs are not evidence
 of independent review. The review and merge policy is in
-[CONTRIBUTING.md](../CONTRIBUTING.md#review-and-merge-policy).
+[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy).
 
 Rulesets, branch protection and pull request approvals are repository settings
 that can change at any time, so an
