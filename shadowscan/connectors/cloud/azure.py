@@ -406,7 +406,7 @@ class AzureConnector(BaseConnector):
                 f.add_tag("api-key-auth-enabled")
             if props.get("publicNetworkAccess", "Enabled") == "Enabled":
                 f.add_tag("public-network")
-            if diag is not None and not any(any(l.get("enabled") for l in (d.get("properties") or {}).get("logs") or []) for d in diag):
+            if diag is not None and not any(any(entry.get("enabled") for entry in (d.get("properties") or {}).get("logs") or []) for d in diag):
                 f.add_tag("no-diagnostic-logging")
                 f.add_evidence(Evidence(signal="azure:no-diagnostics", description="No diagnostic setting sends request logs anywhere — usage is not auditable", weight=0.1))
             f.metadata["diagnostic_logging_status"] = "unknown" if diag is None else "observed"

@@ -282,7 +282,7 @@ class SlackConnector(BaseConnector):
             scope_names.append(scope_name.strip())
         installer = None
         installed_at = None
-        for log in sorted(logs, key=lambda l: str(l.get("date", ""))):
+        for log in sorted(logs, key=lambda entry: str(entry.get("date", ""))):
             if log.get("change_type") in {"added", "enabled", "expanded", None}:
                 installer = log.get("user_name") or log.get("user_id")
                 installed_at = to_iso(parse_timestamp(log.get("date")))

@@ -837,7 +837,7 @@ def correlate(findings: list[Finding]) -> None:
         for k in cand:
             keys.setdefault(k, set()).add(f.id)
     related: dict[str, set[str]] = {}
-    for k, ids in keys.items():
+    for ids in keys.values():
         if 1 < len(ids) <= 25:
             for i in ids:
                 related.setdefault(i, set()).update(ids - {i})

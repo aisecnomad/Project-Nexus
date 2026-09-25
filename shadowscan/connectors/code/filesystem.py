@@ -1905,7 +1905,7 @@ class FilesystemConnector(BaseConnector):
         *, wildcards: list[tuple[str, int, str]] | None = None, models: list[Match] | None = None,
     ) -> Finding:
         f = self._base(label, root, rel, Kind.INFRA, "", "iac")
-        for m, value, snip in hits:
+        for m, _value, snip in hits:
             apply_matches(f, [m], location=rel, snippet=snip)
         for m in models or []:
             apply_matches(f, [m], location=rel)

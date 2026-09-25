@@ -409,9 +409,7 @@ class AwsConnector(BaseConnector):
 
     def _collect_lambda(self, region: str) -> Iterator[dict[str, Any]]:
         lam = self._client("lambda", region)
-        n = 0
-        for fn in self._paginate(lam, "list_functions", "Functions"):
-            n += 1
+        for n, fn in enumerate(self._paginate(lam, "list_functions", "Functions"), start=1):
             if n > self.max_lambda:
                 self.ctx.warn(f"cloud.aws: max_lambda reached in {region}", incomplete=True)
                 break

@@ -72,7 +72,7 @@ exclude = ["tests/fixtures", "examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4"]
-ignore = ["E501", "B008", "SIM108", "SIM102", "SIM103", "SIM113", "B034", "C408", "C416", "SIM105", "B007", "B023", "E741", "UP042"]
+ignore = ["E501", "SIM108", "SIM102", "SIM103", "C408", "SIM105", "B023", "UP042"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
