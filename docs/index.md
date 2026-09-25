@@ -63,3 +63,12 @@ See [evaluation](evaluation.md), [production deployment](production.md) and
 - [Community and support](community.md)
 - [Contributing](contributing.md)
 - [Changelog](changelog.md)
+
+## Community
+
+Read the [code of conduct](https://github.com/aisecnomad/Project-Nexus/blob/main/CODE_OF_CONDUCT.md),
+use the [support guide](https://github.com/aisecnomad/Project-Nexus/blob/main/SUPPORT.md),
+or follow the [contribution guide](contributing.md). Maintainer-scoped
+[good first issues](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+are a starting point when available. Keep credentials and private exports out of
+public issues. Version 0.1.1 remains unreleased; deploy only a reviewed full commit SHA.
