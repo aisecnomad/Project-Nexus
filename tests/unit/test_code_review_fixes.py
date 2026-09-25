@@ -140,7 +140,10 @@ def test_ruby_block_comments_scan_in_linear_time():
     started = time.perf_counter()
     noncode_ranges(large, "ruby")
     large_time = time.perf_counter() - started
-    assert large_time < 1.0 and large_time < max(small_time, 0.005) * 64
+    # Sixteen times the input must not cost more than 64 times the time (a
+    # quadratic scan would cost 256 times); no absolute bound, since coverage
+    # tracing on CI runners slows the loop by an interpreter-dependent factor.
+    assert large_time < max(small_time, 0.005) * 64
 
 
 def test_git_author_containing_the_separator_cannot_forge_fields(tmp_path, index, monkeypatch):
@@ -217,3 +220,24 @@ def test_per_repository_contexts_share_the_diagnostic_cap(tmp_path, index):
 def test_python_eof_errors_remain_unambiguous(source, ambiguous):
     spans, flagged = noncode_ranges(source, "python")
     assert flagged is ambiguous
+
+
+def test_unclosed_one_line_string_masks_only_its_line():
+    # Python 3.11 tokenizes past an unclosed one-line literal (ERRORTOKEN);
+    # 3.12+ raises TokenError there. Both must mask that line only and keep
+    # scanning the rest of the file as complete coverage.
+    source = (
+        'a = "never closed; StateGraph(\n'
+        'import openai\n'
+        "b = 'also open\n"
+        'from langgraph.graph import StateGraph\n'
+    )
+    spans, flagged = noncode_ranges(source, "python")
+    assert flagged is False
+
+    def masked(index: int) -> bool:
+        return any(start <= index < end for start, end in spans)
+
+    assert masked(source.index("StateGraph(")) and masked(source.index("also open"))
+    assert not masked(source.index("import openai")) and not masked(source.index("from langgraph"))
+    assert not masked(source.index("a = ")) and not masked(source.index("b = "))

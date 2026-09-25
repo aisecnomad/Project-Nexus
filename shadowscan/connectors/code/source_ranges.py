@@ -112,11 +112,28 @@ def _python_ranges(text: str) -> tuple[list[tuple[int, int]], bool]:
     for line in text.splitlines(keepends=True):
         offsets.append(offsets[-1] + len(line))
 
+    spans: list[tuple[int, int]] = []
+    ambiguous = False
+    resume_line: int | None = 0  # zero-based line at which the tokenizer (re)starts
+    while resume_line is not None:
+        ambiguous, resume_line = _python_ranges_from(text, offsets, resume_line, spans)
+    return sorted(spans), ambiguous
+
+
+_UNTERMINATED_ONE_LINE_STRING = "unterminated string literal"
+
+
+def _python_ranges_from(
+    text: str, offsets: list[int], first_line: int, spans: list[tuple[int, int]],
+) -> tuple[bool, int | None]:
+    """Tokenize from ``first_line``; return (ambiguous, line to resume at or None)."""
+
     def offset(position: tuple[int, int]) -> int:
         line, column = position
+        line += first_line
         return min(len(text), offsets[min(line - 1, len(offsets) - 1)] + column)
 
-    spans: list[tuple[int, int]] = []
+    chunk = text[offsets[min(first_line, len(offsets) - 1)]:]
     fstring_starts: list[int] = []
     fstring_start_type = getattr(tokenize, "FSTRING_START", None)
     fstring_end_type = getattr(tokenize, "FSTRING_END", None)
@@ -125,14 +142,14 @@ def _python_ranges(text: str) -> tuple[list[tuple[int, int]], bool]:
         if hasattr(tokenize, name)
     }
     try:
-        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        for token in tokenize.generate_tokens(io.StringIO(chunk).readline):
             if token.type == tokenize.STRING:
                 prefix = _FSTRING_PREFIX.match(token.string)
                 if prefix is not None and "f" in prefix.group(1).lower():
                     inner, incomplete = _legacy_fstring_ranges(token.string, offset(token.start))
                     if incomplete:
                         spans.append((offset(token.start), offset(token.end)))
-                        return sorted(spans), True
+                        return True, None
                     spans.extend(inner)
                 else:
                     spans.append((offset(token.start), offset(token.end)))
@@ -143,26 +160,42 @@ def _python_ranges(text: str) -> tuple[list[tuple[int, int]], bool]:
                 elif token.type == fstring_end_type and fstring_starts:
                     fstring_starts.pop()
             elif token.type == tokenize.ERRORTOKEN and token.string in {'"', "'"}:
-                # Unclosed one-line literal: do not scan its prose as code.
+                # Unclosed one-line literal (Python 3.11): do not scan its prose
+                # as code; the tokenizer itself continues on the next line.
                 start = offset(token.start)
                 end = text.find("\n", start)
                 spans.append((start, len(text) if end < 0 else end))
     except (tokenize.TokenError, IndentationError) as exc:
         if fstring_starts:
             start = fstring_starts[0]
-            return [*(span for span in spans if span[1] <= start), (start, len(text))], True
+            spans[:] = [*(span for span in spans if span[1] <= start), (start, len(text))]
+            return True, None
+        message = str(exc.args[0]) if exc.args else ""
         position = exc.args[1] if isinstance(exc, tokenize.TokenError) else (exc.lineno or 1, exc.offset or 0)
+        if isinstance(exc, tokenize.TokenError) and message.startswith(_UNTERMINATED_ONE_LINE_STRING):
+            # Python 3.12+ aborts on an unclosed one-line literal where 3.11
+            # emitted an ERRORTOKEN and carried on. Mask that line (the
+            # reported column is one past the opening quote) and resume on the
+            # next line so the remainder keeps the same coverage as 3.11.
+            start = max(offset((position[0], 0)), offset(position) - 1)
+            end = text.find("\n", start)
+            if end < 0:
+                spans.append((start, len(text)))
+                return False, None
+            spans.append((start, end))
+            return False, first_line + position[0]
         spans.append((offset(position), len(text)))
         # An unterminated multi-line literal/statement is masked through EOF:
-        # nothing after that opening can be executable Python. Python 3.12+ also
-        # raises TokenError for mid-file lexical errors that 3.11 tolerated; those
-        # mask the remainder ambiguously and must mark the file incomplete.
-        message = str(exc.args[0]) if exc.args else ""
-        return spans, not (isinstance(exc, tokenize.TokenError) and "EOF" in message)
+        # nothing after that opening can be executable Python. Any other
+        # tokenizer error (Python 3.12+ raises for mid-file lexical errors that
+        # 3.11 tolerated) masks the remainder ambiguously and must mark the
+        # file incomplete.
+        return not (isinstance(exc, tokenize.TokenError) and "EOF" in message), None
     if fstring_starts:
         start = fstring_starts[0]
-        return [*(span for span in spans if span[1] <= start), (start, len(text))], True
-    return spans, False
+        spans[:] = [*(span for span in spans if span[1] <= start), (start, len(text))]
+        return True, None
+    return False, None
 
 
 def _legacy_fstring_ranges(token: str, base: int, depth: int = 0) -> tuple[list[tuple[int, int]], bool]:
