@@ -113,7 +113,8 @@ supported-platform comment when regenerating. Do not bypass failed hash checks.
 
 The Dockerfile installs the runtime and build locks under `--require-hashes`,
 builds the package with `--no-build-isolation`, and runs as UID/GID 65532. Its
-literal `FROM` pins the multi-arch `python:3.12-slim-trixie` image index (Debian 13, Git 2.47 for `use_git`).
+literal `FROM` pins the multi-arch `python:3.12-slim-trixie` image index. The
+image build checks that Git is 2.45 or newer for history enrichment.
 Review that exact digest and any Dependabot refresh before deployment:
 
 ```bash

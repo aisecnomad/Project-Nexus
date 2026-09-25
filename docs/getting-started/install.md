@@ -29,6 +29,10 @@ code-only worker. Retain the selected commit and built wheel hash. Other
 platforms need a separately validated lock; a commit SHA alone does not pin
 transitive dependencies.
 
+The [consumer CI workflow](../operations/ci.md#github-actions) checks out the
+reviewed scanner commit, installs both runtime and build locks with hash checks,
+and installs its built wheel without resolving new runtime dependencies.
+
 ## Docker
 
 The disposable non-root worker uses the reviewed index digest pinned in its

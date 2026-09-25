@@ -50,7 +50,7 @@ shadowscan connectors --surface code       # filter by surface
 ## Signature listing
 
 ```bash
-shadowscan signatures list                         # show all 211 signatures
+shadowscan signatures list                         # show all 212 signatures
 shadowscan signatures test langchain               # test what a value matches
 shadowscan signatures test sk-proj-abc...          # test a key format
 ```
