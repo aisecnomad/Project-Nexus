@@ -14,8 +14,8 @@ git checkout --detach "$SHADOWSCAN_REVISION"
 test "$(git rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
 python -m venv .venv
 . .venv/bin/activate
-python -m pip install --upgrade --only-binary=:all: \
-  pip==26.2.1 setuptools==84.0.0 wheel==0.48.0
+python -m pip install --upgrade --only-binary=:all: pip==26.2.1
+python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 python -m pip install --no-deps dist/shadowscan-*.whl
@@ -31,14 +31,11 @@ transitive dependencies.
 
 ## Docker
 
-The disposable non-root worker requires a reviewed index digest for its
-`python:3.12-slim-bookworm` base image:
+The disposable non-root worker uses the reviewed index digest pinned in its
+literal `Dockerfile` `FROM` line. Review that pin and any Dependabot update:
 
 ```bash
-PYTHON_BASE_DIGEST="REPLACE_WITH_APPROVED_64_HEX_DIGEST"
-[[ "$PYTHON_BASE_DIGEST" =~ ^[a-f0-9]{64}$ ]]
-docker build --build-arg "PYTHON_BASE_DIGEST=$PYTHON_BASE_DIGEST" \
-  --tag shadowscan:reviewed .
+docker build --tag shadowscan:reviewed .
 ```
 
 See [production deployment](../production.md) for container isolation and

@@ -63,8 +63,9 @@ and requires current scanner source/signature fingerprints. Evaluation output ha
 no execution timestamp, so `evaluated_at` is explicitly an operator declaration.
 
 The verifier rejects a holdout that repeats an exact file's bytes or recorded
-repository/commit/path from the bundled synthetic, public, AI-labeled independent
-or September 25 review corpora. It also rejects repeated files and source
+repository/commit/path from the five bundled evaluated corpora: synthetic,
+public, realistic multi-file, AI-labeled independent, and September 25 review.
+It also rejects repeated files and source
 locations within the holdout. Repository names are compared without case;
 commit and path remain exact. Declare **every additional previously evaluated
 corpus** in optional `evaluation.prior_corpora`, as an array of the same
@@ -73,7 +74,9 @@ their hashes and rejects reused source bytes/locations. It cannot discover an
 omitted private corpus, near duplicates or a source previously shown to a
 reviewer outside these records; check those during independent selection. The
 family name `all` is reserved for aggregate metrics and is rejected before
-the verifier summarizes results.
+the verifier summarizes results. The adjudicated holdout cannot use any
+`known_gap` flag; its evaluator report must include an empty `known_gaps`
+summary and must mark every case as `known_gap: false`.
 
 The operator chooses `min_cases`, `min_positive_cases`, `min_negative_cases`,
 `min_precision`, `min_recall`, and `min_specificity`. There are no automatic claims

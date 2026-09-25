@@ -37,7 +37,7 @@ answer three questions for every agent in the estate:
 
 ## Key capabilities
 
-- **178 signatures / 790 signals** covering orchestrators, protocols, coding
+- **211 signatures / 912 signals** covering orchestrators, protocols, coding
   agents, platforms, model providers, and observability tools
 - **32 connectors** across 6 surfaces, each supporting both live API and
   offline export modes

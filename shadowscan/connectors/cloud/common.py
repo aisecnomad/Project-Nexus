@@ -73,12 +73,16 @@ def scan_env(index: SignatureIndex, finding: Finding, env: dict[str, Any] | None
         if matches:
             matched_names.append(str(name))
             apply_matches(finding, matches, location=location)
-        if isinstance(value, str) and value and not looks_like_placeholder(value) and not value.startswith(("${", "{{", "arn:", "projects/")):
+        if isinstance(value, str) and value and not value.startswith(("${", "{{", "arn:", "projects/")):
+            # Judge each matched credential rather than the surrounding value,
+            # so a URL or note containing a marker word cannot hide a real key.
             for m in index.match_secrets(value):
+                if looks_like_placeholder(m.value):
+                    continue
                 finding.add_tag("plaintext-credential")
                 finding.add_evidence(Evidence(signal=f"secret:{m.signature_id}", description=f"Plaintext {m.signal.description or m.signature.name} in environment variable {name}: {redact(m.value)}", location=location, weight=0.6, signature=m.signature_id))
                 finding.add_model_provider(m.signature_id) if m.signature.category == "provider" else None
-            is_secretish = _SECRETISH.search(str(name)) and len(value) >= 16 and not value.startswith(("http", "/", "@Microsoft.KeyVault", "{", "$"))
+            is_secretish = _SECRETISH.search(str(name)) and len(value) >= 16 and not value.startswith(("http", "/", "@Microsoft.KeyVault", "{", "$")) and not looks_like_placeholder(value)
             provider_key = next((m for m in matches if m.signature.category == "provider"), None) if matches else None
             if is_secretish and provider_key:
                 finding.add_tag("plaintext-credential")

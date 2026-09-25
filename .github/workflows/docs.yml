@@ -30,7 +30,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install MkDocs
-        run: python -m pip install -c requirements-ci-constraints.txt "mkdocs-material>=9.5" "mkdocs-minify-plugin>=0.8"
+        run: |
+          python -m pip install --only-binary=:all: -c requirements-ci-constraints.txt \
+            "mkdocs-material==9.7.7"
       - name: Build docs
         run: mkdocs build --strict
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
@@ -48,4 +50,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac2b3c603fc # v4.0.5
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

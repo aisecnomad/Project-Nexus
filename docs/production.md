@@ -20,7 +20,7 @@ export must include a valid team record or an explicit operator-supplied
 Teams records without valid app identity make collection incomplete while valid
 neighboring observations remain available.
 
-Use the [offline acceptance verifier](../tools/acceptance/README.md) to check the
+Use the [offline acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) to check the
 required evidence for the intended deployment scope. It checks artifact identity,
 freshness and declared review/metric requirements. It does not authenticate
 reviewers, prove that a supplied receipt came from a real tenant, or turn synthetic
@@ -28,7 +28,7 @@ tests into operational evidence. Keep receipts and human attestations in control
 audit storage and review their origin. Unsupported live connectors still require
 their own acceptance work; they cannot inherit an AWS or Slack result.
 
-The manually invoked [release-evidence workflow](../.github/workflows/release.yml)
+The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
 requires a successful main-branch CI run for the exact selected commit. It builds
 and checks the wheel, retains a runtime dependency SBOM and hashes, and produces
 GitHub artifact provenance. It does not publish to PyPI, create a release, or
@@ -74,7 +74,7 @@ From the reviewed checkout, in a clean virtual environment:
 
 ```bash
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-python -m pip install --only-binary=:all: setuptools==84.0.0 wheel==0.48.0
+python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 python -m pip install --no-deps dist/shadowscan-0.1.1-*.whl
 python -m pip check
@@ -83,9 +83,14 @@ shadowscan --help
 ```
 
 The runtime lock deliberately includes all cloud extras, even for a code-only
-worker. Development tools and isolated wheel build tooling are not part of this
-runtime lock. The build backend versions are fixed in `pyproject.toml`, and CI
-uses a separate exact-version constraints file for development tools. Build the
+worker. Development tools are not part of it; CI uses a separate exact-version
+constraints file for them. The build backend is locked separately:
+`requirements-build.lock` carries the exact `[build-system]` requirements from
+`pyproject.toml` (setuptools and wheel) with the SHA-256 hash of every artifact
+PyPI publishes for those releases. Install it under `--require-hashes` and build
+with `--no-build-isolation`, as above; an isolated build would let pip resolve
+the backend from the live index on a version pin alone. CI fails when the two
+files disagree, so refresh them together. Build the
 wheel in a controlled builder, retain its SHA-256, and install that reviewed
 artifact into workers. Capture the builder image digest, Python/pip/build-backend
 versions and wheel hash: matching runtime dependencies alone does not ensure
@@ -106,26 +111,24 @@ pip-compile --extra cloud --generate-hashes --strip-extras \
 Use `--upgrade` only for an intentional dependency refresh. Preserve the lock's
 supported-platform comment when regenerating. Do not bypass failed hash checks.
 
-The Dockerfile uses this runtime lock and UID/GID 65532. It **requires** the
-64-character hex digest of an approved `python:3.12-slim-bookworm` image index:
+The Dockerfile installs the runtime and build locks under `--require-hashes`,
+builds the package with `--no-build-isolation`, and runs as UID/GID 65532. Its
+literal `FROM` pins the multi-arch `python:3.12-slim-bookworm` image index.
+Review that exact digest and any Dependabot refresh before deployment:
 
 ```bash
-PYTHON_BASE_DIGEST="REPLACE_WITH_APPROVED_64_HEX_DIGEST"
-[[ "$PYTHON_BASE_DIGEST" =~ ^[a-f0-9]{64}$ ]]
-docker build --build-arg "PYTHON_BASE_DIGEST=$PYTHON_BASE_DIGEST" \
-  --tag shadowscan:reviewed .
+docker build --tag shadowscan:reviewed .
 ```
 
-No base digest is supplied by default. Retain both the reviewed base digest and
-the built image digest. CI resolves the current upstream tag to an index digest
-for its smoke test and prints it, but this is **not** an approved deployment
-digest. Distribution packages from `apt-get`, build tooling and image metadata
-remain mutable, so the Dockerfile does not promise byte-for-byte reproducible
-images. CI smoke-tests a non-root, read-only and network-isolated image; build
-and test the deployment image at its approved digest, including resource limits
-and output-directory permissions, before rollout.
+Retain the reviewed base and built image digests. The build context is an
+allowlist (`.dockerignore`) of package sources, signature data, packaging
+inputs and the two locks. Distribution packages from `apt-get` and image
+metadata remain mutable, so the Dockerfile does not promise byte-for-byte
+reproducible images. CI smoke-tests a non-root, read-only and network-isolated
+image; build and test the deployment image, including resource limits and
+output-directory permissions, before rollout.
 
-The [Kubernetes offline Job example](../examples/k8s-job.yaml) has a 20-minute
+The [Kubernetes offline Job example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-job.yaml) has a 20-minute
 active deadline, a placeholder for a reviewed image digest, and a matching
 NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
 reviewed `/input` volume before running it. For live API collection, use a
@@ -423,20 +426,46 @@ lost user attribution before using their counts as governance evidence.
 
 ## Release verification
 
-### Protect the merge gate
+### Merge gate and review status
 
-On 2026-09-24, ruleset
+The repository has a single maintainer. As of 2026-09-24 every pull request was
+merged by that maintainer's own account and, apart from Dependabot updates,
+authored by it or by the AI assistant it used; no change on `main` carries an
+approving review from a second person. Merged pull requests, the version string and the maintainer's own
+hardening logs under `docs/hardening-logs/` are therefore not evidence of an
+independent review. The review and merge policy, including how a second
+reviewer is recorded, is in [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy).
+
+Ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
-is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an up-to-date
-branch, and one approving review, but its live enforcement is **disabled**.
-Restore enforcement before relying on GitHub to block unsafe merges; until then,
-verify these checks and an independent review manually. Keep the CodeQL job's
-displayed name `analyze` when restoring the required check.
+is configured to require the `test (3.11)`, `test (3.12)` and `analyze` checks,
+an up-to-date branch and one approving review, but on 2026-09-24 its enforcement
+was **disabled**. A disabled ruleset blocks nothing, and a ruleset that asks for
+a review is not evidence that a review happened. Keep the CodeQL job's displayed
+name `analyze` if the required check is ever restored.
 
-A successful workflow is necessary but does not supply independent approval.
-Obtain an eligible review on the final changes; do not treat disabled rules as
-evidence of a protected merge gate. Recheck live ruleset and
-PR status at release time because repository settings can change.
+None of this is verifiable from a checkout. Rulesets, branch protection and pull
+request approvals are repository settings that can change at any time, so an
+operator who needs an independently reviewed revision must inspect the live
+state when selecting the commit and retain the output with the deployment
+evidence:
+
+```bash
+# Rules currently enforced on main; an empty list means nothing is enforced
+gh api repos/aisecnomad/Project-Nexus/rules/branches/main
+# The ruleset itself, including its enforcement state
+gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 --jq '{name, enforcement, rules: [.rules[].type]}'
+# Classic branch protection; HTTP 404 means none is configured
+gh api repos/aisecnomad/Project-Nexus/branches/main/protection
+# Who authored, reviewed and merged the pull request that introduced a change
+gh pr view <number> --repo aisecnomad/Project-Nexus --json author,mergedBy,reviews
+```
+
+An approving review counts only when it comes from an account other than the
+author's and was submitted on the final commit of the pull request. A successful
+workflow run is necessary but does not supply that approval. Recheck the live
+ruleset and pull request status at release time because repository settings can
+change.
 
 The CI workflow installs the hash-locked core/cloud runtime dependency set and validates signatures, lint, typing, dependency advisories, tests
 with a minimum 80% statement coverage, wheel creation, installed-wheel validation
@@ -502,8 +531,8 @@ Until completed, describe deployment status as pending tenant and container acce
 
 ## Consolidated candidate compatibility
 
-The consolidated review preserves the PR #30 runtime policies and reconciles
-verified additional fixes with PR #31, which merged during the review. The
+The consolidated candidate preserves the PR #30 runtime policies and reconciles
+verified additional fixes with PR #31, which merged during that work. The
 canonical deadline setting is `options.connector_timeout_seconds` /
 `--connector-timeout-seconds` (default 120). Legacy `options.connector_timeout`
 and `--connector-timeout` remain deprecated compatibility aliases. Configure only
@@ -542,5 +571,6 @@ against its expected issuer and allowed keys. This is signature evidence, not an
 authorization or token-acceptance decision. Key rotation during the same analysis
 requires a new scan.
 
-See [the consolidated review](consolidated-review-2026-09-24.md) for verification
-evidence and implementation choices.
+See the [consolidated hardening log](hardening-logs/consolidated-review-2026-09-24.md)
+for the maintainer's verification notes and implementation choices. It is an
+internal, AI-assisted work log, not an independent review.

@@ -107,3 +107,28 @@ signatures:
       - type: code
         patterns: ['(?i)\b(?:openai|anthropic|gemini|google|groq|mistral|cohere|together|fireworks|openrouter|deepseek|xai|perplexity|huggingface|hf|replicate|azure_openai|litellm|langsmith|langchain|pinecone|tavily|e2b|serpapi|elevenlabs|voyage|jina)_?(?:api_?)?(?:key|token|secret)\s*[=:]\s*["''][A-Za-z0-9_\-]{16,}["'']', '(?i)\bapi_key\s*=\s*["''](?:sk-|AIza|gsk_|hf_|r8_|xai-|pplx-|tvly-|e2b_)[A-Za-z0-9_\-]{10,}["'']']
         weight: 0.6
+
+  - id: heuristic.unattributed-api-key
+    name: sk- style API key of an unknown vendor
+    category: heuristic
+    vendor: null
+    description: A credential in the common `sk-` shape that no provider signature claims (DeepSeek, DashScope, Moonshot and other OpenAI-compatible hosts issue such keys); the vendor cannot be attributed from the value alone.
+    risk_notes: ["Hard-coded credentials; rotate and move to a secret store."]
+    signals:
+      - type: secret
+        # Excludes every sk- prefix owned by a vendor signature (Anthropic, OpenRouter,
+        # Langfuse, LiteLLM, OpenAI project / service-account / admin keys) and the
+        # OpenAI key marker, so a key never counts twice.
+        patterns: ['\bsk-(?!ant-|or-|lf-|litellm-|proj-|svcacct-|admin-)(?![A-Za-z0-9]{20}T3BlbkFJ)[A-Za-z0-9_-]{32,}\b']
+        weight: 0.4
+        description: sk- style API key (vendor unknown)
+
+  - id: heuristic.agent-construction
+    name: Agent object construction
+    category: heuristic
+    vendor: null
+    description: A generic Agent(...) / new Agent({...}) constructor shared by many SDKs (Agno, Pydantic AI, Strands, OpenAI Agents, Mastra...); supporting evidence only, the framework is attributed by its import or dependency.
+    signals:
+      - type: code
+        patterns: ['\bAgent\s*\(\s*(?:model|tools|system_prompt|instructions|llm)\s*=', '\bnew\s+Agent\s*\(\s*\{\s*(?:name|model|instructions|tools)\s*:']
+        weight: 0.35

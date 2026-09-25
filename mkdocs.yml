@@ -35,21 +35,18 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
-# Repository documents link to source files and tools outside docs/; those
-# links are valid on GitHub but not on the rendered site. Report them without
-# failing the strict build.
+# Keep links to repository files absolute, so the rendered site and GitHub
+# Markdown resolve them consistently. Fail strict builds for broken site links.
 validation:
   links:
-    not_found: info
-    unrecognized_links: info
-    absolute_links: info
+    not_found: warn
+    unrecognized_links: warn
+    absolute_links: warn
   nav:
     omitted_files: info
 
 plugins:
   - search
-  - minify:
-      minify_html: true
 
 markdown_extensions:
   - admonition

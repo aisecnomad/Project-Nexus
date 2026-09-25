@@ -45,224 +45,31 @@ from shadowscan.connectors.base import (
     ConnectorContext,
     ConnectorError,
     _NoDump,
+    _OfflineInputBudget,
     _positive_limit,
 )
 from shadowscan.connectors.common import apply_matches, finalize
+from shadowscan.connectors.gateway.normalise import (  # noqa: F401 - re-exported; callers and tests import them from here
+    NORMALISERS,
+    Event,
+    _b,
+    _f,
+    _has_tool_calls,
+    _has_tools,
+    _i,
+    _normalise,
+    detect_schema,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.redaction import REDACTED, credential_id, sanitize
-from shadowscan.utils.text import get_path, host_of, parse_timestamp, to_iso
+from shadowscan.utils.text import get_path, parse_timestamp, to_iso
 
 _MAX_CACHED_USER_AGENTS = 256
 _MAX_CACHED_USER_AGENT_CHARS = 1024
 _OPAQUE_SCOPE_PREFIX = "scope:hmac-sha256:"
 _LEGACY_SCOPE_PREFIX = "scope:sha256:"
 _PUBLIC_CREDENTIAL_ID = re.compile(r"credential:sha256:[0-9a-f]{64}\Z")
-
-# ---------------------------------------------------------------- schemas
-
-
-@dataclass(slots=True)
-class Event:
-    """Normalised LLM call record."""
-
-    caller: str  # identity key (api key hash, principal, service...)
-    caller_kind: str  # api-key | principal | service | user | user-agent | ip
-    caller_label: str  # human readable
-    timestamp: datetime | None = None
-    interval_end: datetime | None = None
-    request_count: int = 1
-    aggregated: bool = False
-    model: str | None = None
-    provider: str | None = None
-    host: str | None = None
-    user_agent: str | None = None
-    ip: str | None = None
-    user: str | None = None  # end-user / on-behalf-of
-    team: str | None = None
-    tools: bool | None = None  # request carried tool/function definitions
-    tool_calls: bool | None = None  # response contained tool calls
-    streaming: bool | None = None
-    tokens_in: int = 0
-    tokens_out: int = 0
-    cost: float = 0.0
-    status: str | None = None
-    path: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-    schema: str = "generic"
-    scope: dict[str, str] = field(default_factory=dict)
-    scope_redacted: bool = False
-    caller_redacted: bool = False
-    binding_caller: str | None = field(default=None, repr=False)  # private exact-match key; never exported
-    environment: str | None = None
-    runtime_frameworks: list[str] = field(default_factory=list)
-    code_resources: list[str] = field(default_factory=list)
-    identity_assurance: str = "unverified"
-
-
-def _b(v: Any) -> bool | None:
-    if v is None or v == "":
-        return None
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return v > 0
-    s = str(v).lower()
-    if s in {"true", "1", "yes", "y"}:
-        return True
-    if s in {"false", "0", "no", "n", "[]", "{}", "null", "none"}:
-        return False
-    return len(s) > 2
-
-
-def _i(v: Any) -> int:
-    try:
-        number = float(v)
-    except (TypeError, ValueError, OverflowError):
-        return 0
-    return int(number) if math.isfinite(number) else 0
-
-
-def _f(v: Any) -> float:
-    """Finite floats only: NaN/Infinity would poison caller totals and the JSON report."""
-    try:
-        number = float(v)
-    except (TypeError, ValueError, OverflowError):
-        return 0.0
-    return number if math.isfinite(number) else 0.0
-
-
-def _has_tools(obj: Any) -> bool | None:
-    if obj is None:
-        return None
-    if isinstance(obj, str):
-        if not obj.strip().startswith(("{", "[")):
-            return None
-        try:
-            obj = json.loads(obj)
-        except json.JSONDecodeError:
-            return None
-    if isinstance(obj, dict):
-        choice = obj.get("tool_choice")
-        if choice == "none" or isinstance(choice, dict) and choice.get("type") == "none":
-            return False
-        for wrapper in ("body", "request", "payload", "json"):
-            inner = obj.get(wrapper)
-            if isinstance(inner, (dict, str)) and not any(k in obj for k in ("tools", "functions", "messages", "input")):
-                return _has_tools(inner)
-        for key in ("tools", "functions", "function_declarations"):
-            v = obj.get(key)
-            if isinstance(v, str) and v.strip().startswith(("[", "{")):
-                try:
-                    v = json.loads(v)
-                except json.JSONDecodeError:
-                    pass
-            if v not in (None, [], {}, ""):
-                return True
-        for key in ("toolConfig", "tool_config"):
-            if isinstance(obj.get(key), (dict, str)) and _has_tools(obj[key]):
-                return True
-        # A choice of "none" (or "auto" without definitions) does not
-        # establish that a tool was available or invoked.
-        if isinstance(choice, dict) and choice.get("type") not in {"none", "auto", None}:
-            return True
-        msgs = obj.get("messages") or obj.get("input") or []
-        if isinstance(msgs, list):
-            for m in msgs:
-                if isinstance(m, dict) and (m.get("tool_calls") or m.get("role") in {"tool", "function"} or m.get("type") in {"function_call", "function_call_output", "tool_use", "tool_result"}):
-                    return True
-        return False
-    if isinstance(obj, list):
-        return any(
-            isinstance(item, dict) and (
-                bool(item.get("tool_calls")) or item.get("role") in {"tool", "function"}
-                or item.get("type") in {"function_call", "function_call_output", "tool_use", "tool_result"}
-            ) or _has_tools(item) is True
-            for item in obj
-        )
-    return None
-
-
-def _has_tool_calls(obj: Any) -> bool | None:
-    if obj is None:
-        return None
-    if isinstance(obj, str):
-        if not obj.strip().startswith(("{", "[")):
-            return None
-        try:
-            obj = json.loads(obj)
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(obj, (dict, list)):
-        return None
-    # Inspect structured response fields, never serialized keys or free text:
-    # optional null/empty fields are normal in non-tool model responses.
-    pending = [obj]
-    finish_marker = False
-    explicit_empty = False
-    while pending:
-        item = pending.pop()
-        if isinstance(item, list):
-            pending.extend(item)
-        elif isinstance(item, dict):
-            calls = item.get("tool_calls")
-            if isinstance(calls, str) and calls.strip().startswith(("[", "{")):
-                try:
-                    calls = json.loads(calls)
-                except json.JSONDecodeError:
-                    calls = None
-            if isinstance(calls, list) and any(isinstance(call, dict) and call for call in calls):
-                return True
-            if "tool_calls" in item and calls in (None, [], {}, "", False):
-                explicit_empty = True
-            for key in ("function_call", "functionCall", "tool_use"):
-                value = item.get(key)
-                if isinstance(value, str) and value.strip().startswith(("[", "{")):
-                    try:
-                        value = json.loads(value)
-                    except json.JSONDecodeError:
-                        value = None
-                if isinstance(value, dict) and value:
-                    return True
-                if key in item and value in (None, [], {}, "", False):
-                    explicit_empty = True
-            if item.get("type") in {"tool_use", "function_call"}:
-                return True
-            if item.get("stop_reason") == "tool_use" or item.get("finish_reason") in {"tool_calls", "function_call"}:
-                finish_marker = True
-            pending.extend(value for value in item.values() if isinstance(value, (dict, list)))
-    return finish_marker and not explicit_empty
-
-
-def detect_schema(rec: dict[str, Any]) -> str:
-    keys = set(rec.keys())
-    if "schemaType" in rec and rec.get("schemaType") == "ModelInvocationLog" or ("modelId" in rec and "identity" in rec and "input" in rec):
-        return "bedrock"
-    if "protoPayload" in rec and "aiplatform" in json.dumps(rec.get("protoPayload", {}))[:500]:
-        return "vertex"
-    if rec.get("category") in {"RequestResponse", "Audit", "Trace"} and ("properties" in rec or "callerIpAddress" in rec) and ("resourceId" in rec or "ResourceId" in rec):
-        return "azure-openai"
-    if "spend" in rec and ("api_key" in rec or "call_type" in rec or "request_id" in rec):
-        return "litellm"
-    if "ai.proxy" in json.dumps(rec)[:2000] or "ai" in rec and isinstance(rec.get("ai"), dict) and "proxy" in rec["ai"]:
-        return "kong"
-    if "gateway_id" in rec or ("provider" in rec and "request_type" in rec and "tokens_in" in rec) or "ai_gateway" in rec:
-        return "cloudflare"
-    if "trace_id" in rec and "virtual_key" in rec or "portkey" in json.dumps(rec)[:500].lower() or "x-portkey" in json.dumps(rec)[:2000].lower():
-        return "portkey"
-    if "helicone" in json.dumps(rec)[:1000].lower() or "request_properties" in rec and "helicone-request-id" in json.dumps(rec)[:5000].lower():
-        return "helicone"
-    if "observation_id" in rec or ("traceId" in rec and "usageDetails" in rec) or ("type" in rec and rec.get("type") == "GENERATION" and "model" in rec) or ("project_id" in rec and "trace_id" in rec and "model" in rec):
-        return "langfuse"
-    if "n_context_tokens_total" in rec or ("object" in rec and str(rec.get("object", "")).startswith("organization.usage")) or ("api_key_id" in rec and "input_tokens" in rec) or ("actor" in rec and "effective_at" in rec):
-        return "openai-usage"
-    if "workspace_id" in rec and "api_key_id" in rec and "uncached_input_tokens" in rec or ("uncached_input_tokens" in rec and "model" in rec):
-        return "anthropic-usage"
-    if ("request" in rec and isinstance(rec.get("request"), str)) or ("http_user_agent" in keys or "user_agent" in keys or "userAgent" in keys or "http.user_agent" in keys) and ("model" not in keys):
-        return "access-log"
-    if {"remote_addr", "request_uri"} & keys or {"clientIp", "requestUri"} & keys or "c-ip" in keys or "elb" in keys:
-        return "access-log"
-    return "generic"
 
 
 def normalise(rec: dict[str, Any], schema: str) -> Event | None:
@@ -334,6 +141,47 @@ def _withhold_public_credential_id(value: Any, identifier: str) -> Any:
     return value
 
 
+def _validate_scalar_fields(ev: Event) -> None:
+    """Reject JSON containers in identity fields before any counter is updated.
+
+    Validate scalar fields before attribution or counters are updated. JSON
+    containers in headers/identity fields otherwise fail partway through
+    accumulation and can discard all callers collected before that record.
+    """
+    if isinstance(ev.status, int) and not isinstance(ev.status, bool):
+        ev.status = str(ev.status)
+    for name in ("caller", "caller_kind", "caller_label", "model", "provider", "host",
+                 "user_agent", "ip", "user", "team", "status", "path"):
+        value = getattr(ev, name)
+        if value is not None and not isinstance(value, str):
+            raise ConnectorError(f"gateway.logs: normalized {name} must be a string")
+
+
+def _conceal_api_key(
+    ev: Event, rec: dict[str, Any], schema: str, scope_key: bytes,
+) -> tuple[str | None, str | None]:
+    """Replace an API key caller with a keyed opaque identity.
+
+    Returns ``(opaque_id, raw_key)``, both None for callers that are not API
+    keys. The exact-match binding key stays private on the Event.
+    """
+    if ev.caller_kind != "api-key":
+        return None, None
+    namespace, _, raw_key = ev.caller.partition(":")
+    ev.binding_caller = f"{namespace}:{credential_id(raw_key)}"
+    # No publicly enumerable digest of a caller-supplied API key or key ID
+    # may appear in a report. Even provider key IDs can be guessable.
+    material = json.dumps(["shadowscan.gateway.credential.v1", namespace, raw_key], separators=(",", ":"))
+    opaque_id = "credential:hmac-sha256:" + hmac.digest(scope_key, material.encode(), "sha256").hex()
+    ev.caller = f"{namespace}:{opaque_id}"
+    ev.caller_redacted = True
+    if not ev.caller_label or raw_key in ev.caller_label or ev.caller_label in raw_key:
+        ev.caller_label = opaque_id
+    if schema == "litellm" and not get_path(rec, "api_key_alias", "key_alias", "metadata.user_api_key_alias"):
+        ev.caller_label = opaque_id
+    return opaque_id, raw_key
+
+
 def normalise_with_record(
     rec: dict[str, Any], schema: str, *, scope_key: bytes | None = None,
 ) -> tuple[Event | None, dict[str, Any] | None]:
@@ -346,31 +194,8 @@ def normalise_with_record(
     if ev is None:
         return None, None
     scope_key = scope_key if scope_key is not None else secrets.token_bytes(32)
-    # Validate scalar fields before attribution or counters are updated. JSON
-    # containers in headers/identity fields otherwise fail partway through
-    # accumulation and can discard all callers collected before that record.
-    if isinstance(ev.status, int) and not isinstance(ev.status, bool):
-        ev.status = str(ev.status)
-    for name in ("caller", "caller_kind", "caller_label", "model", "provider", "host",
-                 "user_agent", "ip", "user", "team", "status", "path"):
-        value = getattr(ev, name)
-        if value is not None and not isinstance(value, str):
-            raise ConnectorError(f"gateway.logs: normalized {name} must be a string")
-    opaque_id = None
-    raw_key = None
-    if ev.caller_kind == "api-key":
-        namespace, _, raw_key = ev.caller.partition(":")
-        ev.binding_caller = f"{namespace}:{credential_id(raw_key)}"
-        # No publicly enumerable digest of a caller-supplied API key or key ID
-        # may appear in a report. Even provider key IDs can be guessable.
-        material = json.dumps(["shadowscan.gateway.credential.v1", namespace, raw_key], separators=(",", ":"))
-        opaque_id = "credential:hmac-sha256:" + hmac.digest(scope_key, material.encode(), "sha256").hex()
-        ev.caller = f"{namespace}:{opaque_id}"
-        ev.caller_redacted = True
-        if not ev.caller_label or raw_key in ev.caller_label or ev.caller_label in raw_key:
-            ev.caller_label = opaque_id
-        if schema == "litellm" and not get_path(rec, "api_key_alias", "key_alias", "metadata.user_api_key_alias"):
-            ev.caller_label = opaque_id
+    _validate_scalar_fields(ev)
+    opaque_id, raw_key = _conceal_api_key(ev, rec, schema, scope_key)
     # Include original credential-bearing fields so duplicated opaque secrets in
     # unrelated metadata are scrubbed before samples are truncated. Preserve
     # trusted Event field names: even a one-character credential can match a
@@ -415,355 +240,6 @@ def normalise_with_record(
         cleaned["caller_label"] = opaque_id
     cleaned["binding_caller"] = ev.binding_caller
     return Event(**cleaned), clean_record
-
-
-def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
-    if schema == "litellm":
-        key = rec.get("api_key") or rec.get("hashed_api_key") or rec.get("key_hash") or ""
-        alias = rec.get("api_key_alias") or rec.get("key_alias") or get_path(rec, "metadata.user_api_key_alias") or ""
-        team = rec.get("team_id") or get_path(rec, "metadata.user_api_key_team_id", "metadata.user_api_key_team_alias")
-        user = rec.get("user") or rec.get("end_user") or get_path(rec, "metadata.user_api_key_user_id", "metadata.user_api_key_user_email")
-        ua = get_path(rec, "metadata.user_agent", "metadata.headers.user-agent", "request_tags.user_agent", "metadata.requester_metadata.user_agent")
-        tools = _has_tools(rec.get("proxy_server_request") or rec.get("request") or get_path(rec, "metadata.proxy_server_request.body"))
-        caller = f"litellm-key:{key or alias or 'anonymous'}"
-        return Event(
-            caller=caller,
-            caller_kind="api-key",
-            caller_label=alias or str(key or "anonymous"),
-            timestamp=parse_timestamp(rec.get("startTime") or rec.get("start_time") or rec.get("endTime") or rec.get("timestamp")),
-            model=rec.get("model") or rec.get("model_group"),
-            provider=rec.get("custom_llm_provider") or rec.get("provider"),
-            host=host_of(rec.get("api_base")),
-            user_agent=ua,
-            ip=get_path(rec, "metadata.requester_ip_address", "requester_ip_address"),
-            user=str(user) if user else None,
-            team=str(team) if team else None,
-            tools=tools,
-            tool_calls=_has_tool_calls(rec.get("response")),
-            tokens_in=_i(rec.get("prompt_tokens")),
-            tokens_out=_i(rec.get("completion_tokens")),
-            cost=_f(rec.get("spend")),
-            status=rec.get("status"),
-            path=rec.get("call_type"),
-            metadata={"request_tags": rec.get("request_tags"), "cache_hit": rec.get("cache_hit")},
-            schema=schema,
-        )
-    if schema == "portkey":
-        vk = rec.get("virtual_key") or get_path(rec, "config.virtual_key", "metadata.virtual_key")
-        api_key = rec.get("api_key") or get_path(rec, "metadata._user", "metadata.user", "metadata.user_id")
-        ua = get_path(rec, "request.headers.user-agent", "metadata.user_agent", "headers.user-agent")
-        req_body = get_path(rec, "request.body", "request")
-        caller = f"portkey:{vk or api_key or 'unknown'}"
-        return Event(
-            caller=caller,
-            caller_kind="api-key",
-            caller_label=str(vk or api_key or "unknown"),
-            timestamp=parse_timestamp(rec.get("created_at") or rec.get("timestamp") or rec.get("time")),
-            model=rec.get("ai_model") or rec.get("model") or get_path(rec, "response.body.model", "request.body.model"),
-            provider=rec.get("ai_provider") or rec.get("provider"),
-            user_agent=ua,
-            user=str(get_path(rec, "metadata._user", "metadata.user")) if get_path(rec, "metadata._user", "metadata.user") else None,
-            tools=_has_tools(req_body),
-            tool_calls=_has_tool_calls(get_path(rec, "response.body", "response")),
-            tokens_in=_i(rec.get("prompt_tokens") or get_path(rec, "response.body.usage.prompt_tokens")),
-            tokens_out=_i(rec.get("completion_tokens") or get_path(rec, "response.body.usage.completion_tokens")),
-            cost=_f(rec.get("cost")),
-            status=str(rec.get("status") or rec.get("response_status") or ""),
-            path=rec.get("endpoint") or get_path(rec, "request.url"),
-            metadata={"trace_id": rec.get("trace_id"), "metadata": rec.get("metadata")},
-            schema=schema,
-        )
-    if schema == "kong":
-        ai = rec.get("ai") or {}
-        proxy = ai.get("proxy") if isinstance(ai, dict) else None
-        proxy = proxy or get_path(rec, "ai.proxy") or {}
-        meta = proxy.get("meta", {}) if isinstance(proxy, dict) else {}
-        usage = proxy.get("usage", {}) if isinstance(proxy, dict) else {}
-        consumer = get_path(rec, "consumer.username", "consumer.id", "authenticated_entity.consumer_id")
-        headers = get_path(rec, "request.headers") or {}
-        return Event(
-            caller=f"kong:{consumer or get_path(rec, 'client_ip') or 'anonymous'}",
-            caller_kind="principal" if consumer else "ip",
-            caller_label=str(consumer or get_path(rec, "client_ip") or "anonymous"),
-            timestamp=parse_timestamp(rec.get("started_at") or rec.get("timestamp")),
-            model=meta.get("response_model") or meta.get("request_model") or get_path(rec, "ai.proxy.meta.request_model"),
-            provider=meta.get("provider_name"),
-            host=host_of(get_path(rec, "upstream_uri", "request.url")),
-            user_agent=headers.get("user-agent") if isinstance(headers, dict) else None,
-            ip=get_path(rec, "client_ip"),
-            tools=None,
-            tokens_in=_i(usage.get("prompt_tokens")),
-            tokens_out=_i(usage.get("completion_tokens")),
-            cost=_f(usage.get("cost")),
-            status=str(get_path(rec, "response.status") or ""),
-            path=get_path(rec, "request.uri", "route.paths.0"),
-            metadata={"plugin": meta.get("plugin_id"), "route": get_path(rec, "route.name"), "service": get_path(rec, "service.name")},
-            schema=schema,
-        )
-    if schema == "cloudflare":
-        meta = rec.get("metadata") or {}
-        user = meta.get("user") or meta.get("user_id") or meta.get("userId") if isinstance(meta, dict) else None
-        caller = rec.get("api_key_id") or user or rec.get("gateway_id") or "unknown"
-        return Event(
-            caller=f"cloudflare:{caller}",
-            caller_kind="api-key" if rec.get("api_key_id") else ("user" if user else "service"),
-            caller_label=str(caller),
-            timestamp=parse_timestamp(rec.get("created_at") or rec.get("timestamp")),
-            model=rec.get("model"),
-            provider=rec.get("provider"),
-            user_agent=get_path(rec, "request_head.headers.user-agent", "request_headers.user-agent"),
-            tools=_has_tools(rec.get("request_head") or rec.get("request_body")),
-            tool_calls=_has_tool_calls(rec.get("response_head") or rec.get("response_body")),
-            tokens_in=_i(rec.get("tokens_in")),
-            tokens_out=_i(rec.get("tokens_out")),
-            cost=_f(rec.get("cost")),
-            status=str(rec.get("status_code") or rec.get("success") or ""),
-            path=rec.get("path") or rec.get("request_type"),
-            metadata={"gateway_id": rec.get("gateway_id"), "cached": rec.get("cached"), "metadata": meta},
-            schema=schema,
-        )
-    if schema == "helicone":
-        props = rec.get("request_properties") or rec.get("properties") or {}
-        user = rec.get("request_user_id") or rec.get("user_id") or props.get("Helicone-User-Id")
-        return Event(
-            caller=f"helicone:{user or props.get('Helicone-Property-App') or 'unknown'}",
-            caller_kind="user" if user else "principal",
-            caller_label=str(user or props.get("Helicone-Property-App") or "unknown"),
-            timestamp=parse_timestamp(rec.get("request_created_at") or rec.get("created_at")),
-            model=rec.get("request_model") or rec.get("response_model") or rec.get("model"),
-            provider=rec.get("provider"),
-            host=host_of(rec.get("request_path") or rec.get("target_url")),
-            tools=_has_tools(rec.get("request_body")),
-            tool_calls=_has_tool_calls(rec.get("response_body")),
-            tokens_in=_i(rec.get("prompt_tokens")),
-            tokens_out=_i(rec.get("completion_tokens")),
-            cost=_f(rec.get("cost") or rec.get("costUSD")),
-            status=str(rec.get("response_status") or ""),
-            path=rec.get("request_path"),
-            metadata={"properties": props},
-            schema=schema,
-        )
-    if schema == "langfuse":
-        user = rec.get("userId") or rec.get("user_id") or get_path(rec, "trace.userId")
-        name = rec.get("name") or get_path(rec, "trace.name") or rec.get("traceName")
-        caller = user or name or rec.get("projectId") or rec.get("project_id") or "unknown"
-        return Event(
-            caller=f"langfuse:{caller}",
-            caller_kind="user" if user else "service",
-            caller_label=str(caller),
-            timestamp=parse_timestamp(rec.get("startTime") or rec.get("start_time") or rec.get("timestamp") or rec.get("createdAt")),
-            model=rec.get("model") or get_path(rec, "modelParameters.model"),
-            provider=None,
-            tools=_has_tools(rec.get("input")) if isinstance(rec.get("input"), (dict, str)) else (True if isinstance(rec.get("input"), list) and any(isinstance(m, dict) and (m.get("tool_calls") or m.get("role") == "tool") for m in rec["input"]) else None),
-            tool_calls=_has_tool_calls(rec.get("output")),
-            tokens_in=_i(get_path(rec, "usage.input", "usageDetails.input", "usage.promptTokens", "promptTokens")),
-            tokens_out=_i(get_path(rec, "usage.output", "usageDetails.output", "usage.completionTokens", "completionTokens")),
-            cost=_f(get_path(rec, "calculatedTotalCost", "totalCost", "costDetails.total")),
-            status=rec.get("level"),
-            path=name,
-            metadata={"trace": rec.get("traceId") or rec.get("trace_id"), "tags": rec.get("tags"), "session": rec.get("sessionId")},
-            schema=schema,
-        )
-    if schema == "bedrock":
-        ident = rec.get("identity") or {}
-        arn = ident.get("arn") if isinstance(ident, dict) else str(ident)
-        inp = rec.get("input") or {}
-        body = inp.get("inputBodyJson") if isinstance(inp, dict) else None
-        out = rec.get("output") or {}
-        obody = out.get("outputBodyJson") if isinstance(out, dict) else None
-        return Event(
-            caller=f"aws:{arn or 'unknown'}",
-            caller_kind="principal",
-            caller_label=str(arn or "unknown"),
-            timestamp=parse_timestamp(rec.get("timestamp")),
-            model=rec.get("modelId"),
-            provider="aws-bedrock",
-            host=f"bedrock-runtime.{rec.get('region', 'unknown')}.amazonaws.com",
-            ip=rec.get("sourceIp") or get_path(rec, "requestMetadata.sourceIp"),
-            tools=_has_tools(body) if body else None,
-            tool_calls=_has_tool_calls(obody) if obody else None,
-            tokens_in=_i(inp.get("inputTokenCount") if isinstance(inp, dict) else 0),
-            tokens_out=_i(out.get("outputTokenCount") if isinstance(out, dict) else 0),
-            status="ok" if not rec.get("errorCode") else str(rec.get("errorCode")),
-            path=rec.get("operation"),
-            metadata={"account": rec.get("accountId"), "region": rec.get("region"), "request_id": rec.get("requestId"), "inference_region": rec.get("inferenceRegion"), "request_metadata": rec.get("requestMetadata")},
-            schema=schema,
-        )
-    if schema == "azure-openai":
-        props = rec.get("properties") or {}
-        if isinstance(props, str):
-            props = json.loads(props)
-        if not isinstance(props, dict):
-            raise ConnectorError("gateway.logs: Azure properties must be an object")
-        ident = rec.get("identity") or props.get("identity") or {}
-        oid = get_path(ident, "claims.oid", "authorization.objectId", "claims.appid", "oid") if isinstance(ident, dict) else None
-        upn = get_path(ident, "claims.upn", "claims.name", "claims.email", "claims.appid") if isinstance(ident, dict) else None
-        caller = oid or upn or rec.get("callerIpAddress") or rec.get("CallerIPAddress") or "unknown"
-        return Event(
-            caller=f"azure:{caller}",
-            caller_kind="principal" if oid or upn else "ip",
-            caller_label=str(upn or oid or caller),
-            timestamp=parse_timestamp(rec.get("time") or rec.get("TimeGenerated") or rec.get("timestamp")),
-            model=props.get("modelName") or props.get("modelDeploymentName") or props.get("deploymentName") or props.get("model"),
-            provider="azure-openai",
-            host=host_of(rec.get("resourceId") or rec.get("ResourceId")),
-            user_agent=props.get("userAgent") or get_path(rec, "properties.headers.user-agent"),
-            ip=rec.get("callerIpAddress") or rec.get("CallerIPAddress"),
-            user=str(upn) if upn else None,
-            tools=_has_tools(props.get("requestBody") or props.get("request")),
-            tool_calls=_has_tool_calls(props.get("responseBody") or props.get("response")),
-            tokens_in=_i(props.get("promptTokens") or get_path(props, "usage.prompt_tokens")),
-            tokens_out=_i(props.get("completionTokens") or get_path(props, "usage.completion_tokens")),
-            status=str(rec.get("resultSignature") or rec.get("ResultSignature") or props.get("statusCode") or ""),
-            path=rec.get("operationName") or rec.get("OperationName") or props.get("apiName"),
-            metadata={"resource_id": rec.get("resourceId") or rec.get("ResourceId"), "deployment": props.get("modelDeploymentName"), "api_version": props.get("apiVersion"), "object_id": oid, "tenant": get_path(ident, "claims.tid") if isinstance(ident, dict) else None},
-            schema=schema,
-        )
-    if schema == "vertex":
-        pp = rec.get("protoPayload") or {}
-        principal = get_path(pp, "authenticationInfo.principalEmail") or get_path(pp, "authenticationInfo.principalSubject")
-        method = pp.get("methodName", "")
-        resource = pp.get("resourceName", "")
-        model = None
-        m = re.search(r"(publishers/[^/]+/models/[^/:\s]+|endpoints/[^/:\s]+|reasoningEngines/[^/:\s]+|models/[^/:\s]+)", str(resource))
-        if m:
-            model = m.group(1)
-        ua = get_path(pp, "requestMetadata.callerSuppliedUserAgent")
-        return Event(
-            caller=f"gcp:{principal or 'unknown'}",
-            caller_kind="principal",
-            caller_label=str(principal or "unknown"),
-            timestamp=parse_timestamp(rec.get("timestamp") or rec.get("receiveTimestamp")),
-            model=model,
-            provider="google-vertex-ai",
-            host=pp.get("serviceName"),
-            user_agent=ua,
-            ip=get_path(pp, "requestMetadata.callerIp"),
-            tools=_has_tools(pp.get("request")),
-            tool_calls=_has_tool_calls(pp.get("response")),
-            status=str(get_path(pp, "status.code") or "ok"),
-            path=method,
-            metadata={"project": get_path(rec, "resource.labels.project_id"), "location": get_path(rec, "resource.labels.location"), "resource": resource, "service_account_delegation": get_path(pp, "authenticationInfo.serviceAccountDelegationInfo")},
-            schema=schema,
-        )
-    if schema == "openai-usage":
-        actor = rec.get("actor") or {}
-        key_id = rec.get("api_key_id") or get_path(actor, "api_key.id") or get_path(rec, "api_key.id")
-        user = rec.get("user_id") or get_path(actor, "session.user.email", "api_key.user.email", "api_key.service_account.name", "session.user.id")
-        sa = get_path(actor, "api_key.service_account.id", "api_key.service_account.name")
-        caller = key_id or sa or user or rec.get("project_id") or "unknown"
-        aggregate = any(key in rec for key in ("num_model_requests", "n_requests"))
-        count = rec.get("num_model_requests", rec.get("n_requests", 1))
-        if aggregate:
-            if isinstance(count, str) and count.isdecimal():
-                count = int(count)
-            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-                raise ConnectorError("gateway.logs: OpenAI usage request count must be a nonnegative integer")
-        return Event(
-            caller=f"openai:{caller}",
-            caller_kind="api-key" if key_id else ("service" if sa else "user"),
-            caller_label=str(sa or user or key_id or caller),
-            timestamp=parse_timestamp(get_path(rec, "start_time", "effective_at", "aggregation_timestamp", "timestamp")),
-            interval_end=parse_timestamp(rec.get("end_time")) if aggregate else None,
-            request_count=count,
-            aggregated=aggregate,
-            model=rec.get("model") or rec.get("snapshot_id"),
-            provider="openai",
-            host="api.openai.com",
-            user=str(user) if user else None,
-            team=rec.get("project_id") or rec.get("project_name"),
-            tokens_in=_i(rec.get("input_tokens") or rec.get("n_context_tokens_total")),
-            tokens_out=_i(rec.get("output_tokens") or rec.get("n_generated_tokens_total")),
-            path=rec.get("operation") or rec.get("type") or rec.get("endpoint"),
-            metadata={"project": rec.get("project_id"), "num_requests": rec.get("num_model_requests") or rec.get("n_requests"), "batch": rec.get("batch"), "service_account": sa, "event_type": rec.get("type")},
-            schema=schema,
-        )
-    if schema == "anthropic-usage":
-        caller = rec.get("api_key_id") or rec.get("workspace_id") or "unknown"
-        return Event(
-            caller=f"anthropic:{caller}",
-            caller_kind="api-key" if rec.get("api_key_id") else "principal",
-            caller_label=str(caller),
-            timestamp=parse_timestamp(rec.get("starting_at") or rec.get("timestamp")),
-            model=rec.get("model"),
-            provider="anthropic",
-            host="api.anthropic.com",
-            team=rec.get("workspace_id"),
-            tokens_in=_i(rec.get("uncached_input_tokens")) + _i(get_path(rec, "cache_read_input_tokens")),
-            tokens_out=_i(rec.get("output_tokens")),
-            path=rec.get("service_tier") or rec.get("context_window"),
-            metadata={"workspace": rec.get("workspace_id"), "service_tier": rec.get("service_tier")},
-            schema=schema,
-        )
-    if schema == "access-log":
-        ua = get_path(rec, "http_user_agent", "user_agent", "userAgent", "http.user_agent", "request.headers.user-agent", "cs(User-Agent)", "cs-user-agent", "useragent")
-        ip = get_path(rec, "remote_addr", "client_ip", "clientIp", "c-ip", "x_forwarded_for", "http.client_ip", "source_ip", "src_ip", "client.ip")
-        host = get_path(rec, "host", "http_host", "server_name", "upstream_host", "authority", "http.host", "cs-host", "x-forwarded-host", "domain")
-        path = get_path(rec, "request_uri", "requestUri", "uri", "path", "http.url", "cs-uri-stem", "request_path", "url")
-        req = rec.get("request")
-        if isinstance(req, str) and " " in req and not path:
-            parts = req.split()
-            path = parts[1] if len(parts) > 1 else req
-        user = get_path(rec, "remote_user", "user", "username", "auth_user", "principal", "sub", "x_user", "http.user")
-        api_key = get_path(rec, "api_key", "x_api_key", "apikey", "authorization_hash", "consumer", "client_id")
-        caller = api_key or user or ua or ip or "unknown"
-        kind = "api-key" if api_key else "user" if user else "user-agent" if ua else "ip"
-        return Event(
-            caller=f"access:{caller}",
-            caller_kind=kind,
-            caller_label=str(caller)[:120],
-            timestamp=parse_timestamp(get_path(rec, "time", "timestamp", "@timestamp", "time_local", "time_iso8601", "start_time", "date", "ts", "datetime")),
-            model=get_path(rec, "model", "x_model", "request_model", "llm_model"),
-            host=host,
-            user_agent=ua,
-            ip=str(ip) if ip else None,
-            user=str(user) if user else None,
-            status=str(get_path(rec, "status", "status_code", "response_code", "sc-status", "http.status_code") or ""),
-            path=path,
-            metadata={"method": get_path(rec, "request_method", "method", "cs-method", "http.method"), "bytes": get_path(rec, "body_bytes_sent", "bytes", "sc-bytes")},
-            schema=schema,
-        )
-    # generic
-    key = get_path(rec, "api_key", "apiKey", "api_key_id", "key", "key_id", "key_alias", "virtual_key", "token_id", "client_id", "clientId")
-    principal = get_path(rec, "principal", "principal_id", "identity", "identity.arn", "caller", "service", "service_name", "app", "application", "app_name", "source", "team", "team_id", "org", "project")
-    user = get_path(rec, "user", "user_id", "userId", "username", "email", "end_user", "sub", "actor")
-    ua = get_path(rec, "user_agent", "userAgent", "http_user_agent", "headers.user-agent", "request.headers.user-agent", "metadata.user_agent")
-    ip = get_path(rec, "ip", "client_ip", "source_ip", "remote_addr", "callerIp")
-    who = key or principal or user or ua or ip
-    if who is None:
-        return None
-    kind = "api-key" if key else "principal" if principal else "user" if user else "user-agent" if ua else "ip"
-    req = rec.get("request") or rec.get("request_body") or rec.get("input") or rec.get("body") or rec.get("messages")
-    resp = rec.get("response") or rec.get("response_body") or rec.get("output") or rec.get("completion")
-    if req is not None:
-        has_tools = _has_tools(req)
-    elif any(key in rec for key in ("tools", "functions", "function_declarations", "tool_choice", "toolConfig", "tool_config")):
-        has_tools = _has_tools(rec)
-    else:
-        has_tools = _b(get_path(rec, "has_tools", "tool_count", "function_call"))
-    return Event(
-        caller=f"{kind}:{who}",
-        caller_kind=kind,
-        caller_label=str(who)[:120],
-        timestamp=parse_timestamp(get_path(rec, "timestamp", "time", "@timestamp", "ts", "created_at", "createdAt", "start_time", "startTime", "date", "datetime", "event_time")),
-        model=get_path(rec, "model", "model_id", "modelId", "model_name", "deployment", "engine", "llm", "response.model", "request.model"),
-        provider=get_path(rec, "provider", "llm_provider", "custom_llm_provider", "vendor", "platform"),
-        host=host_of(get_path(rec, "host", "url", "endpoint", "api_base", "base_url", "upstream")),
-        user_agent=ua,
-        ip=str(ip) if ip else None,
-        user=str(user) if user else None,
-        team=get_path(rec, "team", "team_id", "org", "project", "workspace"),
-        tools=has_tools,
-        tool_calls=_has_tool_calls(resp) if resp is not None else _b(get_path(rec, "tool_calls", "has_tool_calls")),
-        streaming=_b(get_path(rec, "stream", "streaming")),
-        tokens_in=_i(get_path(rec, "prompt_tokens", "input_tokens", "tokens_in", "usage.prompt_tokens", "usage.input_tokens", "promptTokens")),
-        tokens_out=_i(get_path(rec, "completion_tokens", "output_tokens", "tokens_out", "usage.completion_tokens", "usage.output_tokens", "completionTokens")),
-        cost=_f(get_path(rec, "cost", "spend", "total_cost", "cost_usd")),
-        status=str(get_path(rec, "status", "status_code", "http_status") or ""),
-        path=get_path(rec, "path", "endpoint", "operation", "call_type", "route", "method_name"),
-        metadata={},
-        schema="generic",
-    )
 
 
 # --------------------------------------------------------------- text logs
@@ -908,6 +384,179 @@ def _json_lines_fallback(lines: list[str]) -> bool:
     return bool(first) and first != "{" and not first.startswith("[")
 
 
+def _record_activity(c: _Caller, ev: Event) -> None:
+    """Track first/last seen and, for individual requests, the hour and weekday."""
+    if ev.timestamp:
+        c.first = ev.timestamp if not c.first or ev.timestamp < c.first else c.first
+        end = ev.interval_end or ev.timestamp
+        c.last = end if not c.last or end > c.last else c.last
+        if not ev.aggregated:
+            c.hours[ev.timestamp.hour] += 1
+            c.weekdays[ev.timestamp.weekday()] += 1
+
+
+def _record_interval(c: _Caller, ev: Event, retain_interval: bool) -> bool:
+    """Keep an aggregate interval's detail within the caller's bound; report whether it was stored."""
+    if not ev.aggregated:
+        return False
+    if retain_interval and len(c.usage_intervals) < min(_MAX_USAGE_INTERVALS, _MAX_DISTINCT_KEYS):
+        c.usage_intervals.append({"start": to_iso(ev.timestamp), "end": to_iso(ev.interval_end),
+                                  "requests": ev.request_count, "model": ev.model})
+        return True
+    c.usage_intervals_dropped += 1
+    c.usage_interval_requests_dropped += ev.request_count
+    return False
+
+
+def _record_distributions(c: _Caller, ev: Event, detail_budget: _DetailBudget | None) -> None:
+    """Count the event's labels in every bounded per-caller distribution."""
+    if ev.model:
+        _count(c.models, str(ev.model), ev.request_count, c.distribution_events_dropped, "models", detail_budget)
+    if ev.provider:
+        _count(c.providers, str(ev.provider), ev.request_count, c.distribution_events_dropped, "providers", detail_budget)
+    if ev.host:
+        _count(c.hosts, ev.host, ev.request_count, c.distribution_events_dropped, "hosts", detail_budget)
+    if ev.user_agent:
+        _count(c.user_agents, str(ev.user_agent)[:160], ev.request_count, c.distribution_events_dropped, "user_agents", detail_budget)
+    if ev.ip:
+        _count(c.ips, ev.ip, ev.request_count, c.distribution_events_dropped, "source_ips", detail_budget)
+    if ev.user:
+        _count(c.users, ev.user, ev.request_count, c.distribution_events_dropped, "end_users", detail_budget)
+    if ev.team:
+        _count(c.teams, str(ev.team), ev.request_count, c.distribution_events_dropped, "teams", detail_budget)
+    if ev.path:
+        # Query strings carry per-request identifiers; the operation is the path.
+        _count(
+            c.paths, str(ev.path).split("?", 1)[0][:120], ev.request_count,
+            c.distribution_events_dropped, "operations", detail_budget,
+        )
+
+
+def _record_usage(c: _Caller, ev: Event, total_cost: float) -> None:
+    """Tool use, token, cost and error totals, plus the first metadata sample per key."""
+    if ev.tools is not None:
+        c.tool_known += ev.request_count
+        if ev.tools:
+            c.tools_requests += ev.request_count
+    if ev.tool_calls:
+        c.tool_call_responses += ev.request_count
+    c.tokens_in += ev.tokens_in
+    c.tokens_out += ev.tokens_out
+    c.cost = total_cost
+    if ev.status and (ev.status.startswith(("4", "5")) or ev.status.lower() in {"error", "failure", "failed"}):
+        c.errors += 1
+    for k, v in ev.metadata.items():
+        if v not in (None, "", {}, []) and k not in c.metadata_samples:
+            c.metadata_samples[k] = v if isinstance(v, (str, int, float, bool)) else json.dumps(v, default=str)[:300]
+
+
+def _record_observation(c: _Caller, ev: Event, detail_budget: _DetailBudget | None) -> None:
+    """Group the event into its runtime observation (workload, frameworks, environment, assurance)."""
+    bucket = json.dumps([ev.code_resources, ev.runtime_frameworks, ev.environment, ev.identity_assurance])
+    if bucket not in c.observations:
+        if len(c.observations) >= _MAX_DISTINCT_KEYS or (detail_budget is not None and detail_budget.used >= _MAX_TOTAL_DETAIL_KEYS):
+            # Hostile exports can vary the environment label per record.
+            c.observations_dropped += ev.request_count
+            if detail_budget is not None:
+                detail_budget.observations_omitted += 1
+                detail_budget.observation_requests_omitted += ev.request_count
+            return
+        if detail_budget is not None:
+            detail_budget.used += 1
+    observation = c.observations.setdefault(bucket, {
+        "code_resources": ev.code_resources,
+        "frameworks": ev.runtime_frameworks,
+        "environment": ev.environment,
+        "scope": dict(ev.scope),
+        "events": 0,
+        "timestamped_events": 0,
+        "first_seen": None,
+        "last_seen": None,
+        "identity_basis": "configured-exact-caller-and-scope",
+        "identity_assurance": ev.identity_assurance,
+        "environment_assurance": "event-label-unverified" if ev.environment else "absent",
+    })
+    observation["events"] += ev.request_count
+    if ev.timestamp and not ev.aggregated:
+        timestamp = to_iso(ev.timestamp)
+        observation["timestamped_events"] += 1
+        observation["first_seen"] = min(observation["first_seen"], timestamp) if observation["first_seen"] else timestamp
+        observation["last_seen"] = max(observation["last_seen"], timestamp) if observation["last_seen"] else timestamp
+
+
+_CALLER_KIND_WEIGHT = {"api-key": 0.35, "principal": 0.35, "service": 0.45, "user": 0.15, "user-agent": 0.2, "ip": 0.15}
+
+
+def _tool_use_evidence(f: Finding, c: _Caller) -> None:
+    """Tool definitions in requests, or tool calls in responses, mark an agentic caller."""
+    tool_ratio = (c.tools_requests / c.tool_known) if c.tool_known else None
+    if tool_ratio is not None and tool_ratio > 0:
+        f.add_capability("tool-use")
+        f.add_evidence(Evidence(signal="gateway:tool-use", description=f"{c.tools_requests}/{c.tool_known} inspected requests carried tool/function definitions ({tool_ratio:.0%}); {c.tool_call_responses} responses invoked tools", weight=min(0.9, 0.4 + tool_ratio * 0.5)))
+        f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
+    if c.tool_call_responses and tool_ratio is None:
+        f.add_capability("tool-use")
+        f.add_evidence(Evidence(signal="gateway:tool-calls", description=f"{c.tool_call_responses} responses contained tool calls", weight=0.6))
+        f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
+
+
+def _temporal_evidence(f: Finding, c: _Caller, framework_user_agent: bool) -> None:
+    """Round-the-clock activity: an agent indicator only when another signal corroborates it.
+
+    A shared key used across time zones also produces round-the-clock
+    activity; the pattern alone must not promote a human-attributed caller to
+    an agent. Without corroboration the tag stays informational.
+    """
+    # Non-temporal automation indicators: tool use (counted above), an
+    # agent framework user agent, or an identity that no end user owns.
+    unattributed = c.kind in {"api-key", "service", "principal"} and not c.users
+    service_style = c.kind in {"service", "principal"}
+    # temporal shape: automated callers run around the clock and on weekends
+    total_ts = sum(c.hours.values())
+    if total_ts < 50:
+        return
+    night = sum(v for h, v in c.hours.items() if h < 6 or h >= 22) / total_ts
+    weekend = sum(v for d, v in c.weekdays.items() if d >= 5) / total_ts
+    active_hours = len(c.hours)
+    always_on = active_hours >= 20 or (night > 0.25 and weekend > 0.15)
+    corroborated = always_on and (bool(f.metadata.get("agent_indicators")) or framework_user_agent or unattributed or service_style)
+    if always_on:
+        f.add_tag("always-on")
+        shape = f"Activity across {active_hours}/24 hours, {night:.0%} at night, {weekend:.0%} on weekends"
+        if corroborated:
+            f.add_capability("autonomous")
+            f.add_evidence(Evidence(signal="gateway:always-on", description=f"{shape}: unattended / scheduled caller", weight=0.5))
+            f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
+        else:
+            f.add_evidence(Evidence(signal="gateway:always-on", description=f"{shape}: round-the-clock activity without tool use, an agent framework or an unattended identity", weight=0.3))
+    f.metadata["activity"] = {"active_hours": active_hours, "night_share": round(night, 2), "weekend_share": round(weekend, 2), "always_on": always_on, "always_on_corroborated": corroborated}
+
+
+def _volume_evidence(f: Finding, c: _Caller) -> None:
+    """Volume, model breadth, attribution and error-rate signals."""
+    if c.events >= 1000:
+        f.add_evidence(Evidence(signal="gateway:volume", description=f"High volume: {c.events} requests", weight=0.2))
+    if len(c.models) >= 4:
+        f.add_evidence(Evidence(signal="gateway:multi-model", description=f"Uses {len(c.models)} different models (router / orchestrator behaviour)", weight=0.2))
+    if c.kind in {"api-key", "service", "principal"} and not c.users:
+        f.add_tag("no-end-user-attribution")
+    if c.errors and c.errors / c.events > 0.2:
+        f.add_tag("high-error-rate")
+
+
+def _assign_owner(f: Finding, c: _Caller) -> None:
+    """The most frequent end user, else team, owns the caller.
+
+    A truncated distribution cannot establish its most frequent owner. Leave
+    attribution unknown rather than promote the retained subset.
+    """
+    if not c.distribution_events_dropped.get("end_users"):
+        if c.users:
+            f.owner = c.users.most_common(1)[0][0]
+        elif c.teams and not c.distribution_events_dropped.get("teams"):
+            f.owner = c.teams.most_common(1)[0][0]
+
+
 class GatewayLogConnector(BaseConnector, _NoDump):
     name: ClassVar[str] = "gateway.logs"
     surface: ClassVar[Surface] = Surface.GATEWAY
@@ -919,9 +568,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         "min_events": "ignore callers with fewer events (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
         "max_records": "stop after N records (default 5,000,000)",
-        "max_input_bytes": "maximum expanded bytes read across offline files (default 256 MiB)",
-        "max_input_file_bytes": "maximum expanded bytes read from one offline file (default 32 MiB)",
-        "max_input_files": "maximum offline files in a directory input (default 10,000)",
+        "label": "gateway name recorded as the finding provider and as the account of unscoped callers (defaults to the entry's `label`)",
+        "gateway_name": "fallback for `label` when the connector entry has none",
         "correlation_bindings": "explicit [{code_resource, caller, scope}] mappings to workload identities; scope must exactly match log tenant/account/project/workspace fields ({} for unscoped exports)",
     }
     offline_formats: ClassVar[str] = "JSONL / JSON / CSV / text access logs"
@@ -985,40 +633,47 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             ) if key in rec
         }
 
+    def _expand_usage_bucket(self, rec: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Usage results are aggregate intervals, not individual transactions."""
+        results = rec.get("results")
+        first, last = parse_timestamp(rec.get("start_time")), parse_timestamp(rec.get("end_time"))
+        if not isinstance(results, list) or first is None or last is None or last <= first:
+            self.ctx.warn("gateway.logs: malformed OpenAI usage bucket (results and a valid interval are required)")
+            return
+        for result in results:
+            if not isinstance(result, dict) or not any(key in result for key in ("num_model_requests", "n_requests")):
+                self.ctx.warn("gateway.logs: malformed OpenAI usage result (request count is required)")
+                continue
+            if "object" in result and not str(result["object"]).startswith("organization.usage."):
+                self.ctx.warn("gateway.logs: unsupported OpenAI usage result type")
+                continue
+            yield {
+                **result,
+                "object": result.get("object") or "organization.usage.completions.result",
+                "start_time": rec["start_time"], "end_time": rec["end_time"],
+            }
+
+    def _expand_log_events(self, rec: dict[str, Any], depth: int) -> Iterator[dict[str, Any]]:
+        """CloudWatch subscription batches: each log event inherits the batch context."""
+        events = rec["logEvents"]
+        if not isinstance(events, list):
+            self.ctx.warn("gateway.logs: logEvents must be an array")
+            return
+        for event in events:
+            if isinstance(event, dict):
+                yield from self._expand_record({**self._envelope_context(rec), **event}, depth + 1)
+            else:
+                self.ctx.warn("gateway.logs: malformed CloudWatch log event")
+
     def _expand_record(self, rec: dict[str, Any], depth: int = 0) -> Iterator[dict[str, Any]]:
         if depth >= 16:
             self.ctx.warn("gateway.logs: export wrapper nesting limit exceeded")
             return
         if rec.get("object") == "bucket" or (self.format == "openai-usage" and "results" in rec):
-            # Usage results are aggregate intervals, not individual transactions.
-            results = rec.get("results")
-            first, last = parse_timestamp(rec.get("start_time")), parse_timestamp(rec.get("end_time"))
-            if not isinstance(results, list) or first is None or last is None or last <= first:
-                self.ctx.warn("gateway.logs: malformed OpenAI usage bucket (results and a valid interval are required)")
-                return
-            for result in results:
-                if not isinstance(result, dict) or not any(key in result for key in ("num_model_requests", "n_requests")):
-                    self.ctx.warn("gateway.logs: malformed OpenAI usage result (request count is required)")
-                    continue
-                if "object" in result and not str(result["object"]).startswith("organization.usage."):
-                    self.ctx.warn("gateway.logs: unsupported OpenAI usage result type")
-                    continue
-                yield {
-                    **result,
-                    "object": result.get("object") or "organization.usage.completions.result",
-                    "start_time": rec["start_time"], "end_time": rec["end_time"],
-                }
+            yield from self._expand_usage_bucket(rec)
             return
         if "logEvents" in rec:
-            events = rec["logEvents"]
-            if not isinstance(events, list):
-                self.ctx.warn("gateway.logs: logEvents must be an array")
-                return
-            for event in events:
-                if isinstance(event, dict):
-                    yield from self._expand_record({**self._envelope_context(rec), **event}, depth + 1)
-                else:
-                    self.ctx.warn("gateway.logs: malformed CloudWatch log event")
+            yield from self._expand_log_events(rec, depth)
             return
         if "jsonPayload" in rec and "protoPayload" not in rec:
             payload = rec["jsonPayload"]
@@ -1076,28 +731,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                     self.ctx.error("gateway.logs: empty offline export; use [] for an empty inventory")
                 continue
             if suffix == ".json":
-                text = self._read_offline_text(source, budget)
-                if text is None:
-                    continue
-                if not text.strip():
-                    self.ctx.error("gateway.logs: empty offline export; use [] for an empty inventory")
-                    continue
-                try:
-                    data = json.loads(text)
-                except json.JSONDecodeError:
-                    # A .json export may contain one JSON object per line. A
-                    # corrupted pretty-printed document is not one: reporting
-                    # every line of it individually would flood the report.
-                    lines = text.splitlines()
-                    if _json_lines_fallback(lines):
-                        yield from self._json_gateway_lines(lines)
-                    else:
-                        self.ctx.error("gateway.logs: invalid JSON export")
-                except (RecursionError, ValueError):
-                    self.ctx.error("gateway.logs: invalid JSON export")
-                else:
-                    for rec in self._gateway_records(data):
-                        yield from self._expand_record(rec)
+                yield from self._load_json_export(source, budget)
                 continue
             saw_content = False
             for number, line in enumerate(
@@ -1109,6 +743,31 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                     yield from self._expand_record(parsed)
             if not saw_content:
                 self.ctx.warn("gateway.logs: empty text export; use [] for an empty JSON export")
+
+    def _load_json_export(self, source: Path, budget: _OfflineInputBudget) -> Iterator[dict[str, Any]]:
+        """A .json export: one document, or one object per line as a fallback."""
+        text = self._read_offline_text(source, budget)
+        if text is None:
+            return
+        if not text.strip():
+            self.ctx.error("gateway.logs: empty offline export; use [] for an empty inventory")
+            return
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            # A .json export may contain one JSON object per line. A
+            # corrupted pretty-printed document is not one: reporting
+            # every line of it individually would flood the report.
+            lines = text.splitlines()
+            if _json_lines_fallback(lines):
+                yield from self._json_gateway_lines(lines)
+            else:
+                self.ctx.error("gateway.logs: invalid JSON export")
+        except (RecursionError, ValueError):
+            self.ctx.error("gateway.logs: invalid JSON export")
+        else:
+            for rec in self._gateway_records(data):
+                yield from self._expand_record(rec)
 
     def _gateway_records(self, data: Any) -> Iterator[dict[str, Any]]:
         # CloudWatch and usage buckets carry context on the enclosing object.
@@ -1200,6 +859,24 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 self.ctx.warn(f"gateway.logs: invalid record {n}: {type(exc).__name__}{detail}")
                 continue
         self.ctx.examined(n)
+        self._report_limits(callers, detail_budget, omitted_caller_records, omitted_caller_requests)
+        if skipped:
+            self.log.info("gateway.logs: %d/%d records skipped (unrecognised or non-LLM)", skipped, n)
+        for c in callers.values():
+            if c.events < self.min_events:
+                continue
+            try:
+                yield self._finding(c)
+            except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
+                    RecursionError, ConnectorError, MatchTimeoutError) as exc:
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"gateway.logs: caller analysis failed ({type(exc).__name__}){detail}")
+
+    def _report_limits(
+        self, callers: dict[str, _Caller], detail_budget: _DetailBudget,
+        omitted_caller_records: int, omitted_caller_requests: int,
+    ) -> None:
+        """Warn about every bound that truncated caller coverage or detail."""
         if omitted_caller_records:
             self.ctx.warn(
                 f"gateway.logs: distinct caller limit ({_MAX_DISTINCT_CALLERS}) reached; "
@@ -1224,17 +901,6 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 f"{detail_budget.observation_requests_omitted} requests; "
                 "classification, attribution, and detail telemetry may be incomplete"
             )
-        if skipped:
-            self.log.info("gateway.logs: %d/%d records skipped (unrecognised or non-LLM)", skipped, n)
-        for c in callers.values():
-            if c.events < self.min_events:
-                continue
-            try:
-                yield self._finding(c)
-            except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
-                    RecursionError, ConnectorError, MatchTimeoutError) as exc:
-                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
-                self.ctx.warn(f"gateway.logs: caller analysis failed ({type(exc).__name__}){detail}")
 
     def _runtime_context(
         self,
@@ -1356,86 +1022,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         if ev.aggregated:
             c.aggregate_records += 1
         c.schemas[ev.schema] += 1
-        if ev.timestamp:
-            c.first = ev.timestamp if not c.first or ev.timestamp < c.first else c.first
-            end = ev.interval_end or ev.timestamp
-            c.last = end if not c.last or end > c.last else c.last
-            if not ev.aggregated:
-                c.hours[ev.timestamp.hour] += 1
-                c.weekdays[ev.timestamp.weekday()] += 1
-        interval_stored = False
-        if ev.aggregated:
-            if retain_interval and len(c.usage_intervals) < min(_MAX_USAGE_INTERVALS, _MAX_DISTINCT_KEYS):
-                c.usage_intervals.append({"start": to_iso(ev.timestamp), "end": to_iso(ev.interval_end),
-                                          "requests": ev.request_count, "model": ev.model})
-                interval_stored = True
-            else:
-                c.usage_intervals_dropped += 1
-                c.usage_interval_requests_dropped += ev.request_count
-        if ev.model:
-            _count(c.models, str(ev.model), ev.request_count, c.distribution_events_dropped, "models", detail_budget)
-        if ev.provider:
-            _count(c.providers, str(ev.provider), ev.request_count, c.distribution_events_dropped, "providers", detail_budget)
-        if ev.host:
-            _count(c.hosts, ev.host, ev.request_count, c.distribution_events_dropped, "hosts", detail_budget)
-        if ev.user_agent:
-            _count(c.user_agents, str(ev.user_agent)[:160], ev.request_count, c.distribution_events_dropped, "user_agents", detail_budget)
-        if ev.ip:
-            _count(c.ips, ev.ip, ev.request_count, c.distribution_events_dropped, "source_ips", detail_budget)
-        if ev.user:
-            _count(c.users, ev.user, ev.request_count, c.distribution_events_dropped, "end_users", detail_budget)
-        if ev.team:
-            _count(c.teams, str(ev.team), ev.request_count, c.distribution_events_dropped, "teams", detail_budget)
-        if ev.path:
-            # Query strings carry per-request identifiers; the operation is the path.
-            _count(
-                c.paths, str(ev.path).split("?", 1)[0][:120], ev.request_count,
-                c.distribution_events_dropped, "operations", detail_budget,
-            )
-        if ev.tools is not None:
-            c.tool_known += ev.request_count
-            if ev.tools:
-                c.tools_requests += ev.request_count
-        if ev.tool_calls:
-            c.tool_call_responses += ev.request_count
-        c.tokens_in += ev.tokens_in
-        c.tokens_out += ev.tokens_out
-        c.cost = total_cost
-        if ev.status and (ev.status.startswith(("4", "5")) or ev.status.lower() in {"error", "failure", "failed"}):
-            c.errors += 1
-        for k, v in ev.metadata.items():
-            if v not in (None, "", {}, []) and k not in c.metadata_samples:
-                c.metadata_samples[k] = v if isinstance(v, (str, int, float, bool)) else json.dumps(v, default=str)[:300]
-        bucket = json.dumps([ev.code_resources, ev.runtime_frameworks, ev.environment, ev.identity_assurance])
-        if bucket not in c.observations:
-            if len(c.observations) >= _MAX_DISTINCT_KEYS or (detail_budget is not None and detail_budget.used >= _MAX_TOTAL_DETAIL_KEYS):
-                # Hostile exports can vary the environment label per record.
-                c.observations_dropped += ev.request_count
-                if detail_budget is not None:
-                    detail_budget.observations_omitted += 1
-                    detail_budget.observation_requests_omitted += ev.request_count
-                return interval_stored
-            if detail_budget is not None:
-                detail_budget.used += 1
-        observation = c.observations.setdefault(bucket, {
-            "code_resources": ev.code_resources,
-            "frameworks": ev.runtime_frameworks,
-            "environment": ev.environment,
-            "scope": dict(ev.scope),
-            "events": 0,
-            "timestamped_events": 0,
-            "first_seen": None,
-            "last_seen": None,
-            "identity_basis": "configured-exact-caller-and-scope",
-            "identity_assurance": ev.identity_assurance,
-            "environment_assurance": "event-label-unverified" if ev.environment else "absent",
-        })
-        observation["events"] += ev.request_count
-        if ev.timestamp and not ev.aggregated:
-            timestamp = to_iso(ev.timestamp)
-            observation["timestamped_events"] += 1
-            observation["first_seen"] = min(observation["first_seen"], timestamp) if observation["first_seen"] else timestamp
-            observation["last_seen"] = max(observation["last_seen"], timestamp) if observation["last_seen"] else timestamp
+        _record_activity(c, ev)
+        interval_stored = _record_interval(c, ev, retain_interval)
+        _record_distributions(c, ev, detail_budget)
+        _record_usage(c, ev, total_cost)
+        _record_observation(c, ev, detail_budget)
         return interval_stored
 
     def _finding(self, c: _Caller, *, source_id: str | None = None) -> Finding:
@@ -1452,14 +1043,40 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             first_seen=to_iso(c.first),
             last_seen=to_iso(c.last),
         )
+        top_models, framework_user_agent = self._match_signatures(f, c)
+        f.add_evidence(Evidence(
+            signal=f"gateway:{c.kind}",
+            description=f"{c.events} LLM request(s) by {c.kind} '{c.label}' to models {', '.join(top_models[:5]) or 'unknown'}",
+            weight=_CALLER_KIND_WEIGHT[c.kind],
+        ))
+        _tool_use_evidence(f, c)
+        _temporal_evidence(f, c, framework_user_agent)
+        _volume_evidence(f, c)
+        _assign_owner(f, c)
+        f.metadata.update(self._finding_metadata(c, source_id))
+        f.id = "ss-" + hashlib.sha256(f"{f.compute_id()}|{source_id}".encode()).hexdigest()[:16]
+        finalize(f, self.index)
+        f.kind = Kind.GATEWAY_CALLER
+        f.title = self._finding_title(f, c, top_models)
+        return f
+
+    def _match_signatures(self, f: Finding, c: _Caller) -> tuple[list[str], bool]:
+        """Apply model, host, user agent, provider and name signatures.
+
+        Returns the caller's most used models and whether a user agent matched
+        an agent framework or coding agent.
+        """
         top_models = [m for m, _ in c.models.most_common(10)]
         f.models = top_models
         for m in top_models:
             apply_matches(f, self.index.match_model(m), weight_scale=0.5)
         for h, _ in c.hosts.most_common(10):
             apply_matches(f, self.index.match_domain(h), weight_scale=0.6)
+        framework_user_agent = False
         for ua, _ in c.user_agents.most_common(10):
-            apply_matches(f, self.index.match_user_agent(ua), weight_scale=1.0)
+            ua_matches = self.index.match_user_agent(ua)
+            apply_matches(f, ua_matches, weight_scale=1.0)
+            framework_user_agent = framework_user_agent or any(m.signature.category in {"framework", "coding-agent"} for m in ua_matches)
         for p, _ in c.providers.most_common(5):
             sid = _provider_signature(self.index, p)
             if sid:
@@ -1467,91 +1084,50 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         apply_matches(f, self.index.match_name(c.label), weight_scale=0.6)
         for u, _ in c.users.most_common(3):
             apply_matches(f, self.index.match_name(str(u)), weight_scale=0.4)
+        return top_models, framework_user_agent
 
-        base_weight = {"api-key": 0.35, "principal": 0.35, "service": 0.45, "user": 0.15, "user-agent": 0.2, "ip": 0.15}[c.kind]
-        f.add_evidence(Evidence(signal=f"gateway:{c.kind}", description=f"{c.events} LLM request(s) by {c.kind} '{c.label}' to models {', '.join(top_models[:5]) or 'unknown'}", weight=base_weight))
+    def _finding_metadata(self, c: _Caller, source_id: str) -> dict[str, Any]:
+        """The caller's totals, bounded distributions and runtime observations."""
+        return {
+            "caller_kind": c.kind,
+            "caller": c.label,
+            "events": c.events,
+            "records": c.records,
+            "aggregate_records": c.aggregate_records,
+            "usage_intervals": c.usage_intervals,
+            "usage_intervals_dropped": c.usage_intervals_dropped,
+            "usage_interval_requests_dropped": c.usage_interval_requests_dropped,
+            "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
+            "models": dict(c.models.most_common(10)),
+            "providers": dict(c.providers.most_common(5)),
+            "hosts": dict(c.hosts.most_common(5)),
+            "user_agents": dict(c.user_agents.most_common(5)),
+            "source_ips": dict(c.ips.most_common(5)),
+            "end_users": dict(c.users.most_common(5)),
+            "teams": dict(c.teams.most_common(3)),
+            "operations": dict(c.paths.most_common(5)),
+            "distribution_events_dropped": dict(c.distribution_events_dropped),
+            "distribution_limit": _MAX_DISTINCT_KEYS,
+            "classification_incomplete": any(c.distribution_events_dropped.get(name) for name in (
+                "models", "providers", "hosts", "user_agents", "end_users", "teams",
+            )),
+            "tool_requests": c.tools_requests,
+            "tool_call_responses": c.tool_call_responses,
+            "tokens_in": c.tokens_in,
+            "tokens_out": c.tokens_out,
+            "cost": round(c.cost, 4),
+            "errors": c.errors,
+            "schemas": dict(c.schemas),
+            "samples": c.metadata_samples,
+            "correlation_scope": c.scope,
+            "correlation_scope_redacted": c.scope_redacted,
+            "runtime_observations": list(c.observations.values()),
+            "runtime_observations_dropped": c.observations_dropped,
+            "runtime_source": {"id": source_id, "input": str(self.ctx.input_path or ""), "label": self.label, "schemas": sorted(c.schemas)},
+        }
 
-        tool_ratio = (c.tools_requests / c.tool_known) if c.tool_known else None
-        if tool_ratio is not None and tool_ratio > 0:
-            f.add_capability("tool-use")
-            f.add_evidence(Evidence(signal="gateway:tool-use", description=f"{c.tools_requests}/{c.tool_known} inspected requests carried tool/function definitions ({tool_ratio:.0%}); {c.tool_call_responses} responses invoked tools", weight=min(0.9, 0.4 + tool_ratio * 0.5)))
-            f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
-        if c.tool_call_responses and tool_ratio is None:
-            f.add_capability("tool-use")
-            f.add_evidence(Evidence(signal="gateway:tool-calls", description=f"{c.tool_call_responses} responses contained tool calls", weight=0.6))
-            f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
-
-        # temporal shape: automated callers run around the clock and on weekends
-        total_ts = sum(c.hours.values())
-        if total_ts >= 50:
-            night = sum(v for h, v in c.hours.items() if h < 6 or h >= 22) / total_ts
-            weekend = sum(v for d, v in c.weekdays.items() if d >= 5) / total_ts
-            active_hours = len(c.hours)
-            if active_hours >= 20 or (night > 0.25 and weekend > 0.15):
-                f.add_capability("autonomous")
-                f.add_tag("always-on")
-                f.add_evidence(Evidence(signal="gateway:always-on", description=f"Activity across {active_hours}/24 hours, {night:.0%} at night, {weekend:.0%} on weekends: unattended / scheduled caller", weight=0.5))
-                f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
-            f.metadata["activity"] = {"active_hours": active_hours, "night_share": round(night, 2), "weekend_share": round(weekend, 2)}
-        if c.events >= 1000:
-            f.add_evidence(Evidence(signal="gateway:volume", description=f"High volume: {c.events} requests", weight=0.2))
-        if len(c.models) >= 4:
-            f.add_evidence(Evidence(signal="gateway:multi-model", description=f"Uses {len(c.models)} different models (router / orchestrator behaviour)", weight=0.2))
-        if c.kind in {"api-key", "service", "principal"} and not c.users:
-            f.add_tag("no-end-user-attribution")
-        if c.errors and c.errors / c.events > 0.2:
-            f.add_tag("high-error-rate")
-
-        # A truncated distribution cannot establish its most frequent owner.
-        # Leave attribution unknown rather than promote the retained subset.
-        if not c.distribution_events_dropped.get("end_users"):
-            if c.users:
-                f.owner = c.users.most_common(1)[0][0]
-            elif c.teams and not c.distribution_events_dropped.get("teams"):
-                f.owner = c.teams.most_common(1)[0][0]
-        f.metadata.update(
-            {
-                "caller_kind": c.kind,
-                "caller": c.label,
-                "events": c.events,
-                "records": c.records,
-                "aggregate_records": c.aggregate_records,
-                "usage_intervals": c.usage_intervals,
-                "usage_intervals_dropped": c.usage_intervals_dropped,
-                "usage_interval_requests_dropped": c.usage_interval_requests_dropped,
-                "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
-                "models": dict(c.models.most_common(10)),
-                "providers": dict(c.providers.most_common(5)),
-                "hosts": dict(c.hosts.most_common(5)),
-                "user_agents": dict(c.user_agents.most_common(5)),
-                "source_ips": dict(c.ips.most_common(5)),
-                "end_users": dict(c.users.most_common(5)),
-                "teams": dict(c.teams.most_common(3)),
-                "operations": dict(c.paths.most_common(5)),
-                "distribution_events_dropped": dict(c.distribution_events_dropped),
-                "distribution_limit": _MAX_DISTINCT_KEYS,
-                "classification_incomplete": any(c.distribution_events_dropped.get(name) for name in (
-                    "models", "providers", "hosts", "user_agents", "end_users", "teams",
-                )),
-                "tool_requests": c.tools_requests,
-                "tool_call_responses": c.tool_call_responses,
-                "tokens_in": c.tokens_in,
-                "tokens_out": c.tokens_out,
-                "cost": round(c.cost, 4),
-                "errors": c.errors,
-                "schemas": dict(c.schemas),
-                "samples": c.metadata_samples,
-                "correlation_scope": c.scope,
-                "correlation_scope_redacted": c.scope_redacted,
-                "runtime_observations": list(c.observations.values()),
-                "runtime_observations_dropped": c.observations_dropped,
-                "runtime_source": {"id": source_id, "input": str(self.ctx.input_path or ""), "label": self.label, "schemas": sorted(c.schemas)},
-            }
-        )
-        f.id = "ss-" + hashlib.sha256(f"{f.compute_id()}|{source_id}".encode()).hexdigest()[:16]
-        finalize(f, self.index)
-        f.kind = Kind.GATEWAY_CALLER
+    def _finding_title(self, f: Finding, c: _Caller, top_models: list[str]) -> str:
+        """Caller kind, request volume, up to two frameworks and the top model."""
         what = "Agentic caller" if f.metadata.get("agent_indicators") else "LLM caller"
         fw = [self.index.get(s).name for s in f.frameworks[:2] if self.index.get(s)]  # type: ignore[union-attr]
-        f.title = f"{what} '{c.label}' ({c.kind}): {c.events} requests" + (f" via {', '.join(fw)}" if fw else "") + (f" to {top_models[0]}" if top_models else "")
-        return f
+        return f"{what} '{c.label}' ({c.kind}): {c.events} requests" + (f" via {', '.join(fw)}" if fw else "") + (f" to {top_models[0]}" if top_models else "")

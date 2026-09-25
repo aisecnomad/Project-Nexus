@@ -11,15 +11,38 @@ Produces:
 * one ``workflow`` finding per exported low-code flow (n8n, Flowise, Langflow, Dify, Make, Power Automate, Logic Apps);
 * one ``infra`` finding per IaC / container file provisioning agent platforms;
 * one ``secret`` finding per file containing LLM-provider credentials (redacted).
+
+Precision safeguards
+--------------------
+* A credential whose value looks like a documentation placeholder (see
+  ``shadowscan.connectors.common.placeholder_reason``) never becomes a
+  ``secret`` finding. It is attached to the project finding as low-weight
+  ``example-credential`` evidence (tag ``example-credential``) so analysts
+  still see that a sample key exists, without a high-risk alert.
+* A credential alone does not establish LLM usage: secret matches only join
+  the project finding when the project has another technology observation.
+* Vendor-neutral heuristics (agent loops, autonomy flags, shell execution)
+  only count when the project also matches a framework, provider, platform,
+  protocol or cloud-service signature; on their own they describe ordinary
+  automation code and are dropped.
+* When every technology observation other than those heuristics is an
+  environment-variable or display-name reference, the heuristics are dropped
+  and the finding is built from the name references alone: evidence weights
+  are halved, the finding is tagged ``env-names-only`` and confidence is
+  capped below the ``confirmed`` band.
 """
 
 from __future__ import annotations
 
+import errno
+import fnmatch
 import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
+import time
 import tomllib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
@@ -48,7 +71,13 @@ from shadowscan.connectors.code.semantic_config import (
 )
 from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.connectors.code.source_semantics import bound_source_matches
-from shadowscan.connectors.common import apply_matches, finalize, looks_like_placeholder
+from shadowscan.connectors.common import (
+    apply_matches,
+    cap_confidence,
+    finalize,
+    looks_like_placeholder,
+    placeholder_reason,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, language_for_path
@@ -119,6 +148,59 @@ LOCK_FILES = {
     "bun.lockb",
     "bun.lock",
 }
+
+# A file over max_file_size that the scanner would read is an error: unread
+# content could hide agent configuration. Names matching these globs hold
+# generated, locked or binary content that never carries such evidence, so
+# skipping them is a warning and the scan stays complete. The connector's
+# `oversize_skip_globs` replaces the list; see docs/scanning.md.
+DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "poetry.lock",
+    "Pipfile.lock",
+    "Cargo.lock",
+    "Gemfile.lock",
+    "composer.lock",
+    "go.sum",
+    "*.min.js",
+    "*.min.css",
+    "*.map",
+    "*.svg",
+    "*.csv",
+    "*.parquet",
+    "*.wasm",
+    "*.so",
+    "*.dylib",
+    "*.dll",
+    "*.pdf",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.gif",
+    "*.woff",
+    "*.woff2",
+    "*.ttf",
+    "*.zip",
+    "*.gz",
+    "*.tar",
+    "*.jar",
+    "*.pyc",
+    "*.class",
+)
+# Path.is_file() treats these as "not a file"; keep that for a vanished entry.
+_IGNORED_STAT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
+# Per-file matching budget: `scan_timeout` covers the first 256 KiB and one
+# more budget is added per further 256 KiB, capped so a hostile file still
+# fails fast. A 971 KB JSON index gets four default budgets (8 s).
+SCAN_TIMEOUT_STEP_BYTES = 256 * 1024
+SCAN_TIMEOUT_CAP_SECONDS = 10.0
+# Stop the walk this far before the connector deadline so the findings
+# collected so far are emitted, sanitized and accepted by the engine, which
+# discards a result that arrives after the deadline.
+DEADLINE_MARGIN_FRACTION = 0.05
+DEADLINE_MARGIN_MIN_SECONDS = 0.25
 
 PROJECT_ROOT_MARKERS = {
     "package.json",
@@ -206,6 +288,27 @@ MCP_CONFIG_NAMES = {
 }
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
+# Files whose parsed structure supplies credential context for excerpt
+# redaction (see _structured_context).
+_JSON_SUFFIXES = (".json", ".jsonc", ".json5")
+_YAML_SUFFIXES = (".yaml", ".yml")
+
+# Documentation placeholders are informational: enough to be listed, never
+# enough to establish a technology or raise risk.
+EXAMPLE_CREDENTIAL_WEIGHT = 0.1
+MAX_EXAMPLE_CREDENTIAL_EVIDENCE = 20
+# Environment-variable names alone are a weak signal (see module docstring):
+# weights are halved and confidence stays inside the "likely" band.
+ENV_ONLY_WEIGHT_SCALE = 0.5
+ENV_ONLY_MAX_CONFIDENCE = 0.8
+# Capability implied by an MCP server's launch command; the first matching
+# group wins, so a database server launched through docker keeps code-exec.
+_MCP_CAPABILITY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("code-exec", ("shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh")),
+    ("data-access", ("filesystem", "sqlite", "postgres", "mysql", "mongodb")),
+    ("browsing", ("puppeteer", "playwright", "browser")),
+    ("saas-actions", ("github", "gitlab", "slack", "gmail", "google-drive", "aws", "gcloud", "azure")),
+)
 
 
 @dataclass
@@ -213,6 +316,7 @@ class _Project:
     root: str  # relative posix path ("." for scan root)
     files: int = 0
     matches: list[tuple[Match, str, str | None]] = field(default_factory=list)  # match, relpath, snippet
+    example_credentials: list[tuple[Match, str, str]] = field(default_factory=list)  # match, relpath, reason
     deps: list[Dep] = field(default_factory=list)
     languages: set[str] = field(default_factory=set)
     coding_agent_files: dict[str, list[str]] = field(default_factory=dict)  # sig id -> files
@@ -223,6 +327,33 @@ class _Project:
 
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 MAX_ROOT_OWNERSHIP_STEPS = 20_000_000
+
+
+def scan_timeout_for_size(base: float, size: int) -> float:
+    """Return the matching budget in seconds for one file of ``size`` bytes.
+
+    ``base`` is the configured ``scan_timeout``. Each further 256 KiB adds
+    one more ``base`` so ordinary large text files finish on an idle core;
+    the result is capped at 10 seconds, or at ``base`` when that is higher.
+    """
+    steps = max(size, 0) // SCAN_TIMEOUT_STEP_BYTES
+    return min(base * (1 + steps), max(base, SCAN_TIMEOUT_CAP_SECONDS))
+
+
+def deadline_margin(remaining: float) -> float:
+    """Return the safety margin kept before a connector deadline.
+
+    Five percent of the budget that remained when the walk started, and at
+    least 250 ms, covers emitting the collected project findings and the
+    engine's own sanitization before it compares completion to the deadline.
+    """
+    return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining)
+
+
+def _validated_globs(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)) or not all(isinstance(g, str) and g.strip() for g in value):
+        raise ConnectorError("code.filesystem: oversize_skip_globs must be a list of file name globs")
+    return [g.strip().lower() for g in value]
 
 
 def _checked_scan_root(path: str | Path) -> Path:
@@ -276,15 +407,22 @@ class FilesystemConnector(BaseConnector):
     description: ClassVar[str] = "Scan a local directory / repository checkout for agent frameworks, MCP, coding agents, IaC and secrets."
     config_keys: ClassVar[dict[str, str]] = {
         "path": "directory to scan (or `paths`: list)",
+        "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "extra directory names / glob patterns to skip",
-        "max_file_size": "bytes; larger files are skipped (default 1 MiB)",
+        "max_file_size": "bytes; a larger file is not analyzed and is an error unless oversize_skip_globs matches it (default 1 MiB)",
+        "oversize_skip_globs": "case-insensitive file name globs; a file over max_file_size matching one is skipped with a warning instead of an error (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts)",
         "max_files": "stop after this many files (default 100000)",
-        "scan_timeout": "matching budget in seconds per file (default 2)",
+        "scan_timeout": "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan_timeout when higher",
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
+        "account": "account label recorded on every finding (default none)",
+        "owner": "owner recorded on every finding; overrides CODEOWNERS and inventory attribution (default: CODEOWNERS, then git author when use_git, then inventory)",
+        "provider": "provider label recorded on findings (default filesystem)",
+        "metadata": "mapping merged into every finding's metadata",
     }
+    shared_config_keys: ClassVar[dict[str, str]] = {}  # scans a checkout, not an export file
     offline_formats: ClassVar[str] = "n/a (path is the input)"
 
     def __init__(self, ctx):
@@ -294,6 +432,7 @@ class FilesystemConnector(BaseConnector):
         self.scan_timeout = float(ctx.get("scan_timeout", 2.0))
         if self.max_file_size < 1 or self.max_files < 1 or not 0 < self.scan_timeout <= 60:
             raise ConnectorError("code.filesystem: limits must be positive; scan_timeout must be at most 60 seconds")
+        self.oversize_skip_globs = _validated_globs(ctx.get("oversize_skip_globs", list(DEFAULT_OVERSIZE_SKIP_GLOBS)))
         self.scan_secrets = bool(ctx.get("scan_secrets", True))
         self.use_git = ctx.get("use_git", False)
         if not isinstance(self.use_git, bool):
@@ -377,8 +516,38 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
+    def _oversize_skippable(self, rel: str, name: str) -> bool:
+        """Whether an oversize file is generated, locked or binary content per ``oversize_skip_globs``."""
+        lower = name.lower()
+        for pattern in self.oversize_skip_globs:
+            if "/" in pattern:
+                if PurePosixPath(rel.lower()).match(pattern):
+                    return True
+            elif fnmatch.fnmatchcase(lower, pattern):
+                return True
+        return False
+
+    def _skip_oversize(self, rel: str, size: int) -> None:
+        self.ctx.warn(
+            f"code.filesystem: {rel}: skipped {size} byte file over max_file_size ({self.max_file_size}); "
+            "generated or binary content is never analyzed",
+            incomplete=False,
+        )
+
     def _iter_files(self, root: Path) -> Iterator[tuple[str, Path, str]]:
         """Yield (relpath, path, project_root_rel) top-down with project root tracking."""
+        for rel, path, proj, _ in self._iter_entries(root):
+            yield rel, path, proj
+
+    def _iter_entries(self, root: Path) -> Iterator[tuple[str, Path, str, int]]:
+        """Yield (relpath, path, project_root_rel, size) for every regular file to analyze.
+
+        A file over ``max_file_size`` whose name matches ``oversize_skip_globs``
+        is reported as a warning and never yielded; the scan stays complete
+        because such content is never analyzed. Every other oversize file is
+        yielded so the reader records the existing error, or skips it silently
+        when its type is never read.
+        """
         # os.walk visits descendants before siblings. Keep only active project
         # ancestors, so assigning a project is amortized constant time even in
         # monorepos with thousands of sibling projects.
@@ -393,7 +562,15 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"code.filesystem: skipped symbolic link {rel}; coverage incomplete")
 
         if root.is_file():
-            yield root.name, root, "."
+            try:
+                size = root.stat().st_size
+            except OSError:
+                self.ctx.error(f"code.filesystem: could not inspect {root.name}")
+                return
+            if size > self.max_file_size and self._oversize_skippable(root.name, root.name):
+                self._skip_oversize(root.name, size)
+                return
+            yield root.name, root, ".", size
             return
         def walk_error(exc: OSError) -> None:
             self.ctx.error(f"code.filesystem: could not enumerate a directory under {root}")
@@ -429,22 +606,65 @@ class FilesystemConnector(BaseConnector):
                     if p.is_symlink():
                         skipped_link(rel)
                         continue
-                except OSError:
+                    info = p.stat()
+                except OSError as exc:
+                    if exc.errno in _IGNORED_STAT_ERRNOS:
+                        continue
                     self.ctx.error(f"code.filesystem: could not inspect {rel}")
+                    continue
+                if not stat.S_ISREG(info.st_mode):
+                    continue
+                if info.st_size > self.max_file_size and self._oversize_skippable(rel, fn):
+                    self._skip_oversize(rel, info.st_size)
                     continue
                 if fn in LOCK_FILES or fn.endswith((".min.js", ".min.css", ".map", ".pyc", ".lock")):
-                    continue
-                try:
-                    if not p.is_file():
-                        continue
-                except OSError:
-                    self.ctx.error(f"code.filesystem: could not inspect {rel}")
                     continue
                 count += 1
                 if count > self.max_files:
                     self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
                     return
-                yield rel, p, proj
+                yield rel, p, proj, info.st_size
+
+    def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
+        """Return the share of ``budget`` a file must have left before the walk may start it.
+
+        Files the reader never opens (over ``max_file_size``, which only
+        records an error, or neither source, configuration nor a file-name
+        signal) reserve nothing, so they cannot end the walk under a short
+        deadline.
+        """
+        if size > self.max_file_size:
+            return 0.0
+        name = path.name
+        ext = path.suffix.lower()
+        will_read = (
+            ext in SOURCE_EXTENSIONS or ext in TEXT_CONFIG_EXTENSIONS or name.lower().startswith(".env")
+            or is_manifest_name(name) or "." not in name or bool(self.index.match_file(rel))
+        )
+        return budget if will_read else 0.0
+
+    def _stop_at_deadline(
+        self, root: Path, examined: int, entries: Iterator[tuple[str, Path, str, int]], deadline: float, margin: float,
+    ) -> None:
+        """Record one error naming how much of the tree the connector deadline left unread.
+
+        The remaining entries are only counted (a stat each, never a read).
+        Counting stops at half the margin or just before the ``max_files``
+        cap, so the findings already collected are still emitted in time.
+        """
+        remaining = 1  # the entry that could not start
+        truncated = False
+        count_until = deadline - margin / 2
+        for _ in entries:
+            remaining += 1
+            if examined + remaining >= self.max_files or (not (remaining & 63) and time.monotonic() >= count_until):
+                truncated = True
+                break
+        total = f"at least {examined + remaining}" if truncated else str(examined + remaining)
+        self.ctx.error(
+            f"code.filesystem: connector deadline reached after {examined} of {total} files under {root}; "
+            "results incomplete",
+        )
 
     # ------------------------------------------------------------------ scan
     def scan_tree(self, root: Path) -> Iterator[Finding]:
@@ -464,9 +684,34 @@ class FilesystemConnector(BaseConnector):
         workflow_files: dict[str, list[tuple[Match, str]]] = {}
         infra_files: dict[str, list[tuple[Match, str, str]]] = {}  # relpath -> (match, value, snippet)
         infra_names: dict[str, list[str]] = {}  # relpath -> display / resource names
-        for rel, path, proj_root in self._iter_files(root):
+        deadline = self.ctx.deadline
+        margin = deadline_margin(deadline - time.monotonic()) if deadline is not None else 0.0
+        entries = self._iter_entries(root)
+        examined = 0
+        for rel, path, proj_root, size in entries:
+            budget = scan_timeout_for_size(self.scan_timeout, size)
+            reserve = self._reserved_budget(rel, path, size, budget)
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining < reserve + margin:
+                    if remaining > margin + self.scan_timeout:
+                        # Only this file's size-scaled budget does not fit; the
+                        # walk can still cover ordinary files, so record the
+                        # gap for this file alone and keep going.
+                        self.ctx.error(
+                            f"code.filesystem: {rel}: skipped; the remaining connector deadline cannot cover "
+                            f"its {reserve:.0f}s matching budget",
+                        )
+                        continue
+                    # Cooperative deadline: never start a file whose budget
+                    # could run into the margin. Findings collected so far are
+                    # returned and the engine keeps them; only a result that
+                    # arrives after the deadline is discarded.
+                    self._stop_at_deadline(root, examined, entries, deadline, margin)
+                    break
+            examined += 1
             try:
-                with self.index.scan_budget(seconds=self.scan_timeout):
+                with self.index.scan_budget(seconds=budget):
                     proj = projects.setdefault(proj_root, _Project(proj_root))
                     proj.files += 1
                     self.ctx.examined()
@@ -496,8 +741,13 @@ class FilesystemConnector(BaseConnector):
                         for issue in dict.fromkeys(notebook_errors):
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                         lang = "python"
-                    safe_text = _safe_source_text(rel, text)
-                    safe_lines = safe_text.splitlines()
+                    # Structured files are parsed now so a resource-limit
+                    # failure reaches the per-file boundary. Redacting the
+                    # text for excerpts waits until a match needs one, which
+                    # most files never do.
+                    structure = _structured_context(rel, text)
+                    source: str = text
+                    safe_lines: list[str] | None = None
 
                     card_kind = agent_manifest_kind(rel)
                     card_valid = False
@@ -518,6 +768,9 @@ class FilesystemConnector(BaseConnector):
                         self._record(proj, m, rel, None)
 
                     def excerpt(line_number: int | None, secret: str | None = None) -> str:
+                        nonlocal safe_lines
+                        if safe_lines is None:
+                            safe_lines = _redacted_source(source, structure).splitlines()
                         return _excerpt(safe_lines, line_number or 1, secret)
 
                     is_mcp = self._looks_like_mcp_config(rel, name, text) or (
@@ -641,7 +894,9 @@ class FilesystemConnector(BaseConnector):
                             record_content_match(m, excerpt(m.line))
                     if self.scan_secrets:
                         for m in self.index.match_secrets(text):
-                            if looks_like_placeholder(m.value):
+                            reason = placeholder_reason(m.value)
+                            if reason:
+                                self._record_example_credential(proj, m, rel, reason)
                                 continue
                             secret_hits.setdefault(rel, []).append((m, excerpt(m.line, m.value)))
                             self._record(proj, m, rel, None)
@@ -653,6 +908,10 @@ class FilesystemConnector(BaseConnector):
                         card_files.append((rel, text, card_kind))
                     if ext in {".md", ".mdc"} and (".claude/agents/" in rel or ".github/agents/" in rel or ".cursor/rules/" in rel or ".windsurf/rules/" in rel):
                         proj.agent_defs.append(self._parse_agent_definition(rel, text))
+            except ConnectorError:
+                # Cancellation or an exhausted deadline ends the walk; it must
+                # not become one "file analysis incomplete" error per file.
+                raise
             except Exception as exc:  # noqa: BLE001 - isolate hostile files and retain other findings
                 self.ctx.error(f"code.filesystem: {rel}: file analysis incomplete ({type(exc).__name__})")
 
@@ -688,11 +947,21 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"code.filesystem: {rel}: infrastructure analysis incomplete ({type(exc).__name__})")
         for rel, hits in secret_hits.items():
             try:
-                yield self._secret_finding(label, root, rel, hits)
+                f = self._secret_finding(label, root, rel, hits)
+                if f:
+                    yield f
             except Exception as exc:  # noqa: BLE001 - retain findings from other files
                 self.ctx.error(f"code.filesystem: {rel}: credential analysis incomplete ({type(exc).__name__})")
 
     # --------------------------------------------------------------- helpers
+    def _record_example_credential(self, proj: _Project, m: Match, rel: str, reason: str) -> None:
+        """Remember a placeholder credential for informational project evidence."""
+        key = (m.signature_id, id(m.signal), m.value, rel, m.line)
+        if key in proj.seen:
+            return
+        proj.seen.add(key)
+        proj.example_credentials.append((m, rel, reason))
+
     def _record(self, proj: _Project, m: Match, rel: str, snippet: str | None) -> None:
         snippet = sanitize_text(snippet) if snippet is not None else None
         if m.signature.category == "identity-app":
@@ -735,9 +1004,15 @@ class FilesystemConnector(BaseConnector):
                 m.line = art.line
                 self._record(proj, m, rel, f"{art.kind}: {art.value}")
             val = art.extra.get("value") if art.extra else None
-            if val and self.scan_secrets and not looks_like_placeholder(val):
+            if val and self.scan_secrets:
                 for m in self.index.match_secrets(val):
                     m.line = art.line
+                    # Judge the matched credential, not the whole assignment:
+                    # a trailing comment must not hide a real key.
+                    reason = placeholder_reason(m.value)
+                    if reason:
+                        self._record_example_credential(proj, m, rel, reason)
+                        continue
                     secret_hits.setdefault(rel, []).append((m, f"{art.value}={redact(m.value)}"))
                     self._record(proj, m, rel, None)
         elif art.kind == "iac":
@@ -949,8 +1224,27 @@ class FilesystemConnector(BaseConnector):
         return f
 
     def _emit_project(self, label: str, root: Path, proj: _Project) -> Iterator[Finding]:
-        tech_matches = [(m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}]
-        if any(m.signature.category != "heuristic" for m, _, _ in tech_matches):
+        observations = [(m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}]
+        # Anchors establish LLM / agent technology on their own. A credential
+        # alone is already a SECRET finding, and a vendor-neutral heuristic
+        # alone (a retry loop, subprocess.run) describes ordinary automation.
+        anchors = [t for t in observations if t[0].signature.category != "heuristic" and t[0].signal.type != "secret"]
+        tech_matches = observations if anchors else []
+        if tech_matches:
+            # Environment-variable and display-name references are weak
+            # anchors, so they are judged before heuristics join: an agent
+            # loop or subprocess.run next to a .env.example must not promote
+            # the project to a confirmed agent with autonomous or code-exec
+            # capabilities. Such a finding is built from the name references
+            # alone. A live credential is not a name: it keeps full weights
+            # and lets the heuristics count. Every anchor is non-heuristic,
+            # so the judgement below is never vacuous.
+            env_only = all(
+                m.signal.type in {"env", "name"}
+                for m, _, _ in tech_matches if m.signature.category != "heuristic"
+            )
+            if env_only:
+                tech_matches = [t for t in tech_matches if t[0].signal.type in {"env", "name"}]
             library_evidence = {m.signature_id for m, _, _ in tech_matches if m.signal.type in {"import", "dependency"}}
 
             def verified_indicator(match: Match) -> bool:
@@ -970,7 +1264,7 @@ class FilesystemConnector(BaseConnector):
             for m, rel, snip in sorted(tech_matches, key=lambda item: not verified_indicator(item[0])):
                 if m.extra.get("lexical_source") and m.signature.category == "framework" and m.signature_id not in library_evidence:
                     m.weight = min(m.weight, 0.6)
-                apply_matches(f, [m], location=rel, snippet=snip)
+                apply_matches(f, [m], location=rel, snippet=snip, weight_scale=ENV_ONLY_WEIGHT_SCALE if env_only else 1.0)
             # Repeated observations of one technology are correlated evidence.
             # Generic idioms share a single supporting group; loops in several
             # worker files must never accumulate into a confirmed AI agent.
@@ -981,6 +1275,9 @@ class FilesystemConnector(BaseConnector):
                     "uncorroborated-lexical" if evidence.signature in uncorroborated else
                     evidence.signature or evidence.signal
                 )
+            if env_only:
+                f.add_tag("env-names-only")
+            self._attach_example_credentials(f, proj)
             git = self._git_info(root, proj.root)
             f.metadata.update(git)
             if git.get("last_commit"):
@@ -1004,6 +1301,9 @@ class FilesystemConnector(BaseConnector):
                 for m, _, _ in tech_matches
             )
             finalize(f, self.index)
+            if env_only:
+                cap_confidence(f, ENV_ONLY_MAX_CONFIDENCE)
+                f.metadata["confidence_cap"] = {"reason": "env-names-only", "maximum": ENV_ONLY_MAX_CONFIDENCE}
             f.title = self._project_title(f, proj)
             yield f
         for sig_id, files in proj.coding_agent_files.items():
@@ -1028,6 +1328,33 @@ class FilesystemConnector(BaseConnector):
             finalize(f, self.index)
             f.kind = Kind.AGENT_CONFIG
             yield f
+
+    @staticmethod
+    def _attach_example_credentials(f: Finding, proj: _Project) -> None:
+        """Attach placeholder credentials as informational evidence (see module docstring)."""
+        if not proj.example_credentials:
+            return
+        f.add_tag("example-credential")
+        files: list[str] = []
+        for i, (m, rel, reason) in enumerate(proj.example_credentials):
+            if rel not in files:
+                files.append(rel)
+            if i >= MAX_EXAMPLE_CREDENTIAL_EVIDENCE:
+                continue
+            what = m.signal.description or m.signature.name
+            f.add_evidence(
+                Evidence(
+                    signal=f"example-credential:{m.signature_id}",
+                    description=f"placeholder {what} ({reason}) in {rel}: {redact(m.value)}",
+                    location=f"{rel}:{m.line}" if m.line else rel,
+                    weight=EXAMPLE_CREDENTIAL_WEIGHT,
+                    signature=m.signature_id,
+                    attributes={"category": m.signature.category, "value": redact(m.value), "placeholder": reason},
+                )
+            )
+        # The key name must not read as a credential field, or the report
+        # sanitizer withholds the file list itself.
+        f.metadata["placeholder_samples"] = {"count": len(proj.example_credentials), "files": sorted(files)[:MAX_EXAMPLE_CREDENTIAL_EVIDENCE]}
 
     def _project_title(self, f: Finding, proj: _Project) -> str:
         order = {"framework": 0, "cloud-service": 1, "platform": 2, "protocol": 3}
@@ -1063,8 +1390,10 @@ class FilesystemConnector(BaseConnector):
                 f.add_tag("inline-secrets")
                 f.add_evidence(Evidence(signal="secret:inline", description=f"MCP server '{s['name']}' has credential-looking values in its env block", location=rel, weight=0.3))
             cmd = " ".join([str(s.get("command") or "")] + [str(a) for a in s.get("args", [])]).lower()
-            if any(k in cmd for k in ("filesystem", "shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh", "sqlite", "postgres", "mysql", "mongodb", "github", "gitlab", "slack", "gmail", "google-drive", "aws", "gcloud", "azure", "puppeteer", "playwright", "browser")):
-                f.add_capability("code-exec" if any(k in cmd for k in ("shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh")) else "saas-actions")
+            for capability, keywords in _MCP_CAPABILITY_KEYWORDS:
+                if any(k in cmd for k in keywords):
+                    f.add_capability(capability)
+                    break
         f.metadata["servers"] = enabled
         f.metadata["server_count"] = len(enabled)
         f.metadata["disabled_server_count"] = len(servers) - len(enabled)
@@ -1175,14 +1504,18 @@ class FilesystemConnector(BaseConnector):
         f.kind = Kind.INFRA
         return f
 
-    def _secret_finding(self, label: str, root: Path, rel: str, hits: list[tuple[Match, str]]) -> Finding:
-        f = self._base(label, root, rel, Kind.SECRET, f"LLM provider credential in {rel}", "file")
+    def _secret_finding(self, label: str, root: Path, rel: str, hits: list[tuple[Match, str]]) -> Finding | None:
         # A structured value (e.g. a .env assignment) and the raw text pass can
         # both observe the same credential on the same line; count it once.
+        # Placeholders are filtered again here so every caller shares the rule.
         unique: dict[tuple[str, str, int | None], tuple[Match, str]] = {}
         for m, snip in hits:
-            unique.setdefault((m.signature_id, m.value, m.line), (m, snip))
+            if not looks_like_placeholder(m.value):
+                unique.setdefault((m.signature_id, m.value, m.line), (m, snip))
         hits = list(unique.values())
+        if not hits:
+            return None
+        f = self._base(label, root, rel, Kind.SECRET, f"LLM provider credential in {rel}", "file")
         for m, snip in hits:
             apply_matches(f, [m], location=rel, snippet=snip)
         f.add_tag("hardcoded-credential")
@@ -1285,30 +1618,51 @@ def _without_xml_comments(text: str) -> str:
     return re.sub(r"<!--.*?(?:-->|$)", lambda match: re.sub(r"[^\n]", " ", match.group()), text, flags=re.S)
 
 
-def _safe_source_text(rel: str, text: str) -> str:
-    """Use structured credential context while retaining source line positions.
+_NO_STRUCTURE = object()
+
+
+def _structured_context(rel: str, text: str) -> Any:
+    """Parse the structure that supplies credential context for excerpt redaction.
+
+    Returns ``_NO_STRUCTURE`` for plain text and for structured files whose
+    syntax or shape the dedicated parser rejects; lexical redaction then
+    applies. Resource-limit failures propagate: they must reach the per-file
+    isolation boundary even when nothing is excerpted, since lexical fallback
+    would otherwise disguise an incomplete analysis.
+    """
+    try:
+        if rel.endswith(_JSON_SUFFIXES):
+            return _load_json_lenient(text)
+        if rel.endswith(".toml"):
+            return tomllib.loads(text)
+        if rel.endswith(_YAML_SUFFIXES):
+            return bounded_safe_load(text)
+    except (YAMLResourceLimitError, SanitizationLimitError):
+        raise
+    except (ValueError, RecursionError, yaml.YAMLError):
+        return _NO_STRUCTURE
+    return _NO_STRUCTURE
+
+
+def _redacted_source(text: str, structure: Any) -> str:
+    """Redact ``text`` with the structured context from ``_structured_context``, keeping line positions.
 
     An opaque argv value is identifiable only alongside its flag, and environment
     values must not reappear in source snippets after being removed from metadata.
     """
+    if structure is _NO_STRUCTURE:
+        return sanitize_text(text)
     try:
-        if rel.endswith((".json", ".jsonc", ".json5")):
-            data = _load_json_lenient(text)
-        elif rel.endswith(".toml"):
-            data = tomllib.loads(text)
-        elif rel.endswith((".yaml", ".yml")):
-            data = bounded_safe_load(text)
-        else:
-            return sanitize_text(text)
-        return sanitize((data, text))[1]
+        return sanitize((structure, text))[1]
     except (YAMLResourceLimitError, SanitizationLimitError):
-        # Resource-limit failures must reach the per-file isolation boundary;
-        # lexical fallback would otherwise disguise an incomplete analysis.
         raise
     except (ValueError, RecursionError, yaml.YAMLError):
-        # Dedicated parsers report syntax/shape failures. Lexical redaction still
-        # applies if this file cannot supply usable structured context.
         return sanitize_text(text)
+
+
+def _safe_source_text(rel: str, text: str) -> str:
+    """Use structured credential context while retaining source line positions."""
+    return _redacted_source(text, _structured_context(rel, text))
 
 
 def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:

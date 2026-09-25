@@ -17,7 +17,7 @@ import pytest
 from shadowscan import __version__
 from tools.acceptance import verify as gate
 from tools.evaluation.annotations import validate_annotations
-from tools.evaluation.evaluate import load_corpus, summarize
+from tools.evaluation.evaluate import evaluate, known_gaps, load_corpus, summarize
 
 NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
 SOURCE = "1" * 64
@@ -71,14 +71,15 @@ def evidence(tmp_path, monkeypatch):
     metadata, loaded_cases, digest = load_corpus(tmp_path / "corpus.json")
     rows = [{"id": case.id, "family": case.family, "description": case.description, "source": case.source,
              "target": {"kind": case.kind.value, "signature": case.signature}, "present": case.present,
-             "predicted": case.present, "score": float(case.present), "correct": True,
+             "predicted": case.present, "score": float(case.present), "correct": True, "known_gap": False,
              "assertion_failures": [], "median_ms": 1.0,
              "findings": [{"kind": "agent", "signatures": [], "confidence": 1.0}] if case.present else []}
             for case in loaded_cases]
     report = {"schema": 1, "corpus": {**metadata, "sha256": digest}, "annotation_validation": ledger,
               "implementation": {"scanner_version": __version__, "scanner_source_sha256": SOURCE,
                                  "signature_sha256": SIGNATURE, "python": "3.11", "platform": "synthetic-test"},
-              "cases": rows, "metrics": summarize(rows), "calibration": {}, "performance": {}, "passed": True}
+              "cases": rows, "metrics": summarize(rows), "known_gaps": known_gaps(rows),
+              "calibration": {}, "performance": {}, "passed": True}
     report_ref = write_artifact(tmp_path, "evaluation.json", report)
     manifest = {"schema": gate.SCHEMA, "reviewer": "test-operator", "reviewed_at": stamp(1),
                 "policy": {"frozen_at": stamp(24), "max_age_hours": 48, "min_cases": 20, "min_positive_cases": 7,
@@ -141,6 +142,7 @@ def refresh_evaluation(root: Path, manifest: dict, report: dict, corpus: dict) -
         row["source"] = case.source
         row["target"] = {"kind": case.kind.value, "signature": case.signature}
     report["metrics"] = summarize(report["cases"])
+    report["known_gaps"] = known_gaps(report["cases"])
     report["passed"] = all(row["correct"] for row in report["cases"])
     manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", report)
 
@@ -179,6 +181,7 @@ def test_optional_per_kind_policy_counts_and_error_caps(evidence):
     row = report["cases"][14]
     row.update(predicted=True, correct=False, findings=[{"kind": "mcp-server", "signatures": [], "confidence": 0.7}])
     report["metrics"] = summarize(report["cases"])
+    report["known_gaps"] = known_gaps(report["cases"])
     report["passed"] = False
     manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", report)
     manifest["policy"]["min_precision"] = 0.85
@@ -219,6 +222,7 @@ def test_per_kind_false_negative_cap_is_stricter_than_aggregate_recall(evidence)
     row.update(predicted=False, correct=False, findings=[])
     report["passed"] = False
     report["metrics"] = summarize(report["cases"])
+    report["known_gaps"] = known_gaps(report["cases"])
     manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", report)
     with pytest.raises(gate.EvidenceError, match="kind_error_budget_exceeded"):
         gate.verify(write_manifest(root, manifest), now=NOW)
@@ -256,6 +260,37 @@ def test_holdout_cannot_reuse_september_review_regression_file(evidence):
     selected["source"]["sha256"] = hashlib.sha256(contents.encode()).hexdigest()
     refresh_evaluation(root, manifest, report, corpus)
     with pytest.raises(gate.EvidenceError, match="holdout_reuses_evaluated_source"):
+        gate.verify(write_manifest(root, manifest), now=NOW)
+
+
+def test_holdout_cannot_reuse_new_realistic_multifile_evaluation(evidence):
+    root, manifest, report = evidence
+    corpus = json.loads((root / "corpus.json").read_text())
+    _, realistic, _ = load_corpus(gate.DEFAULT_CORPUS.with_name("realistic_corpus.json"))
+    selected = corpus["cases"][0]
+    source_path = selected["source"]["path"]
+    contents = next(iter(realistic[0].files.values()))
+    selected["files"][source_path] = contents
+    selected["source"]["sha256"] = hashlib.sha256(contents.encode()).hexdigest()
+    refresh_evaluation(root, manifest, report, corpus)
+    with pytest.raises(gate.EvidenceError, match="holdout_reuses_evaluated_source"):
+        gate.verify(write_manifest(root, manifest), now=NOW)
+
+
+def test_actual_evaluator_known_gap_report_cannot_pass_holdout(evidence):
+    root, manifest, _ = evidence
+    corpus = json.loads((root / "corpus.json").read_text())
+    corpus["cases"][0]["known_gap"] = True
+    corpus_ref = write_artifact(root, "corpus.json", corpus)
+    manifest["evaluation"]["corpus"] = corpus_ref
+    annotations = json.loads((root / "annotations.json").read_text())
+    annotations["corpus_sha256"] = corpus_ref["sha256"]
+    manifest["evaluation"]["annotations"] = write_artifact(root, "annotations.json", annotations)
+    actual = evaluate(root / "corpus.json", annotations=root / "annotations.json")
+    assert actual["known_gaps"]["count"] == 1
+    assert actual["cases"][0]["known_gap"] is True
+    manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", actual)
+    with pytest.raises(gate.EvidenceError, match="known_gap_not_allowed_in_holdout"):
         gate.verify(write_manifest(root, manifest), now=NOW)
 
 
@@ -392,6 +427,7 @@ def test_metrics_cannot_hide_misses(evidence):
     with pytest.raises(gate.EvidenceError, match="inconsistent_evaluation_metrics"):
         gate.verify(write_manifest(root, manifest), now=NOW)
     report["metrics"] = summarize(report["cases"])
+    report["known_gaps"] = known_gaps(report["cases"])
     manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", report)
     with pytest.raises(gate.EvidenceError, match="metric_threshold_not_met"):
         gate.verify(write_manifest(root, manifest), now=NOW)

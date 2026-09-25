@@ -90,7 +90,7 @@ def test_azure_app_settings_are_redacted_in_dumps_but_analyzed_live(index):
     record = {
         "_kind": "appsettings", "id": "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
         "name": "app", "kind": "functionapp",
-        "environment": {"OPENAI_API_KEY": "sk-proj-" + "a" * 40, "SENDGRID_KEY": "SG.opaque-value-1234567890"},
+        "environment": {"OPENAI_API_KEY": "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h", "SENDGRID_KEY": "SG.opaque-value-1234567890"},
     }
     dumped = sanitize(record)
     assert set(dumped["environment"].values()) == {REDACTED}
@@ -112,7 +112,7 @@ def test_azure_foundry_projects_inherit_subscription_and_location(index, monkeyp
         "location": "eastus", "subscriptionId": "s1", "properties": {},
     }]}
 
-    def fake_list(path, api, **kwargs):
+    def fake_list(path, api, *, allow_partial=False):
         return [{"id": f"{account_id}/projects/p1", "name": "p1", "properties": {}}] if path.endswith("/projects") else []
 
     monkeypatch.setattr(connector, "_auth", lambda: setattr(connector, "http", http))
@@ -138,6 +138,7 @@ def test_oci_clients_are_cached_per_region_with_timeouts(index):
     other = connector._client(Client, "r2")
     assert other is not first and other.config["region"] == "r2"
     assert first.kwargs["timeout"] == (10, 30)
+    assert first.kwargs["retry_strategy"] is not None
 
 
 def test_oci_function_reads_environment_and_legacy_config_keys(index):

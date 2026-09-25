@@ -32,7 +32,8 @@ class OktaConnector(BaseConnector):
     description: ClassVar[str] = "Okta applications, OAuth service apps, admin/user consent grants."
     config_keys: ClassVar[dict[str, str]] = {
         "org_url": "https://<org>.okta.com (env OKTA_ORG_URL)",
-        "token": "SSWS API token (env OKTA_API_TOKEN) or set `bearer` for OAuth access token",
+        "token": "SSWS API token (env OKTA_API_TOKEN); ignored when `bearer` is set",
+        "bearer": "OAuth 2.0 access token with okta.apps.read, sent as Bearer instead of `token` (env OKTA_ACCESS_TOKEN)",
         "include_inactive": "include INACTIVE apps (default false)",
         "fetch_tokens": "call /tokens per OIDC app to count user consents (default true)",
         "input": "offline: JSON export of /api/v1/apps (with optional _grants/_tokens)",

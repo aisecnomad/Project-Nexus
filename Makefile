@@ -1,6 +1,5 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
-export PYTHON_BASE_DIGEST
 
 # --- Development -----------------------------------------------------------
 
@@ -63,6 +62,7 @@ check: lint typecheck signatures audit test coverage-gate evaluate ## Run local 
 
 .PHONY: build
 build: ## Build distributable wheel
+	python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 	python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 
 .PHONY: wheel-validate
@@ -76,12 +76,8 @@ wheel-validate: build ## Validate the wheel installs and works outside checkout
 	rm -rf /tmp/shadowscan-wheel-test
 
 .PHONY: docker
-docker: ## Build worker with PYTHON_BASE_DIGEST=<approved 64-character hex digest>
-	@if [[ ! "$${PYTHON_BASE_DIGEST:-}" =~ ^[a-f0-9]{64}$$ ]]; then \
-		echo "Set PYTHON_BASE_DIGEST to an approved 64-character python:3.12-slim-bookworm image index digest" >&2; \
-		exit 2; \
-	fi
-	docker build --build-arg "PYTHON_BASE_DIGEST=$${PYTHON_BASE_DIGEST}" --tag shadowscan:local .
+docker: ## Build worker from the reviewed Dockerfile base digest
+	docker build --tag shadowscan:local .
 
 .PHONY: docker-test
 docker-test: docker ## Run container smoke test
@@ -107,12 +103,12 @@ demo-sarif: ## Run offline demo with SARIF output
 
 .PHONY: docs
 docs: ## Build documentation site locally
-	pip install -q mkdocs-material mkdocs-minify-plugin
+	python -m pip install -q --only-binary=:all: -c requirements-ci-constraints.txt "mkdocs-material==9.7.7"
 	mkdocs build
 
 .PHONY: docs-serve
 docs-serve: ## Serve documentation site with live reload
-	pip install -q mkdocs-material mkdocs-minify-plugin
+	python -m pip install -q --only-binary=:all: -c requirements-ci-constraints.txt "mkdocs-material==9.7.7"
 	mkdocs serve
 
 # --- Cleanup ---------------------------------------------------------------

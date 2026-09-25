@@ -42,10 +42,10 @@ jobs:
           git -C "$scanner_dir" fetch --no-tags --depth 1 origin "$SHADOWSCAN_REVISION"
           git -C "$scanner_dir" checkout --detach -q FETCH_HEAD
           test "$(git -C "$scanner_dir" rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
-          # The reviewed tree supplies exact runtime versions and artifact hashes.
-          # The build tools match this project's CI and pyproject build backend.
-          python -m pip install --upgrade --only-binary=:all: \
-            pip==26.2.1 setuptools==84.0.0 wheel==0.48.0
+          # The reviewed tree supplies exact runtime and build backend hashes.
+          python -m pip install --upgrade --only-binary=:all: pip==26.2.1
+          python -m pip install --require-hashes --only-binary=:all: \
+            -r "$scanner_dir/requirements-build.lock"
           python -m pip install --require-hashes --only-binary=:all: \
             -r "$scanner_dir/requirements.lock"
           python -m pip wheel --no-deps --no-build-isolation \

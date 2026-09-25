@@ -139,7 +139,7 @@ def test_merge_preserves_runtime_observations_and_variable_names():
     assert next(f for f in result if f.kind == Kind.SECRET).metadata["variable_names"] == ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
 
 
-def test_gateway_caller_keeps_export_metrics_separate_and_correlates_both(tmp_path: Path):
+def test_gateway_caller_keeps_export_metrics_separate_and_correlates_both(tmp_path: Path, index):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "requirements.txt").write_text("langchain\n")
@@ -162,7 +162,7 @@ def test_gateway_caller_keeps_export_metrics_separate_and_correlates_both(tmp_pa
     result = Engine(ScanConfig(connectors=[
         ConnectorSpec("code.filesystem", {"path": str(repo)}, label="github:acme/ops-agent"),
         *gateway_specs,
-    ], parallel=1)).run()
+    ], parallel=1), index).run()
     assert result.complete
     gateways = [f for f in result.findings if f.surface == Surface.GATEWAY]
     assert len(gateways) == 2
@@ -179,7 +179,7 @@ def test_gateway_caller_keeps_export_metrics_separate_and_correlates_both(tmp_pa
     assert {source["gateway_finding_id"] for source in activity["sources"]} == {gateway.id for gateway in gateways}
 
 
-def test_engine_end_to_end_with_config(tmp_path: Path, fixtures):
+def test_engine_end_to_end_with_config(tmp_path: Path, fixtures, index):
     cfg = ScanConfig(
         connectors=[
             ConnectorSpec(name="code.filesystem", config={"path": str(fixtures / "sample_repo"), "label": "repo"}),
@@ -190,7 +190,7 @@ def test_engine_end_to_end_with_config(tmp_path: Path, fixtures):
         min_confidence=0.2,
         parallel=2,
     )
-    result = Engine(cfg).run()
+    result = Engine(cfg, index).run()
     assert result.inventory_size == 1
     registered = [f for f in result.findings if f.shadow is False]
     assert {f.registry_match for f in registered} == {"ops-provisioning-04"} and len(registered) >= 2
@@ -222,7 +222,7 @@ def test_invalid_confidence_threshold_never_clears_scan(threshold):
         ScanConfig.from_dict({"options": {"min_confidence": threshold}})
     cfg = ScanConfig(min_confidence=threshold)
     with pytest.raises(ValueError, match="min_confidence must be a finite number between 0 and 1"):
-        Engine(cfg).run()
+        Engine(cfg, SignatureIndex([])).run()
 
 
 def test_env_connector_enabled_flag_parsed_explicitly(monkeypatch):

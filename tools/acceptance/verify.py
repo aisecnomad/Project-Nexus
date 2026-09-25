@@ -29,6 +29,7 @@ from tools.evaluation.evaluate import (
     Case,
     _assertions,
     _source_fingerprint,
+    known_gaps,
     load_corpus,
     summarize,
 )
@@ -189,7 +190,8 @@ def _exclude_evaluated_cases(cases: list[Case], corpus_digest: str, base: Path,
                 prior_locations.add((case.source["repo"].casefold(), case.source["commit"], case.source["path"]))
 
     for path in (DEFAULT_CORPUS, *(DEFAULT_CORPUS.with_name(name) for name in
-                                    ("public_corpus.json", "independent_corpus.json", "review_corpus.json"))):
+                                    ("public_corpus.json", "realistic_corpus.json",
+                                     "independent_corpus.json", "review_corpus.json"))):
         _, prior, digest = load_corpus(path)
         record(prior, digest)
     with tempfile.TemporaryDirectory(prefix="nexus-prior-evaluations-") as temp:
@@ -250,8 +252,9 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
         ledger = validate_annotations(corpus_path, annotation_path)
         metadata, cases, digest = load_corpus(corpus_path)
     _exclude_evaluated_cases(cases, digest, base, evidence.get("prior_corpora", []))
+    _require(not any(case.known_gap for case in cases), "known_gap_not_allowed_in_holdout")
     _keys(report, {"schema", "corpus", "annotation_validation", "implementation", "cases", "metrics",
-                   "calibration", "performance", "passed"})
+                   "known_gaps", "calibration", "performance", "passed"})
     _require(type(report["schema"]) is int and report["schema"] == 1, "unsupported_evaluation_schema")
     _require(report["corpus"] == {**metadata, "sha256": digest} and report["annotation_validation"] == ledger,
              "evaluation_label_provenance_mismatch")
@@ -266,6 +269,7 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
     seen: set[str] = set()
     for row in rows:
         _keys(row, {"id", "family", "description", "source", "target", "present", "predicted", "score",
+                    "known_gap",
                     "correct", "assertion_failures", "findings", "median_ms"})
         _require(isinstance(row["id"], str) and row["id"] in expected and row["id"] not in seen,
                  "evaluation_case_mismatch")
@@ -276,6 +280,7 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
                  and type(row["present"]) is bool and row["present"] == case.present
                  and type(row["predicted"]) is bool and type(row["correct"]) is bool,
                  "evaluation_label_mismatch")
+        _require(row["known_gap"] is False, "known_gap_not_allowed_in_holdout")
         _require(row["assertion_failures"] == [], "evaluation_assertion_failure")
         _require(row["correct"] == (row["present"] == row["predicted"]), "inconsistent_evaluation_result")
         _require(isinstance(row["findings"], list), "invalid_evaluation_findings")
@@ -291,6 +296,8 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
              "inconsistent_evaluation_result")
     metrics = summarize(rows)
     _require(report["metrics"] == metrics, "inconsistent_evaluation_metrics")
+    _require(report["known_gaps"] == known_gaps(rows), "inconsistent_evaluation_result")
+    _require(report["known_gaps"]["count"] == 0, "known_gap_not_allowed_in_holdout")
     overall = metrics["all"]
     for name in ("cases", "positive_cases", "negative_cases"):
         _require(overall[name] >= policy[f"min_{name}"], "sample_threshold_not_met")

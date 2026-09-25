@@ -74,7 +74,8 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("release directory must be a real directory")
     files = sorted(directory.iterdir())
-    required = {"ci-verification.json", "runtime-sbom.cdx.json", "requirements.lock", "requirements-ci-constraints.txt"}
+    required = {"ci-verification.json", "runtime-sbom.cdx.json", "requirements.lock",
+                "requirements-build.lock", "requirements-ci-constraints.txt"}
     if not required.issubset({path.name for path in files}):
         raise ValueError("release evidence is missing required files")
     if len([path for path in files if path.suffix == ".whl"]) != 1:

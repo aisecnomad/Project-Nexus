@@ -49,15 +49,27 @@ def test_plugin_requires_approval_even_after_cached_import(monkeypatch):
     monkeypatch.setattr(registry, "_cache", {})
     imports = []
 
+    class Extension(BaseConnector):
+        name = "code.extension"
+        surface = Surface.CODE
+        description = "Approval boundary probe."
+        config_keys: dict[str, str] = {}
+
+        def collect(self):
+            yield from ()
+
+        def analyze(self, records):
+            yield from ()
+
     def load(path):
         imports.append(path)
-        return BaseConnector
+        return Extension
 
     monkeypatch.setattr(registry, "_load", load)
     with pytest.raises(ValueError, match="not approved"):
         registry.get_connector_class("code.extension")
     assert imports == []
-    assert registry.get_connector_class("code.extension", allowed_plugins=["code.extension"]) is BaseConnector
+    assert registry.get_connector_class("code.extension", allowed_plugins=["code.extension"]) is Extension
     assert len(imports) == 1
     with pytest.raises(ValueError, match="not approved"):
         registry.get_connector_class("code.extension")

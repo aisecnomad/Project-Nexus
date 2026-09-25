@@ -109,8 +109,17 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   while scanning. Runtime telemetry attribution does not prove that a particular
   dependency executed.
 
-See [deployment and migration](docs/production.md), [scan semantics](docs/scanning.md),
-and [connector permissions](docs/connectors.md).
+See [deployment and migration](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md),
+[scan semantics](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/scanning.md),
+and [connector permissions](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/connectors.md).
+
+## Supported versions
+
+No version has been released. There is no tag, published package or signed
+artifact; the `0.1.1` version string in `pyproject.toml` names an unreleased
+candidate. Only the current `main` branch receives fixes, and fixes land there
+without a backport. Report issues against the full commit SHA of `main` or of
+the pinned revision you deployed, not against a version number.
 
 ## Reporting
 

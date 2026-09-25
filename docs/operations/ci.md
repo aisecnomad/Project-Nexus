@@ -5,10 +5,10 @@ GitHub Code Scanning and exits with deterministic codes for gate decisions.
 
 ## GitHub Actions
 
-Copy the [consumer GitHub Action](../../examples/github-action-code-scan.yml)
+Copy the [consumer GitHub Action](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/github-action-code-scan.yml)
 into your repository and set `SHADOWSCAN_REVISION` to a reviewed full commit SHA.
 The example pins its actions, checks out that exact scanner revision, installs
-the hash-locked runtime dependencies, builds a wheel with pinned build tools,
+the hash-locked runtime and build dependencies, builds a wheel with the locked backend,
 and uploads the SARIF report. Review its `--fail-on` level for your policy.
 
 ## Exit code handling

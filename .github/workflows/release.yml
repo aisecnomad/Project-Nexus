@@ -60,13 +60,16 @@ jobs:
             --current-sha "$GITHUB_SHA" --run-id "$CI_RUN_ID"
       - name: Install pinned build tools and locked runtime
         run: |
-          python -m pip install --upgrade --only-binary=:all: pip==26.2.1 setuptools==84.0.0 wheel==0.48.0
+          python -m pip install --upgrade --only-binary=:all: pip==26.2.1
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
           python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
           python - <<'PY'
           import os
           import re
           from pathlib import Path
-          pins = [line.split()[0] for line in Path('requirements.lock').read_text().splitlines()
+          pins = [line.split()[0]
+                  for lock in ('requirements.lock', 'requirements-build.lock')
+                  for line in Path(lock).read_text().splitlines()
                   if re.match(r'^[A-Za-z0-9_.-]+==[^\s]+', line)]
           if not pins:
               raise SystemExit('runtime lock has no version pins')
@@ -80,6 +83,7 @@ jobs:
           git diff --exit-code
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           export SOURCE_DATE_EPOCH
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
           python -m pip wheel . --no-deps --no-build-isolation --wheel-dir candidate
       - name: Validate the installed wheel outside the checkout
         run: |
@@ -108,7 +112,7 @@ jobs:
             -r requirements.lock -f cyclonedx-json -o candidate/runtime-sbom.cdx.json
       - name: Record source identity, dependency pins and file digests
         run: |
-          cp requirements.lock requirements-ci-constraints.txt candidate/
+          cp requirements.lock requirements-build.lock requirements-ci-constraints.txt candidate/
           python -m tools.release.evidence manifest --directory candidate \
             --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --workflow-run "$GITHUB_RUN_ID"
           cd candidate
