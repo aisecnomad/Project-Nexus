@@ -319,12 +319,13 @@ def test_unrelated_bound_calls_do_not_exhaust_the_binder(run_connector, tmp_path
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
-def test_internal_symlinks_keep_coverage_complete(run_connector, tmp_path):
+def test_internal_directory_symlinks_mark_alias_path_unscanned(run_connector, tmp_path):
     write(tmp_path, "certs/valid/ca.pem", "certificate\n")
     (tmp_path / "certs" / "client").mkdir()
     (tmp_path / "certs" / "client" / "ca").symlink_to(tmp_path / "certs" / "valid")
     _, stats = scan(run_connector, tmp_path, strict_coverage=True)
-    assert not stats.errors and not stats.warnings and not stats.incomplete
+    assert stats.errors and stats.incomplete
+    assert any("symbolic link certs/client/ca" in issue for issue in stats.errors)
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")

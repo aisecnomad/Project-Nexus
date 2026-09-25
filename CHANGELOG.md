@@ -8,7 +8,9 @@
   symlinks as incomplete even without `strict_coverage`; the flag elevates the
   diagnostic from a warning to an error. Declared generated-file omissions in
   `oversize_skip_globs` remain visible warnings.
-- Treat malformed explicit GitLab project responses and empty GitHub/GitLab
+- Treat in-root directory symlinks, and file links to excluded or otherwise
+  unread targets, as incomplete instead of assuming alias content was scanned.
+- Treat malformed or mismatched explicit GitHub/GitLab repository responses and empty GitHub/GitLab
   offline clone inputs as incomplete scans instead of complete empty results.
 - Compute the signature-set digest once per incremental scan run instead of
   reserializing it for every input snapshot; changes between runs still invalidate

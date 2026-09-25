@@ -110,13 +110,14 @@ class GitLabConnector(BaseConnector):
         seen: set[int] = set()
         requested: set[str] = set()
         for p in projects:
-            if str(p) in requested:
+            project = str(p)
+            if project in requested:
                 continue
-            requested.add(str(p))
+            requested.add(project)
             if len(seen) >= self.max_projects:
                 self.ctx.warn(f"code.gitlab: max_projects ({self.max_projects}) reached", incomplete=True)
                 return
-            data = self.http.try_get_json(f"/projects/{quote(str(p), safe='')}")
+            data = self.http.try_get_json(f"/projects/{quote(project, safe='')}")
             if (
                 not isinstance(data, dict)
                 or isinstance(data.get("id"), bool)
@@ -126,6 +127,18 @@ class GitLabConnector(BaseConnector):
                 or not data["path_with_namespace"].strip()
             ):
                 self.ctx.warn("code.gitlab: explicit project response is missing a valid id or path; coverage unknown")
+                continue
+            # A successful HTTP response does not prove that it describes the
+            # requested project. GitLab may resolve an old path after a rename;
+            # require the caller to use the canonical path instead of silently
+            # claiming coverage of a different project.
+            canonical = data["path_with_namespace"]
+            numeric_id = project.isascii() and project.isdecimal() and project.lstrip("0") == str(data["id"])
+            if not (numeric_id or project.casefold() == canonical.casefold()):
+                self.ctx.warn(
+                    "code.gitlab: explicit project response does not match the requested path or id; "
+                    "project may have moved; coverage unknown"
+                )
                 continue
             if data["id"] not in seen:
                 seen.add(data["id"])

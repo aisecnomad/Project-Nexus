@@ -237,8 +237,9 @@ for configuration, limitations, and migration guidance.
 Oversize files that the scanner would inspect and symbolic links that leave the
 scan root make coverage incomplete (exit 3) by default. `--strict-coverage`
 (`strict_coverage: true`) records them as errors instead of warnings; explicitly
-declared `oversize_skip_globs` remain warnings. Links that stay inside the root never reduce coverage because
-their targets are scanned directly. Evidence found only in test or fixture code
+declared `oversize_skip_globs` remain warnings. In-root file links stay complete
+only when their real targets are included and analyzed; directory links are
+incomplete because their alias paths are not scanned. Evidence found only in test or fixture code
 cannot establish an agent unless `--include-tests` is set.
 
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches

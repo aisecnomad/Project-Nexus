@@ -179,12 +179,21 @@ class GitHubConnector(BaseConnector):
                     self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
                     return
                 data = self.http.try_get_json(f"/repos/{full}")
-                if data:
-                    if data["full_name"] not in seen:
-                        seen.add(data["full_name"])
-                        yield _remote_record(data)
-                else:
+                if not data:
                     self.ctx.warn(f"code.github: cannot access {full}", incomplete=True)
+                    continue
+                name = data.get("full_name") if isinstance(data, dict) else None
+                if (
+                    not isinstance(name, str)
+                    or name.count("/") != 1
+                    or not all(name.split("/"))
+                    or name.casefold() != str(full).casefold()
+                ):
+                    self.ctx.warn("code.github: explicit repository response does not match the requested name; coverage unknown")
+                    continue
+                if name not in seen:
+                    seen.add(name)
+                    yield _remote_record(data)
         if org:
             for r in self.http.paginate_link(f"/orgs/{org}/repos", params={"per_page": 100, "type": "all", "sort": "pushed"}):
                 if r["full_name"] not in seen and self._wanted(r):

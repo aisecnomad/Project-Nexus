@@ -59,6 +59,8 @@ input: a directory of clones. Code findings retain the scanned Git tree/commit
 identity in `metadata.source_snapshot`; API blob bytes are checked against their
 enumerated Git object IDs.
 An offline input with no clone directories is incomplete.
+An explicit `repos:` response whose repository identity does not match the
+requested name is incomplete, and that response is not scanned.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 
@@ -71,7 +73,7 @@ Live API records cannot choose internal offline paths or dispatch fields. Code
 findings retain the scanned Git tree/commit identity in
 `metadata.source_snapshot`, and API mode pins tree pagination to an immutable
 commit before downloading files.
-Missing or malformed details for an explicitly named project, and an offline
+Missing, malformed or mismatched details for an explicitly named project, and an offline
 input with no clone directories, make the scan incomplete.
 
 

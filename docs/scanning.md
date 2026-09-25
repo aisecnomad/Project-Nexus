@@ -5,10 +5,12 @@
 A code scan is *complete* when every file it was asked to assess was assessed.
 Two situations are deliberately outside a repository's own content:
 
-* **Symbolic links** are never followed. A link whose target resolves inside the
-  scan root loses nothing (the target is scanned at its real path) and is
-  skipped silently. A link that leaves the root, or cannot be resolved, makes
-  the scan incomplete (exit code 3).
+* **Symbolic links** are never followed. A regular-file link whose target
+  resolves to an included, analyzable file is skipped silently because the
+  target is scanned at its real path with equivalent detection semantics.
+  Directory links are incomplete because files under the alias path are not
+  inspected. File links into excluded or unread content, links outside the
+  root, and unresolved links also make the scan incomplete (exit code 3).
 * **Oversize files** (`max_file_size`, default 1 MiB) that the scanner would
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain

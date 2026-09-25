@@ -293,9 +293,10 @@ application owns process supervision. Keep the external job deadline and process
 group/container cleanup to reap child processes and bound native code that holds
 the interpreter lock indefinitely.
 
-Code scans follow a documented coverage policy. Symbolic links that resolve
-inside the scan root are skipped silently because their targets are scanned at
-their real path. Links leaving the root and oversized files the scanner would
+Code scans follow a documented coverage policy. Regular-file links whose real
+targets are included and analyzed with equivalent semantics are skipped because
+the target is scanned at its real path. Directory links, links into excluded or
+unread content, links leaving the root and oversized files the scanner would
 inspect make the scan incomplete (exit 3) by default, with a warning naming
 the omission. `strict_coverage: true` (`--strict-coverage`) records those
 conditions as errors; explicit `oversize_skip_globs` remain declared omissions
