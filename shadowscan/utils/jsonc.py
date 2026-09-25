@@ -21,8 +21,8 @@ from typing import Any
 # comment. Strings come first so comment markers inside them are preserved.
 _COMMENT_TOKENS = re.compile(r'"(?:[^"\\\n]|\\.)*"|//[^\n]*|/\*.*?\*/|/\*', re.DOTALL)
 # A string literal, or a comma followed only by whitespace before a closing
-# bracket or the end of the document.
-_TRAILING_COMMA_TOKENS = re.compile(r'"(?:[^"\\\n]|\\.)*"|,(?=\s*(?:[}\]]|\Z))')
+# bracket. A comma at the end of the document stays and remains an error.
+_TRAILING_COMMA_TOKENS = re.compile(r'"(?:[^"\\\n]|\\.)*"|,(?=\s*[}\]])')
 
 
 def _strip_comment(match: re.Match[str]) -> str:

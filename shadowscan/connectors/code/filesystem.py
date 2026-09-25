@@ -899,21 +899,24 @@ class FilesystemConnector(BaseConnector):
                         for issue in dict.fromkeys(notebook_errors):
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                         lang = "python"
+                        # Unread analyzable content leaves coverage incomplete, as
+                        # for any oversize file; strict_coverage only raises the
+                        # diagnostic from a warning to an error.
+                        gap: str | None = None
                         if len(text) > self.max_file_size:
-                            message = f"code.filesystem: {rel}: skipped, notebook code cells exceed max_file_size"
+                            gap = f"code.filesystem: {rel}: skipped, notebook code cells exceed max_file_size"
+                        elif oversized_notebook and self.scan_secrets:
+                            # Code cells are analyzed as usual. Saved outputs are
+                            # read only for credentials, and not at this size.
+                            gap = (f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
+                                   "saved outputs not scanned for credentials")
+                        if gap is not None:
                             if self.strict_coverage:
-                                self.ctx.error(message)
+                                self.ctx.error(gap)
                             else:
-                                self.ctx.warn(f"{message}; enable strict_coverage to treat this as incomplete", incomplete=False)
+                                self.ctx.warn(f"{gap}; coverage incomplete", incomplete=True)
+                        if len(text) > self.max_file_size:
                             continue
-                        if oversized_notebook:
-                            # Code cells are analyzed as usual. Saved outputs
-                            # are not read for credentials at this size.
-                            self.ctx.warn(
-                                f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
-                                "saved outputs not scanned for credentials",
-                                incomplete=self.strict_coverage,
-                            )
                     # Structured files are parsed now so a resource-limit
                     # failure reaches the per-file boundary. Redacting the
                     # text for excerpts waits until a match needs one, which

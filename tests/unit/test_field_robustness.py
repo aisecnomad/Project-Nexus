@@ -183,8 +183,19 @@ def test_notebook_with_large_outputs_is_analyzed_by_code_cells(tmp_path, index):
     findings, ctx = _run(index, tmp_path, max_file_size=10_000)
     project = next(f for f in findings if f.resource_type == "project")
     assert "framework.crewai" in project.frameworks and project.kind == Kind.AGENT
-    assert not ctx.stats.incomplete
-    assert any("code cells analyzed" in w for w in ctx.stats.warnings)
+    # The saved outputs were not read for credentials: an honest gap.
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert any("code cells analyzed" in w and "coverage incomplete" in w for w in ctx.stats.warnings)
+    _, strict = _run(index, tmp_path, max_file_size=10_000, strict_coverage=True)
+    assert any("saved outputs not scanned" in e for e in strict.stats.errors)
+
+
+def test_notebook_outputs_are_no_gap_when_credentials_are_not_scanned(tmp_path, index):
+    # Outputs are read only for credentials; with that off nothing is skipped.
+    (tmp_path / "demo.ipynb").write_text(_notebook(CREW_CODE, 30_000))
+    findings, ctx = _run(index, tmp_path, max_file_size=10_000, scan_secrets=False)
+    assert any(f.resource_type == "project" and f.kind == Kind.AGENT for f in findings)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
 
 
 def test_notebook_limits_still_apply(tmp_path, index):
@@ -194,12 +205,21 @@ def test_notebook_limits_still_apply(tmp_path, index):
     assert any("demo.ipynb" in w for w in ctx.stats.warnings)
     (tmp_path / "demo.ipynb").write_text(_notebook(CREW_CODE * 40, 10))
     findings, ctx = _run(index, tmp_path, max_file_size=1_000)
+    assert ctx.stats.incomplete
     assert any("notebook code cells exceed max_file_size" in w for w in ctx.stats.warnings)
     _, strict = _run(index, tmp_path, max_file_size=1_000, strict_coverage=True)
-    assert strict.stats.incomplete
+    assert any("notebook code cells exceed max_file_size" in e for e in strict.stats.errors)
 
 
 @pytest.mark.parametrize("value", [0, -1, "big", 1.5])
 def test_max_notebook_size_is_validated(tmp_path, index, value):
     with pytest.raises(ConnectorError):
         _run(index, tmp_path, max_notebook_size=value)
+
+
+@pytest.mark.parametrize("text", ["1,", '{"a": 1},', "[1] , "])
+def test_lenient_json_keeps_a_trailing_comma_after_the_document_an_error(text):
+    # Only commas before a closing bracket are JSONC; the previous loader
+    # rejected a comma after the document, and the regex rewrite must too.
+    with pytest.raises(ValueError):
+        load_json_lenient(text)

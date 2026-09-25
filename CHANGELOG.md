@@ -28,8 +28,9 @@ Fewer false incomplete scans:
   as partially analyzed: a warning in test code, an error elsewhere. New
   `max_ast_nodes` option (default 50000).
 - Notebooks whose saved outputs exceed `max_file_size` have their code cells
-  analyzed up to `max_notebook_size` (default 20 MiB); their outputs are not
-  scanned for credentials, which the scan reports.
+  analyzed up to `max_notebook_size` (default 20 MiB) instead of being skipped.
+  Their outputs are not scanned for credentials at that size, which leaves the
+  scan incomplete unless `scan_secrets` is off.
 
 Precision and recall:
 

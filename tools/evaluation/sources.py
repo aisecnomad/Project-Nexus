@@ -76,6 +76,7 @@ def bundled_source_index() -> SourceIndex:
     index = SourceIndex()
     for path in (DEFAULT_CORPUS, *(DEFAULT_CORPUS.with_name(name) for name in (
         "public_corpus.json", "realistic_corpus.json", "independent_corpus.json", "review_corpus.json",
+        "field_review_corpus.json",
     ))):
         _, cases, digest = load_corpus(path)
         index.add(cases, digest)

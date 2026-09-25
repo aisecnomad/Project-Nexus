@@ -382,9 +382,11 @@ def test_pre_commit_hooks_select_files_with_types_or() -> None:
 
 def test_dev_extra_is_fully_pinned_for_ci() -> None:
     """CI installs [dev] under constraints; an unpinned name floats from the live index."""
+    # CI constrains the [dev] install with both runtime and build-backend locks.
     pinned = {
         name.lower().replace("_", "-")
-        for text in (_read(ROOT / "requirements-ci-constraints.txt"), _read(ROOT / "requirements.lock"))
+        for text in (_read(ROOT / "requirements-ci-constraints.txt"), _read(ROOT / "requirements.lock"),
+                     _read(ROOT / "requirements-build.lock"))
         for name in re.findall(r"^([A-Za-z0-9_.-]+)==", text, re.MULTILINE)
     }
     for requirement in _pyproject()["project"]["optional-dependencies"]["dev"]:

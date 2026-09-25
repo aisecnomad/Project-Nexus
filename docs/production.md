@@ -439,10 +439,13 @@ pinned baseline with a candidate before enforcing policy on the new output:
 - **GitHub Apps.** Installations without an AI signature or AI-like name are no
   longer reported. Set `include_unrecognized_apps: true` to keep reviewing them,
   at possible confidence with the `unrecognized-app` tag.
-- **Completeness.** Syntax errors in ordinary configuration files, Python test
-  modules over `max_ast_nodes` and notebooks whose outputs exceed
-  `max_file_size` now produce warnings instead of incomplete scans. Enable
-  `strict_coverage` to keep treating them as incomplete.
+- **Completeness.** Syntax errors in ordinary configuration files and Python
+  test modules over `max_ast_nodes` produce warnings instead of incomplete
+  scans; the file is still read lexically. Enable `strict_coverage` to keep
+  treating them as incomplete. Notebooks whose outputs exceed `max_file_size`
+  now contribute their code-cell evidence; their outputs are not scanned for
+  credentials at that size, so the scan stays incomplete unless `scan_secrets`
+  is off. Raise `max_file_size` to scan the outputs too.
 - **Capabilities.** Test-only evidence and vendor-neutral idioms in MCP tool
   servers no longer add capabilities; MCP server capabilities come from their
   registered tools. Risk scores of affected findings change accordingly.

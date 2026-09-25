@@ -57,7 +57,7 @@ structured checks, with a warning; `.claude`, `.codex` and `.gemini` settings
 and `strict_coverage` keep such an error incomplete. A notebook larger than
 `max_file_size` because of saved outputs is analyzed by its code cells up to
 `max_notebook_size` (default 20 MiB); its outputs are then not scanned for
-credentials. A Python module over `max_ast_nodes` (default 50000) keeps its
+credentials, which leaves coverage incomplete unless `scan_secrets` is off. A Python module over `max_ast_nodes` (default 50000) keeps its
 lexical evidence without import-bound analysis: a warning in test code, an error
 elsewhere.
 
