@@ -142,13 +142,13 @@ jobs:
         run: sha256sum --check SHA256SUMS
       - name: Attest candidate provenance
         id: provenance
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: candidate/*
           create-storage-record: false
       - name: Attest locked runtime SBOM for the wheel
         id: sbom
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: candidate/*.whl
           sbom-path: candidate/runtime-sbom.cdx.json
