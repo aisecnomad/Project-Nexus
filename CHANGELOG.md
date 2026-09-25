@@ -2,6 +2,15 @@
 
 ## 0.1.1 — Unreleased
 
+### Repository hygiene
+
+- Every documentation page is reachable from the site navigation: the ADRs,
+  the tenant canary guide and the 2026-09-24 assurance results were built but
+  unlisted. A consistency test now fails on any page missing from the nav.
+- Ruff enforces six more rules (`B007`, `B008`, `B034`, `C416`, `E741`,
+  `SIM113`) after fixing their few violations: unused loop variables, a
+  hand-maintained counter, a redundant comprehension and ambiguous `l` names.
+
 ### Type checking and lint coverage
 
 - `mypy` runs with `warn_return_any` and `warn_unreachable`, and ruff's `B904`
