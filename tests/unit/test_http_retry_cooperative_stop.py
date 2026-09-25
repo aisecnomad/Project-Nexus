@@ -25,10 +25,23 @@ def test_sleep_is_interrupted_by_the_installed_stop_check():
         reset_cooperative_stop(token)
 
 
-def test_sleep_without_a_stop_check_waits_the_requested_time(monkeypatch):
+def test_sleep_without_a_stop_check_waits_once_for_the_requested_time(monkeypatch):
     slept = []
+    monkeypatch.setattr(http.time, "sleep", lambda s: slept.append(s))
+    _sleep_cooperatively(2.5)
+    assert slept == [2.5]
+
+
+def test_sleep_with_a_stop_check_is_sliced_so_the_deadline_is_consulted(monkeypatch):
+    slept = []
+    checks = []
     monkeypatch.setattr(http.time, "sleep", lambda s: slept.append(s))
     clock = iter([0.0, 0.0, 1.0, 2.0, 2.5, 3.0])
     monkeypatch.setattr(http.time, "monotonic", lambda: next(clock))
-    _sleep_cooperatively(2.5)
+    token = set_cooperative_stop(lambda: checks.append(True))
+    try:
+        _sleep_cooperatively(2.5)
+    finally:
+        reset_cooperative_stop(token)
     assert slept and all(0 < s <= 1.0 for s in slept)
+    assert len(checks) >= len(slept)

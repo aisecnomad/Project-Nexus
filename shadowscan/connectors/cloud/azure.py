@@ -132,14 +132,20 @@ class AzureConnector(BaseConnector):
                 self.log.debug("foundry token acquisition failed (%s)", type(exc).__name__)
         return self._foundry_token
 
-    def _get(self, path: str, api: str, **params: Any) -> Any:
-        """One failed detail call must not discard the remaining subscription."""
+    def _get(self, path: str, api: str, *, raise_on_failure: bool = False, **params: Any) -> Any:
+        """One failed detail call must not discard the remaining subscription.
+
+        List callers pass ``raise_on_failure`` so they can report the failed
+        page themselves, once, while keeping the pages already observed.
+        """
         assert self.http
         try:
             if "api-version" not in parse_qs(urlsplit(path).query):
                 params = {"api-version": api, **params}
             return self.http.get_json(path, params=params or None)
         except (HttpError, RequestException, ValueError) as exc:
+            if raise_on_failure:
+                raise
             status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
             self.ctx.warn(f"cloud.azure: {status} for {path}; coverage unknown", incomplete=True)
             return None
@@ -159,9 +165,12 @@ class AzureConnector(BaseConnector):
                 self.ctx.warn("cloud.azure: repeated list continuation", incomplete=True)
                 break
             seen.add(path)
-            data = self._get(path, api)
-            if data is None:
-                break  # _get already recorded the failure as incomplete coverage
+            try:
+                data = self._get(path, api, raise_on_failure=True)
+            except (HttpError, RequestException, ValueError) as exc:
+                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                self.ctx.warn(f"cloud.azure: list collection failed ({status}); coverage unknown", incomplete=True)
+                break
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("value"), list):
                 self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)
                 break

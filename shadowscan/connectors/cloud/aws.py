@@ -683,13 +683,14 @@ class AwsConnector(BaseConnector):
                     yield {**item, "_type": key}
 
     def _collect_cloudtrail(self, region: str) -> Iterator[dict[str, Any]]:
-        # LookupEvents cannot return data-plane invocations by design. That is
-        # a documented scope limit; only a failed lookup (reported by _safe)
-        # makes the collection incomplete, so default live scans can complete.
+        # LookupEvents cannot return data-plane invocations. Runtime visibility
+        # is therefore never complete from this source alone; set
+        # ``cloudtrail_days: 0`` or exclude the service to obtain a complete
+        # inventory scan without runtime claims.
         self.ctx.warn(
             f"cloud.aws: CloudTrail LookupEvents in {region} covers management events only; "
             "model/agent invocation data events require a CloudTrail Lake or trail export. "
-            "No returned callers does not establish absence of runtime activity.", incomplete=False,
+            "No returned callers does not establish absence of runtime activity.", incomplete=True,
         )
         ct = self._client("cloudtrail", region)
         start = datetime.now(UTC) - timedelta(days=min(self.cloudtrail_days, 90))

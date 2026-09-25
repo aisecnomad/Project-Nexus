@@ -29,6 +29,9 @@ from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path, truncate
 
+_ZAPIER_AGENT_STEP = re.compile(r"(?i)\b(?:agents? by zapier|zapier agents?)\b")
+_AI_AGENT_TITLE = re.compile(r"(?i)\b(?:ai|llm|gpt|chatgpt|claude|copilot|zapier)[ -]?agents?\b")
+
 
 class _AutomationBase(BaseConnector):
     surface: ClassVar[Surface] = Surface.LOWCODE
@@ -332,10 +335,14 @@ class ZapierConnector(_AutomationBase):
             # is not an AI step, and only Zapier's own agent objects are agents.
             ai_steps = [s for s in steps_list if re.search(r"(?i)chatgpt|openai|claude|anthropic|gemini|ai by zapier|zapier ai|\b(?:agents? by zapier|zapier agents?|ai agents?)\b|copilot|\bgpt\b|perplexity|mistral|hugging ?face", s)]
             owner = rec.get("owner") or rec.get("Owner") or get_path(rec, "owner.email", "user.email", "creator")
-            # A zap is an agent when it is a Zapier agent object or runs a
-            # "Zapier Agents" step; a title mentioning agents is not enough.
-            agent_step = any(re.search(r"(?i)\b(?:agents? by zapier|zapier agents?)\b", s) for s in steps_list)
-            kind = Kind.AGENT if rec.get("type") == "agent" or "instructions" in rec or agent_step else Kind.WORKFLOW
+            # A zap is an agent when it is a Zapier agent object, runs a
+            # "Zapier Agents" step, or is titled as an AI agent. A title such as
+            # "Notify agent on new lead" describes a person, not an AI feature.
+            agent_step = any(_ZAPIER_AGENT_STEP.search(s) for s in steps_list)
+            kind = (
+                Kind.AGENT if rec.get("type") == "agent" or "instructions" in rec or agent_step or _AI_AGENT_TITLE.search(str(title))
+                else Kind.WORKFLOW
+            )
             if kind == Kind.AGENT and not ai_steps:
                 ai_steps = ["Zapier Agent"]  # the object itself is the AI step
             f = self._workflow_finding(

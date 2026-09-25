@@ -54,12 +54,14 @@ def reset_cooperative_stop(token: contextvars.Token[Callable[[], None] | None]) 
 
 
 def _sleep_cooperatively(delay: float) -> None:
-    """Sleep in short slices, honouring the connector's deadline between them."""
+    """Sleep for ``delay``; with a stop check installed, in slices that honour it."""
+    check = _cooperative_stop.get()
+    if check is None:
+        time.sleep(delay)
+        return
     deadline = time.monotonic() + max(0.0, delay)
     while True:
-        check = _cooperative_stop.get()
-        if check is not None:
-            check()
+        check()
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return

@@ -43,9 +43,10 @@ Robustness
   partial checkout is removed before the API fallback; a worker that finished
   inside its deadline is never reported as timed out.
 - One malformed or oversized record costs only itself in the cloud, low-code and
-  automation connectors (`MatchTimeoutError` is isolated per record). Default
-  live AWS scans can complete: the CloudTrail management-event scope is reported
-  as a documented limit, not a failed collection.
+  automation connectors (`MatchTimeoutError` is isolated per record). Azure list
+  failures are reported once. CloudTrail LookupEvents still marks runtime
+  visibility incomplete by design; set `cloudtrail_days: 0` for an inventory
+  scan that can complete.
 - HTTP retry back-off sleeps in short slices and honours the connector deadline.
 - OAuth token responses without an access token fail closed; the device
   authorization grant is not a machine-only grant; scalar `products` and

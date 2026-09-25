@@ -36,7 +36,7 @@ _SENSITIVE_SUFFIXES = (
 )
 _SENSITIVE_NAMES = {
     "token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie",
-    "pass", "pwd", "auth", "passphrase", "apikey", "secrets",
+    "pass", "pwd", "auth", "passphrase", "apikey",
 }
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
