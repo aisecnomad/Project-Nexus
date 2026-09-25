@@ -15,23 +15,25 @@
 # Drop --network none for live API collection. Never mount production
 # credential files into a container that also mounts an untrusted repo.
 #
-# Base image: python:3.12-slim-bookworm pinned to its multi-arch image index
+# Base image: python:3.12-slim-trixie pinned to its multi-arch image index
 # digest (the Docker-Content-Digest of the tag's OCI index, which covers the
-# linux/amd64 manifest), resolved from Docker Hub on 2026-09-24. The digest
-# lives on a literal FROM line because Dependabot's docker parser reads only
-# literal FROM lines; the weekly docker entry in .github/dependabot.yml
-# proposes digest refreshes. To refresh by hand, run
-#   docker buildx imagetools inspect python:3.12-slim-bookworm
+# linux/amd64 manifest), resolved from Docker Hub on 2026-09-25. Debian 13
+# (trixie) ships Git 2.47; `use_git` history enrichment needs 2.45+, and the
+# build below fails on an older git. The digest lives on a literal FROM line
+# because Dependabot's docker parser reads only literal FROM lines; the weekly
+# docker entry in .github/dependabot.yml proposes digest refreshes. To refresh
+# by hand, run
+#   docker buildx imagetools inspect python:3.12-slim-trixie
 # and copy the top-level Digest (equivalently, the Docker-Content-Digest header
-# of GET https://registry-1.docker.io/v2/library/python/manifests/3.12-slim-bookworm
+# of GET https://registry-1.docker.io/v2/library/python/manifests/3.12-slim-trixie
 # requested with Accept: application/vnd.oci.image.index.v1+json), then update
 # the date in this comment.
 #
 # PYTHON_IMAGE selects the base and defaults to the pinned stage below. Build an
 # immutable deployment image at a digest your own review approved instead:
-#   docker build --build-arg PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:<digest> .
+#   docker build --build-arg PYTHON_IMAGE=python:3.12-slim-trixie@sha256:<digest> .
 ARG PYTHON_IMAGE=pinned-base
-FROM python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS pinned-base
+FROM python:3.12-slim-trixie@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS pinned-base
 FROM ${PYTHON_IMAGE}
 
 LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Project-Nexus" \
@@ -48,7 +50,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 65532 nonroot \
-    && useradd --uid 65532 --gid 65532 --create-home --home-dir /home/nonroot nonroot
+    && useradd --uid 65532 --gid 65532 --create-home --home-dir /home/nonroot nonroot \
+    && python3 -c "import re, subprocess, sys; v = tuple(map(int, re.search(r'(\d+)\.(\d+)', subprocess.run(['git', '--version'], capture_output=True, text=True, check=True).stdout).groups())); sys.exit(0 if v >= (2, 45) else 'git >= 2.45 is required for use_git history enrichment')"
 
 WORKDIR /opt/shadowscan
 COPY pyproject.toml requirements.lock requirements-build.lock README.md LICENSE NOTICE /opt/shadowscan/

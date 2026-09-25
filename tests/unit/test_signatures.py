@@ -170,7 +170,8 @@ def test_langchain_text_splitters_is_a_utility_not_framework_usage(index: Signat
         assert all(m.weight <= 0.35 and not m.agent_indicator for m in matches)
     utility = index.match_imports("from langchain_text_splitters import RecursiveCharacterTextSplitter\n", "python")
     assert _ids(utility) == {"framework.langchain-utilities"}
-    assert _ids(index.match_imports("from langchain_openai import ChatOpenAI\n", "python")) == {"framework.langchain"}
+    # The integration package also attributes the model provider it wraps.
+    assert _ids(index.match_imports("from langchain_openai import ChatOpenAI\n", "python")) == {"framework.langchain", "provider.openai"}
     assert "framework.langchain" in _ids(index.match_dependency("pypi", "langchain-openai"))
 
 

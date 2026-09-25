@@ -255,6 +255,23 @@ wall-clock deadline and terminate the disposable worker when it expires.
 SDK connect/read limits and bounded retries reduce blocking; none guarantees a
 universal hard deadline for the whole scan.
 
+Code scans follow a documented coverage policy. Symbolic links that resolve
+inside the scan root are skipped silently because their targets are scanned at
+their real path; links leaving the root and files over `max_file_size` are
+skipped with a warning. `strict_coverage: true` (`--strict-coverage`) turns both
+into incomplete coverage (exit 3): use it for enforcement gates, and raise
+`max_file_size` or add `exclude` patterns for known data files. Evidence found
+only in test or fixture paths has half weight and cannot promote a project to an
+agent unless `include_tests: true` (`--include-tests`) is set, and a project
+finding whose evidence is already reported by an MCP configuration, agent
+manifest, exported workflow, IaC or credential finding is not emitted again.
+Recognisable placeholder credentials (repeated characters, marker words such as
+`EXAMPLE`, very low character diversity) are no longer reported. Risk factors
+always sum to the reported score; `risk.danger_score` excludes the governance
+factors and `options.risk_basis: danger` bases `level` and `--fail-on` on it.
+Review [scan state and runtime correlation](scanning.md) and the changelog
+before raising an enforcement gate on a scanner upgrade.
+
 Saved provider errors and unsupported/malformed export records also make scans
 incomplete. Valid neighbors remain available. Explicit empty inventories such
 as `[]` remain valid; an authorization-error document is not an empty inventory.

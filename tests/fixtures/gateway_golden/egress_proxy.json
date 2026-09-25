@@ -2443,7 +2443,8 @@
    "risk": {
     "score": 0,
     "level": "info",
-    "factors": []
+    "factors": [],
+    "danger_score": 0
    },
    "shadow": null,
    "registry_match": null,
@@ -2614,7 +2615,8 @@
    "risk": {
     "score": 0,
     "level": "info",
-    "factors": []
+    "factors": [],
+    "danger_score": 0
    },
    "shadow": null,
    "registry_match": null,
