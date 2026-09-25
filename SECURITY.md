@@ -46,7 +46,8 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   Opaque `api_token`, `foundry_token`, and `github_token` values, including the
   `GH_TOKEN` fallback, are sensitive.
 * `options.connector_timeout_seconds` / `--connector-timeout-seconds` defaults
-  to a 120-second cooperative completion deadline. Late connector results are
+  to a 120-second cooperative completion deadline. HTTP retry back-off honours
+  it between one-second sleep slices. Late connector results are
   discarded and coverage is incomplete. Legacy `connector_timeout` /
   `--connector-timeout` remain compatibility aliases; legacy YAML null uses the
   default. Python cannot forcibly interrupt blocked threads: calls may outlive
@@ -91,7 +92,8 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   Dump directories must be private (0700); record files use 0600 and unique
   per-instance filenames. An export manifest records provenance/completion without
   raw connector configuration. JWT records are never exported. No `--dump-raw`
-  option exists. Redaction handles recognized secrets and sensitive Python
+  option exists. Redaction handles recognized secrets, generic secret and token
+  names (`*_SECRET`, `*_TOKEN`, `passphrase`, `auth`, `pwd`) and sensitive Python
   assignments, including annotated and multiline expressions, but arbitrary
   credentials and sensitive business data may remain.
 * Generated inventory resource bindings escape literal glob characters. Manual

@@ -278,6 +278,9 @@ class GitHubConnector(BaseConnector):
             if self._clone(repo, dest):
                 self._set_clone_snapshot(repo, dest)
                 return dest
+            # A timed-out git is killed before its cleanup runs. API mode must
+            # not scan a partial checkout (or its .git) as if it were API bytes.
+            shutil.rmtree(dest, ignore_errors=True)
             self.ctx.warn(f"code.github: clone failed for {full}; falling back to API mode")
         self.ctx.check_deadline()
         return self._fetch_via_api(repo, tmp)

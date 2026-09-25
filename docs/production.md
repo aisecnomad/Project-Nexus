@@ -79,7 +79,8 @@ and isolated build tooling are mutable; the Dockerfile alone does not promise
 byte-for-byte reproducible images. CI smoke-tests a non-root, read-only and
 network-isolated image; build and test the deployment image at its approved base
 digest, including resource limits and output-directory permissions, before rollout.
-Opt-in Git history enrichment requires Git 2.45+;
+Opt-in Git history enrichment requires Git 2.45+ (the worker image's Debian
+trixie base ships 2.47 and the image build fails on older Git);
 verify the distribution Git version if that feature is needed. Keep runtime
 secrets out of the build context.
 

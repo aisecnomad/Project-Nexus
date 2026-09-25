@@ -15,8 +15,10 @@
 # Drop --network none for live API collection. Never mount production
 # credential files into a container that also mounts an untrusted repo.
 # Supply an approved image digest for immutable deployment builds:
-#   docker build --build-arg PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:<digest> .
-ARG PYTHON_IMAGE=python:3.12-slim-bookworm
+#   docker build --build-arg PYTHON_IMAGE=python:3.12-slim-trixie@sha256:<digest> .
+# Debian trixie ships Git 2.47; opt-in history enrichment (`use_git: true`)
+# requires Git 2.45+ and the build fails closed on an older base image.
+ARG PYTHON_IMAGE=python:3.12-slim-trixie
 FROM ${PYTHON_IMAGE}
 
 LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Project-Nexus" \
@@ -26,6 +28,7 @@ LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Project-Nex
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
+    && git --no-lazy-fetch --version \
     && groupadd --gid 65532 nonroot \
     && useradd --uid 65532 --gid 65532 --create-home --home-dir /home/nonroot nonroot
 

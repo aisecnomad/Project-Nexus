@@ -49,7 +49,7 @@ from shadowscan.connectors.base import (
 )
 from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.signatures.matcher import MatchTimeoutError
+from shadowscan.signatures.matcher import Match, MatchTimeoutError
 from shadowscan.utils.redaction import REDACTED, credential_id, sanitize
 from shadowscan.utils.text import get_path, host_of, parse_timestamp, to_iso
 
@@ -778,15 +778,35 @@ _LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=("[^"]*"|\S+)')
 _HOST_IN_LINE = re.compile(r"\b(?:host|authority|upstream_host|server_name)[=:]\s*\"?([A-Za-z0-9.-]+\.[a-z]{2,})", re.I)
 
 
+def _workload_matches(matches: list[Match]) -> list[Match]:
+    """Drop identity-app signatures: they describe OAuth/SaaS products, not callers.
+
+    A direct request to a provider API is LLM use; only frameworks, tool use and
+    activity shape establish an agent. An end user named Olivia is not a bot.
+    """
+    return [m for m in matches if m.signature.category != "identity-app"]
+
+
 def parse_text_line(line: str) -> dict[str, Any] | None:
     line = line.strip()
     if not line:
         return None
-    if line.startswith(("{", "[")):
+    if line.startswith("{"):
         rec = json.loads(line)
         if not isinstance(rec, dict):
             raise ValueError("gateway text log JSON must be an object")
         return rec
+    if line.startswith("["):
+        # A JSON array line is rejected below; envoy's default text format
+        # also begins with "[START_TIME]" and falls through to text parsing.
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            rec = None
+        if rec is not None:
+            if not isinstance(rec, dict):
+                raise ValueError("gateway text log JSON must be an object")
+            return rec
     m = _COMBINED.match(line)
     if m:
         d = m.groupdict()
@@ -1319,6 +1339,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
     def _is_llm_traffic(self, ev: Event) -> bool:
         if ev.path and re.search(r"(?:^|/)(?:favicon\.ico|robots\.txt|healthz?|readyz?|livez?|metrics)(?:$|[/?#])|\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)(?:$|[?#])", ev.path, re.I):
             return False
+        if ev.host and not self.index.match_domain(ev.host):
+            # ``llm_hosts_only`` is a host filter. An internal dashboard that
+            # serves /sse or /v1/files is not inference traffic; only records
+            # that carry an explicit model or token usage qualify.
+            return bool(ev.model) or ev.tokens_in > 0 or ev.tokens_out > 0
         text = " ".join(x for x in (ev.host, ev.path) if x)
         if ev.path and re.search(r"/v1/(?:chat/completions|completions|responses|messages|embeddings|models|assistants|threads|runs|audio|images|files|batches|realtime)|/openai/deployments/|/generateContent|:generateContent|:streamGenerateContent|/invoke(?:-with-response-stream)?|/converse|/mcp\b|/sse\b|/a2a\b|/agents?/|/predict\b|/api/(?:chat|generate|tags)\b", text):
             return True
@@ -1457,16 +1482,16 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         for m in top_models:
             apply_matches(f, self.index.match_model(m), weight_scale=0.5)
         for h, _ in c.hosts.most_common(10):
-            apply_matches(f, self.index.match_domain(h), weight_scale=0.6)
+            apply_matches(f, _workload_matches(self.index.match_domain(h)), weight_scale=0.6)
         for ua, _ in c.user_agents.most_common(10):
             apply_matches(f, self.index.match_user_agent(ua), weight_scale=1.0)
         for p, _ in c.providers.most_common(5):
             sid = _provider_signature(self.index, p)
             if sid:
                 f.add_model_provider(sid)
-        apply_matches(f, self.index.match_name(c.label), weight_scale=0.6)
+        apply_matches(f, _workload_matches(self.index.match_name(c.label)), weight_scale=0.6)
         for u, _ in c.users.most_common(3):
-            apply_matches(f, self.index.match_name(str(u)), weight_scale=0.4)
+            apply_matches(f, _workload_matches(self.index.match_name(str(u))), weight_scale=0.4)
 
         base_weight = {"api-key": 0.35, "principal": 0.35, "service": 0.45, "user": 0.15, "user-agent": 0.2, "ip": 0.15}[c.kind]
         f.add_evidence(Evidence(signal=f"gateway:{c.kind}", description=f"{c.events} LLM request(s) by {c.kind} '{c.label}' to models {', '.join(top_models[:5]) or 'unknown'}", weight=base_weight))

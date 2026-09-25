@@ -46,7 +46,7 @@ from shadowscan.connectors.code.semantic_config import (
     structured_code_matches,
 )
 from shadowscan.connectors.code.source_ranges import noncode_ranges
-from shadowscan.connectors.code.source_semantics import bound_source_matches
+from shadowscan.connectors.code.source_semantics import SourceBindingUnavailable, bound_source_matches
 from shadowscan.connectors.common import apply_matches, finalize, looks_like_placeholder
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
@@ -186,6 +186,23 @@ TEXT_CONFIG_EXTENSIONS = {
     ".csv",
 }
 
+# File names dedicated to MCP client configuration. A bare top-level
+# "servers" mapping (VS Code, Visual Studio) is accepted only in these.
+_EXPLICIT_MCP_CONFIG_NAMES = {
+    ".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json",
+    "claude_desktop_config.json", "cline_mcp_settings.json", "mcp_settings.json", "smithery.yaml",
+}
+# A nested MCP block: {"mcp": {"servers": ...}} or a YAML "mcp:" mapping with
+# an indented "servers:" member. A bare "servers" key (OpenAPI, Docker, Nginx)
+# next to the substring "mcp" elsewhere in a document is not a configuration.
+_JSON_MCP_SERVERS = re.compile(r'"mcp"\s*:\s*\{[^{}]*"servers"\s*:')
+_YAML_MCP_SERVERS = re.compile(r"(?m)^[ \t]*mcp:[ \t]*(?:#.*)?$\n(?:[ \t]*(?:#.*)?\n)*[ \t]+servers:")
+# Signature categories whose source constructors are attributed only through
+# import binding in Python/JavaScript, and need corroborating library evidence
+# elsewhere: many libraries export an Agent, Task or ClientSession.
+_BOUND_CATEGORIES = frozenset({"framework", "protocol"})
+# Per-file budgets scale linearly above this size, up to the validated maximum.
+_BUDGET_SCALE_BYTES = 100_000
 MCP_CONFIG_NAMES = {
     ".mcp.json",
     "mcp.json",
@@ -278,7 +295,7 @@ class FilesystemConnector(BaseConnector):
         "exclude": "extra directory names / glob patterns to skip",
         "max_file_size": "bytes; larger files are skipped (default 1 MiB)",
         "max_files": "stop after this many files (default 100000)",
-        "scan_timeout": "matching budget in seconds per file (default 2)",
+        "scan_timeout": "matching budget in seconds per file (default 2; scaled up for files over 100 KB, at most 60)",
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
@@ -376,6 +393,19 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
+    def _file_budget(self, path: Path) -> float:
+        """Per-file matching budget, scaled for large inputs.
+
+        ``scan_timeout`` covers a typical source file. Ordinary large modules
+        (generated code, vendored bundles, a 450 KB type checker) need
+        proportionally more time; the ceiling is the validated maximum.
+        """
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        return min(60.0, self.scan_timeout * max(1.0, size / _BUDGET_SCALE_BYTES))
+
     def _iter_files(self, root: Path) -> Iterator[tuple[str, Path, str]]:
         """Yield (relpath, path, project_root_rel) top-down with project root tracking."""
         # os.walk visits descendants before siblings. Keep only active project
@@ -421,7 +451,7 @@ class FilesystemConnector(BaseConnector):
                 proj = rel_dir
             for fn in sorted(filenames):
                 rel = fn if rel_dir == "." else f"{rel_dir}/{fn}"
-                if self.exclude_globs and self._excluded(rel, fn):
+                if self._excluded(rel, fn):
                     continue
                 p = Path(dirpath) / fn
                 try:
@@ -465,7 +495,7 @@ class FilesystemConnector(BaseConnector):
         infra_names: dict[str, list[str]] = {}  # relpath -> display / resource names
         for rel, path, proj_root in self._iter_files(root):
             try:
-                with self.index.scan_budget(seconds=self.scan_timeout):
+                with self.index.scan_budget(seconds=self._file_budget(path)):
                     proj = projects.setdefault(proj_root, _Project(proj_root))
                     proj.files += 1
                     self.ctx.examined()
@@ -525,7 +555,9 @@ class FilesystemConnector(BaseConnector):
                     mcp_servers: list[dict[str, Any]] = []
                     if is_mcp:
                         mcp_errors: list[str] = []
-                        mcp_servers = _parse_mcp_servers(rel, text, mcp_errors)
+                        mcp_servers = _parse_mcp_servers(
+                            rel, text, mcp_errors, allow_bare_servers=lower in _EXPLICIT_MCP_CONFIG_NAMES,
+                        )
                         for issue in dict.fromkeys(mcp_errors):
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                     active_mcp = [server for server in mcp_servers if not server["disabled"]]
@@ -583,9 +615,25 @@ class FilesystemConnector(BaseConnector):
                             self.index.match_code(content_text, lang, ignore_spans=ignored)
                             if ignored else self.index.match_code(content_text, lang)
                         )
+                        bound: list[Match] | None = None
+                        if lang in {"python", "javascript"}:
+                            try:
+                                bound = bound_source_matches(self.index, content_text, lang, ignored)
+                            except SourceBindingUnavailable:
+                                # Grammar this interpreter cannot parse (for
+                                # example newer Python syntax) must not erase
+                                # agent evidence. Fall back to the lexical rules
+                                # used for languages without an import binder.
+                                self.ctx.warn(
+                                    f"code.filesystem: {rel}: source could not be parsed for import binding; "
+                                    "lexical evidence retained", incomplete=False,
+                                )
                         for m in code_matches:
-                            if lang in {"python", "javascript"}:
-                                if m.signature.category == "framework":
+                            if bound is not None:
+                                # Library and protocol constructors are only
+                                # attributed through import binding: aiohttp
+                                # also exports a ClientSession.
+                                if m.signature.category in _BOUND_CATEGORIES:
                                     continue  # bound calls below establish the library
                                 m.extra["verified_agent"] = False
                             else:
@@ -594,9 +642,8 @@ class FilesystemConnector(BaseConnector):
                                 # corroborating library evidence at emit time.
                                 m.extra["lexical_source"] = lang
                             record_content_match(m, excerpt(m.line))
-                        if lang in {"python", "javascript"}:
-                            for m in bound_source_matches(self.index, content_text, lang, ignored):
-                                record_content_match(m, excerpt(m.line))
+                        for m in bound or ():
+                            record_content_match(m, excerpt(m.line))
                     elif not is_nonexecutable:
                         config_errors: list[str] = []
                         structured = [] if is_mcp else structured_code_matches(self.index, rel, content_text, errors=config_errors)
@@ -630,6 +677,10 @@ class FilesystemConnector(BaseConnector):
                         card_files.append((rel, text, card_kind))
                     if ext in {".md", ".mdc"} and (".claude/agents/" in rel or ".github/agents/" in rel or ".cursor/rules/" in rel or ".windsurf/rules/" in rel):
                         proj.agent_defs.append(self._parse_agent_definition(rel, text))
+            except ConnectorError:
+                # Cooperative cancellation and deadline signals must stop the
+                # walk instead of being recorded as one more file diagnostic.
+                raise
             except Exception as exc:  # noqa: BLE001 - isolate hostile files and retain other findings
                 self.ctx.error(f"code.filesystem: {rel}: file analysis incomplete ({type(exc).__name__})")
 
@@ -783,8 +834,8 @@ class FilesystemConnector(BaseConnector):
                 or "[mcp_servers." in head
                 or re.search(r"(?m)^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$", head) is not None
                 or re.search(r"(?m)^[ \t]*mcp_servers\.[A-Za-z0-9_-]+[ \t]*=", head) is not None
-                or ('"mcp"' in head and '"servers"' in head)
-                or ("mcp:" in head and "servers:" in head)
+                or _JSON_MCP_SERVERS.search(head) is not None
+                or _YAML_MCP_SERVERS.search(head) is not None
             )
         return False
 
@@ -935,17 +986,17 @@ class FilesystemConnector(BaseConnector):
                     return False
                 if "verified_agent" in match.extra:
                     return bool(match.extra["verified_agent"])
-                if match.extra.get("lexical_source") and match.signature.category == "framework":
+                if match.extra.get("lexical_source") and match.signature.category in _BOUND_CATEGORIES:
                     return match.agent_indicator and match.signature_id in library_evidence
                 return match.agent_indicator
 
             f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
             uncorroborated = {m.signature_id for m, _, _ in tech_matches
-                              if m.extra.get("lexical_source") and m.signature.category == "framework"
+                              if m.extra.get("lexical_source") and m.signature.category in _BOUND_CATEGORIES
                               and m.signature_id not in library_evidence}
             # Decisive evidence must survive the per-signature report quota.
             for m, rel, snip in sorted(tech_matches, key=lambda item: not verified_indicator(item[0])):
-                if m.extra.get("lexical_source") and m.signature.category == "framework" and m.signature_id not in library_evidence:
+                if m.extra.get("lexical_source") and m.signature.category in _BOUND_CATEGORIES and m.signature_id not in library_evidence:
                     m.weight = min(m.weight, 0.6)
                 apply_matches(f, [m], location=rel, snippet=snip)
             # Repeated observations of one technology are correlated evidence.
@@ -984,13 +1035,20 @@ class FilesystemConnector(BaseConnector):
             f.title = self._project_title(f, proj)
             yield f
         for sig_id, files in proj.coding_agent_files.items():
+            coding_matches = proj.coding_agent_matches.get(sig_id, [])
+            # A hostname or variable name quoted inside a data file (an egress
+            # allowlist, a vendor inventory, this scanner's own signatures)
+            # does not configure a coding agent. Require a configuration file,
+            # dependency, import, workflow action or code signal.
+            if not any(m.signal.type not in {"domain", "env"} for m, _, _ in coding_matches):
+                continue
             sig = self.index.get(sig_id)
             f = self._base(
                 label, root, proj.root, Kind.AGENT_CONFIG,
                 f"{sig.name if sig else sig_id} configured in {proj.root if proj.root != '.' else 'repository root'}",
                 "coding-agent-config", identity_discriminator=f"coding-agent-config:{sig_id}",
             )
-            for m, rel, snip in proj.coding_agent_matches.get(sig_id, []):
+            for m, rel, snip in coding_matches:
                 apply_matches(f, [m], location=rel, snippet=snip)
             f.metadata["files"] = sorted(files)
             defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
@@ -1288,7 +1346,9 @@ def _safe_source_text(rel: str, text: str) -> str:
         return sanitize_text(text)
 
 
-def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:
+def _parse_mcp_servers(
+    rel: str, text: str, errors: list[str] | None = None, *, allow_bare_servers: bool = True,
+) -> list[dict[str, Any]]:
     errors = errors if errors is not None else []
     try:
         if rel.endswith(".toml"):
@@ -1307,9 +1367,13 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
     if not isinstance(mcp, dict):
         errors.append("MCP mcp field must be an object")
         mcp = {}
-    servers: Any = next((value for value in (
-        data.get("mcp_servers"), data.get("mcpServers"), mcp.get("servers"), data.get("servers"),
-    ) if value is not None), {})
+    candidates = [data.get("mcp_servers"), data.get("mcpServers"), mcp.get("servers")]
+    if allow_bare_servers:
+        # VS Code and Visual Studio use a top-level "servers" mapping, but only
+        # in dedicated MCP files: OpenAPI, Docker and proxy documents also
+        # have "servers" members that are not tool servers.
+        candidates.append(data.get("servers"))
+    servers: Any = next((value for value in candidates if value is not None), {})
     if isinstance(servers, list):
         if any(not isinstance(server, dict) for server in servers):
             errors.append("MCP server entries must be objects")

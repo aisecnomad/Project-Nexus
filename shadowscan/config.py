@@ -281,10 +281,7 @@ def _optional_path(base: Path, value: Any, location: str) -> str | None:
 
 def _positive_integer(value: Any, location: str) -> int:
     if isinstance(value, str) and re.fullmatch(r"[0-9]+", value):
-        try:
-            value = int(value)
-        except ValueError:
-            raise ConfigValidationError(f"{location} must be a positive integer") from None
+        value = int(value)
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ConfigValidationError(f"{location} must be a positive integer")
     return value
@@ -377,7 +374,9 @@ def _coerce(value: str) -> Any:
         return False
     if low in {"null", "none", ""}:
         return None
-    if re.fullmatch(r"-?\d+", value):
+    # A leading zero marks an identifier (tenant, account, project IDs), not a
+    # number: integer coercion would silently drop it.
+    if re.fullmatch(r"-?(?:0|[1-9]\d*)", value):
         return int(value)
     if re.fullmatch(r"-?\d+\.\d+", value):
         return float(value)

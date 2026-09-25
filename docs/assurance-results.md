@@ -17,9 +17,13 @@ annotation reasons are retained in `tools/evaluation/`.
 
 | Scanner observation | True positives | False positives | False negatives | True negatives |
 | --- | ---: | ---: | ---: | ---: |
-| Main at `3c619fa2511cee2eeaff80088ecfc087b9544067` | 11 | 3 | 1 | 27 |
-| First implementation evaluation | 11 | 0 | 1 | 30 |
-| Subsequent regression evaluation | 12 | 0 | 0 | 30 |
+| Held-out baseline: main at `3c619fa2511cee2eeaff80088ecfc087b9544067` (before any fix) | 11 | 3 | 1 | 27 |
+| First implementation evaluation (after fixing the three false positives) | 11 | 0 | 1 | 30 |
+| Regression evaluation (after fixing the remaining miss; tuned, not held out) | 12 | 0 | 0 | 30 |
+
+The first row is the only genuinely held-out observation on this corpus. Every
+error it exposed was fixed in the same change that introduced the corpus, so the
+later rows are regression results and must not be quoted as field accuracy.
 
 The first implementation result exposed a missed typed Pydantic constructor,
 `Agent[Deps, Response](...)`. Supporting that syntax removed the remaining miss.
@@ -37,7 +41,7 @@ but cannot identify an exact reproducible implementation. The final report hashe
 the actual scanner sources, signatures and corpus. CI regenerates reports for the
 reviewed commit rather than trusting these recorded results.
 
-The separate authored synthetic suite passes 39 cases (16 positives, 23 negatives),
+The separate authored synthetic suite passes 44 cases (18 positives, 26 negatives),
 and the earlier public-source sample passes five. One **synthetic** PHP fixture
 was corrected to a negative: a bare `create_agent(...)` call with no framework
 binding cannot establish AI-agent construction. This does not modify the frozen

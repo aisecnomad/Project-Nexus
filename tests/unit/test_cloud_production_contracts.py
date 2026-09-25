@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import sys
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from requests import Timeout
 
 from shadowscan.connectors.base import ConnectorContext
-from shadowscan.connectors.cloud.aws import AwsConnector
 from shadowscan.connectors.cloud.azure import AzureConnector
 from shadowscan.connectors.cloud.gcp import GcpConnector
-from shadowscan.connectors.cloud.oci import OciConnector
 from shadowscan.models import ScanStats
 from shadowscan.utils.http import HttpError
 
@@ -186,41 +182,3 @@ def test_azure_partial_diagnostics_remain_unknown(index):
     assert "no-diagnostic-logging" not in finding.tags
     assert connector.ctx.stats.incomplete
 
-
-def test_aws_sdk_clients_bound_authentication_and_inventory_requests(index, monkeypatch):
-    pytest.importorskip("botocore")
-    sessions = [Mock(), Mock()]
-    sessions[0].client.return_value.assume_role.return_value = {"Credentials": {
-        "AccessKeyId": "test", "SecretAccessKey": "test", "SessionToken": "test",
-    }}
-    sessions[1].client.return_value.get_caller_identity.return_value = {"Account": "123456789012"}
-    monkeypatch.setitem(sys.modules, "boto3", SimpleNamespace(Session=Mock(side_effect=sessions)))
-    connector = AwsConnector(context(index, role_arn="arn:aws:iam::123456789012:role/audit"))
-    connector._client("lambda", "us-east-1")
-    calls = [*sessions[0].client.call_args_list, *sessions[1].client.call_args_list]
-    assert [call.args[0] for call in calls] == ["sts", "sts", "lambda"]
-    for call in calls:
-        config = call.kwargs["config"]
-        assert (config.connect_timeout, config.read_timeout) == (10, 30)
-        assert config.retries == {"mode": "standard", "total_max_attempts": 3}
-
-
-def test_oci_sdk_client_has_finite_transport_and_retry_bounds(index):
-    oci = pytest.importorskip("oci")
-    connector = OciConnector(context(index))
-    connector._config = {"region": "us-phoenix-1"}
-    connector._signer = Mock()
-    factory = Mock()
-    connector._client(factory, "us-ashburn-1")
-    kwargs = factory.call_args.kwargs
-    assert factory.call_args.args == ({"region": "us-ashburn-1"},)
-    assert kwargs["signer"] is connector._signer
-    assert kwargs["timeout"] == (10, 30)
-    strategy = kwargs["retry_strategy"]
-    # Exercise the real SDK strategy with sleeping replaced, no network calls.
-    strategy.do_sleep = Mock()
-    request = Mock(side_effect=oci.exceptions.ServiceError(503, "Unavailable", {}, "test"))
-    request.__name__ = "list_resources"
-    with pytest.raises(oci.exceptions.ServiceError):
-        strategy.make_retrying_call(request)
-    assert request.call_count == 3

@@ -23,7 +23,7 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.common import apply_matches, finalize, name_matches
+from shadowscan.connectors.common import apply_matches, finalize, name_matches, product_matches
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -181,12 +181,12 @@ class ServiceNowConnector(BaseConnector):
                 triggers.setdefault(str(_reference(rec.get("usecase"))), []).append(rec)
             elif table == "sys_hub_flow":
                 self.ctx.examined()
-                f = self._flow_finding(rec)
+                f = self.ctx.isolate("lowcode.servicenow: flow", self._flow_finding, rec)
                 if f:
                     yield f
             elif table == "oauth_entity":
                 self.ctx.examined()
-                f = self._oauth_finding(rec)
+                f = self.ctx.isolate("lowcode.servicenow: OAuth entity", self._oauth_finding, rec)
                 if f:
                     yield f
         for a in agents:
@@ -258,7 +258,7 @@ class ServiceNowConnector(BaseConnector):
     def _flow_finding(self, rec: dict[str, Any]) -> Finding | None:
         name = _val(rec.get("name")) or ""
         text = f"{name} {_val(rec.get('description')) or ''} {_val(rec.get('sys_scope')) or ''}"
-        matches = name_matches(self.index, text)
+        matches = product_matches(name_matches(self.index, text))
         low = text.lower()
         if not matches and not any(k in low for k in ("now assist", "generative", "gen ai", "genai", "gpt", "llm", "sn_generative_ai", "sn_aia", "ai agent")):
             return None

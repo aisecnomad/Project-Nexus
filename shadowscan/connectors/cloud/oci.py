@@ -22,6 +22,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.cloud.common import cloud_finding, done, name_hint, scan_env, string_list
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.text import truncate
 
 GENAI_POLICY_RX = re.compile(r"(?i)\b(?:allow)\b.*?\b(?:to\s+)?(manage|use|read|inspect)\s+(generative-ai[a-z-]*|oda[a-z-]*|data-science[a-z-]*|all-resources|ai-service[a-z-]*)\b")
@@ -333,19 +334,19 @@ class OciConnector(BaseConnector):
                     endpoints.setdefault(rec["agent_id"], []).append(rec)
                 else:
                     others.append(rec)
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
                 self.ctx.warn("cloud.oci: record has invalid fields for its _kind")
         for a in agents:
             try:
                 yield self._agent_finding(a, endpoints.get(str(a.get("id")), []))
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
                 self.ctx.warn("cloud.oci: record has invalid agent fields")
         for rec in others:
             try:
                 f = handlers[rec["_kind"]](rec)
                 if f:
                     yield f
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
                 self.ctx.warn("cloud.oci: record has invalid fields for its _kind")
 
     def _base(self, rec: dict[str, Any]) -> dict[str, Any]:

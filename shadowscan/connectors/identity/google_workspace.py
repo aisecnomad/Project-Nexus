@@ -25,7 +25,7 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize
-from shadowscan.connectors.identity.common import assess_app, summarize_scopes
+from shadowscan.connectors.identity.common import access_token, assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 
@@ -197,4 +197,4 @@ def _dwd_token(sa_file: Path, subject: str, scopes: str) -> str:
     )
     client = HttpClient()
     resp = client.post(info.get("token_uri", "https://oauth2.googleapis.com/token"), data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion})
-    return client.read_json_response(resp)["access_token"]
+    return access_token(client.read_json_response(resp), "identity.google-workspace")

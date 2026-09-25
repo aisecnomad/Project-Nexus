@@ -142,11 +142,15 @@ Auto-detects the schema per record: `litellm`, `portkey`, `kong`, `cloudflare`,
 `helicone`, `langfuse`, `bedrock` (model invocation logs, CloudWatch export or
 S3), `azure-openai` (diagnostic `RequestResponse`/`Audit`), `vertex` (Cloud
 Audit Logs), `openai-usage`, `anthropic-usage`, `access-log` (nginx/envoy/ALB
-combined or JSON, keeps only LLM/agent hosts and paths by default) or
+combined or JSON; `llm_hosts_only`, on by default, keeps only requests whose
+host matches a provider or platform signature, or that carry a model or token
+usage, so set it to `false` for logs of an internal gateway host) or
 `generic`. Each caller (API key, principal, service, user, user agent or IP)
 becomes a finding with models, providers, frameworks (user agent
 fingerprints), tool-use ratio, tool-call responses, temporal shape (24×7 /
-night / weekend → `always-on`), volume, tokens, cost, errors. A gateway finding
+night / weekend → `always-on`), volume, tokens, cost, errors. A direct request
+to a provider API is an "LLM caller"; only framework fingerprints, tool use or
+an unattended activity shape make it an "Agentic caller". A gateway finding
 for an anonymous, shared or user-agent/IP fallback caller cannot establish
 the identity of a code workload in cross-layer correlation. Aggregate provider
 usage exports count requests from provider counters; aggregate buckets are

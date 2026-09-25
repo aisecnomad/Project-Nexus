@@ -280,8 +280,12 @@ review per-connector diagnostics and rerun after restoring access.
 Malformed files are isolated, so one bad manifest cannot suppress neighboring
 findings. Regex matches have time budgets; exhausted budgets mark the scan
 incomplete. Configure `code.filesystem.scan_timeout` in seconds to adjust the
-shared per-file regex budget (default 2 seconds); manifest parsers additionally
-cap each pattern at one second within that budget.
+shared per-file regex budget (default 2 seconds). The budget scales linearly for
+files above 100 KB, up to 60 seconds, so a 450 KB generated module receives
+9 seconds by default; manifest parsers additionally cap each pattern at one
+second within that budget. Other connectors scale their default per-record
+budget the same way. Source files the scanner's interpreter cannot parse keep
+their lexical evidence and record a warning without marking the scan incomplete.
 
 Denied or failed API requests and exhausted pagination mark collection incomplete.
 Offline exports require valid objects or arrays of objects; scalar records,

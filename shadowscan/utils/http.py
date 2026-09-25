@@ -36,6 +36,36 @@ MAX_RETRY_DELAY = 120
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 _HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
 
+# A cooperative stop check installed by the engine for the current connector.
+# Retry back-off sleeps consult it so a rate-limited API cannot hold a worker
+# past its completion deadline.
+_cooperative_stop: contextvars.ContextVar[Callable[[], None] | None] = contextvars.ContextVar(
+    "shadowscan_cooperative_stop", default=None
+)
+
+
+def set_cooperative_stop(check: Callable[[], None] | None) -> contextvars.Token[Callable[[], None] | None]:
+    """Install a callable that raises when the current connector must stop."""
+    return _cooperative_stop.set(check)
+
+
+def reset_cooperative_stop(token: contextvars.Token[Callable[[], None] | None]) -> None:
+    _cooperative_stop.reset(token)
+
+
+def _sleep_cooperatively(delay: float) -> None:
+    """Sleep in short slices, honouring the connector's deadline between them."""
+    deadline = time.monotonic() + max(0.0, delay)
+    while True:
+        check = _cooperative_stop.get()
+        if check is not None:
+            check()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(1.0, remaining))
+
+
 _allow_private_origin: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "shadowscan_allow_private_origin", default=False
 )
@@ -325,11 +355,7 @@ class HttpClient:
         self.session.mount("https://", self._policy_adapter)
         self.session.headers.update({"User-Agent": f"shadowscan/{__version__}", "Accept": "application/json"})
         if headers:
-            try:
-                for header in headers.items():
-                    check_header_validity(header)
-            except InvalidHeader:
-                raise ValueError("HTTP header name or value contains invalid characters") from None
+            # _validate_headers above already rejected invalid names and values.
             self.session.headers.update(headers)
         if auth is not None:
             self.session.auth = auth
@@ -402,7 +428,7 @@ class HttpClient:
                 resp.close()
                 delay = _retry_delay(resp, attempt)
                 log.warning("HTTP %s from %s; retrying in %.0fs (attempt %d)", resp.status_code, diagnostic_url(url), delay, attempt)
-                time.sleep(delay)
+                _sleep_cooperatively(delay)
                 continue
             if resp.status_code >= 400 and raise_for_status:
                 resp.close()

@@ -28,7 +28,12 @@ from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface, now
 from shadowscan.registry import Inventory
 from shadowscan.risk import assess
 from shadowscan.signatures import SignatureIndex, get_index
-from shadowscan.utils.http import reset_allow_private_origin, set_allow_private_origin
+from shadowscan.utils.http import (
+    reset_allow_private_origin,
+    reset_cooperative_stop,
+    set_allow_private_origin,
+    set_cooperative_stop,
+)
 from shadowscan.utils.output import prepare_private_directory, write_private_text
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize
 
@@ -43,6 +48,17 @@ class _JobState:
     completed_at: float | None = None
     cancelled: Event = field(default_factory=Event)
     publication_lock: Lock = field(default_factory=Lock)
+
+
+def _pending_expired(state: _JobState, now: float) -> bool:
+    """Whether a still-pending worker has exhausted its completion deadline.
+
+    A worker that finished inside its deadline may not appear in the poll's
+    ``done`` set yet; its completion timestamp, not the wall clock, decides.
+    """
+    if state.deadline is None or now < state.deadline:
+        return False
+    return state.completed_at is None or state.completed_at >= state.deadline
 
 
 class Engine:
@@ -154,6 +170,7 @@ class Engine:
             fs: list[Finding] = []
             started_at = now_iso()
             origin_token = set_allow_private_origin(self.config.allow_private_origin)
+            stop_token = set_cooperative_stop(ctx.check_deadline)
             try:
                 ctx.check_deadline()
                 cls = _lookup(spec.name)
@@ -206,6 +223,7 @@ class Engine:
                 st.errors.append(message)
                 log.warning("connector failed; diagnostic recorded in incomplete scan stats")
             finally:
+                reset_cooperative_stop(stop_token)
                 reset_allow_private_origin(origin_token)
             st.findings = len(fs)
             try:
@@ -315,9 +333,9 @@ class Engine:
                     else:
                         completed[number] = future.result()
                         pending.remove(future)
+                now = time.monotonic()
                 for future in pending - done:
-                    deadline = states[futures[future][0]].deadline
-                    if deadline is not None and time.monotonic() >= deadline:
+                    if _pending_expired(states[futures[future][0]], now):
                         expired.append(future)
                 for future in expired:
                     number, spec = futures[future]

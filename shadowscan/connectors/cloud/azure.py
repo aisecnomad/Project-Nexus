@@ -33,6 +33,7 @@ from shadowscan.connectors.cloud.common import (
 )
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
 
@@ -158,12 +159,9 @@ class AzureConnector(BaseConnector):
                 self.ctx.warn("cloud.azure: repeated list continuation", incomplete=True)
                 break
             seen.add(path)
-            try:
-                data = self._get(path, api)
-            except (HttpError, RequestException, ValueError) as exc:
-                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
-                self.ctx.warn(f"cloud.azure: list collection failed ({status}); coverage unknown")
-                break
+            data = self._get(path, api)
+            if data is None:
+                break  # _get already recorded the failure as incomplete coverage
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("value"), list):
                 self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)
                 break
@@ -361,14 +359,14 @@ class AzureConnector(BaseConnector):
                         diagnostics[rec["_account"]] = None if rec.get("coverage") == "unknown" or settings is None else settings
                 else:
                     others.append(rec)
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
                 self.ctx.warn("cloud.azure: record has invalid fields for its _kind")
         for r in resources:
             try:
                 f = self._resource_finding(r, deployments.get(str(r.get("id")), []), diagnostics.get(str(r.get("id"))))
                 if f:
                     yield f
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
                 self.ctx.warn("cloud.azure: record has invalid resource fields")
         for rec in others:
             try:
@@ -376,7 +374,7 @@ class AzureConnector(BaseConnector):
                 f = handler(rec, identities) if rec["_kind"] == "role-assignment" else handler(rec)
                 if f:
                     yield f
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
                 self.ctx.warn("cloud.azure: record has invalid fields for its _kind")
 
     def _resource_finding(self, r: dict[str, Any], deps: list[dict[str, Any]], diag: list[dict[str, Any]] | None) -> Finding | None:

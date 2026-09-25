@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from conftest import requires_git_metadata
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector
@@ -532,6 +533,7 @@ def test_plugin_overriding_builtin_name_is_not_cached(tmp_path, index, monkeypat
     assert second.findings[0].resource == "run:2" and not second.stats[0].cached
 
 
+@requires_git_metadata
 def test_git_replacement_cannot_reuse_stale_owner(tmp_path, index):
     cfg = config(tmp_path)
     repo = tmp_path / "repo"

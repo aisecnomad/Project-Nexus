@@ -46,6 +46,7 @@ from shadowscan.connectors.cloud.credentials import (
 )
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.identity import has_aws_account_scope
 from shadowscan.utils.text import truncate
 
@@ -682,10 +683,13 @@ class AwsConnector(BaseConnector):
                     yield {**item, "_type": key}
 
     def _collect_cloudtrail(self, region: str) -> Iterator[dict[str, Any]]:
+        # LookupEvents cannot return data-plane invocations by design. That is
+        # a documented scope limit; only a failed lookup (reported by _safe)
+        # makes the collection incomplete, so default live scans can complete.
         self.ctx.warn(
             f"cloud.aws: CloudTrail LookupEvents in {region} covers management events only; "
             "model/agent invocation data events require a CloudTrail Lake or trail export. "
-            "No returned callers does not establish absence of runtime activity.", incomplete=True,
+            "No returned callers does not establish absence of runtime activity.", incomplete=False,
         )
         ct = self._client("cloudtrail", region)
         start = datetime.now(UTC) - timedelta(days=min(self.cloudtrail_days, 90))
@@ -740,12 +744,12 @@ class AwsConnector(BaseConnector):
                                 incomplete=True,
                             )
                         yield f
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
                 self.ctx.warn("cloud.aws: record has invalid fields for its _kind")
         for key, agg in callers.items():
             try:
                 yield self._caller_finding(key, agg)
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
                 self.ctx.warn("cloud.aws: invalid aggregated caller fields")
 
     def _arn_account(self, arn: str | None) -> str | None:

@@ -25,6 +25,7 @@ from requests import RequestException
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.common import apply_matches, blob_matches, finalize, model_matches, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path, truncate
 
@@ -51,7 +52,13 @@ class _AutomationBase(BaseConnector):
         extra: dict[str, Any] | None = None,
         url: str | None = None,
     ) -> Finding | None:
-        matches = blob_matches(self.index, blob)
+        try:
+            matches = blob_matches(self.index, blob)
+        except MatchTimeoutError as exc:
+            # One oversized definition must not end the analysis of every later
+            # workflow in the export.
+            self.ctx.warn(f"{self.name}: workflow '{name}' definition matching exceeded its budget ({exc}); record coverage incomplete")
+            return None
         if not matches and not ai_steps:
             return None
         f = Finding(
@@ -117,7 +124,10 @@ class N8nConnector(_AutomationBase):
                 self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
             types = [str(n.get("type", "")) for n in nodes]
             ai_steps = [f"{n.get('name')} ({n.get('type')})" for n in nodes if re.search(r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace|\.agent$|mcp", str(n.get("type", "")), re.I)]
-            triggers = [t for t in types if re.search(r"trigger|cron|schedule|webhook", t, re.I)]
+            # Manual, chat and form triggers wait for a person; they do not make
+            # a workflow autonomous.
+            triggers = [t for t in types if re.search(r"trigger|cron|schedule|webhook", t, re.I)
+                        and not re.search(r"manualTrigger|chatTrigger|formTrigger", t, re.I)]
             models = [str(get_path(n, "parameters.model.value", "parameters.model", "parameters.modelId.value", "parameters.options.model")) for n in nodes if get_path(n, "parameters.model", "parameters.modelId")]
             f = self._workflow_finding(
                 wid=str(w.get("id") or w.get("name")),
@@ -318,9 +328,16 @@ class ZapierConnector(_AutomationBase):
             else:
                 steps_list = [str(get_path(s, "app.title", "app", "title", "action") or s) for s in steps] if isinstance(steps, list) else []
             blob = json.dumps(rec, default=str)[:100_000]
-            ai_steps = [s for s in steps_list if re.search(r"(?i)chatgpt|openai|claude|anthropic|gemini|ai by zapier|zapier ai|agent|copilot|gpt|perplexity|mistral|hugging", s)]
+            # Word boundaries: an "Agentbox" CRM step or a "Notify agent" title
+            # is not an AI step, and only Zapier's own agent objects are agents.
+            ai_steps = [s for s in steps_list if re.search(r"(?i)chatgpt|openai|claude|anthropic|gemini|ai by zapier|zapier ai|\b(?:agents? by zapier|zapier agents?|ai agents?)\b|copilot|\bgpt\b|perplexity|mistral|hugging ?face", s)]
             owner = rec.get("owner") or rec.get("Owner") or get_path(rec, "owner.email", "user.email", "creator")
-            kind = Kind.AGENT if re.search(r"(?i)\bagent\b", title) or rec.get("type") == "agent" or "instructions" in rec else Kind.WORKFLOW
+            # A zap is an agent when it is a Zapier agent object or runs a
+            # "Zapier Agents" step; a title mentioning agents is not enough.
+            agent_step = any(re.search(r"(?i)\b(?:agents? by zapier|zapier agents?)\b", s) for s in steps_list)
+            kind = Kind.AGENT if rec.get("type") == "agent" or "instructions" in rec or agent_step else Kind.WORKFLOW
+            if kind == Kind.AGENT and not ai_steps:
+                ai_steps = ["Zapier Agent"]  # the object itself is the AI step
             f = self._workflow_finding(
                 wid=str(rec.get("id") or rec.get("Id") or title),
                 name=str(title),

@@ -37,6 +37,7 @@ import yaml
 
 from shadowscan.models import Finding, ScanStats, Surface, now_iso
 from shadowscan.signatures import SignatureIndex, get_index
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize
 from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
 
@@ -208,6 +209,18 @@ class ConnectorContext:
             self.log.error("Connector error recorded; inspect scan report for sanitized details")
         if self.stats is not None:
             getattr(self.stats, channel).append(msg)
+
+    def isolate(self, what: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run one record's analysis; a malformed or oversized record costs only itself.
+
+        Returns ``None`` after recording the failure as incomplete coverage.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError) as exc:
+            detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+            self.warn(f"{what} analysis failed ({type(exc).__name__}){detail}; record coverage incomplete")
+            return None
 
     def examined(self, n: int = 1) -> None:
         self.check_deadline()

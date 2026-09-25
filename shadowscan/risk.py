@@ -116,6 +116,15 @@ PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
 }
 
 
+# Breadth of mentions is not danger. Capability and provider weights are
+# summed within these ceilings so a project that merely names many vendors
+# cannot outrank a confirmed agent, and findings that only establish framework
+# or SDK use never reach the critical band reserved for agents and credentials.
+MAX_CAPABILITY_WEIGHT = 30
+MAX_PROVIDER_WEIGHT = 15
+FRAMEWORK_USAGE_CEILING = 74
+
+
 def assess(finding: Finding, index: SignatureIndex | None = None, inventory_present: bool = False) -> Risk:
     factors: list[RiskFactor] = []
     raw = KIND_BASE.get(finding.kind, 5)
@@ -130,11 +139,15 @@ def assess(finding: Finding, index: SignatureIndex | None = None, inventory_pres
         factors.append(RiskFactor("no-owner", "no identifiable owner", 10))
 
     seen_caps = set()
+    capability_total = 0
     for cap in finding.capabilities:
         if cap in CAPABILITY_WEIGHTS and cap not in seen_caps:
             seen_caps.add(cap)
             w, d = CAPABILITY_WEIGHTS[cap]
             factors.append(RiskFactor(f"capability:{cap}", d, w))
+            capability_total += w
+    if capability_total > MAX_CAPABILITY_WEIGHT:
+        factors.append(RiskFactor("capability-ceiling", f"capability weights capped at {MAX_CAPABILITY_WEIGHT}", MAX_CAPABILITY_WEIGHT - capability_total))
 
     for tag in finding.tags:
         if tag in TAG_WEIGHTS:
@@ -142,10 +155,14 @@ def assess(finding: Finding, index: SignatureIndex | None = None, inventory_pres
             if w:
                 factors.append(RiskFactor(f"tag:{tag}", d, w))
 
+    provider_total = 0
     for pid in finding.model_providers:
         if pid in PROVIDER_WEIGHTS:
             w, d = PROVIDER_WEIGHTS[pid]
             factors.append(RiskFactor(f"provider:{pid}", d, w))
+            provider_total += w
+    if provider_total > MAX_PROVIDER_WEIGHT:
+        factors.append(RiskFactor("provider-ceiling", f"provider weights capped at {MAX_PROVIDER_WEIGHT}", MAX_PROVIDER_WEIGHT - provider_total))
 
     if index is not None:
         notes = []
@@ -192,4 +209,7 @@ def assess(finding: Finding, index: SignatureIndex | None = None, inventory_pres
     score = int(round(max(0, min(100, total * scale))))
     if scale < 1.0:
         factors.append(RiskFactor("confidence-scaling", f"scaled by confidence {finding.confidence:.2f}", int(round(total * scale - total))))
+    if finding.kind == Kind.FRAMEWORK_USAGE and score > FRAMEWORK_USAGE_CEILING:
+        factors.append(RiskFactor("kind-ceiling", "framework or SDK use without agent evidence stays below critical", FRAMEWORK_USAGE_CEILING - score))
+        score = FRAMEWORK_USAGE_CEILING
     return Risk(score=score, level=RiskLevel.from_score(score), factors=factors)

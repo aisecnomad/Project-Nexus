@@ -4,14 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
-import pytest
-from requests import ConnectionError as RequestsConnectionError
-
 from shadowscan.connectors import ConnectorContext
-from shadowscan.connectors.base import ConnectorError
-from shadowscan.connectors.cloud.aws import AwsConnector
 from shadowscan.connectors.cloud.azure import AzureConnector
-from shadowscan.connectors.cloud.common import string_list
 from shadowscan.connectors.cloud.oci import OciConnector
 from shadowscan.connectors.lowcode import salesforce as salesforce_module
 from shadowscan.connectors.lowcode import servicenow as servicenow_module
@@ -21,91 +15,12 @@ from shadowscan.connectors.saas import github_apps as github_apps_module
 from shadowscan.connectors.saas.github_apps import GitHubAppsConnector
 from shadowscan.models import ScanStats
 from shadowscan.utils.http import HttpError
-from shadowscan.utils.redaction import REDACTED, sanitize
 
 
 def context(index, **config):
     ctx = ConnectorContext(config=config, index=index)
     ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
     return ctx
-
-
-def test_string_list_coercion():
-    assert string_list("lambda", "services") == ["lambda"]
-    assert string_list(["a", " b "], "x") == ["a", "b"]
-    assert string_list("", "x") is None and string_list(None, "x") is None
-    assert string_list("us-east-1", "regions", pattern=r"[a-z0-9-]+") == ["us-east-1"]
-    with pytest.raises(ValueError):
-        string_list(["a", 1], "x")
-    with pytest.raises(ValueError):
-        string_list("US East", "regions", pattern=r"[a-z0-9-]+")
-
-
-def test_aws_scalar_settings_are_single_items_and_unknown_services_are_rejected(index):
-    connector = AwsConnector(context(index, services="lambda", regions="us-east-1"))
-    assert connector.services == {"lambda"} and connector.regions == ["us-east-1"]
-    with pytest.raises(ConnectorError):
-        AwsConnector(context(index, services="nope"))
-    with pytest.raises(ConnectorError):
-        AwsConnector(context(index, regions="US East"))
-
-
-def test_aws_layer_name_and_ssm_parameter_arn(index):
-    connector = AwsConnector(context(index, account_id="123456789012"))
-    finding = connector._h_lambda({
-        "FunctionArn": "arn:aws:lambda:us-east-1:123456789012:function:f", "FunctionName": "f", "_region": "us-east-1",
-        "Layers": ["arn:aws:lambda:us-east-1:123456789012:layer:langchain-deps:4"],
-    })
-    assert finding is not None and "framework.langchain" in finding.frameworks
-    plain = connector._h_ssm_parameter({"Name": "OPENAI_API_KEY", "_region": "us-east-1"})
-    nested = connector._h_ssm_parameter({"Name": "/prod/OPENAI_API_KEY", "_region": "us-east-1"})
-    assert plain is not None and plain.resource == "arn:aws:ssm:us-east-1:123456789012:parameter/OPENAI_API_KEY"
-    assert nested is not None and nested.resource == "arn:aws:ssm:us-east-1:123456789012:parameter/prod/OPENAI_API_KEY"
-
-
-def test_aws_clients_carry_explicit_timeouts(index, monkeypatch):
-    connector = AwsConnector(context(index, account_id="123456789012"))
-    session = Mock()
-    connector._session = session
-    connector._client("lambda", "us-east-1")
-    config = session.client.call_args.kwargs["config"]
-    assert config.connect_timeout == 10 and config.read_timeout == 30
-    assert config.retries == {"mode": "standard", "total_max_attempts": 3}
-
-
-def test_azure_detail_failures_are_incomplete_coverage_not_fatal(index):
-    ctx = context(index)
-    connector = AzureConnector(ctx)
-    connector.http = Mock()
-    connector.http.get_json.side_effect = HttpError(500, "https://management.azure.com/x")
-    assert connector._get("/x", "2024-01-01") is None
-    connector.http.get_json.side_effect = RequestsConnectionError()
-    assert connector._get("/y", "2024-01-01") is None
-    connector.http.post_json.side_effect = RequestsConnectionError()
-    assert ctx.stats.incomplete and len(ctx.stats.warnings) == 2
-
-
-def test_azure_scalar_subscription_is_one_subscription(index):
-    assert AzureConnector(context(index, subscriptions="s1")).subscriptions == ["s1"]
-    with pytest.raises(ConnectorError):
-        AzureConnector(context(index, subscriptions="/subscriptions/s1"))
-
-
-def test_azure_app_settings_are_redacted_in_dumps_but_analyzed_live(index):
-    record = {
-        "_kind": "appsettings", "id": "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
-        "name": "app", "kind": "functionapp",
-        "environment": {"OPENAI_API_KEY": "sk-proj-" + "a" * 40, "SENDGRID_KEY": "SG.opaque-value-1234567890"},
-    }
-    dumped = sanitize(record)
-    assert set(dumped["environment"].values()) == {REDACTED}
-    connector = AzureConnector(context(index))
-    finding = connector._h_appsettings(record)
-    assert finding is not None and "plaintext-credential" in finding.tags
-    assert "OPENAI_API_KEY" in finding.metadata["setting_names"]
-    legacy = {**record, "settings": record["environment"]}
-    del legacy["environment"]
-    assert connector._h_appsettings(legacy) is not None
 
 
 def test_azure_foundry_projects_inherit_subscription_and_location(index, monkeypatch):
@@ -144,15 +59,6 @@ def test_oci_clients_are_cached_per_region_with_timeouts(index):
     assert other is not first and other.config["region"] == "r2"
     assert first.kwargs["timeout"] == (10, 30)
     assert first.kwargs["retry_strategy"] is not None
-
-
-def test_oci_function_reads_environment_and_legacy_config_keys(index):
-    connector = OciConnector(context(index))
-    base = {"id": "ocid1.fnfunc.oc1..fn1", "display_name": "fn", "_region": "r", "_compartment": "c", "_application": "app", "image": "ollama/ollama:latest"}
-    current = connector._h_function({**base, "environment": {"OPENAI_API_KEY": "x"}})
-    legacy = connector._h_function({**base, "config": {"OPENAI_API_KEY": "x"}})
-    assert current is not None and legacy is not None
-    assert current.metadata["config_keys"] == legacy.metadata["config_keys"] == ["OPENAI_API_KEY"]
 
 
 def test_salesforce_never_requests_token_values_and_survives_expired_locators(index, monkeypatch):

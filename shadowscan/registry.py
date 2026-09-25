@@ -61,6 +61,24 @@ def _has_usable_scope_identity(finding: Finding) -> bool:
     )
 
 
+def _meta_display_names(finding: Finding) -> set[str]:
+    """Human-readable names from metadata, including list and record members."""
+    out: set[str] = set()
+    for k in NAME_FIELDS:
+        v = finding.metadata.get(k)
+        if isinstance(v, str):
+            out.add(v)
+        elif isinstance(v, list):
+            for item in v:
+                if isinstance(item, str):
+                    out.add(item)
+                elif isinstance(item, dict):
+                    for kk in ("name", "agent_id", "display_name"):
+                        if isinstance(item.get(kk), str):
+                            out.add(item[kk])
+    return {name for name in out if name.strip()}
+
+
 def _meta_names(finding: Finding) -> set[str]:
     out: set[str] = set()
     for k in NAME_FIELDS:
@@ -306,7 +324,6 @@ class Inventory:
             and any(fnmatch.fnmatchcase(finding.resource or "", pattern) for pattern in entry.resources)
         ]
         if len(matches) == 1:
-            finding.metadata.pop("registry_suggestions", None)
             return matches[0]
         if len(matches) > 1:
             finding.metadata["registry_suggestions"] = sorted({e.agent_id for e in matches})
@@ -481,7 +498,7 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
             ) else [
                 finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})
             ],
-            "names": sorted({str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}),
+            "names": sorted(_meta_display_names(finding)),
             "frameworks": finding.frameworks,
             "surfaces": [finding.surface.value],
             "providers": [finding.provider] if finding.provider else [],

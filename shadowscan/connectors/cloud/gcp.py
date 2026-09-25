@@ -36,6 +36,7 @@ from shadowscan.connectors.cloud.common import (
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials, require_local_adc
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
 
@@ -344,12 +345,12 @@ class GcpConnector(BaseConnector):
                     yield result
                 elif result:
                     yield from result
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
                 self.ctx.warn("cloud.gcp: record has invalid fields for its _kind")
         for (_, principal), agg in callers.items():
             try:
                 yield self._caller_finding(principal, agg)
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
                 self.ctx.warn("cloud.gcp: invalid aggregated caller fields")
 
     def _h_project(self, rec: dict[str, Any]) -> Finding | None:

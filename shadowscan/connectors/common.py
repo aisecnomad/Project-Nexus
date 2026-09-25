@@ -120,6 +120,15 @@ def finalize(finding: Finding, index: SignatureIndex | None = None) -> Finding:
     return finding
 
 
+def product_matches(matches: Iterable[Match]) -> list[Match]:
+    """Keep matches that identify a product; drop the generic AI-name hint.
+
+    The word "agent" in a flow or record name (case routing, support agents)
+    is not evidence of an AI feature on its own.
+    """
+    return [m for m in matches if m.signature_id != "identity-app.generic-ai-name"]
+
+
 def name_matches(index: SignatureIndex, *texts: str | None) -> list[Match]:
     """Run display-name signatures over several strings (name, publisher, description)."""
     out: list[Match] = []

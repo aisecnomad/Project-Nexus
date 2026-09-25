@@ -25,6 +25,15 @@ from shadowscan.utils.redaction import sanitize_text
 _SCAN_DEADLINE: ContextVar[float | None] = ContextVar("signature_scan_deadline", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
 DEFAULT_SCAN_BUDGET_SECONDS = 2.0
+MAX_SCAN_BUDGET_SECONDS = 60.0
+# The default budget covers a typical input; larger records (a 300 KB workflow
+# export, a generated module) get proportionally more, up to the maximum.
+BUDGET_SCALE_BYTES = 100_000
+
+
+def default_budget_for(size: int, base: float = DEFAULT_SCAN_BUDGET_SECONDS) -> float:
+    """Scale a per-input budget with the input size, within the validated range."""
+    return min(MAX_SCAN_BUDGET_SECONDS, base * max(1.0, size / BUDGET_SCALE_BYTES))
 # A briefly busy worker can exhaust several regex wall-clock attempts before
 # this thread has used its own 100 ms CPU allowance. Keep retries finite and
 # inside the original per-pattern CPU and per-input wall deadlines.
@@ -309,14 +318,14 @@ class SignatureIndex:
         return out
 
     @contextmanager
-    def _input_budget(self):
-        """Preserve a caller's explicit budget or open the default input budget."""
+    def _input_budget(self, size: int = 0):
+        """Preserve a caller's explicit budget or open a size-scaled default budget."""
         if _SCAN_DEADLINE.get() is not None:
             _remaining_timeout()
             yield
             _remaining_timeout()
             return
-        with self.scan_budget():
+        with self.scan_budget(default_budget_for(size)):
             yield
 
     def _match_regex_signals(
@@ -324,7 +333,7 @@ class SignatureIndex:
         ignore_spans: Sequence[tuple[int, int]] = (),
     ) -> list[Match]:
         # One deadline covers the whole signal class even outside filesystem scans.
-        with self._input_budget():
+        with self._input_budget(len(text)):
             return self._match_regex_signals_with_budget(signal_type, text, language, max_per_signal, ignore_spans)
 
     def _match_regex_signals_with_budget(
@@ -434,17 +443,30 @@ class SignatureIndex:
             h = h.split("://", 1)[1]
         h_with_port = h.split("/", 1)[0]
         h = h_with_port.split(":", 1)[0]
-        out: list[Match] = [Match(sig, s, h, s.weight) for sig, s in self._domains.get(h, [])]
+        # One signal can list a host both exactly and as a wildcard suffix
+        # (api.openai.com and *.api.openai.com). Report each signal once so a
+        # single observed host cannot count twice in noisy-OR confidence.
+        out: list[Match] = []
+        seen: set[tuple[str, int]] = set()
+
+        def add(sig: Signature, s: Signal, value: str) -> None:
+            key = (sig.id, id(s))
+            if key not in seen:
+                seen.add(key)
+                out.append(Match(sig, s, value, s.weight))
+
+        for sig, s in self._domains.get(h, []):
+            add(sig, s, h)
         for suffix, sig, s in self._domain_suffixes:
             if h.endswith(suffix) or h == suffix.lstrip("."):
-                out.append(Match(sig, s, h, s.weight))
+                add(sig, s, h)
         for rx, sig, s in self._domain_regex:
             if _search(rx, h, sig.id) or _search(rx, h_with_port, sig.id):
-                out.append(Match(sig, s, h_with_port, s.weight))
+                add(sig, s, h_with_port)
         return out
 
     def match_domains_in_text(self, text: str) -> list[Match]:
-        with self._input_budget():
+        with self._input_budget(len(text)):
             return self._match_domains_in_text_with_budget(text)
 
     def _match_domains_in_text_with_budget(self, text: str) -> list[Match]:
@@ -488,7 +510,7 @@ class SignatureIndex:
 
     def match_envs_in_text(self, text: str) -> list[Match]:
         """Find environment variable style identifiers inside arbitrary text."""
-        with self._input_budget():
+        with self._input_budget(len(text)):
             return self._match_envs_in_text_with_budget(text)
 
     def _match_envs_in_text_with_budget(self, text: str) -> list[Match]:

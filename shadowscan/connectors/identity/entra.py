@@ -26,7 +26,12 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize, scope_matches
-from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
+from shadowscan.connectors.identity.common import (
+    access_token,
+    assess_app,
+    identity_kind_for,
+    summarize_scopes,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 
@@ -70,7 +75,7 @@ class EntraConnector(BaseConnector):
                 f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token",
                 data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret, "scope": "https://graph.microsoft.com/.default"},
             )
-            token = client.read_json_response(resp)["access_token"]
+            token = access_token(client.read_json_response(resp), "identity.entra")
         self.http = HttpClient(GRAPH, headers={"Authorization": f"Bearer {token}", "ConsistencyLevel": "eventual"})
 
     def _pages(self, path: str, **kwargs: Any) -> Iterator[dict[str, Any]]:

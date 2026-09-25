@@ -9,6 +9,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from conftest import requires_git_metadata
 
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code import filesystem
@@ -136,6 +137,7 @@ def test_api_fetch_never_silently_changes_unsupported_branch(provider, index, mo
     assert ctx.stats.incomplete
 
 
+@requires_git_metadata
 def test_metadata_and_incremental_git_ignore_inherited_repo_and_config(tmp_path, index, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()

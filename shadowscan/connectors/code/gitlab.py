@@ -250,6 +250,9 @@ class GitLabConnector(BaseConnector):
             if self._clone(proj, dest):
                 self._set_clone_snapshot(proj, dest)
                 return dest
+            # A timed-out git is killed before its cleanup runs. API mode must
+            # not scan a partial checkout (or its .git) as if it were API bytes.
+            shutil.rmtree(dest, ignore_errors=True)
             self.ctx.warn(f"code.gitlab: clone failed for {proj.get('path_with_namespace')}; falling back to API mode")
         self.ctx.check_deadline()
         return self._fetch_via_api(proj, tmp)

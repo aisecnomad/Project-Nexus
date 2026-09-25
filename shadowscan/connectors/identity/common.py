@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
+from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.common import apply_matches, classify_permissions, domain_matches, name_matches
 from shadowscan.models import Evidence, Finding, Kind
 from shadowscan.signatures import SignatureIndex
 
-MACHINE_GRANT_TYPES = {"client_credentials", "urn:ietf:params:oauth:grant-type:jwt-bearer", "urn:ietf:params:oauth:grant-type:token-exchange", "urn:ietf:params:oauth:grant-type:device_code"}
+# Non-interactive grants. The device authorization grant (RFC 8628) needs a
+# person to approve the code on another device, so it is not machine-only.
+MACHINE_GRANT_TYPES = {"client_credentials", "urn:ietf:params:oauth:grant-type:jwt-bearer", "urn:ietf:params:oauth:grant-type:token-exchange"}
+
+
+def access_token(payload: Any, connector: str) -> str:
+    """Return the access token of an OAuth token response, or fail closed."""
+    token = payload.get("access_token") if isinstance(payload, Mapping) else None
+    if not isinstance(token, str) or not token.strip():
+        raise ConnectorError(f"{connector}: token endpoint response did not include an access token")
+    return token
 
 
 def assess_app(

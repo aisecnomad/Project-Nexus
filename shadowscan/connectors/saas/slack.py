@@ -242,10 +242,14 @@ class SlackConnector(BaseConnector):
             scope_names.append(scope_name.strip())
         installer = None
         installed_at = None
+        installed = False
         for log in sorted(logs, key=lambda l: str(l.get("date", ""))):
-            if log.get("change_type") in {"added", "enabled", "expanded", None}:
+            # The earliest enable event is the installation; later expansions
+            # must not move first_seen forward or replace the installer.
+            if not installed and log.get("change_type") in {"added", "enabled", "expanded", None}:
                 installer = log.get("user_name") or log.get("user_id")
                 installed_at = to_iso(parse_timestamp(log.get("date")))
+                installed = True
             if log.get("scope"):
                 scope_names.extend(str(log["scope"]).split(","))
         f = Finding(

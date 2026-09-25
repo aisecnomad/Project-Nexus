@@ -2,6 +2,75 @@
 
 ## 0.1.1 — Unreleased
 
+### Production readiness review fixes (2026-09-25)
+
+Detection
+
+- Attribute library and protocol constructors in Python/JavaScript only through
+  import binding: `aiohttp.ClientSession(` and other same-named exports are no
+  longer MCP evidence, while an import-bound `mcp.ClientSession(` still is.
+- Fall back to lexical evidence, with a warning, when the scanner's interpreter
+  cannot parse a source file (for example PEP 695 syntax on Python 3.11) instead
+  of silently dropping its agent evidence.
+- Recognize MCP configurations by structure: a nested `mcp.servers` block or a
+  dedicated MCP file name. OpenAPI, Docker and proxy documents with a `servers`
+  member are not tool servers.
+- Emit coding-agent configuration findings only from configuration files,
+  dependencies, imports, workflow actions or code; vendor hostnames and variable
+  names quoted inside data files (an egress allowlist, a vendor inventory, the
+  scanner's own signature packs) no longer configure Cursor, Windsurf, Goose,
+  Copilot, Claude Code or Cody.
+- Gateway callers: a direct request to a provider API is LLM use, not an
+  "agentic" caller. OAuth-app signatures no longer apply to hostnames or user
+  names, `llm_hosts_only` is a host filter (an internal dashboard serving `/sse`
+  is not inference traffic), and one observed host counts once even when a
+  signal lists it both exactly and as a wildcard.
+- Low-code: the word "agent" in a flow, zap or record name is not an AI hint;
+  Zapier agent objects are agents by themselves; n8n manual, chat and form
+  triggers are not autonomous.
+- Risk: capability and provider weights are capped, and findings that only
+  establish framework or SDK use stay below the critical band reserved for
+  agents and credentials.
+
+Robustness
+
+- Large ordinary source files complete: the import binder accepts 400k AST
+  nodes and 4,096 bound calls, per-file and default matching budgets scale with
+  input size (up to the validated 60-second maximum), and a minified bundle with
+  hundreds of credential-like keys on one line is sanitized in linear time.
+- `exclude` names apply without an accompanying glob; cooperative cancellation
+  stops the file walk instead of being recorded once per file; a killed clone's
+  partial checkout is removed before the API fallback; a worker that finished
+  inside its deadline is never reported as timed out.
+- One malformed or oversized record costs only itself in the cloud, low-code and
+  automation connectors (`MatchTimeoutError` is isolated per record). Default
+  live AWS scans can complete: the CloudTrail management-event scope is reported
+  as a documented limit, not a failed collection.
+- HTTP retry back-off sleeps in short slices and honours the connector deadline.
+- OAuth token responses without an access token fail closed; the device
+  authorization grant is not a machine-only grant; scalar `products` and
+  `environments` settings are one item, not characters; Slack `first_seen` is
+  the earliest enable event; hostnames of URLs with userinfo or IPv6 literals
+  parse correctly.
+
+Redaction
+
+- Generic secret names (`JWT_SECRET`, `SESSION_SECRET`, `VAULT_TOKEN`,
+  `NPM_TOKEN`, `CI_JOB_TOKEN`, `SECRET_KEY_BASE`, `X-Amz-Security-Token`,
+  `passphrase`, `auth`, `pwd`) are redacted; `max_tokens`, `token_count` and
+  similar descriptive names stay readable.
+
+Operations
+
+- `--set` keeps identifiers with leading zeros (`tenant_id=0123`) as strings.
+- Generated inventory stubs list readable names instead of Python reprs.
+- The worker image is based on Debian trixie (Git 2.47) and fails the build on a
+  Git older than 2.45; tests of history enrichment skip on older Git, and the
+  OCI contract tests skip without the SDK, so `pip install -e ".[dev]"` followed
+  by `pytest` works on a stock Ubuntu 24.04 host.
+- Byte-identical duplicate tests were removed; regression tests are named by
+  feature.
+
 ### Detection and collection assurance (2026-09-24)
 
 - Require corroborating AI evidence and bound source constructors to imported

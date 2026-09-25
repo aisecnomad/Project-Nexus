@@ -19,11 +19,11 @@ def validate_git_ref(name: str | None) -> str | None:
     if not isinstance(name, str):
         return None
     value = name
+    # The character class already rejects option-like, absolute, escaped and
+    # reflog (@{) spellings; only sequence and boundary rules remain.
     if not value or not _REF_RX.fullmatch(value):
         return None
-    if value.startswith("-") or value.startswith("/") or value.endswith(("/", ".")):
-        return None
-    if ".." in value or "//" in value or "@{" in value or "\\" in value:
+    if value.endswith(("/", ".")) or ".." in value or "//" in value:
         return None
     if any(part.startswith(".") or part.endswith(".lock") for part in value.split("/")):
         return None
@@ -143,7 +143,7 @@ def read_git_snapshot(path: str | os.PathLike[str], *, timeout: float = 10.0) ->
             return None
         try:
             result = subprocess.run(
-                [*git_argv_prefix(), "-C", root, "rev-parse", "--verify", revision],
+                [*metadata_git_argv_prefix(), "-C", root, "rev-parse", "--verify", revision],
                 env=env,
                 capture_output=True,
                 text=True,

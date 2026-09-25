@@ -15,6 +15,7 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.cloud.common import string_list
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -38,7 +39,7 @@ class AtlassianConnector(BaseConnector):
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.site = str(ctx.get("site", env="ATLASSIAN_SITE") or "").rstrip("/")
-        self.products = ctx.get("products") or ["jira", "confluence"]
+        self.products = string_list(ctx.get("products"), "products") or ["jira", "confluence"]
 
     def collect(self) -> Iterable[dict[str, Any]]:
         email = self.ctx.get("email", env="ATLASSIAN_EMAIL")

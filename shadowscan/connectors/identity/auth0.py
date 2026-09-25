@@ -15,7 +15,12 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.common import finalize
-from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
+from shadowscan.connectors.identity.common import (
+    access_token,
+    assess_app,
+    identity_kind_for,
+    summarize_scopes,
+)
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
@@ -51,7 +56,7 @@ class Auth0Connector(BaseConnector):
                 raise ConnectorError("identity.auth0: client_id + client_secret (or token) required")
             client = HttpClient()
             resp = client.post(f"https://{self.domain}/oauth/token", json={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret, "audience": f"https://{self.domain}/api/v2/"})
-            token = client.read_json_response(resp)["access_token"]
+            token = access_token(client.read_json_response(resp), "identity.auth0")
         self.http = HttpClient(f"https://{self.domain}", headers={"Authorization": f"Bearer {token}"})
 
     def collect(self) -> Iterable[dict[str, Any]]:

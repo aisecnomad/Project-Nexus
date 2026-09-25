@@ -10,6 +10,7 @@ import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from shadowscan.utils.redaction import credential_id, sanitize, sanitize_text
 
@@ -44,9 +45,7 @@ def safe_join(root: Path, rel: str) -> Path | None:
     if not rel or rel.startswith(("/", "\\")) or ":" in Path(rel).parts[0]:
         return None
     candidate = Path(rel)
-    if candidate.is_absolute() or any(part in {"..", ""} and part == ".." for part in candidate.parts):
-        return None
-    if ".." in candidate.parts:
+    if candidate.is_absolute() or ".." in candidate.parts:
         return None
     try:
         base = root.expanduser().resolve()
@@ -66,7 +65,7 @@ def iter_files_confined(root: Path, *, suffixes: set[str] | None = None) -> list
     found: list[Path] = []
     if base.is_symlink() or not base.is_dir():
         return found
-    for dirpath, dirnames, filenames in __import__("os").walk(base, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
         current = Path(dirpath)
         try:
             current.resolve().relative_to(base)
@@ -272,11 +271,20 @@ def truncate(s: str | None, n: int = 200) -> str | None:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-_HOST_IN_URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*://)?([^/:?#]+)(?::\d+)?", re.IGNORECASE)
-
-
 def host_of(url: str | None) -> str | None:
+    """Return the lower-cased hostname of a URL or bare authority, if any.
+
+    Userinfo, ports and bracketed IPv6 literals are handled by the standard
+    parser: ``https://user:pw@example.com/p`` is ``example.com`` and
+    ``https://[::1]:8080/x`` is ``::1``.
+    """
     if not url:
         return None
-    m = _HOST_IN_URL.match(url.strip())
-    return m.group(1).lower() if m else None
+    value = url.strip()
+    if "://" not in value:
+        value = "//" + value
+    try:
+        host = urlsplit(value).hostname
+    except ValueError:
+        return None
+    return host.lower() if host else None

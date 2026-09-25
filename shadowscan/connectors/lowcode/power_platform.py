@@ -23,6 +23,7 @@ from urllib.parse import quote
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.cloud.common import string_list
 from shadowscan.connectors.common import apply_matches, blob_matches, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -71,7 +72,7 @@ class PowerPlatformConnector(BaseConnector):
         self.tenant = ctx.get("tenant_id", env="AZURE_TENANT_ID")
         self.client_id = ctx.get("client_id", env="AZURE_CLIENT_ID")
         self.client_secret = ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
-        self.only_envs = set(ctx.get("environments", []) or [])
+        self.only_envs = set(string_list(ctx.get("environments"), "environments") or [])
         self.include_bots = bool(ctx.get("include_bots", True))
         self._tokens: dict[str, str] = {}
 
@@ -160,12 +161,12 @@ class PowerPlatformConnector(BaseConnector):
                 continue
             if kind == "flow":
                 self.ctx.examined()
-                f = self._flow_finding(rec)
+                f = self.ctx.isolate("lowcode.power-platform: flow", self._flow_finding, rec)
                 if f:
                     yield f
             elif kind == "app":
                 self.ctx.examined()
-                f = self._app_finding(rec)
+                f = self.ctx.isolate("lowcode.power-platform: app", self._app_finding, rec)
                 if f:
                     yield f
             elif kind == "bot":
@@ -174,7 +175,9 @@ class PowerPlatformConnector(BaseConnector):
                 components.setdefault(str(rec.get("_parentbotid_value") or rec.get("parentbotid") or ""), []).append(rec)
         for bid, bot in bots.items():
             self.ctx.examined()
-            yield self._bot_finding(bot, components.get(bid, []))
+            f = self.ctx.isolate("lowcode.power-platform: bot", self._bot_finding, bot, components.get(bid, []))
+            if f:
+                yield f
 
     def _record_kind(self, rec: dict[str, Any]) -> str | None:
         if not self._record_fields_valid(

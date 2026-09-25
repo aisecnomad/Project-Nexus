@@ -92,7 +92,9 @@ def test_import_and_code_patterns(index: SignatureIndex):
 
 
 def test_domain_user_agent_model_and_secret(index: SignatureIndex):
-    assert {m.signature_id for m in index.match_domain("api.anthropic.com")} == {"provider.anthropic"} | {m.signature_id for m in index.match_domain("api.anthropic.com") if m.signature_id != "provider.anthropic"}
+    anthropic_ids = {m.signature_id for m in index.match_domain("api.anthropic.com")}
+    assert "provider.anthropic" in anthropic_ids
+    assert "identity-app.anthropic-claude" in anthropic_ids
     assert "provider.aws-bedrock" in {m.signature_id for m in index.match_domain("bedrock-runtime.eu-west-1.amazonaws.com")}
     assert "cloud.aws-bedrock-agents" in {m.signature_id for m in index.match_domain("bedrock-agent-runtime.us-east-1.amazonaws.com")}
     assert "provider.azure-openai" in {m.signature_id for m in index.match_domain("acme.openai.azure.com")}

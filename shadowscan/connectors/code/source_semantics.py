@@ -26,8 +26,12 @@ from shadowscan.signatures.loader import Signal
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 from shadowscan.utils.redaction import sanitize_text
 
-MAX_AST_NODES = 50_000
-MAX_BOUND_CALLS = 512
+# Ordinary large modules (a 450 KB type checker is 53k nodes) must bind;
+# the 1 MiB default file limit keeps a full walk near 100k nodes.
+MAX_AST_NODES = 400_000
+# Only calls to imported symbols are retained, each capped at MAX_CALL_TEXT,
+# so a hostile file can hold at most MAX_BOUND_CALLS * MAX_CALL_TEXT bytes.
+MAX_BOUND_CALLS = 4096
 MAX_CALL_TEXT = 8192
 
 
@@ -35,6 +39,13 @@ MAX_CALL_TEXT = 8192
 class _Binding:
     module: str
     symbol: str
+
+
+class SourceBindingUnavailable(Exception):
+    """The interpreter could not parse the source, so imports cannot be bound.
+
+    Callers keep lexical evidence for the file instead of discarding it.
+    """
 
 
 @dataclass(frozen=True)
@@ -448,15 +459,16 @@ def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[lis
 def bound_source_matches(index: SignatureIndex, text: str, language: str, ignored: list[tuple[int, int]]) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
-    Invalid Python cannot establish bound constructions. The caller already
-    retains lexical import/supporting evidence and reports lexical ambiguity.
+    Invalid Python (including grammar newer than this interpreter) cannot
+    establish bound constructions: ``SourceBindingUnavailable`` tells the
+    caller to fall back to lexical evidence and report the limitation.
     """
     try:
         calls, imports = _python_bindings(text) if language == "python" else _javascript_bindings(text, ignored)
     except RecursionError as exc:
         raise MatchTimeoutError("source binding recursion limit exceeded") from exc
-    except (SyntaxError, ValueError):
-        return []
+    except (SyntaxError, ValueError) as exc:
+        raise SourceBindingUnavailable(type(exc).__name__) from None
     found: list[Match] = []
     module_cache: dict[_Binding, list[Match]] = {}
 

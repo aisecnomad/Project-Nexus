@@ -17,8 +17,10 @@ mypy shadowscan
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 ```
 
-Cloud extras (`pip install -e ".[cloud]"`) are optional. Offline fixtures cover
-the cloud connectors; do not commit live tenant exports.
+Cloud extras (`pip install -e ".[cloud]"`) are optional: the OCI contract tests
+skip without the SDK, and offline fixtures cover the cloud connectors. Do not
+commit live tenant exports. Tests of opt-in Git history enrichment skip on Git
+older than 2.45; everything else runs on a stock Ubuntu 24.04 or macOS host.
 
 ## Pull requests
 

@@ -23,7 +23,7 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.common import apply_matches, finalize, name_matches
+from shadowscan.connectors.common import apply_matches, finalize, name_matches, product_matches
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -306,7 +306,7 @@ class SalesforceConnector(BaseConnector):
 
     def _flow_finding(self, rec: dict[str, Any]) -> Finding | None:
         text = " ".join(str(rec.get(k) or "") for k in ("ApiName", "Label", "Description"))
-        matches = name_matches(self.index, text)
+        matches = product_matches(name_matches(self.index, text))
         if not matches and not any(k in text.lower() for k in ("prompt", "einstein", "gpt", "agentforce", "llm", "generative")):
             return None
         f = Finding(

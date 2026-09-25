@@ -28,8 +28,16 @@ _SENSITIVE_SUFFIXES = (
     "accountkey", "sharedaccesskey", "sastoken",
     # Capability URLs: whoever holds a webhook URL can post through it.
     "webhookurl", "webhookuri", "webhookid", "hookurl",
+    # Generic suffixes: JWT_SECRET, SESSION_SECRET, SIGNING_SECRET, VAULT_TOKEN,
+    # NPM_TOKEN, CI_JOB_TOKEN, X-Amz-Security-Token, SECRET_KEY_BASE. A plural
+    # or descriptive continuation (max_tokens, token_count, secrets_manager)
+    # does not end with these and stays readable.
+    "secret", "token", "secretkeybase", "passphrase", "securitytoken", "signingsecret",
 )
-_SENSITIVE_NAMES = {"token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie"}
+_SENSITIVE_NAMES = {
+    "token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie",
+    "pass", "pwd", "auth", "passphrase", "apikey", "secrets",
+}
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
 _SECRET_TOKEN = re.compile(
@@ -70,6 +78,7 @@ _ASSIGNMENT = re.compile(
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;\}\]\)\"']+)"
 )
 _QUERY_SEPARATOR = re.compile(r"[&#]")
+_MAX_ASSIGNMENT_LINE = 8192
 _PYTHON_ASSIGNMENT_KEY = re.compile(
     r"(?<![\w-])(?P<key>[A-Za-z_][A-Za-z0-9_.]{0,100})[ \t]*(?P<separator>:|=(?!=))"
 )
@@ -230,8 +239,18 @@ def _redact_python_assignments(text: str) -> str:
     work = 0
     urls = _URL.finditer(text)
     url = next(urls, None)
+    line_start = line_end = -1
     for match in _PYTHON_ASSIGNMENT_KEY.finditer(text):
         if match.start() < cursor or not _sensitive_key(match.group("key")):
+            continue
+        if not line_start <= match.start() < line_end:
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line_end = text.find("\n", match.start())
+            line_end = len(text) if line_end < 0 else line_end
+        if line_end - line_start > _MAX_ASSIGNMENT_LINE:
+            # A minified bundle holds hundreds of candidates on one physical
+            # line; tokenizing the remainder for each is quadratic. The bounded
+            # assignment pass in sanitize_text still redacts their values.
             continue
         annotated = match.group("separator") == ":"
         assigned_at: int | None = None if annotated else match.end()
