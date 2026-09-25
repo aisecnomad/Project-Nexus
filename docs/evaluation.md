@@ -86,18 +86,17 @@ standup bot, a crypto exchange client named `gemini-python`, a `copilot-css`
 theme and a monitoring agent Helm chart. Each case labels one target kind and
 signature; placeholder cases also assert that no secret finding is produced.
 
-This corpus was written to be failable and it is: at the time of writing the
-scanner scores 14 TP, 2 FP, 1 FN and 14 TN on it (precision 0.875, recall
-0.933, specificity 0.875). The three failures carry `known_gap: true` and
-explain the cause in their description: the Semantic Kernel app is reported
-as framework usage rather than an agent because only its NuGet dependency and
-`using` directives match and no C# code pattern exists for kernel builders,
-plugins or auto tool invocation; the Flask app is promoted to a LangChain
-agent because its `create_agent()` view function matches the LangChain call
-pattern and `supervisor` matches the agent loop heuristic; and the runbook's
-illustrative `sk-proj-` value is reported as a hardcoded credential because it
-is well formed and high entropy, a finding a secret scanner cannot rule out
-from the surrounding prose. Passing cases also show attribution noise that the
+This corpus was written to be failable, and its first run found three
+misses. Two were fixed in the signature data: the Semantic Kernel app now
+promotes to an agent through C# code patterns for `Kernel.CreateBuilder()`,
+`Plugins.AddFromType<>()`, `[KernelFunction("...")]` and automatic tool
+invocation, and a Flask view defined as `def create_agent():` no longer matches
+the LangChain `create_agent(` call pattern. At the time of writing the scanner
+scores 15 TP, 1 FP, 0 FN and 15 TN on it (precision 0.9375, recall 1.0,
+specificity 0.9375). The remaining failure carries `known_gap: true` and
+explains the cause in its description: the runbook's illustrative `sk-proj-`
+value is reported as a hardcoded credential because it is well formed and high
+entropy, a finding a secret scanner cannot rule out from the surrounding prose. Passing cases also show attribution noise that the
 binary target does not penalise: Java `@Tool(` is credited to LangChain4j next
 to Spring AI, `new Agent({ name:` is credited to Mastra next to the OpenAI
 Agents SDK, `docker-compose.yml` files raise a container workload infra

@@ -39,7 +39,7 @@ signatures:
         patterns: ['from\s+["'']@?langchain(?!/textsplitters\b)(?:/[^"'']+)?["'']', 'require\(\s*["'']@?langchain(?!/textsplitters\b)']
         weight: 0.85
       - type: code
-        patterns: ['\bAgentExecutor\s*\(', '\binitialize_agent\s*\(', '\bcreate_(?:react|tool_calling|openai_tools|openai_functions|structured_chat|json_chat|xml|self_ask_with_search|conversational_retrieval|sql)_agent\s*\(', '\bcreate_agent\s*\(', '\bcreateReactAgent\s*\(', '\bcreateToolCallingAgent\s*\(', '\bAgentType\.']
+        patterns: ['\bAgentExecutor\s*\(', '\binitialize_agent\s*\(', '\bcreate_(?:react|tool_calling|openai_tools|openai_functions|structured_chat|json_chat|xml|self_ask_with_search|conversational_retrieval|sql)_agent\s*\(', '(?<!def )\bcreate_agent\s*\(', '\bcreateReactAgent\s*\(', '\bcreateToolCallingAgent\s*\(', '\bAgentType\.']
         weight: 0.9
         agent_indicator: true
         capabilities: [tool-use]
@@ -371,7 +371,7 @@ signatures:
         patterns: ['^[^\S\r\n]*using\s+Microsoft\.SemanticKernel\b']
         weight: 0.9
       - type: code
-        patterns: ['\b(?:ChatCompletionAgent|OpenAIAssistantAgent|AzureAIAgent|AgentGroupChat|BedrockAgent|CopilotStudioAgent)\s*\(', '@kernel_function\b', '\[KernelFunction\]', '\bFunctionChoiceBehavior\.Auto\s*\(']
+        patterns: ['\b(?:ChatCompletionAgent|OpenAIAssistantAgent|AzureAIAgent|AgentGroupChat|BedrockAgent|CopilotStudioAgent)\s*\(', '@kernel_function\b', '\[KernelFunction(?:\]|\()', '\bFunctionChoiceBehavior\.(?:Auto|Required)\s*\(', '\bKernel\.CreateBuilder\s*\(', '\.Plugins\.AddFrom(?:Type|Object|Functions)\s*[<(]', '\bToolCallBehavior\.AutoInvokeKernelFunctions\b']
         weight: 0.85
         agent_indicator: true
 

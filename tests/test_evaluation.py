@@ -103,7 +103,7 @@ def test_realistic_corpus_has_multi_file_cases_and_documented_gaps():
             assert "Known gap:" in case.description
         if case.family == "secret" and not case.present:
             assert case.assertions.get("max_secret_findings") == 0
-    assert {"semantic-kernel-csharp-console", "flask-insurance-agents-crud", "readme-key-rotation-tutorial"} <= {
+    assert {"readme-key-rotation-tutorial"} <= {
         c.id for c in cases if c.known_gap
     }
 
