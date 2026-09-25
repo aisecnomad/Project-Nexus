@@ -115,7 +115,8 @@ def policy_token() -> tuple[tuple[int, Any], ...]:
     """
     policy: tuple[Any, ...] = (
         _SENSITIVE_SUFFIXES, _SENSITIVE_NAMES, _SECRET_TOKEN, _PATH_SECRET_RULES, _JWT, _PEM, _AUTH,
-        _URL, _ASSIGNMENT, _PYTHON_ASSIGNMENT_KEY, _MAPPING_VALUE, _YAML_MAPPING_LINE,
+        _URL, _ASSIGNMENT, _PYTHON_ASSIGNMENT_KEY, _INDEXED_ASSIGNMENT_KEY,
+        _TARGET_ATTRIBUTE, _MAPPING_VALUE, _YAML_MAPPING_LINE,
         _ASSIGNMENT_CREDENTIAL_NAME,
     )
     return tuple(

@@ -1,5 +1,7 @@
 """Dataclass attributes are independent values, never positional CLI arguments."""
 
+import re
+
 import pytest
 
 from shadowscan.models import Evidence, Finding, Kind, Risk, RiskFactor, Surface
@@ -83,6 +85,22 @@ def test_sanitize_verifies_unchanged_state_by_digest_and_redacts_every_later_mut
     assert finding.to_dict()["risk"]["factors"][0]["description"] == f"password={REDACTED}" and len(calls) == 6
     finding.to_dict()
     assert len(calls) == 6
+
+
+@pytest.mark.parametrize("pattern_name,source", [
+    ("_INDEXED_ASSIGNMENT_KEY", 'config["password"] = "opaque-cached-value"'),
+    ("_TARGET_ATTRIBUTE", 'config["password"].primary = "opaque-cached-value"'),
+])
+def test_replaced_indexed_redaction_pattern_invalidates_sanitized_state(monkeypatch, pattern_name, source):
+    from shadowscan.utils import redaction
+
+    original = getattr(redaction, pattern_name)
+    with monkeypatch.context() as patch:
+        patch.setattr(redaction, pattern_name, re.compile(r"(?!)"))
+        finding = _finding(metadata={"source": source})
+        assert finding.metadata["source"] == source
+    assert getattr(redaction, pattern_name) is original
+    assert "opaque-cached-value" not in finding.to_dict()["metadata"]["source"]
 
 
 def test_sanitization_bookkeeping_never_enters_reports_and_cannot_be_imported():
