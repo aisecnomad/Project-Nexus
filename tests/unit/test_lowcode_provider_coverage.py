@@ -84,7 +84,6 @@ def test_servicenow_page_limit_and_repeated_pages_are_bounded(index, monkeypatch
     assert connector.ctx.stats.incomplete
 
 
-
 def test_servicenow_name_matching_timeout_preserves_native_agents(index, monkeypatch):
     monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
     calls = 0

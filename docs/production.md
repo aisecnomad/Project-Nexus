@@ -534,8 +534,9 @@ and 3.12 jobs enforce a
 75% statement-coverage floor for each built-in connector module, so a
 well-tested engine cannot conceal an untested provider. Coverage proves
 execution of code paths in tests; it does not prove provider compatibility or
-complete tenant inventory. The Python 3.13 matrix job tests the candidate; verify its inclusion in the
-live branch rules before treating it as a required gate. It builds the Docker image and
+complete tenant inventory. The Python 3.13 matrix job tests the candidate;
+verify its inclusion in the live branch rules before treating it as a required
+gate. It builds the Docker image and
 checks its non-root UID, signature assets and
 network-isolated scan with a read-only root filesystem and resource limits.
 Focused regressions cover the review findings, private-address enforcement,
