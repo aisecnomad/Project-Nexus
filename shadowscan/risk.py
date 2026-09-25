@@ -6,11 +6,20 @@ agent at all. Every contribution is recorded as a :class:`RiskFactor` so the
 report can say *why* something is critical.
 
 Scores map to levels: >=75 critical, >=50 high, >=25 medium, >0 low.
+
+Factors always add up to the reported score: confidence scaling and the 0-100
+bounds appear as explicit factors. ``danger_score`` excludes governance
+factors (inventory registration and ownership), so triage can rank what an
+agent can do separately from whether anyone approved it. A
+:class:`RiskPolicy` overrides weights and can base the level on danger alone.
 """
 
 from __future__ import annotations
 
 import math
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel
@@ -103,6 +112,7 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "suspended": (-10, "suspended"),
     "expired": (-5, "expired"),
     "asks-user": (-3, "asks the user before acting"),
+    "test-code-only": (-10, "evidence found only in test or fixture code"),
 }
 
 PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
@@ -118,6 +128,82 @@ PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
     "provider.ollama": (-3, "local / self-hosted inference"),
     "provider.vllm": (-3, "self-hosted inference"),
 }
+
+
+
+GOVERNANCE_WEIGHTS: dict[str, int] = {"shadow": 25, "registered": -10, "no-owner": 10}
+GOVERNANCE_FACTORS = frozenset(GOVERNANCE_WEIGHTS)
+RISK_BASES = frozenset({"combined", "danger"})
+_WEIGHT_GROUPS = ("kinds", "capabilities", "tags", "providers", "governance")
+_KEY_RE = re.compile(r"[a-z0-9][a-z0-9._:-]{0,99}\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class RiskPolicy:
+    """Weights used by :func:`assess`; defaults reproduce the built-in model."""
+
+    kinds: Mapping[Kind, int] = field(default_factory=lambda: dict(KIND_BASE))
+    capabilities: Mapping[str, tuple[int, str]] = field(default_factory=lambda: dict(CAPABILITY_WEIGHTS))
+    tags: Mapping[str, tuple[int, str]] = field(default_factory=lambda: dict(TAG_WEIGHTS))
+    providers: Mapping[str, tuple[int, str]] = field(default_factory=lambda: dict(PROVIDER_WEIGHTS))
+    governance: Mapping[str, int] = field(default_factory=lambda: dict(GOVERNANCE_WEIGHTS))
+    basis: str = "combined"
+
+    @classmethod
+    def from_options(cls, weights: Mapping[str, Any] | None = None, basis: str = "combined") -> RiskPolicy:
+        """Validate ``options.risk_weights`` / ``options.risk_basis``; raise ValueError on any problem."""
+        if basis not in RISK_BASES:
+            raise ValueError("risk_basis must be combined or danger")
+        weights = {} if weights is None else weights
+        if not isinstance(weights, Mapping):
+            raise ValueError("risk_weights must be a mapping")
+        unknown = set(weights) - set(_WEIGHT_GROUPS)
+        if unknown:
+            raise ValueError(f"risk_weights has unknown groups: {', '.join(sorted(map(str, unknown)))}")
+
+        def group(name: str) -> dict[str, int]:
+            values = weights.get(name)
+            values = {} if values is None else values
+            if not isinstance(values, Mapping):
+                raise ValueError(f"risk_weights.{name} must be a mapping")
+            out: dict[str, int] = {}
+            for key, value in values.items():
+                if not isinstance(key, str) or not _KEY_RE.match(key):
+                    raise ValueError(f"risk_weights.{name} has an invalid key")
+                if type(value) is not int or not -100 <= value <= 100:
+                    raise ValueError(f"risk_weights.{name}.{key} must be an integer between -100 and 100")
+                out[key] = value
+            return out
+
+        kinds = dict(KIND_BASE)
+        for key, value in group("kinds").items():
+            try:
+                kinds[Kind(key)] = value
+            except ValueError:
+                raise ValueError(f"risk_weights.kinds.{key} is not a finding kind") from None
+        governance = dict(GOVERNANCE_WEIGHTS)
+        for key, value in group("governance").items():
+            if key not in GOVERNANCE_WEIGHTS:
+                raise ValueError(f"risk_weights.governance.{key} must be one of shadow, registered, no-owner")
+            governance[key] = value
+
+        def described(defaults: Mapping[str, tuple[int, str]], overrides: dict[str, int], noun: str) -> dict[str, tuple[int, str]]:
+            merged = dict(defaults)
+            for key, value in overrides.items():
+                merged[key] = (value, defaults[key][1] if key in defaults else f"{noun} {key}")
+            return merged
+
+        return cls(
+            kinds=kinds,
+            capabilities=described(CAPABILITY_WEIGHTS, group("capabilities"), "capability"),
+            tags=described(TAG_WEIGHTS, group("tags"), "tag"),
+            providers=described(PROVIDER_WEIGHTS, group("providers"), "provider"),
+            governance=governance,
+            basis=basis,
+        )
+
+
+DEFAULT_POLICY = RiskPolicy()
 
 
 def _as_int(value: Any, default: int = 0) -> int:
@@ -155,42 +241,50 @@ def _strings(values: Any) -> list[str]:
     return []
 
 
-def assess(finding: Finding, index: SignatureIndex | None = None, inventory_present: bool = False) -> Risk:
+def assess(
+    finding: Finding, index: SignatureIndex | None = None, inventory_present: bool = False,
+    policy: RiskPolicy | None = None,
+) -> Risk:
     """Score one finding, recording every contribution as a :class:`RiskFactor`.
 
     Scoring is total: a field or metadata value of an unexpected shape (from a
     loaded report, an incremental cache entry or a plugin) contributes nothing
     instead of aborting the scan, and well-formed input scores exactly as
-    documented in the module docstring.
+    documented in the module docstring. ``policy`` overrides the built-in
+    weights (``options.risk_weights``) and the level basis (``options.risk_basis``).
     """
+    policy = policy or DEFAULT_POLICY
     factors: list[RiskFactor] = []
-    raw = KIND_BASE.get(finding.kind, 5)
+    raw = policy.kinds.get(finding.kind, 5)
     factors.append(RiskFactor("kind", f"{finding.kind.value} finding", raw))
+    # Governance factors describe approval and ownership, not capability. Under
+    # the "danger" basis they are reported with zero weight.
+    governance_scale = 0 if policy.basis == "danger" else 1
 
     if inventory_present:
         if finding.shadow:
-            factors.append(RiskFactor("shadow", "not present in the sanctioned agent inventory", 25))
+            factors.append(RiskFactor("shadow", "not present in the sanctioned agent inventory", policy.governance["shadow"] * governance_scale))
         elif finding.shadow is False:
-            factors.append(RiskFactor("registered", f"registered as {finding.registry_match}", -10))
+            factors.append(RiskFactor("registered", f"registered as {finding.registry_match}", policy.governance["registered"] * governance_scale))
     if not finding.owner:
-        factors.append(RiskFactor("no-owner", "no identifiable owner", 10))
+        factors.append(RiskFactor("no-owner", "no identifiable owner", policy.governance["no-owner"] * governance_scale))
 
     seen_caps = set()
     for cap in _strings(finding.capabilities):
-        if cap in CAPABILITY_WEIGHTS and cap not in seen_caps:
+        if cap in policy.capabilities and cap not in seen_caps:
             seen_caps.add(cap)
-            w, d = CAPABILITY_WEIGHTS[cap]
+            w, d = policy.capabilities[cap]
             factors.append(RiskFactor(f"capability:{cap}", d, w))
 
     for tag in _strings(finding.tags):
-        if tag in TAG_WEIGHTS:
-            w, d = TAG_WEIGHTS[tag]
+        if tag in policy.tags:
+            w, d = policy.tags[tag]
             if w:
                 factors.append(RiskFactor(f"tag:{tag}", d, w))
 
     for pid in _strings(finding.model_providers):
-        if pid in PROVIDER_WEIGHTS:
-            w, d = PROVIDER_WEIGHTS[pid]
+        if pid in policy.providers:
+            w, d = policy.providers[pid]
             factors.append(RiskFactor(f"provider:{pid}", d, w))
 
     if index is not None:
@@ -237,16 +331,25 @@ def assess(finding: Finding, index: SignatureIndex | None = None, inventory_pres
             factors.append(RiskFactor("blast-radius", f"{users} users / installations", 5))
 
     total = sum(f.weight for f in factors)
+    danger_total = sum(f.weight for f in factors if f.id not in GOVERNANCE_FACTORS)
     # scale by confidence that this is really an agent / agent enabler
     scale = 0.6 + 0.4 * max(0.0, min(1.0, finding.confidence))
-    score = int(round(max(0, min(100, total * scale))))
+    scaled = int(round(total * scale))
+    score = max(0, min(100, scaled))
     if scale < 1.0:
         # Scaling lowers a positive subtotal. A subtotal at or below zero is
-        # already clamped to 0, so the adjustment must never read as added risk.
-        adjustment = min(0, int(round(total * scale - total)))
+        # already floored at 0, so the adjustment must never read as added risk.
+        adjustment = min(0, scaled - total)
         factors.append(RiskFactor(
             "confidence-scaling",
             f"score multiplied by {scale:.2f} because confidence is {finding.confidence:.2f}; this only ever lowers risk",
             adjustment,
         ))
-    return Risk(score=score, level=RiskLevel.from_score(score), factors=factors)
+    else:
+        adjustment = 0
+    explained = total + adjustment
+    if score != explained:
+        # Keep the explanation exact: listed factors always sum to the score.
+        factors.append(RiskFactor("bounds", "score floored at 0" if explained < 0 else "score capped at 100", score - explained))
+    danger_score = max(0, min(100, int(round(danger_total * scale))))
+    return Risk(score=score, level=RiskLevel.from_score(score), factors=factors, danger_score=danger_score)

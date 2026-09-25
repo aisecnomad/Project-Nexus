@@ -49,6 +49,7 @@ def ecs_connector(index, **config):
 
 @pytest.mark.parametrize("regions", [None, [REGION], "all"])
 def test_aws_authenticates_before_account_record_without_account_override(index, monkeypatch, regions):
+    pytest.importorskip("botocore")
     session = Mock()
     session.client.return_value.get_caller_identity.return_value = {"Account": ACCOUNT}
     session.client.return_value.describe_regions.return_value = {"Regions": [{"RegionName": REGION}]}
@@ -65,6 +66,7 @@ def test_aws_authenticates_before_account_record_without_account_override(index,
 
 
 def test_aws_authentication_failure_does_not_emit_invalid_account_metadata(index, monkeypatch):
+    pytest.importorskip("botocore")
     session = Mock()
     session.client.return_value.get_caller_identity.side_effect = RuntimeError("AccessDenied")
     monkeypatch.setitem(sys.modules, "boto3", SimpleNamespace(Session=Mock(return_value=session)))

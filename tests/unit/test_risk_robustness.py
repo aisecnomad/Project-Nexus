@@ -131,10 +131,13 @@ def test_confidence_scaling_never_adds_risk_to_a_negative_subtotal():
     expired = _finding(kind=Kind.TOKEN, tags=["expired"], owner="alice", shadow=False, registry_match="svc",
                        confidence=0.05)
     risk = assess(expired, inventory_present=True)
-    assert sum(factor.weight for factor in risk.factors if factor.id != "confidence-scaling") == -10
+    assert sum(factor.weight for factor in risk.factors if factor.id not in {"confidence-scaling", "bounds"}) == -10
     scaling = next(factor for factor in risk.factors if factor.id == "confidence-scaling")
     assert scaling.weight == 0
     assert "multiplied by 0.62" in scaling.description and "confidence is 0.05" in scaling.description
+    # The floor is an explicit factor, so the listed factors still sum to the score.
+    assert next(factor for factor in risk.factors if factor.id == "bounds").weight == 10
+    assert sum(factor.weight for factor in risk.factors) == risk.score
     assert risk.score == 0 and risk.level == RiskLevel.INFO
 
 
@@ -228,7 +231,9 @@ def _reference_assess(finding: Finding, index, inventory_present: bool) -> Risk:
     scale = 0.6 + 0.4 * max(0.0, min(1.0, finding.confidence))
     score = int(round(max(0, min(100, total * scale))))
     if scale < 1.0:
-        factors.append(RiskFactor("confidence-scaling", "scaled by confidence", int(round(total * scale - total))))
+        # Round the scaled score first so the adjustment is exactly the
+        # difference the reported score shows, ties included.
+        factors.append(RiskFactor("confidence-scaling", "scaled by confidence", int(round(total * scale)) - total))
     return Risk(score=score, level=RiskLevel.from_score(score), factors=factors)
 
 
@@ -288,8 +293,11 @@ def test_bundled_fixture_findings_score_identically_to_the_reference(index, fixt
             actual = assess(candidate, index, inventory_present=inventory_present)
             expected = _reference_assess(candidate, index, inventory_present)
             assert (actual.score, actual.level) == (expected.score, expected.level)
-            assert [factor.id for factor in actual.factors] == [factor.id for factor in expected.factors]
-            for got, want in zip(actual.factors, expected.factors, strict=True):
+            # The bounds factor keeps the listed factors summing to a floored or
+            # capped score; the reference model has no such factor.
+            actual_factors = [factor for factor in actual.factors if factor.id != "bounds"]
+            assert [factor.id for factor in actual_factors] == [factor.id for factor in expected.factors]
+            for got, want in zip(actual_factors, expected.factors, strict=True):
                 if got.id == "confidence-scaling":
                     # The only intended difference: scaling never reads as added risk.
                     assert got.weight == min(0, want.weight)

@@ -61,6 +61,8 @@ class GitLabConnector(BaseConnector):
         "include_archived": "default false",
         "max_projects": "default 500",
         "scan_timeout": "matching budget in seconds per file (default 2)",
+        "strict_coverage": "see code.filesystem (default false)",
+        "include_tests": "see code.filesystem (default false)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "exclude": "forwarded to the filesystem scanner (see code.filesystem)",
         "max_file_size": "forwarded to the filesystem scanner (see code.filesystem)",
@@ -213,7 +215,7 @@ class GitLabConnector(BaseConnector):
         full = proj.get("path_with_namespace") or Path(local).name
         ns = (proj.get("namespace") or {}).get("full_path") or full.rsplit("/", 1)[0]
         cfg = {
-            **{k: v for k, v in self.ctx.config.items() if k in {"exclude", "max_file_size", "max_files", "scan_timeout", "scan_secrets", "use_git"}},
+            **{k: v for k, v in self.ctx.config.items() if k in {"exclude", "max_file_size", "max_files", "scan_timeout", "scan_secrets", "use_git", "strict_coverage", "include_tests"}},
             "path": local,
             "label": f"gitlab:{full}",
             "account": ns,

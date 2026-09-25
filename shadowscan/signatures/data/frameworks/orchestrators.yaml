@@ -94,7 +94,7 @@ signatures:
     vendor: LangChain, Inc.
     homepage: https://langchain-ai.github.io/langgraph/
     description: Graph-based stateful multi-actor agent runtime (LangGraph, LangGraph Platform).
-    capabilities: [tool-use, memory]
+    capabilities: [tool-use]
     agent_indicator: true
     signals:
       - type: dependency
@@ -459,9 +459,14 @@ signatures:
     vendor: OpenAI
     homepage: https://openai.github.io/openai-agents-python/
     description: OpenAI's Agents SDK (Python and TypeScript) with handoffs, guardrails, tracing and hosted tools.
-    capabilities: [tool-use, multi-agent]
+    capabilities: [tool-use]
     agent_indicator: true
     signals:
+      - type: code
+        description: Hand-offs between agents
+        patterns: ['\bhandoff\s*\(', '\bhandoffs\s*[=:]\s*\[']
+        weight: 0.6
+        capabilities: [multi-agent]
       - type: dependency
         ecosystem: pypi
         names: [openai-agents]

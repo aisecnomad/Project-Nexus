@@ -26,6 +26,31 @@ while True:
 '''
 
 
+ANTHROPIC_LOOP = '''import anthropic
+import subprocess
+client = anthropic.Anthropic()
+tools = [{"name": "bash", "description": "Run a shell command", "input_schema": {"type": "object"}}]
+messages = [{"role": "user", "content": "Clean up disk space"}]
+while True:
+    response = client.messages.create(model="example-model", max_tokens=1024, tools=tools, messages=messages)
+    if response.stop_reason != "tool_use":
+        break
+    messages.append({"role": "assistant", "content": response.content})
+    for block in response.content:
+        if block.type == "tool_use":
+            output = subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout
+            messages.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": block.id, "content": output}]})
+'''
+
+COLLECTED_RESULTS = '''    results = []
+    for block in response.content:
+        if block.type == "tool_use":
+            output = bash(**block.input)
+            results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
+    messages.append({"role": "user", "content": results})
+'''
+
+
 def scan(tmp_path, run_connector, source=LOOP):
     (tmp_path / "app.py").write_text(source)
     return run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
@@ -93,6 +118,50 @@ def test_connected_provider_tool_loop_is_an_agent(tmp_path, run_connector, sourc
     "from openai import OpenAI\n" + "\n".join("# " + line for line in LOOP.splitlines()),
 ])
 def test_disconnected_or_inert_tool_code_is_not_an_agent(tmp_path, run_connector, source):
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize("source", [
+    ANTHROPIC_LOOP,
+    ANTHROPIC_LOOP.replace("import anthropic\n", "from anthropic import Anthropic\n").replace("anthropic.Anthropic()", "Anthropic()"),
+    ANTHROPIC_LOOP.replace("import subprocess\n", "import subprocess as sp\n").replace("subprocess.run(", "sp.run("),
+    ANTHROPIC_LOOP.replace("import subprocess\n", "from subprocess import check_output\n")
+    .replace('subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout', 'check_output(block.input["command"], shell=True)'),
+    ANTHROPIC_LOOP.replace('subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout', "bash(**block.input)"),
+    ANTHROPIC_LOOP.replace('subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout', "handlers[block.name](**block.input)"),
+    ANTHROPIC_LOOP.split("    for block in response.content:")[0] + COLLECTED_RESULTS,
+    ANTHROPIC_LOOP.split("    for block in response.content:")[0]
+    + '    if response.stop_reason == "tool_use":\n' + "".join("    " + line + "\n" for line in COLLECTED_RESULTS.splitlines()),
+])
+def test_connected_anthropic_tool_loop_is_an_agent(tmp_path, run_connector, source):
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    agents = [finding for finding in findings if finding.kind == Kind.AGENT]
+    assert len(agents) == 1
+    assert "provider.anthropic" in agents[0].model_providers
+    assert {"tool-use", "autonomous"} <= set(agents[0].capabilities)
+    assert any("conversation feedback" in evidence.description for evidence in agents[0].evidence)
+
+
+@pytest.mark.parametrize("source", [
+    ANTHROPIC_LOOP.replace('            messages.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": block.id, "content": output}]})\n', "            print(output)\n"),
+    ANTHROPIC_LOOP.replace('"content": output}', '"content": "done"}'),
+    ANTHROPIC_LOOP.replace('"tool_use_id": block.id', '"tool_use_id": "unrelated"'),
+    ANTHROPIC_LOOP.replace('subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout', "log(block.input)"),
+    ANTHROPIC_LOOP.replace('subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout', 'subprocess.run("ls", shell=True).stdout'),
+    ANTHROPIC_LOOP.replace("import subprocess\n", "subprocess = fake_shell()\n"),
+    ANTHROPIC_LOOP.replace('subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout', "bash(**block.input)")
+    .replace("tools=tools", "tools=load_tools()"),
+    ANTHROPIC_LOOP.replace('subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout', "bash(**block.input)")
+    .replace("while True:\n", "tools = other_tools\nwhile True:\n"),
+    ANTHROPIC_LOOP.split("    for block in response.content:")[0] + COLLECTED_RESULTS.replace("    messages.append(", "    other.append("),
+    ANTHROPIC_LOOP.split("    for block in response.content:")[0] + COLLECTED_RESULTS.replace("    messages.append(", "    results = []\n    messages.append("),
+    ANTHROPIC_LOOP.replace("    for block in response.content:", "    for block in saved_blocks:"),
+    ANTHROPIC_LOOP.replace("while True:", "while False:"),
+])
+def test_disconnected_or_inert_anthropic_tool_code_is_not_an_agent(tmp_path, run_connector, source):
     findings, ctx = scan(tmp_path, run_connector, source)
     assert not ctx.stats.incomplete, ctx.stats.errors
     assert not any(finding.kind == Kind.AGENT for finding in findings)

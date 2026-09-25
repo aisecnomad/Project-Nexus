@@ -14,6 +14,11 @@ live secret, when :func:`placeholder_reason` finds one of:
   repeated characters, or at least half of its characters continue a run of
   the same or adjacent characters (``0000``, ``1234567890``, ``abcdef``).
 
+When a context-bound pattern captured an assignment (``NAME=value``,
+``NAME: value``), only the value is judged, so a variable name such as
+``TEST_API_KEY`` never marks a real key as a placeholder; an empty value is a
+template.
+
 Randomly generated keys practically never satisfy these rules (fewer than one
 in ten thousand in simulation), and connectors report a placeholder as
 low-weight ``example-credential`` evidence rather than dropping it silently,
@@ -211,6 +216,8 @@ _ALPHA_RUN = re.compile(r"[A-Za-z]+")
 _SECRET_PREFIX = re.compile(r"^(?:[A-Za-z0-9]{1,8}[-_]){1,3}")
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
 _MIN_ENTROPY_BODY = 8
+# Context-bound secret patterns capture ``NAME=value`` / ``NAME: value``; only the value is judged.
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*\s*[=:]\s*[\"']?(.*?)[\"']?$")
 
 
 def _case_delimited(value: str, start: int, end: int) -> bool:
@@ -260,6 +267,11 @@ def placeholder_reason(value: str) -> str | None:
     value = value.strip()
     if not value:
         return None
+    assignment = _ASSIGNMENT.match(value)
+    if assignment:
+        value = assignment.group(1).strip()
+        if not value:
+            return "template"
     if _PLACEHOLDER.match(value) or _TEMPLATE_MARKER.search(value):
         return "template"
     if _FILL_RUN.search(value) or _placeholder_word(value):
