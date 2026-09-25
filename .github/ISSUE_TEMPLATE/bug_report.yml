@@ -11,9 +11,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: ShadowScan version
-      description: Output of `shadowscan --version` or the commit SHA you installed from.
-      placeholder: "0.1.1 or commit abc1234"
+      label: Full commit SHA
+      description: The full 40-character commit SHA you installed from (`git rev-parse HEAD` in a checkout). `shadowscan --version` prints `0.1.1` for every unreleased commit and cannot identify a revision.
+      placeholder: "0123456789abcdef0123456789abcdef01234567"
     validations:
       required: true
 
@@ -90,7 +90,7 @@ body:
       label: Scan exit code
       options:
         - "0 (completed, passed)"
-        - "2 (completed, --fail-on triggered)"
+        - "2 (completed and --fail-on triggered, or a CLI invocation error such as a missing option or unknown connector)"
         - "3 (incomplete scan)"
-        - "1 or other (crash / usage error)"
+        - "1 (crash, or an error the CLI reported such as invalid configuration or an unwritable output path)"
         - Not applicable

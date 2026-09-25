@@ -18,6 +18,8 @@
 - [ ] `make lint` passes
 - [ ] `make typecheck` passes
 - [ ] `pytest -q --cov=shadowscan --cov-fail-under=80` passes
+- [ ] `make audit` (`pip-audit`) reports no known vulnerabilities
+- [ ] `python -m shadowscan.signatures.validate` passes
 - [ ] No raw credentials, JWTs, or unsanitized configuration in logs or reports
 - [ ] `CHANGELOG.md` updated under Unreleased (if user-facing)
 
@@ -33,7 +35,7 @@
 ### Required for signature changes
 
 - [ ] `python -m shadowscan.signatures.validate` passes
-- [ ] Evaluation corpus updated and `python -m tools.evaluation.evaluate` passes
+- [ ] Evaluation corpus updated and `make evaluate` passes (all bundled corpora)
 - [ ] No false positives introduced on existing negative corpus entries
 
 ### Required for security-sensitive changes

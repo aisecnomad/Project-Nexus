@@ -1,5 +1,9 @@
 # Production review, round 2 — 24 September 2026
 
+> **Internal, AI-assisted hardening log. Not an independent review.** This
+> document was produced by the maintainer with an AI assistant; no second
+> person or third party has verified its findings.
+
 ## Scope and method
 
 Review began with `main` at `d355204` (PR #39). It covered the engine, data model,

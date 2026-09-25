@@ -27,7 +27,8 @@ fail-closed trust model.
 - First tagged release and signed artifacts. Nothing publishes
   automatically.
 - Optional package index publish from a reviewed tag.
-- Branch protection that requires a non-author approving review.
+- A second reviewer who can satisfy the `main` ruleset's non-author approving
+  review, which is configured today but cannot be met by a single maintainer.
 
 ## Not planned
 

@@ -19,3 +19,4 @@ exports/
 .DS_Store
 
 .shadowscan-state/
+site/
