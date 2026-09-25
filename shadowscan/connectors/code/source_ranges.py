@@ -108,15 +108,24 @@ def noncode_ranges(
 
 
 def _python_ranges(text: str) -> tuple[list[tuple[int, int]], bool]:
-    offsets = [0]
-    for line in text.splitlines(keepends=True):
-        offsets.append(offsets[-1] + len(line))
+    # Python's file reader treats a standalone CR as a newline, whereas
+    # StringIO.readline does not. Normalize only those CRs, preserving every
+    # offset so ignored spans still refer to the original source.
+    lex_text = re.sub(r"\r(?!\n)", "\n", text) if "\r" in text else text
+    # tokenize.readline advances at '\n' only. str.splitlines() also treats
+    # Unicode separators inside a quoted value as line breaks and would shift
+    # later ignored spans away from their original source positions.
+    offsets = [0, *(match.end() for match in re.finditer("\n", lex_text))]
+    if offsets[-1] != len(lex_text):
+        offsets.append(len(lex_text))
 
     spans: list[tuple[int, int]] = []
     ambiguous = False
     resume_line: int | None = 0  # zero-based line at which the tokenizer (re)starts
+    reader = io.StringIO(lex_text)
     while resume_line is not None:
-        ambiguous, resume_line = _python_ranges_from(text, offsets, resume_line, spans)
+        reader.seek(offsets[min(resume_line, len(offsets) - 1)])
+        ambiguous, resume_line = _python_ranges_from(lex_text, offsets, resume_line, spans, reader)
     return sorted(spans), ambiguous
 
 
@@ -124,7 +133,7 @@ _UNTERMINATED_ONE_LINE_STRING = "unterminated string literal"
 
 
 def _python_ranges_from(
-    text: str, offsets: list[int], first_line: int, spans: list[tuple[int, int]],
+    text: str, offsets: list[int], first_line: int, spans: list[tuple[int, int]], reader: io.StringIO,
 ) -> tuple[bool, int | None]:
     """Tokenize from ``first_line``; return (ambiguous, line to resume at or None)."""
 
@@ -133,7 +142,6 @@ def _python_ranges_from(
         line += first_line
         return min(len(text), offsets[min(line - 1, len(offsets) - 1)] + column)
 
-    chunk = text[offsets[min(first_line, len(offsets) - 1)]:]
     fstring_starts: list[int] = []
     fstring_start_type = getattr(tokenize, "FSTRING_START", None)
     fstring_end_type = getattr(tokenize, "FSTRING_END", None)
@@ -142,7 +150,7 @@ def _python_ranges_from(
         if hasattr(tokenize, name)
     }
     try:
-        for token in tokenize.generate_tokens(io.StringIO(chunk).readline):
+        for token in tokenize.generate_tokens(reader.readline):
             if token.type == tokenize.STRING:
                 prefix = _FSTRING_PREFIX.match(token.string)
                 if prefix is not None and "f" in prefix.group(1).lower():
