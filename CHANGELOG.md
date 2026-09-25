@@ -148,6 +148,15 @@ Development:
 - Defang bare HTTP(S) and `www.` URLs in untrusted report text so copied Markdown
   does not automatically turn attacker-controlled values into clickable links.
 
+### Supported-platform preflight
+
+- Every `shadowscan` command now fails closed, with a clear error, on a host
+  that cannot enforce the documented path confinement (Windows, or a platform
+  without `O_NOFOLLOW`); `--help` and `--version` still work everywhere.
+  `shadowscan.utils.platform.require_supported_platform()` performs the same
+  check for embedding callers. `redact` and `sanitize_record` in
+  `shadowscan.utils.text` stay as documented compatibility aliases.
+
 ### Community policy consistency
 
 - Add a documentation issue form, keep detection reports and private security

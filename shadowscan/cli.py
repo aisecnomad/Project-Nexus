@@ -47,6 +47,7 @@ from shadowscan.reporters.table import print_table
 from shadowscan.signatures import Match, SignatureIndex, get_index
 from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
 from shadowscan.utils.output import prepare_private_directory, terminal_text, write_private_text
+from shadowscan.utils.platform import UnsupportedPlatformError, require_supported_platform
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 
 console = Console(width=None if sys.stdout.isatty() else 200)
@@ -277,6 +278,13 @@ def add_options(options):
 @click.option("-q", "--quiet", is_flag=True, help="errors only")
 def main(verbose: int, quiet: bool) -> None:
     """ShadowScan — discover shadow AI agents across code, identity, gateways, low-code, SaaS and cloud."""
+    # Click answers --help and --version before this callback runs, so those
+    # still work everywhere; every command fails closed on a host that cannot
+    # enforce the documented path confinement (Windows, no O_NOFOLLOW).
+    try:
+        require_supported_platform()
+    except UnsupportedPlatformError as exc:
+        raise click.ClickException(str(exc)) from None
     _setup_logging(verbose, quiet)
     main.verbose = verbose  # type: ignore[attr-defined]
 
