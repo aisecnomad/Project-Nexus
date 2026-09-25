@@ -666,6 +666,13 @@ class Match:
         return self.signature.agent_indicator or self.signal.agent_indicator
 
 
+def _prefix_excluded(signal: Signal, norm: str) -> bool:
+    """True when a prefix signal explicitly carves ``norm`` out (exact name or sub-prefix)."""
+    if any(norm == normalise_package_name(n) for n in signal.exclude_names):
+        return True
+    return any(norm.startswith(normalise_package_name(p)) for p in signal.exclude_prefixes)
+
+
 class SignatureIndex:
     """Indexes signatures by signal type for efficient matching."""
 
@@ -799,7 +806,7 @@ class SignatureIndex:
                     out.append(Match(sig, s, name, s.weight))
         for e in (eco, "any"):
             for prefix, sig, s in self._dep_prefix.get(e, []):
-                if norm.startswith(prefix) and sig.id not in seen:
+                if norm.startswith(prefix) and sig.id not in seen and not _prefix_excluded(s, norm):
                     seen.add(sig.id)
                     out.append(Match(sig, s, name, s.weight))
         return out

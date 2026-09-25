@@ -152,8 +152,7 @@
    "owner": null,
    "frameworks": [],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o"
@@ -168,18 +167,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "gpt-"
@@ -207,7 +194,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.754,
+   "confidence": 0.692,
    "likelihood": "likely",
    "risk": {
     "score": 0,
@@ -287,7 +274,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "identity-app.generic-ai-name|name": 1
     },
     "technologies": [
@@ -296,12 +282,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -322,8 +302,7 @@
    "owner": "kim@acme.com",
    "frameworks": [],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o-mini"
@@ -344,18 +323,6 @@
      }
     },
     {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
      "signal": "gateway:api-key",
      "description": "1 LLM request(s) by api-key 'credential:hmac-sha256:450fbe769a9aa739b08928eb692f6fffb5b1559d58df725b5cfa27283908e4cf' to models gpt-4o-mini",
      "location": null,
@@ -365,7 +332,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.688,
+   "confidence": 0.61,
    "likelihood": "likely",
    "risk": {
     "score": 0,
@@ -442,8 +409,7 @@
      ]
     },
     "evidence_counts": {
-     "provider.openai|model": 1,
-     "provider.azure-openai|model": 1
+     "provider.openai|model": 1
     },
     "technologies": [
      {
@@ -451,12 +417,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },

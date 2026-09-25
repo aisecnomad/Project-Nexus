@@ -4,6 +4,15 @@
 # egress logs. `name` patterns are matched against display names, publishers
 # and descriptions; `domain` values against reply URLs, homepages and hosts.
 #
+# These umbrella signatures own the display names of the SaaS products they
+# list; dedicated product signatures (coding-agent.*, platform.*) do not repeat
+# them. Product names that are also dictionary words or first names (Otter,
+# Devin, Jasper, Drift, Monica...) are context-guarded: the vendor form
+# (otter.ai, devin.ai) always matches, the bare word only when it is the whole
+# display name ("Gong") or when product context (ai, meeting, sales, chatbot...)
+# appears on the same line. "Otter Insurance Portal" or "Devin Smith" never
+# match.
+#
 # tags:
 #   assistant       general-purpose chat assistant (data leaves the tenant)
 #   meeting-bot     joins calls / reads calendars & transcripts
@@ -47,7 +56,7 @@ signatures:
     agent_indicator: true
     signals:
       - type: name
-        patterns: ['(?i)\bgemini\b', '(?i)\bai studio\b', '(?i)\bnotebooklm\b', '(?i)\bgoogle ai\b', '(?i)\bproject mariner\b']
+        patterns: ['(?i)\bgemini\b', '(?i)\bgoogle ai studio\b', '(?i)\bnotebooklm\b', '(?i)\bgoogle ai\b', '(?i)\bproject mariner\b']
         weight: 0.85
       - type: domain
         values: [gemini.google.com, aistudio.google.com, notebooklm.google.com, makersuite.google.com, bard.google.com]
@@ -61,7 +70,9 @@ signatures:
     agent_indicator: true
     signals:
       - type: name
-        patterns: ['(?i)\bmicrosoft (?:365 )?copilot\b', '(?i)\bcopilot\b(?! studio)', '(?i)\bbing chat\b', '(?i)\bm365 copilot\b']
+        # "Copilot" alone is now a generic product word (identity-app.generic-ai-name
+        # keeps it as a hint); Microsoft attribution needs Microsoft context.
+        patterns: ['(?i)\bmicrosoft (?:365 )?copilot\b', '(?i)\bm365 copilot\b', '(?i)\bcopilot for (?:microsoft 365|sales|service|finance|security)\b', '(?i)\bcopilot (?:chat|pro|pages|notebooks)\b', '(?i)\bbing chat\b', '(?i)^(?=.*\b(?:microsoft|m365|office|365|teams|outlook|word|excel|powerpoint|dynamics|bing|edge|windows|azure)\b).*\bcopilot\b(?![-_](?:css|scss|less|themes?|kit|ui|icons?|fonts?|styles?)\b)']
         weight: 0.8
       - type: domain
         values: [copilot.microsoft.com, m365.cloud.microsoft, copilot.cloud.microsoft, "*.copilot.microsoft.com", substrate.office.com]
@@ -83,6 +94,117 @@ signatures:
         weight: 0.9
       - type: domain
         values: [perplexity.ai, www.perplexity.ai, "*.perplexity.ai"]
+        weight: 0.9
+
+  - id: identity-app.mistral-le-chat
+    name: Mistral Le Chat
+    category: identity-app
+    vendor: Mistral AI
+    tags: [assistant, agent-platform]
+    description: Mistral's hosted assistant (Le Chat) and console; Le Chat agents and connectors act on enterprise data.
+    agent_indicator: true
+    signals:
+      - type: name
+        # "Mistral" is a wind and a surname: the vendor form, the whole display
+        # name or AI context is required.
+        patterns: ['(?i)\ble chat\b', '(?i)\bmistral ai\b', '(?i)\bmistral\.ai\b', '(?i)^(?=.*\b(?:ai|chat|assistant|agent|llm|app)\b).*\bmistral\b|^[^\S\r\n]*mistral[^\S\r\n]*$']
+        weight: 0.85
+      - type: domain
+        values: [chat.mistral.ai, console.mistral.ai, auth.mistral.ai, mistral.ai, "*.mistral.ai"]
+        weight: 0.9
+
+  - id: identity-app.deepseek
+    name: DeepSeek
+    category: identity-app
+    vendor: DeepSeek
+    tags: [assistant]
+    agent_indicator: true
+    risk_notes: ["DeepSeek's hosted assistant processes data in the PRC; review data-transfer policy."]
+    signals:
+      - type: name
+        patterns: ['(?i)\bdeepseek\b']
+        weight: 0.9
+      - type: domain
+        values: [chat.deepseek.com, platform.deepseek.com, deepseek.com, "*.deepseek.com"]
+        weight: 0.9
+
+  - id: identity-app.qwen
+    name: Qwen Chat / Alibaba Model Studio
+    category: identity-app
+    vendor: Alibaba Cloud
+    tags: [assistant, agent-platform]
+    agent_indicator: true
+    risk_notes: ["Qwen Chat and Alibaba Model Studio process data in Alibaba Cloud regions; review data-transfer policy."]
+    signals:
+      - type: name
+        patterns: ['(?i)\bqwen\b', '(?i)\btongyi\b', '(?i)\balibaba (?:cloud )?model studio\b', '(?i)\bbailian\b']
+        weight: 0.85
+      - type: domain
+        values: [chat.qwen.ai, qwen.ai, "*.qwen.ai", tongyi.aliyun.com, bailian.console.aliyun.com, bailian.console.alibabacloud.com]
+        weight: 0.9
+
+  - id: identity-app.kimi
+    name: Kimi (Moonshot AI)
+    category: identity-app
+    vendor: Moonshot AI
+    tags: [assistant]
+    agent_indicator: true
+    risk_notes: ["Kimi processes data in the PRC; review data-transfer policy."]
+    signals:
+      - type: name
+        # "Kimi" is a first name: the vendor form, the whole display name or AI
+        # context is required.
+        patterns: ['(?i)\bkimi\.(?:ai|com)\b', '(?i)\bmoonshot ai\b', '(?i)^(?=.*\b(?:ai|chat|assistant|moonshot|k\d)\b).*\bkimi\b|^[^\S\r\n]*kimi[^\S\r\n]*$']
+        weight: 0.85
+      - type: domain
+        values: [kimi.ai, kimi.com, www.kimi.com, kimi.moonshot.cn, platform.moonshot.ai, platform.moonshot.cn]
+        weight: 0.9
+
+  - id: identity-app.xai-grok
+    name: Grok (xAI)
+    category: identity-app
+    vendor: xAI
+    tags: [assistant]
+    agent_indicator: true
+    signals:
+      - type: name
+        # "grok" is a verb and a log-parsing pattern language: the vendor form,
+        # the whole display name or xAI context is required.
+        patterns: ['(?i)\bgrok\.com\b', '(?i)\bxai grok\b', '(?i)\bgrok by xai\b', '(?i)^(?=.*\b(?:xai|x\.ai|ai|chat|assistant|twitter|x corp)\b).*\bgrok\b|^[^\S\r\n]*grok[^\S\r\n]*$']
+        weight: 0.85
+      - type: domain
+        values: [grok.com, "*.grok.com", grok.x.ai, accounts.x.ai, console.x.ai, x.ai]
+        weight: 0.9
+
+  - id: identity-app.poe
+    name: Poe (Quora)
+    category: identity-app
+    vendor: Quora
+    tags: [assistant, agent-platform]
+    description: Multi-model chat front-end hosting user-created bots.
+    agent_indicator: true
+    signals:
+      - type: name
+        # "Poe" is a surname: the vendor form, the whole display name or bot /
+        # AI context is required.
+        patterns: ['(?i)\bpoe\.com\b', '(?i)\bpoe by quora\b', '(?i)^(?=.*\b(?:quora|ai|bots?|chat|assistant)\b).*\bpoe\b|^[^\S\r\n]*poe[^\S\r\n]*$']
+        weight: 0.85
+      - type: domain
+        values: [poe.com, "*.poe.com"]
+        weight: 0.9
+
+  - id: identity-app.character-ai
+    name: Character.ai
+    category: identity-app
+    vendor: Character Technologies
+    tags: [assistant]
+    agent_indicator: true
+    signals:
+      - type: name
+        patterns: ['(?i)\bcharacter\.?ai\b', '(?i)\bc\.ai\b']
+        weight: 0.85
+      - type: domain
+        values: [character.ai, "*.character.ai", beta.character.ai, plus.character.ai]
         weight: 0.9
 
   - id: identity-app.glean
@@ -110,7 +232,10 @@ signatures:
     risk_notes: ["Meeting bots capture confidential conversations and often request calendar and mail scopes."]
     signals:
       - type: name
-        patterns: ['(?i)\botter(?:\.ai)?\b', '(?i)\bfireflies(?:\.ai)?\b', '(?i)\bread\.?ai\b', '(?i)\bfathom\b', '(?i)\btl;?dv\b', '(?i)\bgong\b', '(?i)\bavoma\b', '(?i)\bfellow(?:\.app)?\b', '(?i)\bgrain\b', '(?i)\bkrisp\b', '(?i)\bai companion\b', '(?i)\bsembly\b', '(?i)\bsupernormal\b', '(?i)\bcircleback\b', '(?i)\bgranola\b', '(?i)\bnotetaker\b', '(?i)\bnote[- ]?taker\b', '(?i)\bmeetgeek\b', '(?i)\bbluedot\b', '(?i)\bjamie\b']
+        # Otter, Gong, Grain, Fathom, Fellow, Granola, Bluedot and Jamie are
+        # words / names: the bare word counts as the whole display name (Jamie
+        # excepted) or with meeting context on the same line.
+        patterns: ['(?i)\botter\.?ai\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\botter\b|^[^\S\r\n]*otter[^\S\r\n]*$', '(?i)\bfireflies(?:\.ai)?\b', '(?i)\bread\.?ai\b', '(?i)\bfathom\.video\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bfathom\b|^[^\S\r\n]*fathom[^\S\r\n]*$', '(?i)\btl;?dv\b', '(?i)\bgong\.io\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?|revenue|sales)\b).*\bgong\b|^[^\S\r\n]*gong[^\S\r\n]*$', '(?i)\bavoma\b', '(?i)\bfellow\.app\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bfellow\b|^[^\S\r\n]*fellow[^\S\r\n]*$', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bgrain\b|^[^\S\r\n]*grain[^\S\r\n]*$', '(?i)\bkrisp\b', '(?i)\bai companion\b', '(?i)\bsembly\b', '(?i)\bsupernormal\b', '(?i)\bcircleback\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bgranola\b|^[^\S\r\n]*granola[^\S\r\n]*$', '(?i)\bnotetaker\b', '(?i)\bnote[- ]?taker\b', '(?i)\bmeetgeek\b', '(?i)\bbluedothq\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bbluedot\b|^[^\S\r\n]*bluedot[^\S\r\n]*$', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bjamie\b']
         weight: 0.85
       - type: domain
         values: [otter.ai, "*.otter.ai", fireflies.ai, "*.fireflies.ai", read.ai, "*.read.ai", fathom.video, "*.fathom.video", tldv.io, "*.tldv.io", gong.io, "*.gong.io", avoma.com, fellow.app, grain.com, "*.grain.com", krisp.ai, sembly.ai, supernormal.com, circleback.ai, granola.ai, meetgeek.ai, bluedothq.com]
@@ -123,7 +248,9 @@ signatures:
     tags: [assistant]
     signals:
       - type: name
-        patterns: ['(?i)\bgrammarly\b', '(?i)\bjasper(?:\.ai)?\b', '(?i)\bwriter(?:\.com| ai)\b', '(?i)\bcopy\.ai\b', '(?i)\bquillbot\b', '(?i)\bwordtune\b', '(?i)\bdeepl\b', '(?i)\bnotion ai\b', '(?i)\bgamma(?:\.app)?\b', '(?i)\btome\b', '(?i)\bbeautiful\.ai\b', '(?i)\bcompose ai\b', '(?i)\bhyperwrite\b', '(?i)\brytr\b']
+        # Jasper, Tome and Gamma are words / names: the bare word counts as the
+        # whole display name or with writing / presentation context.
+        patterns: ['(?i)\bgrammarly\b', '(?i)\bjasper\.ai\b', '(?i)^(?=.*\b(?:ai|writ\w*|content|marketing|copy|blog\w*|assistant|copilot|generat\w*)\b).*\bjasper\b|^[^\S\r\n]*jasper[^\S\r\n]*$', '(?i)\bwriter(?:\.com| ai)\b', '(?i)\bcopy\.ai\b', '(?i)\bquillbot\b', '(?i)\bwordtune\b', '(?i)\bdeepl\b', '(?i)\bnotion ai\b', '(?i)\bgamma\.app\b', '(?i)^(?=.*\b(?:ai|presentations?|slides?|decks?|docs?|websites?|generat\w*|assistant)\b).*\bgamma\b|^[^\S\r\n]*gamma[^\S\r\n]*$', '(?i)\btome\.app\b', '(?i)^(?=.*\b(?:ai|presentations?|slides?|decks?|storytelling|generat\w*|assistant)\b).*\btome\b|^[^\S\r\n]*tome[^\S\r\n]*$', '(?i)\bbeautiful\.ai\b', '(?i)\bcompose ai\b', '(?i)\bhyperwrite\b', '(?i)\brytr\b']
         weight: 0.8
       - type: domain
         values: [grammarly.com, "*.grammarly.com", jasper.ai, "*.jasper.ai", writer.com, app.writer.com, copy.ai, quillbot.com, wordtune.com, deepl.com, "*.deepl.com", gamma.app, tome.app, beautiful.ai, hyperwriteai.com]
@@ -137,7 +264,10 @@ signatures:
     agent_indicator: true
     signals:
       - type: name
-        patterns: ['(?i)\bcursor\b', '(?i)\bwindsurf\b', '(?i)\bcodeium\b', '(?i)\breplit\b', '(?i)\blovable\b', '(?i)\bbolt\.new\b', '(?i)\bstackblitz\b', '(?i)\bv0(?:\.dev| by vercel)\b', '(?i)\bdevin\b', '(?i)\bcognition\b', '(?i)\bfactory(?:\.ai| droid)\b', '(?i)\btabnine\b', '(?i)\baugment(?: code)?\b', '(?i)\bsourcegraph\b', '(?i)\bwarp\b', '(?i)\bzed\b', '(?i)\bqodo\b', '(?i)\bgitlab duo\b', '(?i)\bjetbrains ai\b', '(?i)\bcopilot workspace\b', '(?i)\bmagic\.dev\b', '(?i)\bpoolside\b', '(?i)\bcline\b', '(?i)\broo code\b', '(?i)\bkilo code\b', '(?i)\bopenhands\b', '(?i)\ball hands\b']
+        # Devin, Warp, Zed, Lovable and Augment are words / names: the bare word
+        # counts as the whole display name or with coding-agent context.
+        # "cursor" excludes UI phrases such as "cursor position".
+        patterns: ['(?i)\bcursor\b(?!\s*(?:position|pointer|style|css|icon|theme))', '(?i)\bwindsurf\b', '(?i)\bcodeium\b', '(?i)\breplit\b', '(?i)\blovable\.dev\b', '(?i)^(?=.*\b(?:ai|apps?|dev|build\w*|code|coding)\b).*\blovable\b|^[^\S\r\n]*lovable[^\S\r\n]*$', '(?i)\bbolt\.new\b', '(?i)\bstackblitz\b', '(?i)\bv0(?:\.dev| by vercel)\b', '(?i)\bdevin\.ai\b', '(?i)^(?=.*\b(?:ai|cognition|agent|bot|integration|labs)\b).*\bdevin\b|^[^\S\r\n]*devin[^\S\r\n]*$', '(?i)\bcognition(?: ai| labs)\b', '(?i)\bfactory(?:\.ai| droid)\b', '(?i)\btabnine\b', '(?i)\baugment ?code\b', '(?i)^(?=.*\b(?:ai|code|coding|agent|dev)\b).*\baugment\b|^[^\S\r\n]*augment[^\S\r\n]*$', '(?i)\bsourcegraph\b', '(?i)\bwarp\.dev\b', '(?i)^(?=.*\b(?:ai|terminal|agents?|agentic|code|coding|dev)\b).*\bwarp\b|^[^\S\r\n]*warp[^\S\r\n]*$', '(?i)\bzed\.dev\b', '(?i)^(?=.*\b(?:ai|editor|agents?|code|coding|industries)\b).*\bzed\b|^[^\S\r\n]*zed[^\S\r\n]*$', '(?i)\bgitlab duo\b', '(?i)\bjetbrains ai\b', '(?i)\bcopilot workspace\b', '(?i)\bmagic\.dev\b', '(?i)\bpoolside\b', '(?i)\bcline\b', '(?i)\broo code\b', '(?i)\bkilo code\b', '(?i)\bopenhands\b', '(?i)\ball[- ]hands(?: ai|\.dev)\b']
         weight: 0.8
       - type: domain
         values: [cursor.com, cursor.sh, windsurf.com, codeium.com, replit.com, "*.replit.com", "*.repl.co", lovable.dev, "*.lovable.app", bolt.new, stackblitz.com, v0.dev, v0.app, devin.ai, app.devin.ai, cognition.ai, factory.ai, app.factory.ai, tabnine.com, augmentcode.com, sourcegraph.com, ampcode.com, warp.dev, app.warp.dev, zed.dev, qodo.ai, app.all-hands.dev]
@@ -152,7 +282,10 @@ signatures:
     risk_notes: ["Automation platforms hold long-lived OAuth tokens and execute write actions across SaaS."]
     signals:
       - type: name
-        patterns: ['(?i)\bzapier\b', '(?i)\bmake\.com\b', '(?i)\bintegromat\b', '(?i)\bn8n\b', '(?i)\bworkato\b', '(?i)\bbardeen\b', '(?i)\blindy\b', '(?i)\brelevance ai\b', '(?i)\bdust(?:\.tt)?\b', '(?i)\bbeam\.ai\b', '(?i)\badept\b', '(?i)\bmultion\b', '(?i)\bmanus\b', '(?i)\bgenspark\b', '(?i)\bsana(?: ai| labs)?\b', '(?i)\bmoveworks\b', '(?i)\baisera\b', '(?i)\bkore\.ai\b', '(?i)\bada(?:\.cx| cx)\b', '(?i)\bsierra(?:\.ai)?\b', '(?i)\bdecagon\b', '(?i)\bintercom fin\b', '(?i)\bfin ai\b', '(?i)\bforethought\b', '(?i)\bcresta\b', '(?i)\bagentforce\b', '(?i)\bnow assist\b', '(?i)\brovo\b', '(?i)\bcopilot studio\b', '(?i)\bpower automate\b', '(?i)\bgumloop\b', '(?i)\bparabola\b', '(?i)\bactivepieces\b', '(?i)\bpipedream\b', '(?i)\btray\.(?:io|ai)\b', '(?i)\bcomposio\b', '(?i)\bparagon\b', '(?i)\bnango\b']
+        # Lindy, Dust, Adept, Manus, Sierra, Sana and Paragon are words / names:
+        # the bare word counts as the whole display name (Sana and Paragon
+        # excepted) or with agent / automation context.
+        patterns: ['(?i)\bzapier\b', '(?i)\bmake\.com\b', '(?i)\bintegromat\b', '(?i)\bn8n\b', '(?i)\bworkato\b', '(?i)\bbardeen\b', '(?i)\blindy\.ai\b', '(?i)^(?=.*\b(?:ai|agents?|assistant|automation|bot)\b).*\blindy\b|^[^\S\r\n]*lindy[^\S\r\n]*$', '(?i)\brelevance ai\b', '(?i)\bdust\.tt\b', '(?i)^(?=.*\b(?:ai|agents?|assistant|app|labs)\b).*\bdust\b|^[^\S\r\n]*dust[^\S\r\n]*$', '(?i)\bbeam\.ai\b', '(?i)\badept\.ai\b', '(?i)^(?=.*\b(?:ai|agents?|labs|automation)\b).*\badept\b|^[^\S\r\n]*adept[^\S\r\n]*$', '(?i)\bmultion\b', '(?i)\bmanus\.im\b', '(?i)^(?=.*\b(?:ai|agents?|automation|butterfly effect)\b).*\bmanus\b|^[^\S\r\n]*manus[^\S\r\n]*$', '(?i)\bgenspark\b', '(?i)\bsana(?: ai| labs|\.ai)\b', '(?i)\bmoveworks\b', '(?i)\baisera\b', '(?i)\bkore\.ai\b', '(?i)\bada(?:\.cx| cx)\b', '(?i)\bsierra\.ai\b', '(?i)^(?=.*\b(?:ai|agents?|customer|support|conversational|cx)\b).*\bsierra\b|^[^\S\r\n]*sierra[^\S\r\n]*$', '(?i)\bdecagon\b', '(?i)\bintercom fin\b', '(?i)\bfin ai\b', '(?i)\bforethought\b', '(?i)\bcresta\b', '(?i)\bagentforce\b', '(?i)\bnow assist\b', '(?i)\brovo\b', '(?i)\bcopilot studio\b', '(?i)\bpower automate\b', '(?i)\bgumloop\b', '(?i)\bparabola\b', '(?i)\bactivepieces\b', '(?i)\bpipedream\b', '(?i)\btray\.(?:io|ai)\b', '(?i)\bcomposio\b', '(?i)\buseparagon\b', '(?i)\bparagon(?: ai| integrations| actionkit)\b', '(?i)\bnango\b']
         weight: 0.8
       - type: domain
         values: [zapier.com, "*.zapier.com", make.com, "*.make.com", "*.n8n.cloud", workato.com, "*.workato.com", bardeen.ai, lindy.ai, "*.lindy.ai", relevanceai.com, "*.relevanceai.com", dust.tt, "*.dust.tt", beam.ai, adept.ai, multion.ai, manus.im, genspark.ai, sana.ai, moveworks.com, aisera.com, kore.ai, ada.cx, sierra.ai, decagon.ai, forethought.ai, cresta.com, gumloop.com, activepieces.com, pipedream.com, tray.io, composio.dev, useparagon.com, nango.dev]
@@ -165,7 +298,9 @@ signatures:
     tags: [assistant]
     signals:
       - type: name
-        patterns: ['(?i)\belicit\b', '(?i)\bconsensus\b', '(?i)\bscite\b', '(?i)\byou\.com\b', '(?i)\bkagi\b', '(?i)\bhebbia\b', '(?i)\bharvey(?:\.ai)?\b', '(?i)\blegora\b', '(?i)\bspellbook\b', '(?i)\bcocounsel\b', '(?i)\blexis\+ ai\b', '(?i)\bcasetext\b']
+        # Elicit, Consensus and Harvey are words / names: the bare word counts
+        # as the whole display name or with research / legal context.
+        patterns: ['(?i)\belicit(?:\.com| ai)\b', '(?i)^(?=.*\b(?:ai|research|papers?|scientific|search)\b).*\belicit\b|^[^\S\r\n]*elicit[^\S\r\n]*$', '(?i)\bconsensus\.app\b', '(?i)^(?=.*\b(?:ai|research|papers?|scientific|search)\b).*\bconsensus\b|^[^\S\r\n]*consensus[^\S\r\n]*$', '(?i)\bscite\b', '(?i)\byou\.com\b', '(?i)\bkagi\b', '(?i)\bhebbia\b', '(?i)\bharvey\.ai\b', '(?i)^(?=.*\b(?:ai|legal|law|assistant|counsel)\b).*\bharvey\b|^[^\S\r\n]*harvey[^\S\r\n]*$', '(?i)\blegora\b', '(?i)\bspellbook\b', '(?i)\bcocounsel\b', '(?i)\blexis\+ ai\b', '(?i)\bcasetext\b']
         weight: 0.8
       - type: domain
         values: [elicit.com, consensus.app, scite.ai, you.com, kagi.com, hebbia.ai, harvey.ai, "*.harvey.ai", legora.com, spellbook.legal, casetext.com]
@@ -178,7 +313,10 @@ signatures:
     tags: [assistant]
     signals:
       - type: name
-        patterns: ['(?i)\bmidjourney\b', '(?i)\brunway(?:ml)?\b', '(?i)\belevenlabs\b', '(?i)\bsynthesia\b', '(?i)\bdescript\b', '(?i)\bheygen\b', '(?i)\bpika\b', '(?i)\bluma(?: ai| labs)?\b', '(?i)\bsuno\b', '(?i)\budio\b', '(?i)\bstability ai\b', '(?i)\bideogram\b', '(?i)\bleonardo\.ai\b', '(?i)\bfirefly\b', '(?i)\bd-id\b', '(?i)\bopus ?clip\b', '(?i)\bkling\b', '(?i)\bhailuo\b']
+        # Runway, Pika, Luma, Firefly and Kling are words / names: the vendor
+        # form or generative-media context is required (Firefly also counts as
+        # the whole display name).
+        patterns: ['(?i)\bmidjourney\b', '(?i)\brunwayml\b', '(?i)^(?=.*\b(?:ai|ml|gen-?\d|video|generat\w*|creative)\b).*\brunway\b', '(?i)\belevenlabs\b', '(?i)\bsynthesia\b', '(?i)\bdescript\b', '(?i)\bheygen\b', '(?i)\bpika(?:\.art| labs| ai)\b', '(?i)\bluma(?: ai| labs|labs\.ai)\b', '(?i)\bsuno\b', '(?i)\budio\b', '(?i)\bstability ai\b', '(?i)\bideogram\b', '(?i)\bleonardo\.ai\b', '(?i)\badobe firefly\b', '(?i)^(?=.*\b(?:adobe|ai|generat\w*|images?|creative)\b).*\bfirefly\b|^[^\S\r\n]*firefly[^\S\r\n]*$', '(?i)\bd-id\b', '(?i)\bopus ?clip\b', '(?i)\bkling ?ai\b', '(?i)\bhailuo\b']
         weight: 0.75
       - type: domain
         values: [midjourney.com, runwayml.com, elevenlabs.io, api.elevenlabs.io, synthesia.io, descript.com, heygen.com, pika.art, lumalabs.ai, suno.com, udio.com, stability.ai, ideogram.ai, leonardo.ai, d-id.com, opus.pro, klingai.com]
@@ -192,7 +330,10 @@ signatures:
     risk_notes: ["Browser AI extensions read page content, including internal apps, and send it to third-party models."]
     signals:
       - type: name
-        patterns: ['(?i)\bmonica\b', '(?i)\bmerlin\b', '(?i)\bsider\b', '(?i)\bharpa\b', '(?i)\bmaxai\b', '(?i)\bmagical\b', '(?i)\bwiseone\b', '(?i)\bopera aria\b', '(?i)\bbrave leo\b', '(?i)\bdia browser\b']
+        # Monica, Merlin, Sider and Magical are names / words: the bare word
+        # counts as the whole display name (Sider excepted) or with
+        # browser-extension / assistant context.
+        patterns: ['(?i)\bmonica\.im\b', '(?i)^(?=.*\b(?:ai|assistant|chatgpt|extension|copilot|browser|chrome)\b).*\bmonica\b|^[^\S\r\n]*monica[^\S\r\n]*$', '(?i)\bgetmerlin\b', '(?i)^(?=.*\b(?:ai|assistant|chatgpt|extension|browser|chrome)\b).*\bmerlin\b|^[^\S\r\n]*merlin[^\S\r\n]*$', '(?i)\bsider\.ai\b', '(?i)^(?=.*\b(?:ai|assistant|chatgpt|extension|browser|chrome|sidebar)\b).*\bsider\b', '(?i)\bharpa\b', '(?i)\bmaxai\b', '(?i)\bgetmagical\b', '(?i)^(?=.*\b(?:ai|autofill|automation|extension|browser|chrome|text expander)\b).*\bmagical\b|^[^\S\r\n]*magical[^\S\r\n]*$', '(?i)\bwiseone\b', '(?i)\bopera aria\b', '(?i)\bbrave leo\b', '(?i)\bdia browser\b']
         weight: 0.7
       - type: domain
         values: [monica.im, "*.monica.im", getmerlin.in, "*.getmerlin.in", sider.ai, "*.sider.ai", harpa.ai, app.maxai.me, "*.maxai.me", getmagical.com, wiseone.io, aria.opera.com, leo.brave.com]
@@ -206,7 +347,11 @@ signatures:
     agent_indicator: true
     signals:
       - type: name
-        patterns: ['(?i)\bclari\b', '(?i)\bapollo(?:\.io)?\b', '(?i)\bkaia\b', '(?i)\bregie(?:\.ai)?\b', '(?i)\blavender\b', '(?i)\bbreeze (?:agent|copilot|intelligence)\b', '(?i)\bdrift\b', '(?i)\bqualified\b', '(?i)\bclay(?:\.com)?\b', '(?i)\b11x(?:\.ai)?\b', '(?i)\bartisan(?:\.co)?\b', '(?i)\bema(?: unlimited)?\b', '(?i)\bleena ai\b', '(?i)\bparadox(?:\.ai)?\b', '(?i)\bolivia\b', '(?i)\bworkday illuminate\b', '(?i)\bpiper\b']
+        # Apollo, Lavender, Drift, Qualified, Clay, Artisan, Ema, Paradox,
+        # Olivia and Piper are words / names: Lavender, Drift, Qualified and
+        # Clay count as the whole display name, every bare word needs sales,
+        # support or recruiting context otherwise.
+        patterns: ['(?i)\bclari\b', '(?i)\bapollo\.io\b', '(?i)^(?=.*\b(?:ai|sales|prospect\w*|outreach|leads?|sdr)\b).*\bapollo\b', '(?i)\bkaia\b', '(?i)\bregie(?:\.ai)?\b', '(?i)\blavender\.ai\b', '(?i)^(?=.*\b(?:ai|email|sales|coach\w*|outreach)\b).*\blavender\b|^[^\S\r\n]*lavender[^\S\r\n]*$', '(?i)\bbreeze (?:agent|copilot|intelligence)\b', '(?i)\bdrift\.com\b', '(?i)^(?=.*\b(?:ai|chat|chatbot|conversational|marketing|sales|salesloft)\b).*\bdrift\b|^[^\S\r\n]*drift[^\S\r\n]*$', '(?i)\bqualified\.com\b', '(?i)^(?=.*\b(?:ai|piper|sales|pipeline|chat|conversational|website)\b).*\bqualified\b|^[^\S\r\n]*qualified[^\S\r\n]*$', '(?i)\bclay\.com\b', '(?i)^(?=.*\b(?:ai|sales|prospect\w*|enrich\w*|leads?|gtm)\b).*\bclay\b|^[^\S\r\n]*clay[^\S\r\n]*$', '(?i)\b11x(?:\.ai)?\b', '(?i)\bartisan\.co\b', '(?i)^(?=.*\b(?:ai|sdr|sales|ava)\b).*\bartisan\b', '(?i)\bema(?: unlimited|\.co)\b', '(?i)^(?=.*\b(?:ai|agents?|agentic|employee|universal)\b).*\bema\b', '(?i)\bleena ai\b', '(?i)\bparadox\.ai\b', '(?i)^(?=.*\b(?:ai|recruit\w*|hiring|olivia|talent|hr)\b).*\bparadox\b', '(?i)^(?=.*\b(?:paradox|recruit\w*|hiring|ai|assistant|bot|talent)\b).*\bolivia\b', '(?i)\bworkday illuminate\b', '(?i)^(?=.*\b(?:qualified|ai|sdr|bot|agents?|pipeline|sales)\b).*\bpiper\b']
         weight: 0.6
       - type: domain
         values: [clari.com, app.apollo.io, regie.ai, lavender.ai, drift.com, qualified.com, clay.com, "*.clay.com", 11x.ai, artisan.co, ema.co, leena.ai, paradox.ai]
@@ -219,5 +364,7 @@ signatures:
     description: Display names suggesting an AI agent, assistant or bot without matching a known product.
     signals:
       - type: name
-        patterns: ['(?i)\bai[- ]?(?:agent|assistant|bot|copilot|helper|companion)\b', '(?i)\b(?:llm|gpt|genai|gen-ai|generative ai)\b', '(?i)\bagents?\b', '(?i)\bassistant\b', '(?i)\bcopilot\b', '(?i)\bchat ?bot\b', '(?i)\b(?:auto|autonomous)[- ]?(?:agent|pilot)\b', '(?i)\brag\b', '(?i)\bmcp\b', '(?i)\b(?:svc|service)[-_ ]?(?:agent|ai|llm)\b', '(?i)\bbot\b']
+        # "mcp" is owned by protocol.mcp; "copilot" excludes stylesheet / theme
+        # package names such as copilot-css.
+        patterns: ['(?i)\bai[- ]?(?:agent|assistant|bot|copilot|helper|companion)\b', '(?i)\b(?:llm|gpt|genai|gen-ai|generative ai)\b', '(?i)\bagents?\b', '(?i)\bassistant\b', '(?i)\bcopilot\b(?![-_](?:css|scss|less|themes?|kit|ui|icons?|fonts?|styles?)\b)', '(?i)\bchat ?bot\b', '(?i)\b(?:auto|autonomous)[- ]?(?:agent|pilot)\b', '(?i)\brag\b', '(?i)\b(?:svc|service)[-_ ]?(?:agent|ai|llm)\b', '(?i)\bbot\b']
         weight: 0.35

@@ -80,6 +80,8 @@ class Signal:
     languages: list[str] = field(default_factory=list)  # import / code
     names: list[str] = field(default_factory=list)  # dependency / env / client_id
     prefixes: list[str] = field(default_factory=list)  # dependency
+    exclude_names: list[str] = field(default_factory=list)  # dependency: exact names a prefix must not claim
+    exclude_prefixes: list[str] = field(default_factory=list)  # dependency: name prefixes a prefix must not claim
     patterns: list[str] = field(default_factory=list)  # regexes
     globs: list[str] = field(default_factory=list)  # file
     values: list[str] = field(default_factory=list)  # domain / scope / iac
@@ -166,6 +168,8 @@ def _signal_from_dict(d: dict[str, Any]) -> Signal:
         languages=list(d.get("languages", []) or []),
         names=[str(x) for x in d.get("names", []) or []],
         prefixes=[str(x) for x in d.get("prefixes", []) or []],
+        exclude_names=[str(x) for x in d.get("exclude_names", []) or []],
+        exclude_prefixes=[str(x) for x in d.get("exclude_prefixes", []) or []],
         patterns=[str(x) for x in d.get("patterns", []) or []],
         globs=[str(x) for x in d.get("globs", []) or []],
         values=[str(x) for x in d.get("values", []) or []],

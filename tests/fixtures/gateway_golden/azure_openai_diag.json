@@ -3492,18 +3492,6 @@
      }
     },
     {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
      "signal": "user_agent:framework.microsoft-agent-framework",
      "description": "user agent matched Microsoft Agent Framework: agent-framework",
      "location": null,
@@ -3570,7 +3558,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.994,
+   "confidence": 0.992,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -3668,7 +3656,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "framework.microsoft-agent-framework|user_agent": 1,
      "provider.openai|user_agent": 1,
      "identity-app.generic-ai-name|name": 2

@@ -2600,8 +2600,7 @@
     "framework.langchain"
    ],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o"
@@ -2618,18 +2617,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "gpt-"
@@ -2666,7 +2653,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.994,
+   "confidence": 0.992,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -2751,7 +2738,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "framework.langchain|user_agent": 1
     },
     "technologies": [
@@ -2766,12 +2752,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -2948,8 +2928,7 @@
     "framework.crewai"
    ],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o-mini-2024-07-18"
@@ -2967,18 +2946,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "gpt-"
@@ -3149,7 +3116,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1,
      "framework.crewai|user_agent": 1,
@@ -3173,12 +3139,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -3542,8 +3502,7 @@
    "owner": null,
    "frameworks": [],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o"
@@ -3564,18 +3523,6 @@
      }
     },
     {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
      "signal": "gateway:user",
      "description": "1 LLM request(s) by user 'erin' to models gpt-4o",
      "location": null,
@@ -3585,7 +3532,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.592,
+   "confidence": 0.49,
    "likelihood": "possible",
    "risk": {
     "score": 0,
@@ -3664,8 +3611,7 @@
      ]
     },
     "evidence_counts": {
-     "provider.openai|model": 1,
-     "provider.azure-openai|model": 1
+     "provider.openai|model": 1
     },
     "technologies": [
      {
@@ -3673,12 +3619,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -3839,8 +3779,7 @@
     "identity-app.openai-chatgpt"
    ],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o"
@@ -3857,18 +3796,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "gpt-"
@@ -3929,7 +3856,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.996,
+   "confidence": 0.995,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -4012,7 +3939,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1
     },
@@ -4028,12 +3954,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -4056,8 +3976,7 @@
     "identity-app.openai-chatgpt"
    ],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o-mini"
@@ -4072,18 +3991,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "gpt-"
@@ -4135,7 +4042,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.97,
+   "confidence": 0.962,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -4217,7 +4124,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1
     },
@@ -4233,12 +4139,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -4259,8 +4159,7 @@
    "owner": null,
    "frameworks": [],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o-mini"
@@ -4277,18 +4176,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "gpt-"
@@ -4313,7 +4200,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.959,
+   "confidence": 0.949,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -4394,8 +4281,7 @@
      ]
     },
     "evidence_counts": {
-     "provider.openai|model": 1,
-     "provider.azure-openai|model": 1
+     "provider.openai|model": 1
     },
     "technologies": [
      {
@@ -4403,12 +4289,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -5318,8 +5198,7 @@
     "identity-app.openai-chatgpt"
    ],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o",
@@ -5341,36 +5220,12 @@
      }
     },
     {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
      "signal": "model:provider.openai",
      "description": "model id matched OpenAI: gpt-",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "gpt-"
@@ -5422,7 +5277,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.985,
+   "confidence": 0.977,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -5526,7 +5381,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 2,
-     "provider.azure-openai|model": 2,
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1
     },
@@ -5542,12 +5396,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -5570,8 +5418,7 @@
     "identity-app.openai-chatgpt"
    ],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "text-embedding-3-small"
@@ -5586,18 +5433,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "text-embedding-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: text-embedding-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "text-embedding-"
@@ -5649,7 +5484,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.96,
+   "confidence": 0.95,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -5746,7 +5581,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1
     },
@@ -5762,12 +5596,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -5790,8 +5618,7 @@
     "identity-app.openai-chatgpt"
    ],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4-0613"
@@ -5806,18 +5633,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "gpt-"
@@ -5869,7 +5684,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.97,
+   "confidence": 0.962,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -5961,7 +5776,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1
     },
@@ -5977,12 +5791,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -6371,8 +6179,7 @@
     "framework.langchain"
    ],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o"
@@ -6389,18 +6196,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "gpt-"
@@ -6564,7 +6359,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1,
      "framework.langchain|user_agent": 1
@@ -6587,12 +6381,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -7639,8 +7427,7 @@
     "platform.litellm"
    ],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o"
@@ -7655,18 +7442,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "gpt-"
@@ -7694,7 +7469,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.953,
+   "confidence": 0.942,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -7780,7 +7555,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "platform.litellm|user_agent": 1
     },
     "technologies": [
@@ -7795,12 +7569,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -7824,8 +7592,7 @@
     "framework.llamaindex"
    ],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "text-embedding-3-large"
@@ -7843,18 +7610,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "text-embedding-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: text-embedding-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "text-embedding-"
@@ -7918,7 +7673,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.994,
+   "confidence": 0.992,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -8010,7 +7765,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1,
      "framework.llamaindex|user_agent": 1
@@ -8033,12 +7787,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -8059,8 +7807,7 @@
    "owner": "lena@acme.com",
    "frameworks": [],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o"
@@ -8077,18 +7824,6 @@
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
      "attributes": {
       "category": "provider",
       "value": "gpt-"
@@ -8125,7 +7860,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.991,
+   "confidence": 0.988,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -8205,7 +7940,6 @@
     },
     "evidence_counts": {
      "provider.openai|model": 1,
-     "provider.azure-openai|model": 1,
      "provider.openai|user_agent": 1
     },
     "technologies": [
@@ -8214,12 +7948,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -8726,8 +8454,7 @@
    "owner": null,
    "frameworks": [],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o"
@@ -8748,18 +8475,6 @@
      }
     },
     {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
      "signal": "gateway:api-key",
      "description": "1 LLM request(s) by api-key 'credential:hmac-sha256:707985f4e87292e43f07c2ecee534750fe9ba85d497309163989a06cc6ff4753' to models gpt-4o",
      "location": null,
@@ -8769,7 +8484,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.688,
+   "confidence": 0.61,
    "likelihood": "likely",
    "risk": {
     "score": 0,
@@ -8844,8 +8559,7 @@
      ]
     },
     "evidence_counts": {
-     "provider.openai|model": 1,
-     "provider.azure-openai|model": 1
+     "provider.openai|model": 1
     },
     "technologies": [
      {
@@ -8853,12 +8567,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -8879,8 +8587,7 @@
    "owner": null,
    "frameworks": [],
    "model_providers": [
-    "provider.openai",
-    "provider.azure-openai"
+    "provider.openai"
    ],
    "models": [
     "gpt-4o"
@@ -8901,18 +8608,6 @@
      }
     },
     {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
      "signal": "gateway:api-key",
      "description": "1 LLM request(s) by api-key 'credential:hmac-sha256:7827da4e68ca81f69d06175b67872c20c9bf66bcff3e4c364ee1d00bb1c734f9' to models gpt-4o",
      "location": null,
@@ -8922,7 +8617,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.688,
+   "confidence": 0.61,
    "likelihood": "likely",
    "risk": {
     "score": 0,
@@ -8997,8 +8692,7 @@
      ]
     },
     "evidence_counts": {
-     "provider.openai|model": 1,
-     "provider.azure-openai|model": 1
+     "provider.openai|model": 1
     },
     "technologies": [
      {
@@ -9006,12 +8700,6 @@
       "name": "OpenAI",
       "category": "provider",
       "vendor": "OpenAI"
-     },
-     {
-      "id": "provider.azure-openai",
-      "name": "Azure OpenAI",
-      "category": "provider",
-      "vendor": "Microsoft"
      }
     ]
    },
@@ -9225,18 +8913,6 @@
      }
     },
     {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
      "signal": "gateway:principal",
      "description": "1 LLM request(s) by principal 'julia@acme.com' to models gpt-4o-prod",
      "location": null,
@@ -9246,7 +8922,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.688,
+   "confidence": 0.61,
    "likelihood": "likely",
    "risk": {
     "score": 0,
@@ -9333,8 +9009,7 @@
      ]
     },
     "evidence_counts": {
-     "provider.openai|model": 1,
-     "provider.azure-openai|model": 1
+     "provider.openai|model": 1
     },
     "technologies": [
      {
@@ -9392,18 +9067,6 @@
      }
     },
     {
-     "signal": "model:provider.azure-openai",
-     "description": "model id matched Azure OpenAI: gpt-",
-     "location": null,
-     "snippet": null,
-     "weight": 0.2,
-     "signature": "provider.azure-openai",
-     "attributes": {
-      "category": "provider",
-      "value": "gpt-"
-     }
-    },
-    {
      "signal": "gateway:principal",
      "description": "1 LLM request(s) by principal 'obj-9' to models gpt-4o",
      "location": null,
@@ -9422,7 +9085,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.969,
+   "confidence": 0.961,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -9507,8 +9170,7 @@
      ]
     },
     "evidence_counts": {
-     "provider.openai|model": 1,
-     "provider.azure-openai|model": 1
+     "provider.openai|model": 1
     },
     "technologies": [
      {

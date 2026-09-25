@@ -9,10 +9,19 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 import yaml
 
+from shadowscan.risk import CAPABILITY_WEIGHTS
 from shadowscan.signatures import SignatureIndex, load_signatures
-from shadowscan.signatures.loader import load_signature_file, signature_from_dict
-from shadowscan.signatures.matcher import MatchTimeoutError
-from shadowscan.signatures.validate import main
+from shadowscan.signatures.loader import VALID_CATEGORIES, load_signature_file, signature_from_dict
+from shadowscan.signatures.matcher import _LANG_ALIASES, MatchTimeoutError
+from shadowscan.signatures.schema import (
+    CAPABILITIES,
+    ECOSYSTEMS,
+    LANGUAGES,
+    NAMESPACE_CATEGORIES,
+    check_glob,
+    matches_empty_string,
+)
+from shadowscan.signatures.validate import cross_signature_duplicates, main, validate_signature_set
 
 
 def _signature():
@@ -207,3 +216,162 @@ else:
     result = subprocess.run([sys.executable, "-c", code, signal_type], capture_output=True, text=True, timeout=3)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "incomplete"
+
+
+# ------------------------------------------------------------ vocabularies
+def test_capability_vocabulary_matches_the_risk_engine():
+    # risk.py scores capabilities by exact string; a signature capability the
+    # engine does not know would silently never contribute to a score.
+    assert set(CAPABILITY_WEIGHTS) == CAPABILITIES
+
+
+def test_language_vocabulary_matches_the_matcher_aliases():
+    assert set(_LANG_ALIASES.values()) == LANGUAGES
+
+
+def test_namespace_table_covers_every_category_and_manifest_ecosystems_are_closed():
+    assert set(NAMESPACE_CATEGORIES.values()) == VALID_CATEGORIES
+    assert {"pypi", "npm", "nuget", "maven", "go", "cargo", "rubygems", "composer", "conda", "any"} == ECOSYSTEMS
+
+
+@pytest.mark.parametrize(
+    "signal",
+    [
+        {"type": "dependency", "ecosystem": "pip", "names": ["example"]},
+        {"type": "dependency", "ecosystem": "PyPI", "names": ["example"]},
+        {"type": "dependency", "ecosystem": 1, "names": ["example"]},
+        {"type": "import", "languages": ["typescript"], "patterns": ["example"]},
+        {"type": "code", "patterns": ["example"], "capabilities": ["code_exec"]},
+        {"type": "code", "patterns": ["example"], "capabilities": ["tool-use", "tool-use"]},
+        {"type": "code", "patterns": ["example", "example"]},
+        {"type": "dependency", "ecosystem": "pypi", "names": ["a", "a"]},
+        {"type": "scope", "values": ["api", "api"]},
+        {"type": "code", "patterns": ["example"], "weight": 0},
+        {"type": "code", "patterns": ["example"], "weight": 0.0},
+        {"type": "code", "patterns": ["a*"]},
+        {"type": "code", "patterns": ["^"]},
+        {"type": "code", "patterns": ["(?i)foo|"]},
+        {"type": "env", "names": ["A_B"], "patterns": [r"\s*"]},
+        {"type": "domain", "values": ["re:.*"]},
+        {"type": "file", "globs": ["**/[abc"]},
+        {"type": "file", "globs": ["a]b"]},
+        {"type": "file", "globs": ["**/{a,b}.json"]},
+    ],
+)
+def test_rejects_vocabulary_typos_zero_weights_empty_matches_and_bad_globs(signal):
+    sig = _signature()
+    sig["signals"] = [signal]
+    with pytest.raises(ValueError):
+        signature_from_dict(sig)
+
+
+@pytest.mark.parametrize(
+    "signal",
+    [
+        {"type": "dependency", "names": ["example"]},
+        {"type": "dependency", "ecosystem": "any", "names": ["example"]},
+        {"type": "code", "patterns": [r"\bexample\b"], "weight": 0.01},
+        {"type": "file", "globs": ["**/[!.]*.md", "[]]literal", "*.json"]},
+        {"type": "domain", "values": ["re:.*:11434$", "*.example.com"]},
+    ],
+)
+def test_accepts_well_formed_signals(signal):
+    sig = _signature()
+    sig["signals"] = [signal]
+    assert signature_from_dict(sig).signals[0].type == signal["type"]
+
+
+def test_empty_string_and_glob_helpers():
+    assert matches_empty_string("a*") and matches_empty_string("^$") and matches_empty_string("")
+    assert not matches_empty_string(r"\bagent\b") and not matches_empty_string("[")  # loader reports the compile error
+    check_glob("**/[!.]*.md", "ok")
+    with pytest.raises(ValueError, match="unbalanced"):
+        check_glob("[abc", "bad")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("capabilities", ["tool_use"]), ("capabilities", ["tool-use", "tool-use"]), ("tags", ["coding", "coding"])],
+)
+def test_rejects_signature_level_vocabulary_and_duplicates(field, value):
+    sig = _signature()
+    sig[field] = value
+    with pytest.raises(ValueError):
+        signature_from_dict(sig)
+
+
+@pytest.mark.parametrize(
+    ("sig_id", "category", "ok"),
+    [
+        ("cloud.example", "platform", False),
+        ("cloud.example", "cloud-service", True),
+        ("tool.example", "sandbox", True),
+        ("tool.example", "framework", False),
+        ("framework.example", "provider", False),
+        ("identity-app.example", "identity-app", True),
+        ("custom.example", "framework", True),
+        ("acme.example", "provider", True),
+    ],
+)
+def test_id_namespace_must_match_its_category(sig_id, category, ok):
+    sig = _signature()
+    sig["id"], sig["category"] = sig_id, category
+    if ok:
+        assert signature_from_dict(sig).id == sig_id
+    else:
+        with pytest.raises(ValueError, match="namespace"):
+            signature_from_dict(sig)
+
+
+def test_uniqueness_is_per_signal_so_distinct_signals_may_layer_capabilities():
+    # The matcher lets two signals of one signature attach different weights or
+    # capabilities to the same text (see the filesystem connector); only a
+    # value repeated inside one signal is a data error.
+    sig = _signature()
+    sig["signals"] = [
+        {"type": "code", "patterns": ["--yolo"], "weight": 0.9},
+        {"type": "code", "patterns": ["--yolo"], "weight": 0.5, "capabilities": ["autonomous"]},
+        {"type": "env", "patterns": ["--yolo"]},
+    ]
+    assert len(signature_from_dict(sig).signals) == 3
+    sig["signals"] = [{"type": "code", "patterns": ["--yolo", "--yolo"]}]
+    with pytest.raises(ValueError, match="duplicate value"):
+        signature_from_dict(sig)
+
+
+def _named(sig_id: str, category: str, patterns: list[str], signal_type: str = "code"):
+    field = "values" if signal_type == "domain" else "patterns"
+    return signature_from_dict({"id": sig_id, "category": category, "signals": [{"type": signal_type, field: patterns}]})
+
+
+def test_cross_signature_duplicate_regexes_are_errors_unless_one_side_is_heuristic():
+    shared = r"\bAgent\s*\(\s*model\s*="
+    a = _named("framework.a", "framework", [shared])
+    b = _named("framework.b", "framework", [shared])
+    heuristic = _named("heuristic.h", "heuristic", [shared])
+    problems = cross_signature_duplicates([a, b, heuristic])
+    assert len(problems) == 1 and "framework.a, framework.b" in problems[0] and repr(shared) in problems[0]
+    assert cross_signature_duplicates([a, heuristic]) == []
+    # Different signal types are different observations even with identical text.
+    assert cross_signature_duplicates([a, _named("provider.c", "provider", [shared], "user_agent")]) == []
+    # Domain regexes count; plain domain values (shared on purpose with policies) do not.
+    d1 = _named("provider.d1", "provider", ["re:.*:11434$", "api.example.com"], "domain")
+    d2 = _named("provider.d2", "provider", ["re:.*:11434$", "api.example.com"], "domain")
+    assert len(cross_signature_duplicates([d1, d2])) == 1
+
+
+def test_builtin_packs_pass_the_whole_set_checks():
+    assert validate_signature_set(load_signatures()) == []
+
+
+def test_cli_reports_competing_regexes_in_custom_packs(tmp_path, capsys):
+    first, second = _signature(), _signature()
+    second["id"] = "framework.other"
+    (tmp_path / "pack.yaml").write_text(yaml.safe_dump({"signatures": [first, second]}))
+    assert main(["--no-builtin", str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "Signature validation failed" in err and "competing signatures framework.example, framework.other" in err
+    second["signals"][0]["patterns"] = [r"\bOtherAgent\b"]
+    (tmp_path / "pack.yaml").write_text(yaml.safe_dump({"signatures": [first, second]}))
+    assert main(["--no-builtin", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.strip() == "Validated 2 signatures and 2 signals."
