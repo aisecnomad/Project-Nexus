@@ -462,8 +462,8 @@ def _loop_request(
     """(request call, response name, kind, history, tools, statements following in the same block)."""
     if isinstance(statement, (ast.With, ast.AsyncWith)) and len(statement.items) == 1:
         item = statement.items[0]
-        call = _unwrap(item.context_expr)
-        if not (isinstance(call, ast.Call) and id(call) in request_calls and isinstance(item.optional_vars, ast.Name)):
+        opened = _unwrap(item.context_expr)
+        if not (isinstance(opened, ast.Call) and id(opened) in request_calls and isinstance(item.optional_vars, ast.Name)):
             return None
         stream = item.optional_vars.id
         for number, inner in enumerate(statement.body):
@@ -472,8 +472,8 @@ def _loop_request(
             if (len(targets) == 1 and isinstance(targets[0], ast.Name) and isinstance(final, ast.Call)
                     and isinstance(final.func, ast.Attribute) and final.func.attr in _FINAL_MESSAGE
                     and isinstance(final.func.value, ast.Name) and final.func.value.id == stream):
-                options = {keyword.arg: keyword.value for keyword in call.keywords if keyword.arg}
-                return call, targets[0].id, "response", options.get("messages"), options.get("tools"), statement.body[number + 1:]
+                options = {keyword.arg: keyword.value for keyword in opened.keywords if keyword.arg}
+                return opened, targets[0].id, "response", options.get("messages"), options.get("tools"), statement.body[number + 1:]
         return None
     targets, expression = _assignment(statement)
     call = _unwrap(expression) if expression is not None else None
