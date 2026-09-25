@@ -136,7 +136,7 @@ def test_api_fetch_never_silently_changes_unsupported_branch(provider, index, mo
     assert ctx.stats.incomplete
 
 
-@pytest.mark.requires_git_history
+@pytest.mark.requires_git_2_45
 def test_metadata_and_incremental_git_ignore_inherited_repo_and_config(tmp_path, index, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()

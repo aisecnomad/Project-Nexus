@@ -13,6 +13,7 @@ from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.cloud.oci import OciConnector
 from shadowscan.models import ScanStats
 
+# The optional cloud extra must never break collection of the rest of the suite.
 oci = pytest.importorskip("oci")
 
 

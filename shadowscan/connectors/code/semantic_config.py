@@ -30,6 +30,8 @@ class AgentManifestResult:
     valid: bool = False
 
 
+_TEMPLATE_MARKER_RX = re.compile(r"\{\{-?\s*[.$a-zA-Z_\"']|\{%-?\s*[a-z]")
+
 def agent_manifest_kind(rel: str) -> str | None:
     path = PurePosixPath(rel)
     name = path.name.lower()
@@ -306,6 +308,11 @@ def structured_code_matches(
     """
     issues = errors if errors is not None else []
     extension = PurePosixPath(rel).suffix.lower()
+    if extension in {".yaml", ".yml"} and _TEMPLATE_MARKER_RX.search(text):
+        # Helm, Jinja and Go-template manifests are not YAML until rendered;
+        # their syntax failure is expected and must not mark the scan
+        # incomplete. Lexical signatures still run over the text elsewhere.
+        return []
     try:
         if extension in {".yaml", ".yml"}:
             documents = bounded_safe_load_all(text)

@@ -19,11 +19,46 @@ by expanded size. Override `max_input_files`, `max_input_file_bytes` or
 `max_input_bytes` in the connector config when a trusted export needs larger
 limits. The existing hard ceilings remain 64 MiB per file and 512 MiB total.
 Any skipped symlink or input-limit hit marks the connector incomplete.
+These three keys are declared once on `BaseConnector.shared_config_keys` and
+apply to every connector that reads an export file, so `shadowscan connectors`
+lists them after each connector's own keys. `code.filesystem`, `code.github` and
+`code.gitlab` scan checkouts instead of exports: they are bounded by `max_files`,
+`max_repos` and `max_projects` and do not advertise the export limits. They
+ignore those three keys, but a value supplied for one must still be a positive
+integer or the entry fails validation.
 
 See [scan state and runtime correlation](scanning.md) for incremental scans,
 gateway workload bindings and completion semantics.
 
 `shadowscan connectors` prints the up-to-date option list for every connector.
+A configuration key that a built-in connector does not read is rejected when
+the YAML file or `--set` option is parsed (`connector 'identity.okta' does not
+accept 'fetch_tokenz'`), so a typo cannot silently disable an option. Keys
+starting with an underscore are reserved for the engine. Third-party plugins
+are not imported while parsing, so their keys are not checked at that point.
+
+## Connector entry keys
+
+Every entry under `connectors:` in a scan configuration accepts these keys in
+addition to the connector's own options:
+
+- `name` (required): the connector, for example `identity.okta`. A bare string
+  entry is shorthand for `{name: ...}`.
+- `enabled`: `true` (default) or `false` to keep the entry but skip it on this
+  run. Environment-backed strings such as `"false"`, `"no"`, `"off"` or `"0"` are
+  accepted; any other value fails validation. A disabled entry is not a valid
+  `--only` selector.
+- `label`: a name for this entry. Give each repeated connector a distinct
+  label; nothing else tells the entries apart. It is the entry's id in
+  `--only`, progress and `dump_records` file names, and it is passed to the
+  connector as the `label` key:
+  `code.filesystem` prefixes resource ids with it and `gateway.logs` records it
+  as the gateway name.
+- `config`: an optional nested mapping merged into the top-level keys, for
+  configurations that keep credentials apart from entry metadata. A nested
+  key replaces a top-level key of the same name.
+- `input`: the offline export path; each connector's offline format is listed
+  below and by `shadowscan connectors`.
 
 ## Code
 
@@ -61,8 +96,13 @@ unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
-`scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
-`root_ids` aligned with those paths for IDs that survive moving checkouts.
+`scan_timeout`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
+supply unique `root_ids` aligned with those paths for IDs that survive moving
+checkouts. `account`, `owner` and `provider` set the corresponding finding
+fields. A configured `owner` is recorded on every finding and takes precedence
+over CODEOWNERS and inventory attribution; leave it unset to attribute by
+CODEOWNERS, then the git author when `use_git` is on, then the inventory.
+`metadata` is a mapping merged into every finding's metadata.
 
 ### `code.github`
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
@@ -76,6 +116,13 @@ enumerated Git object IDs.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 
+Options: `org` (env `GITHUB_ORG`), `user` or `repos`; `token` (env
+`GITHUB_TOKEN`, falling back to `github_token` / env `GH_TOKEN`); `api_url`,
+`mode`, `include_archived`, `include_forks`, `max_repos`, `clone_depth`,
+`topics`. The filesystem scanner options `exclude`, `max_file_size`,
+`max_files`, `scan_timeout`, `scan_secrets` and `use_git` are forwarded to
+every repository scan.
+
 ### `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
 clone or API mode; also CI/CD variable names (masked flag), group service
@@ -86,13 +133,20 @@ findings retain the scanned Git tree/commit identity in
 `metadata.source_snapshot`, and API mode pins tree pagination to an immutable
 commit before downloading files.
 
+Options: `group` (env `GITLAB_GROUP`) or `projects`; `token` (env
+`GITLAB_TOKEN`); `api_url` (env `GITLAB_API_URL`), `mode`, `include_archived`,
+`max_projects`. The same filesystem scanner options as `code.github` are
+forwarded to every project scan.
+
 ## Identity
 
 ### `identity.okta`
 `/api/v1/apps` (+ `/grants`, `/tokens` for OIDC apps). Reports OAuth apps that
 match AI SaaS signatures or hold privileged scopes, and service apps
 (`application_type: service` / `client_credentials` / token-exchange).
-Token: SSWS API token or OAuth bearer with `okta.apps.read`.
+Token: SSWS API token (`token`, env `OKTA_API_TOKEN`) or OAuth bearer
+(`bearer`, env `OKTA_ACCESS_TOKEN`) with `okta.apps.read`; `bearer` wins when
+both are set. Options: `include_inactive`, `fetch_tokens`.
 
 ### `identity.entra`
 Microsoft Graph: service principals, delegated `oauth2PermissionGrants`,
@@ -154,6 +208,11 @@ not individual timestamped transaction events. Log fields for environment
 and caller identity are evidence from the supplied export; assess the
 producer and delivery chain before treating them as verified production facts.
 
+Options: `format`, `min_events`, `llm_hosts_only`, `max_records`,
+`correlation_bindings`, and `label` (or `gateway_name` when the entry has no
+label), which names the gateway on findings: it becomes the provider and the
+account of callers without a tenant/account scope.
+
 ## Low-code
 
 ### `lowcode.power-platform`
@@ -185,7 +244,9 @@ Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
 Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
 GenAI/agentic providers); triggers (schedule/webhook → autonomous), code
-steps (→ code-exec), models.
+steps (→ code-exec), models. Live pagination is bounded by `max_pages`
+(default 1000). Make scans one `team_id`, or every team of an
+`organization_id` when `team_id` is unset.
 
 ## SaaS
 
@@ -292,7 +353,9 @@ shows access, not observed agent execution.
 Cloud Run discovery enumerates project locations and then lists services in each
 concrete region (`run.locations.list` and `run.services.list` permissions).
 Unreachable locations reported by GCP make the scan incomplete. `max_projects`
-limits discovery without loading all projects first.
+limits discovery without loading all projects first; `max_pages` (default 1000)
+bounds every paginated call; resource lists stop at 500 pages and audit-log
+queries at 50 pages regardless.
 
 ### `cloud.azure`
 Azure Resource Graph inventory across subscriptions, then: OpenAI/AI Services
@@ -316,6 +379,10 @@ Assistant, GenAI endpoints/clusters/custom models, Data Science model
 deployments, Functions, Container Instances, Vault secret names, IAM policies
 granting `generative-ai*`, dynamic groups. Auth: `~/.oci/config` profile,
 instance or resource principal.
+Options: `profile`, `config_file`, `auth`, `tenancy` (default: from the
+profile or the principal signer), `region` (session region for
+`instance_principal`; config auth uses the profile's region), `regions`,
+`compartments`, `max_pages` (default 1000).
 Function inspection retrieves application and function details, combines
 inherited configuration with function overrides, and supports both legacy image
 fields and `source_details.image`. Denied or invalid detail reads mark coverage

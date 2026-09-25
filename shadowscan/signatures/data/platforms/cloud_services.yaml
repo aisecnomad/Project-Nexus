@@ -73,7 +73,9 @@ signatures:
         values: ["re:^qbusiness\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^runtime-v2-lex\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^runtime\\.sagemaker\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^q\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^codewhisperer\\.[a-z0-9-]+\\.amazonaws\\.com$"]
         weight: 0.9
       - type: image
-        patterns: ['huggingface-pytorch-tgi-inference', 'djl-inference', 'huggingface-pytorch-inference', 'pytorch-inference', 'sagemaker-tritonserver', 'lmi', 'vllm']
+        # SageMaker inference containers; LMI images are djl-inference tags and
+        # vLLM images are owned by provider.vllm.
+        patterns: ['huggingface-pytorch-tgi-inference', 'djl-inference', 'huggingface-pytorch-inference', 'pytorch-inference', 'sagemaker-tritonserver']
         weight: 0.6
 
   - id: cloud.gcp-vertex-agent-engine
@@ -101,7 +103,9 @@ signatures:
         values: ["roles/dialogflow.admin", "roles/dialogflow.client", "roles/dialogflow.consoleAgentEditor", "roles/dialogflow.serviceAgent", "roles/discoveryengine.admin", "roles/discoveryengine.editor", "roles/discoveryengine.user", "roles/discoveryengine.viewer", "roles/aiplatform.reasoningEngineServiceAgent", "aiplatform.reasoningEngines.query", "aiplatform.reasoningEngines.create", "dialogflow.sessions.detectIntent", "discoveryengine.conversations.converse", "discoveryengine.answers.get", "https://www.googleapis.com/auth/dialogflow"]
         weight: 0.9
       - type: name
-        patterns: ['(?i)\breasoning[- ]?engine\b', '(?i)\bagent[- ]?engine\b', '(?i)\bdialogflow\b', '(?i)\bagentspace\b', '(?i)\bagent builder\b']
+        # "Agent Builder" and "Agent Engine" are generic product phrases (Salesforce,
+        # OpenAI and Copilot Studio use them too): require the Google product names.
+        patterns: ['(?i)\breasoning[- ]?engine\b', '(?i)\bvertex(?: ai)? agent[- ]?engine\b', '(?i)\bdialogflow\b', '(?i)\bagentspace\b', '(?i)\b(?:vertex(?: ai)?|google) agent builder\b']
         weight: 0.75
 
   - id: cloud.azure-ai-foundry-agents
@@ -133,12 +137,15 @@ signatures:
         patterns: ['^[^\S\r\n]*(?:from|import)\s+azure\.ai\.(?:projects|agents)\b']
         weight: 0.95
       - type: code
-        patterns: ['\bAIProjectClient\s*\(', '\bAgentsClient\s*\(', '\bPersistentAgentsClient\s*\(', '\.agents\.create_agent\s*\(', '\bcreate_agent\s*\(\s*model\s*=', '\bAzureAIAgent\s*\(', '\bAzureAIAgentClient\s*\(', '\bAgentsClient\.Administration\.CreateAgent', '/agents\?api-version=', '\bBingGroundingTool\s*\(', '\bAzureFunctionTool\s*\(', '\bOpenApiTool\s*\(']
+        patterns: ['\bAIProjectClient\s*\(', '\bAgentsClient\s*\(', '\bPersistentAgentsClient\s*\(', '\.agents\.create_agent\s*\(', '\bcreate_agent\s*\(\s*model\s*=', '\bAzureAIAgent\s*\(', '\bAzureAIAgentClient\s*\(', '\bAgentsClient\.Administration\.CreateAgent', '/agents\?api-version=', '\bAzureFunctionTool\s*\(', '\bOpenApiTool\s*\(']
         weight: 0.9
       - type: code
-        patterns: ['\bCodeInterpreterTool\s*\(']
-        weight: 0.5
-        capabilities: [code-exec]
+        patterns: ['\bBingGroundingTool\s*\(', '\bBingCustomSearchTool\s*\(']
+        weight: 0.9
+        capabilities: [browsing]
+        description: Foundry agent grounded with Bing web search
+      # CodeInterpreterTool( is shared by several SDKs; heuristic.code-execution
+      # attaches the code-exec capability without pinning a vendor.
       - type: env
         names: [AZURE_AI_PROJECT_ENDPOINT, PROJECT_ENDPOINT, AZURE_AI_AGENT_PROJECT_CONNECTION_STRING, AZURE_AI_PROJECT_CONNECTION_STRING, AZURE_AI_AGENT_ENDPOINT, AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME, AZURE_AI_FOUNDRY_PROJECT_ENDPOINT, AZURE_EXISTING_AIPROJECT_ENDPOINT]
         weight: 0.8
@@ -152,7 +159,9 @@ signatures:
         values: ["Azure AI Developer", "Azure AI Project Manager", "Azure AI Account Owner", "Azure AI Administrator", "64702f94-c99e-4e88-8e0b-ba3389c66a89", "eadc314b-1a2d-4efa-be10-5d325db5065e", "e503ece1-11d0-4e8e-8e2c-7a6c3bf38815", "b78c5d69-af96-48a3-bf8d-a8b4d589de94"]
         weight: 0.8
       - type: name
-        patterns: ['(?i)\bai foundry\b', '(?i)\bazure ai agent', '(?i)\bai studio\b', '(?i)\bfoundry\b']
+        # "Foundry" and "AI Studio" alone are ambiguous (Palantir Foundry, Google AI
+        # Studio): require the Azure / Microsoft product names.
+        patterns: ['(?i)\bai foundry\b', '(?i)\bazure ai agent', '(?i)\bazure ai studio\b', '(?i)\b(?:azure|microsoft) foundry\b']
         weight: 0.6
 
   - id: cloud.azure-logic-apps-ai
@@ -207,5 +216,7 @@ signatures:
         patterns: ['^[^\S\r\n]*kind:\s*(?:Deployment|StatefulSet|Job|CronJob|Pod)\s*$']
         weight: 0.05
       - type: image
-        patterns: ['kagent-dev/kagent', 'ghcr\.io/kagent-dev', 'agentgateway/agentgateway', 'kgateway', 'ghcr\.io/nvidia/nemo', 'nvcr\.io/nvidia/nemo', 'ghcr\.io/kubeflow/', 'ray-project/ray', 'triton', 'text-generation-inference', 'localai/localai', 'lmstudio', 'ghcr\.io/ggerganov/llama\.cpp', 'ghcr\.io/ggml-org/llama\.cpp', 'ghcr\.io/mudler/localai', 'ghcr\.io/open-webui', 'ghcr\.io/coollabsio', 'anythingllm', 'langgenius', 'flowiseai', 'langflowai', 'n8nio', 'berriai/litellm', 'portkeyai']
+        # Images of products with their own signature (LiteLLM, LocalAI,
+        # llama.cpp, LM Studio) are attributed there, not here.
+        patterns: ['kagent-dev/kagent', 'ghcr\.io/kagent-dev', 'agentgateway/agentgateway', 'kgateway', 'ghcr\.io/nvidia/nemo', 'nvcr\.io/nvidia/nemo', 'ghcr\.io/kubeflow/', 'ray-project/ray', 'triton', 'text-generation-inference', 'ghcr\.io/open-webui', 'ghcr\.io/coollabsio', 'anythingllm', 'langgenius', 'flowiseai', 'langflowai', 'n8nio', 'portkeyai']
         weight: 0.85

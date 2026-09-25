@@ -103,7 +103,12 @@ signatures:
         patterns: ['^(?:gpt-|o1|o3|o4|chatgpt-|text-embedding-|dall-e|whisper|tts-|davinci|babbage|computer-use-preview|codex-)']
         weight: 0.8
       - type: secret
-        patterns: ['\bsk-(?!ant-|or-)(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}\b']
+        # Only OpenAI-specific shapes: the project / service-account / admin
+        # prefixes, or the base64 "OpenAI" marker (T3BlbkFJ) that every OpenAI
+        # key carries. Other sk- keys (Anthropic, OpenRouter, Langfuse, LiteLLM,
+        # DeepSeek, DashScope, Moonshot) are claimed by their own signatures or
+        # by heuristic.unattributed-api-key.
+        patterns: ['\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{32,}\b', '\bsk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20,}\b']
         weight: 0.9
         description: OpenAI API key
 
@@ -404,7 +409,9 @@ signatures:
         patterns: ['^(?:us\.|eu\.|apac\.|global\.)?(?:anthropic|amazon|meta|mistral|cohere|ai21|stability|deepseek|writer|qwen|openai|twelvelabs)\.[a-z0-9.-]+(?::\d+)?(?:-v\d)?', '^arn:aws:bedrock:']
         weight: 0.85
       - type: user_agent
-        patterns: ['(?i)\bBedrock\b']
+        # "Bedrock" alone also names Minecraft Bedrock clients: require the AWS
+        # service name or an AWS SDK product token.
+        patterns: ['(?i)\bbedrock-(?:runtime|agent(?:core)?(?:-runtime)?|data-automation)\b', '(?i)\b(?:aws-sdk|boto3|botocore|aws-cli)\b[^\n]*\bbedrock\b']
         weight: 0.5
 
   - id: provider.azure-openai
@@ -471,8 +478,10 @@ signatures:
         values: ["Cognitive Services OpenAI User", "Cognitive Services OpenAI Contributor", "Cognitive Services User", "Cognitive Services Contributor", "Azure AI Inference Deployment Operator", "Azure AI User", "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd", "a001fd3d-188f-4b5d-821b-7da978bf7442", "a97b65f3-24c7-4388-baec-2e87135dc908", "53ca6127-db72-4b80-b1b0-d745d6d5456d"]
         weight: 0.7
       - type: model
-        patterns: ['^(?:gpt-|o1|o3|o4|text-embedding-|dall-e|whisper)']
-        weight: 0.4
+        # Azure deployments carry the OpenAI model ids, so a bare id cannot
+        # attribute Azure: require the deployment path or gateway prefix.
+        patterns: ['^azure(?:_openai|-openai|_ai|ai)?/', '/openai/deployments/[A-Za-z0-9._-]+', '\.openai\.azure\.com/', '^deployments/[A-Za-z0-9._-]+']
+        weight: 0.8
 
   - id: provider.mistral
     name: Mistral AI
@@ -1188,5 +1197,253 @@ signatures:
         values: ["re:.*:1234$", "re:.*:8080/v1$", "re:.*:8000/v1$", "re:.*:4000$"]
         weight: 0.3
       - type: env
-        names: [OPENAI_API_HOST, LLM_BASE_URL, LLM_API_BASE, OPENAI_COMPAT_BASE_URL, LMSTUDIO_BASE_URL, LOCALAI_BASE_URL]
+        names: [OPENAI_API_HOST, LLM_BASE_URL, LLM_API_BASE, OPENAI_COMPAT_BASE_URL]
         weight: 0.5
+
+  # ------------------------------------------------------ local inference
+  - id: provider.llama-cpp
+    name: llama.cpp
+    category: provider
+    vendor: ggml
+    homepage: https://github.com/ggml-org/llama.cpp
+    description: Local GGUF inference (llama.cpp, llama-server, llama-cpp-python, node-llama-cpp); an OpenAI-compatible server on port 8080 by default.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [llama-cpp-python, llamacpp]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: [node-llama-cpp]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+llama_cpp\b']
+        weight: 0.8
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']node-llama-cpp["'']']
+        weight: 0.8
+      - type: code
+        patterns: ['\bLlama\s*\(\s*model_path\s*=', '\bllama-(?:server|cli)\s+(?:-m|--model|-hf)\b', '\bgetLlama\s*\(', '\bLlamaChatSession\s*\(']
+        weight: 0.75
+      - type: image
+        patterns: ['ghcr\.io/ggml-org/llama\.cpp', 'ghcr\.io/ggerganov/llama\.cpp']
+        weight: 0.9
+
+  - id: provider.lm-studio
+    name: LM Studio
+    category: provider
+    vendor: Element Labs
+    homepage: https://lmstudio.ai
+    description: Desktop local model runner exposing an OpenAI-compatible server on port 1234 and an SDK (lmstudio-python / lmstudio-js).
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [lmstudio]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: ["@lmstudio/sdk"]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+lmstudio\b']
+        weight: 0.8
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@lmstudio/sdk["'']']
+        weight: 0.8
+      - type: code
+        patterns: ['\blms\s+(?:server\s+start|load|ps|get)\b', 'localhost:1234/v1', '127\.0\.0\.1:1234/v1']
+        weight: 0.7
+      - type: env
+        names: [LMSTUDIO_BASE_URL, LMSTUDIO_API_KEY, LM_STUDIO_BASE_URL]
+        weight: 0.6
+
+  - id: provider.localai
+    name: LocalAI
+    category: provider
+    vendor: LocalAI
+    homepage: https://localai.io
+    description: Self-hosted OpenAI-compatible inference server.
+    signals:
+      - type: image
+        patterns: ['localai/localai', 'ghcr\.io/mudler/localai', 'quay\.io/go-skynet/local-ai']
+        weight: 0.9
+      - type: env
+        names: [LOCALAI_BASE_URL, LOCALAI_API_KEY, LOCALAI_MODELS_PATH]
+        weight: 0.6
+      - type: code
+        patterns: ['\blocal-ai\s+(?:run|models\s+install)\b']
+        weight: 0.7
+
+  - id: provider.sglang
+    name: SGLang
+    category: provider
+    vendor: LMSYS
+    homepage: https://docs.sglang.ai
+    description: Self-hosted high-throughput inference runtime and frontend language (OpenAI-compatible server).
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [sglang, sglang-router]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+sglang\b']
+        weight: 0.8
+      - type: code
+        patterns: ['sglang\.launch_server', '\bsglang\s+serve\b', '\bsgl\.(?:function|gen|Runtime|Engine)\b']
+        weight: 0.8
+      - type: image
+        patterns: ['lmsysorg/sglang']
+        weight: 0.9
+
+  - id: provider.llama-stack
+    name: Meta Llama Stack
+    category: provider
+    vendor: Meta
+    homepage: https://llama-stack.readthedocs.io
+    description: Meta's standardized inference, safety and agents API server with client SDKs (llama-stack-client).
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [llama-stack, llama-stack-client]
+        weight: 0.85
+      - type: dependency
+        ecosystem: npm
+        names: [llama-stack-client]
+        weight: 0.85
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+llama_stack(?:_client)?\b']
+        weight: 0.85
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']llama-stack-client["'']']
+        weight: 0.85
+      - type: code
+        patterns: ['\bLlamaStackClient\s*\(', '\bLlamaStackAsLibraryClient\s*\(', '\bllama\s+stack\s+(?:run|build)\b']
+        weight: 0.8
+      - type: code
+        patterns: ['\bfrom\s+llama_stack_client\s+import\s+[^\n]*\bAgent\b', '\bclient\.agents\.(?:create|turn|session)\b']
+        weight: 0.8
+        agent_indicator: true
+        capabilities: [tool-use]
+        description: Llama Stack Agents API
+      - type: env
+        names: [LLAMA_STACK_BASE_URL, LLAMA_STACK_PORT, LLAMA_STACK_CONFIG]
+        weight: 0.6
+      - type: image
+        patterns: ['llamastack/distribution-']
+        weight: 0.9
+
+  - id: provider.meta-llama-api
+    name: Meta Llama API
+    category: provider
+    vendor: Meta
+    homepage: https://llama.developer.meta.com
+    description: Meta's hosted Llama inference API (llama-api-client SDKs).
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [llama-api-client]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: [llama-api-client]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+llama_api_client\b']
+        weight: 0.8
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']llama-api-client["'']']
+        weight: 0.8
+      - type: code
+        patterns: ['\bLlamaAPIClient\s*\(']
+        weight: 0.8
+      - type: env
+        names: [LLAMA_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.llama.com]
+        weight: 0.9
+
+  - id: provider.alibaba-dashscope
+    name: Alibaba Cloud Model Studio (DashScope / Qwen API)
+    category: provider
+    vendor: Alibaba Cloud
+    homepage: https://www.alibabacloud.com/en/product/modelstudio
+    risk_notes: ["DashScope endpoints process data in Alibaba Cloud regions (PRC or Singapore); review data-transfer policy."]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [dashscope, llama-index-llms-dashscope]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+dashscope\b']
+        weight: 0.8
+      - type: code
+        patterns: ['\bdashscope\.(?:Generation|MultiModalConversation|TextEmbedding)\.call\s*\(', '\bChatTongyi\s*\(', '\bTongyi\s*\(']
+        weight: 0.7
+      - type: env
+        names: [DASHSCOPE_API_KEY, DASHSCOPE_HTTP_BASE_URL, DASHSCOPE_BASE_URL]
+        weight: 0.6
+      - type: domain
+        values: [dashscope.aliyuncs.com, dashscope-intl.aliyuncs.com, "*.dashscope.aliyuncs.com", "*.dashscope-intl.aliyuncs.com"]
+        weight: 0.9
+      - type: model
+        patterns: ['^(?:qwen|qwq|qvq)[0-9.]*-']
+        weight: 0.6
+
+  - id: provider.moonshot
+    name: Moonshot AI (Kimi API)
+    category: provider
+    vendor: Moonshot AI
+    homepage: https://platform.moonshot.ai
+    risk_notes: ["Moonshot's hosted API processes data in the PRC; review data-transfer policy."]
+    signals:
+      - type: env
+        names: [MOONSHOT_API_KEY, MOONSHOT_BASE_URL]
+        weight: 0.6
+      - type: domain
+        values: [api.moonshot.cn, api.moonshot.ai]
+        weight: 0.9
+      - type: model
+        patterns: ['^(?:moonshot-v1|kimi-k\d|kimi-latest|kimi-thinking)']
+        weight: 0.8
+
+  - id: provider.ai21
+    name: AI21 Labs
+    category: provider
+    vendor: AI21 Labs
+    homepage: https://www.ai21.com
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [ai21, langchain-ai21, llama-index-llms-ai21]
+        weight: 0.8
+      - type: dependency
+        ecosystem: npm
+        names: [ai21]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+ai21\b']
+        weight: 0.8
+      - type: code
+        patterns: ['\bAI21Client\s*\(', '\bChatAI21\s*\(']
+        weight: 0.8
+      - type: env
+        names: [AI21_API_KEY]
+        weight: 0.6
+      - type: domain
+        values: [api.ai21.com]
+        weight: 0.9
+      - type: model
+        patterns: ['^(?:jamba-|j2-)']
+        weight: 0.8
