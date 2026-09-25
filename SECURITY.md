@@ -123,5 +123,37 @@ the pinned revision you deployed, not against a version number.
 
 ## Reporting
 
-Use a private GitHub security advisory or contact the maintainer privately.
+Use a [private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new).
 Do not include credentials, private exports or exploit details in public issues.
+
+### What to report privately
+
+Report credential or private-data disclosure, redaction failures, unexpected
+access outside the scan root or configured network origin, allowlist bypasses,
+and malformed inputs that make incomplete coverage look complete. Reports about
+CI or release-evidence integrity also belong in the private channel.
+
+Ordinary false positives, missed integrations and incorrect attribution can use
+the [detection report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml)
+when the reproduction is safe to publish. A trusted component being compromised
+is outside the scanner's stated trust boundary; explain any demonstrated bypass
+rather than assuming the scanner protects a compromised host.
+
+### What to include
+
+- The full scanner commit SHA, connector and collection mode. The unreleased
+  package version alone does not identify the revision.
+- A minimal synthetic reproduction or public repository and commit, with
+  expected and observed behavior.
+- The security impact, affected artifacts and who could access them.
+- Any relevant sanitized diagnostics; do not attach real credentials, JWTs or
+  live tenant exports.
+
+### Response and disclosure
+
+This volunteer project has one maintainer and cannot guarantee response times.
+Use the advisory to coordinate reproduction, a fix and disclosure timing. Fixes
+land on `main`; there is no released-version backport commitment. A confirmed
+fix should include a regression test and any necessary rollout or migration
+notes. Reporter credit and publication timing should be agreed in the advisory.
+Only test repositories, accounts and tenants you are authorized to assess.

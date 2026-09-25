@@ -1,4 +1,5 @@
 name: Detection quality report
+labels: [detection]
 description: Report a false positive, missed agent, or misleading confidence with a safe reproducer.
 labels: [bug]
 body:

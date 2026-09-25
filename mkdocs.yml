@@ -47,6 +47,9 @@ validation:
   nav:
     omitted_files: info
 
+# The HTML minifier plugin is deliberately not used: its dependencies publish
+# no wheels, and the Docs workflow installs the toolchain wheel-only from the
+# hash-locked requirements-docs.lock.
 plugins:
   - search
 

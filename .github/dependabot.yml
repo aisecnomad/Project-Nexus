@@ -1,3 +1,7 @@
+# Review routing comes from CODEOWNERS; the deprecated `reviewers` key is not
+# used. requirements.lock and requirements-docs.lock are refreshed by hand with
+# pip-tools (see docs/production.md and the lock headers); Dependabot tracks
+# the version ranges in pyproject.toml.
 version: 2
 updates:
   - package-ecosystem: pip
@@ -9,8 +13,6 @@ updates:
     labels:
       - dependencies
       - python
-    reviewers:
-      - aisecnomad
     groups:
       cloud-sdks:
         patterns:
@@ -44,8 +46,6 @@ updates:
     labels:
       - dependencies
       - github-actions
-    reviewers:
-      - aisecnomad
 
   - package-ecosystem: docker
     directory: /
@@ -56,8 +56,6 @@ updates:
     labels:
       - dependencies
       - docker
-    reviewers:
-      - aisecnomad
     ignore:
       # Refresh the Dockerfile base image digest only. The interpreter line
       # follows the supported matrix in pyproject.toml and CI, not Docker Hub.

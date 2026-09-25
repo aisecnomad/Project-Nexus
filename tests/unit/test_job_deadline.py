@@ -93,6 +93,20 @@ def test_cli_deadline_cancels_when_command_preflight_fails(monkeypatch):
     watchdog.cancel.assert_called_once_with()
 
 
+@pytest.mark.parametrize("args", [
+    ["run", "--job-deadline-seconds", "1"],
+    ["code", ".", "--job-deadline-seconds", "1", "--connector-timeout-seconds", "-3"],
+])
+def test_cli_deadline_cancels_when_subcommand_parsing_fails(monkeypatch, args):
+    watchdog = Mock()
+    arm = Mock(return_value=watchdog)
+    monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm)
+    result = CliRunner().invoke(main, args)
+    assert result.exit_code == 2, result.output
+    arm.assert_called_once_with(1.0)
+    watchdog.cancel.assert_called_once_with()
+
+
 def test_locked_stderr_cannot_block_watchdog_exit(monkeypatch):
     release = threading.Event()
     exited = threading.Event()

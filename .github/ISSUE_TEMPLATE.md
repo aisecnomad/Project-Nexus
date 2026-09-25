@@ -5,8 +5,9 @@ to open the appropriate form:
 
 - [Bug report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=bug_report.yml)
 - [Detection quality report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml)
-- [Feature or documentation improvement](https://github.com/aisecnomad/Project-Nexus/issues/new?template=feature_request.yml)
+- [Feature request](https://github.com/aisecnomad/Project-Nexus/issues/new?template=feature_request.yml)
 - [Connector request](https://github.com/aisecnomad/Project-Nexus/issues/new?template=connector_request.yml)
+- [Documentation improvement](https://github.com/aisecnomad/Project-Nexus/issues/new?template=documentation.yml)
 - [Usage question](https://github.com/aisecnomad/Project-Nexus/issues/new?template=question.yml)
 
 Do not paste credentials, JWTs, private tenant exports, or unsanitized scan

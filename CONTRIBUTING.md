@@ -13,7 +13,9 @@ its reporting and enforcement process. For usage questions, start with the
 ## Choose a contribution
 
 - **Documentation:** fix a confusing step, add a synthetic example, or improve
-  an explanation. No live tenant or cloud credentials are needed.
+  an explanation. No live tenant or cloud credentials are needed. Use the
+  [documentation form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=documentation.yml)
+  or submit a focused pull request.
 - **Detection quality:** provide a minimal positive or negative fixture with the
   expected outcome and why it is correct. A dependency name alone does not prove
   an agent is running.
@@ -152,6 +154,9 @@ Do not commit private adjudicated evaluation corpora.
   affects rollout, finding identity, or credential policy.
 - Include regression tests for bug fixes.
 - Use the PR template checklist — it matches the CI gates.
+
+When changing workflows or issue forms, run `make policy` to check action pins,
+permissions, manual publishing boundaries, and issue-form structure and labels.
 
 ## Writing a connector
 

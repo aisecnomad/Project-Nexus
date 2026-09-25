@@ -232,11 +232,12 @@ def _job_deadline_option(ctx: click.Context, param: click.Parameter, value: floa
     except ValueError as exc:
         raise click.BadParameter(str(exc)) from exc
     if seconds is not None:
-        # An eager option callback runs before command arguments and other
-        # option callbacks; Click closes the context even on usage errors.
+        # Click parses a child context without cleanup, so a later usage error
+        # can discard that child before it is entered. Its already-open root
+        # context still closes, including when subcommand parsing fails.
         watchdog = arm_job_deadline(seconds)
         ctx.meta[_JOB_DEADLINE_CONTEXT_KEY] = watchdog
-        ctx.call_on_close(watchdog.cancel)
+        ctx.find_root().call_on_close(watchdog.cancel)
     return seconds
 
 
