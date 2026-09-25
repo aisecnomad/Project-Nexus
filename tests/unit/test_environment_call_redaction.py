@@ -25,6 +25,11 @@ from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitiz
 SECRET = "opaque-environment-credential-canary-123456"
 TAIL = "opaque-environment-credential-second-fragment"
 
+PEP701_CALLS = [
+    'os.getenv("AZURE_OPENAI_API_KEY", f"{str(")")}' + SECRET + '")',
+    'os.getenv(default=f"{str(")")}' + SECRET + '", key="AZURE_OPENAI_API_KEY")',
+]
+
 CALLS = [
     f'os.environ.setdefault("AZURE_OPENAI_API_KEY", "{SECRET}")',
     f'os.putenv("AZURE_OPENAI_API_KEY", "{SECRET}")',
@@ -43,8 +48,7 @@ CALLS = [
     f'os.getenv(\n "AZURE_OPENAI_API_KEY",\n "{SECRET}"\n)',
     f'os.getenv("AZURE_OPENAI_API_KEY", ("{SECRET}" +\n "{TAIL}"))',
     f'os.getenv("AZURE_OPENAI_API_KEY", """{SECRET}\n{TAIL}""")',
-    'os.getenv("AZURE_OPENAI_API_KEY", f"{str(")")}' + SECRET + '")',
-    'os.getenv(default=f"{str(")")}' + SECRET + '", key="AZURE_OPENAI_API_KEY")',
+    *PEP701_CALLS,
     'os.getenv("AZURE_OPENAI_API_KEY", `prefix-${lookup(`)`)}}' + SECRET + '`)',
     f'os.getenv("AZURE_OPENAI_API_KEY", decode("{SECRET}", suffix="{TAIL}"))',
     f'os.getenv(# credential name\n "AZURE_OPENAI_API_KEY", "{SECRET}")',
@@ -131,13 +135,30 @@ assert 'opaque-value' not in safe and REDACTED in safe
 
 
 @pytest.mark.parametrize("scan_secrets", [False, True])
-def test_environment_credentials_never_reach_any_evidence_reporter(tmp_path, index, scan_secrets):
-    for number, source in enumerate(CALLS):
+@pytest.mark.parametrize(("sources", "requires_pep701"), [
+    pytest.param([source for source in CALLS if source not in PEP701_CALLS], False, id="portable"),
+    pytest.param(PEP701_CALLS, True, id="pep701"),
+])
+def test_environment_credentials_never_reach_any_evidence_reporter(
+    tmp_path, index, scan_secrets, sources, requires_pep701,
+):
+    for number, source in enumerate(sources):
         (tmp_path / f"agent_{number}.py").write_text('import langchain; ' + source + '\n', encoding="utf-8")
     result = Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem", {
         "path": str(tmp_path), "use_git": False, "scan_secrets": scan_secrets,
     })]), index).run()
-    assert result.complete and result.findings
+    assert result.findings and len(result.stats) == 1
+    if requires_pep701 and sys.version_info < (3, 12):
+        # Python 3.11 cannot lex same-quote nested f-strings. Preserve the
+        # scanner's incomplete status and verify every affected source is
+        # reported, while requiring sanitized evidence in every report below.
+        assert not result.complete and result.stats[0].incomplete
+        assert result.stats[0].errors == [
+            f"code.filesystem: agent_{number}.py: incomplete source lexical analysis"
+            for number in range(len(sources))
+        ]
+    else:
+        assert result.complete and not result.stats[0].errors
     for render in (render_json, render_html, render_markdown, render_sarif, render_csv):
         output = render(result)
         assert SECRET not in output, render.__name__
