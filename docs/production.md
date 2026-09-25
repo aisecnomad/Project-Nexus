@@ -296,10 +296,12 @@ application owns process supervision. Keep the external job deadline and process
 group/container cleanup to reap child processes and bound native code that holds
 the interpreter lock indefinitely.
 
-Code scans follow a documented coverage policy. Regular-file links whose real
-targets are included and analyzed with equivalent semantics are skipped because
-the target is scanned at its real path. Directory links, links into excluded or
-unread content, links leaving the root and oversized files the scanner would
+Code scans follow a documented coverage policy. Links whose own names are never
+read, and source-file links whose real targets are analyzed in the same project
+with the same test classification, are skipped because nothing at the alias
+path is lost (see [scan semantics](scanning.md) for the exact rule). Directory
+links, configuration aliases, links into excluded or unread content, links
+leaving the root and oversized files the scanner would
 inspect make the scan incomplete (exit 3) by default, with a warning naming
 the omission. `strict_coverage: true` (`--strict-coverage`) records those
 conditions as errors; explicit `oversize_skip_globs` remain declared omissions

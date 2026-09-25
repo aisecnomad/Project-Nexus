@@ -189,7 +189,11 @@ class GitHubConnector(BaseConnector):
                     or not all(name.split("/"))
                     or name.casefold() != str(full).casefold()
                 ):
-                    self.ctx.warn("code.github: explicit repository response does not match the requested name; coverage unknown")
+                    returned = name if isinstance(name, str) and len(name) <= 200 else "an invalid name"
+                    self.ctx.warn(
+                        f"code.github: explicit repository response ({returned}) does not match the requested name; "
+                        "the repository may have been renamed; coverage unknown"
+                    )
                     continue
                 if name not in seen:
                     seen.add(name)

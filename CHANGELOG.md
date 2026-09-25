@@ -10,6 +10,9 @@
   `oversize_skip_globs` remain visible warnings.
 - Treat in-root directory symlinks, and file links to excluded or otherwise
   unread targets, as incomplete instead of assuming alias content was scanned.
+  Links whose own names are never read (lockfiles, generated bundles, images)
+  and source aliases analyzed in the same project with the same test
+  classification stay complete.
 - Treat malformed or mismatched explicit GitHub/GitLab repository responses and empty GitHub/GitLab
   offline clone inputs as incomplete scans instead of complete empty results.
 - Compute the signature-set digest once per incremental scan run instead of

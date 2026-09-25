@@ -202,6 +202,15 @@ SCAN_TIMEOUT_CAP_SECONDS = 10.0
 DEADLINE_MARGIN_FRACTION = 0.05
 DEADLINE_MARGIN_MIN_SECONDS = 0.25
 
+# Generated or locked files the walker never reads at any size.
+_NEVER_READ_SUFFIXES = (".min.js", ".min.css", ".map", ".pyc", ".lock")
+
+
+def _never_read_by_name(name: str) -> bool:
+    """Whether the walker skips ``name`` silently because it never carries evidence."""
+    return name in LOCK_FILES or name.endswith(_NEVER_READ_SUFFIXES)
+
+
 PROJECT_ROOT_MARKERS = {
     "package.json",
     "pyproject.toml",
@@ -453,7 +462,7 @@ class FilesystemConnector(BaseConnector):
         "scan_timeout": "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan_timeout when higher",
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
-        "strict_coverage": "report unread analyzable oversize files and outward symbolic links as errors instead of incomplete warnings (default false)",
+        "strict_coverage": "report coverage gaps (unread analyzable oversize files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false)",
         "include_tests": "let test and fixture code establish agents at full weight (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
@@ -583,54 +592,49 @@ class FilesystemConnector(BaseConnector):
         )
 
     def _link_target_is_scanned(self, rel: str, target: Path, root: Path) -> bool:
-        """A contained target only preserves coverage when the walk reads it.
+        """Whether skipping the (never followed) link at ``rel`` loses no coverage.
 
-        A link may point into an excluded directory, to an excluded file, or
-        to a file type that its *link name* would make analyzable. Treat these
-        as gaps instead of assuming every in-root target is visited.
+        Coverage is kept when nothing would ever be read at the alias path, or
+        when the real target is walked and analyzed with the same semantics the
+        alias path would have had: same project, same test classification, same
+        source type and no file-name signal that only the alias name carries.
+        Directory links, links into excluded or unread content and config or
+        document aliases (whose parsing can depend on their path) are gaps.
         """
         relative = target.relative_to(root)
-        parts = relative.parts
-        for depth, name in enumerate(parts[:-1], start=1):
-            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
-                return False
         target_rel = relative.as_posix()
         if target.is_dir():
             # A directory alias changes every descendant's path. Even an
             # included target cannot prove that path-based signals at the
             # alias were assessed without walking the link (which we forbid).
             return False
-        if not target.is_file() or self._excluded_file(target_rel):
+        link_name = PurePosixPath(rel).name
+        link_ext = Path(link_name).suffix.lower()
+        alias_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(rel)}
+        link_read = bool(alias_signals) or (
+            link_ext in SOURCE_EXTENSIONS or link_ext in TEXT_CONFIG_EXTENSIONS
+            or link_name.lower().startswith(".env") or is_manifest_name(link_name) or "." not in link_name
+        )
+        if _never_read_by_name(link_name) or not link_read:
+            # The walker would skip this name silently even as a regular
+            # file, whatever it points at: the alias hides nothing.
+            return True
+        parts = relative.parts
+        for depth, name in enumerate(parts[:-1], start=1):
+            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
+                return False
+        if not target.is_file() or self._excluded_file(target_rel) or _never_read_by_name(target.name):
             return False
-        if target.name in LOCK_FILES or target.name.endswith((".min.js", ".min.css", ".map", ".pyc", ".lock")):
+        # Only source aliases are equivalent without opening the link: config
+        # and document parsing can depend on the file name and directory.
+        if link_ext not in SOURCE_EXTENSIONS or Path(target.name).suffix.lower() != link_ext:
             return False
-
-        def content_kind(name: str, path: str) -> tuple[str, bool]:
-            extension = Path(name).suffix.lower()
-            supported = (
-                extension in SOURCE_EXTENSIONS or extension in TEXT_CONFIG_EXTENSIONS
-                or name.lower().startswith(".env") or is_manifest_name(name)
-                or "." not in name or bool(self.index.match_file(path))
-            )
-            return extension, supported
-
-        link_ext, link_supported = content_kind(Path(rel).name, rel)
-        target_ext, target_supported = content_kind(target.name, target_rel)
-        if link_supported and (not target_supported or link_ext != target_ext):
-            return False
-        # For source aliases in another project or test directory, the real
-        # path can change project ownership and evidence weight. Config and
-        # document aliases can change filename-specific parsing even with the
-        # same extension. Only same-directory, same-class source aliases are
-        # equivalent without opening the link itself.
-        if link_supported and (
-            link_ext not in SOURCE_EXTENSIONS
-            or PurePosixPath(rel).parent != PurePosixPath(target_rel).parent
-            or _is_test_path(rel) != _is_test_path(target_rel)
-        ):
+        # The real path must keep the alias's project ownership and evidence
+        # weight; another project or a test directory would change both.
+        if (_project_root(root, rel) != _project_root(root, target_rel)
+                or _is_test_path(rel) != _is_test_path(target_rel)):
             return False
         # File-name signatures can apply to the alias but not the real file.
-        alias_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(rel)}
         target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
         return alias_signals <= target_signals
 
@@ -728,7 +732,7 @@ class FilesystemConnector(BaseConnector):
                 if info.st_size > self.max_file_size and self._oversize_skippable(rel, fn):
                     self._skip_oversize(rel, info.st_size)
                     continue
-                if fn in LOCK_FILES or fn.endswith((".min.js", ".min.css", ".map", ".pyc", ".lock")):
+                if _never_read_by_name(fn):
                     continue
                 count += 1
                 if count > self.max_files:
@@ -1839,6 +1843,25 @@ def _load_json_lenient(text: str) -> Any:
         return json.loads(text)
     except ValueError:
         return json.loads(_strip_json_comments(text))
+
+
+def _project_root(root: Path, rel: str) -> str:
+    """The project a file at ``rel`` belongs to, as ``_iter_entries`` assigns it.
+
+    That is the deepest ancestor directory below the scan root holding a
+    project marker, or ``"."``. Used for the rare symlink checks only.
+    """
+    for parent in PurePosixPath(rel).parents:
+        directory = parent.as_posix()
+        if directory == ".":
+            break
+        try:
+            names = os.listdir(root / directory)
+        except OSError:
+            continue
+        if PROJECT_ROOT_MARKERS.intersection(names):
+            return directory
+    return "."
 
 
 def _nearest_root(rel_dir: str, roots: list[str]) -> str:
