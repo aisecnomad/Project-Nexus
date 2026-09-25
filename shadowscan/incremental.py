@@ -50,6 +50,9 @@ _MAX_HASH_FILE_BYTES = 64 * 1024 * 1024
 _MAX_HASH_BYTES = 512 * 1024 * 1024
 _MAX_HASH_ENTRIES = 200_000
 _MAX_HASH_SECONDS = 30.0
+# Metadata tracked for every file, hashed or not: a fresh checkout at a new
+# inode, a touched file or a chmod all miss the cache.
+_FILE_STAT_ATTRS = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
 _CLOUD_EXPORTS = {"cloud.aws", "cloud.azure", "cloud.gcp", "cloud.oci"}
 _CODE = {"code.filesystem", "code.github", "code.gitlab"}
 # These directories can be read by the filesystem connector's ownership lookup
@@ -134,7 +137,7 @@ def _file_digest(path: Path, *, max_bytes: int = _MAX_HASH_FILE_BYTES, budget: _
             digest.update(chunk)
         after = os.fstat(stream.fileno())
     current = path.stat()
-    attrs = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+    attrs = _FILE_STAT_ATTRS
     if any(getattr(before, a) != getattr(after, a) or getattr(after, a) != getattr(current, a) for a in attrs):
         raise ValueError("input changed while hashing")
     # Change time and inode identity catch ordinary replace/restore changes.
@@ -181,8 +184,16 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
 
 def _tree_digest(
     root: Path, *, code: bool, use_git: bool, budget: _HashBudget, max_file_bytes: int,
-    excluded_dir_names: frozenset[str] = frozenset(),
+    excluded_dir_names: frozenset[str] = frozenset(), unread_above: int | None = None,
 ) -> str:
+    """Digest a tree's content and metadata.
+
+    Every directory and file contributes its size, mode, times, device and
+    inode; readable files also contribute their content. A file larger than
+    ``unread_above`` (the scanner's own ``max_file_size``) is never opened by
+    the scanner, so only its metadata is tracked instead of aborting the
+    fingerprint, which kept every tree with one oversize file out of the cache.
+    """
     digest = hashlib.sha256()
     budget.check(entries=1)
     if root.is_file():
@@ -225,16 +236,23 @@ def _tree_digest(
                 continue
             if path.is_symlink():
                 raise ValueError("symlink in static input")
-            if not stat.S_ISREG(path.stat().st_mode):
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode):
                 raise ValueError("special file in input")
-            digest.update(_json(["file", path.relative_to(root).as_posix(), _file_digest(path, max_bytes=max_file_bytes, budget=budget)]))
+            relative = path.relative_to(root).as_posix()
+            if unread_above is not None and info.st_size > unread_above:
+                digest.update(_json(["oversize", relative, [getattr(info, attr) for attr in _FILE_STAT_ATTRS]]))
+                continue
+            digest.update(_json(["file", relative, _file_digest(path, max_bytes=max_file_bytes, budget=budget)]))
         after = basepath.stat(follow_symlinks=False)
         if any(getattr(before, attr) != getattr(after, attr) for attr in attrs):
             raise ValueError("input directory changed while hashing")
     return digest.hexdigest()
 
 
-def _checkout_container_digest(root: Path, *, use_git: bool, budget: _HashBudget, max_file_bytes: int) -> str:
+def _checkout_container_digest(
+    root: Path, *, use_git: bool, budget: _HashBudget, max_file_bytes: int, unread_above: int | None = None,
+) -> str:
     """Offline provider inputs contain repositories; their names are not exclusions."""
     if not root.is_dir():
         raise ValueError("checkout container must be a directory")
@@ -249,6 +267,7 @@ def _checkout_container_digest(root: Path, *, use_git: bool, budget: _HashBudget
         if child.is_dir():
             digest.update(_json([child.name, _tree_digest(
                 child, code=True, use_git=use_git, budget=budget, max_file_bytes=max_file_bytes,
+                unread_above=unread_above,
             )]))
     after = root.stat(follow_symlinks=False)
     if any(getattr(before, attr) != getattr(after, attr) for attr in attrs):
@@ -316,15 +335,20 @@ class IncrementalCache:
             use_git = bool(spec.config.get("use_git", False))
             budget = _HashBudget()
             excluded_dir_names = _literal_excluded_directories(spec)
-            max_bytes = min(int(spec.config.get("max_file_size", 1_000_000)), _MAX_HASH_FILE_BYTES) if code else _MAX_HASH_FILE_BYTES
+            # The code scanners never open a file over their max_file_size, so
+            # such files are tracked by metadata; a hashed file stays capped.
+            unread_above = int(spec.config.get("max_file_size", 1_000_000)) if code else None
+            max_bytes = min(unread_above, _MAX_HASH_FILE_BYTES) if unread_above is not None else _MAX_HASH_FILE_BYTES
             inputs = []
             for root in roots:
                 if spec.name in {"code.github", "code.gitlab"}:
-                    digest = _checkout_container_digest(root, use_git=use_git, budget=budget, max_file_bytes=max_bytes)
+                    digest = _checkout_container_digest(
+                        root, use_git=use_git, budget=budget, max_file_bytes=max_bytes, unread_above=unread_above,
+                    )
                 else:
                     digest = _tree_digest(
-                        root, code=code, use_git=use_git, budget=budget,
-                        max_file_bytes=max_bytes, excluded_dir_names=excluded_dir_names,
+                        root, code=code, use_git=use_git, budget=budget, max_file_bytes=max_bytes,
+                        excluded_dir_names=excluded_dir_names, unread_above=unread_above,
                     )
                 inputs.append([str(root), digest])
             fingerprint = hashlib.sha256(_json({

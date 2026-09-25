@@ -34,11 +34,15 @@ Precision safeguards
 
 from __future__ import annotations
 
+import errno
+import fnmatch
 import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
+import time
 import tomllib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
@@ -138,6 +142,59 @@ LOCK_FILES = {
     "bun.lock",
 }
 
+# A file over max_file_size that the scanner would read is an error: unread
+# content could hide agent configuration. Names matching these globs hold
+# generated, locked or binary content that never carries such evidence, so
+# skipping them is a warning and the scan stays complete. The connector's
+# `oversize_skip_globs` replaces the list; see docs/scanning.md.
+DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "poetry.lock",
+    "Pipfile.lock",
+    "Cargo.lock",
+    "Gemfile.lock",
+    "composer.lock",
+    "go.sum",
+    "*.min.js",
+    "*.min.css",
+    "*.map",
+    "*.svg",
+    "*.csv",
+    "*.parquet",
+    "*.wasm",
+    "*.so",
+    "*.dylib",
+    "*.dll",
+    "*.pdf",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.gif",
+    "*.woff",
+    "*.woff2",
+    "*.ttf",
+    "*.zip",
+    "*.gz",
+    "*.tar",
+    "*.jar",
+    "*.pyc",
+    "*.class",
+)
+# Path.is_file() treats these as "not a file"; keep that for a vanished entry.
+_IGNORED_STAT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
+# Per-file matching budget: `scan_timeout` covers the first 256 KiB and one
+# more budget is added per further 256 KiB, capped so a hostile file still
+# fails fast. A 971 KB JSON index gets four default budgets (8 s).
+SCAN_TIMEOUT_STEP_BYTES = 256 * 1024
+SCAN_TIMEOUT_CAP_SECONDS = 10.0
+# Stop the walk this far before the connector deadline so the findings
+# collected so far are emitted, sanitized and accepted by the engine, which
+# discards a result that arrives after the deadline.
+DEADLINE_MARGIN_FRACTION = 0.05
+DEADLINE_MARGIN_MIN_SECONDS = 0.25
+
 PROJECT_ROOT_MARKERS = {
     "package.json",
     "pyproject.toml",
@@ -224,6 +281,10 @@ MCP_CONFIG_NAMES = {
 }
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
+# Files whose parsed structure supplies credential context for excerpt
+# redaction (see _structured_context).
+_JSON_SUFFIXES = (".json", ".jsonc", ".json5")
+_YAML_SUFFIXES = (".yaml", ".yml")
 
 # Documentation placeholders are informational: enough to be listed, never
 # enough to establish a technology or raise risk.
@@ -259,6 +320,33 @@ class _Project:
 
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 MAX_ROOT_OWNERSHIP_STEPS = 20_000_000
+
+
+def scan_timeout_for_size(base: float, size: int) -> float:
+    """Return the matching budget in seconds for one file of ``size`` bytes.
+
+    ``base`` is the configured ``scan_timeout``. Each further 256 KiB adds
+    one more ``base`` so ordinary large text files finish on an idle core;
+    the result is capped at 10 seconds, or at ``base`` when that is higher.
+    """
+    steps = max(size, 0) // SCAN_TIMEOUT_STEP_BYTES
+    return min(base * (1 + steps), max(base, SCAN_TIMEOUT_CAP_SECONDS))
+
+
+def deadline_margin(remaining: float) -> float:
+    """Return the safety margin kept before a connector deadline.
+
+    Five percent of the budget that remained when the walk started, and at
+    least 250 ms, covers emitting the collected project findings and the
+    engine's own sanitization before it compares completion to the deadline.
+    """
+    return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining)
+
+
+def _validated_globs(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)) or not all(isinstance(g, str) and g.strip() for g in value):
+        raise ConnectorError("code.filesystem: oversize_skip_globs must be a list of file name globs")
+    return [g.strip().lower() for g in value]
 
 
 def _checked_scan_root(path: str | Path) -> Path:
@@ -314,9 +402,10 @@ class FilesystemConnector(BaseConnector):
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "extra directory names / glob patterns to skip",
-        "max_file_size": "bytes; larger files are skipped (default 1 MiB)",
+        "max_file_size": "bytes; a larger file is not analyzed and is an error unless oversize_skip_globs matches it (default 1 MiB)",
+        "oversize_skip_globs": "case-insensitive file name globs; a file over max_file_size matching one is skipped with a warning instead of an error (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts)",
         "max_files": "stop after this many files (default 100000)",
-        "scan_timeout": "matching budget in seconds per file (default 2)",
+        "scan_timeout": "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan_timeout when higher",
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
@@ -336,6 +425,7 @@ class FilesystemConnector(BaseConnector):
         self.scan_timeout = float(ctx.get("scan_timeout", 2.0))
         if self.max_file_size < 1 or self.max_files < 1 or not 0 < self.scan_timeout <= 60:
             raise ConnectorError("code.filesystem: limits must be positive; scan_timeout must be at most 60 seconds")
+        self.oversize_skip_globs = _validated_globs(ctx.get("oversize_skip_globs", list(DEFAULT_OVERSIZE_SKIP_GLOBS)))
         self.scan_secrets = bool(ctx.get("scan_secrets", True))
         self.use_git = ctx.get("use_git", False)
         if not isinstance(self.use_git, bool):
@@ -419,8 +509,38 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
+    def _oversize_skippable(self, rel: str, name: str) -> bool:
+        """Whether an oversize file is generated, locked or binary content per ``oversize_skip_globs``."""
+        lower = name.lower()
+        for pattern in self.oversize_skip_globs:
+            if "/" in pattern:
+                if PurePosixPath(rel.lower()).match(pattern):
+                    return True
+            elif fnmatch.fnmatchcase(lower, pattern):
+                return True
+        return False
+
+    def _skip_oversize(self, rel: str, size: int) -> None:
+        self.ctx.warn(
+            f"code.filesystem: {rel}: skipped {size} byte file over max_file_size ({self.max_file_size}); "
+            "generated or binary content is never analyzed",
+            incomplete=False,
+        )
+
     def _iter_files(self, root: Path) -> Iterator[tuple[str, Path, str]]:
         """Yield (relpath, path, project_root_rel) top-down with project root tracking."""
+        for rel, path, proj, _ in self._iter_entries(root):
+            yield rel, path, proj
+
+    def _iter_entries(self, root: Path) -> Iterator[tuple[str, Path, str, int]]:
+        """Yield (relpath, path, project_root_rel, size) for every regular file to analyze.
+
+        A file over ``max_file_size`` whose name matches ``oversize_skip_globs``
+        is reported as a warning and never yielded; the scan stays complete
+        because such content is never analyzed. Every other oversize file is
+        yielded so the reader records the existing error, or skips it silently
+        when its type is never read.
+        """
         # os.walk visits descendants before siblings. Keep only active project
         # ancestors, so assigning a project is amortized constant time even in
         # monorepos with thousands of sibling projects.
@@ -435,7 +555,15 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"code.filesystem: skipped symbolic link {rel}; coverage incomplete")
 
         if root.is_file():
-            yield root.name, root, "."
+            try:
+                size = root.stat().st_size
+            except OSError:
+                self.ctx.error(f"code.filesystem: could not inspect {root.name}")
+                return
+            if size > self.max_file_size and self._oversize_skippable(root.name, root.name):
+                self._skip_oversize(root.name, size)
+                return
+            yield root.name, root, ".", size
             return
         def walk_error(exc: OSError) -> None:
             self.ctx.error(f"code.filesystem: could not enumerate a directory under {root}")
@@ -471,22 +599,47 @@ class FilesystemConnector(BaseConnector):
                     if p.is_symlink():
                         skipped_link(rel)
                         continue
-                except OSError:
+                    info = p.stat()
+                except OSError as exc:
+                    if exc.errno in _IGNORED_STAT_ERRNOS:
+                        continue
                     self.ctx.error(f"code.filesystem: could not inspect {rel}")
+                    continue
+                if not stat.S_ISREG(info.st_mode):
+                    continue
+                if info.st_size > self.max_file_size and self._oversize_skippable(rel, fn):
+                    self._skip_oversize(rel, info.st_size)
                     continue
                 if fn in LOCK_FILES or fn.endswith((".min.js", ".min.css", ".map", ".pyc", ".lock")):
-                    continue
-                try:
-                    if not p.is_file():
-                        continue
-                except OSError:
-                    self.ctx.error(f"code.filesystem: could not inspect {rel}")
                     continue
                 count += 1
                 if count > self.max_files:
                     self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
                     return
-                yield rel, p, proj
+                yield rel, p, proj, info.st_size
+
+    def _stop_at_deadline(
+        self, root: Path, examined: int, entries: Iterator[tuple[str, Path, str, int]], deadline: float, margin: float,
+    ) -> None:
+        """Record one error naming how much of the tree the connector deadline left unread.
+
+        The remaining entries are only counted (a stat each, never a read).
+        Counting stops at half the margin or just before the ``max_files``
+        cap, so the findings already collected are still emitted in time.
+        """
+        remaining = 1  # the entry that could not start
+        truncated = False
+        count_until = deadline - margin / 2
+        for _ in entries:
+            remaining += 1
+            if examined + remaining >= self.max_files or (not (remaining & 63) and time.monotonic() >= count_until):
+                truncated = True
+                break
+        total = f"at least {examined + remaining}" if truncated else str(examined + remaining)
+        self.ctx.error(
+            f"code.filesystem: connector deadline reached after {examined} of {total} files under {root}; "
+            "results incomplete",
+        )
 
     # ------------------------------------------------------------------ scan
     def scan_tree(self, root: Path) -> Iterator[Finding]:
@@ -506,9 +659,22 @@ class FilesystemConnector(BaseConnector):
         workflow_files: dict[str, list[tuple[Match, str]]] = {}
         infra_files: dict[str, list[tuple[Match, str, str]]] = {}  # relpath -> (match, value, snippet)
         infra_names: dict[str, list[str]] = {}  # relpath -> display / resource names
-        for rel, path, proj_root in self._iter_files(root):
+        deadline = self.ctx.deadline
+        margin = deadline_margin(deadline - time.monotonic()) if deadline is not None else 0.0
+        entries = self._iter_entries(root)
+        examined = 0
+        for rel, path, proj_root, size in entries:
+            budget = scan_timeout_for_size(self.scan_timeout, size)
+            if deadline is not None and time.monotonic() + budget + margin > deadline:
+                # Cooperative deadline: never start a file whose budget could
+                # run into the margin. Findings collected so far are returned
+                # and the engine keeps them; only a result that arrives after
+                # the deadline is discarded.
+                self._stop_at_deadline(root, examined, entries, deadline, margin)
+                break
+            examined += 1
             try:
-                with self.index.scan_budget(seconds=self.scan_timeout):
+                with self.index.scan_budget(seconds=budget):
                     proj = projects.setdefault(proj_root, _Project(proj_root))
                     proj.files += 1
                     self.ctx.examined()
@@ -541,10 +707,18 @@ class FilesystemConnector(BaseConnector):
                         for issue in dict.fromkeys(notebook_errors):
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                         lang = "python"
-                    safe_text = _safe_source_text(rel, text)
-                    safe_lines = safe_text.splitlines()
+                    # Structured files are parsed now so a resource-limit
+                    # failure reaches the per-file boundary. Redacting the
+                    # text for excerpts waits until a match needs one, which
+                    # most files never do.
+                    structure = _structured_context(rel, text)
+                    source: str = text
+                    safe_lines: list[str] | None = None
 
                     def excerpt(line_number: int | None, secret: str | None = None) -> str:
+                        nonlocal safe_lines
+                        if safe_lines is None:
+                            safe_lines = _redacted_source(source, structure).splitlines()
                         return _excerpt(safe_lines, line_number or 1, secret)
 
                     is_mcp = self._looks_like_mcp_config(rel, name, text) or (
@@ -650,6 +824,10 @@ class FilesystemConnector(BaseConnector):
                         card_files.append((rel, text, "crewai"))
                     if ext in {".md", ".mdc"} and (".claude/agents/" in rel or ".github/agents/" in rel or ".cursor/rules/" in rel or ".windsurf/rules/" in rel):
                         proj.agent_defs.append(self._parse_agent_definition(rel, text))
+            except ConnectorError:
+                # Cancellation or an exhausted deadline ends the walk; it must
+                # not become one "file analysis incomplete" error per file.
+                raise
             except Exception as exc:  # noqa: BLE001 - isolate hostile files and retain other findings
                 self.ctx.error(f"code.filesystem: {rel}: file analysis incomplete ({type(exc).__name__})")
 
@@ -1333,30 +1511,51 @@ def _without_xml_comments(text: str) -> str:
     return re.sub(r"<!--.*?(?:-->|$)", lambda match: re.sub(r"[^\n]", " ", match.group()), text, flags=re.S)
 
 
-def _safe_source_text(rel: str, text: str) -> str:
-    """Use structured credential context while retaining source line positions.
+_NO_STRUCTURE = object()
+
+
+def _structured_context(rel: str, text: str) -> Any:
+    """Parse the structure that supplies credential context for excerpt redaction.
+
+    Returns ``_NO_STRUCTURE`` for plain text and for structured files whose
+    syntax or shape the dedicated parser rejects; lexical redaction then
+    applies. Resource-limit failures propagate: they must reach the per-file
+    isolation boundary even when nothing is excerpted, since lexical fallback
+    would otherwise disguise an incomplete analysis.
+    """
+    try:
+        if rel.endswith(_JSON_SUFFIXES):
+            return _load_json_lenient(text)
+        if rel.endswith(".toml"):
+            return tomllib.loads(text)
+        if rel.endswith(_YAML_SUFFIXES):
+            return bounded_safe_load(text)
+    except (YAMLResourceLimitError, SanitizationLimitError):
+        raise
+    except (ValueError, RecursionError, yaml.YAMLError):
+        return _NO_STRUCTURE
+    return _NO_STRUCTURE
+
+
+def _redacted_source(text: str, structure: Any) -> str:
+    """Redact ``text`` with the structured context from ``_structured_context``, keeping line positions.
 
     An opaque argv value is identifiable only alongside its flag, and environment
     values must not reappear in source snippets after being removed from metadata.
     """
+    if structure is _NO_STRUCTURE:
+        return sanitize_text(text)
     try:
-        if rel.endswith((".json", ".jsonc", ".json5")):
-            data = _load_json_lenient(text)
-        elif rel.endswith(".toml"):
-            data = tomllib.loads(text)
-        elif rel.endswith((".yaml", ".yml")):
-            data = bounded_safe_load(text)
-        else:
-            return sanitize_text(text)
-        return sanitize((data, text))[1]
+        return sanitize((structure, text))[1]
     except (YAMLResourceLimitError, SanitizationLimitError):
-        # Resource-limit failures must reach the per-file isolation boundary;
-        # lexical fallback would otherwise disguise an incomplete analysis.
         raise
     except (ValueError, RecursionError, yaml.YAMLError):
-        # Dedicated parsers report syntax/shape failures. Lexical redaction still
-        # applies if this file cannot supply usable structured context.
         return sanitize_text(text)
+
+
+def _safe_source_text(rel: str, text: str) -> str:
+    """Use structured credential context while retaining source line positions."""
+    return _redacted_source(text, _structured_context(rel, text))
 
 
 def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:
