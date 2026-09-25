@@ -104,7 +104,7 @@ def test_aws_offline(run_connector, fixtures):
     lam = {f.metadata.get("runtime"): f for f in by_type["lambda-function"]}
     assert "python3.12" in lam and "nodejs20.x" not in lam
     assert "framework.langchain" in lam["python3.12"].frameworks and "provider.anthropic" in lam["python3.12"].model_providers
-    assert by_type["ecs-task-definition"][0].frameworks == ["platform.langflow"] or "platform.langflow" in by_type["ecs-task-definition"][0].frameworks
+    assert "platform.langflow" in by_type["ecs-task-definition"][0].frameworks
     assert "provider.huggingface" in by_type["sagemaker-endpoint"][0].model_providers
     assert "provider.aws-bedrock" in by_type["state-machine"][0].model_providers
     logging = by_type["bedrock-logging"][0]

@@ -90,8 +90,11 @@ matching inventory entries require review and leave the resource unregistered.
 bindings. The bundled `agent-card.yaml` contains example bindings for offline AWS
 fixtures; replace them with your reviewed identities before production use.
 
-`shadowscan inventory check inventory/` lists what was loaded and how each
-entry can match.
+`shadowscan inventory check inventory/` validates the files and lists what was
+loaded: each entry's agent id, name, owner, explicit resource patterns (or
+`none (suggestions only)` when the entry can only produce suggestions) and
+source file. It does not display scope restrictions or simulate matching; run
+a scan against the inventory to see which findings an entry approves.
 
 ## From shadow to registered
 

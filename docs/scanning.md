@@ -2,10 +2,15 @@
 
 ## Incremental scans
 
-Incremental mode reuses a completed connector result when SHA-256 content hashes
-of its inputs, connector options, signature definitions and scanner implementation
-are unchanged. Inventory approval, risk scoring and runtime correlation always
-run again. New, edited and deleted files invalidate the affected repository.
+Incremental mode reuses a completed connector result when the fingerprint of its
+inputs, connector options, signature definitions and scanner implementation is
+unchanged. The fingerprint is a SHA-256 digest over the content of every file the
+scanner can read plus the size, modification and change times, mode, device and
+inode of every file and directory, so a fresh checkout at a new inode does not hit
+the cache. Files over `max_file_size` contribute only that metadata: the scanner
+never opens them, so their bytes cannot change the result. Inventory approval,
+risk scoring and runtime correlation always run again. New, edited and deleted
+files invalidate the affected repository.
 
 ```bash
 shadowscan code ./repo-a ./repo-b --incremental
@@ -47,10 +52,13 @@ sanitized, unscored findings, not source content or raw credentials. Protect the
 state as local security data; a checksum detects corruption, not a malicious user
 who controls the scanner account. Remove the state directory to clear it.
 
-Incomplete scans are never cached. Corrupt, incompatible or unsafe state and
+Incomplete scans are never cached; a complete scan whose only diagnostics are
+warnings, such as skipped oversize generated files, is cached and replays those
+warnings on every hit. Corrupt, incompatible or unsafe state and
 symlink-bearing eligible inputs cause a full scan. Hashing has conservative limits:
-512 MiB total, 200,000 entries, 30 seconds per snapshot, and 64 MiB per file (code
-files are further capped by `max_file_size`, default 1,000,000 bytes). Exceeding a
+512 MiB total, 200,000 entries, 30 seconds per snapshot, and 64 MiB per hashed
+file; code files over `max_file_size` (default 1,000,000 bytes) are tracked by
+metadata rather than hashed. Exceeding a
 limit falls back to normal scanning. Git replacement refs, grafts or externally
 overridden history also disable reuse; HEAD and shallow boundaries are tracked.
 Symlinked roots and ancestor path components are also ineligible for reuse.
@@ -98,15 +106,70 @@ gateway findings and scan completion are unaffected.
 See [deployment and migration](production.md) for explicit plugin, signature
 override and private-endpoint policies, output changes and rollout checks.
 
+## Large and generated files
+
+`code.filesystem.max_file_size` (default 1,000,000 bytes) bounds every file the
+scanner reads. A larger file is never analyzed. Whether that makes the scan
+incomplete depends on what the file could hide:
+
+* A file whose name matches `oversize_skip_globs` is skipped with a warning and
+  the scan stays complete. The default list names lockfiles (`package-lock.json`,
+  `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `Pipfile.lock`, `Cargo.lock`,
+  `Gemfile.lock`, `composer.lock`, `go.sum`), minified bundles and source maps
+  (`*.min.js`, `*.min.css`, `*.map`), data and vector graphics (`*.svg`, `*.csv`,
+  `*.parquet`), compiled or packaged artifacts (`*.wasm`, `*.so`, `*.dylib`,
+  `*.dll`, `*.jar`, `*.pyc`, `*.class`), documents, images and fonts (`*.pdf`,
+  `*.png`, `*.jpg`, `*.jpeg`, `*.gif`, `*.woff`, `*.woff2`, `*.ttf`) and archives
+  (`*.zip`, `*.gz`, `*.tar`). Such content is generated from sources the scanner
+  does inspect, or is binary, so no agent configuration, framework usage or
+  credential evidence is lost by skipping it. The warning still names each file
+  so the omission is visible. Lockfiles, minified bundles, source maps and
+  bytecode below the limit are skipped silently because they are never analyzed.
+* Every other oversize file, for example a 2 MiB Python module, JSON or YAML
+  document, is an error and the scan is incomplete (exit 3), because the scanner
+  would otherwise claim coverage of content it never inspected. Raise
+  `max_file_size`, exclude the directory, or add the name to
+  `oversize_skip_globs` after confirming it carries no agent evidence.
+
+`oversize_skip_globs` replaces the default list with case-insensitive file-name
+globs; a pattern containing `/` is matched against the path relative to the scan
+root. An empty list turns every oversize file that the scanner would read into an
+error. Oversize files that are never read at any size, such as executables or
+media in other formats, are skipped silently as before.
+
+The per-file matching budget also grows with size. `scan_timeout` (default 2
+seconds) covers files up to 256 KiB; each further 256 KiB adds one more budget,
+capped at 10 seconds or at `scan_timeout` when that is higher, so a 900 KB JSON
+index gets 8 seconds by default and a pathological file still fails fast. An
+exhausted budget marks the file's analysis incomplete and the scan incomplete.
+
 ## Connector deadlines and parallelism
 
 `options.connector_timeout_seconds` (or `--connector-timeout-seconds`) sets a
 positive, finite completion deadline for each connector, defaulting to 120 seconds.
 It starts when the connector worker begins; split filesystem roots share that
 connector's deadline. Legacy `options.connector_timeout` and `--connector-timeout`
-are deprecated compatibility aliases. Configure only one YAML key; supplying
-both is rejected. Legacy YAML `connector_timeout: null` uses the 120-second
-default; it does not disable the deadline.
+are deprecated compatibility aliases; the YAML alias logs a deprecation warning
+once per process. Configure only one YAML key; supplying both is rejected.
+Legacy YAML `connector_timeout: null` uses the 120-second default; it does not
+disable the deadline.
+
+Setup failures that name only paths, option names and positions are printed
+verbatim by the CLI: a missing inventory path or signature directory, a
+malformed signature pack (file and document number), an unknown connector key,
+and YAML syntax errors in the configuration (line and column, never the source
+line). Any other exception raised while a scan is being set up is masked as
+`scan setup failed` with its type name, because third-party error text can
+echo credentials.
+
+The filesystem scanner stops cooperatively before the deadline: it never starts a
+file whose matching budget could run into a safety margin (5% of the budget that
+remained when the walk began, at least 250 ms), records one error naming how many
+files it examined and how many remain (`connector deadline reached after N of M
+files ... results incomplete`), and returns the findings collected so far. The
+engine keeps those findings and reports the scan incomplete (exit 3), so a large
+tree yields partial inventory rather than nothing. Split roots share the deadline;
+a root that starts inside the margin records that error for all of its files.
 
 On expiry, the engine discards that connector's results, records incomplete
 coverage and the reason, retains other completed connectors' findings, and
@@ -233,6 +296,28 @@ OpenAI organization usage exports with `data[].results[]` are supported.
 per-request timestamp: it cannot establish hourly continuous activity or confirm
 timestamped framework execution for runtime correlation.
 
+## Precision safeguards
+
+Several rules keep weak observations from producing confirmed or high-risk
+findings. A credential whose value looks like a documentation placeholder
+(`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
+sequences after the provider prefix) is never a `secret` finding; it is listed
+on the project finding as low-weight `example-credential` evidence. A key alone
+does not establish LLM usage, and vendor-neutral heuristics (agent loops,
+`subprocess.run`, auto-approve flags) only count in a project that also matches
+a framework, provider, platform, protocol or cloud-service signature. When every
+observation for a project other than those heuristics is an environment-variable
+or display-name reference, the heuristics are dropped and the finding is built
+from the name references alone: it is tagged `env-names-only`, its evidence
+weights are halved and its confidence is capped at 0.8 (`likely`), however many
+names appear. MCP servers
+for files and databases carry the `data-access` capability, browser servers
+`browsing`, and shells `code-exec`. In gateway logs, round-the-clock activity
+keeps the informational `always-on` tag but only marks a caller as agentic,
+with the `autonomous` capability, when tool use, an agent-framework user agent,
+a service or principal identity, or missing end-user attribution corroborates
+it. `tools/evaluation/corpus.json` carries regression cases for each rule.
+
 ## Comparing reports
 
 `shadowscan diff baseline.json current.json` reports new findings and substantive
@@ -280,8 +365,9 @@ review per-connector diagnostics and rerun after restoring access.
 Malformed files are isolated, so one bad manifest cannot suppress neighboring
 findings. Regex matches have time budgets; exhausted budgets mark the scan
 incomplete. Configure `code.filesystem.scan_timeout` in seconds to adjust the
-shared per-file regex budget (default 2 seconds); manifest parsers additionally
-cap each pattern at one second within that budget.
+shared per-file regex budget (default 2 seconds for files up to 256 KiB, growing
+with file size as described under [large and generated files](#large-and-generated-files));
+manifest parsers additionally cap each pattern at one second within that budget.
 
 Denied or failed API requests and exhausted pagination mark collection incomplete.
 Offline exports require valid objects or arrays of objects; scalar records,
