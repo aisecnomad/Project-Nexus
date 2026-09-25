@@ -117,7 +117,17 @@ class GitLabConnector(BaseConnector):
                 self.ctx.warn(f"code.gitlab: max_projects ({self.max_projects}) reached", incomplete=True)
                 return
             data = self.http.try_get_json(f"/projects/{quote(str(p), safe='')}")
-            if data and data["id"] not in seen:
+            if (
+                not isinstance(data, dict)
+                or isinstance(data.get("id"), bool)
+                or not isinstance(data.get("id"), int)
+                or data["id"] < 1
+                or not isinstance(data.get("path_with_namespace"), str)
+                or not data["path_with_namespace"].strip()
+            ):
+                self.ctx.warn("code.gitlab: explicit project response is missing a valid id or path; coverage unknown")
+                continue
+            if data["id"] not in seen:
                 seen.add(data["id"])
                 yield _remote_record(data)
         if group:
@@ -180,6 +190,9 @@ class GitLabConnector(BaseConnector):
                 yield _OfflineRepository({"path_with_namespace": child.name}, str(child))
         except OSError:
             self.ctx.warn("code.gitlab: could not enumerate offline clones")
+            return
+        if count == 0:
+            self.ctx.warn("code.gitlab: offline input contains no clone directories")
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:

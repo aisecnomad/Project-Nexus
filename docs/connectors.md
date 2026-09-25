@@ -113,6 +113,8 @@ matching LLM providers. Token: fine-grained PAT or GitHub App token with
 input: a directory of clones. Code findings retain the scanned Git tree/commit
 identity in `metadata.source_snapshot`; API blob bytes are checked against their
 enumerated Git object IDs.
+An offline clone directory containing no repositories makes the scan incomplete;
+verify the export or select an intended nonempty directory.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) checks GitHub's reported repository size
@@ -143,6 +145,9 @@ commit before downloading files.
 incomplete-scan semantics as `code.github`. GitLab project details are queried
 for size statistics when the listing omits them. If no usable estimate is
 available, the connector falls back to sampled API mode without launching Git.
+A missing or malformed response for an explicitly named project marks coverage
+incomplete; an empty offline clone directory is also incomplete. Check the
+configured project names and export before treating an empty result as clean.
 A size estimate cannot bound actual checkout bytes; enforce a writable disk
 quota on the worker.
 

@@ -328,21 +328,21 @@ def test_internal_symlinks_keep_coverage_complete(run_connector, tmp_path):
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
-def test_external_symlinks_warn_unless_strict(run_connector, tmp_path):
+def test_external_symlinks_make_coverage_incomplete_by_default(run_connector, tmp_path):
     repo, outside = tmp_path / "repo", tmp_path / "outside"
     write(outside, "secret.txt", "not part of the repository\n")
     repo.mkdir()
     (repo / "link").symlink_to(outside)
     _, stats = scan(run_connector, repo)
-    assert stats.warnings and not stats.errors and not stats.incomplete
+    assert stats.warnings and not stats.errors and stats.incomplete
     _, stats = scan(run_connector, repo, strict_coverage=True)
     assert stats.errors and stats.incomplete
 
 
-def test_oversize_files_warn_unless_strict(run_connector, tmp_path):
+def test_oversize_files_make_coverage_incomplete_by_default(run_connector, tmp_path):
     write(tmp_path, "fixtures/cassette.yaml", "x: " + "y" * 400 + "\n")
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
-    assert stats.warnings and not stats.errors and not stats.incomplete
+    assert stats.warnings and not stats.errors and stats.incomplete
     _, stats = scan(run_connector, tmp_path, max_file_size=100, strict_coverage=True)
     assert stats.errors and stats.incomplete
 
@@ -354,13 +354,13 @@ def test_coverage_options_must_be_booleans(run_connector, tmp_path, key):
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
-def test_cli_strict_coverage_controls_exit_code(tmp_path):
+def test_cli_incomplete_coverage_has_exit_code_three_by_default(tmp_path):
     repo, outside = tmp_path / "repo", tmp_path / "outside"
     outside.mkdir()
     repo.mkdir()
     (repo / "link").symlink_to(outside)
     runner = CliRunner()
-    assert runner.invoke(main, ["code", str(repo), "--format", "json"]).exit_code == 0
+    assert runner.invoke(main, ["code", str(repo), "--format", "json"]).exit_code == 3
     assert runner.invoke(main, ["code", str(repo), "--format", "json", "--strict-coverage"]).exit_code == 3
 
 

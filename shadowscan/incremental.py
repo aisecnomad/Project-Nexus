@@ -290,6 +290,7 @@ class IncrementalCache:
         self.directory = self.directory.absolute()
         self.enabled = config.incremental and not config.dump_records
         self.scanner_digest = ""
+        self.signature_digest = ""
         if not self.enabled:
             return
         try:
@@ -302,7 +303,10 @@ class IncrementalCache:
                         raise ValueError("state directory overlaps a scan input")
             self._secure_directory()
             self.scanner_digest = scanner_source_digest()
-        except (OSError, ValueError):
+            # The signature index is stable for this scan. Its semantic digest
+            # need not be serialized again for every pre/post input snapshot.
+            self.signature_digest = index.fingerprint()
+        except (OSError, ValueError, TypeError):
             self.enabled = False
             log.warning("incremental state is unavailable or unsafe; running full scans")
 
@@ -355,7 +359,7 @@ class IncrementalCache:
                 "format": _FORMAT,
                 "version": __version__,
                 "scanner": self.scanner_digest,
-                "signatures": self.index.fingerprint(),
+                "signatures": self.signature_digest,
                 "connector": spec.name,
                 "id": spec.id,
                 "config": spec.config,

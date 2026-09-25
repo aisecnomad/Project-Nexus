@@ -2,6 +2,20 @@
 
 ## 0.1.1 — Unreleased
 
+### Coverage and release verification follow-up
+
+- Mark unread oversized source and configuration files and outward or unresolved
+  symlinks as incomplete even without `strict_coverage`; the flag elevates the
+  diagnostic from a warning to an error. Declared generated-file omissions in
+  `oversize_skip_globs` remain visible warnings.
+- Treat malformed explicit GitLab project responses and empty GitHub/GitLab
+  offline clone inputs as incomplete scans instead of complete empty results.
+- Compute the signature-set digest once per incremental scan run instead of
+  reserializing it for every input snapshot; changes between runs still invalidate
+  the cache.
+- Accept GitHub's actual workflow-run path in the release evidence gate and
+  require successful exact-commit CI and CodeQL before building a candidate.
+
 ### Community policy consistency
 
 - Add a documentation issue form, keep detection reports and private security

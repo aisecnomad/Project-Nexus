@@ -344,7 +344,7 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], fmt: 
 @click.option("--mode", type=click.Choice(["clone", "api"]), default=None, help="remote fetch mode")
 @click.option("--exclude", multiple=True, help="extra directory names / globs to skip")
 @click.option("--no-secrets", is_flag=True, help="skip credential detection")
-@click.option("--strict-coverage", is_flag=True, help="treat oversize files and symlinks leaving the scan root as incomplete coverage")
+@click.option("--strict-coverage", is_flag=True, help="record incomplete file and symlink coverage as errors (exit 3 in either mode)")
 @click.option("--include-tests", is_flag=True, help="let test and fixture code establish agents at full weight")
 @add_options(output_options)
 def code(paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str, ...], gitlab_group: str | None, mode: str | None, exclude: tuple[str, ...], no_secrets: bool, strict_coverage: bool, include_tests: bool, fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None, job_deadline_seconds: float | None) -> None:

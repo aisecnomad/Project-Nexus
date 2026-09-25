@@ -149,11 +149,11 @@ LOCK_FILES = {
     "bun.lock",
 }
 
-# A file over max_file_size that the scanner would read is an error: unread
-# content could hide agent configuration. Names matching these globs hold
-# generated, locked or binary content that never carries such evidence, so
-# skipping them is a warning and the scan stays complete. The connector's
-# `oversize_skip_globs` replaces the list; see docs/scanning.md.
+# A file over max_file_size that the scanner would read leaves coverage
+# incomplete: unread content could hide agent configuration. Names matching
+# these globs hold generated, locked or binary content that is explicitly
+# outside the scan scope, so skipping them is a warning and the scan stays
+# complete. The connector's `oversize_skip_globs` replaces the list.
 DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
     "package-lock.json",
     "yarn.lock",
@@ -447,13 +447,13 @@ class FilesystemConnector(BaseConnector):
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "extra directory names / glob patterns to skip",
-        "max_file_size": "bytes; a larger file is not analyzed: skipped with a warning, or an error under strict_coverage unless oversize_skip_globs matches it (default 1 MiB)",
+        "max_file_size": "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs matches it (default 1 MiB)",
         "oversize_skip_globs": "case-insensitive file name globs; a file over max_file_size matching one is skipped with a warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts)",
         "max_files": "stop after this many files (default 100000)",
         "scan_timeout": "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan_timeout when higher",
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
-        "strict_coverage": "treat oversize files and symbolic links leaving the scan root as incomplete coverage (default false: skipped with a warning)",
+        "strict_coverage": "report unread analyzable oversize files and outward symbolic links as errors instead of incomplete warnings (default false)",
         "include_tests": "let test and fixture code establish agents at full weight (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
@@ -593,8 +593,8 @@ class FilesystemConnector(BaseConnector):
         A file over ``max_file_size`` whose name matches ``oversize_skip_globs``
         is reported as a warning and never yielded; the scan stays complete
         because such content is never analyzed. Every other oversize file is
-        yielded so the reader records the existing error, or skips it silently
-        when its type is never read.
+        yielded so the reader records incomplete coverage for analyzable files;
+        types that the scanner never reads are still ignored.
         """
         # os.walk visits descendants before siblings. Keep only active project
         # ancestors, so assigning a project is amortized constant time even in
@@ -617,7 +617,7 @@ class FilesystemConnector(BaseConnector):
                 if self.strict_coverage:
                     self.ctx.error(f"{message}; coverage incomplete")
                 else:
-                    self.ctx.warn(f"{message}; enable strict_coverage to treat this as incomplete", incomplete=False)
+                    self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
 
         if root.is_file():
             try:
@@ -795,7 +795,7 @@ class FilesystemConnector(BaseConnector):
                     text = read_text(path, self.max_file_size, read_errors)
                     for issue in read_errors:
                         if issue == "file exceeds max_file_size" and not self.strict_coverage:
-                            self.ctx.warn(f"code.filesystem: {rel}: skipped, {issue}; enable strict_coverage to treat this as incomplete", incomplete=False)
+                            self.ctx.warn(f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete", incomplete=True)
                         else:
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                     if text is None:

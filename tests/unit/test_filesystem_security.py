@@ -184,9 +184,9 @@ def test_source_symlink_is_skipped_and_marks_scan_incomplete(tmp_path, run_conne
     findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=strict)
     assert any("framework.langgraph" in finding.frameworks for finding in findings)
     assert not any("private business notes" in str(finding.to_dict()) for finding in findings)
-    # The link is never followed. Content outside the repository is reported as
-    # skipped; strict_coverage makes that incomplete coverage.
-    assert ctx.stats.incomplete is strict
+    # The link is never followed; a skipped external target leaves coverage
+    # incomplete regardless of the chosen diagnostic severity.
+    assert ctx.stats.incomplete
     diagnostics = ctx.stats.errors if strict else ctx.stats.warnings
     assert any("symbolic link" in issue for issue in diagnostics)
 

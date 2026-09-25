@@ -136,10 +136,59 @@ def test_explicit_repository_caps_are_enforced(cls, key, records, identity, inde
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
     connector = cls(ctx)
     connector.http = Mock()
-    connector.http.try_get_json.return_value = {identity: "acme/one" if cls is GitHubConnector else 1}
+    connector.http.try_get_json.return_value = (
+        {identity: "acme/one"} if cls is GitHubConnector
+        else {identity: 1, "path_with_namespace": "acme/one"}
+    )
     assert len(list(connector.collect())) == 1
     assert connector.http.try_get_json.call_count == 1
     assert ctx.stats.incomplete and any(limit in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("response", [
+    {}, None, [], {"id": 7}, {"id": 0, "path_with_namespace": "acme/agent"},
+    {"id": 7, "path_with_namespace": " "}, {"id": True, "path_with_namespace": "acme/agent"},
+])
+def test_gitlab_malformed_explicit_project_response_marks_scan_incomplete(response, index):
+    ctx = ConnectorContext(config={"projects": ["acme/agent"]}, index=index)
+    ctx.stats = ScanStats(connector="code.gitlab", started_at="2026-01-01T00:00:00Z")
+    connector = GitLabConnector(ctx)
+    connector.http.try_get_json = Mock(return_value=response)
+
+    records = list(connector.collect())
+    assert list(connector.analyze(records)) == []
+    assert records == []
+    assert ctx.stats.incomplete
+    assert any("explicit project response" in warning for warning in ctx.stats.warnings)
+
+
+def test_gitlab_invalid_explicit_response_does_not_hide_valid_project(index, fixtures, monkeypatch):
+    ctx = ConnectorContext(config={"projects": ["acme/broken", "acme/agent"], "use_git": False}, index=index)
+    connector = GitLabConnector(ctx)
+    connector.http.try_get_json = Mock(side_effect=[{}, {"id": 7, "path_with_namespace": "acme/agent"}])
+    fetch = Mock(return_value=str(fixtures / "sample_repo"))
+    monkeypatch.setattr(connector, "_fetch", fetch)
+    monkeypatch.setattr(connector, "_project_level", lambda _project: iter(()))
+
+    findings = connector.run()  # exercises collect() and analyze() together
+    assert any(f.resource_type == "project" and f.frameworks for f in findings)
+    assert fetch.call_count == 1
+    assert fetch.call_args.args[0]["path_with_namespace"] == "acme/agent"
+    assert connector.http.try_get_json.call_count == 2
+    assert ctx.stats is not None and ctx.stats.objects_examined >= 1
+    assert ctx.stats.incomplete
+
+
+def test_gitlab_empty_group_listing_is_valid_when_optional_metadata_is_empty(index):
+    ctx = ConnectorContext(config={"group": "acme"}, index=index)
+    ctx.stats = ScanStats(connector="code.gitlab", started_at="2026-01-01T00:00:00Z")
+    connector = GitLabConnector(ctx)
+    connector.http.paginate_link = Mock(side_effect=lambda *args, **kwargs: iter(()))
+    connector.http.try_get_json = Mock(return_value={})
+
+    records = list(connector.collect())
+    assert records == [] and list(connector.analyze(records)) == []
+    assert not ctx.stats.incomplete
 
 
 @pytest.mark.parametrize("cls,key", [(GitHubConnector, "max_repos"), (GitLabConnector, "max_projects")])
@@ -160,6 +209,19 @@ def test_offline_repo_caps_mark_partial_coverage(tmp_path: Path, connector: str,
     findings, ctx = run_connector(connector, input=str(tmp_path), use_git=False, **{limit: 1})
     assert len([f for f in findings if f.resource_type == "project"]) == 1
     assert ctx.stats.incomplete and any(limit in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("connector", ["code.github", "code.gitlab"])
+@pytest.mark.parametrize("file_only", [False, True], ids=["empty-root", "files-without-clones"])
+def test_empty_offline_clone_input_marks_scan_incomplete(tmp_path: Path, connector: str, file_only: bool, run_connector):
+    if file_only:
+        (tmp_path / "README.md").write_text("No checkout was exported here.\n")
+    findings, ctx = run_connector(connector, input=str(tmp_path), use_git=False)
+
+    assert findings == []
+    assert ctx.stats is not None and ctx.stats.objects_examined == 0
+    assert ctx.stats.incomplete
+    assert any("contains no clone directories" in warning for warning in ctx.stats.warnings)
 
 
 @pytest.mark.parametrize("connector", ["code.github", "code.gitlab"])

@@ -236,6 +236,9 @@ class GitHubConnector(BaseConnector):
                 yield _OfflineRepository({"full_name": child.name, "owner": {"login": child.name.split("__")[0] if "__" in child.name else child.name}}, str(child))
         except OSError:
             self.ctx.warn("code.github: could not enumerate offline clones")
+            return
+        if count == 0:
+            self.ctx.warn("code.github: offline input contains no clone directories")
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
