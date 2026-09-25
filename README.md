@@ -6,14 +6,14 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Docs](https://img.shields.io/badge/docs-source-blue.svg)](https://github.com/aisecnomad/Project-Nexus/tree/main/docs)
 
-**ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
+**ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
 
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
-low-code platforms, SaaS apps and cloud accounts. It fingerprints frameworks and
-model providers, scores findings and reconciles discoveries against your approved
-inventory of
+low-code platforms, SaaS apps, and cloud accounts. It fingerprints frameworks and
+model providers, scores findings, and reconciles discoveries against your approved
+registry of
 [Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
-Counts and severity labels need analyst review before they drive enforcement.
+Counts and severity labels need an analyst review before they drive enforcement.
 
 Example findings (totals vary as signatures evolve):
 
@@ -39,8 +39,8 @@ Bedrock Agents provisioned by Terraform, MCP servers wired into every
 developer's editor, service principals with `Mail.ReadWrite` acting on behalf of nobody, and JWTs carrying an `act` claim. 
 Each surface has its own discovery API and its own vocabulary. 
 ShadowScan normalizes these observations into one finding model with evidence,
-so investigators can ask: *who owns this candidate, what can it do, and is it
-registered in the inventory supplied for this scan?*
+so investigators or auditors can ask: *Who owns this AI Agent? What can it do, and is it
+registered in the registry supplied for this scan?*
 
 | Observation | What it establishes | Next check |
 |---|---|---|
@@ -108,15 +108,15 @@ tells you what a package, host, user agent, model id, scope or file path maps to
 ## Project status
 
 * **Unreleased.** The `0.1.1` version string is a candidate: there is no tag,
-  no published package and no signed artifact. The package classifier is
+  no published package, and no signed artifact. The package classifier is
   `Development Status :: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** One account merges every
   change; apart from Dependabot updates, every commit was authored by that
-  account or generated with its AI assistant. Much of the code, and the
+  account or generated with its AI assistant. Much of the code and the
   hardening logs under [docs/hardening-logs/](docs/hardening-logs/), were
   produced with AI assistance and reviewed by that same maintainer.
 * **What is independently reviewed: nothing yet.** Every pull request runs
-  CI, CodeQL and a dependency audit, but no pull request has been approved by a
+  CI, CodeQL, and a dependency audit, but no pull request has been approved by a
   second person, and the hardening logs are not third-party reviews.
   Independent human review is required before any tagged release; see the
   [review and merge policy](CONTRIBUTING.md#review-and-merge-policy).
@@ -147,7 +147,7 @@ python -m pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Pro
 The current `0.1.1` source version is an unreleased candidate; the version
 string does not imply a published or signed artifact. These VCS installs resolve
 transitive dependencies at install time. For deployment, use the locked install
-below. Python 3.11+ is required; CI covers 3.11, 3.12 and 3.13. Core dependencies
+below. Python 3.11+ is required; CI covers 3.11, 3.12, and 3.13. Core dependencies
 include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
@@ -392,7 +392,7 @@ A small documentation fix or a reproducible false-positive report is useful.
 | Understand participation standards or report harmful conduct | [Code of conduct](CODE_OF_CONDUCT.md) |
 
 Use synthetic, minimal examples in public reports. Scan results can contain
-credentials, personal data and sensitive inventory even after redaction.
+credentials, personal data, and sensitive inventory even after redaction.
 
 ## Safety notes
 
