@@ -121,9 +121,9 @@ def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
 
 
 def _plugin_registry_problems() -> tuple[str, ...]:
-    """Rescan plugin metadata and return its collision and validity diagnostics."""
+    """Rescan plugin metadata and return its collision and validity diagnostics as printable lines."""
     available_connectors()
-    return plugin_registry_errors()
+    return tuple(str(problem) for problem in plugin_registry_errors())
 
 
 def _log_masked_failure(stage: str, exc: BaseException) -> None:

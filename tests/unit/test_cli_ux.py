@@ -36,9 +36,9 @@ def test_connectors_table_keeps_requirements_and_bracketed_descriptions_literal(
     assert result.exit_code == 0, result.output
     assert "requires:" in result.output and "[dim]" not in result.output
 
-    result = CliRunner().invoke(main, ["connectors", "--surface", "code"])
-    assert result.exit_code == 0, result.output
-    assert "repos: [owner/name, ...]" in _flat(result.output)
+    # The cloud.aws regions description carries a literal Python list; it must
+    # survive Rich rendering unchanged rather than being parsed as markup.
+    assert "regions: regions to scan (default ['us-east-1'," in _flat(result.output)
 
 
 def test_connectors_reports_plugin_registry_problems_on_stderr(monkeypatch):
@@ -52,8 +52,8 @@ def test_connectors_reports_plugin_registry_problems_on_stderr(monkeypatch):
     rows = json.loads(result.stdout)
     assert "custom.twice" not in {row["name"] for row in rows}
     warnings = _flat(result.stderr)
-    assert "plugin 'identity.okta' cannot replace a built-in connector" in warnings
-    assert "plugin 'custom.twice' is defined more than once" in warnings
+    assert "plugin 'identity.okta' is a built-in connector name; plugins cannot replace it" in warnings
+    assert "plugin 'custom.twice' is registered by 2 entry points with different targets" in warnings
 
 
 def test_scan_logs_plugin_registry_problems_as_warnings(tmp_path, monkeypatch):
@@ -64,7 +64,7 @@ def test_scan_logs_plugin_registry_problems_as_warnings(tmp_path, monkeypatch):
     source.mkdir()
     result = CliRunner().invoke(main, ["code", str(source), "--format", "json"])
     assert result.exit_code == 0, result.output
-    assert "plugin 'identity.okta' cannot replace a built-in connector" in _flat(result.stderr)
+    assert "plugin 'identity.okta' is a built-in connector name; plugins cannot replace it" in _flat(result.stderr)
 
 
 # ----------------------------------------------------------- setup errors
