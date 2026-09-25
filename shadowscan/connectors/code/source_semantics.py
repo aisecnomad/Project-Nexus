@@ -100,13 +100,19 @@ _TOOL_REQUEST_METHODS = re.compile(
 _TOOL_ARGUMENTS = re.compile(r"(?<![\w$])(?:tools|toolConfig|functions|function_declarations)\s*[=:]")
 # Import-bound request calls whose response shape the loop recognizer understands.
 _LOOP_REQUESTS: dict[str, tuple[str, frozenset[str]]] = {
+    # Plain, raw-response (``.parse()`` returns the message) and streaming
+    # (``get_final_message()`` / ``get_final_completion()``) request forms.
     "openai": ("provider.openai", frozenset({
-        f"{client}.chat.completions.create" for client in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI")
+        f"{client}.{api}chat.completions.{method}"
+        for client in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI")
+        for api in ("", "beta.")
+        for method in ("create", "with_raw_response.create", "stream")
     })),
     "anthropic": ("provider.anthropic", frozenset({
-        f"{client}.{api}messages.create"
+        f"{client}.{api}messages.{method}"
         for client in ("Anthropic", "AsyncAnthropic", "AnthropicBedrock", "AsyncAnthropicBedrock", "AnthropicVertex", "AsyncAnthropicVertex")
         for api in ("", "beta.")
+        for method in ("create", "with_raw_response.create", "stream")
     })),
 }
 # Keyword arguments that evidence a specific capability of a bound construction.

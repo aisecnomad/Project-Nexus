@@ -53,6 +53,7 @@ import yaml
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
+from shadowscan.connectors.code.mcp_tools import mcp_tool_capabilities, mcp_tool_names
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
     MAX_PATTERN_LENGTH,
@@ -87,6 +88,17 @@ from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
 from shadowscan.utils.text import notebook_to_source, parse_timestamp, read_text, redact, truncate
+
+# Manifests that configure the code of the project containing them. A2A cards
+# and M365 declarative agents declare a separately addressable agent (its own
+# name, endpoint and authentication) and stay findings of their own.
+_PROJECT_MANIFESTS = frozenset({"crewai", "langgraph"})
+
+# Registered MCP tool names retained per project.
+_MAX_MCP_TOOLS = 200
+
+# Signal types that establish a library in a project (see _emit_project).
+_LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
 
 # Saved outputs (plots, tables, logs) routinely push small notebooks past
 # max_file_size. Their code cells are still analyzed up to this size.
@@ -338,6 +350,7 @@ class _Project:
     coding_agent_matches: dict[str, list[tuple[Match, str, str | None]]] = field(default_factory=dict)
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
     seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
+    mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
 
 
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
@@ -815,7 +828,7 @@ class FilesystemConnector(BaseConnector):
         projects: dict[str, _Project] = {".": _Project(".")}
         secret_hits: dict[str, list[tuple[Match, str]]] = {}  # relpath -> matches
         mcp_files: list[tuple[str, list[dict[str, Any]]]] = []  # relpath, parsed servers
-        card_files: list[tuple[str, str, str]] = []  # relpath, text, kind
+        card_files: list[tuple[str, str, str, str]] = []  # relpath, text, kind, project root
         workflow_files: dict[str, list[tuple[Match, str]]] = {}
         infra_files: dict[str, list[tuple[Match, str, str]]] = {}  # relpath -> (match, value, snippet)
         infra_names: dict[str, list[str]] = {}  # relpath -> display / resource names
@@ -1121,6 +1134,10 @@ class FilesystemConnector(BaseConnector):
                             record_content_match(m, excerpt(m.line))
                         for m in bound:
                             record_content_match(m, excerpt(m.line))
+                        if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
+                            for tool in mcp_tool_names(text):
+                                if len(proj.mcp_tools) < _MAX_MCP_TOOLS:
+                                    proj.mcp_tools.setdefault(tool, rel)
                     elif not is_nonexecutable:
                         config_errors: list[str] = []
                         structured = [] if is_mcp else structured_code_matches(self.index, rel, content_text, errors=config_errors)
@@ -1154,7 +1171,7 @@ class FilesystemConnector(BaseConnector):
                         if len(card_files) >= _MAX_CARD_FILES:
                             self.ctx.error(f"code.filesystem: {rel}: agent manifest limit ({_MAX_CARD_FILES}) reached; manifest skipped")
                         else:
-                            card_files.append((rel, text, card_kind))
+                            card_files.append((rel, text, card_kind, proj_root))
                     if ext in {".md", ".mdc"} and (".claude/agents/" in rel or ".github/agents/" in rel or ".cursor/rules/" in rel or ".windsurf/rules/" in rel):
                         if len(proj.agent_defs) >= _MAX_AGENT_DEFINITIONS:
                             self.ctx.error(f"code.filesystem: {rel}: agent definition limit ({_MAX_AGENT_DEFINITIONS}) reached; definition skipped")
@@ -1174,11 +1191,19 @@ class FilesystemConnector(BaseConnector):
         # MCP configs, agent manifests, exported workflows and IaC produce their
         # own findings; a project finding built only from them is a duplicate.
         covered_files = frozenset(
-            {rel for rel, _ in mcp_files} | {rel for rel, _, _ in card_files} | set(workflow_files) | set(infra_files)
+            {rel for rel, _ in mcp_files} | {rel for rel, _, _, _ in card_files} | set(workflow_files) | set(infra_files)
         )
+        # Project findings are held back until the manifests are read: a
+        # manifest inside a reported project describes that project's agent
+        # and is folded into its finding instead of counting it twice.
+        project_findings: dict[str, Finding] = {}
         for proj in projects.values():
             try:
-                yield from self._emit_project(label, root, proj, covered_files)
+                for finding in self._emit_project(label, root, proj, covered_files):
+                    if finding.resource_type == "project":
+                        project_findings[proj.root] = finding
+                    else:
+                        yield finding
             except ConnectorError:
                 raise
             except Exception as exc:  # noqa: BLE001 - retain findings from other projects
@@ -1191,16 +1216,22 @@ class FilesystemConnector(BaseConnector):
                 raise
             except Exception as exc:  # noqa: BLE001 - retain findings from other configurations
                 self.ctx.error(f"code.filesystem: {rel}: MCP analysis incomplete ({type(exc).__name__})")
-        for rel, text, kind in card_files:
+        for rel, text, kind, proj_root in card_files:
             try:
                 with self.index.scan_budget(seconds=self.scan_timeout):
                     f = self._card_finding(label, root, rel, text, kind)
-                    if f:
+                    if f is None:
+                        continue
+                    owner = project_findings.get(proj_root) if kind in _PROJECT_MANIFESTS else None
+                    if owner is None:
                         yield f
+                    else:
+                        self._fold_manifest(owner, f, projects[proj_root])
             except ConnectorError:
                 raise
             except Exception as exc:  # noqa: BLE001 - retain findings from other manifests
                 self.ctx.error(f"code.filesystem: {rel}: agent manifest analysis incomplete ({type(exc).__name__})")
+        yield from project_findings.values()
         for rel, hits in workflow_files.items():
             try:
                 yield self._workflow_finding(label, root, rel, [*hits, *workflow_providers.get(rel, [])])
@@ -1504,6 +1535,15 @@ class FilesystemConnector(BaseConnector):
         self, label: str, root: Path, proj: _Project, covered_files: frozenset[str] = frozenset(),
     ) -> Iterator[Finding]:
         observations = [(m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}]
+        # An ambiguous pattern is a common identifier outside the product
+        # (aiohttp's ClientSession, a UI component named AgentCard). It counts
+        # only when the same signature has library evidence in this project:
+        # an import, a dependency or one of its specific code patterns.
+        independent = {
+            m.signature_id for m, _, _ in observations
+            if m.signal.type in _LIBRARY_SIGNALS and not m.signal.ambiguous
+        }
+        observations = [t for t in observations if not t[0].signal.ambiguous or t[0].signature_id in independent]
         discount_tests = not self.include_tests
 
         def in_tests(rel: str) -> bool:
@@ -1542,19 +1582,34 @@ class FilesystemConnector(BaseConnector):
                     return False
                 if "verified_agent" in match.extra:
                     return bool(match.extra["verified_agent"])
-                if match.extra.get("lexical_source") and match.signature.category == "framework":
+                if match.extra.get("lexical_source"):
                     return match.agent_indicator and match.signature_id in library_evidence
                 return match.agent_indicator
 
             f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
             uncorroborated = {m.signature_id for m, _, _ in tech_matches
-                              if m.extra.get("lexical_source") and m.signature.category == "framework"
+                              if m.extra.get("lexical_source") and m.signature.category != "heuristic"
                               and m.signature_id not in library_evidence}
+            # Capabilities describe what the deployed code can do. Evidence
+            # from tests (unless the project is only tests) and vendor-neutral
+            # idioms in an MCP tool server (whose tools are read below) is
+            # kept as evidence but implies no capability.
+            test_only = discount_tests and all(_is_test_path(rel) for _, rel, _ in tech_matches)
+            mcp_server = {m.signature_id for m, _, _ in tech_matches if m.signature.category != "heuristic"} == {"protocol.mcp"}
+
+            def implies_capabilities(match: Match, rel: str) -> bool:
+                if in_tests(rel) and not test_only:
+                    return False
+                return not (mcp_server and match.signature.category == "heuristic")
+
             # Decisive evidence must survive the per-signature report quota.
             for m, rel, snip in sorted(tech_matches, key=lambda item: not verified_indicator(item[0])):
-                if m.extra.get("lexical_source") and m.signature.category == "framework" and m.signature_id not in library_evidence:
+                if m.signature_id in uncorroborated and m.extra.get("lexical_source"):
                     m.weight = min(m.weight, 0.6)
-                apply_matches(f, [m], location=rel, snippet=snip, weight_scale=(ENV_ONLY_WEIGHT_SCALE if env_only else 1.0) * (0.5 if in_tests(rel) else 1.0))
+                apply_matches(f, [m], location=rel, snippet=snip, weight_scale=(ENV_ONLY_WEIGHT_SCALE if env_only else 1.0) * (0.5 if in_tests(rel) else 1.0),
+                              capabilities=implies_capabilities(m, rel))
+            if "protocol.mcp" in f.frameworks and proj.mcp_tools:
+                self._apply_mcp_tools(f, proj)
             # Repeated observations of one technology are correlated evidence.
             # Generic idioms share a single supporting group; loops in several
             # worker files must never accumulate into a confirmed AI agent.
@@ -1625,6 +1680,57 @@ class FilesystemConnector(BaseConnector):
             yield f
 
     @staticmethod
+    def _apply_mcp_tools(f: Finding, proj: _Project) -> None:
+        """Derive MCP server capabilities from the tool names it registers."""
+        tools = sorted(proj.mcp_tools)
+        f.metadata["mcp_tools"] = tools[:50]
+        implied: dict[str, list[str]] = {}
+        for tool in tools:
+            for capability in mcp_tool_capabilities(tool):
+                implied.setdefault(capability, []).append(tool)
+        for capability, names in sorted(implied.items()):
+            f.add_capability(capability)
+            f.add_evidence(Evidence(
+                signal=f"mcp-tool:{capability}",
+                description=f"registers MCP tools implying {capability}: {', '.join(names[:5])}{' …' if len(names) > 5 else ''}",
+                location=proj.mcp_tools[names[0]],
+                weight=0.5,
+                signature="protocol.mcp",
+                attributes={"category": "protocol", "value": names[0]},
+            ))
+
+    def _fold_manifest(self, project: Finding, manifest: Finding, proj: _Project) -> None:
+        """Merge a project manifest into the finding of the project that contains it.
+
+        A CrewAI ``agents.yaml`` or a ``langgraph.json`` configures the agent
+        implemented by that project's code, so the project is an agent and the
+        manifest's evidence, technologies and details move onto it instead of
+        counting the same agent twice. The manifest stays visible under
+        ``metadata.manifests``.
+        """
+        for evidence in manifest.evidence:
+            project.add_evidence(evidence)
+        for sid in manifest.frameworks:
+            project.add_framework(sid)
+        for pid in manifest.model_providers:
+            project.add_model_provider(pid)
+        for capability in manifest.capabilities:
+            project.add_capability(capability)
+        for tag in manifest.tags:
+            project.add_tag(tag)
+        for model in manifest.models:
+            if model not in project.models:
+                project.models.append(model)
+        details = {k: v for k, v in manifest.metadata.items() if k not in {"path", "scan_root", "technologies", "evidence_counts"}}
+        project.metadata.setdefault("manifests", []).append({
+            "path": manifest.metadata.get("path"), "title": manifest.title, "resource": manifest.resource, **details,
+        })
+        project.metadata["agent_indicators"] = max(1, int(project.metadata.get("agent_indicators") or 0))
+        project.kind = Kind.AGENT
+        finalize(project, self.index)
+        project.title = self._project_title(project, proj)
+
+    @staticmethod
     def _attach_example_credentials(f: Finding, proj: _Project) -> None:
         """Attach placeholder credentials as informational evidence (see module docstring)."""
         if not proj.example_credentials:
@@ -1661,7 +1767,14 @@ class FilesystemConnector(BaseConnector):
         provs = [self.index.get(sid).name for sid in f.model_providers[:3] if self.index.get(sid)]  # type: ignore[union-attr]
         where = "repository root" if proj.root == "." else proj.root
         what = "Agent" if f.kind == Kind.AGENT else "LLM usage"
-        detail = ", ".join(names) or ", ".join(provs) or "LLM SDK"
+        detail = ", ".join(names) or ", ".join(provs)
+        if not detail:
+            # Only supporting technology (a search tool, a vector store,
+            # tracing): name it rather than claim an LLM SDK.
+            support = [s.name.split(" (", 1)[0] for sid in f.frameworks if (s := self.index.get(sid))]
+            detail = ", ".join(support[:3]) or "LLM SDK"
+            if support and f.kind != Kind.AGENT:
+                what = "AI tooling"
         return f"{what} in {where}: {detail}"
 
     def _mcp_finding(self, label: str, root: Path, rel: str, servers: list[dict[str, Any]]) -> Finding:
