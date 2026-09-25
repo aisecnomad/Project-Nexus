@@ -190,8 +190,18 @@ signatures:
         languages: [dotnet]
         patterns: ['^[^\S\r\n]*using\s+Microsoft\.Agents\.(?:Builder|Hosting|Core|Authentication)\b']
         weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+microsoft_agents\b']
+        weight: 0.95
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@microsoft/agents-(?:hosting|activity|copilotstudio-client)']
+        weight: 0.95
       - type: code
-        patterns: ['\bAgentApplication\s*\(', '\bAgentApplicationOptions\b', '\bCloudAdapter\s*\(', '\bCopilotClient\s*\(', '\bCopilotStudioClient\s*\(']
+        # CloudAdapter( is inherited from Bot Framework and CopilotClient( belongs
+        # to platform.copilot-studio; only SDK-specific classes are claimed here.
+        patterns: ['\bAgentApplication\s*\(', '\bAgentApplicationOptions\b']
         weight: 0.85
 
   - id: framework.bot-framework
@@ -216,7 +226,9 @@ signatures:
         prefixes: ["Microsoft.Bot."]
         weight: 0.75
       - type: code
-        patterns: ['\bActivityHandler\b', '\bBotFrameworkAdapter\s*\(', '\bCloudAdapter\s*\(', '\bTeamsActivityHandler\b']
+        # CloudAdapter( alone is shared with the M365 Agents SDK; require the
+        # Bot Framework authentication object it is constructed with.
+        patterns: ['\bActivityHandler\b', '\bBotFrameworkAdapter\s*\(', '\bCloudAdapter\s*\(\s*(?:new\s+)?(?:[A-Za-z_]+\.)?(?:Configuration)?[Bb]otFrameworkAuthentication\b', '\bTeamsActivityHandler\b']
         weight: 0.6
       - type: env
         names: [MICROSOFTAPPID, MICROSOFTAPPPASSWORD, MICROSOFTAPPTENANTID, MICROSOFTAPPTYPE, BOT_ID, BOT_PASSWORD]

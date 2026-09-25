@@ -106,8 +106,8 @@ def test_replaced_indexed_redaction_pattern_invalidates_sanitized_state(monkeypa
 def test_sanitization_bookkeeping_never_enters_reports_and_cannot_be_imported():
     finding = _finding()
     exported = finding.to_dict()
-    assert "_sanitized_state" not in exported
-    forged = Finding.from_dict({**exported, "_sanitized_state": "0" * 64,
+    assert "_clean_digest" not in exported
+    forged = Finding.from_dict({**exported, "_clean_digest": "0" * 64,
                                 "title": "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"})
     assert forged.title == REDACTED
     assert forged == Finding.from_dict(forged.to_dict()), "cache state is excluded from equality"
@@ -120,7 +120,7 @@ def test_failed_sanitization_pass_records_no_verified_state():
     finding.connector = "code.filesystem sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
     with pytest.raises(SanitizationLimitError):
         finding.sanitize()
-    assert finding._sanitized_state != finding._state_digest(), "a failed pass never marks the state verified"
+    assert finding._clean_digest is None, "a failed pass never marks the state verified"
     assert REDACTED in finding.connector, "the rejected identity field is withheld even though the finding is omitted"
 
 
@@ -135,4 +135,6 @@ def test_state_digest_rejects_an_aliased_dag_before_expanding_it():
     with pytest.raises(SanitizationLimitError):
         finding.sanitize()
     with pytest.raises(SanitizationLimitError):
-        finding._state_digest()
+        from shadowscan.models import _clean_state
+
+        _clean_state(finding._digest_state(), bounded=False)

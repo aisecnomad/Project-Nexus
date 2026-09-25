@@ -13,6 +13,7 @@ import io
 import re
 import token
 import tokenize
+import types
 from collections.abc import Iterator, Mapping
 from typing import Any
 from urllib.parse import unquote
@@ -104,24 +105,6 @@ _KEY_NORMALISE = re.compile(r"[^a-z0-9]")
 _ASSIGNMENT_CREDENTIAL_NAME = re.compile(
     r"(?i)[a-z][a-z0-9]*(?:_[a-z0-9]+)*_(?:key|token|secret|password|passwd|credentials?)"
 )
-
-
-def policy_token() -> tuple[tuple[int, Any], ...]:
-    """Identity of the redaction policy objects in effect.
-
-    Callers that memoize a sanitized state include this token so that a
-    replaced pattern or name set (for example a hot-patched policy) forces a
-    fresh pass instead of a stale verdict.
-    """
-    policy: tuple[Any, ...] = (
-        _SENSITIVE_SUFFIXES, _SENSITIVE_NAMES, _SECRET_TOKEN, _PATH_SECRET_RULES, _JWT, _PEM, _AUTH,
-        _URL, _ASSIGNMENT, _PYTHON_ASSIGNMENT_KEY, _INDEXED_ASSIGNMENT_KEY,
-        _TARGET_ATTRIBUTE, _MAPPING_VALUE, _YAML_MAPPING_LINE,
-        _ASSIGNMENT_CREDENTIAL_NAME,
-    )
-    return tuple(
-        (id(obj), obj.pattern if isinstance(obj, re.Pattern) else len(obj)) for obj in policy
-    ) + ((_MAX_SANITIZATION_NODES, _MAX_SANITIZATION_CHARS), (_MAX_REDACTION_WORK, REDACTED))
 
 
 class SanitizationLimitError(ValueError):
@@ -814,3 +797,39 @@ def _check_sanitization_structure(value: Any) -> None:
     nodes, chars, _ = cost(value)
     if nodes > _MAX_SANITIZATION_NODES or chars > _MAX_SANITIZATION_CHARS:
         raise SanitizationLimitError("sanitization expanded output limit exceeded")
+
+
+def policy_token() -> tuple[Any, ...]:
+    """Identify the redaction rules and limits currently in force.
+
+    State verified clean by one policy is not clean under another. Callers
+    that cache a verified-clean digest key it by this value, so a rule set
+    replaced at runtime (for example a patched sensitive-name list or a
+    lowered limit) is applied on their next pass instead of being skipped.
+    The tuple holds the live policy objects, which makes an unchanged policy
+    compare by identity; mutable collections are snapshotted by value.
+    """
+    module = globals()
+    return tuple(_policy_value(module[name]) for name in _POLICY_NAMES)
+
+
+def _policy_value(value: Any) -> Any:
+    if isinstance(value, (set, frozenset)):
+        return frozenset(value)
+    if isinstance(value, list):
+        return tuple(value)
+    if isinstance(value, dict):
+        return tuple(value.items())
+    return value
+
+
+def _is_policy(value: Any) -> bool:
+    """Rules, patterns and limits defined here, plus this module's own helpers."""
+    if isinstance(value, (str, int, float, tuple, list, dict, set, frozenset, re.Pattern)):
+        return True
+    return isinstance(value, types.FunctionType) and value.__module__ == __name__
+
+
+# Every module-level rule, pattern, limit and helper defined above. Computed
+# last so a newly added policy constant is covered without registration.
+_POLICY_NAMES = tuple(sorted(name for name, value in globals().items() if not name.startswith("__") and _is_policy(value)))

@@ -46,7 +46,10 @@ class OciConnector(BaseConnector):
         "auth": "config | instance_principal | resource_principal (default config)",
         "allow_instance_credentials": "allow instance/resource principal credentials (default false; inherited from options)",
         "regions": "regions to scan (default: all subscribed)",
+        "region": "session region for instance_principal auth (default: the signer's region); config auth uses the profile's region",
+        "tenancy": "tenancy OCID (default: from the config profile or the principal signer)",
         "compartments": "compartment OCIDs (default: all active compartments in the tenancy)",
+        "max_pages": "cap on pages per paginated list call, at least 1 (default 1000)",
         "input": "offline: JSONL dump of records",
     }
     offline_formats: ClassVar[str] = "JSONL dump of records"

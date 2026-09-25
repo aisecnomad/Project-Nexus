@@ -1,0 +1,1083 @@
+{
+ "description": "Inline text log mixing combined-format lines, logfmt lines, an embedded JSON object, a health probe filtered as non-LLM traffic, a blank line and an unrecognised line.",
+ "suffix": ".log",
+ "config": {},
+ "lines": [
+  "10.9.0.1 - - [01/Sep/2025:21:00:00 +0000] \"POST /v1/chat/completions HTTP/1.1\" 200 512 \"-\" \"OpenAI/Python 1.51.0\" host=api.openai.com",
+  "10.9.0.2 - alice [01/Sep/2025:21:01:00 +0000] \"POST /v1/messages HTTP/1.1\" 200 640 \"-\" \"claude-code/1.0.5\" host=api.anthropic.com",
+  "ts=2025-09-01T21:02:00Z client_ip=10.9.0.9 method=POST path=/v1/messages status=200 host=api.anthropic.com user_agent=\"claude-code/1.0.5\" model=claude-sonnet-4-20250514",
+  "time=2025-09-01T21:05:00Z remote_addr=10.9.0.10 request_uri=/v1/chat/completions status=200 http_user_agent=\"langchain/0.3\" host=api.openai.com",
+  "{\"remote_addr\": \"10.9.0.11\", \"request_uri\": \"/healthz\", \"http_user_agent\": \"kube-probe/1.29\", \"status\": 200, \"host\": \"llm-proxy.internal\", \"time\": \"2025-09-01T21:06:00Z\"}",
+  "",
+  "garbage line without structure",
+  "10.9.0.1 - - [01/Sep/2025:21:07:00 +0000] \"GET /v1/models HTTP/1.1\" 200 128 \"-\" \"OpenAI/Python 1.51.0\" host=api.openai.com"
+ ],
+ "volatile_fields": [
+  "id",
+  "metadata.runtime_source.id",
+  "metadata.runtime_source.input"
+ ],
+ "events": [
+  {
+   "schema": "access-log",
+   "event": {
+    "caller": "access:OpenAI/Python 1.51.0",
+    "caller_kind": "user-agent",
+    "caller_label": "OpenAI/Python 1.51.0",
+    "timestamp": "2025-09-01T21:00:00+00:00",
+    "interval_end": null,
+    "request_count": 1,
+    "aggregated": false,
+    "model": null,
+    "provider": null,
+    "host": "api.openai.com",
+    "user_agent": "OpenAI/Python 1.51.0",
+    "ip": "10.9.0.1",
+    "user": null,
+    "team": null,
+    "tools": null,
+    "tool_calls": null,
+    "streaming": null,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost": 0.0,
+    "status": "200",
+    "path": "/v1/chat/completions",
+    "metadata": {
+     "method": "POST",
+     "bytes": null
+    },
+    "schema": "access-log",
+    "scope": {},
+    "scope_redacted": false,
+    "caller_redacted": false,
+    "binding_caller": null,
+    "environment": null,
+    "runtime_frameworks": [],
+    "code_resources": [],
+    "identity_assurance": "unverified"
+   }
+  },
+  {
+   "schema": "access-log",
+   "event": {
+    "caller": "access:alice",
+    "caller_kind": "user",
+    "caller_label": "alice",
+    "timestamp": "2025-09-01T21:01:00+00:00",
+    "interval_end": null,
+    "request_count": 1,
+    "aggregated": false,
+    "model": null,
+    "provider": null,
+    "host": "api.anthropic.com",
+    "user_agent": "claude-code/1.0.5",
+    "ip": "10.9.0.2",
+    "user": "alice",
+    "team": null,
+    "tools": null,
+    "tool_calls": null,
+    "streaming": null,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost": 0.0,
+    "status": "200",
+    "path": "/v1/messages",
+    "metadata": {
+     "method": "POST",
+     "bytes": null
+    },
+    "schema": "access-log",
+    "scope": {},
+    "scope_redacted": false,
+    "caller_redacted": false,
+    "binding_caller": null,
+    "environment": null,
+    "runtime_frameworks": [],
+    "code_resources": [],
+    "identity_assurance": "unverified"
+   }
+  },
+  {
+   "schema": "generic",
+   "event": {
+    "caller": "user-agent:claude-code/1.0.5",
+    "caller_kind": "user-agent",
+    "caller_label": "claude-code/1.0.5",
+    "timestamp": "2025-09-01T21:02:00+00:00",
+    "interval_end": null,
+    "request_count": 1,
+    "aggregated": false,
+    "model": "claude-sonnet-4-20250514",
+    "provider": null,
+    "host": "api.anthropic.com",
+    "user_agent": "claude-code/1.0.5",
+    "ip": "10.9.0.9",
+    "user": null,
+    "team": null,
+    "tools": null,
+    "tool_calls": null,
+    "streaming": null,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost": 0.0,
+    "status": "200",
+    "path": "/v1/messages",
+    "metadata": {},
+    "schema": "generic",
+    "scope": {},
+    "scope_redacted": false,
+    "caller_redacted": false,
+    "binding_caller": null,
+    "environment": null,
+    "runtime_frameworks": [],
+    "code_resources": [],
+    "identity_assurance": "unverified"
+   }
+  },
+  {
+   "schema": "access-log",
+   "event": {
+    "caller": "access:langchain/0.3",
+    "caller_kind": "user-agent",
+    "caller_label": "langchain/0.3",
+    "timestamp": "2025-09-01T21:05:00+00:00",
+    "interval_end": null,
+    "request_count": 1,
+    "aggregated": false,
+    "model": null,
+    "provider": null,
+    "host": "api.openai.com",
+    "user_agent": "langchain/0.3",
+    "ip": "10.9.0.10",
+    "user": null,
+    "team": null,
+    "tools": null,
+    "tool_calls": null,
+    "streaming": null,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost": 0.0,
+    "status": "200",
+    "path": "/v1/chat/completions",
+    "metadata": {
+     "method": null,
+     "bytes": null
+    },
+    "schema": "access-log",
+    "scope": {},
+    "scope_redacted": false,
+    "caller_redacted": false,
+    "binding_caller": null,
+    "environment": null,
+    "runtime_frameworks": [],
+    "code_resources": [],
+    "identity_assurance": "unverified"
+   }
+  },
+  {
+   "schema": "access-log",
+   "event": {
+    "caller": "access:kube-probe/1.29",
+    "caller_kind": "user-agent",
+    "caller_label": "kube-probe/1.29",
+    "timestamp": "2025-09-01T21:06:00+00:00",
+    "interval_end": null,
+    "request_count": 1,
+    "aggregated": false,
+    "model": null,
+    "provider": null,
+    "host": "llm-proxy.internal",
+    "user_agent": "kube-probe/1.29",
+    "ip": "10.9.0.11",
+    "user": null,
+    "team": null,
+    "tools": null,
+    "tool_calls": null,
+    "streaming": null,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost": 0.0,
+    "status": "200",
+    "path": "/healthz",
+    "metadata": {
+     "method": null,
+     "bytes": null
+    },
+    "schema": "access-log",
+    "scope": {},
+    "scope_redacted": false,
+    "caller_redacted": false,
+    "binding_caller": null,
+    "environment": null,
+    "runtime_frameworks": [],
+    "code_resources": [],
+    "identity_assurance": "unverified"
+   }
+  },
+  {
+   "schema": "access-log",
+   "event": {
+    "caller": "access:OpenAI/Python 1.51.0",
+    "caller_kind": "user-agent",
+    "caller_label": "OpenAI/Python 1.51.0",
+    "timestamp": "2025-09-01T21:07:00+00:00",
+    "interval_end": null,
+    "request_count": 1,
+    "aggregated": false,
+    "model": null,
+    "provider": null,
+    "host": "api.openai.com",
+    "user_agent": "OpenAI/Python 1.51.0",
+    "ip": "10.9.0.1",
+    "user": null,
+    "team": null,
+    "tools": null,
+    "tool_calls": null,
+    "streaming": null,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost": 0.0,
+    "status": "200",
+    "path": "/v1/models",
+    "metadata": {
+     "method": "GET",
+     "bytes": null
+    },
+    "schema": "access-log",
+    "scope": {},
+    "scope_redacted": false,
+    "caller_redacted": false,
+    "binding_caller": null,
+    "environment": null,
+    "runtime_frameworks": [],
+    "code_resources": [],
+    "identity_assurance": "unverified"
+   }
+  }
+ ],
+ "findings": [
+  {
+   "identity": "ss-65b97cdba725cd79",
+   "surface": "gateway",
+   "connector": "gateway.logs",
+   "kind": "gateway-caller",
+   "title": "Agentic caller 'OpenAI/Python 1.51.0' (user-agent): 2 requests via ChatGPT / OpenAI",
+   "resource": "access:OpenAI/Python 1.51.0",
+   "resource_type": "caller/user-agent",
+   "provider": "access-log",
+   "account": null,
+   "region": null,
+   "owner": null,
+   "frameworks": [
+    "identity-app.openai-chatgpt"
+   ],
+   "model_providers": [
+    "provider.openai"
+   ],
+   "models": [],
+   "capabilities": [],
+   "permissions": [],
+   "evidence": [
+    {
+     "signal": "domain:provider.openai",
+     "description": "endpoint matched OpenAI: api.openai.com",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "provider.openai",
+     "attributes": {
+      "category": "provider",
+      "value": "api.openai.com"
+     }
+    },
+    {
+     "signal": "domain:identity-app.openai-chatgpt",
+     "description": "endpoint matched ChatGPT / OpenAI: api.openai.com",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "identity-app.openai-chatgpt",
+     "attributes": {
+      "category": "identity-app",
+      "value": "api.openai.com"
+     }
+    },
+    {
+     "signal": "domain:provider.openai",
+     "description": "endpoint matched OpenAI: api.openai.com",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "provider.openai",
+     "attributes": {
+      "category": "provider",
+      "value": "api.openai.com"
+     }
+    },
+    {
+     "signal": "user_agent:provider.openai",
+     "description": "user agent matched OpenAI: OpenAI/Python",
+     "location": null,
+     "snippet": null,
+     "weight": 0.7,
+     "signature": "provider.openai",
+     "attributes": {
+      "category": "provider",
+      "value": "OpenAI/Python"
+     }
+    },
+    {
+     "signal": "name:identity-app.openai-chatgpt",
+     "description": "display name matched ChatGPT / OpenAI: OpenAI",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "identity-app.openai-chatgpt",
+     "attributes": {
+      "category": "identity-app",
+      "value": "OpenAI"
+     }
+    },
+    {
+     "signal": "gateway:user-agent",
+     "description": "2 LLM request(s) by user-agent 'OpenAI/Python 1.51.0' to models unknown",
+     "location": null,
+     "snippet": null,
+     "weight": 0.2,
+     "signature": null,
+     "attributes": {}
+    }
+   ],
+   "confidence": 0.989,
+   "likelihood": "confirmed",
+   "risk": {
+    "score": 0,
+    "level": "info",
+    "factors": []
+   },
+   "shadow": null,
+   "registry_match": null,
+   "tags": [
+    "assistant",
+    "agent-platform"
+   ],
+   "first_seen": "2025-09-01T21:00:00+00:00",
+   "last_seen": "2025-09-01T21:07:00+00:00",
+   "metadata": {
+    "agent_indicators": 2,
+    "caller_kind": "user-agent",
+    "caller": "OpenAI/Python 1.51.0",
+    "events": 2,
+    "records": 2,
+    "aggregate_records": 0,
+    "usage_intervals": [],
+    "usage_intervals_dropped": 0,
+    "usage_interval_requests_dropped": 0,
+    "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
+    "models": {},
+    "providers": {},
+    "hosts": {
+     "api.openai.com": 2
+    },
+    "user_agents": {
+     "OpenAI/Python 1.51.0": 2
+    },
+    "source_ips": {
+     "10.9.0.1": 2
+    },
+    "end_users": {},
+    "teams": {},
+    "operations": {
+     "/v1/chat/completions": 1,
+     "/v1/models": 1
+    },
+    "distribution_events_dropped": {},
+    "distribution_limit": 2000,
+    "classification_incomplete": false,
+    "tool_requests": 0,
+    "tool_call_responses": 0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost": 0.0,
+    "errors": 0,
+    "schemas": {
+     "access-log": 2
+    },
+    "samples": {
+     "method": "POST"
+    },
+    "correlation_scope": {},
+    "correlation_scope_redacted": false,
+    "runtime_observations": [
+     {
+      "code_resources": [],
+      "frameworks": [],
+      "environment": null,
+      "scope": {},
+      "events": 2,
+      "timestamped_events": 2,
+      "first_seen": "2025-09-01T21:00:00+00:00",
+      "last_seen": "2025-09-01T21:07:00+00:00",
+      "identity_basis": "configured-exact-caller-and-scope",
+      "identity_assurance": "unverified",
+      "environment_assurance": "absent"
+     }
+    ],
+    "runtime_observations_dropped": 0,
+    "runtime_source": {
+     "label": null,
+     "schemas": [
+      "access-log"
+     ]
+    },
+    "evidence_counts": {
+     "provider.openai|domain": 2,
+     "identity-app.openai-chatgpt|domain": 1,
+     "provider.openai|user_agent": 1,
+     "identity-app.openai-chatgpt|name": 1
+    },
+    "technologies": [
+     {
+      "id": "identity-app.openai-chatgpt",
+      "name": "ChatGPT / OpenAI",
+      "category": "identity-app",
+      "vendor": "OpenAI"
+     },
+     {
+      "id": "provider.openai",
+      "name": "OpenAI",
+      "category": "provider",
+      "vendor": "OpenAI"
+     }
+    ]
+   },
+   "identity_discriminator": "caller",
+   "identity_schema": "shadowscan.finding-identity/v2"
+  },
+  {
+   "identity": "ss-d4afd670e3c01303",
+   "surface": "gateway",
+   "connector": "gateway.logs",
+   "kind": "gateway-caller",
+   "title": "Agentic caller 'alice' (user): 1 requests via Claude / Anthropic, Claude Code",
+   "resource": "access:alice",
+   "resource_type": "caller/user",
+   "provider": "access-log",
+   "account": null,
+   "region": null,
+   "owner": "alice",
+   "frameworks": [
+    "identity-app.anthropic-claude",
+    "coding-agent.claude-code"
+   ],
+   "model_providers": [
+    "provider.anthropic"
+   ],
+   "models": [],
+   "capabilities": [
+    "code-exec",
+    "tool-use"
+   ],
+   "permissions": [],
+   "evidence": [
+    {
+     "signal": "domain:provider.anthropic",
+     "description": "endpoint matched Anthropic: api.anthropic.com",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "provider.anthropic",
+     "attributes": {
+      "category": "provider",
+      "value": "api.anthropic.com"
+     }
+    },
+    {
+     "signal": "domain:identity-app.anthropic-claude",
+     "description": "endpoint matched Claude / Anthropic: api.anthropic.com",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "identity-app.anthropic-claude",
+     "attributes": {
+      "category": "identity-app",
+      "value": "api.anthropic.com"
+     }
+    },
+    {
+     "signal": "user_agent:coding-agent.claude-code",
+     "description": "user agent matched Claude Code: claude-code",
+     "location": null,
+     "snippet": null,
+     "weight": 0.9,
+     "signature": "coding-agent.claude-code",
+     "attributes": {
+      "category": "coding-agent",
+      "value": "claude-code"
+     }
+    },
+    {
+     "signal": "user_agent:provider.anthropic",
+     "description": "user agent matched Anthropic: claude-code/",
+     "location": null,
+     "snippet": null,
+     "weight": 0.7,
+     "signature": "provider.anthropic",
+     "attributes": {
+      "category": "provider",
+      "value": "claude-code/"
+     }
+    },
+    {
+     "signal": "gateway:user",
+     "description": "1 LLM request(s) by user 'alice' to models unknown",
+     "location": null,
+     "snippet": null,
+     "weight": 0.15,
+     "signature": null,
+     "attributes": {}
+    }
+   ],
+   "confidence": 0.995,
+   "likelihood": "confirmed",
+   "risk": {
+    "score": 0,
+    "level": "info",
+    "factors": []
+   },
+   "shadow": null,
+   "registry_match": null,
+   "tags": [
+    "assistant",
+    "agent-platform",
+    "coding"
+   ],
+   "first_seen": "2025-09-01T21:01:00+00:00",
+   "last_seen": "2025-09-01T21:01:00+00:00",
+   "metadata": {
+    "agent_indicators": 2,
+    "caller_kind": "user",
+    "caller": "alice",
+    "events": 1,
+    "records": 1,
+    "aggregate_records": 0,
+    "usage_intervals": [],
+    "usage_intervals_dropped": 0,
+    "usage_interval_requests_dropped": 0,
+    "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
+    "models": {},
+    "providers": {},
+    "hosts": {
+     "api.anthropic.com": 1
+    },
+    "user_agents": {
+     "claude-code/1.0.5": 1
+    },
+    "source_ips": {
+     "10.9.0.2": 1
+    },
+    "end_users": {
+     "alice": 1
+    },
+    "teams": {},
+    "operations": {
+     "/v1/messages": 1
+    },
+    "distribution_events_dropped": {},
+    "distribution_limit": 2000,
+    "classification_incomplete": false,
+    "tool_requests": 0,
+    "tool_call_responses": 0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost": 0.0,
+    "errors": 0,
+    "schemas": {
+     "access-log": 1
+    },
+    "samples": {
+     "method": "POST"
+    },
+    "correlation_scope": {},
+    "correlation_scope_redacted": false,
+    "runtime_observations": [
+     {
+      "code_resources": [],
+      "frameworks": [],
+      "environment": null,
+      "scope": {},
+      "events": 1,
+      "timestamped_events": 1,
+      "first_seen": "2025-09-01T21:01:00+00:00",
+      "last_seen": "2025-09-01T21:01:00+00:00",
+      "identity_basis": "configured-exact-caller-and-scope",
+      "identity_assurance": "unverified",
+      "environment_assurance": "absent"
+     }
+    ],
+    "runtime_observations_dropped": 0,
+    "runtime_source": {
+     "label": null,
+     "schemas": [
+      "access-log"
+     ]
+    },
+    "evidence_counts": {
+     "provider.anthropic|domain": 1,
+     "identity-app.anthropic-claude|domain": 1,
+     "coding-agent.claude-code|user_agent": 1,
+     "provider.anthropic|user_agent": 1
+    },
+    "technologies": [
+     {
+      "id": "identity-app.anthropic-claude",
+      "name": "Claude / Anthropic",
+      "category": "identity-app",
+      "vendor": "Anthropic"
+     },
+     {
+      "id": "coding-agent.claude-code",
+      "name": "Claude Code",
+      "category": "coding-agent",
+      "vendor": "Anthropic"
+     },
+     {
+      "id": "provider.anthropic",
+      "name": "Anthropic",
+      "category": "provider",
+      "vendor": "Anthropic"
+     }
+    ]
+   },
+   "identity_discriminator": "caller",
+   "identity_schema": "shadowscan.finding-identity/v2"
+  },
+  {
+   "identity": "ss-69e20c3ae5781402",
+   "surface": "gateway",
+   "connector": "gateway.logs",
+   "kind": "gateway-caller",
+   "title": "Agentic caller 'claude-code/1.0.5' (user-agent): 1 requests via Claude / Anthropic, Claude Code to claude-sonnet-4-20250514",
+   "resource": "user-agent:claude-code/1.0.5",
+   "resource_type": "caller/user-agent",
+   "provider": "generic",
+   "account": null,
+   "region": null,
+   "owner": null,
+   "frameworks": [
+    "identity-app.anthropic-claude",
+    "coding-agent.claude-code"
+   ],
+   "model_providers": [
+    "provider.anthropic"
+   ],
+   "models": [
+    "claude-sonnet-4-20250514"
+   ],
+   "capabilities": [
+    "code-exec",
+    "tool-use"
+   ],
+   "permissions": [],
+   "evidence": [
+    {
+     "signal": "model:provider.anthropic",
+     "description": "model id matched Anthropic: claude-",
+     "location": null,
+     "snippet": null,
+     "weight": 0.4,
+     "signature": "provider.anthropic",
+     "attributes": {
+      "category": "provider",
+      "value": "claude-"
+     }
+    },
+    {
+     "signal": "domain:provider.anthropic",
+     "description": "endpoint matched Anthropic: api.anthropic.com",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "provider.anthropic",
+     "attributes": {
+      "category": "provider",
+      "value": "api.anthropic.com"
+     }
+    },
+    {
+     "signal": "domain:identity-app.anthropic-claude",
+     "description": "endpoint matched Claude / Anthropic: api.anthropic.com",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "identity-app.anthropic-claude",
+     "attributes": {
+      "category": "identity-app",
+      "value": "api.anthropic.com"
+     }
+    },
+    {
+     "signal": "user_agent:coding-agent.claude-code",
+     "description": "user agent matched Claude Code: claude-code",
+     "location": null,
+     "snippet": null,
+     "weight": 0.9,
+     "signature": "coding-agent.claude-code",
+     "attributes": {
+      "category": "coding-agent",
+      "value": "claude-code"
+     }
+    },
+    {
+     "signal": "user_agent:provider.anthropic",
+     "description": "user agent matched Anthropic: claude-code/",
+     "location": null,
+     "snippet": null,
+     "weight": 0.7,
+     "signature": "provider.anthropic",
+     "attributes": {
+      "category": "provider",
+      "value": "claude-code/"
+     }
+    },
+    {
+     "signal": "name:identity-app.anthropic-claude",
+     "description": "display name matched Claude / Anthropic: claude",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "identity-app.anthropic-claude",
+     "attributes": {
+      "category": "identity-app",
+      "value": "claude"
+     }
+    },
+    {
+     "signal": "gateway:user-agent",
+     "description": "1 LLM request(s) by user-agent 'claude-code/1.0.5' to models claude-sonnet-4-20250514",
+     "location": null,
+     "snippet": null,
+     "weight": 0.2,
+     "signature": null,
+     "attributes": {}
+    }
+   ],
+   "confidence": 0.999,
+   "likelihood": "confirmed",
+   "risk": {
+    "score": 0,
+    "level": "info",
+    "factors": []
+   },
+   "shadow": null,
+   "registry_match": null,
+   "tags": [
+    "assistant",
+    "agent-platform",
+    "coding"
+   ],
+   "first_seen": "2025-09-01T21:02:00+00:00",
+   "last_seen": "2025-09-01T21:02:00+00:00",
+   "metadata": {
+    "agent_indicators": 3,
+    "caller_kind": "user-agent",
+    "caller": "claude-code/1.0.5",
+    "events": 1,
+    "records": 1,
+    "aggregate_records": 0,
+    "usage_intervals": [],
+    "usage_intervals_dropped": 0,
+    "usage_interval_requests_dropped": 0,
+    "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
+    "models": {
+     "claude-sonnet-4-20250514": 1
+    },
+    "providers": {},
+    "hosts": {
+     "api.anthropic.com": 1
+    },
+    "user_agents": {
+     "claude-code/1.0.5": 1
+    },
+    "source_ips": {
+     "10.9.0.9": 1
+    },
+    "end_users": {},
+    "teams": {},
+    "operations": {
+     "/v1/messages": 1
+    },
+    "distribution_events_dropped": {},
+    "distribution_limit": 2000,
+    "classification_incomplete": false,
+    "tool_requests": 0,
+    "tool_call_responses": 0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost": 0.0,
+    "errors": 0,
+    "schemas": {
+     "generic": 1
+    },
+    "samples": {},
+    "correlation_scope": {},
+    "correlation_scope_redacted": false,
+    "runtime_observations": [
+     {
+      "code_resources": [],
+      "frameworks": [],
+      "environment": null,
+      "scope": {},
+      "events": 1,
+      "timestamped_events": 1,
+      "first_seen": "2025-09-01T21:02:00+00:00",
+      "last_seen": "2025-09-01T21:02:00+00:00",
+      "identity_basis": "configured-exact-caller-and-scope",
+      "identity_assurance": "unverified",
+      "environment_assurance": "absent"
+     }
+    ],
+    "runtime_observations_dropped": 0,
+    "runtime_source": {
+     "label": null,
+     "schemas": [
+      "generic"
+     ]
+    },
+    "evidence_counts": {
+     "provider.anthropic|model": 1,
+     "provider.anthropic|domain": 1,
+     "identity-app.anthropic-claude|domain": 1,
+     "coding-agent.claude-code|user_agent": 1,
+     "provider.anthropic|user_agent": 1,
+     "identity-app.anthropic-claude|name": 1
+    },
+    "technologies": [
+     {
+      "id": "identity-app.anthropic-claude",
+      "name": "Claude / Anthropic",
+      "category": "identity-app",
+      "vendor": "Anthropic"
+     },
+     {
+      "id": "coding-agent.claude-code",
+      "name": "Claude Code",
+      "category": "coding-agent",
+      "vendor": "Anthropic"
+     },
+     {
+      "id": "provider.anthropic",
+      "name": "Anthropic",
+      "category": "provider",
+      "vendor": "Anthropic"
+     }
+    ]
+   },
+   "identity_discriminator": "caller",
+   "identity_schema": "shadowscan.finding-identity/v2"
+  },
+  {
+   "identity": "ss-6ad0aaa5f6ab8064",
+   "surface": "gateway",
+   "connector": "gateway.logs",
+   "kind": "gateway-caller",
+   "title": "Agentic caller 'langchain/0.3' (user-agent): 1 requests via ChatGPT / OpenAI, LangChain",
+   "resource": "access:langchain/0.3",
+   "resource_type": "caller/user-agent",
+   "provider": "access-log",
+   "account": null,
+   "region": null,
+   "owner": null,
+   "frameworks": [
+    "identity-app.openai-chatgpt",
+    "framework.langchain"
+   ],
+   "model_providers": [
+    "provider.openai"
+   ],
+   "models": [],
+   "capabilities": [
+    "tool-use"
+   ],
+   "permissions": [],
+   "evidence": [
+    {
+     "signal": "domain:provider.openai",
+     "description": "endpoint matched OpenAI: api.openai.com",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "provider.openai",
+     "attributes": {
+      "category": "provider",
+      "value": "api.openai.com"
+     }
+    },
+    {
+     "signal": "domain:identity-app.openai-chatgpt",
+     "description": "endpoint matched ChatGPT / OpenAI: api.openai.com",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "identity-app.openai-chatgpt",
+     "attributes": {
+      "category": "identity-app",
+      "value": "api.openai.com"
+     }
+    },
+    {
+     "signal": "domain:provider.openai",
+     "description": "endpoint matched OpenAI: api.openai.com",
+     "location": null,
+     "snippet": null,
+     "weight": 0.54,
+     "signature": "provider.openai",
+     "attributes": {
+      "category": "provider",
+      "value": "api.openai.com"
+     }
+    },
+    {
+     "signal": "user_agent:framework.langchain",
+     "description": "user agent matched LangChain: langchain",
+     "location": null,
+     "snippet": null,
+     "weight": 0.8,
+     "signature": "framework.langchain",
+     "attributes": {
+      "category": "framework",
+      "value": "langchain"
+     }
+    },
+    {
+     "signal": "gateway:user-agent",
+     "description": "1 LLM request(s) by user-agent 'langchain/0.3' to models unknown",
+     "location": null,
+     "snippet": null,
+     "weight": 0.2,
+     "signature": null,
+     "attributes": {}
+    }
+   ],
+   "confidence": 0.984,
+   "likelihood": "confirmed",
+   "risk": {
+    "score": 0,
+    "level": "info",
+    "factors": []
+   },
+   "shadow": null,
+   "registry_match": null,
+   "tags": [
+    "assistant",
+    "agent-platform"
+   ],
+   "first_seen": "2025-09-01T21:05:00+00:00",
+   "last_seen": "2025-09-01T21:05:00+00:00",
+   "metadata": {
+    "agent_indicators": 1,
+    "caller_kind": "user-agent",
+    "caller": "langchain/0.3",
+    "events": 1,
+    "records": 1,
+    "aggregate_records": 0,
+    "usage_intervals": [],
+    "usage_intervals_dropped": 0,
+    "usage_interval_requests_dropped": 0,
+    "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
+    "models": {},
+    "providers": {},
+    "hosts": {
+     "api.openai.com": 1
+    },
+    "user_agents": {
+     "langchain/0.3": 1
+    },
+    "source_ips": {
+     "10.9.0.10": 1
+    },
+    "end_users": {},
+    "teams": {},
+    "operations": {
+     "/v1/chat/completions": 1
+    },
+    "distribution_events_dropped": {},
+    "distribution_limit": 2000,
+    "classification_incomplete": false,
+    "tool_requests": 0,
+    "tool_call_responses": 0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost": 0.0,
+    "errors": 0,
+    "schemas": {
+     "access-log": 1
+    },
+    "samples": {},
+    "correlation_scope": {},
+    "correlation_scope_redacted": false,
+    "runtime_observations": [
+     {
+      "code_resources": [],
+      "frameworks": [
+       "framework.langchain"
+      ],
+      "environment": null,
+      "scope": {},
+      "events": 1,
+      "timestamped_events": 1,
+      "first_seen": "2025-09-01T21:05:00+00:00",
+      "last_seen": "2025-09-01T21:05:00+00:00",
+      "identity_basis": "configured-exact-caller-and-scope",
+      "identity_assurance": "unverified",
+      "environment_assurance": "absent"
+     }
+    ],
+    "runtime_observations_dropped": 0,
+    "runtime_source": {
+     "label": null,
+     "schemas": [
+      "access-log"
+     ]
+    },
+    "evidence_counts": {
+     "provider.openai|domain": 2,
+     "identity-app.openai-chatgpt|domain": 1,
+     "framework.langchain|user_agent": 1
+    },
+    "technologies": [
+     {
+      "id": "identity-app.openai-chatgpt",
+      "name": "ChatGPT / OpenAI",
+      "category": "identity-app",
+      "vendor": "OpenAI"
+     },
+     {
+      "id": "framework.langchain",
+      "name": "LangChain",
+      "category": "framework",
+      "vendor": "LangChain, Inc."
+     },
+     {
+      "id": "provider.openai",
+      "name": "OpenAI",
+      "category": "provider",
+      "vendor": "OpenAI"
+     }
+    ]
+   },
+   "identity_discriminator": "caller",
+   "identity_schema": "shadowscan.finding-identity/v2"
+  }
+ ],
+ "diagnostics": {
+  "warnings": [
+   "gateway.logs: unrecognized text record at line 7"
+  ],
+  "errors": [],
+  "objects_examined": 6,
+  "incomplete": true,
+  "skipped": false
+ }
+}

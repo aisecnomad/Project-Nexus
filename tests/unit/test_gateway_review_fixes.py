@@ -67,7 +67,10 @@ def test_activity_buckets_use_utc_regardless_of_export_offset(index):
     records = [_litellm(i, startTime="2026-01-09T12:00:00-12:00") for i in range(60)]
     findings, _ = _scan(index, records, format="litellm")
     activity = findings[0].metadata["activity"]
-    assert activity == {"active_hours": 1, "night_share": 1.0, "weekend_share": 1.0}
+    assert {key: activity[key] for key in ("active_hours", "night_share", "weekend_share")} == {
+        "active_hours": 1, "night_share": 1.0, "weekend_share": 1.0,
+    }
+    assert activity["always_on"] and activity["always_on_corroborated"]
     assert "always-on" in findings[0].tags
 
 

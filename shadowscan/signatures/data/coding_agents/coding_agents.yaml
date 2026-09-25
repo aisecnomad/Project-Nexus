@@ -83,9 +83,8 @@ signatures:
       - type: user_agent
         patterns: ['(?i)\bcursor/\d', '(?i)\bcursor-agent\b']
         weight: 0.85
-      - type: name
-        patterns: ['(?i)\bcursor\b(?!\s*(?:position|pointer))']
-        weight: 0.5
+      # Display names of the Cursor product are owned by
+      # identity-app.coding-assistants-saas (guarded against "cursor position").
 
   - id: coding-agent.windsurf
     name: Windsurf (Codeium)
@@ -103,9 +102,7 @@ signatures:
       - type: user_agent
         patterns: ['(?i)\bwindsurf\b', '(?i)\bcodeium\b']
         weight: 0.85
-      - type: name
-        patterns: ['(?i)\bwindsurf\b', '(?i)\bcodeium\b']
-        weight: 0.7
+      # Display names (Windsurf, Codeium) are owned by identity-app.coding-assistants-saas.
 
   - id: coding-agent.cline
     name: Cline
@@ -117,9 +114,7 @@ signatures:
       - type: file
         globs: [".clinerules", "**/.clinerules", ".clinerules/**", "**/.clinerules/**", ".clineignore", "cline_mcp_settings.json", "**/cline_mcp_settings.json", ".cline/**"]
         weight: 0.9
-      - type: name
-        patterns: ['(?i)\bcline\b']
-        weight: 0.7
+      # The Cline display name is owned by identity-app.coding-assistants-saas.
 
   - id: coding-agent.roo-code
     name: Roo Code
@@ -148,17 +143,24 @@ signatures:
         names: ["@openai/codex"]
         weight: 0.95
       - type: code
-        patterns: ['uses:\s*openai/codex-action', 'npx\s+@openai/codex', '\bcodex\s+exec\b', '\bcodex\s+--full-auto\b', '--dangerously-bypass-approvals-and-sandbox', 'approval_policy\s*=\s*"never"', 'sandbox_mode\s*=\s*"danger-full-access"']
+        patterns: ['uses:\s*openai/codex-action', 'npx\s+@openai/codex', '\bcodex\s+exec\b']
         weight: 0.9
       - type: code
-        patterns: ['--full-auto', '--dangerously-bypass-approvals-and-sandbox', 'approval_policy\s*=\s*"never"']
+        patterns: ['\bcodex\s+--full-auto\b', '--dangerously-bypass-approvals-and-sandbox', 'approval_policy\s*=\s*"never"', 'sandbox_mode\s*=\s*"danger-full-access"']
+        weight: 0.9
+        capabilities: [autonomous]
+        description: Codex approval and sandbox gates disabled
+      - type: code
+        patterns: ['--full-auto']
         weight: 0.5
         capabilities: [autonomous]
       - type: user_agent
         patterns: ['(?i)codex_cli', '(?i)\bcodex-cli\b', '(?i)openai-codex']
         weight: 0.9
       - type: name
-        patterns: ['(?i)\bcodex\b']
+        # "Codex" is a dictionary word: it counts as the whole display name or
+        # with OpenAI / agent context on the same line.
+        patterns: ['(?i)\bopenai codex\b', '(?i)^(?=.*\b(?:openai|cli|agent|bot|ai|cloud|review|connector)\b).*\bcodex\b|^[^\S\r\n]*codex[^\S\r\n]*$']
         weight: 0.6
 
   - id: coding-agent.agents-md
@@ -187,17 +189,20 @@ signatures:
         names: ["@google/gemini-cli", "@google/gemini-cli-core"]
         weight: 0.95
       - type: code
-        patterns: ['uses:\s*google-github-actions/run-gemini-cli', 'uses:\s*google-gemini/gemini-cli-action', 'npx\s+@google/gemini-cli', '\bgemini\s+--yolo\b']
+        patterns: ['uses:\s*google-github-actions/run-gemini-cli', 'uses:\s*google-gemini/gemini-cli-action', 'npx\s+@google/gemini-cli']
         weight: 0.9
       - type: code
         patterns: ['\bgemini\s+--yolo\b', '"approvalMode"\s*:\s*"yolo"']
-        weight: 0.5
+        weight: 0.9
         capabilities: [autonomous]
+        description: Gemini CLI approval prompts disabled (YOLO mode)
       - type: user_agent
         patterns: ['(?i)GeminiCLI/', '(?i)gemini-cli']
         weight: 0.9
       - type: name
-        patterns: ['(?i)gemini cli', '(?i)\bjules\b']
+        # "Jules" is a first name: it counts as the whole display name or with
+        # Google / agent context on the same line.
+        patterns: ['(?i)gemini cli', '(?i)^(?=.*\b(?:google|gemini|agent|bot|ai|labs|coding)\b).*\bjules\b|^[^\S\r\n]*jules[^\S\r\n]*$']
         weight: 0.6
 
   - id: coding-agent.amazon-q-developer
@@ -285,7 +290,10 @@ signatures:
         values: [sourcegraph.com, ampcode.com, "*.sourcegraph.com", "*.sourcegraphcloud.com"]
         weight: 0.7
       - type: name
-        patterns: ['(?i)\bcody\b', '(?i)\bsourcegraph\b', '(?i)\bamp(?:code)?\b']
+        # "Cody" and "Amp" are first names / words: they count as the whole
+        # display name or with Sourcegraph / coding-agent context. The
+        # Sourcegraph name itself is owned by identity-app.coding-assistants-saas.
+        patterns: ['(?i)\bampcode\b', '(?i)^(?=.*\b(?:sourcegraph|ai|agent|bot|code|coding|app)\b).*\bcody\b|^[^\S\r\n]*cody[^\S\r\n]*$', '(?i)^(?=.*\b(?:sourcegraph|ai|agent|coding|code)\b).*\bamp\b|^[^\S\r\n]*amp[^\S\r\n]*$']
         weight: 0.5
 
   - id: coding-agent.jetbrains-junie
@@ -327,7 +335,11 @@ signatures:
         patterns: ['uses:\s*coderabbitai/[a-z-]+', 'uses:\s*qodo-ai/pr-agent', 'uses:\s*Codium-ai/pr-agent', 'uses:\s*sweepai/[a-z-]+', 'uses:\s*ellipsis-dev/[a-z-]+', 'uses:\s*greptileai/[a-z-]+']
         weight: 0.9
       - type: name
-        patterns: ['(?i)\bcoderabbit(?:ai)?\b', '(?i)\bsweep(?:ai)?\b', '(?i)\bellipsis\b', '(?i)\bgreptile\b', '(?i)\bsourcery(?:-ai)?\b', '(?i)\bpr-agent\b', '(?i)\bqodo\b', '(?i)\bkorbit\b', '(?i)\bbito\b', '(?i)\bcodium(?:ai)?\b', '(?i)\bdevin(?:-ai)?\b', '(?i)\bcursor bugbot\b', '(?i)\bgraphite\b', '(?i)\bmentat\b', '(?i)\bcopilot-pull-request-reviewer\b']
+        # Sweep, Ellipsis, Graphite and Bito are dictionary words / names: the
+        # bare word only counts as the whole display name (the GitHub App name)
+        # or with review-bot context on the same line. Devin is owned by
+        # identity-app.coding-assistants-saas.
+        patterns: ['(?i)\bcoderabbit(?:ai)?\b', '(?i)\bsweepai\b', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|stack(?:ed|s)?|app)\b).*\bsweep\b|^[^\S\r\n]*sweep[^\S\r\n]*$', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|app)\b).*\bellipsis\b|^[^\S\r\n]*ellipsis[^\S\r\n]*$', '(?i)\bgreptile\b', '(?i)\bsourcery(?:-ai)?\b', '(?i)\bpr-agent\b', '(?i)\bqodo\b', '(?i)\bkorbit\b', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|app)\b).*\bbito\b|^[^\S\r\n]*bito[^\S\r\n]*$', '(?i)\bcodium(?:ai)?\b', '(?i)\bcursor bugbot\b', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|stack(?:ed|s)?|app)\b).*\bgraphite\b|^[^\S\r\n]*graphite[^\S\r\n]*$', '(?i)\bmentat\b', '(?i)\bcopilot-pull-request-reviewer\b']
         weight: 0.8
       - type: user_agent
         patterns: ['(?i)coderabbit', '(?i)\bsweep\b', '(?i)greptile']

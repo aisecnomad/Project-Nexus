@@ -50,7 +50,7 @@ def test_sample_repo_scan(run_connector, fixtures):
     assert len(secrets) == 1 and secrets[0].metadata["path"] == "services/research-agent/app/config.py"
     assert {"provider.openai", "provider.anthropic"} <= set(secrets[0].model_providers)
     for e in secrets[0].evidence:
-        assert "sk-proj-abcdefghijklmnopqrstuvwxyz" not in (e.description + (e.snippet or "")), "secret must be redacted"
+        assert "sk-proj-3OoFmQTsHfOvesPLUXvRXpfToFF2XPOcdJ2kMQJ2g0" not in (e.description + (e.snippet or "")), "secret must be redacted"
 
     infra = {f.metadata["path"]: f for f in kinds[Kind.INFRA]}
     assert "cloud.aws-bedrock-agents" in infra["infra/terraform/bedrock.tf"].frameworks

@@ -24,7 +24,7 @@ from shadowscan.connectors.code.manifests import is_manifest_name, parse_manifes
 from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.models import Kind, ScanStats, now_iso
 
-SECRET = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnop"
+SECRET = "sk-proj-aP9rVv3qN4zY7bC2hJ8Lm5Qw6Dt0KsX1eR7uT4p"
 
 
 def _scan(index, root: Path, **config):
@@ -41,7 +41,7 @@ def test_cancellation_stops_the_tree_walk(tmp_path, index):
     ctx = ConnectorContext(config={"path": str(tmp_path)}, index=index, cancelled=cancelled)
     connector = FilesystemConnector(ctx)
     walked = 0
-    original = connector._iter_files
+    original = connector._iter_entries
 
     def counting(root):
         nonlocal walked
@@ -51,15 +51,20 @@ def test_cancellation_stops_the_tree_walk(tmp_path, index):
                 cancelled.set()
             yield item
 
-    connector._iter_files = counting  # type: ignore[method-assign]
+    connector._iter_entries = counting  # type: ignore[method-assign]
     assert connector.run() == []
     assert walked == 10 and ctx.stats is not None and ctx.stats.skipped
     assert len(ctx.stats.errors) == 1 and "deadline" in ctx.stats.errors[0]
 
 
-def test_credentials_are_reported_when_a_content_pass_times_out(tmp_path, index):
-    pad = "a " * 480_000
-    (tmp_path / "app.js").write_text(f'const k = "{SECRET}"; const pad = "{pad}";\n')
+def test_credentials_are_reported_when_a_content_pass_times_out(tmp_path, index, monkeypatch):
+    (tmp_path / "app.js").write_text(f'const k = "{SECRET}"; const model = "gpt-4";\n')
+    # Force a failure after the independent credential pass. Wall-clock timing
+    # depends on the machine and on #47's optimized matchers.
+    def exhausted(*args, **kwargs):
+        raise TimeoutError("simulated content budget")
+
+    monkeypatch.setattr(index, "match_domains_in_text", exhausted)
     findings, ctx = _scan(index, tmp_path, scan_timeout=60)
     assert any(f.kind == Kind.SECRET for f in findings)
     assert ctx.stats is not None and ctx.stats.incomplete

@@ -152,7 +152,7 @@ def test_capability_and_connection_string_fields_are_sensitive(key):
     assert sanitize({key: "opaque-capability-value"}) == {key: REDACTED}
 
 
-def test_record_exports_withhold_webhook_credentials(tmp_path: Path):
+def test_record_exports_withhold_webhook_credentials(tmp_path: Path, index):
     """Regression: --dump-records wrote n8n webhook URLs verbatim."""
     slack, discord = _slack(), _discord()
     export = tmp_path / "n8n.json"
@@ -169,7 +169,7 @@ def test_record_exports_withhold_webhook_credentials(tmp_path: Path):
         connectors=[ConnectorSpec(name="lowcode.n8n", config={"input": str(export)})],
         dump_records=str(tmp_path / "exports"),
     )
-    result = Engine(config).run()
+    result = Engine(config, index).run()
     assert result.complete and result.findings
     exported = "".join(path.read_text() for path in (tmp_path / "exports").glob("*.jsonl"))
     report = result.to_json()

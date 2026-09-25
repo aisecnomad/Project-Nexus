@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import time
@@ -22,13 +23,14 @@ def _run(index, root, **config):
 
 
 def test_secret_excerpt_is_redacted_before_truncation(tmp_path, index):
-    key = "pplx-" + "a" * 45
+    # Derived at runtime so no secret-shaped literal sits in the source.
+    key = "pplx-" + hashlib.sha256(b"perplexity-sample").hexdigest()[:48]
     (tmp_path / "client.py").write_text('headers = {"X-Trace": "' + "p" * 100 + '", "X-Custom-Header": "' + key + '"}\n')
     findings, _ = _run(index, tmp_path)
     secrets = [f for f in findings if f.kind == Kind.SECRET]
     assert len(secrets) == 1
     serialized = json.dumps(secrets[0].to_dict())
-    assert "a" * 12 not in serialized and "pplx-" not in serialized
+    assert key[5:17] not in serialized and "pplx-" not in serialized
 
 
 def test_excerpt_helper_redacts_then_truncates():
@@ -45,7 +47,7 @@ def test_duplicate_manifest_and_text_observations_count_once(tmp_path, index):
     assert len(env_evidence) == 1
     assert project.confidence < 0.85  # a single mention is not a confirmed agent
     (tmp_path / "Dockerfile").unlink()
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-" + "b" * 40 + "\n")
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h\n")
     findings, _ = _run(index, tmp_path)
     secret = next(f for f in findings if f.kind == Kind.SECRET)
     assert secret.metadata["count"] == 1 and len(secret.evidence) == 1
@@ -76,7 +78,7 @@ def test_git_metadata_decoding_is_lenient_and_isolated(tmp_path, index, monkeypa
 
 def test_emit_phase_failures_are_isolated_per_finding(tmp_path, index, monkeypatch):
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
-    (tmp_path / "config.py").write_text("OPENAI_API_KEY = 'sk-proj-" + "c" * 40 + "'\n")
+    (tmp_path / "config.py").write_text("OPENAI_API_KEY = 'sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h'\n")
 
     def boom(self, *args, **kwargs):
         raise RuntimeError("synthetic")

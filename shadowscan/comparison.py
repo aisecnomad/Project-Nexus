@@ -19,6 +19,7 @@ from shadowscan.config import PATH_KEYS, ConnectorSpec, ScanConfig
 from shadowscan.connectors import _BUILTIN
 from shadowscan.models import FINDING_IDENTITY_SCHEMA
 from shadowscan.signatures import SignatureIndex
+from shadowscan.utils.digest import scanner_source_digest
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.redaction import _sensitive_key, sanitize
 
@@ -86,11 +87,7 @@ def _has_private_scope_values(value: Any) -> bool:
 
 
 def _scanner_digest() -> str:
-    package = Path(__file__).parent
-    return hashlib.sha256(_canonical([
-        [p.relative_to(package).as_posix(), hashlib.sha256(p.read_bytes()).hexdigest()]
-        for p in sorted(package.rglob("*.py"))
-    ])).hexdigest()
+    return scanner_source_digest()
 
 
 def build_collection_scope(
