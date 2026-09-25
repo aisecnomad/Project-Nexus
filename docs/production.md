@@ -425,6 +425,28 @@ approve each root separately. A scalar `path` retains its prior resource ID,
 so another option for stable identities is one connector per repository with
 its own explicit label.
 
+## Field review changes
+
+A field review of public repositories changed what some scans report. Compare a
+pinned baseline with a candidate before enforcing policy on the new output:
+
+- **Folded manifests.** A CrewAI `agents.yaml` or `langgraph.json` inside a
+  reported project no longer produces its own `agent-manifest` finding; it is
+  listed under the project finding's `metadata.manifests`. `diff` shows those
+  finding IDs as resolved. Inventory entries that bound a manifest path should
+  bind the project resource instead. A2A cards and M365 declarative agents are
+  unchanged.
+- **GitHub Apps.** Installations without an AI signature or AI-like name are no
+  longer reported. Set `include_unrecognized_apps: true` to keep reviewing them,
+  at possible confidence with the `unrecognized-app` tag.
+- **Completeness.** Syntax errors in ordinary configuration files, Python test
+  modules over `max_ast_nodes` and notebooks whose outputs exceed
+  `max_file_size` now produce warnings instead of incomplete scans. Enable
+  `strict_coverage` to keep treating them as incomplete.
+- **Capabilities.** Test-only evidence and vendor-neutral idioms in MCP tool
+  servers no longer add capabilities; MCP server capabilities come from their
+  registered tools. Risk scores of affected findings change accordingly.
+
 ## Finding identity and comparison migration
 
 Finding IDs now separate stable source identity from inferred classification.
@@ -700,11 +722,11 @@ against its expected issuer and allowed keys. This is signature evidence, not an
 authorization or token-acceptance decision. Key rotation during the same analysis
 requires a new scan.
 
-See the [consolidated hardening log](hardening-logs/consolidated-review-2026-09-24.md)
+See the [consolidated hardening log](https://github.com/aisecnomad/Project-Nexus/blob/main/archive/reviews/consolidated-review-2026-09-24.md)
 for the maintainer's verification notes and implementation choices. It is an
 internal, AI-assisted work log, not an independent review.
 
-The [round 2 production review](production-review-2026-09-24-round2.md), also an
+The [round 2 production review](https://github.com/aisecnomad/Project-Nexus/blob/main/archive/reviews/production-review-2026-09-24-round2.md), also an
 internal AI-assisted work log rather than an independent review, records
 the later verified corrections to export sanitization, Bedrock/IAM/OCI collection,
 JWT classification, gateway detection and report rendering performance.

@@ -126,6 +126,12 @@ finding, and the CrewAI `agents.yaml` model names add an Azure OpenAI
 provider. Like the other corpora, this one is author-written: the authors
 chose the frameworks, the file layouts and the distractors, so its rates
 describe these 31 cases only and are not a field precision estimate.
+`field_review_corpus.json` holds eight synthetic cases written after a field
+review of public repositories: an aiohttp client, a UI component named
+`AgentCard` and a call-center `invoke_agent` function as hard negatives, and
+bound MCP, raw-response, streaming, helper-function and crew manifest cases as
+positives. Its cases re-create observed patterns in original code and are a
+regression suite, not a field precision estimate.
 `review_corpus.json` is a separate authored regression set for the September 25
 findings: local-module collisions, ordinary provider calls, tool-schema-only
 requests, and supported agent construction/loops. It was written after observing

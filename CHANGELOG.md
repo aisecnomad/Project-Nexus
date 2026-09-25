@@ -2,6 +2,70 @@
 
 ## 0.1.1 — Unreleased
 
+### Field review of public repositories (2026-09-25)
+
+Behavior changes to review before upgrading (see
+[production](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#field-review-changes)):
+
+- **Finding identity:** a CrewAI `agents.yaml` or `langgraph.json` inside a
+  reported project is folded into that project's finding (listed under
+  `metadata.manifests`) instead of a second agent finding. `diff` reports the
+  former manifest findings as resolved. A2A cards and M365 declarative agents
+  stay separate findings.
+- **GitHub Apps:** an installation needs an AI signature or an AI-like name.
+  Dependency, deploy and CI bots are no longer reported unless
+  `include_unrecognized_apps: true`, which caps them at possible confidence.
+  Only `workflows` or `actions` write access implies `code-exec`.
+- **Scan completeness:** a syntax error in a configuration file that is not
+  coding-agent settings (`.claude`, `.codex`, `.gemini`) is a warning; lexical
+  checks still read the file. `strict_coverage` keeps it incomplete.
+
+Fewer false incomplete scans:
+
+- Structured configuration accepts JSONC (VS Code settings, dev containers,
+  tsconfig) through a shared, faster lenient loader (`shadowscan.utils.jsonc`).
+- A Python module over the AST budget keeps its lexical evidence and is reported
+  as partially analyzed: a warning in test code, an error elsewhere. New
+  `max_ast_nodes` option (default 50000).
+- Notebooks whose saved outputs exceed `max_file_size` have their code cells
+  analyzed up to `max_notebook_size` (default 20 MiB); their outputs are not
+  scanned for credentials, which the scan reports.
+
+Precision and recall:
+
+- Code signals accept `ambiguous: true` for identifiers common outside the
+  product. Such matches count only with an import, dependency or specific code
+  pattern of the same signature in the project. Applied to `ClientSession(`
+  (aiohttp), `AgentCard(`/`AgentSkill(`/`DefaultRequestHandler(` (A2A),
+  `invoke_agent(`/`invoke_flow(` (Bedrock Agents), `create_agent(model=`,
+  `AgentsClient(`, `OpenApiTool(` (Azure AI Foundry), `CopilotClient(`
+  (Copilot Studio) and `Exa(`/`GoogleSearch(`/`WebSearch` (web search tools).
+- The cap on uncorroborated lexical evidence in languages without the import
+  binder applies to every signature category, not only frameworks.
+- On a host shared with another product and not named for MCP
+  (`api.githubcopilot.com`), the URL path decides: `/mcp` or `/sse` is MCP.
+- Provider tool loops are recognized with raw-response, streaming and
+  helper-function requests.
+- MCP server capabilities come from the tool names the server registers
+  (`metadata.mcp_tools`). Test-path evidence adds no capability unless the
+  project is only tests, and vendor-neutral idioms add none to an MCP server.
+- Findings with only supporting technology are titled `AI tooling`.
+- New `tools/evaluation/field_review_corpus.json` (8 synthetic cases) in
+  `make evaluate`.
+
+Performance:
+
+- Regex signal passes select candidate patterns with one scan over their
+  required literals instead of a per-pattern check, synthesized import
+  statements are matched once per index, and unresolved imports skip a code
+  pass whose results were discarded. Findings are unchanged.
+
+Development:
+
+- `pip install -e ".[dev]"` runs the whole suite: boto3 tests skip without the
+  AWS extra, and the dev extra includes setuptools and wheel.
+- Internal AI-assisted review logs move from `docs/` to `archive/reviews/`.
+
 ### Coverage and release verification follow-up
 
 - Mark unread oversized source and configuration files and outward or unresolved

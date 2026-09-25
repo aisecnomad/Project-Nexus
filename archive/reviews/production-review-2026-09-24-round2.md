@@ -88,5 +88,5 @@ callers now record their tool-call responses.
 * Findings sanitized by digest rely on the sanitizer being idempotent, which the
   existing regression suite asserts; keep that property when extending redaction.
 * Tenant canaries, container runtime acceptance and a held-out detection set
-  remain required before enforcing a policy gate; see [production](production.md)
-  and [evaluation](evaluation.md).
+  remain required before enforcing a policy gate; see [production](../../docs/production.md)
+  and [evaluation](../../docs/evaluation.md).

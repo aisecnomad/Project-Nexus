@@ -13,7 +13,7 @@
 > against real tenant permissions rather than mocked responses; the dependency
 > lock, wheel build and container process; and the repository and CI settings
 > that this log takes as given. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md)
-> for the review policy and [deployment and migration](../production.md) for
+> for the review policy and [deployment and migration](../../docs/production.md) for
 > the current rollout guide.
 
 Review date: 24 September 2026. Initial baseline:
@@ -210,7 +210,7 @@ requirements.
 
 ## Deployment limits and migration
 
-Read [deployment and migration](../production.md) before upgrading configurations.
+Read [deployment and migration](../../docs/production.md) before upgrading configurations.
 Strict validation is deliberately incompatible with silently ignored malformed
 configuration. Existing valid explicit configuration remains supported.
 

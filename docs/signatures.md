@@ -109,6 +109,13 @@ noisy-OR of its evidence weights (`1 - Π(1 - w)`). Rules of thumb:
 `agent_indicator` (on the signature or a signal) is what promotes a code
 project from `framework-usage` to `agent`. Plain provider SDK usage never does.
 
+`ambiguous: true` on a `code` signal marks patterns that are common identifiers
+outside the product, such as aiohttp's `ClientSession(` or a UI component named
+`AgentCard(`. The code connector counts such a match only when the same
+signature also has an import, a dependency or a non-ambiguous code match in the
+same project. Put ambiguous patterns in their own signal; every signature with
+one must also declare an import, dependency or specific code signal.
+
 ## Adding or overriding
 
 Put YAML files in a directory and pass `--signatures DIR` (or `signatures:` in
