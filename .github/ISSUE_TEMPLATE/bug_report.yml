@@ -1,0 +1,96 @@
+name: Bug report
+description: Report a scan failure, incorrect finding, or unexpected behavior.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not include credentials, JWTs, private exports, or exploit details.**
+        Use a [private security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new) for credential leaks, redaction failures, or anything that could expose sensitive data.
+
+  - type: input
+    id: version
+    attributes:
+      label: ShadowScan version
+      description: Output of `shadowscan --version` or the commit SHA you installed from.
+      placeholder: "0.1.1 or commit abc1234"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      description: Which surface or component is affected?
+      options:
+        - Code (filesystem / GitHub / GitLab)
+        - Identity (Okta / Entra / Google Workspace / Auth0 / JWT)
+        - Gateway (logs)
+        - Low-code (Power Platform / Salesforce / ServiceNow / n8n / Make / Zapier / Workato)
+        - SaaS (Slack / Teams / GitHub Apps / Atlassian / Notion / Zoom / generic)
+        - Cloud (AWS / GCP / Azure / OCI)
+        - Core engine / CLI / reporters
+        - Signatures
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Collection mode
+      options:
+        - Live (API credentials)
+        - Offline (JSON / CSV / log export)
+        - Both
+        - Not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug. Include the CLI command you ran and any relevant output.
+      placeholder: |
+        I ran `shadowscan run identity.entra --set tenant_id=...` and got...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration (sanitized)
+      description: |
+        Paste the relevant section of your `shadowscan.yaml` with all secrets removed.
+        Use `${REDACTED}` in place of real tokens.
+      render: yaml
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Python version, OS, container or CI runner details.
+      placeholder: |
+        Python 3.12.4, Ubuntu 24.04, running in GitHub Actions
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scan-exit
+    attributes:
+      label: Scan exit code
+      options:
+        - "0 (completed, passed)"
+        - "2 (completed, --fail-on triggered)"
+        - "3 (incomplete scan)"
+        - "1 or other (crash / usage error)"
+        - Not applicable

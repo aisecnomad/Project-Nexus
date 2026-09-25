@@ -1,0 +1,59 @@
+name: Connector request
+description: Request support for a new platform, identity provider, or data source.
+labels: [connector-request]
+body:
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      description: Which discovery surface does this belong to?
+      options:
+        - Code (source repositories / package registries)
+        - Identity (IdP / OAuth / token issuers)
+        - Gateway (LLM proxy / observability logs)
+        - Low-code (automation / citizen-dev platforms)
+        - SaaS (collaboration / productivity apps)
+        - Cloud (hyperscaler / managed AI services)
+        - New surface
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform or service
+      placeholder: "e.g. HubSpot, PagerDuty, Databricks"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-to-discover
+    attributes:
+      label: What should be discovered?
+      description: |
+        What AI agents, bots, integrations, or LLM-related resources exist on this platform
+        that an organization might not know about?
+    validations:
+      required: true
+
+  - type: textarea
+    id: api-docs
+    attributes:
+      label: API documentation
+      description: |
+        Links to the platform's API docs for listing bots, apps, agents, or integrations.
+        Note whether the API is read-only and what scopes are needed.
+
+  - type: checkboxes
+    id: offline
+    attributes:
+      label: Offline support
+      options:
+        - label: This platform supports a CSV / JSON export that could be analyzed offline.
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to implement this connector.
