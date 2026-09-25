@@ -158,15 +158,18 @@ incomplete depends on what the file could hide:
   so the omission is visible. Lockfiles, minified bundles, source maps and
   bytecode below the limit are skipped silently because they are never analyzed.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
-  document, is an error and the scan is incomplete (exit 3), because the scanner
-  would otherwise claim coverage of content it never inspected. Raise
-  `max_file_size`, exclude the directory, or add the name to
-  `oversize_skip_globs` after confirming it carries no agent evidence.
+  document, is skipped with a warning by default (see the coverage policy
+  above). With `strict_coverage: true` (`--strict-coverage`) it is an error and
+  the scan is incomplete (exit 3), because an enforcement gate must not claim
+  coverage of content the scanner never inspected. Raise `max_file_size`,
+  exclude the directory, or add the name to `oversize_skip_globs` after
+  confirming it carries no agent evidence.
 
 `oversize_skip_globs` replaces the default list with case-insensitive file-name
 globs; a pattern containing `/` is matched against the path relative to the scan
-root. An empty list turns every oversize file that the scanner would read into an
-error. Oversize files that are never read at any size, such as executables or
+root. A matching file stays a warning even under `strict_coverage`; an empty
+list makes every oversize file that the scanner would read an error in strict
+mode. Oversize files that are never read at any size, such as executables or
 media in other formats, are skipped silently as before.
 
 The per-file matching budget also grows with size. `scan_timeout` (default 2
