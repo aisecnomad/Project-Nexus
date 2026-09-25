@@ -1,108 +1,29 @@
 # Contributing
 
-Thank you for your interest in contributing to ShadowScan.
+The [repository contributor guide](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md)
+is the canonical source for development setup, quality gates, review policy,
+commit sign-off and the pull request process. Keeping these requirements in one
+place avoids conflicting instructions between the website and the repository.
 
-## Before you start
+## First contribution
 
-1. Read the [security policy](security.md) — ShadowScan handles audit
-   credentials and security findings.
-2. Check [existing issues](https://github.com/aisecnomad/Project-Nexus/issues)
-   for related work.
-3. For significant changes, open an issue first to discuss the approach.
+1. Read the [community guide](community.md) and
+   [security policy](security.md).
+2. Search [open issues](https://github.com/aisecnomad/Project-Nexus/issues) for
+   related work. Documentation fixes and small synthetic reproductions are
+   useful contributions.
+3. For significant changes, open an issue first to agree on scope and the
+   approach. Follow the contributor guide to create a local development
+   environment and submit a focused pull request.
 
-## Development setup
+## Technical guides
 
-```bash
-git clone https://github.com/aisecnomad/Project-Nexus.git
-cd Project-Nexus
-python -m pip install -e ".[all]"   # dev + cloud extras
-make install-hooks                  # pre-commit hooks
-```
+- [Architecture and connector contract](architecture.md)
+- [Connector configuration and permissions](connectors.md)
+- [Signature authoring](signatures.md)
+- [Detection evaluation](evaluation.md)
+- [Deployment and acceptance evidence](production.md)
+- [Architectural decisions](adrs/index.md)
 
-For a quick reference of all development commands:
-
-```bash
-make help
-```
-
-## Running quality gates
-
-```bash
-make check   # runs everything CI runs
-```
-
-Or individually:
-
-```bash
-make lint        # ruff
-make typecheck   # mypy
-make test        # pytest with coverage
-make signatures  # validate signature schemas
-make audit       # pip-audit
-make evaluate    # detection corpus evaluation
-```
-
-## Trust model
-
-The operator workstation or CI runner, the scan configuration, and installed
-Python packages are trusted. Remote API responses, scanned repositories, and
-offline exports are untrusted. Third-party connectors are not a sandbox: an
-approved plugin runs with scanner privileges.
-
-## Pull request guidelines
-
-- Target `main`. Do not push reviewed security changes directly.
-- Keep findings fail-closed: a limit, malformed export, or denied API must
-  mark the scan incomplete (exit 3) rather than look empty.
-- Do not log raw credentials, JWTs, or unsanitized connector configuration.
-- Pin GitHub Actions by full commit SHA.
-- Update `CHANGELOG.md` under Unreleased and `docs/production.md` when a
-  change affects rollout, finding identity, or credential policy.
-- Include regression tests for any bug fix.
-- Connector changes require per-connector coverage ≥ 75%.
-
-## Review gate
-
-The author of a change cannot supply the required independent approving
-review. Do not weaken repository rulesets to self-merge.
-
-## Writing a connector
-
-Connectors implement two methods:
-
-- `collect()` — live API collection
-- `analyze()` — offline record analysis (records → findings)
-
-Register through the `shadowscan.connectors` entry-point group. See
-[architecture](architecture.md) for the full connector contract.
-
-Each connector must:
-
-- Handle API failures gracefully and mark coverage incomplete
-- Support offline mode with JSON/CSV/log exports
-- Include offline test fixtures (no live credentials in tests)
-- Achieve ≥ 75% statement coverage
-- Be documented in `docs/connectors.md`
-
-## Writing signatures
-
-Signatures are YAML. Add a pack directory with `--signatures` or the
-`signatures:` config key. See [signatures](signatures.md) for the schema
-and authoring guide.
-
-After adding or modifying signatures:
-
-```bash
-python -m shadowscan.signatures.validate
-make evaluate
-```
-
-## Security reports
-
-Use a [private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new).
-Do not include credentials, private exports, or exploit details in public issues.
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the
-Apache-2.0 license.
+Use synthetic fixtures and authorized inputs. Never put live credentials,
+private exports or confidential source code in a public issue or pull request.

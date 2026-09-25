@@ -5,43 +5,11 @@ GitHub Code Scanning and exits with deterministic codes for gate decisions.
 
 ## GitHub Actions
 
-A complete example is provided in `examples/github-action-code-scan.yml`.
-The minimal version:
-
-```yaml
-name: Shadow AI scan
-on:
-  push:
-    branches: [main]
-  pull_request:
-permissions:
-  contents: read
-  security-events: write  # for SARIF upload
-jobs:
-  scan:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install ShadowScan
-        run: pip install "git+https://github.com/aisecnomad/Project-Nexus.git@COMMIT_SHA"
-
-      - name: Scan repository
-        run: shadowscan code . --format sarif -o shadowscan.sarif --fail-on high
-
-      - name: Upload SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: shadowscan.sarif
-```
+Copy the [consumer GitHub Action](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/github-action-code-scan.yml)
+into your repository and set `SHADOWSCAN_REVISION` to a reviewed full commit SHA.
+The example pins its actions, checks out that exact scanner revision, installs
+the hash-locked runtime and build dependencies, builds a wheel with the locked backend,
+and uploads the SARIF report. Review its `--fail-on` level for your policy.
 
 ## Exit code handling
 
@@ -49,36 +17,50 @@ jobs:
 |------|-------------------|
 | `0` | Pass — scan completed, no findings above threshold |
 | `2` | Fail — scan completed, findings reached `--fail-on` level |
-| `3` | Warn — incomplete scan, some connectors failed |
+| `3` | Fail — incomplete scan, some connectors failed |
 
-For `--fail-on` gating, use exit code 2 as a pipeline failure. Exit code 3
-should trigger a warning, not a hard failure, since it indicates partial results
-rather than a policy violation.
+For `--fail-on` gating, fail on exit codes 2 and 3. An incomplete scan may omit
+findings above the threshold and cannot establish that the policy passed.
 
 ## Container-based scanning
 
-For isolated scanning of untrusted repositories:
+For isolated scanning of untrusted repositories, set the repository variable
+`SHADOWSCAN_IMAGE` to a reviewed image reference such as
+`registry.example.com/security/shadowscan@sha256:<approved-64-hex-image-digest>`.
+This is the built worker image digest, distinct from the approved base digest:
 
 ```yaml
 - name: Scan in container
+  env:
+    SHADOWSCAN_IMAGE: ${{ vars.SHADOWSCAN_IMAGE }}
+  shell: bash
   run: |
+    set -euo pipefail
+    [[ "$SHADOWSCAN_IMAGE" =~ ^[^[:space:]]+@sha256:[a-f0-9]{64}$ ]] || exit 1
+    umask 077
     docker run --rm --network none --read-only --cap-drop ALL \
       --security-opt no-new-privileges --memory 1g --pids-limit 128 \
       --tmpfs /tmp:rw,noexec,nosuid,size=64m \
       --mount "type=bind,source=${{ github.workspace }},target=/input,readonly" \
-      shadowscan:reviewed code /input --format sarif -o /dev/stdout > shadowscan.sarif
+      "$SHADOWSCAN_IMAGE" code /input --format sarif > shadowscan.sarif
 ```
 
 ## Incremental scanning
 
-Use `--incremental` with a persistent cache directory to skip unchanged inputs:
+Use `--incremental` with a private state directory outside the scanned checkout.
+If you cache state between trusted main-branch runs, scope the cache to the
+reviewed scanner revision and restore that exact path:
 
 ```yaml
-- uses: actions/cache@v4
+- uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+  if: github.event_name == 'push' && github.ref == 'refs/heads/main'
   with:
-    path: .shadowscan-cache
-    key: shadowscan-${{ hashFiles('**/*.py', '**/*.js', '**/*.ts') }}
-    restore-keys: shadowscan-
+    path: ${{ runner.temp }}/shadowscan-cache
+    key: shadowscan-${{ runner.os }}-${{ vars.SHADOWSCAN_REVISION }}-${{ hashFiles('shadowscan.yaml', '**/*.py', '**/*.js', '**/*.ts') }}
+    restore-keys: shadowscan-${{ runner.os }}-${{ vars.SHADOWSCAN_REVISION }}-
 
-- run: shadowscan scan -c shadowscan.yaml --incremental --fail-on high
+- run: |
+    install -d -m 700 "$RUNNER_TEMP/shadowscan-cache"
+    shadowscan scan -c shadowscan.yaml --incremental \
+      --state-dir "$RUNNER_TEMP/shadowscan-cache" --fail-on high
 ```

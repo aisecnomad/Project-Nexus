@@ -222,7 +222,8 @@ class EntraConnector(BaseConnector):
             resource=f"entra:sp:{sp.get('id')}",
             resource_type=f"service-principal/{sp_type}",
             provider="entra",
-            account=self.tenant or sp.get("appOwnerOrganizationId"),
+            # appOwnerOrganizationId is the publisher's tenant, not the scanned one.
+            account=self.tenant,
             first_seen=sp.get("createdDateTime"),
         )
         assess_app(
@@ -232,7 +233,8 @@ class EntraConnector(BaseConnector):
             publisher=sp.get("publisherName") or ((sp.get("verifiedPublisher") or {}).get("displayName")),
             description=" ".join(x for x in [sp.get("notes"), sp.get("description")] if x),
             urls=[sp.get("homepage"), sp.get("loginUrl"), *(sp.get("replyUrls") or [])],
-            scopes=list(delegated) + app_perms,
+            # Sets iterate in hash order; sort so reports are reproducible across runs.
+            scopes=sorted(delegated) + app_perms,
             client_id=sp.get("appId"),
         )
         if first_party and not f.frameworks and not self.include_first_party:
@@ -263,6 +265,7 @@ class EntraConnector(BaseConnector):
                 "publisher": sp.get("publisherName"),
                 "verified_publisher": (sp.get("verifiedPublisher") or {}).get("displayName"),
                 "first_party": first_party,
+                "owner_tenant": sp.get("appOwnerOrganizationId"),
                 "account_enabled": sp.get("accountEnabled"),
                 "sign_in_audience": sp.get("signInAudience"),
                 "tags": sp.get("tags"),

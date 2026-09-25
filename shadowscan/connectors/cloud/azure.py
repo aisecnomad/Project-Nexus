@@ -79,6 +79,7 @@ class _ResourceBase(TypedDict):
 
 class AzureConnector(BaseConnector):
     name: ClassVar[str] = "cloud.azure"
+    _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = True
     surface: ClassVar[Surface] = Surface.CLOUD
     provider: ClassVar[str | None] = "azure"
     requires: ClassVar[list[str]] = []

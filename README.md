@@ -4,9 +4,9 @@
 [![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://aisecnomad.github.io/Project-Nexus/)
+[![Docs](https://img.shields.io/badge/docs-source-blue.svg)](https://github.com/aisecnomad/Project-Nexus/tree/main/docs)
 
-**ShadowScan is an Open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
+**ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
 
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps and cloud accounts. It fingerprints frameworks and
@@ -147,7 +147,7 @@ python -m pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Pro
 The current `0.1.1` source version is an unreleased candidate; the version
 string does not imply a published or signed artifact. These VCS installs resolve
 transitive dependencies at install time. For deployment, use the locked install
-below. Python 3.11+ is required; CI covers 3.11 and 3.12. Core dependencies
+below. Python 3.11+ is required; CI covers 3.11, 3.12 and 3.13. Core dependencies
 include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
@@ -170,7 +170,7 @@ shadowscan code . --inventory agent-card.yaml
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 
 # 3. Real estate: one config, live connectors, secrets from the environment
-shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif --fail-on high
+shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif
 
 # 4. Single connector, ad-hoc
 shadowscan run identity.entra --set tenant_id=$AZURE_TENANT_ID
@@ -208,7 +208,6 @@ options:
   connector_timeout_seconds: 120    # soft deadline; also enforce a host job timeout
   parallel: 4                        # worker threads; use 1-2 for CPU-bound offline scans
   min_confidence: 0.3
-  fail_on: high
   dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs
 connectors:
   - name: identity.entra
@@ -263,6 +262,10 @@ cannot establish an agent unless `--include-tests` is set.
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
 scans as unsuccessful, while preserving findings from successfully assessed inputs.
+Enable `--fail-on` only after a [frozen, independently adjudicated holdout](docs/evaluation.md#gate-a-frozen-holdout)
+and [read-only tenant canary](docs/evaluation.md#read-only-tenant-canary-procedure)
+establish an acceptable threshold for that environment. A complete static scan
+does not prove that an agent executed or that every eligible resource was collected.
 The CLI normally exits promptly after a connector deadline even when a blocked
 worker cannot be joined. A filesystem publication already in progress can still
 delay timeout handling; enforce a host job timeout for hard limits.
@@ -363,15 +366,33 @@ turns shadow findings into card skeletons for review. See
 pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
 ruff check shadowscan tests tools
-mypy shadowscan tools/evaluation
+mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
 pip-audit --progress-spinner off
 pytest -q --cov=shadowscan --cov-fail-under=80
 shadowscan scan -c examples/shadowscan.offline.yaml
 ```
 
-The test suite needs the `cloud` extra: one OCI test module imports the SDK at
-collection time, so without it pytest stops with a collection error before any
-test runs. See [CONTRIBUTING.md](CONTRIBUTING.md#development).
+Install the `cloud` extra for the same connector coverage as CI. Tests that
+require missing optional SDKs can skip, so a core-only run does not validate all
+connectors. See [CONTRIBUTING.md](CONTRIBUTING.md#getting-started).
+
+## Community and contributing
+
+Contributions are welcome from developers, security practitioners, technical
+writers and people testing the scanner against their own authorized data.
+A small documentation fix or a reproducible false-positive report is useful.
+
+| I want to… | Start here |
+|---|---|
+| Learn, ask a question or troubleshoot a scan | [Support guide](SUPPORT.md) |
+| Report a bug or suggest a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
+| Make a first contribution | [Contributor guide](CONTRIBUTING.md) |
+| Understand decisions, review and release requirements | [Governance](GOVERNANCE.md) |
+| Report a vulnerability privately | [Security policy](SECURITY.md#reporting) |
+| Understand participation standards or report harmful conduct | [Code of conduct](CODE_OF_CONDUCT.md) |
+
+Use synthetic, minimal examples in public reports. Scan results can contain
+credentials, personal data and sensitive inventory even after redaction.
 
 ## Safety notes
 

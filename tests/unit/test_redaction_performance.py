@@ -71,6 +71,19 @@ assert sanitize_text(url + '&%74oken=opaque-secret') == url + '&%74oken=' + REDA
 """)
 
 
+def test_unmatched_very_long_identifier_has_bounded_work():
+    # The identifier cannot be retried at each internal dot or hyphen.
+    _bounded_process("""
+from shadowscan.utils.redaction import REDACTED, sanitize_text
+key = 'segment.' * 40_000 + 'API_KEY'
+source = key + ' ' * 50_000
+assert sanitize_text(source) == source
+secret = 'opaque-synthetic-value'
+safe = sanitize_text(key + ' = "' + secret + '"')
+assert secret not in safe and REDACTED in safe
+""")
+
+
 def test_full_source_scan_survives_hostile_url_preprocessing(tmp_path):
     (tmp_path / "a.py").write_text(
         "url = 'https://example.test/" + "?" * 500_000 + "'\n", encoding="utf-8",

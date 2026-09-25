@@ -21,7 +21,7 @@ def _run() -> dict[str, Any]:
         "id": 123,
         "head_sha": SHA,
         "head_branch": "main",
-        "path": ".github/workflows/ci.yml",
+        "path": ".github/workflows/ci.yml@main",
         "event": "push",
         "status": "completed",
         "conclusion": "success",
@@ -40,7 +40,9 @@ def _verify(run: Any, **overrides: Any) -> dict[str, Any]:
     ("field", "value"),
     [
         ("id", 124), ("head_sha", "b" * 40), ("head_branch", "feature"),
-        ("path", ".github/workflows/spoof-ci.yml"), ("event", "pull_request"),
+        ("path", ".github/workflows/spoof-ci.yml@main"),
+        ("path", ".github/workflows/ci.yml"),
+        ("path", ".github/workflows/ci.yml@feature"), ("event", "pull_request"),
         ("status", "in_progress"), ("conclusion", "failure"), ("conclusion", "skipped"),
         ("repository", {"full_name": "someone/fork"}),
         ("head_repository", {"full_name": "someone/fork"}), ("head_repository", None),
@@ -74,6 +76,7 @@ def test_ci_gate_retains_only_verified_fields() -> None:
 def candidate(tmp_path: Path) -> Path:
     (tmp_path / "shadowscan-0.1.1-py3-none-any.whl").write_bytes(b"wheel bytes")
     (tmp_path / "requirements.lock").write_text("click==8.1\n", encoding="utf-8")
+    (tmp_path / "requirements-build.lock").write_text("setuptools==84.0.0\n", encoding="utf-8")
     (tmp_path / "requirements-ci-constraints.txt").write_text("pip-audit==2.10.1\n", encoding="utf-8")
     (tmp_path / "ci-verification.json").write_text(json.dumps(_verify(_run())), encoding="utf-8")
     (tmp_path / "runtime-sbom.cdx.json").write_text(
@@ -91,6 +94,7 @@ def test_release_manifest_covers_every_artifact_and_detects_changed_bytes(candid
     _manifest(candidate)
     manifest = json.loads((candidate / "build-evidence.json").read_text())
     assert manifest["source"] == {"repository": REPOSITORY, "commit": SHA}
+    assert "requirements-build.lock" in {item["name"] for item in manifest["files"]}
     assert manifest["ci"]["id"] == 123
     assert "not a claim" in manifest["scope"]["assurance"]
     checksums = (candidate / "SHA256SUMS").read_text().splitlines()
@@ -121,10 +125,13 @@ def test_release_evidence_refuses_failed_saved_ci(candidate: Path) -> None:
         _manifest(candidate)
 
 
-@pytest.mark.parametrize("case", ["missing-sbom", "empty-sbom", "no-wheel", "two-wheels", "symlink", "bad-name"])
+@pytest.mark.parametrize("case", ["missing-sbom", "missing-build-lock", "empty-sbom", "no-wheel",
+                                 "two-wheels", "symlink", "bad-name"])
 def test_release_evidence_refuses_incomplete_or_unsafe_bundle(candidate: Path, case: str) -> None:
     if case == "missing-sbom":
         (candidate / "runtime-sbom.cdx.json").unlink()
+    elif case == "missing-build-lock":
+        (candidate / "requirements-build.lock").unlink()
     elif case == "empty-sbom":
         (candidate / "runtime-sbom.cdx.json").write_text('{"bomFormat":"CycloneDX","components":[]}', encoding="utf-8")
     elif case == "no-wheel":

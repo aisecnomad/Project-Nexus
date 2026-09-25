@@ -41,11 +41,16 @@ from shadowscan.connectors.common import (
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.jwks import fetch_jwks, verification_algorithms, verify_against_jwks
+from shadowscan.utils.redaction import sanitize_text
 from shadowscan.utils.text import parse_timestamp, to_iso
 
 _JWT_RX = re.compile(r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*$")
 USER_CLAIMS = ("upn", "preferred_username", "email", "unique_name", "name", "given_name", "family_name", "username", "cognito:username", "oid_user")
 AGENT_CLAIM_KEYS = ("agent_id", "agent", "agent_name", "agentid", "x-agent-id", "bot", "bot_id", "client_name", "app_displayname", "azp_name", "workload", "spiffe_id", "delegation", "on_behalf_of", "obo", "actor", "act", "may_act", "purpose", "tool", "tools")
+# Client-naming claims are present on ordinary user tokens (every Entra v1
+# delegated token carries app_displayname). Their *value* must match an AI
+# product / agent name signature before they count as an agent hint.
+_AGENT_NAMING_CLAIMS = frozenset({"client_name", "app_displayname", "azp_name"})
 _KUBERNETES_LEGACY_CLAIMS = (
     "kubernetes.io/serviceaccount/namespace",
     "kubernetes.io/serviceaccount/secret.name",
@@ -244,8 +249,17 @@ class JwtConnector(BaseConnector, _NoDump):
         ):
             identity_type = "service"
             reasons.append("Keycloak service account")
+        agent_hints: dict[str, Any] = {}
+        for key in AGENT_CLAIM_KEYS:
+            if key not in claims or key in {"act", "may_act"}:
+                continue
+            if key in _AGENT_NAMING_CLAIMS and not name_matches(self.index, str(claims[key])):
+                continue
+            agent_hints[key] = claims[key]
         if "act" in claims or "may_act" in claims:
-            identity_type = "delegated-agent" if identity_type != "human" else "delegated"
+            # A user-subject token whose claims identify an agent is an agent
+            # acting on behalf of that user; delegation never weakens the class.
+            identity_type = "delegated-agent" if identity_type != "human" or agent_hints else "delegated"
             actor = claims.get("act") or {}
             chain = []
             while isinstance(actor, dict):
@@ -257,7 +271,6 @@ class JwtConnector(BaseConnector, _NoDump):
         azp = claims.get("azp") or claims.get("appid") or claims.get("client_id") or claims.get("cid")
         if azp and aud_list and str(azp) not in aud_list and identity_type == "human":
             reasons.append(f"authorised party {azp} differs from audience (token issued to a client acting for the user)")
-        agent_hints = {k: claims[k] for k in AGENT_CLAIM_KEYS if k in claims and k not in {"act", "may_act"}}
         if agent_hints:
             reasons.append(f"agent-related claims: {', '.join(agent_hints)}")
             f.add_tag("agent-claims")
@@ -330,7 +343,9 @@ class JwtConnector(BaseConnector, _NoDump):
                 "kid": header.get("kid"),
                 "lifetime_hours": round(lifetime_h, 1) if lifetime_h else None,
                 "scopes": scopes[:40],
-                "agent_claims": {k: (v if isinstance(v, (str, int, bool)) else json.dumps(v)[:200]) for k, v in agent_hints.items()},
+                # Sanitize before shortening: a nested token loses its
+                # recognizable three-segment shape once truncated.
+                "agent_claims": {k: (v if isinstance(v, (str, int, bool)) else sanitize_text(json.dumps(v))[:200]) for k, v in agent_hints.items()},
                 "claim_names": sorted(claims.keys()),
                 "context": context,
             }

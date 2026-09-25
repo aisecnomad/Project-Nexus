@@ -6,7 +6,6 @@ import base64
 import os
 import subprocess
 import sys
-from types import SimpleNamespace
 
 import pytest
 
@@ -102,11 +101,12 @@ def test_clone_callers_enforce_hooks_auth_and_branch_validation(provider, branch
     connector = cls(ctx)
     captured = {}
 
-    def fake_run(cmd, **kwargs):
-        captured.update(cmd=cmd, **kwargs)
-        return SimpleNamespace(returncode=0)
+    def fake_clone(cmd, env, ctx, timeout):
+        captured.update(cmd=cmd, env=env, ctx=ctx, timeout=timeout)
+        return True
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr("shadowscan.connectors.code.github.run_bounded_clone", fake_clone)
+    monkeypatch.setattr("shadowscan.connectors.code.gitlab.run_bounded_clone", fake_clone)
     repo = {
         "full_name": "acme/app", "default_branch": branch,
         "clone_url": "https://github.com/acme/app.git",

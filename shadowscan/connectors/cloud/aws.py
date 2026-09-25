@@ -90,6 +90,7 @@ def _resource_id(value: Any) -> str:
 
 class AwsConnector(BaseConnector):
     name: ClassVar[str] = "cloud.aws"
+    _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = True
     surface: ClassVar[Surface] = Surface.CLOUD
     provider: ClassVar[str | None] = "aws"
     requires: ClassVar[list[str]] = ["boto3"]
@@ -320,7 +321,9 @@ class AwsConnector(BaseConnector):
             groups: list[dict[str, Any]] = []
             knowledge_bases: list[dict[str, Any]] = []
             collaborators: list[dict[str, Any]] = []
-            version_details: dict[str, dict[str, Any]] = {"DRAFT": agent}
+            # Snapshot the public DRAFT fields: storing the record itself creates a
+            # cycle that export sanitization collapses to a redaction marker.
+            version_details: dict[str, dict[str, Any]] = {"DRAFT": {k: v for k, v in agent.items() if not k.startswith("_")}}
             for version in sorted(versions):
                 if version != "DRAFT":
                     version_result = self._safe(ba.get_agent_version, agentId=agent_id, agentVersion=version)
@@ -767,8 +770,13 @@ class AwsConnector(BaseConnector):
         details: dict[str, dict[str, Any]] = {}
         for version, version_detail in raw_details.items():
             if not isinstance(version_detail, dict):
-                self.ctx.warn("cloud.aws: Bedrock agent has invalid version details")
-                continue
+                if str(version) == "DRAFT":
+                    # Older exports collapsed the self-referential DRAFT entry; the
+                    # DRAFT details are the agent record itself by construction.
+                    version_detail = rec
+                else:
+                    self.ctx.warn("cloud.aws: Bedrock agent has invalid version details")
+                    continue
             details[str(version)] = version_detail
         models = [rec.get("foundationModel"), *(v.get("foundationModel") for v in details.values())]
         if any(model is not None and not isinstance(model, str) for model in models):
@@ -820,6 +828,11 @@ class AwsConnector(BaseConnector):
         return done(f, self.index, Kind.WORKFLOW)
 
     def _h_bedrock_logging(self, rec: dict[str, Any]) -> Finding | None:
+        if "loggingConfig" not in rec or self._is_error_record(rec):
+            # Live collection always includes the key (null when disabled); an
+            # export lacking it or carrying an error body cannot establish absence.
+            self.ctx.warn(f"cloud.aws: Bedrock logging configuration unavailable for {rec.get('_region')}; coverage unknown", incomplete=True)
+            return None
         cfg = rec.get("loggingConfig")
         f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Bedrock model invocation logging {'enabled' if cfg else 'DISABLED'} in {rec.get('_region')}", resource=f"arn:aws:bedrock:{rec.get('_region')}:{self.account}:logging", resource_type="bedrock-logging", account=self.account, region=rec.get("_region"))
         f.add_model_provider("provider.aws-bedrock")
@@ -961,7 +974,13 @@ class AwsConnector(BaseConnector):
             return None
         f.add_model_provider("provider.huggingface") if llm and not f.model_providers else None
         f.add_evidence(Evidence(signal="aws:sagemaker", description=f"Endpoint '{rec.get('EndpointName')}' ({rec.get('EndpointStatus')}) serving {', '.join(str(m.get('name')) for m in rec.get('models') or [])} on {', '.join(str(m.get('instance')) for m in rec.get('models') or [])}", location=arn, weight=0.6))
-        f.metadata.update({"status": rec.get("EndpointStatus"), "models": rec.get("models")})
+        # Environment values never enter finding metadata: they are analysed
+        # above and a benign value could otherwise be redacted out of sibling
+        # identity fields. Keep the variable names, as the Lambda handler does.
+        f.metadata.update({"status": rec.get("EndpointStatus"), "models": [
+            {**{k: v for k, v in m.items() if k != "env"}, "env_names": sorted(str(k) for k in (m.get("env") or {}))[:40]}
+            for m in rec.get("models") or [] if isinstance(m, dict)
+        ]})
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_state_machine(self, rec: dict[str, Any]) -> Finding | None:

@@ -13,6 +13,8 @@ import re
 import tokenize
 from dataclasses import dataclass
 
+_RUBY_BLOCK_END = re.compile(r"(?m)^=end(?:\s|$)")
+
 _FSTRING_PREFIX = re.compile(r"(?i)^([rubf]{1,3})(\"\"\"|'''|\"|')")
 _STRING_PREFIX = re.compile(r"(?i)[rubf]{0,3}(\"\"\"|'''|\"|')")
 _MAX_FSTRING_DEPTH = 24
@@ -106,15 +108,40 @@ def noncode_ranges(
 
 
 def _python_ranges(text: str) -> tuple[list[tuple[int, int]], bool]:
-    offsets = [0]
-    for line in text.splitlines(keepends=True):
-        offsets.append(offsets[-1] + len(line))
+    # Python's file reader treats a standalone CR as a newline, whereas
+    # StringIO.readline does not. Normalize only those CRs, preserving every
+    # offset so ignored spans still refer to the original source.
+    lex_text = re.sub(r"\r(?!\n)", "\n", text) if "\r" in text else text
+    # tokenize.readline advances at '\n' only. str.splitlines() also treats
+    # Unicode separators inside a quoted value as line breaks and would shift
+    # later ignored spans away from their original source positions.
+    offsets = [0, *(match.end() for match in re.finditer("\n", lex_text))]
+    if offsets[-1] != len(lex_text):
+        offsets.append(len(lex_text))
+
+    spans: list[tuple[int, int]] = []
+    ambiguous = False
+    resume_line: int | None = 0  # zero-based line at which the tokenizer (re)starts
+    reader = io.StringIO(lex_text)
+    while resume_line is not None:
+        reader.seek(offsets[min(resume_line, len(offsets) - 1)])
+        ambiguous, resume_line = _python_ranges_from(lex_text, offsets, resume_line, spans, reader)
+    return sorted(spans), ambiguous
+
+
+_UNTERMINATED_ONE_LINE_STRING = "unterminated string literal"
+
+
+def _python_ranges_from(
+    text: str, offsets: list[int], first_line: int, spans: list[tuple[int, int]], reader: io.StringIO,
+) -> tuple[bool, int | None]:
+    """Tokenize from ``first_line``; return (ambiguous, line to resume at or None)."""
 
     def offset(position: tuple[int, int]) -> int:
         line, column = position
+        line += first_line
         return min(len(text), offsets[min(line - 1, len(offsets) - 1)] + column)
 
-    spans: list[tuple[int, int]] = []
     fstring_starts: list[int] = []
     fstring_start_type = getattr(tokenize, "FSTRING_START", None)
     fstring_end_type = getattr(tokenize, "FSTRING_END", None)
@@ -123,14 +150,14 @@ def _python_ranges(text: str) -> tuple[list[tuple[int, int]], bool]:
         if hasattr(tokenize, name)
     }
     try:
-        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        for token in tokenize.generate_tokens(reader.readline):
             if token.type == tokenize.STRING:
                 prefix = _FSTRING_PREFIX.match(token.string)
                 if prefix is not None and "f" in prefix.group(1).lower():
                     inner, incomplete = _legacy_fstring_ranges(token.string, offset(token.start))
                     if incomplete:
                         spans.append((offset(token.start), offset(token.end)))
-                        return sorted(spans), True
+                        return True, None
                     spans.extend(inner)
                 else:
                     spans.append((offset(token.start), offset(token.end)))
@@ -141,23 +168,44 @@ def _python_ranges(text: str) -> tuple[list[tuple[int, int]], bool]:
                 elif token.type == fstring_end_type and fstring_starts:
                     fstring_starts.pop()
             elif token.type == tokenize.ERRORTOKEN and token.string in {'"', "'"}:
-                # Unclosed one-line literal: do not scan its prose as code.
+                # Unclosed one-line literal (Python 3.11): do not scan its prose
+                # as code; the tokenizer itself continues on the next line.
                 start = offset(token.start)
                 end = text.find("\n", start)
                 spans.append((start, len(text) if end < 0 else end))
     except (tokenize.TokenError, IndentationError) as exc:
         if fstring_starts:
             start = fstring_starts[0]
-            return [*(span for span in spans if span[1] <= start), (start, len(text))], True
+            spans[:] = [*(span for span in spans if span[1] <= start), (start, len(text))]
+            return True, None
+        message = str(exc.args[0]) if exc.args else ""
         position = exc.args[1] if isinstance(exc, tokenize.TokenError) else (exc.lineno or 1, exc.offset or 0)
-        spans.append((offset(position), len(text)))
-        # Unterminated literals are masked through EOF. Nothing after that
-        # opening quote can be executable Python; preceding code is covered.
-        return spans, False
+        if isinstance(exc, tokenize.TokenError) and message.startswith(_UNTERMINATED_ONE_LINE_STRING):
+            # Python 3.12+ aborts on an unclosed one-line literal where 3.11
+            # emitted an ERRORTOKEN and carried on. Mask that line (the
+            # reported column is one past the opening quote) and resume on the
+            # next line so the remainder keeps the same coverage as 3.11.
+            start = max(offset((position[0], 0)), offset(position) - 1)
+            end = text.find("\n", start)
+            if end < 0:
+                spans.append((start, len(text)))
+                return False, None
+            spans.append((start, end))
+            return False, first_line + position[0]
+        start = offset(position)
+        if start < len(text):  # an error reported at EOF itself masks nothing
+            spans.append((start, len(text)))
+        # An unterminated multi-line literal/statement is masked through EOF:
+        # nothing after that opening can be executable Python. Any other
+        # tokenizer error (Python 3.12+ raises for mid-file lexical errors that
+        # 3.11 tolerated) masks the remainder ambiguously and must mark the
+        # file incomplete.
+        return not (isinstance(exc, tokenize.TokenError) and "EOF" in message), None
     if fstring_starts:
         start = fstring_starts[0]
-        return [*(span for span in spans if span[1] <= start), (start, len(text))], True
-    return spans, False
+        spans[:] = [*(span for span in spans if span[1] <= start), (start, len(text))]
+        return True, None
+    return False, None
 
 
 def _legacy_fstring_ranges(token: str, base: int, depth: int = 0) -> tuple[list[tuple[int, int]], bool]:
@@ -532,6 +580,45 @@ _RUBY_HEREDOC = re.compile(r"<<[-~]?(['\"]?)([A-Za-z_]\w*)\1")
 _PHP_HEREDOC = re.compile(r"<<<[ \t]*(['\"]?)([A-Za-z_]\w*)\1")
 _GO_IMPORT_BLOCK = re.compile(r"import\s*\(")
 _MAX_GO_IMPORT_PREFIX = 4096
+_RUBY_PERCENT_PAIRS = {"{": "}", "[": "]", "(": ")", "<": ">"}
+
+
+def _ruby_percent_delimiter(text: str, start: int) -> bool:
+    if start + 2 >= len(text) or not text.startswith(("%q", "%Q"), start):
+        return False
+    delimiter = text[start + 2]
+    # Ruby's percent strings need an immediately following non-alphanumeric
+    # delimiter. Do not interpret an adjacent identifier/modulo as a string.
+    if start and (text[start - 1].isalnum() or text[start - 1] in "_$.)]}"):
+        return False
+    return delimiter.isascii() and not delimiter.isalnum() and not delimiter.isspace() and delimiter != "\\"
+
+
+def _ruby_percent_string_end(text: str, start: int) -> tuple[int, bool]:
+    """Return end and certainty for delimited %q/%Q Ruby strings.
+
+    %q is inert even when it contains interpolation syntax. %Q can contain
+    executable interpolation; mask through EOF and mark incomplete instead of
+    claiming a code finding or a complete scan without parsing that expression.
+    """
+    opener = text[start + 2]
+    closer = _RUBY_PERCENT_PAIRS.get(opener, opener)
+    depth = 1
+    i = start + 3
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text.startswith("#{", i) and text[start + 1] == "Q":
+            return len(text), False
+        if opener != closer and text[i] == opener:
+            depth += 1
+        elif text[i] == closer:
+            depth -= 1
+            if depth == 0:
+                return i + 1, True
+        i += 1
+    return len(text), False
 
 
 def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple[list[tuple[int, int]], bool]:
@@ -651,11 +738,13 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
             continue
 
         if language == "ruby" and (i == 0 or text[i - 1] == "\n") and text.startswith("=begin", i) and (i + 6 == size or text[i + 6].isspace()):
-            end_marker = re.search(r"(?m)^=end(?:\s|$)", text[i + 6:])
+            # Search from a position instead of slicing: a file of many short
+            # blocks would otherwise copy the remainder for each one (quadratic).
+            end_marker = _RUBY_BLOCK_END.search(text, i + 6)
             if end_marker is None:
                 spans.append((i, size))
                 return spans, True
-            end = i + 6 + end_marker.end()
+            end = end_marker.end()
             spans.append((i, end))
             i = end
             continue
@@ -666,6 +755,14 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
                 heredocs.append(heredoc.group(2))
                 i = heredoc.end()
                 continue
+
+        if language == "ruby" and _ruby_percent_delimiter(text, i):
+            end, certain = _ruby_percent_string_end(text, i)
+            spans.append((i, end))
+            if not certain:
+                return spans, True
+            i = end
+            continue
 
         if language == "php" and text.startswith("<<<", i):
             heredoc = _PHP_HEREDOC.match(text, i)

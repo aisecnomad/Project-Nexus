@@ -83,18 +83,18 @@ class SlackConnector(BaseConnector):
             data = self._api(http, "/team.integrationLogs", {"count": 1000, "page": page})
             if data is None:
                 return
-            entries = data.get("logs")
-            if not isinstance(entries, list):
+            logs = data.get("logs")
+            if not isinstance(logs, list):
                 self.ctx.warn("saas.slack: invalid integration logs collection; coverage unknown")
                 return
-            for entry in entries:
+            for entry in logs:
                 if not isinstance(entry, dict):
                     self.ctx.warn("saas.slack: invalid integration log record; coverage unknown")
                     continue
                 yield {"_kind": "integration_log", **entry}
             paging = data.get("paging")
             pages = paging.get("pages") if isinstance(paging, dict) else None
-            if type(pages) is not int or pages < 0 or (pages == 0 and entries):
+            if type(pages) is not int or pages < 0 or (pages == 0 and logs):
                 self.ctx.warn("saas.slack: invalid integration log pagination; coverage unknown")
                 return
             if page >= pages:
@@ -111,7 +111,7 @@ class SlackConnector(BaseConnector):
             return None
         if not isinstance(data, dict) or data.get("ok") is not True:
             error = data.get("error") if isinstance(data, dict) else None
-            # Keep machine-readable denial codes, never arbitrary provider text.
+            # Preserve only known machine-readable denial codes; provider text may contain sensitive data.
             if not isinstance(error, str) or error not in {
                 "missing_scope", "not_allowed_token_type", "restricted_action",
                 "invalid_auth", "not_authed", "token_revoked", "account_inactive",
@@ -120,6 +120,8 @@ class SlackConnector(BaseConnector):
                 error = "invalid or failed response"
             self.ctx.warn(f"saas.slack: {path}: {error}; coverage unknown", incomplete=True)
             return None
+        if "error" in data or data.get("errors"):
+            self.ctx.warn(f"saas.slack: {path}: contradictory success response; coverage unknown", incomplete=True)
         return data
 
     def _cursor(self, http: HttpClient, path: str, params: dict[str, Any], key: str) -> Iterable[dict[str, Any]]:

@@ -10,6 +10,24 @@ from pathlib import Path
 from shadowscan.utils.files import require_no_symlinks
 
 
+def terminal_text(value: object) -> str:
+    """Display untrusted values without executing terminal control sequences.
+
+    Rich's Text/markup=False prevents markup interpretation but still passes
+    through ANSI escape sequences. Render control and bidi-formatting characters
+    visibly so repository names, evidence and diagnostics cannot alter terminal
+    state or conceal/reorder a report. Call before adding intentional newlines.
+    """
+    out = []
+    for char in str(value):
+        code = ord(char)
+        if code < 32 or 0x7F <= code <= 0x9F or 0x202A <= code <= 0x202E or 0x2066 <= code <= 0x2069 or code in (0x061C, 0x200E, 0x200F, 0x2028, 0x2029):
+            out.append(f"\\u{code:04x}")
+        else:
+            out.append(char)
+    return "".join(out)
+
+
 def prepare_private_directory(path: str | Path) -> Path:
     """Create private storage without changing permissions on an existing directory."""
     target = require_no_symlinks(Path(path).expanduser())

@@ -41,7 +41,7 @@ def test_repeated_worker_idioms_cannot_become_confirmed_agents(tmp_path, run_con
 
 def test_supporting_heuristics_require_ai_evidence_and_repetition_is_grouped(tmp_path, run_connector):
     (tmp_path / "requirements.txt").write_text("langchain\n")
-    source = "while True:\n    item = queue.get()\n    print(item)\n"
+    source = "max_iterations = 20\nwhile True:\n    item = queue.get()\n    print(item)\n"
     baseline = _scan(tmp_path, run_connector, source)
     project = next(f for f in baseline if f.resource_type == "project")
     assert project.kind == Kind.FRAMEWORK_USAGE

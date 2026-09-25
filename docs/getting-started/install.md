@@ -1,68 +1,46 @@
 # Installation
 
-## Requirements
-
-- Python 3.11 or later
-- pip 22.0 or later
-
-## Core install
-
-The core package includes code, identity, gateway, low-code, and SaaS connectors
-(REST-based). Cloud SDKs are optional.
+For deployment on Linux x86_64, use a reviewed full commit SHA and the
+repository's hash-locked runtime dependencies. The required CI gates cover
+Python 3.11 and 3.12. Python 3.13 awaits successful hosted matrix validation;
+see [production deployment](../production.md#install-from-a-reviewed-revision)
+for the release evidence and platform limits.
 
 ```bash
-pip install "git+https://github.com/aisecnomad/Project-Nexus.git"
+SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
+git clone https://github.com/aisecnomad/Project-Nexus.git
+cd Project-Nexus
+git checkout --detach "$SHADOWSCAN_REVISION"
+test "$(git rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade --only-binary=:all: pip==26.2.1
+python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
+python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+python -m pip install --no-deps dist/shadowscan-*.whl
+python -m pip check
+python -m shadowscan.signatures.validate
+shadowscan --help
 ```
 
-## With cloud connectors
+The runtime lock includes core and all cloud SDK dependencies, even for a
+code-only worker. Retain the selected commit and built wheel hash. Other
+platforms need a separately validated lock; a commit SHA alone does not pin
+transitive dependencies.
 
-To include AWS, GCP, Azure, and OCI SDK support:
-
-```bash
-pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git"
-```
-
-Individual cloud providers can be installed selectively:
-
-```bash
-pip install "shadowscan[aws] @ git+https://github.com/aisecnomad/Project-Nexus.git"   # boto3
-pip install "shadowscan[gcp] @ git+https://github.com/aisecnomad/Project-Nexus.git"   # google-auth
-pip install "shadowscan[azure] @ git+https://github.com/aisecnomad/Project-Nexus.git" # azure-identity
-pip install "shadowscan[oci] @ git+https://github.com/aisecnomad/Project-Nexus.git"   # oci
-```
-
-## From a reviewed commit
-
-Pin to a specific commit SHA for reproducible installs:
-
-```bash
-pip install "git+https://github.com/aisecnomad/Project-Nexus.git@COMMIT_SHA"
-```
-
-!!! warning "Do not follow `main`"
-    Install from a reviewed tag or commit SHA. The `main` branch receives
-    changes that may not yet be validated against production tenants.
+The [consumer CI workflow](../operations/ci.md#github-actions) checks out the
+reviewed scanner commit, installs both runtime and build locks with hash checks,
+and installs its built wheel without resolving new runtime dependencies.
 
 ## Docker
 
-A disposable non-root worker image is provided:
+The disposable non-root worker uses the reviewed index digest pinned in its
+literal `Dockerfile` `FROM` line. Review that pin and any Dependabot update:
 
 ```bash
-docker build -t shadowscan:local .
+docker build --tag shadowscan:reviewed .
 ```
 
-See [Production deployment](../production.md) for secure container usage.
-
-## Verifying the installation
-
-```bash
-shadowscan --version
-shadowscan --help
-python -m shadowscan.signatures.validate  # validates 178 signatures / 790 signals
-```
-
-## Dependencies
-
-Core dependencies are deliberately small: `click`, `rich`, `PyYAML`,
-`requests`, `PyJWT`, `regex`. All runtime dependencies are version- and
-hash-locked in `requirements.lock`.
+See [production deployment](../production.md) for container isolation and
+rollout acceptance requirements.

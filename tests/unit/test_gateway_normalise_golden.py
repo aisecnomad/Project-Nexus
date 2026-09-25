@@ -22,10 +22,13 @@ Regenerate the output sections after an intentional behaviour change with::
     SHADOWSCAN_UPDATE_GATEWAY_GOLDENS=1 pytest tests/unit/test_gateway_normalise_golden.py
 
 and review the resulting diff before committing it.
+The Bedrock invocation fixture stays unchanged; its intentional toolUse
+correction is checked as a narrow scalar delta in the replay test.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from dataclasses import asdict
@@ -167,19 +170,53 @@ def _write(path: Path, golden: dict[str, Any], observed: dict[str, Any]) -> None
     path.write_text(json.dumps(updated, indent=1, allow_nan=False) + "\n", encoding="utf-8")
 
 
+def _bedrock_tool_use_correction(observed: dict[str, Any], expected: dict[str, Any]) -> dict[str, Any]:
+    """Assert the intentional Bedrock toolUse change without rewriting log fixtures.
+
+    The existing snapshot covers all other event, finding and diagnostic fields.
+    A separate small synthetic test covers the toolUse response shape directly.
+    """
+    comparable = copy.deepcopy(observed)
+    assert len(observed["events"]) == len(expected["events"]) == 120
+    for actual, baseline in zip(observed["events"], expected["events"], strict=True):
+        assert baseline["event"]["tool_calls"] is False
+        assert actual["event"]["tool_calls"] is True
+    for entry in comparable["events"]:
+        entry["event"]["tool_calls"] = False
+
+    assert len(observed["findings"]) == len(expected["findings"]) == 2
+    assert sorted(finding["metadata"]["tool_call_responses"] for finding in observed["findings"]) == [30, 90]
+    for actual, baseline, entry in zip(observed["findings"], expected["findings"], comparable["findings"], strict=True):
+        assert baseline["metadata"]["tool_call_responses"] == 0
+        assert actual["metadata"]["tool_call_responses"] == actual["metadata"]["events"]
+        entry["metadata"]["tool_call_responses"] = 0
+        tool_evidence = [ev for ev in entry["evidence"] if ev["signal"] == "gateway:tool-use"]
+        baseline_evidence = [ev for ev in baseline["evidence"] if ev["signal"] == "gateway:tool-use"]
+        assert len(tool_evidence) == len(baseline_evidence) == 1
+        old_description = baseline_evidence[0]["description"]
+        assert old_description.endswith("0 responses invoked tools")
+        assert tool_evidence[0]["description"] == (
+            old_description[:-len("0 responses invoked tools")]
+            + f'{actual["metadata"]["tool_call_responses"]} responses invoked tools'
+        )
+        tool_evidence[0]["description"] = old_description
+    return comparable
+
+
 @pytest.mark.parametrize("golden_path", _golden_paths(), ids=lambda path: path.stem)
 def test_golden_replay(index, tmp_path, golden_path):
     golden = _load(golden_path)
     observed = json.loads(json.dumps(observe(index, golden, tmp_path), allow_nan=False))
-    if _update_requested():
+    if _update_requested() and golden_path.name != "bedrock_invocations.json":
         # Regenerate, then still verify the rewritten file so update mode can never pass silently.
         _write(golden_path, golden, observed)
         golden = _load(golden_path)
     assert golden["volatile_fields"] == list(VOLATILE_FINDING_FIELDS)
     expected = {key: golden[key] for key in ("events", "findings", "diagnostics")}
-    assert observed == expected
+    comparable = _bedrock_tool_use_correction(observed, expected) if golden_path.name == "bedrock_invocations.json" else observed
+    assert comparable == expected
     # Dict equality ignores key order; the report layout must not drift either.
-    assert json.dumps(observed) == json.dumps(expected), "field order changed"
+    assert json.dumps(comparable) == json.dumps(expected), "field order changed"
 
 
 def test_goldens_cover_every_supported_schema():

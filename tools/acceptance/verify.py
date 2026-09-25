@@ -24,7 +24,15 @@ from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.output import write_private_text
 from tools.canaries.run import _source_provenance
 from tools.evaluation.annotations import validate_annotations
-from tools.evaluation.evaluate import _assertions, _source_fingerprint, load_corpus, summarize
+from tools.evaluation.evaluate import (
+    DEFAULT_CORPUS,
+    Case,
+    _assertions,
+    _source_fingerprint,
+    known_gaps,
+    load_corpus,
+    summarize,
+)
 
 SCHEMA = "shadowscan.production-evidence/v1"
 REPORT_SCHEMA = "shadowscan.production-evidence-report/v1"
@@ -33,7 +41,9 @@ LIMITATION = (
     "Checks artifact consistency and declared thresholds only. Human independence, "
     "holdout freshness, real tenant transport, process exits and principal separation "
     "are operator declarations, not authenticated proof. A pass is not certification "
-    "or permission to deploy, and applies only to the declared population/scopes."
+    "or permission to deploy, and applies only to the declared population/scopes. "
+    "Overlap checks cover exact bytes and known or declared prior corpora; near duplicates "
+    "and undisclosed prior evaluations require human review."
 )
 
 
@@ -134,7 +144,7 @@ def _artifact(ref: Any, base: Path) -> tuple[dict[str, Any], str]:
 
 def _policy(policy: Any, now: datetime) -> timedelta:
     _keys(policy, {"frozen_at", "max_age_hours", "min_cases", "min_positive_cases", "min_negative_cases",
-                   "min_precision", "min_recall", "min_specificity"})
+                   "min_precision", "min_recall", "min_specificity"}, {"per_kind"})
     _require(_time(policy["frozen_at"]) <= now, "future_policy")
     _require(type(policy["max_age_hours"]) is int and 1 <= policy["max_age_hours"] <= 720,
              "invalid_maximum_age")
@@ -143,13 +153,75 @@ def _policy(policy: Any, now: datetime) -> timedelta:
     _require(policy["min_cases"] >= 20, "insufficient_minimum_sample")
     for name in ("min_precision", "min_recall", "min_specificity"):
         _require(type(policy[name]) in (float, int) and 0 < policy[name] <= 1, "invalid_metric_threshold")
+    if "per_kind" in policy:
+        kinds = policy["per_kind"]
+        _require(isinstance(kinds, dict) and 1 <= len(kinds) <= len(Kind)
+                 and set(kinds) <= {kind.value for kind in Kind}, "invalid_kind_policy")
+        for limits in kinds.values():
+            _keys(limits, {"min_positive_cases", "min_negative_cases", "max_false_positives", "max_false_negatives"})
+            for name in ("min_positive_cases", "min_negative_cases"):
+                _require(type(limits[name]) is int and 1 <= limits[name] <= 500, "invalid_kind_policy")
+            for name in ("max_false_positives", "max_false_negatives"):
+                _require(type(limits[name]) is int and 0 <= limits[name] <= 500, "invalid_kind_policy")
     return timedelta(hours=policy["max_age_hours"])
+
+
+def _exclude_evaluated_cases(cases: list[Case], corpus_digest: str, base: Path,
+                             additional: Any) -> None:
+    """Prevent exact source reuse across known and declared prior evaluations.
+
+    Each corpus remains bounded by the same validator used for the holdout. This
+    can detect identical bytes and recorded locations, not near duplicates or an
+    operator's failure to disclose another private evaluation corpus.
+    """
+    # summarize() uses "all" for its aggregate group; using that as a case
+    # family would append to its input while iterating and never terminate.
+    _require(all(case.family != "all" for case in cases), "reserved_evaluation_family")
+    _require(isinstance(additional, list) and len(additional) <= 32, "invalid_prior_corpora")
+    prior_digests: set[str] = set()
+    prior_files: set[str] = set()
+    prior_locations: set[tuple[str, str, str]] = set()
+
+    def record(prior: list[Case], digest: str) -> None:
+        prior_digests.add(digest)
+        for case in prior:
+            prior_files.update(hashlib.sha256(content.encode("utf-8")).hexdigest() for content in case.files.values())
+            if case.source:
+                prior_locations.add((case.source["repo"].casefold(), case.source["commit"], case.source["path"]))
+
+    for path in (DEFAULT_CORPUS, *(DEFAULT_CORPUS.with_name(name) for name in
+                                    ("public_corpus.json", "realistic_corpus.json",
+                                     "independent_corpus.json", "review_corpus.json"))):
+        _, prior, digest = load_corpus(path)
+        record(prior, digest)
+    with tempfile.TemporaryDirectory(prefix="nexus-prior-evaluations-") as temp:
+        for number, ref in enumerate(additional):
+            _, raw = _artifact(ref, base)
+            snapshot = Path(temp) / f"prior-{number}.json"
+            snapshot.write_text(raw, encoding="utf-8")
+            _, prior, digest = load_corpus(snapshot)
+            record(prior, digest)
+
+    _require(corpus_digest not in prior_digests, "holdout_reuses_evaluated_corpus")
+    holdout_files: set[str] = set()
+    holdout_locations: set[tuple[str, str, str]] = set()
+    for case in cases:
+        for content in case.files.values():
+            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            _require(digest not in prior_files, "holdout_reuses_evaluated_source")
+            _require(digest not in holdout_files, "duplicate_holdout_source")
+            holdout_files.add(digest)
+        if case.source:
+            location = (case.source["repo"].casefold(), case.source["commit"], case.source["path"])
+            _require(location not in prior_locations, "holdout_reuses_evaluated_source")
+            _require(location not in holdout_locations, "duplicate_holdout_source")
+            holdout_locations.add(location)
 
 
 def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime,
                 age: timedelta, source_sha: str, signature_sha: str) -> dict[str, Any]:
     _keys(evidence, {"corpus", "annotations", "report", "population", "evaluated_at", "holdout_frozen_at",
-                     "human_reviewed", "never_used_for_tuning"})
+                     "human_reviewed", "never_used_for_tuning"}, {"prior_corpora"})
     _require(_identifier(evidence["population"]), "invalid_population")
     _require(evidence["human_reviewed"] is True and evidence["never_used_for_tuning"] is True,
              "human_holdout_declaration_required")
@@ -163,6 +235,13 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
              "human_annotation_ledger_required")
     _require(isinstance(corpus.get("metadata"), dict) and corpus["metadata"].get("type") == "adjudicated",
              "adjudicated_holdout_required")
+    # Reject the aggregate family before invoking annotation/corpus validators:
+    # newer evaluators reject it themselves, and the acceptance gate must retain
+    # its stable private error code across both validation orders.
+    candidate_cases = corpus.get("cases")
+    if isinstance(candidate_cases, list):
+        _require(not any(isinstance(case, dict) and case.get("family") == "all"
+                         for case in candidate_cases), "reserved_evaluation_family")
     # Work from the same bounded bytes whose digests were checked. Existing corpus
     # and ledger validators reopen files; private snapshots prevent a source file
     # change between digest validation and semantic validation.
@@ -172,8 +251,10 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
         annotation_path.write_text(annotation_raw, encoding="utf-8")
         ledger = validate_annotations(corpus_path, annotation_path)
         metadata, cases, digest = load_corpus(corpus_path)
+    _exclude_evaluated_cases(cases, digest, base, evidence.get("prior_corpora", []))
+    _require(not any(case.known_gap for case in cases), "known_gap_not_allowed_in_holdout")
     _keys(report, {"schema", "corpus", "annotation_validation", "implementation", "cases", "metrics",
-                   "calibration", "performance", "passed"})
+                   "known_gaps", "calibration", "performance", "passed"})
     _require(type(report["schema"]) is int and report["schema"] == 1, "unsupported_evaluation_schema")
     _require(report["corpus"] == {**metadata, "sha256": digest} and report["annotation_validation"] == ledger,
              "evaluation_label_provenance_mismatch")
@@ -188,6 +269,7 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
     seen: set[str] = set()
     for row in rows:
         _keys(row, {"id", "family", "description", "source", "target", "present", "predicted", "score",
+                    "known_gap",
                     "correct", "assertion_failures", "findings", "median_ms"})
         _require(isinstance(row["id"], str) and row["id"] in expected and row["id"] not in seen,
                  "evaluation_case_mismatch")
@@ -198,6 +280,7 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
                  and type(row["present"]) is bool and row["present"] == case.present
                  and type(row["predicted"]) is bool and type(row["correct"]) is bool,
                  "evaluation_label_mismatch")
+        _require(row["known_gap"] is False, "known_gap_not_allowed_in_holdout")
         _require(row["assertion_failures"] == [], "evaluation_assertion_failure")
         _require(row["correct"] == (row["present"] == row["predicted"]), "inconsistent_evaluation_result")
         _require(isinstance(row["findings"], list), "invalid_evaluation_findings")
@@ -213,14 +296,28 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
              "inconsistent_evaluation_result")
     metrics = summarize(rows)
     _require(report["metrics"] == metrics, "inconsistent_evaluation_metrics")
+    _require(report["known_gaps"] == known_gaps(rows), "inconsistent_evaluation_result")
+    _require(report["known_gaps"]["count"] == 0, "known_gap_not_allowed_in_holdout")
     overall = metrics["all"]
     for name in ("cases", "positive_cases", "negative_cases"):
         _require(overall[name] >= policy[f"min_{name}"], "sample_threshold_not_met")
     for name in ("precision", "recall", "specificity"):
         _require(overall[name] is not None and overall[name] >= policy[f"min_{name}"], "metric_threshold_not_met")
+    by_kind: dict[str, Any] = {}
+    for kind in sorted({case.kind.value for case in cases}):
+        selected = [{**row, "family": kind} for row in rows if row["target"]["kind"] == kind]
+        by_kind[kind] = summarize(selected)[kind]
+    if "per_kind" in policy:
+        _require(set(policy["per_kind"]) == set(by_kind), "kind_policy_scope_mismatch")
+        for kind, counts in by_kind.items():
+            limits = policy["per_kind"][kind]
+            _require(counts["positive_cases"] >= limits["min_positive_cases"]
+                     and counts["negative_cases"] >= limits["min_negative_cases"], "kind_sample_threshold_not_met")
+            _require(counts["fp"] <= limits["max_false_positives"]
+                     and counts["fn"] <= limits["max_false_negatives"], "kind_error_budget_exceeded")
     return {"cases": overall["cases"], "positive_cases": overall["positive_cases"],
             "negative_cases": overall["negative_cases"], "precision": overall["precision"],
-            "recall": overall["recall"], "specificity": overall["specificity"]}
+            "recall": overall["recall"], "specificity": overall["specificity"], "by_kind": by_kind}
 
 
 def _scope(connector: Any, scope: Any) -> None:

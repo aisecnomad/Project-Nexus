@@ -235,6 +235,12 @@ class BaseConnector(ABC):
     }
     offline_formats: ClassVar[str] = "JSON / JSONL / YAML / CSV export"
     _OFFLINE_COLLECTION_KINDS: ClassVar[dict[str, str]] = {}
+    # Provider inventory records (cloud functions, apps, containers) carry
+    # environment blocks that are mostly ordinary settings. Their values are
+    # still withheld in exports, but they are not credentials to remove from
+    # sibling fields such as ARNs. Tool/agent configuration parsers keep the
+    # default: their env blocks are where secrets live.
+    _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = False
 
     def __init__(self, ctx: ConnectorContext):
         self.ctx = ctx
@@ -490,6 +496,9 @@ class BaseConnector(ABC):
                     if None in rec or any(value is None for value in rec.values()):
                         report(f"CSV row at line {reader.line_num} has the wrong number of columns")
                         continue
+                    if self._is_csv_provider_error(rec):
+                        report(f"provider error response in CSV row at line {reader.line_num}; coverage incomplete")
+                        continue
                     yield rec
             except csv.Error:
                 report("invalid CSV export")
@@ -561,6 +570,37 @@ class BaseConnector(ABC):
             yield from cls._unwrap(data, lambda message: report(f"line {number}: {message}"))
 
     @staticmethod
+    def _csv_records(text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:
+        import io
+
+        try:
+            reader = csv.DictReader(io.StringIO(text), strict=True)
+            fields = reader.fieldnames
+            if not fields or any(not field.strip() for field in fields) or len(set(fields)) != len(fields):
+                report("CSV export needs unique, nonempty column names")
+                return
+            for rec in reader:
+                if None in rec or any(value is None for value in rec.values()):
+                    report(f"CSV row at line {reader.line_num} has the wrong number of columns")
+                    continue
+                if BaseConnector._is_csv_provider_error(rec):
+                    report(f"provider error response in CSV row at line {reader.line_num}; coverage incomplete")
+                    continue
+                yield rec
+        except csv.Error:
+            report("invalid CSV export")
+
+    @staticmethod
+    def _is_csv_provider_error(record: dict[str, str]) -> bool:
+        """Recognize metadata-only failures without treating log event rows as failures."""
+        fields = {key.strip().lower(): value for key, value in record.items()}
+        if not fields.keys() <= {
+            "id", "name", "error", "ok", "code", "message", "status", "requestid", "request_id", "traceid",
+        }:
+            return False
+        return bool(fields.get("error", "").strip()) or fields.get("ok", "").strip().lower() == "false"
+
+    @staticmethod
     def _valid_record(data: Any) -> bool:
         """Validate structural shape without echoing data; reject YAML alias cycles."""
         if not isinstance(data, dict) or not data:
@@ -590,8 +630,41 @@ class BaseConnector(ABC):
 
     @staticmethod
     def _is_native_offline_record(data: dict[str, Any]) -> bool:
-        identity_keys = {"id", "_id", "_kind", "name", "arn", "type", "kind", "resource", "resourceId"}
-        return bool(identity_keys.intersection(data)) or data.get("object") not in (None, "list", "page")
+        # Page IDs, labels and provider-specific ``kind`` values are not
+        # enough to turn a collection into one resource.  Explicit resource
+        # type fields can identify a native record with nested collections.
+        if BaseConnector._is_error_record(data):
+            if data.get("object") == "error" or data.get("type") == "error" or data.get("_kind") == "error":
+                return False
+            kind = data.get("_kind")
+            if kind == "cloudtrail-event" and data.get("eventName") and data.get("eventTime"):
+                return True
+            if kind == "audit-event" and data.get("principal") and data.get("timestamp"):
+                return True
+            if kind == "integration_log" and data.get("change_type") and (
+                data.get("app_id") or data.get("service_id")
+            ):
+                return True
+            # A known log event can legitimately describe an upstream error.
+            # Preserve it only when its nested payload has event attributes;
+            # an error with page records remains a failed partial export.
+            event_fields = {"attempt", "timestamp", "message", "status", "operation", "duration_ms"}
+            payload = data.get("data")
+            return (
+                "id" in data and isinstance(data.get("error"), dict)
+                and isinstance(payload, list) and bool(payload)
+                and all(isinstance(item, dict) and bool(event_fields.intersection(item)) for item in payload)
+            )
+        if ("items" in data or "records" in data or ("value" in data and isinstance(data["value"], list))) and not (
+            {"_kind", "resource", "resourceId", "arn"}.intersection(data)
+            or ("type" in data and data["type"] not in ("list", "page"))
+            or data.get("object") not in (None, "list", "page")
+        ):
+            return False
+        identity_keys = {"_id", "_kind", "name", "arn", "type", "kind", "resource", "resourceId"}
+        if identity_keys.intersection(data) or data.get("object") not in (None, "list", "page"):
+            return True
+        return "id" in data
 
     @staticmethod
     def _is_error_record(data: dict[str, Any]) -> bool:
@@ -611,6 +684,48 @@ class BaseConnector(ABC):
             if any(data.get(key) is not None and not isinstance(data[key], expected) for key in fields):
                 return False
         return True
+
+    @staticmethod
+    def _offline_pagination_issue(data: dict[str, Any]) -> str | None:
+        """Reject partial export envelopes without disclosing opaque cursors.
+
+        Slack nests its continuation cursor under response_metadata; AWS also
+        signals truncation separately from its marker. Empty result arrays do
+        not establish that either provider has reached the end of a collection.
+        Call only for collection envelopes, never arbitrary resource fields.
+        """
+        for flag in ("has_more", "IsTruncated"):
+            if flag in data and not isinstance(data[flag], bool):
+                return "offline export has invalid pagination metadata"
+        metadata = data.get("response_metadata", {})
+        if not isinstance(metadata, dict):
+            return "offline export has invalid pagination metadata"
+        string_cursors = (
+            "next_page_token", "nextPageToken", "nextToken", "NextToken",
+            "NextMarker", "@odata.nextLink", "nextLink", "nextCursor", "next_cursor",
+        )
+        for key in string_cursors:
+            cursor = data.get(key)
+            if cursor is not None and not isinstance(cursor, str):
+                return "offline export has invalid pagination metadata"
+        cursor = metadata.get("next_cursor")
+        if cursor is not None and not isinstance(cursor, str):
+            return "offline export has invalid pagination metadata"
+        for key in ("next_page", "nextPage"):
+            page = data.get(key)
+            # Providers use either an opaque link/token or a positive page
+            # number. Falsey containers/booleans are malformed, not a proof
+            # that collection reached its terminal page.
+            if page is not None and not (
+                isinstance(page, str) or (type(page) is int and page > 0)
+            ):
+                return "offline export has invalid pagination metadata"
+        keys = (
+            "has_more", "IsTruncated", "next_page", "nextPage", *string_cursors,
+        )
+        if any(data.get(key) for key in keys) or metadata.get("next_cursor"):
+            return "offline export contains an uncollected next page"
+        return None
 
     @classmethod
     def _unwrap(cls, data: Any, on_error: Callable[[str], None] | None = None) -> Iterator[dict[str, Any]]:
@@ -645,12 +760,9 @@ class BaseConnector(ABC):
                 failed("ambiguous export envelope contains multiple record collections")
                 return
             if keys:
-                pagination_keys = (
-                    "has_more", "next_page", "nextPage", "next_page_token", "nextPageToken",
-                    "nextToken", "NextToken", "@odata.nextLink", "nextLink", "nextCursor",
-                )
-                if any(data.get(key) for key in pagination_keys):
-                    failed("offline export contains an uncollected next page")
+                pagination_issue = cls._offline_pagination_issue(data)
+                if pagination_issue:
+                    failed(pagination_issue)
                 key = next(iter(keys))
                 record_kind = cls._OFFLINE_COLLECTION_KINDS.get(key)
                 collection = data[key]
@@ -666,6 +778,14 @@ class BaseConnector(ABC):
         for number, item in enumerate(data, 1):
             if not BaseConnector._valid_record(item):
                 failed(f"invalid export record {number}; expected a nonempty object with string keys")
+                continue
+            if cls._is_error_record(item) and not cls._is_native_offline_record(item):
+                if wrappers.intersection(item):
+                    # A failed page embedded in an export can still contain
+                    # observed records.  Keep them, but never mark it complete.
+                    yield from cls._unwrap(item, on_error)
+                else:
+                    failed("provider error response in offline export; coverage is incomplete")
                 continue
             yield {**item, "_kind": record_kind} if record_kind else item
 
@@ -686,7 +806,8 @@ class BaseConnector(ABC):
                     offset = fh.tell()
                     try:
                         encoded_chars = 0
-                        for chunk in json.JSONEncoder(default=str).iterencode(sanitize(rec)):
+                        clean = sanitize(rec, env_values_are_secrets=not self._ENV_VALUES_ARE_CONFIGURATION)
+                        for chunk in json.JSONEncoder(default=str).iterencode(clean):
                             encoded_chars += len(chunk)
                             if encoded_chars > self._MAX_OFFLINE_FILE_BYTES:
                                 raise SanitizationLimitError("export record size limit exceeded")
@@ -730,7 +851,14 @@ class BaseConnector(ABC):
                 f.connector = self.name
                 if f.provider is None:
                     f.provider = self.provider
-                f.sanitize()
+                try:
+                    f.sanitize()
+                except SanitizationLimitError:
+                    # One oversized finding must not discard the others (for
+                    # example a credential finding emitted after an aggregate
+                    # that exceeds the sanitizer's output budget).
+                    self.ctx.error(f"{self.name}: finding omitted: sanitization safety limit exceeded")
+                    continue
                 findings.append(f)
             self.ctx.check_deadline()
         except ConnectorError as exc:

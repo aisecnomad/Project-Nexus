@@ -70,7 +70,7 @@ Community spaces include this GitHub repository (issues, pull requests,
 discussions, wikis, Actions logs), the documentation site, and any future
 chat, mailing list, or event the maintainers designate.
 
-## Enforcement
+## Reporting a concern
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported through a
@@ -78,7 +78,14 @@ reported through a
 Mark the report as a code of conduct concern in the advisory title or body so
 it is not treated as a product vulnerability.
 
-All complaints will be reviewed and investigated promptly and fairly.
+The maintainer will assess reports fairly as capacity permits. This volunteer
+project cannot promise a response time or absolute confidentiality.
+
+For concerns about the maintainer or conduct that violates GitHub's policies,
+use [GitHub's private abuse-reporting process](https://docs.github.com/en/communities/maintaining-your-safety-on-github/reporting-abuse-or-spam).
+Those reports go to GitHub, not to the project maintainer. There is currently
+no independent project appeals panel. Retaliation for a good-faith report or
+appeal is itself a violation of this policy.
 
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.

@@ -65,15 +65,19 @@ _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
 _PEM = re.compile(r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)", re.DOTALL)
 _AUTH = re.compile(r"(?i)\b(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
-# Bounded identifiers keep scanning linear on long lines of non-matching text.
+# A key must be consumed in full: truncating it to a fixed number of characters
+# can leave an opaque credential in evidence when the sensitive suffix follows
+# that limit. The left boundary includes every character accepted by the key
+# lexer (including '.' and '-'), preventing retries at interior key segments.
+# Text size and redaction work are bounded separately below.
 _ASSIGNMENT = re.compile(
-    r"(?P<key>(?<![\w-])[A-Za-z_][A-Za-z0-9_.-]{0,100})"
+    r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
     r"(?P<sep>[\"']\s*:\s*|\s*=\s*|:\s+|:\s*(?=[\"']))"
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;\}\]\)\"']+)"
 )
 _QUERY_SEPARATOR = re.compile(r"[&#]")
 _PYTHON_ASSIGNMENT_KEY = re.compile(
-    r"(?<![\w-])(?P<key>[A-Za-z_][A-Za-z0-9_.]{0,100})[ \t]*(?P<separator>:|=(?!=))"
+    r"(?<![\w.-])(?P<key>[A-Za-z_][A-Za-z0-9_.]*)[ \t]*(?P<separator>:|=(?!=))"
 )
 _INDEXED_ASSIGNMENT_KEY = re.compile(
     r"\[[ \t\r\n]*(?P<quote>[\"'`])(?P<key>[A-Za-z_][A-Za-z0-9_.-]{0,100})"
@@ -81,14 +85,14 @@ _INDEXED_ASSIGNMENT_KEY = re.compile(
 )
 _TARGET_ATTRIBUTE = re.compile(r"\.[A-Za-z_$][A-Za-z0-9_$]*")
 _MAPPING_VALUE = re.compile(
-    r"(?<![\w-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]{0,100})(?P=quote)"
-    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]{0,100}))[ \t]*:[ \t]*"
+    r"(?<![\w.-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
+    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*:[ \t]*"
     r"(?P<value>[\"'`\[\{(])"
 )
 _YAML_MAPPING_LINE = re.compile(
     r"^(?P<prefix>[ \t]*(?:-[ \t]+)*)(?:(?P<quote>[\"'])"
-    r"(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]{0,100})(?P=quote)"
-    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]{0,100}))[ \t]*:[ \t]*"
+    r"(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
+    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*:[ \t]*"
     r"(?P<value>[^\r\n]*)", re.MULTILINE,
 )
 _YAML_CONTINUATION_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n|\Z)")
@@ -96,6 +100,15 @@ _MAX_SANITIZATION_NODES = 100_000
 _MAX_SANITIZATION_CHARS = 64 * 1024 * 1024
 _MAX_REDACTION_WORK = 128 * 1024 * 1024
 _KEY_NORMALISE = re.compile(r"[^a-z0-9]")
+# Environment-style credential names: an underscore-separated identifier ending
+# in KEY/TOKEN/SECRET/... names a credential by convention (AZURE_OPENAI_KEY,
+# DATABRICKS_TOKEN, MODAL_TOKEN_SECRET, LITELLM_MASTER_KEY) even though the bare
+# suffixes are too broad for arbitrary record fields (S3 object keys, pagination
+# tokens, tag "Key" members). Applied to assignments in text excerpts only, where
+# over-redaction of a sort key or a page token costs nothing.
+_ASSIGNMENT_CREDENTIAL_NAME = re.compile(
+    r"(?i)[a-z][a-z0-9]*(?:_[a-z0-9]+)*_(?:key|token|secret|password|passwd|credentials?)"
+)
 
 
 class SanitizationLimitError(ValueError):
@@ -113,7 +126,7 @@ def _redact_yaml_multiline_values(text: str) -> str:
     pieces: list[str] = []
     cursor = 0
     for match in _YAML_MAPPING_LINE.finditer(text):
-        if match.start() < cursor or not _sensitive_key(match.group("quoted") or match.group("plain")):
+        if match.start() < cursor or not _sensitive_assignment_key(match.group("quoted") or match.group("plain")):
             continue
         value = match.group("value").strip()
         # Quoted and flow-style values are consumed by the mapping lexer.
@@ -204,7 +217,7 @@ def _redact_mapping_values(text: str) -> str:
     pieces: list[str] = []
     cursor = 0
     for match in _MAPPING_VALUE.finditer(text):
-        if match.start() < cursor or not _sensitive_key(match.group("quoted") or match.group("plain")):
+        if match.start() < cursor or not _sensitive_assignment_key(match.group("quoted") or match.group("plain")):
             continue
         start = match.start("value")
         end = _mapping_expression_end(text, start)
@@ -232,7 +245,7 @@ def _indexed_assignment_candidates(text: str) -> Iterator[tuple[int, str, str, i
     work = 0
     for match in _INDEXED_ASSIGNMENT_KEY.finditer(text):
         key = match.group("key")
-        if not _sensitive_key(key):
+        if not _sensitive_assignment_key(key):
             continue
         position = match.end()
         brackets: list[str] = ["["]
@@ -324,7 +337,7 @@ def _redact_python_assignments(text: str) -> str:
     urls = _URL.finditer(text)
     url = next(urls, None)
     for start, key, separator, candidate_end in _assignment_candidates(text):
-        if start < cursor or not _sensitive_key(key):
+        if start < cursor or not _sensitive_assignment_key(key):
             continue
         annotated = separator == ":"
         assigned_at: int | None = None if annotated else candidate_end
@@ -448,6 +461,11 @@ def _sensitive_key(key: str) -> bool:
     return normalized in _SENSITIVE_NAMES or normalized.endswith(_SENSITIVE_SUFFIXES)
 
 
+def _sensitive_assignment_key(key: str) -> bool:
+    """Sensitive-key test for assignments and mapping entries inside text."""
+    return _sensitive_key(key) or _ASSIGNMENT_CREDENTIAL_NAME.fullmatch(key.strip()) is not None
+
+
 def credential_id(value: Any) -> str:
     """Stable opaque identity for raw credentials; never retain prefix/suffix."""
     value = str(value)
@@ -507,7 +525,7 @@ def _sanitize_url(match: re.Match[str]) -> str:
         if not equals:
             return field
         decoded = unquote(key).lower()
-        sensitive = _sensitive_key(decoded) or decoded in {"key", "sig", "signature", "code", "x-amz-signature", "x-goog-signature"}
+        sensitive = _sensitive_assignment_key(decoded) or decoded in {"key", "sig", "signature", "code", "x-amz-signature", "x-goog-signature"}
         return key + equals + (REDACTED if sensitive else value)
 
     # Consume each field once. A regex that retries an unbounded key after every
@@ -549,7 +567,7 @@ def sanitize_text(text: str) -> str:
             raw = m.group("value")
             quote = raw[0] if raw.startswith(('"', "'")) else ""
             bare = raw[1:-1] if quote else raw
-            if _sensitive_key(m.group("key")):
+            if _sensitive_assignment_key(m.group("key")):
                 clean = _redact_value(bare)
             elif "=" in bare or ":" in bare:
                 # Do not let an ordinary assignment swallow a nested credential,
@@ -567,7 +585,7 @@ def sanitize_text(text: str) -> str:
     return _redact_mapping_values(assignments(text))
 
 
-def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
+def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_secrets: bool = True) -> Any:
     """Return a sanitized JSON-like copy, preserving nonsecret fields and types.
 
     Environment variable values are omitted regardless of name. Lists additionally
@@ -575,13 +593,22 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
     Known credential values are also removed from other fields in the same object.
     Short credentials withhold a matching field by default. Diagnostics can opt
     into bounded substring replacement to retain surrounding diagnostic context.
+
+    ``env_values_are_secrets`` controls whether every environment value is also
+    treated as a credential to remove from *sibling* fields. That is right for
+    tool and agent configuration, where an ``env`` block is where tokens live and
+    a source excerpt can repeat them. A provider inventory record's environment
+    holds mostly ordinary settings (``STAGE=prod``, ``WORKERS=4``, a region), and
+    removing those from sibling fields destroys resource identities. Producers of
+    such records pass ``False``; values under sensitive names, secret-record
+    shapes and recognizable credential formats are still removed everywhere.
     """
     _check_sanitization_structure(value)
     known: set[str] = set()
 
-    def record_has_secret_value(item: Mapping) -> bool:
+    def record_has_secret_value(item: Mapping, *, environment: bool = False) -> bool:
         name = item.get("name") or item.get("Name") or item.get("key") or item.get("Key")
-        return isinstance(name, str) and _sensitive_key(name)
+        return isinstance(name, str) and (_sensitive_assignment_key(name) if environment else _sensitive_key(name))
 
     def remember(child: Any) -> None:
         if isinstance(child, str) and child:
@@ -593,20 +620,24 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
                 if escaped != child:
                     known.add(escaped)
 
-    discovered: set[int] = set()
+    # The same aliased object can occur both outside and inside an environment
+    # block. Revisit it under the stricter naming policy, but still bound cycles.
+    discovered: set[tuple[int, bool]] = set()
 
-    def discover(item: Any, depth: int = 0) -> None:
-        if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and id(item) in discovered):
+    def discover(item: Any, depth: int = 0, *, environment: bool = False) -> None:
+        identity = (id(item), environment)
+        if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in discovered):
             return
         if isinstance(item, (Mapping, list, tuple)):
-            discovered.add(id(item))
+            discovered.add(identity)
         if isinstance(item, Mapping):
-            if record_has_secret_value(item):
+            if record_has_secret_value(item, environment=environment):
                 remember(item.get("value") or item.get("Value"))
             for key, child in item.items():
-                if _sensitive_key(str(key)):
+                if _sensitive_key(str(key)) or environment and _sensitive_assignment_key(str(key)):
                     remember(child)
-                if str(key).lower() in {"env", "environment", "environment_variables", "environmentvariables"}:
+                child_environment = environment or str(key).lower() in {"env", "environment", "environment_variables", "environmentvariables"}
+                if env_values_are_secrets and child_environment:
                     if isinstance(child, Mapping):
                         for env_value in child.values():
                             remember(env_value)
@@ -614,13 +645,13 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
                         for entry in child:
                             if isinstance(entry, Mapping):
                                 remember(entry.get("value") or entry.get("Value"))
-                discover(child, depth + 1)
+                discover(child, depth + 1, environment=child_environment)
         elif isinstance(item, (list, tuple)):
             previous = None
             for child in item:
                 if isinstance(previous, str) and previous.startswith("-") and _sensitive_key(previous.lstrip("-")):
                     remember(child)
-                discover(child, depth + 1)
+                discover(child, depth + 1, environment=environment)
                 previous = child
 
     discover(value)
@@ -671,7 +702,9 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
                 # short secrets; this avoids both expansion and partial leaks.
                 if len(secret) < 8 and secret in item:
                     return REDACTED
-                item = item.replace(secret, REDACTED)
+                # Keep line counts stable: excerpts index sanitized text by the
+                # raw line number, and a multi-line secret would shift them.
+                item = item.replace(secret, REDACTED + "\n" * secret.count("\n"))
         return sanitize_text(item)
 
     cleaning: set[int] = set()
