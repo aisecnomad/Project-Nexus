@@ -33,11 +33,11 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ## Why
 
-Agents are no longer only Python scripts. 
+Agents are no longer only Python scripts.
 They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
-Bedrock Agents provisioned by Terraform, MCP servers wired into every 
-developer's editor, service principals with `Mail.ReadWrite` acting on behalf of nobody, and JWTs carrying an `act` claim. 
-Each surface has its own discovery API and its own vocabulary. 
+Bedrock Agents provisioned by Terraform, MCP servers wired into every
+developer's editor, service principals with `Mail.ReadWrite` acting on behalf of nobody, and JWTs carrying an `act` claim.
+Each surface has its own discovery API and its own vocabulary.
 ShadowScan normalizes these observations into one finding model with evidence,
 so investigators or auditors can ask: *Who owns this AI Agent? What can it do, and is it
 registered in the registry supplied for this scan?*
@@ -147,7 +147,7 @@ it fails until the variable is set.
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
 shadowscan code . --inventory agent-card.yaml
 
-# 2. Try every connector against the bundled fixtures (offline demo)
+# 2. Try every fixture-backed connector offline (demo; 25 of 27 connectors ship fixtures)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 
 # 3. Real estate: one config, live connectors, secrets from the environment
@@ -296,7 +296,10 @@ See [deployment and migration](docs/production.md) for the rollout checks.
 
 Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
 findings carry file: line locations), `csv`, `markdown`, `html` (self-contained,
-filterable, with evidence drill-down).
+filterable, with evidence drill-down). In `csv` output a cell that starts with
+`=`, `+`, `-`, `@`, a tab or a newline is prefixed with a literal `'` so
+spreadsheets treat it as text (common for `@team` owners); strip that prefix
+when consuming the file programmatically, or use `json`.
 
 ### Risk policy
 
@@ -366,11 +369,13 @@ A small documentation fix or a reproducible false-positive report is useful.
 | I want to… | Start here |
 |---|---|
 | Learn, ask a question or troubleshoot a scan | [Support guide](SUPPORT.md) |
-| Report a bug or suggest a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
-| Make a first contribution | [Contributor guide](CONTRIBUTING.md) |
-| Understand decisions, review and release requirements | [Governance](GOVERNANCE.md) |
+| Report a bug, request a feature or a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
+| Report a false positive, a missed framework or a wrong score | [Detection quality report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml) |
+| Make a first contribution | [Contributor guide](CONTRIBUTING.md) and the [`good first issue`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label |
+| Understand decisions, review and release requirements | [Governance](GOVERNANCE.md), [Maintainers](MAINTAINERS.md), [Roadmap](ROADMAP.md) |
 | Report a vulnerability privately | [Security policy](SECURITY.md#reporting) |
 | Understand participation standards or report harmful conduct | [Code of conduct](CODE_OF_CONDUCT.md) |
+| See what changed, or cite the project | [Changelog](CHANGELOG.md), [CITATION.cff](CITATION.cff) |
 
 Use synthetic, minimal examples in public reports. Scan results can contain
 credentials, personal data, and sensitive inventory even after redaction.
@@ -385,4 +390,6 @@ credentials, personal data, and sensitive inventory even after redaction.
 Deployment behavior, migration options, and limits are documented in
 [SECURITY.md](SECURITY.md) and [docs/production.md](docs/production.md).
 
-License: Apache-2.0.
+## License
+
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

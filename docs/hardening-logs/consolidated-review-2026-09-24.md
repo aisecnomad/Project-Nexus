@@ -23,7 +23,7 @@ four then-open hardening PRs, and the implementation at PR #30 head
 `57d0725137931ea804f0bc3dbf091e3b360627b8`. PR #30 already integrates #26
 and #29. This candidate builds on that head and selectively incorporates verified
 changes from PR #31 (`5f263015a4f5ed46bc4b5a7385fe5903f35670dc`), together
-with additional fixes found during integration and an independent code review.
+with additional fixes found during integration and a further AI-assisted code pass by the same author.
 While this review was in progress, PR #31 merged into `main` as
 `3bb4870e73635da52c9fcaf05a2a8d81d1afadea`. The candidate was reconciled with
 that updated base, retaining the reviewed controls and the integration decisions
@@ -89,7 +89,9 @@ unrecognized claims. No alert suppression or security-gate bypass was introduced
   abandoned worker remains active. Diagnostic/flush errors must not prevent
   that CLI exit. Blocking publication or output still requires an externally
   supervised disposable process.
-- Did not introduce digest-gated finding sanitization or a process-wide text
+- (Superseded on 2026-09-24/25: digest-gated sanitization was later introduced
+  in `shadowscan/models.py`; see the round 2 and quality-pass changelog entries.)
+  Did not introduce digest-gated finding sanitization or a process-wide text
   sanitization cache. Digesting nested objects before the sanitizer's resource
   checks can amplify alias graphs; caching also needs explicit redaction-policy
   invalidation. Regression tests preserve repeated sanitization under mutation.

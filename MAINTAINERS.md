@@ -31,8 +31,8 @@ The project is looking for reviewers and co-maintainers with experience in:
 Start by contributing documentation, signatures, offline fixtures, tests, or a
 connector. Consistent, high-quality work is how reviewer access is earned.
 
-Open an issue or discussion titled `Maintainer interest` if you want to help
-share the load.
+Open a [usage question issue](https://github.com/aisecnomad/Project-Nexus/issues/new?template=question.yml)
+titled `Maintainer interest` if you want to help share the load.
 
 ## Contact
 

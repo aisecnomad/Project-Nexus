@@ -1,7 +1,10 @@
 # Review routing comes from CODEOWNERS; the deprecated `reviewers` key is not
 # used. requirements.lock and requirements-docs.lock are refreshed by hand with
 # pip-tools (see docs/production.md and the lock headers); Dependabot tracks
-# the version ranges in pyproject.toml.
+# the version ranges in pyproject.toml and the exact pins in
+# requirements-ci-constraints.txt. A ruff or mypy bump there must carry the
+# matching .pre-commit-config.yaml rev, which tests/test_repository_consistency.py
+# checks.
 version: 2
 updates:
   - package-ecosystem: pip

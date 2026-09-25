@@ -9,7 +9,10 @@ Copy the [consumer GitHub Action](https://github.com/aisecnomad/Project-Nexus/bl
 into your repository and set `SHADOWSCAN_REVISION` to a reviewed full commit SHA.
 The example pins its actions, checks out that exact scanner revision, installs
 the hash-locked runtime and build dependencies, builds a wheel with the locked backend,
-and uploads the SARIF report. Review its `--fail-on` level for your policy.
+and uploads the SARIF report. Gating is controlled by the repository variable
+`SHADOWSCAN_FAIL_ON`: leave it unset during analyst review, and set it to `low`,
+`medium`, `high` or `critical` once your detection validation and read-only
+canary support a threshold. An incomplete scan exits 3 in either mode.
 
 ## Exit code handling
 

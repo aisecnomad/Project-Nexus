@@ -1,5 +1,9 @@
 # Follow-up security and reliability review
 
+> **Internal, AI-assisted hardening log. Not an independent review.** This
+> document was produced by the maintainer with an AI assistant; no second
+> person or third party has verified its findings.
+
 Base: `65486cc77d0632471409c9d9a618431d18698583` on `main`.
 This review examined implementation behavior and added regression tests for
 reproducible defects. It is not a certification of production detection accuracy

@@ -24,6 +24,7 @@ on:
 permissions:
   contents: read
   security-events: write
+  actions: read   # upload-sarif reads the workflow run; required in private repositories
 jobs:
   shadowscan:
     runs-on: ubuntu-latest
@@ -83,7 +84,7 @@ jobs:
           if [ -f "$RUNNER_TEMP/shadowscan.sarif" ]; then
             echo 'exists=true' >> "$GITHUB_OUTPUT"
           fi
-      - uses: github/codeql-action/upload-sarif@e429ea58a9912cadc53f8132ad35562b54de1b30 # v3.38.1
+      - uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         if: always() && steps.report.outputs.exists == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           sarif_file: ${{ runner.temp }}/shadowscan.sarif

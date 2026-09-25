@@ -18,8 +18,10 @@ its reporting and enforcement process. For usage questions, start with the
   or submit a focused pull request.
 - **Detection quality:** provide a minimal positive or negative fixture with the
   expected outcome and why it is correct. A dependency name alone does not prove
-  an agent is running.
-- **Bugs:** use the [bug report form](https://github.com/aisecnomad/Project-Nexus/issues/new/choose)
+  an agent is running. File it with the
+  [detection quality report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml);
+  accepted reports become labeled regression cases under `tools/evaluation/`.
+- **Bugs:** use the [bug report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=bug_report.yml)
   and include the full scanner commit, command, expected result and a sanitized
   reproducer. Search existing issues first; add evidence to an existing report
   where possible.
@@ -35,21 +37,26 @@ as your first contribution.
 
 ## Getting started
 
-Use Python 3.11 or newer and Git. Fork the repository on GitHub if you need a
-branch you can push; clone your fork in that case. In a local checkout:
+Use Python 3.11 or newer and Git on a POSIX system: Linux is the CI-validated
+target, macOS may work but is untested, and on Windows use WSL, because the
+scanner's confined file reader needs `O_NOFOLLOW`/`dir_fd` and the Makefile
+assumes `/tmp` and a `.venv/bin` layout. Fork the repository on GitHub if you
+need a branch you can push; clone your fork in that case. In a local checkout:
 
 ```bash
 git clone https://github.com/aisecnomad/Project-Nexus.git
 cd Project-Nexus
 python -m venv .venv
-source .venv/bin/activate             # Windows: .venv\Scripts\Activate.ps1
+source .venv/bin/activate
 git switch -c fix/short-description
 python -m pip install -e ".[all]"    # dev + cloud + docs extras
 make install-hooks                   # pre-commit hooks (recommended)
 ```
 
-Cloud extras (`pip install -e ".[cloud]"`) are optional. Offline fixtures cover
-the cloud connectors; do not commit live tenant exports.
+Cloud SDKs are optional for users, but the test suite is gated with them
+installed; `.[all]` (or `.[cloud,dev]`, which omits the docs toolchain)
+includes them. Offline fixtures cover the cloud connectors; do not commit live
+tenant exports.
 
 Run `make help` for a quick reference of all development commands.
 
@@ -153,10 +160,16 @@ Do not commit private adjudicated evaluation corpora.
 - Update `CHANGELOG.md` under Unreleased and `docs/production.md` when a change
   affects rollout, finding identity, or credential policy.
 - Include regression tests for bug fixes.
-- Use the PR template checklist — it matches the CI gates.
+- Use the PR template checklist; it covers the main gates, and `make check` is
+  the authoritative local run of everything CI enforces.
 
-When changing workflows or issue forms, run `make policy` to check action pins,
-permissions, manual publishing boundaries, and issue-form structure and labels.
+Repository policy is tested. When you touch `.github/`, a top-level document or
+a docs page, run `make policy`: `tests/test_repository_policy.py` checks action
+pins, permissions, manual publishing boundaries and issue-form structure, and
+`tests/test_repository_consistency.py` checks that Markdown links and heading
+anchors resolve, that the Makefile, pre-commit hooks and docs lock match CI,
+that every CodeQL step runs the same release, and that documented counts match
+the shipped code.
 
 ## Writing a connector
 
@@ -218,9 +231,13 @@ reviewer must not have authored or produced the change. A review is recorded as
 a GitHub pull request approval from an account other than the author's. Inspect
 the review author, state and `commit_id` with
 `gh api repos/aisecnomad/Project-Nexus/pulls/<number>/reviews`, and compare that
-commit to the current PR head. When the project has a second reviewer, enable
-the ruleset's required approval for routine changes instead of relying on
-convention. Never manufacture an approval or treat an AI reviewer as that person.
+commit to the current PR head. The ruleset on `main` is configured to require
+one approving review from a reviewer with write access; its enforcement state
+has changed during 2026-09 and can change again, so check the
+[live rules](https://github.com/aisecnomad/Project-Nexus/rules) rather than this
+sentence. While the maintainer is the only account with write access, that rule
+cannot be satisfied for the maintainer's own changes by anyone but a second
+reviewer. Never manufacture an approval or treat an AI reviewer as that person.
 
 For deployment, pin the full reviewed commit SHA and retain its review and
 acceptance evidence. No tag exists yet; `0.1.1` names an unreleased candidate.
