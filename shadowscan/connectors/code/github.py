@@ -15,6 +15,7 @@ Offline mode: ``input`` pointing at a directory of already-cloned repositories
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 import re
 import shutil
@@ -31,7 +32,7 @@ from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.git import clone_environment, git_argv_prefix, validate_git_ref
+from shadowscan.utils.git import clone_environment, git_argv_prefix, read_git_snapshot, validate_git_ref
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 
 INTERESTING_DIRS = (".github/", ".claude/", ".cursor/", ".vscode/", ".windsurf/", ".codex/", ".gemini/", ".kiro/", ".amazonq/", ".continue/", ".roo/", ".well-known/", "config/", "infra/", "terraform/", "deploy/", "k8s/", "helm/", "flows/", "workflows/", "agents/", "prompts/")
@@ -72,6 +73,18 @@ def repository_blob_id(value: Any) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", value):
         raise ConnectorError("Repository tree contains an invalid blob object ID")
     return value
+
+
+def repository_blob_matches(value: str, content: bytes) -> bool:
+    """Verify fetched bytes against the immutable Git blob object ID."""
+    try:
+        object_id = repository_blob_id(value)
+        algorithm = "sha1" if len(object_id) == 40 else "sha256"
+        header = f"blob {len(content)}\0".encode("ascii")
+        digest = hashlib.new(algorithm, header + content, usedforsecurity=False).hexdigest()
+    except (ConnectorError, TypeError, ValueError):
+        return False
+    return digest == object_id
 
 
 class GitHubConnector(BaseConnector):
@@ -240,6 +253,7 @@ class GitHubConnector(BaseConnector):
                 "pushed_at": repo.get("pushed_at"),
                 "language": repo.get("language"),
                 "topics": repo.get("topics"),
+                **({"source_snapshot": repo["source_snapshot"]} if isinstance(repo.get("source_snapshot"), dict) else {}),
             },
         }
         fs = FilesystemConnector(ConnectorContext(
@@ -264,13 +278,33 @@ class GitHubConnector(BaseConnector):
     # ------------------------------------------------------------- fetching
     def _fetch_repo(self, repo: dict[str, Any], tmp: str) -> str | None:
         full = repo["full_name"]
+        # This field is generated only from the bytes actually selected for
+        # scanning; provider JSON must not supply scan provenance.
+        repo.pop("source_snapshot", None)
         if self.mode == "clone" and shutil.which("git"):
             dest = os.path.join(tmp, "repo")
             if self._clone(repo, dest):
+                self._set_clone_snapshot(repo, dest)
                 return dest
             self.ctx.warn(f"code.github: clone failed for {full}; falling back to API mode")
         self.ctx.check_deadline()
         return self._fetch_via_api(repo, tmp)
+
+    def _set_clone_snapshot(self, repo: dict[str, Any], local: str) -> None:
+        remaining = max(0.001, self.ctx.deadline - time.monotonic()) if self.ctx.deadline else 10.0
+        snapshot = read_git_snapshot(local, timeout=min(10.0, remaining))
+        if snapshot is None:
+            self.ctx.warn(
+                f"code.github: could not record immutable clone revision for {repo.get('full_name')}; source provenance unknown",
+                incomplete=True,
+            )
+            return
+        repo["source_snapshot"] = {
+            "provider": "github",
+            "capture_method": "git-clone",
+            "ref": validate_git_ref(repo.get("default_branch")),
+            **snapshot,
+        }
 
     def _clone(self, repo: dict[str, Any], dest: str) -> bool:
         api = urlsplit(validate_url(self.api_url))
@@ -299,29 +333,46 @@ class GitHubConnector(BaseConnector):
 
     def _fetch_via_api(self, repo: dict[str, Any], tmp: str) -> str | None:
         full = repo["full_name"]
+        repo.pop("source_snapshot", None)
         branch = validate_git_ref(repo.get("default_branch") or "main")
         if branch is None:
             self.ctx.warn("code.github: unsupported default branch; repository content skipped", incomplete=True)
             return None
         tree = self.http.try_get_json(f"/repos/{full}/git/trees/{quote(branch, safe='')}", params={"recursive": "1"})
-        if not tree or "tree" not in tree:
+        if not isinstance(tree, dict) or not isinstance(tree.get("tree"), list):
             self.ctx.warn(f"code.github: cannot read tree of {full}", incomplete=True)
             return None
+        try:
+            tree_sha = repository_blob_id(tree.get("sha"))
+        except ConnectorError:
+            self.ctx.warn(f"code.github: cannot identify immutable tree snapshot for {full}; source provenance unknown", incomplete=True)
+        else:
+            repo["source_snapshot"] = {
+                "provider": "github",
+                "capture_method": "github-api",
+                "ref": branch,
+                "tree_sha": tree_sha,
+            }
         if tree.get("truncated"):
             self.ctx.warn(f"code.github: tree of {full} truncated; results partial", incomplete=True)
         # Gitlinks and symlink blobs are not regular source files. In
         # particular the contents endpoint can dereference a symlink; keep the
         # same confinement and partial-coverage behavior as a local checkout.
-        if any(t.get("type") == "commit" or t.get("mode") in {"120000", "160000"} for t in tree["tree"]):
+        entries = [t for t in tree["tree"] if isinstance(t, dict) and isinstance(t.get("path"), str)]
+        if len(entries) != len(tree["tree"]):
+            self.ctx.warn(f"code.github: malformed tree entries in {full}; source coverage partial", incomplete=True)
+        if any(t.get("type") == "commit" or t.get("mode") in {"120000", "160000"} for t in entries):
             self.ctx.warn(f"code.github: symbolic links or submodules in {full} skipped; source coverage partial", incomplete=True)
         blobs = {
-            t["path"]: t for t in tree["tree"]
+            t["path"]: t for t in entries
             if t.get("type") == "blob" and t.get("mode") not in {"120000", "160000"}
-            and int(t.get("size") or 0) <= 512_000
+            and isinstance(t.get("size", 0), int) and 0 <= t.get("size", 0) <= 512_000
         }
+        if any(t.get("type") == "blob" and (not isinstance(t.get("size", 0), int) or t.get("size", 0) < 0) for t in entries):
+            self.ctx.warn(f"code.github: invalid blob size metadata in {full}; source coverage partial", incomplete=True)
         paths = list(blobs)
         selected = self._select_paths(paths)
-        if len(selected) < sum(t.get("type") == "blob" for t in tree["tree"]):
+        if len(selected) < sum(t.get("type") == "blob" for t in entries):
             self.ctx.warn(f"code.github: API mode samples repository {full}; source coverage partial", incomplete=True)
         dest = os.path.join(tmp, "repo")
         os.makedirs(dest, exist_ok=True)
@@ -351,6 +402,9 @@ class GitHubConnector(BaseConnector):
                 continue
             if len(content) > 512_000:
                 self.ctx.warn(f"code.github: oversized API content in {full}", incomplete=True)
+                continue
+            if not repository_blob_matches(blob_id, content):
+                self.ctx.warn(f"code.github: API content does not match its immutable blob ID in {full}; content skipped", incomplete=True)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)

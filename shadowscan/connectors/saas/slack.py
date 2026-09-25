@@ -16,6 +16,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
+from requests import RequestException
+
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
@@ -41,14 +43,24 @@ class SlackConnector(BaseConnector):
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.team_id = ctx.get("team_id", env="SLACK_TEAM_ID")
+        if self.team_id is not None and (not isinstance(self.team_id, str) or not self.team_id.strip()):
+            raise ConnectorError("saas.slack: team_id must be a nonempty string")
 
     def collect(self) -> Iterable[dict[str, Any]]:
         token = self.ctx.get("token", env="SLACK_TOKEN")
         if not token:
             raise ConnectorError("saas.slack: token required")
         http = HttpClient("https://slack.com/api", headers={"Authorization": f"Bearer {token}"})
-        info = self._api(http, "/team.info") or {}
-        team = (info.get("team") or {})
+        info = self._api(http, "/team.info")
+        if info is None:
+            return
+        team = info.get("team")
+        if not isinstance(team, dict) or not self._record_fields_valid(team, required=("id",), strings=("name", "domain")):
+            self.ctx.warn("saas.slack: invalid team.info response; workspace identity and coverage unknown")
+            return
+        if self.team_id is not None and team["id"] != self.team_id:
+            self.ctx.warn("saas.slack: authenticated workspace does not match configured team_id; inventory not collected")
+            return
         yield {"_kind": "team", **team}
         for u in self._cursor(http, "/users.list", {"limit": 200}, "members"):
             if u.get("is_bot") or u.get("is_app_user"):
@@ -66,10 +78,21 @@ class SlackConnector(BaseConnector):
             data = self._api(http, "/team.integrationLogs", {"count": 1000, "page": page})
             if data is None:
                 return
-            for entry in data.get("logs", []) or []:
+            entries = data.get("logs")
+            if not isinstance(entries, list):
+                self.ctx.warn("saas.slack: invalid integration logs collection; coverage unknown")
+                return
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    self.ctx.warn("saas.slack: invalid integration log record; coverage unknown")
+                    continue
                 yield {"_kind": "integration_log", **entry}
-            paging = data.get("paging") or {}
-            if page >= int(paging.get("pages", 1)):
+            paging = data.get("paging")
+            pages = paging.get("pages") if isinstance(paging, dict) else None
+            if type(pages) is not int or pages < 0 or (pages == 0 and entries):
+                self.ctx.warn("saas.slack: invalid integration log pagination; coverage unknown")
+                return
+            if page >= pages:
                 return
             page += 1
         self.ctx.warn("saas.slack: integration log page limit reached", incomplete=True)
@@ -77,11 +100,19 @@ class SlackConnector(BaseConnector):
     def _api(self, http: HttpClient, path: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
         try:
             data = http.get_json(path, params=params)
-        except HttpError as exc:
-            self.ctx.warn(f"saas.slack: {path}: HTTP {exc.status}; coverage unknown", incomplete=True)
+        except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            reason = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            self.ctx.warn(f"saas.slack: {path}: {reason}; coverage unknown", incomplete=True)
             return None
         if not isinstance(data, dict) or data.get("ok") is not True:
-            error = data.get("error", "invalid response") if isinstance(data, dict) else "invalid response"
+            error = data.get("error") if isinstance(data, dict) else None
+            # Keep machine-readable denial codes, never arbitrary provider text.
+            if not isinstance(error, str) or error not in {
+                "missing_scope", "not_allowed_token_type", "restricted_action",
+                "invalid_auth", "not_authed", "token_revoked", "account_inactive",
+                "team_access_not_granted", "org_login_required", "not_allowed",
+            }:
+                error = "invalid or failed response"
             self.ctx.warn(f"saas.slack: {path}: {error}; coverage unknown", incomplete=True)
             return None
         return data
@@ -93,8 +124,20 @@ class SlackConnector(BaseConnector):
             data = self._api(http, path, params)
             if data is None:
                 return
-            yield from data.get(key, []) or []
-            cursor = str((data.get("response_metadata") or {}).get("next_cursor") or "").strip()
+            items = data.get(key)
+            if not isinstance(items, list):
+                self.ctx.warn(f"saas.slack: invalid {key} collection for {path}; coverage unknown")
+                return
+            for item in items:
+                if not isinstance(item, dict):
+                    self.ctx.warn(f"saas.slack: invalid {key} record for {path}; coverage unknown")
+                    continue
+                yield item
+            metadata = data.get("response_metadata", {})
+            if not isinstance(metadata, dict) or not isinstance(metadata.get("next_cursor", ""), str):
+                self.ctx.warn(f"saas.slack: invalid cursor for {path}; coverage unknown")
+                return
+            cursor = metadata.get("next_cursor", "").strip()
             if not cursor:
                 return
             if cursor in seen:

@@ -1,0 +1,15 @@
+schema: shadowscan.tenant-canary/v1
+mode: live
+expectation: permission-denied
+connector:
+  name: saas.slack
+  token: ${NEXUS_CANARY_SLACK_TOKEN}
+  team_id: TEXAMPLE
+scope:
+  team_id: TEXAMPLE
+ground_truth:
+  owner: REPLACE_WITH_INDEPENDENT_TENANT_REVIEWER
+  reviewed_at: '2026-09-24'
+  source: REPLACE_WITH_APPROVED_INVENTORY_OR_CHANGE_TICKET
+  independent_of_scanner: true
+controls: []

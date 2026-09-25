@@ -30,11 +30,12 @@ from shadowscan.connectors.code.github import (
     _OfflineRepository,
     _remote_record,
     repository_blob_id,
+    repository_blob_matches,
     repository_target,
 )
 from shadowscan.connectors.common import apply_matches, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.git import clone_environment, git_argv_prefix, validate_git_ref
+from shadowscan.utils.git import clone_environment, git_argv_prefix, read_git_snapshot, validate_git_ref
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 
 
@@ -225,6 +226,7 @@ class GitLabConnector(BaseConnector):
                 "archived": proj.get("archived"),
                 "last_activity_at": proj.get("last_activity_at"),
                 "topics": proj.get("topics"),
+                **({"source_snapshot": proj["source_snapshot"]} if isinstance(proj.get("source_snapshot"), dict) else {}),
             },
         }
         fs = FilesystemConnector(ConnectorContext(
@@ -246,13 +248,33 @@ class GitLabConnector(BaseConnector):
 
     # -------------------------------------------------------------- fetching
     def _fetch(self, proj: dict[str, Any], tmp: str) -> str | None:
+        # Provenance is derived from the scanned content and cannot be
+        # accepted from a provider API record.
+        proj.pop("source_snapshot", None)
         if self.mode == "clone" and shutil.which("git"):
             dest = os.path.join(tmp, "repo")
             if self._clone(proj, dest):
+                self._set_clone_snapshot(proj, dest)
                 return dest
             self.ctx.warn(f"code.gitlab: clone failed for {proj.get('path_with_namespace')}; falling back to API mode")
         self.ctx.check_deadline()
         return self._fetch_via_api(proj, tmp)
+
+    def _set_clone_snapshot(self, proj: dict[str, Any], local: str) -> None:
+        remaining = max(0.001, self.ctx.deadline - time.monotonic()) if self.ctx.deadline else 10.0
+        snapshot = read_git_snapshot(local, timeout=min(10.0, remaining))
+        if snapshot is None:
+            self.ctx.warn(
+                f"code.gitlab: could not record immutable clone revision for {proj.get('path_with_namespace')}; source provenance unknown",
+                incomplete=True,
+            )
+            return
+        proj["source_snapshot"] = {
+            "provider": "gitlab",
+            "capture_method": "git-clone",
+            "ref": validate_git_ref(proj.get("default_branch")),
+            **snapshot,
+        }
 
     def _clone(self, proj: dict[str, Any], dest: str) -> bool:
         url = proj.get("http_url_to_repo")
@@ -280,6 +302,7 @@ class GitLabConnector(BaseConnector):
 
     def _fetch_via_api(self, proj: dict[str, Any], tmp: str) -> str | None:
         pid = proj["id"]
+        proj.pop("source_snapshot", None)
         ref = validate_git_ref(proj.get("default_branch") or "main")
         if ref is None:
             self.ctx.warn("code.gitlab: unsupported default branch; repository content skipped", incomplete=True)
@@ -296,9 +319,18 @@ class GitLabConnector(BaseConnector):
         except ConnectorError:
             self.ctx.warn("code.gitlab: cannot resolve immutable commit; repository content skipped", incomplete=True)
             return None
+        proj["source_snapshot"] = {
+            "provider": "gitlab",
+            "capture_method": "gitlab-api",
+            "ref": ref,
+            "commit_sha": snapshot,
+        }
         blobs: dict[str, dict[str, Any]] = {}
         skipped_links = False
         for item in self.http.paginate_link(f"/projects/{pid}/repository/tree", params={"recursive": "true", "per_page": 100, "ref": snapshot}):
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                self.ctx.warn("code.gitlab: malformed tree entry; source coverage partial", incomplete=True)
+                continue
             if item.get("type") == "commit" or item.get("mode") in {"120000", "160000"}:
                 if not skipped_links:
                     self.ctx.warn("code.gitlab: symbolic links or submodules skipped; source coverage partial", incomplete=True)
@@ -332,6 +364,9 @@ class GitLabConnector(BaseConnector):
                 continue
             except ValueError:
                 self.ctx.warn("code.gitlab: oversized or invalid API content skipped", incomplete=True)
+                continue
+            if not repository_blob_matches(blob_id, content):
+                self.ctx.warn("code.gitlab: API content does not match its immutable blob ID; content skipped", incomplete=True)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)

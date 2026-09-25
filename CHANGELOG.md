@@ -50,6 +50,28 @@
 - `CONTRIBUTING.md` documents the actual single-maintainer, self-merge process with automated checks and requires independent human review before any tagged release; `docs/production.md` gives operators the commands to verify ruleset and review state themselves.
 - The three 2026-09-24 review documents are relabelled as internal AI-assisted hardening logs under `docs/hardening-logs/`; the package classifier drops from Beta to Alpha; README gains a Project status section and corrected claims; SECURITY.md states that no versions are released yet.
 
+### Detection and collection assurance (2026-09-24)
+
+- Require corroborating AI evidence and bound source constructors to imported
+  frameworks; resolve common Python and JavaScript/TypeScript aliases. Repeated
+  generic loops and subprocess calls cannot establish confirmed agents.
+- Validate agent manifests and project operational configuration fields before
+  matching signatures. Descriptions and empty configuration files cannot prove
+  an agent exists.
+- Preserve unknown Lambda environment coverage, recognize potential IAM
+  `NotAction` grants with policy limitations, and validate Slack collection
+  schemas and workspace scope. Preserve observed Slack records on later network
+  failures and report missing n8n workflow definitions as incomplete.
+- Add a frozen, negative-heavy public corpus with separate AI labeling passes,
+  source provenance and annotation-integrity checks in CI. This does not establish
+  independently measured production accuracy.
+- Add read-only AWS and Slack tenant canaries with explicit known controls,
+  scope and coverage assertions, permission-denied controls, and private reports.
+  Offline replay and unavailable credentials cannot produce live acceptance.
+
+Live tenant acceptance remains a deployment gate. Neither these changes nor an
+offline test result constitute evidence that a production tenant was scanned.
+
 ### Final reconciliation after PR #33 (2026-09-24)
 
 - Fence incremental cache and record publication against timed-out connectors, and refuse to reuse an Engine while a prior abandoned worker still runs. A separate process deadline remains necessary for blocked SDK or plugin calls.
@@ -57,6 +79,7 @@
 - Keep untrusted SDK diagnostics out of application logs, redact opaque API/Foundry/GitHub token fields and the `GH_TOKEN` fallback, and restrict Kubernetes JWT classification to documented claim shapes.
 - Preserve the newer webhook, HTTP header, imported finding, CSP, SARIF, GCP and Azure safeguards from the consolidated candidate.
 - Fix the example code-scanning workflow for repositories without an inventory directory and for fork pull requests.
+- Record immutable commit/tree identities on GitHub and GitLab code findings, and reject downloaded blob bytes that do not match the enumerated Git object ID.
 
 Package version: 0.1.1. No release tag or published artifact is implied by this
 entry. Tenant canaries and container runtime acceptance are still required.

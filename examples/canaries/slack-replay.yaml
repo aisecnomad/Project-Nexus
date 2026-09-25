@@ -1,0 +1,32 @@
+schema: shadowscan.tenant-canary/v1
+mode: replay
+expectation: complete
+connector:
+  name: saas.slack
+  input: slack-records.jsonl
+  team_id: TEXAMPLE
+scope:
+  team_id: TEXAMPLE
+ground_truth:
+  owner: example-fixture-author
+  reviewed_at: "2026-09-24"
+  source: synthetic supplied fixture; no live tenant attestation
+  independent_of_scanner: true
+controls:
+  - id: ai-app
+    record:
+      _kind: approved_app
+      app.id: ACANARYAI
+    finding:
+      resource: slack:app:ACANARYAI
+      kind: bot-app
+      present: true
+    rationale: Known OpenAI integration is an AI application, not proof of autonomous execution.
+  - id: attendance-app
+    record:
+      _kind: approved_app
+      app.id: ACANARYBENIGN
+    finding:
+      resource: slack:app:ACANARYBENIGN
+      present: false
+    rationale: Independently inspected attendance helper has no model or agent integrations.

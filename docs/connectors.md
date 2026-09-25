@@ -73,6 +73,22 @@ Continue, Kiro, Amazon Q…), coding-agent configs (`CLAUDE.md`, `.claude/agents
 A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
+
+Python and common JavaScript/TypeScript constructors are resolved against imports,
+including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
+subprocess calls and repeated weak idioms cannot independently establish an agent.
+Confidence groups cap repeated observations of the same technology. Unsupported
+dynamic imports, re-exports and uncertain bindings remain usage evidence. Other
+languages use lexical signatures and require matching framework import/dependency
+corroboration before agent classification; uncorroborated lexical framework code
+is capped at 0.6 confidence. These are static candidate classifications, not proof
+that code ran or that a deployment is autonomous.
+
+Agent filenames select structural discovery checks. Empty/invalid LangGraph,
+A2A, M365 and CrewAI manifests yield incomplete coverage instead of confirmed
+agents. JSON/YAML descriptions are not executed or treated as source; low-code
+matching projects operational fields only. These predicates are not complete
+versioned vendor schema validators.
 Owner comes from `CODEOWNERS` and configured inventory. Git author/history
 enrichment is disabled by default; `use_git: true` explicitly enables it for
 reviewed local metadata. The metadata command must support `--no-lazy-fetch`;
@@ -94,7 +110,9 @@ content by shallow clone (default) or the contents API (`mode: api`, bounded
 file sample) and runs the filesystem scanner. Adds CI secret/variable *names*
 matching LLM providers. Token: fine-grained PAT or GitHub App token with
 `contents:read`, `metadata:read`; `secrets:read` for secret names. Offline
-input: a directory of clones.
+input: a directory of clones. Code findings retain the scanned Git tree/commit
+identity in `metadata.source_snapshot`; API blob bytes are checked against their
+enumerated Git object IDs.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 
@@ -110,7 +128,10 @@ Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
 clone or API mode; also CI/CD variable names (masked flag), group service
 accounts, group/project access tokens, project bots and GitLab Duo enablement.
 Token: PAT with `read_api` + `read_repository`.
-Live API records cannot choose internal offline paths or dispatch fields.
+Live API records cannot choose internal offline paths or dispatch fields. Code
+findings retain the scanned Git tree/commit identity in
+`metadata.source_snapshot`, and API mode pins tree pagination to an immutable
+commit before downloading files.
 
 Options: `group` (env `GITLAB_GROUP`) or `projects`; `token` (env
 `GITLAB_TOKEN`); `api_url` (env `GITLAB_API_URL`), `mode`, `include_archived`,
@@ -232,6 +253,12 @@ steps (→ code-exec), models. Live pagination is bounded by `max_pages`
 ### `saas.slack`
 `users.list` (bots), `admin.apps.approved.list` / `restricted` / `requests`
 (scopes, pending requests), `team.integrationLogs` (who installed what).
+`team.info` must return an authenticated workspace identity. If `team_id` is
+configured, it must match exactly before inventory calls begin. Missing/null
+collection arrays and malformed pagination are incomplete coverage. Later
+network failures retain already collected observations; provider error text is
+not copied into diagnostics. Complete live acceptance generally requires an
+appropriately scoped administrative audit token, not an ordinary bot token.
 
 ### `saas.microsoft-teams`
 Graph app catalog (custom apps with bot definitions and RSC permissions) and
@@ -288,6 +315,23 @@ attachments make collection incomplete. CloudTrail LookupEvents only supplies
 management events: `InvokeAgent` / `InvokeInlineAgent` data events require a
 separately configured trail or event data store and an export to `gateway.logs`.
 The collector reports this coverage gap when CloudTrail collection is enabled.
+
+Lambda `Environment.Error` is unknown environment coverage, not an empty set of
+variables. The `environment_coverage` marker survives sanitized exports and replay;
+other valid function evidence is retained while completeness fails.
+
+IAM findings are policy evidence, not effective authorization. `Allow/NotAction`
+is inspected against representative AI operations and resource service scope,
+with potential actions and explicit limitations recorded. Conditions, denies,
+policy boundaries, unsupported resource semantics and the full action universe
+are not evaluated; partial semantics make coverage incomplete. S3/IAM-only
+wildcards do not independently produce LLM grants. Effective access also depends
+on applicable policies outside this collector's view.
+
+AWS clients ignore configured endpoint URL overrides and use bundled SDK models;
+external model paths (`AWS_DATA_PATH`, user SDK model directories) cannot replace
+service endpoint rules, including after role assumption. This does not replace
+worker egress controls or establish the trustworthiness of installed SDK packages.
 
 ### `cloud.gcp`
 Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)

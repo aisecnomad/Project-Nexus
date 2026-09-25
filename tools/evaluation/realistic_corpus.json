@@ -204,7 +204,7 @@
     {
       "id": "python-openai-tool-loop-script",
       "family": "agent",
-      "description": "A standalone Python script drives the OpenAI chat completions API with function tools inside a while loop until the model stops calling tools",
+      "description": "A standalone Python script drives the OpenAI chat completions API with function tools inside a while loop until the model stops calling tools. Known gap: the scanner requires corroborating framework evidence before a tool-calling loop or subprocess idiom can confirm an agent, so this project is reported as LLM usage rather than an agent.",
       "files": {
         "assistant.py": "#!/usr/bin/env python3\n\"\"\"Release-notes assistant: answers questions by calling local tools until done.\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport os\nimport sys\n\nfrom openai import OpenAI\n\nfrom tools import TOOL_SPECS, run_tool\n\nMODEL = os.environ.get(\"ASSISTANT_MODEL\", \"gpt-4o-mini\")\nMAX_TURNS = 10\nSYSTEM = (\n    \"You answer questions about our release notes. Use the tools to read files; \"\n    \"do not guess version numbers. Stop when you have a complete answer.\"\n)\n\n\ndef ask(client: OpenAI, question: str) -> str:\n    messages = [{\"role\": \"system\", \"content\": SYSTEM}, {\"role\": \"user\", \"content\": question}]\n    turns = 0\n    while True:\n        turns += 1\n        if turns > MAX_TURNS:\n            return \"stopped: too many tool calls\"\n        response = client.chat.completions.create(\n            model=MODEL,\n            messages=messages,\n            tools=TOOL_SPECS,\n            tool_choice=\"auto\",\n            temperature=0,\n        )\n        choice = response.choices[0]\n        messages.append(choice.message)\n        if not choice.message.tool_calls:\n            return choice.message.content or \"\"\n        for call in choice.message.tool_calls:\n            args = json.loads(call.function.arguments or \"{}\")\n            result = run_tool(call.function.name, args)\n            messages.append({\"role\": \"tool\", \"tool_call_id\": call.id, \"content\": result})\n\n\ndef main() -> int:\n    if len(sys.argv) < 2:\n        print(\"usage: assistant.py 'question'\", file=sys.stderr)\n        return 2\n    client = OpenAI()\n    print(ask(client, \" \".join(sys.argv[1:])))\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n",
         "tools.py": "from __future__ import annotations\n\nimport json\nimport os\nimport re\nfrom pathlib import Path\n\nNOTES_DIR = Path(os.environ.get(\"NOTES_DIR\", \"notes\"))\n\nTOOL_SPECS = [\n    {\n        \"type\": \"function\",\n        \"function\": {\n            \"name\": \"list_versions\",\n            \"description\": \"List the versions that have release notes, newest first\",\n            \"parameters\": {\"type\": \"object\", \"properties\": {}, \"required\": []},\n        },\n    },\n    {\n        \"type\": \"function\",\n        \"function\": {\n            \"name\": \"read_notes\",\n            \"description\": \"Read the release notes for one version\",\n            \"parameters\": {\n                \"type\": \"object\",\n                \"properties\": {\"version\": {\"type\": \"string\", \"description\": \"e.g. 2.14.0\"}},\n                \"required\": [\"version\"],\n            },\n        },\n    },\n    {\n        \"type\": \"function\",\n        \"function\": {\n            \"name\": \"grep_notes\",\n            \"description\": \"Search all release notes for a regular expression\",\n            \"parameters\": {\n                \"type\": \"object\",\n                \"properties\": {\"pattern\": {\"type\": \"string\"}},\n                \"required\": [\"pattern\"],\n            },\n        },\n    },\n]\n\n\ndef list_versions() -> list[str]:\n    versions = [p.stem for p in NOTES_DIR.glob(\"*.md\")]\n    return sorted(versions, key=lambda v: [int(x) for x in v.split(\".\") if x.isdigit()], reverse=True)\n\n\ndef read_notes(version: str) -> str:\n    path = NOTES_DIR / f\"{version}.md\"\n    if not path.is_file():\n        return f\"no notes for {version}\"\n    return path.read_text(encoding=\"utf-8\")[:8000]\n\n\ndef grep_notes(pattern: str) -> list[str]:\n    rx = re.compile(pattern, re.IGNORECASE)\n    hits = []\n    for path in NOTES_DIR.glob(\"*.md\"):\n        for n, line in enumerate(path.read_text(encoding=\"utf-8\").splitlines(), 1):\n            if rx.search(line):\n                hits.append(f\"{path.stem}:{n}: {line.strip()}\")\n    return hits[:50]\n\n\ndef run_tool(name: str, args: dict) -> str:\n    handlers = {\"list_versions\": list_versions, \"read_notes\": read_notes, \"grep_notes\": grep_notes}\n    if name not in handlers:\n        return json.dumps({\"error\": f\"unknown tool {name}\"})\n    try:\n        return json.dumps(handlers[name](**args))\n    except Exception as exc:  # noqa: BLE001\n        return json.dumps({\"error\": str(exc)})\n",
@@ -216,7 +216,8 @@
         "kind": "agent",
         "signature": "provider.openai"
       },
-      "present": true
+      "present": true,
+      "known_gap": true
     },
     {
       "id": "dify-agent-app-dsl-export",
@@ -238,7 +239,7 @@
     {
       "id": "litellm-proxy-docker-worker",
       "family": "agent",
-      "description": "A queue worker container calls a LiteLLM proxy through the OpenAI SDK with tool calls, and a sibling container runs the proxy from its config",
+      "description": "A queue worker container calls a LiteLLM proxy through the OpenAI SDK with tool calls, and a sibling container runs the proxy from its config. Known gap: the scanner requires corroborating framework evidence before a tool-calling loop or subprocess idiom can confirm an agent, so this project is reported as LLM usage rather than an agent.",
       "files": {
         "Dockerfile": "FROM python:3.12-slim\nENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1\nWORKDIR /app\nRUN useradd --create-home --uid 10001 worker\nCOPY requirements.txt .\nRUN pip install -r requirements.txt\nCOPY worker ./worker\nUSER worker\nENV LITELLM_BASE_URL=http://litellm:4000 QUEUE_URL=redis://redis:6379/0\nCMD [\"python\", \"-m\", \"worker.main\"]\n",
         "docker-compose.yml": "services:\n  litellm:\n    image: ghcr.io/berriai/litellm:main-v1.55.0\n    command: [\"--config\", \"/etc/litellm/config.yaml\", \"--port\", \"4000\"]\n    volumes:\n      - ./litellm_config.yaml:/etc/litellm/config.yaml:ro\n    environment:\n      - OPENAI_API_KEY=${OPENAI_API_KEY}\n      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}\n      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}\n      - DATABASE_URL=postgresql://litellm:${LITELLM_DB_PASSWORD}@db:5432/litellm\n    ports:\n      - \"127.0.0.1:4000:4000\"\n    depends_on:\n      - db\n  worker:\n    build: .\n    environment:\n      - LITELLM_BASE_URL=http://litellm:4000\n      - LITELLM_API_KEY=${LITELLM_WORKER_KEY}\n      - QUEUE_URL=redis://redis:6379/0\n    depends_on:\n      - litellm\n      - redis\n  redis:\n    image: redis:7-alpine\n  db:\n    image: postgres:16-alpine\n    environment:\n      - POSTGRES_USER=litellm\n      - POSTGRES_PASSWORD=${LITELLM_DB_PASSWORD}\n      - POSTGRES_DB=litellm\n",
@@ -251,7 +252,8 @@
         "kind": "agent",
         "signature": "platform.litellm"
       },
-      "present": true
+      "present": true,
+      "known_gap": true
     },
     {
       "id": "jupyter-pydantic-ai-triage-notebook",

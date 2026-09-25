@@ -310,12 +310,12 @@
       "assertions": {"max_agent_findings": 0}
     },
     {
-      "id": "php-echo-agent",
+      "id": "php-unbound-echo-helper",
       "family": "agent",
-      "description": "A short PHP echo tag contains an executable function call",
+      "description": "A short PHP echo tag calls an unbound helper; its name alone does not establish a LangChain agent",
       "files": {"template.php": "<p>create_agent($model, $tools)</p>\n<?= create_agent($model, $tools) ?>\n"},
       "target": {"kind": "agent", "signature": "framework.langchain"},
-      "present": true
+      "present": false
     },
     {
       "id": "coding-agent-config",
@@ -405,10 +405,11 @@
     {
       "id": "env-names-import-with-heuristics-agent",
       "family": "agent",
-      "description": "The same idioms next to an OpenAI import and the environment variable name describe a real agent",
+      "description": "An OpenAI import next to the same idioms establishes LLM usage; vendor-neutral loops and subprocess calls still cannot confirm an agent",
       "files": {".env.example": "OPENAI_API_KEY=\n", "app.py": "from openai import OpenAI\n", "deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
-      "target": {"kind": "agent", "signature": "provider.openai"},
-      "present": true
+      "target": {"kind": "framework-usage", "signature": "provider.openai"},
+      "present": true,
+      "assertions": {"max_agent_findings": 0}
     }
   ]
 }

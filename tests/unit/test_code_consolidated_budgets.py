@@ -116,18 +116,21 @@ def test_same_text_from_distinct_signals_retains_agent_capabilities(tmp_path):
         "id": "custom.agent",
         "category": "framework",
         "signals": [
+            {"type": "import", "languages": ["python"], "patterns": [r"^from custom_sdk import execute_agent\b"], "weight": 0.8},
             {"type": "code", "patterns": [r"execute_agent\("], "weight": 0.5},
             {"type": "code", "patterns": [r"execute_agent\("], "weight": 0.95,
              "agent_indicator": True, "capabilities": ["code-exec"]},
         ],
     })])
-    (tmp_path / "agent.py").write_text("execute_agent()\n")
+    (tmp_path / "agent.py").write_text("from custom_sdk import execute_agent\nexecute_agent()\n")
     context = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
     findings = FilesystemConnector(context).run()
     project = next(f for f in findings if f.resource_type == "project")
     assert project.kind == Kind.AGENT
     assert "code-exec" in project.capabilities
-    assert len(project.evidence) == 2
+    code_evidence = [e for e in project.evidence if e.signal == "code:custom.agent"]
+    assert len(code_evidence) == 2
+    assert {e.weight for e in code_evidence} == {0.5, 0.95}
 
 
 @pytest.mark.parametrize("cls, fetch_method, metadata_method", [

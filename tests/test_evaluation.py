@@ -199,6 +199,8 @@ def test_evaluation_end_to_end_with_isolated_offline_files(tmp_path: Path):
     assert report["performance"]["files_per_pass"] == 1
     assert report["performance"]["median_scan_ms"] >= 0
     assert report["corpus"]["sha256"]
+    assert len(report["implementation"]["scanner_source_sha256"]) == 64
+    assert len(report["implementation"]["signature_sha256"]) == 64
 
 
 def test_structural_assertion_causes_regression_even_when_label_matches(tmp_path: Path):

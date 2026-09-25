@@ -25,6 +25,10 @@ python -m tools.evaluation.evaluate \
 python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/realistic_corpus.json \
   --output /tmp/nexus-realistic-eval.json
+python -m tools.evaluation.evaluate \
+  --corpus tools/evaluation/independent_corpus.json \
+  --annotations tools/evaluation/independent_annotations.json \
+  --output /tmp/nexus-independent-eval.json
 python -m tools.evaluation.evaluate --repeats 5 \
   --output /tmp/nexus-timing-eval.json
 python -m tools.evaluation.benchmark --files 1000 --runs 3 \
@@ -92,11 +96,15 @@ promotes to an agent through C# code patterns for `Kernel.CreateBuilder()`,
 `Plugins.AddFromType<>()`, `[KernelFunction("...")]` and automatic tool
 invocation, and a Flask view defined as `def create_agent():` no longer matches
 the LangChain `create_agent(` call pattern. At the time of writing the scanner
-scores 15 TP, 1 FP, 0 FN and 15 TN on it (precision 0.9375, recall 1.0,
-specificity 0.9375). The remaining failure carries `known_gap: true` and
-explains the cause in its description: the runbook's illustrative `sk-proj-`
-value is reported as a hardcoded credential because it is well formed and high
-entropy, a finding a secret scanner cannot rule out from the surrounding prose. Passing cases also show attribution noise that the
+scores 13 TP, 1 FP, 2 FN and 15 TN on it (precision 0.93, recall 0.87,
+specificity 0.94). The three failures carry `known_gap: true` and explain the
+cause in their description: the runbook's illustrative `sk-proj-` value is
+reported as a hardcoded credential because it is well formed and high entropy,
+a finding a secret scanner cannot rule out from the surrounding prose; and the
+OpenAI tool-calling script and the LiteLLM proxy worker are reported as LLM
+usage rather than agents because generic loops and subprocess idioms cannot
+confirm an agent without corroborating framework evidence, a deliberate
+precision rule documented in docs/scanning.md. Passing cases also show attribution noise that the
 binary target does not penalise: Java `@Tool(` is credited to LangChain4j next
 to Spring AI, `new Agent({ name:` is credited to Mastra next to the OpenAI
 Agents SDK, `docker-compose.yml` files raise a container workload infra
@@ -125,6 +133,27 @@ pool its results with synthetic cases or report its rates as estate-wide
 precision, recall, or calibrated probabilities. See
 `tools/evaluation/THIRD_PARTY_NOTICES.md` for attribution.
 
+The separate `independent_corpus.json` is a negative-heavy public source sample
+selected and labeled by a curator who did not inspect the scanner implementation
+or its results. A second AI reviewer labeled a neutral source packet without the
+first labels or scanner observations. Both reviewers agreed on all 42 cases
+before the first evaluation. The annotation ledger records both decisions and
+their reasons and binds them to the exact corpus SHA-256. CI rejects missing
+votes, unresolved disagreements, changed labels and content-digest mismatches.
+This is recorded independent **AI** annotation, not independent human validation
+or authenticated third-party certification. Selection is purposive; the sample
+does not estimate the prevalence or accuracy of a production estate.
+
+Once observations are used to improve detection, this set is a frozen regression
+corpus, not a fresh held-out test. Keep its labels unchanged when improving the
+scanner and report the first evaluation separately from subsequent results.
+Commission a new independently labeled sample before making field claims.
+See `INDEPENDENT_CORPUS.md` beside the corpus for selection, licenses and labeling
+provenance. Reports identify the signature and scanner-source fingerprints,
+scanner version and runtime; retain the reviewed source commit and CI run
+alongside them. [Assurance results](assurance-results.md) preserve the first
+observations and subsequent regression results.
+
 Metrics use **one binary target per case**, selected by finding kind and optional
 signature ID. `TP` means the target is present in the case and detected; `FP`
 means absent but detected; `FN` means present and missed; `TN` means absent and
@@ -152,7 +181,9 @@ the tiny selected sample does not calibrate that score.
    labels, and adjudicate disagreement. An ambiguous case is excluded with
    its reason recorded, not silently counted as a negative.
 3. Create the same JSON schema as `tools/evaluation/corpus.json`; set metadata
-   type to `adjudicated` and record provenance and labeling method. The runner
+   type to `adjudicated` and record provenance and labeling method in an annotation
+   ledger supplied through `--annotations`. A ledger requires two distinct reviewer
+   declarations and source-based resolutions for every disagreement. The runner
    limits the corpus to 500 cases, 20 text files per case, 32 KB per file, 1 MB
    combined case content, and 2 MB of JSON. Larger real repositories need a
    separate offline scan and a repository-level annotation protocol. Keep the
@@ -169,6 +200,12 @@ the tiny selected sample does not calibrate that score.
    information about uncommon production patterns.
 
 ## Read-only tenant canary procedure
+
+Executable AWS and Slack live canaries, credential preflight, permission-denied
+controls and clearly separated offline replay checks are documented in
+[canaries.md](canaries.md). Replay or mocked transport success is never recorded
+as live tenant acceptance. Other connectors still require provider-specific
+canary acceptance; these two adapters do not validate the whole estate.
 
 Use distinct disposable, resource-limited workers: one for repository content,
 and others for credentialed cloud, identity, gateway or SaaS APIs. Give each
