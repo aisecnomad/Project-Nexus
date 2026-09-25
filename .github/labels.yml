@@ -1,6 +1,9 @@
-# Labels for ShadowScan issue tracker.
-# Sync with: gh label sync --force
-# Or manually create in GitHub Settings > Labels.
+# Labels for the ShadowScan issue tracker.
+#
+# The Labels workflow (.github/workflows/labels.yml) creates or updates every
+# label listed here on each push to main that changes this file; it never
+# deletes a label. Issue forms under .github/ISSUE_TEMPLATE/ may only apply
+# labels that exist here (tests/test_repository_policy.py checks this).
 
 # Type
 - name: bug
@@ -22,6 +25,14 @@
 - name: security
   color: "e4e669"
   description: Security-related change or report.
+
+- name: detection
+  color: "fbca04"
+  description: False positive, false negative, misattribution, or scoring report.
+
+- name: question
+  color: "d876e3"
+  description: Usage question about installation, configuration, or results.
 
 # Priority
 - name: "priority: critical"

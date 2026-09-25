@@ -3,7 +3,7 @@
 # Run manually: pre-commit run --all-files
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -25,8 +25,10 @@ repos:
         args: [--fix, --exit-non-zero-on-fix]
       # ruff-format is not adopted yet: 173 files would be reformatted.
 
+  # Keep the ruff and mypy revs equal to the pins in requirements-ci-constraints.txt
+  # so the hooks run the same versions as CI (tests/test_repository_policy.py checks).
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.16.0
+    rev: v2.3.1
     hooks:
       - id: mypy
         files: ^shadowscan/

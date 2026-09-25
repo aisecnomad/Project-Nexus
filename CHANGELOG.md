@@ -2,6 +2,16 @@
 
 ## 0.1.1 — Unreleased
 
+### Community policy consistency
+
+- Add a documentation issue form, keep detection reports and private security
+  reports on their existing routes, and document safe vulnerability report inputs.
+- Hash-lock the documentation toolchain, align local hooks with CI tool versions,
+  and scope CodeQL and stale-triage write permissions to their jobs.
+- Validate workflow and issue-form safety policies. Label synchronization creates
+  or updates declared labels without deleting labels; inactive issues and pull
+  requests remain open for maintainer review.
+
 ### Private holdout and CLI job deadline gates
 
 - Reject bundled corpora and AI annotation ledgers from holdout acceptance;
@@ -10,6 +20,8 @@
 - Add optional `--job-deadline-seconds` / `options.job_deadline_seconds` for CLI
   scans. The cancellable process watchdog exits `3` when setup, scanning or output
   exceeds the deadline; external process supervision remains required.
+- Start an explicit CLI deadline before reading JWTs from stdin, so an open,
+  silent input pipe cannot hold the process past its configured deadline.
 
 ### Follow-up trust-boundary review (2026-09-24)
 

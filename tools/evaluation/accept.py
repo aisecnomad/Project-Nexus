@@ -19,7 +19,7 @@ from typing import Any
 
 from shadowscan.utils.files import read_policy_text
 from tools.evaluation.annotations import MAX_ANNOTATION_BYTES
-from tools.evaluation.evaluate import CorpusError, _unique_pairs, evaluate, load_corpus
+from tools.evaluation.evaluate import DEFAULT_CORPUS, Case, CorpusError, _unique_pairs, evaluate, load_corpus
 
 MAX_POLICY_BYTES = 128_000
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -110,6 +110,33 @@ def _annotation_method(annotations: Path) -> str:
     return ledger["method"]
 
 
+def _exclude_bundled_sources(cases: list[Case], digest: str) -> None:
+    """Reject exact reuse of public examples previously scored during development.
+
+    This only checks the five bundled corpora. Undisclosed private evaluations
+    and near-duplicate sources still require review outside this command.
+    """
+    prior_digests: set[str] = set()
+    prior_files: set[str] = set()
+    prior_locations: set[tuple[str, str, str]] = set()
+    for path in (DEFAULT_CORPUS, *(DEFAULT_CORPUS.with_name(name) for name in (
+        "public_corpus.json", "realistic_corpus.json", "independent_corpus.json", "review_corpus.json",
+    ))):
+        _, prior, prior_digest = load_corpus(path)
+        prior_digests.add(prior_digest)
+        for case in prior:
+            prior_files.update(hashlib.sha256(content.encode("utf-8")).hexdigest() for content in case.files.values())
+            if case.source:
+                prior_locations.add((case.source["repo"].casefold(), case.source["commit"], case.source["path"]))
+    if digest in prior_digests:
+        raise CorpusError("holdout reuses a bundled evaluation corpus")
+    for case in cases:
+        if any(hashlib.sha256(content.encode("utf-8")).hexdigest() in prior_files for content in case.files.values()):
+            raise CorpusError("holdout reuses a bundled evaluated source")
+        if case.source and (case.source["repo"].casefold(), case.source["commit"], case.source["path"]) in prior_locations:
+            raise CorpusError("holdout reuses a bundled evaluated source")
+
+
 def accept(corpus: Path, policy_path: Path, annotations: Path) -> dict[str, Any]:
     """Execute the scanner on a private holdout and compare it to a frozen policy."""
     if _is_bundled_release_corpus(corpus):
@@ -128,9 +155,12 @@ def accept(corpus: Path, policy_path: Path, annotations: Path) -> dict[str, Any]
     method = _annotation_method(annotations)
     if method != _HUMAN_METHOD:
         raise CorpusError(
-            "acceptance requires independent-human-double-label-before-scan; "
+            "acceptance requires a human-labeled holdout with independent-human-double-label-before-scan; "
             "AI-labeled public samples remain regression evidence only"
         )
+    if any(case.known_gap for case in cases):
+        raise CorpusError("known gaps cannot be waived in an acceptance holdout")
+    _exclude_bundled_sources(cases, digest)
     result = evaluate(corpus, repeats=2, annotations=annotations)
     if result["corpus"]["sha256"] != policy["corpus_sha256"]:
         raise CorpusError("corpus SHA-256 differs from the frozen acceptance policy")

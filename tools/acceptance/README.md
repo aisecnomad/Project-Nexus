@@ -80,10 +80,13 @@ summary and must mark every case as `known_gap: false`.
 
 The operator chooses `min_cases`, `min_positive_cases`, `min_negative_cases`,
 `min_precision`, `min_recall`, and `min_specificity`. There are no automatic claims
-that these thresholds are adequate for a particular risk appetite. Existing corpus
-validation requires at least 20 cases, three source repositories, positive cases
-and at least twice as many negative cases as positive cases; the evaluator permits
-at most 500 cases. Choose stricter counts from the deployment population and risk.
+that these thresholds are adequate for a particular risk appetite. The production
+verifier requires `min_cases` of at least 20, and the human-labeled holdout must
+contain positive and negative cases; the evaluator permits at most 500 cases.
+The three-repository and two-negatives-per-positive rules apply to public or
+AI-labeled evaluation corpora, not to the private human holdout. Review source
+diversity and class balance explicitly, and choose stricter counts from the
+deployment population and risk.
 The gate compares **point estimates**, not confidence intervals or calibrated
 probabilities. Review sample uncertainty, strata, coverage and operational budgets
 outside this gate. A report with classification errors can meet operator-selected

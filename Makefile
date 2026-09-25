@@ -45,7 +45,7 @@ signatures: ## Validate all signature schemas and regexes
 
 .PHONY: audit
 audit: ## Audit dependencies for known vulnerabilities
-	pip-audit --progress-spinner off
+	pip-audit --skip-editable --progress-spinner off
 
 .PHONY: evaluate
 evaluate: ## Run the bundled detection regression corpora
@@ -105,14 +105,18 @@ demo-sarif: ## Run offline demo with SARIF output
 # --- Docs ------------------------------------------------------------------
 
 .PHONY: docs
-docs: ## Build documentation site locally
-	python -m pip install -q --only-binary=:all: -c requirements-ci-constraints.txt "mkdocs-material==9.7.7"
-	mkdocs build
+docs: ## Build documentation site locally with the locked toolchain
+	python -m pip install -q --require-hashes --only-binary=:all: -r requirements-docs.lock
+	mkdocs build --strict
 
 .PHONY: docs-serve
 docs-serve: ## Serve documentation site with live reload
-	python -m pip install -q --only-binary=:all: -c requirements-ci-constraints.txt "mkdocs-material==9.7.7"
+	python -m pip install -q --require-hashes --only-binary=:all: -r requirements-docs.lock
 	mkdocs serve
+
+.PHONY: policy
+policy: ## Check workflow and issue-form safety policies
+	python -m pytest -q tests/test_repository_policy.py
 
 # --- Cleanup ---------------------------------------------------------------
 

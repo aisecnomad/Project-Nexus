@@ -16,6 +16,13 @@ place avoids conflicting instructions between the website and the repository.
    approach. Follow the contributor guide to create a local development
    environment and submit a focused pull request.
 
+## Try one test
+
+The contributor guide's
+[Run one test section](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#run-one-test)
+provides a credential-free first test, the existing Make targets, and the exact
+coverage-report command. Follow it after setting up your development environment.
+
 ## Technical guides
 
 - [Architecture and connector contract](architecture.md)
