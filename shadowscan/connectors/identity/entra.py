@@ -238,7 +238,7 @@ class EntraConnector(BaseConnector):
             publisher=sp.get("publisherName") or ((sp.get("verifiedPublisher") or {}).get("displayName")),
             description=" ".join(x for x in [sp.get("notes"), sp.get("description")] if x),
             urls=[sp.get("homepage"), sp.get("loginUrl"), *(sp.get("replyUrls") or [])],
-            scopes=list(delegated) + app_perms,
+            scopes=sorted(delegated) + app_perms,
             client_id=sp.get("appId"),
         )
         if first_party and not f.frameworks and not self.include_first_party:
