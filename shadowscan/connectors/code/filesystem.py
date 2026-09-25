@@ -149,11 +149,11 @@ LOCK_FILES = {
     "bun.lock",
 }
 
-# A file over max_file_size that the scanner would read is an error: unread
-# content could hide agent configuration. Names matching these globs hold
-# generated, locked or binary content that never carries such evidence, so
-# skipping them is a warning and the scan stays complete. The connector's
-# `oversize_skip_globs` replaces the list; see docs/scanning.md.
+# A file over max_file_size that the scanner would read leaves coverage
+# incomplete: unread content could hide agent configuration. Names matching
+# these globs hold generated, locked or binary content that is explicitly
+# outside the scan scope, so skipping them is a warning and the scan stays
+# complete. The connector's `oversize_skip_globs` replaces the list.
 DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
     "package-lock.json",
     "yarn.lock",
@@ -357,13 +357,13 @@ def _is_test_path(rel: str) -> bool:
     return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
 
 
-def _link_target_inside(link: Path, resolved_root: Path) -> bool:
-    """True when a (never followed) link resolves inside the scan root."""
+def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
+    """Resolve only to classify a link; never open it through the link path."""
     try:
-        target = Path(os.path.realpath(link))
+        target = link.resolve(strict=True)
     except (OSError, ValueError, RuntimeError):
-        return False
-    return target == resolved_root or resolved_root in target.parents
+        return None
+    return target if target == resolved_root or resolved_root in target.parents else None
 MAX_ROOT_OWNERSHIP_STEPS = 20_000_000
 
 
@@ -447,13 +447,13 @@ class FilesystemConnector(BaseConnector):
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "extra directory names / glob patterns to skip",
-        "max_file_size": "bytes; a larger file is not analyzed: skipped with a warning, or an error under strict_coverage unless oversize_skip_globs matches it (default 1,000,000 bytes)",
+        "max_file_size": "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs matches it (default 1,000,000 bytes)",
         "oversize_skip_globs": "case-insensitive file name globs; a file over max_file_size matching one is skipped with a warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts)",
         "max_files": "stop after this many files (default 100000)",
         "scan_timeout": "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan_timeout when higher",
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
-        "strict_coverage": "treat oversize files and symbolic links leaving the scan root as incomplete coverage (default false: skipped with a warning)",
+        "strict_coverage": "report unread analyzable oversize files and outward symbolic links as errors instead of incomplete warnings (default false)",
         "include_tests": "let test and fixture code establish agents at full weight (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
@@ -582,6 +582,58 @@ class FilesystemConnector(BaseConnector):
             incomplete=False,
         )
 
+    def _link_target_is_scanned(self, rel: str, target: Path, root: Path) -> bool:
+        """A contained target only preserves coverage when the walk reads it.
+
+        A link may point into an excluded directory, to an excluded file, or
+        to a file type that its *link name* would make analyzable. Treat these
+        as gaps instead of assuming every in-root target is visited.
+        """
+        relative = target.relative_to(root)
+        parts = relative.parts
+        for depth, name in enumerate(parts[:-1], start=1):
+            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
+                return False
+        target_rel = relative.as_posix()
+        if target.is_dir():
+            # A directory alias changes every descendant's path. Even an
+            # included target cannot prove that path-based signals at the
+            # alias were assessed without walking the link (which we forbid).
+            return False
+        if not target.is_file() or self._excluded_file(target_rel):
+            return False
+        if target.name in LOCK_FILES or target.name.endswith((".min.js", ".min.css", ".map", ".pyc", ".lock")):
+            return False
+
+        def content_kind(name: str, path: str) -> tuple[str, bool]:
+            extension = Path(name).suffix.lower()
+            supported = (
+                extension in SOURCE_EXTENSIONS or extension in TEXT_CONFIG_EXTENSIONS
+                or name.lower().startswith(".env") or is_manifest_name(name)
+                or "." not in name or bool(self.index.match_file(path))
+            )
+            return extension, supported
+
+        link_ext, link_supported = content_kind(Path(rel).name, rel)
+        target_ext, target_supported = content_kind(target.name, target_rel)
+        if link_supported and (not target_supported or link_ext != target_ext):
+            return False
+        # For source aliases in another project or test directory, the real
+        # path can change project ownership and evidence weight. Config and
+        # document aliases can change filename-specific parsing even with the
+        # same extension. Only same-directory, same-class source aliases are
+        # equivalent without opening the link itself.
+        if link_supported and (
+            link_ext not in SOURCE_EXTENSIONS
+            or PurePosixPath(rel).parent != PurePosixPath(target_rel).parent
+            or _is_test_path(rel) != _is_test_path(target_rel)
+        ):
+            return False
+        # File-name signatures can apply to the alias but not the real file.
+        alias_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(rel)}
+        target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
+        return alias_signals <= target_signals
+
     def _iter_files(self, root: Path) -> Iterator[tuple[str, Path, str]]:
         """Yield (relpath, path, project_root_rel) top-down with project root tracking."""
         for rel, path, proj, _ in self._iter_entries(root):
@@ -593,8 +645,8 @@ class FilesystemConnector(BaseConnector):
         A file over ``max_file_size`` whose name matches ``oversize_skip_globs``
         is reported as a warning and never yielded; the scan stays complete
         because such content is never analyzed. Every other oversize file is
-        yielded so the reader records the existing error, or skips it silently
-        when its type is never read.
+        yielded so the reader records incomplete coverage for analyzable files;
+        types that the scanner never reads are still ignored.
         """
         # os.walk visits descendants before siblings. Keep only active project
         # ancestors, so assigning a project is amortized constant time even in
@@ -606,18 +658,19 @@ class FilesystemConnector(BaseConnector):
 
         def skipped_link(rel: str, link: Path) -> None:
             # Links are never followed. A link that resolves inside the scan
-            # root loses no coverage: its target is scanned at its real path.
-            if _link_target_inside(link, resolved_root):
+            # root loses no coverage only if the target is scanned at its real path.
+            target = _resolved_link_target(link, resolved_root)
+            if target is not None and self._link_target_is_scanned(rel, target, resolved_root):
                 return
             # A single representative diagnostic per root keeps hostile trees
             # from filling the report with thousands of link names.
             if root not in self._symlink_warnings:
                 self._symlink_warnings.add(root)
-                message = f"code.filesystem: skipped symbolic link {rel} whose target is outside the scan root"
+                message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
                 if self.strict_coverage:
                     self.ctx.error(f"{message}; coverage incomplete")
                 else:
-                    self.ctx.warn(f"{message}; enable strict_coverage to treat this as incomplete", incomplete=False)
+                    self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
 
         if root.is_file():
             try:
@@ -795,7 +848,7 @@ class FilesystemConnector(BaseConnector):
                     text = read_text(path, self.max_file_size, read_errors)
                     for issue in read_errors:
                         if issue == "file exceeds max_file_size" and not self.strict_coverage:
-                            self.ctx.warn(f"code.filesystem: {rel}: skipped, {issue}; enable strict_coverage to treat this as incomplete", incomplete=False)
+                            self.ctx.warn(f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete", incomplete=True)
                         else:
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                     if text is None:

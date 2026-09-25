@@ -36,16 +36,17 @@ audit storage and review their origin. Unsupported live connectors still require
 their own acceptance work; they cannot inherit an AWS or Slack result.
 
 The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
-requires a successful main-branch CI run for the exact selected commit. It builds
+requires successful main-branch CI and CodeQL runs for the exact selected commit. It builds
 and checks the wheel, retains a runtime dependency SBOM and hashes, and produces
 GitHub artifact provenance. It does not publish to PyPI, create a release, or
 declare tenant acceptance. Review and retain its artifacts before a separate
 maintainer publication decision.
 
 After merge and successful push CI, dispatch **Release candidate evidence** on
-`main` with `expected_commit` set to the full current main SHA and `ci_run_id`
-set to that commit's successful CI run ID. The workflow rejects stale commits,
-PR-only runs and other workflows. Retain `release-candidate-<SHA>` and
+`main` with `expected_commit` set to the full current main SHA, `ci_run_id`
+set to that commit's successful CI run ID, and `codeql_run_id` set to its
+successful CodeQL run ID. The workflow rejects stale commits, PR-only runs,
+failed checks and other workflows. Retain `release-candidate-<SHA>` and
 `release-attestations-<SHA>` together; hosted retention is 90 days. Verify the
 candidate's `SHA256SUMS` and GitHub attestations before publication. The runtime
 SBOM covers locked Python core/cloud dependencies, not operating-system packages.
@@ -295,12 +296,14 @@ application owns process supervision. Keep the external job deadline and process
 group/container cleanup to reap child processes and bound native code that holds
 the interpreter lock indefinitely.
 
-Code scans follow a documented coverage policy. Symbolic links that resolve
-inside the scan root are skipped silently because their targets are scanned at
-their real path; links leaving the root and files over `max_file_size` are
-skipped with a warning. `strict_coverage: true` (`--strict-coverage`) turns both
-into incomplete coverage (exit 3): use it for enforcement gates, and raise
-`max_file_size` or add `exclude` patterns for known data files. Evidence found
+Code scans follow a documented coverage policy. Regular-file links whose real
+targets are included and analyzed with equivalent semantics are skipped because
+the target is scanned at its real path. Directory links, links into excluded or
+unread content, links leaving the root and oversized files the scanner would
+inspect make the scan incomplete (exit 3) by default, with a warning naming
+the omission. `strict_coverage: true` (`--strict-coverage`) records those
+conditions as errors; explicit `oversize_skip_globs` remain declared omissions
+in both modes. Raise `max_file_size` or add `exclude` patterns for known data files. Evidence found
 only in test or fixture paths has half weight and cannot promote a project to an
 agent unless `include_tests: true` (`--include-tests`) is set, and a project
 finding whose evidence is already reported by an MCP configuration, agent

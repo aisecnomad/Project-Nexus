@@ -98,6 +98,37 @@ def test_unchanged_code_reuses_findings_without_leaking_mutations(tmp_path, inde
     assert first.findings[0].risk.score == second.findings[0].risk.score
 
 
+def test_signature_fingerprint_is_reused_within_one_cache_lifecycle(tmp_path, monkeypatch):
+    cfg = config(tmp_path)
+    signature = signature_from_dict({
+        "id": "framework.example", "name": "Example", "category": "framework",
+        "signals": [{"type": "dependency", "ecosystem": "pypi", "names": ["example"]}],
+    })
+    index = SignatureIndex([signature])
+    original = index.fingerprint
+    calls = 0
+
+    def counted() -> str:
+        nonlocal calls
+        calls += 1
+        return original()
+
+    monkeypatch.setattr(index, "fingerprint", counted)
+    first_cache = IncrementalCache(cfg, index)
+    first = first_cache.snapshot(cfg.connectors[0])
+    assert first is not None
+    assert first_cache.snapshot(cfg.connectors[0]) == first
+    assert calls == 1
+
+    # A new run observes changed detection semantics, while repeated input
+    # snapshots within the previous run still compare the actual input bytes.
+    signature.name = "Updated Example"
+    second_cache = IncrementalCache(cfg, index)
+    second = second_cache.snapshot(cfg.connectors[0])
+    assert second is not None and second.fingerprint != first.fingerprint
+    assert calls == 2
+
+
 def test_config_credential_cache_fingerprint_stays_private_on_miss_and_hit(tmp_path, index, monkeypatch):
     cfg = config(tmp_path)
     cfg.connectors[0].config["token"] = "t1"

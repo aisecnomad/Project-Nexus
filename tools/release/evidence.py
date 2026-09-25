@@ -18,43 +18,72 @@ from typing import Any
 _SHA = re.compile(r"[0-9a-f]{40}")
 _REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+_WORKFLOW_PATHS = {
+    "CI": ".github/workflows/ci.yml",
+    "CodeQL": ".github/workflows/codeql.yml",
+}
 
 
 def verify_ci_run(
     run: Any, *, repository: str, expected_sha: str, current_sha: str, run_id: str
 ) -> dict[str, Any]:
-    """Require successful push CI for the exact dispatched main commit.
+    """Require successful push CI for the exact dispatched main commit."""
+    return _verify_workflow_run(
+        run, repository=repository, expected_sha=expected_sha,
+        current_sha=current_sha, run_id=run_id, workflow="CI",
+    )
+
+
+def verify_codeql_run(
+    run: Any, *, repository: str, expected_sha: str, current_sha: str, run_id: str
+) -> dict[str, Any]:
+    """Require successful push CodeQL for the exact dispatched main commit."""
+    return _verify_workflow_run(
+        run, repository=repository, expected_sha=expected_sha,
+        current_sha=current_sha, run_id=run_id, workflow="CodeQL",
+    )
+
+
+def _verify_workflow_run(
+    run: Any, *, repository: str, expected_sha: str, current_sha: str,
+    run_id: str, workflow: str,
+) -> dict[str, Any]:
+    """Bind a successful run to the workflow file, branch, commit and repository.
 
     A successful PR run, another workflow, a fork, and a different commit do not
-    establish the acceptance gate, even when they share a display name.
+    establish the acceptance gate, even when they share a display name. GitHub's
+    workflow-run REST API uses both bare and @main-suffixed paths; accept only
+    those exact forms and verify head_branch separately.
     """
     if not _REPOSITORY.fullmatch(repository):
         raise ValueError("invalid repository")
     if not _SHA.fullmatch(expected_sha) or expected_sha != current_sha:
         raise ValueError("expected commit must be the full lowercase SHA of this workflow run")
     if not re.fullmatch(r"[1-9][0-9]*", run_id):
-        raise ValueError("CI run ID must be a positive integer")
+        raise ValueError(f"{workflow} run ID must be a positive integer")
     if not isinstance(run, dict):
-        raise ValueError("CI run response must be an object")
+        raise ValueError(f"{workflow} run response must be an object")
+    path = _WORKFLOW_PATHS[workflow]
     expected = {
         "id": int(run_id),
         "head_sha": expected_sha,
         "head_branch": "main",
-        # Workflow-run REST responses include the ref after the workflow path.
-        "path": ".github/workflows/ci.yml@main",
         "event": "push",
         "status": "completed",
         "conclusion": "success",
     }
     for key, value in expected.items():
-        if run.get(key) != value:
-            raise ValueError(f"CI gate failed: {key} does not match")
+        if run.get(key) != value or (key == "id" and type(run.get(key)) is not int):
+            raise ValueError(f"{workflow} gate failed: {key} does not match")
+    if run.get("path") not in (path, f"{path}@main"):
+        raise ValueError(f"{workflow} gate failed: path does not match")
     for key in ("repository", "head_repository"):
         candidate = run.get(key)
         if not isinstance(candidate, dict) or candidate.get("full_name") != repository:
-            raise ValueError(f"CI gate failed: {key} does not match")
+            raise ValueError(f"{workflow} gate failed: {key} does not match")
     return {
         **expected,
+        "path": run["path"],
         "repository": repository,
         "url": f"https://github.com/{repository}/actions/runs/{run_id}",
     }
@@ -74,7 +103,7 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("release directory must be a real directory")
     files = sorted(directory.iterdir())
-    required = {"ci-verification.json", "runtime-sbom.cdx.json", "requirements.lock",
+    required = {"ci-verification.json", "codeql-verification.json", "runtime-sbom.cdx.json", "requirements.lock",
                 "requirements-build.lock", "requirements-ci-constraints.txt"}
     if not required.issubset({path.name for path in files}):
         raise ValueError("release evidence is missing required files")
@@ -85,14 +114,16 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
             raise ValueError("release files must be regular files with portable names")
     if {"build-evidence.json", "SHA256SUMS"}.intersection(path.name for path in files):
         raise ValueError("refusing to overwrite existing release evidence")
-    ci = json.loads((directory / "ci-verification.json").read_text(encoding="utf-8"))
-    # Recheck the saved CI identity rather than just copying an arbitrary JSON file.
-    if not isinstance(ci, dict) or ci.get("repository") != repository or ci.get("head_sha") != commit:
-        raise ValueError("saved CI evidence does not match the release source")
-    verified = verify_ci_run(
-        {**ci, "repository": {"full_name": repository}, "head_repository": {"full_name": repository}},
-        repository=repository, expected_sha=commit, current_sha=commit, run_id=str(ci.get("id", "")),
-    )
+    verified_runs = {}
+    for workflow, verify in (("ci", verify_ci_run), ("codeql", verify_codeql_run)):
+        saved = json.loads((directory / f"{workflow}-verification.json").read_text(encoding="utf-8"))
+        # Recheck each saved identity rather than copying arbitrary JSON into the manifest.
+        if not isinstance(saved, dict) or saved.get("repository") != repository or saved.get("head_sha") != commit:
+            raise ValueError(f"saved {workflow} evidence does not match the release source")
+        verified_runs[workflow] = verify(
+            {**saved, "repository": {"full_name": repository}, "head_repository": {"full_name": repository}},
+            repository=repository, expected_sha=commit, current_sha=commit, run_id=str(saved.get("id", "")),
+        )
     sbom = json.loads((directory / "runtime-sbom.cdx.json").read_text(encoding="utf-8"))
     if not isinstance(sbom, dict) or sbom.get("bomFormat") != "CycloneDX" or not sbom.get("components"):
         raise ValueError("runtime SBOM must contain CycloneDX components")
@@ -100,7 +131,7 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
         "schema_version": 1,
         "source": {"repository": repository, "commit": commit},
         "workflow_run": f"https://github.com/{repository}/actions/runs/{workflow_run}",
-        "ci": verified,
+        **verified_runs,
         "build_environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
@@ -109,7 +140,7 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
         "scope": {
             "sbom": "dependencies in requirements.lock (core and cloud extras); not a container/OS SBOM",
             "artifact": "wheel candidate; publication requires a separate maintainer action",
-            "assurance": "CI and artifact identity only; not a claim of live tenant validation or reproducible builds",
+            "assurance": "CI, CodeQL and artifact identity only; not a claim of live tenant validation or reproducible builds",
         },
         "files": [{"name": path.name, "sha256": _digest(path), "bytes": path.stat().st_size} for path in files],
     }
@@ -131,6 +162,13 @@ def main() -> None:
     gate.add_argument("--expected-sha", required=True)
     gate.add_argument("--current-sha", required=True)
     gate.add_argument("--run-id", required=True)
+    codeql_gate = commands.add_parser("verify-codeql")
+    codeql_gate.add_argument("--input", type=Path, required=True)
+    codeql_gate.add_argument("--output", type=Path, required=True)
+    codeql_gate.add_argument("--repository", required=True)
+    codeql_gate.add_argument("--expected-sha", required=True)
+    codeql_gate.add_argument("--current-sha", required=True)
+    codeql_gate.add_argument("--run-id", required=True)
     manifest = commands.add_parser("manifest")
     manifest.add_argument("--directory", type=Path, required=True)
     manifest.add_argument("--repository", required=True)
@@ -138,8 +176,9 @@ def main() -> None:
     manifest.add_argument("--workflow-run", required=True)
     args = parser.parse_args()
     try:
-        if args.command == "verify-ci":
-            result = verify_ci_run(
+        if args.command in ("verify-ci", "verify-codeql"):
+            verify = verify_ci_run if args.command == "verify-ci" else verify_codeql_run
+            result = verify(
                 json.loads(args.input.read_text(encoding="utf-8")), repository=args.repository,
                 expected_sha=args.expected_sha, current_sha=args.current_sha, run_id=args.run_id,
             )

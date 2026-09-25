@@ -2,6 +2,22 @@
 
 ## 0.1.1 — Unreleased
 
+### Coverage and release verification follow-up
+
+- Mark unread oversized source and configuration files and outward or unresolved
+  symlinks as incomplete even without `strict_coverage`; the flag elevates the
+  diagnostic from a warning to an error. Declared generated-file omissions in
+  `oversize_skip_globs` remain visible warnings.
+- Treat in-root directory symlinks, and file links to excluded or otherwise
+  unread targets, as incomplete instead of assuming alias content was scanned.
+- Treat malformed or mismatched explicit GitHub/GitLab repository responses and empty GitHub/GitLab
+  offline clone inputs as incomplete scans instead of complete empty results.
+- Compute the signature-set digest once per incremental scan run instead of
+  reserializing it for every input snapshot; changes between runs still invalidate
+  the cache.
+- Accept GitHub's actual workflow-run path in the release evidence gate and
+  require successful exact-commit CI and CodeQL before building a candidate.
+
 ### Markdown report safety
 
 - Defang bare HTTP(S) and `www.` URLs in untrusted report text so copied Markdown

@@ -183,14 +183,14 @@ def test_oversize_lockfile_is_a_warning_and_the_scan_stays_complete(tmp_path, in
     assert all("over max_file_size" in warning for warning in stats.warnings)
 
 
-def test_oversize_source_file_is_a_warning_unless_strict_coverage(tmp_path, index):
+def test_oversize_source_file_marks_coverage_incomplete_by_default(tmp_path, index):
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     (tmp_path / "big.py").write_text("x" * 200)
     result = Engine(_engine_config(tmp_path), index).run()
-    assert result.complete and result.findings
+    assert not result.complete and result.findings
     assert not result.stats[0].errors
     assert any("big.py: skipped, file exceeds max_file_size" in warning for warning in result.stats[0].warnings)
-    # Enforcement gates opt back into fail-closed coverage.
+    # Strict coverage keeps the error severity for callers that use it.
     strict = Engine(_engine_config(tmp_path, strict_coverage=True), index).run()
     assert not strict.complete and strict.findings
     assert any("big.py: file exceeds max_file_size" in error for error in strict.stats[0].errors)
@@ -206,7 +206,7 @@ def test_oversize_skip_globs_is_configurable_and_validated(tmp_path, index, run_
     assert sorted(warning.split(": ")[1] for warning in ctx.stats.warnings) == ["big.py", "data.csv"]
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=100,
                            oversize_skip_globs=[])
-    assert not ctx.stats.incomplete and not ctx.stats.errors and len(ctx.stats.warnings) == 2
+    assert ctx.stats.incomplete and not ctx.stats.errors and len(ctx.stats.warnings) == 2
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=100,
                            oversize_skip_globs=[], strict_coverage=True)
     assert ctx.stats.incomplete and not ctx.stats.warnings
@@ -215,6 +215,24 @@ def test_oversize_skip_globs_is_configurable_and_validated(tmp_path, index, run_
         FilesystemConnector(ConnectorContext(config={"path": str(tmp_path), "oversize_skip_globs": "*.csv"}, index=index))
     assert "yarn.lock" in DEFAULT_OVERSIZE_SKIP_GLOBS and "*.pyc" in DEFAULT_OVERSIZE_SKIP_GLOBS
     assert "oversize_skip_globs" in FilesystemConnector.config_keys
+
+
+def test_only_oversize_agent_source_does_not_yield_a_clean_empty_result(tmp_path, index):
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n" + " " * 1_000_000)
+    config = ScanConfig(connectors=[ConnectorSpec("code.filesystem", {"path": str(tmp_path), "use_git": False})],
+                        parallel=1)
+    result = Engine(config, index).run()
+    assert not result.complete and result.findings == []
+    assert result.stats[0].incomplete
+    assert any("agent.py: skipped, file exceeds max_file_size; coverage incomplete" in warning
+               for warning in result.stats[0].warnings)
+
+
+def test_explicit_oversize_source_exclusion_keeps_result_complete(tmp_path, index):
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n" + " " * 200)
+    result = Engine(_engine_config(tmp_path, oversize_skip_globs=["agent.py"]), index).run()
+    assert result.complete and result.findings == []
+    assert any("agent.py" in warning and "never analyzed" in warning for warning in result.stats[0].warnings)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX flock is required for incremental state")

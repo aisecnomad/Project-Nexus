@@ -47,6 +47,9 @@ Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
 `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
+Unread oversized source files and symlinks leaving the root make a scan incomplete
+by default; `strict_coverage` promotes their diagnostics to errors. Declared
+oversize skip globs remain visible omissions.
 
 ### `code.github`
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
@@ -57,6 +60,9 @@ matching LLM providers. Token: fine-grained PAT or GitHub App token with
 input: a directory of clones. Code findings retain the scanned Git tree/commit
 identity in `metadata.source_snapshot`; API blob bytes are checked against their
 enumerated Git object IDs.
+An offline input with no clone directories is incomplete.
+An explicit `repos:` response whose repository identity does not match the
+requested name is incomplete, and that response is not scanned.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 
@@ -69,6 +75,8 @@ Live API records cannot choose internal offline paths or dispatch fields. Code
 findings retain the scanned Git tree/commit identity in
 `metadata.source_snapshot`, and API mode pins tree pagination to an immutable
 commit before downloading files.
+Missing, malformed or mismatched details for an explicitly named project, and an offline
+input with no clone directories, make the scan incomplete.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

@@ -8,7 +8,9 @@ import time
 
 import pytest
 import regex
+from click.testing import CliRunner
 
+from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code import manifests
 from shadowscan.connectors.code.filesystem import FilesystemConnector, _parse_mcp_servers
@@ -184,9 +186,9 @@ def test_source_symlink_is_skipped_and_marks_scan_incomplete(tmp_path, run_conne
     findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=strict)
     assert any("framework.langgraph" in finding.frameworks for finding in findings)
     assert not any("private business notes" in str(finding.to_dict()) for finding in findings)
-    # The link is never followed. Content outside the repository is reported as
-    # skipped; strict_coverage makes that incomplete coverage.
-    assert ctx.stats.incomplete is strict
+    # The link is never followed; a skipped external target leaves coverage
+    # incomplete regardless of the chosen diagnostic severity.
+    assert ctx.stats.incomplete
     diagnostics = ctx.stats.errors if strict else ctx.stats.warnings
     assert any("symbolic link" in issue for issue in diagnostics)
 
@@ -203,6 +205,86 @@ def test_explicitly_excluded_symlink_is_outside_scan_scope(tmp_path, run_connect
     findings, ctx = run_connector("code.filesystem", path=str(repo), exclude=["*excluded.py"], use_git=False)
     assert any("framework.langgraph" in finding.frameworks for finding in findings)
     assert not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("kind", ["excluded-directory", "excluded-file", "unsupported-target", "broken-target"])
+@pytest.mark.parametrize("strict", [False, True])
+def test_in_root_link_to_unscanned_target_marks_incomplete(tmp_path, run_connector, kind, strict):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    extra = []
+    if kind == "excluded-directory":
+        hidden = repo / "node_modules"
+        hidden.mkdir()
+        target = hidden / "agent.py"
+    elif kind == "excluded-file":
+        target = repo / "excluded.py"
+        extra = ["*excluded.py"]
+    elif kind == "unsupported-target":
+        target = repo / "agent.bin"
+    else:
+        target = repo / "missing.py"
+    if kind != "broken-target":
+        target.write_text("from crewai import Agent\n")
+    (repo / "agent.py").symlink_to(target)
+
+    findings, ctx = run_connector("code.filesystem", path=str(repo), exclude=extra,
+                                  use_git=False, strict_coverage=strict)
+    assert findings == []
+    assert ctx.stats.incomplete
+    diagnostics = ctx.stats.errors if strict else ctx.stats.warnings
+    assert any("symbolic link agent.py" in issue and "unscanned" in issue for issue in diagnostics)
+
+
+def test_in_root_link_to_excluded_source_exits_three_by_default(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "node_modules").mkdir(parents=True)
+    target = repo / "node_modules" / "agent.py"
+    target.write_text("from crewai import Agent\n")
+    (repo / "agent.py").symlink_to(target)
+
+    result = CliRunner().invoke(main, ["code", str(repo), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    assert json.loads(result.stdout)["summary"]["complete"] is False
+
+
+def test_in_root_link_to_analyzed_source_keeps_complete(tmp_path, run_connector):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "original.py"
+    target.write_text("from crewai import Agent\n")
+    (repo / "alias.py").symlink_to(target)
+
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=True)
+    assert any("framework.crewai" in finding.frameworks for finding in findings)
+    assert not ctx.stats.incomplete and not ctx.stats.errors and not ctx.stats.warnings
+
+
+def test_source_alias_to_test_directory_marks_incomplete(tmp_path, run_connector):
+    repo = tmp_path / "repo"
+    tests = repo / "tests"
+    tests.mkdir(parents=True)
+    (tests / "agent.py").write_text("from crewai import Agent\n")
+    (repo / "agent.py").symlink_to(tests / "agent.py")
+
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert ctx.stats.incomplete
+    assert any("symbolic link agent.py" in issue for issue in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_in_root_directory_alias_keeps_findings_but_marks_incomplete(tmp_path, run_connector, strict):
+    repo = tmp_path / "repo"
+    source = repo / "source"
+    source.mkdir(parents=True)
+    (source / "agent.py").write_text("from crewai import Agent\n")
+    (repo / "agents").symlink_to(source, target_is_directory=True)
+
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=strict)
+    assert any("framework.crewai" in finding.frameworks for finding in findings)
+    assert ctx.stats.incomplete
+    diagnostics = ctx.stats.errors if strict else ctx.stats.warnings
+    assert any("symbolic link agents" in issue for issue in diagnostics)
 
 
 @pytest.mark.parametrize("kind", ["root", "ancestor", "dotdot"])
