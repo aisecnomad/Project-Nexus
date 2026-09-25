@@ -282,7 +282,9 @@ def test_unflagged_case_defaults_to_regression(tmp_path: Path):
 
 
 def test_max_secret_findings_assertion_catches_a_credential(tmp_path: Path):
-    files = {"config.py": 'OPENAI_API_KEY = "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h"\n'}
+    # Public deterministic fixture: no token or random secret is stored in the repository.
+    synthetic_key = "sk-" + "proj-" + hashlib.sha256(b"Project-Nexus-public-synthetic-test-key").hexdigest()
+    files = {"config.py": f'OPENAI_API_KEY = "{synthetic_key}"\n'}
     corpus = _write(tmp_path / "data.json", _corpus(files, assertions={"max_secret_findings": 0}))
     report = evaluate(corpus)
     assert report["metrics"]["all"]["tn"] == 1
@@ -339,7 +341,7 @@ def _acceptance_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
             "id": "active-graph",
             "family": "agent",
             "description": "Active graph construction",
-            "files": {"agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n"},
+            "files": {"agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# separately selected acceptance case\n"},
             "target": {"kind": "agent", "signature": "framework.langgraph"},
             "present": True,
         }
@@ -442,7 +444,7 @@ def test_acceptance_uses_predeclared_error_budget_instead_of_perfect_labels(tmp_
             "id": "missed-graph",
             "family": "agent",
             "description": "Active graph construction with simulated missed observation",
-            "files": {"missed.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n"},
+            "files": {"missed.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# distinct missed acceptance case\n"},
             "target": {"kind": "agent", "signature": "framework.langgraph"},
             "present": True,
         }

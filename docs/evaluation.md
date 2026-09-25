@@ -285,6 +285,12 @@ from `tools.evaluation.evaluate`, reviewer decisions and CI logs in the
 restricted release record. Changing labels, exclusions, scanner signatures or
 sampling after seeing results requires a new blinded holdout and reviewed policy.
 
+The standalone command requires declared human labels, rejects known-gap waivers
+and exact source reuse from the five bundled evaluated corpora. It cannot find
+undisclosed private prior evaluations or near duplicates. For a production
+rollout, run [`tools.acceptance.verify`](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) with
+declared `prior_corpora` and the separately reviewed tenant canary evidence.
+
 This is a code-filesystem **case-level** gate. The sampled file units and
 framework/kind groups cannot prove whole-repository recall, a specific
 language's accuracy, credential safety, cloud/identity completeness or active

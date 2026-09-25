@@ -627,7 +627,29 @@ class BaseConnector(ABC):
         # Page IDs, labels and provider-specific ``kind`` values are not
         # enough to turn a collection into one resource.  Explicit resource
         # type fields can identify a native record with nested collections.
+        collections = {"items", "records", "value", "data", "results", "resources", "logEvents"}
+        pagination = {
+            "has_more", "IsTruncated", "next_page", "nextPage", "next_page_token",
+            "nextPageToken", "nextToken", "NextToken", "NextMarker", "@odata.nextLink",
+            "nextLink", "nextCursor", "next_cursor", "response_metadata",
+        }
+        if collections.intersection(data) and pagination.intersection(data):
+            # A page can carry an ID, resource-looking type and continuation.
+            # Never let those labels bypass the envelope pagination check.
+            return False
+        if collections.intersection(data) and (
+            data.get("type") in ("list", "page", "collection")
+            or data.get("object") in ("list", "page", "collection")
+        ):
+            return False
         if BaseConnector._is_error_record(data):
+            if {"items", "records", "value", "results", "resources", "logEvents"}.intersection(data):
+                return False
+            payload = data.get("data")
+            if isinstance(payload, list) and any(
+                isinstance(item, dict) and (collections | pagination).intersection(item) for item in payload
+            ):
+                return False
             if data.get("object") == "error" or data.get("type") == "error" or data.get("_kind") == "error":
                 return False
             kind = data.get("_kind")
@@ -643,16 +665,19 @@ class BaseConnector(ABC):
             # Preserve it only when its nested payload has event attributes;
             # an error with page records remains a failed partial export.
             event_fields = {"attempt", "timestamp", "message", "status", "operation", "duration_ms"}
-            payload = data.get("data")
             return (
                 "id" in data and isinstance(data.get("error"), dict)
                 and isinstance(payload, list) and bool(payload)
-                and all(isinstance(item, dict) and bool(event_fields.intersection(item)) for item in payload)
+                and all(
+                    isinstance(item, dict) and bool(event_fields.intersection(item))
+                    and not collections.intersection(item) and not pagination.intersection(item)
+                    for item in payload
+                )
             )
         if ("items" in data or "records" in data or ("value" in data and isinstance(data["value"], list))) and not (
             {"_kind", "resource", "resourceId", "arn"}.intersection(data)
-            or ("type" in data and data["type"] not in ("list", "page"))
-            or data.get("object") not in (None, "list", "page")
+            or ("type" in data and data["type"] not in ("list", "page", "collection"))
+            or data.get("object") not in (None, "list", "page", "collection")
         ):
             return False
         identity_keys = {"_id", "_kind", "name", "arn", "type", "kind", "resource", "resourceId"}
