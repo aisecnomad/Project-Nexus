@@ -348,6 +348,10 @@ record-export directories are created as 0700; existing non-private directories
 are rejected without changing their permissions. Use dedicated directories for
 these outputs.
 
+The Markdown reporter defangs bare HTTP(S) and `www.` strings in untrusted text
+fields. This keeps repository names, diagnostics and evidence descriptions from
+becoming automatically clickable when reports are pasted into a ticket or wiki.
+
 Dump filenames include the original connector configuration ordinal and a safe
 label. Repeated names or normalization-colliding labels no longer overwrite each
 other. Selecting a subset with `--only` retains the original ordinal. Use the

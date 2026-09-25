@@ -10,6 +10,7 @@ from shadowscan.models import Finding, ScanResult
 _LEVEL_ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": "⚪"}
 _MARKDOWN_META = re.compile(r"([\\`*_\[\]~|])")
 _BACKTICKS = re.compile(r"`+")
+_AUTOLINK = re.compile(r"(?i)\b(?:(https?)://|(www)\.)")
 _LINE_BREAKS = {
     "\r": r"\r", "\n": r"\n", "\t": r"\t", "\f": r"\f", "\v": r"\v",
     "\x85": r"\u0085", "\u2028": r"\u2028", "\u2029": r"\u2029",
@@ -33,7 +34,20 @@ def _one_line(value: object) -> str:
 
 def _text(value: object) -> str:
     """Escape data in headings, list items and table cells (including raw HTML)."""
-    return _MARKDOWN_META.sub(r"\\\1", html.escape(_one_line(value), quote=False))
+    content = _one_line(value)
+    # GFM autolinks bare URLs even when the surrounding Markdown is escaped.
+    # Reports include attacker-controlled names and diagnostics, so keep these
+    # strings readable without making an exported report a link-launch surface.
+    # A single alternation handles both forms in one pass over the input.
+    content = _AUTOLINK.sub(_defang_autolink, content)
+    return _MARKDOWN_META.sub(r"\\\1", html.escape(content, quote=False))
+
+
+def _defang_autolink(match: re.Match[str]) -> str:
+    scheme = match.group(1)
+    if scheme:
+        return "hxxps://" if scheme.lower() == "https" else "hxxp://"
+    return "www[.]"
 
 
 def _code(value: object) -> str:
