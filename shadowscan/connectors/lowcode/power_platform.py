@@ -141,7 +141,7 @@ class PowerPlatformConnector(BaseConnector):
             f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token",
             data={"grant_type": "client_credentials", "client_id": self.client_id, "client_secret": self.client_secret, "scope": scope},
         )
-        tok = client.read_json_response(resp)["access_token"]
+        tok: str = client.read_json_response(resp)["access_token"]
         self._tokens[scope] = tok
         return tok
 

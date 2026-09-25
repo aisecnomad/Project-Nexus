@@ -2,6 +2,16 @@
 
 ## 0.1.1 — Unreleased
 
+### Type checking and lint coverage
+
+- `mypy` runs with `warn_return_any` and `warn_unreachable`, and ruff's `B904`
+  and `UP028` rules are enabled. The sites they reported are fixed at the
+  source: untrusted API rows are typed as such so their guards are reachable,
+  the AWS manual pagination path no longer runs inside an exception handler,
+  and a GitLab variable shadow that hid a dead branch is renamed. The
+  `pip install -e ".[dev]"` suite skips the two boto3-only tests without the
+  AWS extra.
+
 ### Field review of public repositories (2026-09-25)
 
 Behavior changes to review before upgrading (see

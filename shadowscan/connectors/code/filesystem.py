@@ -500,8 +500,8 @@ class FilesystemConnector(BaseConnector):
         self.max_file_size = int(ctx.get("max_file_size", 1_000_000))
         self.max_files = int(ctx.get("max_files", 100_000))
         self.scan_timeout = float(ctx.get("scan_timeout", 2.0))
-        self.max_ast_nodes = ctx.get("max_ast_nodes")
-        self.max_notebook_size = ctx.get("max_notebook_size", DEFAULT_MAX_NOTEBOOK_SIZE)
+        self.max_ast_nodes: int | None = ctx.get("max_ast_nodes")  # validated below
+        self.max_notebook_size: int = ctx.get("max_notebook_size", DEFAULT_MAX_NOTEBOOK_SIZE)  # validated below
         if type(self.max_notebook_size) is not int or self.max_notebook_size < 1:
             raise ConnectorError("code.filesystem: max_notebook_size must be a positive integer")
         if self.max_file_size < 1 or self.max_files < 1 or not 0 < self.scan_timeout <= 60:
@@ -2103,7 +2103,8 @@ def _redacted_source(text: str, structure: Any) -> str:
     if structure is _NO_STRUCTURE:
         return sanitize_text(text)
     try:
-        return sanitize((structure, text))[1]
+        result: str = sanitize((structure, text))[1]
+        return result
     except (YAMLResourceLimitError, SanitizationLimitError):
         raise
     except (ValueError, RecursionError, yaml.YAMLError):
@@ -2117,6 +2118,7 @@ def _safe_source_text(rel: str, text: str) -> str:
 
 def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:
     errors = errors if errors is not None else []
+    data: Any  # untrusted repository content; every shape is checked below
     try:
         if rel.endswith(".toml"):
             data = tomllib.loads(text)

@@ -212,22 +212,9 @@ class AwsConnector(BaseConnector):
                 if type(exc).__name__ != "OperationNotPageableError":
                     raise
                 # Only failure to create a paginator permits the manual path.
-                seen: set[str] = set()
-                request = dict(kwargs)
-                for _ in range(MAX_LIST_PAGES):
-                    page = getattr(client, op)(**request)
-                    if not isinstance(page, dict):
-                        raise ValueError("invalid AWS list page")
-                    yield page
-                    token_key = "nextToken" if "nextToken" in page else "NextToken"
-                    token = page.get(token_key)
-                    if token is None or token == "":
-                        return
-                    if not isinstance(token, str) or token in seen:
-                        raise ValueError("invalid or repeated AWS pagination token")
-                    seen.add(token)
-                    request[token_key] = token
-                self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
+                paginator = None
+            if paginator is None:
+                yield from self._manual_pages(client, op, kwargs)
                 return
             for number, page in enumerate(islice(paginator.paginate(**kwargs), MAX_LIST_PAGES), start=1):
                 if not isinstance(page, dict):
@@ -245,6 +232,25 @@ class AwsConnector(BaseConnector):
             denied = isinstance(code, str) and code in {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}
             detail = f"access denied ({code})" if denied else type(exc).__name__
             self.ctx.warn(f"cloud.aws: {op} collection failed ({detail})")
+
+    def _manual_pages(self, client: Any, op: str, kwargs: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Follow ``nextToken``/``NextToken`` by hand for operations without a paginator."""
+        seen: set[str] = set()
+        request = dict(kwargs)
+        for _ in range(MAX_LIST_PAGES):
+            page = getattr(client, op)(**request)
+            if not isinstance(page, dict):
+                raise ValueError("invalid AWS list page")
+            yield page
+            token_key = "nextToken" if "nextToken" in page else "NextToken"
+            token = page.get(token_key)
+            if token is None or token == "":
+                return
+            if not isinstance(token, str) or token in seen:
+                raise ValueError("invalid or repeated AWS pagination token")
+            seen.add(token)
+            request[token_key] = token
+        self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
 
     def _paginate(self, client: Any, op: str, key: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
         for page in self._pages(client, op, **kwargs):

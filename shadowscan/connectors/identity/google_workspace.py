@@ -127,7 +127,7 @@ class GoogleWorkspaceConnector(BaseConnector):
                     self.ctx.warn("identity.google-workspace: max_users reached")
                     break
                 if not isinstance(user, dict):
-                    self.ctx.warn("identity.google-workspace: invalid user record")
+                    self.ctx.warn("identity.google-workspace: invalid user record")  # type: ignore[unreachable]  # untrusted API JSON
                     continue
                 self._check_record_customer(user)
                 email = user.get("primaryEmail")
@@ -261,4 +261,5 @@ def _dwd_token(sa_file: Path, subject: str, scopes: str) -> str:
     )
     client = HttpClient()
     resp = client.post(info.get("token_uri", "https://oauth2.googleapis.com/token"), data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion})
-    return client.read_json_response(resp)["access_token"]
+    token: str = client.read_json_response(resp)["access_token"]
+    return token

@@ -173,7 +173,8 @@ class ConnectorContext:
         try:
             # Use positional extraction: a short secret can also occur in a
             # wrapper key such as 'message', which the sanitizer must redact.
-            return sanitize([{**self.config, **self._resolved_config}, msg], redact_short_secrets=True)[1]
+            result: str = sanitize([{**self.config, **self._resolved_config}, msg], redact_short_secrets=True)[1]
+            return result
         except SanitizationLimitError:
             if self.stats is not None:
                 self.stats.incomplete = True

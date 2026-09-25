@@ -740,6 +740,9 @@ def _redact_credential_calls(text: str) -> str:
 
 def _sensitive_key(key: str) -> bool:
     normalized = _KEY_NORMALISE.sub("", key.lower())
+    # This runs for every key of every sanitized record. ``str.endswith`` with
+    # a tuple compares the suffixes in C; a Python loop over length-bucketed
+    # sets measured about twice as slow per key, so keep the builtin.
     return normalized in _SENSITIVE_NAMES or normalized.endswith(_SENSITIVE_SUFFIXES)
 
 
@@ -750,10 +753,10 @@ def _sensitive_assignment_key(key: str) -> bool:
 
 def credential_id(value: Any) -> str:
     """Stable opaque identity for raw credentials; never retain prefix/suffix."""
-    value = str(value)
-    if _FINGERPRINT.fullmatch(value):
-        return value
-    return "credential:sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+    s = str(value)
+    if _FINGERPRINT.fullmatch(s):
+        return s
+    return "credential:sha256:" + hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
 def _redact_value(value: Any) -> Any:
@@ -830,7 +833,7 @@ def _sanitize_url(match: re.Match[str]) -> str:
 def sanitize_text(text: str) -> str:
     """Redact recognizable credentials, assignments, auth headers and URL secrets."""
     if not isinstance(text, str):
-        text = str(text)
+        text = str(text)  # type: ignore[unreachable]  # untyped callers still pass bytes-like values
     if len(text) > _MAX_SANITIZATION_CHARS:
         raise SanitizationLimitError("text sanitization size limit exceeded")
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
@@ -845,20 +848,23 @@ def sanitize_text(text: str) -> str:
 
     def assignments(value: str, depth: int = 0) -> str:
         def assignment(m: re.Match[str]) -> str:
-            if _FINGERPRINT.fullmatch(m.group(0)):
-                return m.group(0)
-            raw = m.group("value")
+            full: str = m.group(0)
+            if _FINGERPRINT.fullmatch(full):
+                return full
+            raw: str = m.group("value")
             quote = raw[0] if raw.startswith(('"', "'")) else ""
             bare = raw[1:-1] if quote else raw
-            if _sensitive_assignment_key(m.group("key")):
-                clean = _redact_value(bare)
+            key: str = m.group("key")
+            sep: str = m.group("sep")
+            if _sensitive_assignment_key(key):
+                clean: str = _redact_value(bare)
             elif "=" in bare or ":" in bare:
                 # Do not let an ordinary assignment swallow a nested credential,
                 # e.g. config = "api_key=opaque-value" in a source-code excerpt.
                 clean = assignments(bare, depth + 1) if depth < 8 else REDACTED
             else:
-                return m.group(0)
-            return m.group("key") + m.group("sep") + quote + clean + quote
+                return full
+            return key + sep + quote + clean + quote
 
         return _ASSIGNMENT.sub(assignment, value)
 

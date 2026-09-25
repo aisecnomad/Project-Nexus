@@ -268,7 +268,7 @@ class SlackConnector(BaseConnector):
             return None
         return kind
 
-    def _app_finding(self, app_id: str, app: dict[str, Any], scopes: list[Any], status: str, bot: dict[str, Any] | None, logs: list[dict[str, Any]], team: str | None, requester: str | None = None, message: str | None = None) -> Finding | None:
+    def _app_finding(self, app_id: str, app: dict[str, Any], scopes: Any, status: str, bot: dict[str, Any] | None, logs: list[dict[str, Any]], team: str | None, requester: str | None = None, message: str | None = None) -> Finding | None:
         name = app.get("name") or get_path(bot or {}, "profile.real_name", "real_name") or app_id
         scope_names: list[str] = []
         if not isinstance(scopes, list):

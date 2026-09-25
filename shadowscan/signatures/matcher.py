@@ -104,7 +104,8 @@ def _finditer(
             matches = (match for match in matches if not excluded(match.start()))
         return list(islice(matches, limit))
 
-    return _run_regex(collect, context)
+    result: list[Any] = _run_regex(collect, context)
+    return result
 
 
 def _search(rx: Any, text: str, context: str):

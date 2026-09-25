@@ -144,7 +144,7 @@ class AzureConnector(BaseConnector):
             self.ctx.warn(f"cloud.azure: {status} for {path}; coverage unknown", incomplete=True)
             return None
 
-    def _list(self, path: str, api: str, *, allow_partial: bool = False) -> list[dict[str, Any]] | None:
+    def _list(self, path: str, api: str, *, allow_partial: bool = False) -> list[Any] | None:
         """Keep observed ARM resources; strict callers require complete coverage.
 
         Failed collection always marks the scan incomplete. Diagnostic posture
@@ -196,7 +196,7 @@ class AzureConnector(BaseConnector):
         ]
         if not subs:
             raise ConnectorError("cloud.azure: no subscriptions visible")
-        rows: list[dict[str, Any]] = []
+        rows: list[Any] = []  # ARM responses are untrusted; every row is checked below
         skip_token = None
         seen_tokens: set[str] = set()
         for _ in range(1000):
