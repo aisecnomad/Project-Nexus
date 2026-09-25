@@ -1,6 +1,6 @@
 # Project Nexus · ShadowScan
 
-**ShadowScan discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
+**ShadowScan is an Open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
 
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps and cloud accounts. It fingerprints frameworks and
