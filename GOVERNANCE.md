@@ -67,14 +67,18 @@ Sustained, careful contributions, constructive collaboration and willingness to
 maintain changes inform an invitation. The maintainer and candidate should agree
 on the scope of responsibility before granting access, use the least privileges
 needed, and record role changes in this document. Commit volume alone does not
-entitle someone to repository administration.
+entitle someone to repository administration. To offer sustained triage or
+review help, open an issue titled `Maintainer interest`; see the
+[maintainer roster](https://github.com/aisecnomad/Project-Nexus/blob/main/MAINTAINERS.md).
 
 When an independent reviewer is available, enable and verify required approvals
 for routine pull requests. Access should be reviewed when responsibilities
 change or someone steps away. A maintainer handover should record the successor,
 release and security responsibilities, and access transfer before the outgoing
-maintainer leaves. Until another maintainer is appointed, there is a single-person
-continuity risk; support and response times are not guaranteed.
+maintainer leaves. Revoke obsolete access and rotate shared credentials that a
+departing maintainer could access, where applicable. Update the maintainer roster
+to reflect the handover. Until another maintainer is appointed, there is a
+single-person continuity risk; support and response times are not guaranteed.
 
 ## Release process
 

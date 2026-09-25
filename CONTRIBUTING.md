@@ -51,6 +51,38 @@ the cloud connectors; do not commit live tenant exports.
 
 Run `make help` for a quick reference of all development commands.
 
+## Run one test
+
+After the development setup above, run one offline test from the repository root:
+
+```bash
+python -m pytest -q tests/unit/test_signatures.py::test_all_signatures_load_and_validate
+```
+
+This validates that the bundled signatures load successfully. It needs no cloud
+credentials. When iterating on a change, replace the path and test name with the
+relevant test; a single-test pass does not establish full-suite coverage.
+
+Existing Make targets provide the next steps:
+
+```bash
+make test-fast       # full test suite without coverage, stop at first failure
+make test            # full suite with the overall coverage floor
+make coverage-gate   # connector coverage; run after make test
+make check           # all local quality gates
+```
+
+To run the connector coverage check directly after the full coverage test run,
+export a report and pass its filename explicitly:
+
+```bash
+python -m coverage json -o /tmp/shadowscan-coverage.json
+python -m tools.coverage_gate /tmp/shadowscan-coverage.json
+```
+
+The gate requires the JSON report argument; running one test is not enough to
+measure every connector. See [quality gates](#quality-gates) for CI requirements.
+
 ## Trust model
 
 The operator workstation or CI runner, the scan configuration, and installed
