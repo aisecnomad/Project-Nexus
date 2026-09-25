@@ -26,35 +26,72 @@ WRITE_SCOPES = {
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
-    """Reject duplicate keys before PyYAML silently discards policy entries."""
+    """Reject duplicate keys without treating GitHub's `on` key as a boolean."""
+
+    # Copy the resolver table before changing it; leave PyYAML's global loader
+    # untouched. GitHub uses YAML 1.2 booleans, unlike SafeLoader's YAML 1.1.
+    yaml_implicit_resolvers = {
+        initial: [(tag, pattern) for tag, pattern in resolvers if tag != "tag:yaml.org,2002:bool"]
+        for initial, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
 
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
         self.flatten_mapping(node)
-        seen: set[Any] = set()
+        seen = set()
         for key_node, _ in node.value:
             key = self.construct_object(key_node, deep=deep)
-            if key in seen:
+            try:
+                duplicate = key in seen
+                seen.add(key)
+            except TypeError as exc:
                 raise yaml.constructor.ConstructorError(
-                    "while reading a repository YAML file", node.start_mark,
-                    f"duplicate YAML key {key!r}", key_node.start_mark,
+                    "while constructing a mapping", node.start_mark,
+                    "found an unhashable key", key_node.start_mark,
+                ) from exc
+            if duplicate:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping", node.start_mark,
+                    f"found duplicate key {key!r}", key_node.start_mark,
                 )
-            seen.add(key)
         return super().construct_mapping(node, deep=deep)
 
 
+_UniqueKeyLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool", re.compile(r"^(?:true|false)$", re.IGNORECASE), list("tTfF"),
+)
+
+
+def _parse(text: str) -> Any:
+    return yaml.load(text, Loader=_UniqueKeyLoader)
+
+
 def _load(path: Path) -> Any:
-    return yaml.load(path.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
+    return _parse(path.read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("contents", [
-    "name: Detection\nlabels: [detection]\nlabels: [bug]\n",
+@pytest.mark.parametrize("text", [
+    "labels: [bug]\nlabels: [detection]\n",
+    "jobs:\n  check:\n    permissions: {}\n    permissions: {contents: write}\n",
     "permissions:\n  contents: read\n  contents: write\n",
+    "on: [push]\non: [workflow_dispatch]\n",
 ])
-def test_policy_loader_rejects_duplicate_keys(tmp_path: Path, contents: str) -> None:
-    path = tmp_path / "policy.yml"
-    path.write_text(contents, encoding="utf-8")
-    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate YAML key"):
-        _load(path)
+def test_yaml_policy_loading_rejects_duplicate_keys(text: str) -> None:
+    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate key"):
+        _parse(text)
+
+
+def test_yaml_policy_loading_preserves_on_and_real_boolean_values() -> None:
+    data = _parse("on: [push]\npublish: false\nenabled: true\n")
+    assert data["on"] == ["push"]
+    assert data["publish"] is False
+    assert data["enabled"] is True
+    # The local policy loader must not change behavior for other YAML consumers.
+    assert yaml.safe_load("on: [push]\n") == {True: ["push"]}
+
+
+def test_yaml_policy_loading_rejects_unsafe_object_tags() -> None:
+    with pytest.raises(yaml.constructor.ConstructorError):
+        _parse("!!python/object/apply:builtins.str [unsafe]\n")
 
 
 def _triggers(workflow: dict[str, Any]) -> Any:

@@ -1,5 +1,6 @@
 name: Usage question
 description: Ask about installation, configuration, or interpreting a sanitized result.
+labels: [question]
 body:
   - type: markdown
     attributes:

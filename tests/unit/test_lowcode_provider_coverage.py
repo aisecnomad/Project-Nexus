@@ -69,13 +69,18 @@ def test_servicenow_invalid_page_is_incomplete(index, monkeypatch, page):
 @pytest.mark.parametrize("max_pages,expected_calls", [(1, 1), (10, 2)])
 def test_servicenow_page_limit_and_repeated_pages_are_bounded(index, monkeypatch, max_pages, expected_calls):
     monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
+    # Keep this pagination test independent of regex timing for 500 identical
+    # display names. Native agent findings do not depend on name enrichment.
+    match_names = Mock(return_value=[])
+    monkeypatch.setattr(servicenow, "name_matches", match_names)
     page = {"result": [{"sys_id": f"agent-{number}", "name": "Assistant"} for number in range(500)]}
     connector = _live(index, servicenow.ServiceNowConnector, [page, page, RuntimeError("guard against unbounded loop")], max_pages=max_pages)
     findings = connector.run()
+    assert not connector.ctx.stats.errors, connector.ctx.stats.errors
     assert len(findings) == 500
+    assert match_names.call_count == 500
     assert connector.http.get_json.call_count == expected_calls
     assert connector.ctx.stats.incomplete
-    assert not connector.ctx.stats.errors
 
 
 def test_servicenow_native_table_export_keeps_valid_neighbors(tmp_path, run_connector):
