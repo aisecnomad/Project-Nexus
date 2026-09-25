@@ -32,7 +32,10 @@ jobs:
           declared = sorted(tomllib.loads(Path('pyproject.toml').read_text())['build-system']['requires'])
           locked = sorted(line.split()[0] for line in Path('requirements-build.lock').read_text().splitlines()
                           if re.match(r'^[A-Za-z0-9_.-]+==[^\s]+', line))
-          assert declared == locked, f'requirements-build.lock pins {locked} differ from pyproject.toml build-system {declared}'
+          # The lock may also pin the backends' own dependencies (wheel needs
+          # packaging); every declared backend must appear at exactly its pin.
+          missing = sorted(set(declared) - set(locked))
+          assert not missing, f'requirements-build.lock is missing pyproject.toml build-system pins {missing} (locked: {locked})'
           PY
       - name: Install pinned build tools, runtime and development checks
         run: |
