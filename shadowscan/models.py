@@ -139,6 +139,9 @@ class Risk:
     score: int = 0
     level: RiskLevel = RiskLevel.INFO
     factors: list[RiskFactor] = field(default_factory=list)
+    # Score without governance factors (registration, ownership): what the
+    # agent can do, independent of whether anyone approved it.
+    danger_score: int = 0
 
 
 @dataclass(slots=True)
@@ -310,9 +313,11 @@ class Finding:
             raise ValueError("finding risk factors must be objects")
         for factor in factors:
             _validate_number(factor.get("weight"), "risk factor weight")
+        _validate_number(risk.get("danger_score", 0), "risk danger score", minimum=0, maximum=100)
         d["risk"] = Risk(
             score=risk.get("score", 0),
             level=RiskLevel(risk.get("level", "info")),
+            danger_score=risk.get("danger_score", 0),
             factors=[RiskFactor(**{name: value for name, value in factor.items()
                                    if name in {"id", "description", "weight"}}) for factor in factors],
         )

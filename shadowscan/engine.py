@@ -26,7 +26,7 @@ from shadowscan.correlation import correlate_runtime
 from shadowscan.incremental import IncrementalCache
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory
-from shadowscan.risk import assess
+from shadowscan.risk import RiskPolicy, assess
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.utils.http import reset_allow_private_origin, set_allow_private_origin
 from shadowscan.utils.output import prepare_private_directory, write_private_text
@@ -420,6 +420,7 @@ class Engine:
             correlate_runtime(findings)
         except SanitizationLimitError:
             postprocess_errors.append("runtime correlation incomplete: sanitization safety limit exceeded")
+        risk_policy = RiskPolicy.from_options(self.config.risk_weights, self.config.risk_basis)
         for f in findings:
             if self.inventory is not None:
                 entry = self.inventory.match(f)
@@ -427,7 +428,7 @@ class Engine:
                 f.shadow = entry is None
                 if entry and not f.owner:
                     f.owner = entry.owner
-            f.risk = assess(f, self.index, inventory_present=self.inventory is not None)
+            f.risk = assess(f, self.index, inventory_present=self.inventory is not None, policy=risk_policy)
         findings = safe_findings(findings)
         if omitted:
             postprocess_errors.append(f"{omitted} finding(s) omitted after aggregation: sanitization safety limit exceeded")

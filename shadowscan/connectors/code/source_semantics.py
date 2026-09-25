@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import re
 from bisect import bisect_right
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import regex
@@ -77,6 +78,19 @@ _FACTORIES = {
 }
 
 
+# A provider SDK request that offers the model tools lets the model choose
+# actions: the same evidence the Vercel AI SDK rule treats as agent construction.
+_TOOL_REQUEST_METHODS = re.compile(
+    r"(?:^|\.)(?:create|stream|parse|converse|converse_stream|generate_content|generateContent|send_message|chat)$"
+)
+_TOOL_ARGUMENTS = re.compile(r"(?<![\w$])(?:tools|toolConfig|functions|function_declarations)\s*[=:]")
+# Keyword arguments that evidence a specific capability of a bound construction.
+_KEYWORD_CAPABILITIES: dict[str, tuple[tuple[str, str], ...]] = {
+    "framework.openai-agents-sdk": (("handoffs", "multi-agent"),),
+    "framework.langgraph": (("checkpointer", "memory"), ("store", "memory")),
+}
+
+
 def _symbol_tail(symbol: str) -> str:
     # Module paths may precede the exported class/function. Keep class methods.
     parts = symbol.split(".")
@@ -84,8 +98,12 @@ def _symbol_tail(symbol: str) -> str:
 
 
 class _PythonBindings(ast.NodeVisitor):
-    def __init__(self, text: str):
+    def __init__(self, text: str, relevant: Callable[[_Binding], bool] | None = None):
         self.text = text
+        # Only calls into modules that some signature describes can produce
+        # evidence. Counting every bound call (``pytest.raises``, ``requests.get``)
+        # against MAX_BOUND_CALLS made ordinary large files fail as incomplete.
+        self.relevant = relevant
         self.lines = text.splitlines(keepends=True)
         self.offsets = [0]
         for line in self.lines:
@@ -157,12 +175,13 @@ class _PythonBindings(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         binding = self._resolve(node.func)
-        if binding:
+        if binding and (self.relevant is None or self.relevant(binding)):
             if len(self.calls) >= MAX_BOUND_CALLS:
                 raise MatchTimeoutError("source binding call limit exceeded")
             start = self._offset(node.func.end_lineno or node.lineno, node.func.end_col_offset or 0)
             end = self._offset(node.end_lineno or node.lineno, node.end_col_offset or 0)
-            self.calls.append(_Call(binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno))
+            keywords = " ".join(f"{keyword.arg}=" for keyword in node.keywords if keyword.arg)
+            self.calls.append(_Call(binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno, keywords))
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
@@ -335,17 +354,21 @@ class _PythonBindings(ast.NodeVisitor):
                            for name in set(outcomes[0]) | set(outcomes[1])}
 
 
-def _python_bindings(text: str) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
+def _python_bindings(
+    text: str, relevant: Callable[[_Binding], bool] | None = None,
+) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
     tree = ast.parse(text)
     for count, _ in enumerate(ast.walk(tree)):
         if count >= MAX_AST_NODES:
             raise MatchTimeoutError("source binding AST limit exceeded")
-    visitor = _PythonBindings(text)
+    visitor = _PythonBindings(text, relevant)
     visitor.visit(tree)
     return visitor.calls, visitor.imports
 
 
-def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
+def _javascript_bindings(
+    text: str, ignored: list[tuple[int, int]], relevant: Callable[[_Binding], bool] | None = None,
+) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
     starts = [start for start, _ in ignored]
 
     def excluded(offset: int) -> bool:
@@ -430,6 +453,8 @@ def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[lis
         binding = bindings.get(parts[0])
         if binding is None:
             continue
+        if relevant is not None and not relevant(binding):
+            continue
         if len(calls) >= MAX_BOUND_CALLS:
             raise MatchTimeoutError("source binding call limit exceeded")
         opening = match.end() - 1
@@ -451,12 +476,6 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
     Invalid Python cannot establish bound constructions. The caller already
     retains lexical import/supporting evidence and reports lexical ambiguity.
     """
-    try:
-        calls, imports = _python_bindings(text) if language == "python" else _javascript_bindings(text, ignored)
-    except RecursionError as exc:
-        raise MatchTimeoutError("source binding recursion limit exceeded") from exc
-    except (SyntaxError, ValueError):
-        return []
     found: list[Match] = []
     module_cache: dict[_Binding, list[Match]] = {}
 
@@ -472,6 +491,20 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
                     matches = [m for m in matches if m.signature_id != "framework.langchain"]
             module_cache[binding] = matches
         return module_cache[binding]
+
+    def relevant(binding: _Binding) -> bool:
+        return bool(module_matches(binding))
+
+    try:
+        calls, imports = (
+            _python_bindings(text, relevant) if language == "python"
+            else _javascript_bindings(text, ignored, relevant)
+        )
+    except RecursionError as exc:
+        raise MatchTimeoutError("source binding recursion limit exceeded") from exc
+    except (SyntaxError, ValueError):
+        return []
+
 
     for binding, line in imports:
         for match in module_matches(binding):
@@ -497,6 +530,20 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
             if signature.id == "framework.vercel-ai-sdk" and symbol in {"generateText", "streamText"}:
                 # Options belong to a resolved SDK call, not unrelated config.
                 verified = bool(re.search(r"\btools\s*:\s*\{", call.structural_arguments))
+            if (
+                signature.category == "provider" and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
+                and _TOOL_ARGUMENTS.search(call.structural_arguments)
+            ):
+                found.append(Match(signature, Signal(type="code", weight=0.85, agent_indicator=True, capabilities=["tool-use"],
+                                                     description="import-bound tool-calling request"),
+                                   sanitize_text(f"{call.binding.module}:{symbol}(tools="), 0.85, line=call.line,
+                                   extra={"verified_agent": True}))
+            for keyword, capability in _KEYWORD_CAPABILITIES.get(signature.id, ()):
+                if re.search(rf"(?<![\w$]){keyword}\s*[=:]", call.structural_arguments):
+                    found.append(Match(signature, Signal(type="code", weight=0.6, capabilities=[capability],
+                                                         description=f"{keyword} argument"),
+                                       sanitize_text(f"{symbol}({keyword}="), 0.6, line=call.line,
+                                       extra={"verified_agent": False}))
             for signal in signature.signals:
                 if signal.type != "code" or signal.languages and language not in signal.languages:
                     continue

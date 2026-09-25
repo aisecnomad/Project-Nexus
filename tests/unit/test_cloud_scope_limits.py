@@ -87,6 +87,7 @@ def test_aws_sdk_page_limit_does_not_request_an_extra_page(index, monkeypatch, c
 
 @pytest.mark.parametrize("configured,authenticated", [(ACCOUNT, ACCOUNT), (None, ACCOUNT)])
 def test_aws_live_account_is_verified_even_when_configured(index, monkeypatch, configured, authenticated):
+    pytest.importorskip("botocore")
     session = Mock()
     session.client.return_value.get_caller_identity.return_value = {"Account": authenticated}
     monkeypatch.setitem(sys.modules, "boto3", SimpleNamespace(Session=Mock(return_value=session)))
@@ -97,6 +98,7 @@ def test_aws_live_account_is_verified_even_when_configured(index, monkeypatch, c
 
 
 def test_aws_wrong_account_fails_before_any_inventory_record(index, monkeypatch):
+    pytest.importorskip("botocore")
     session = Mock()
     session.client.return_value.get_caller_identity.return_value = {"Account": "999999999999"}
     monkeypatch.setitem(sys.modules, "boto3", SimpleNamespace(Session=Mock(return_value=session)))
@@ -109,6 +111,7 @@ def test_aws_wrong_account_fails_before_any_inventory_record(index, monkeypatch)
 
 @pytest.mark.parametrize("account", [None, "", "wrong", "１２３４５６７８９０１２", 123456789012])
 def test_aws_invalid_sts_identity_fails_before_inventory(index, monkeypatch, account):
+    pytest.importorskip("botocore")
     session = Mock()
     session.client.return_value.get_caller_identity.return_value = {"Account": account}
     monkeypatch.setitem(sys.modules, "boto3", SimpleNamespace(Session=Mock(return_value=session)))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import time
@@ -16,13 +17,17 @@ from shadowscan.connectors.code.ownership import MAX_OWNERSHIP_STEPS, OwnershipB
 from shadowscan.models import Kind, ScanStats, now_iso
 
 
+def fixture_key(seed: str, length: int) -> str:
+    return hashlib.sha256(seed.encode()).hexdigest()[:length]
+
+
 def _run(index, root, **config):
     ctx = ConnectorContext(config={"path": str(root), "use_git": False, **config}, index=index)
     return FilesystemConnector(ctx).run(), ctx
 
 
 def test_secret_excerpt_is_redacted_before_truncation(tmp_path, index):
-    key = "pplx-" + "a" * 45
+    key = "pplx-" + fixture_key("pplx", 45)
     (tmp_path / "client.py").write_text('headers = {"X-Trace": "' + "p" * 100 + '", "X-Custom-Header": "' + key + '"}\n')
     findings, _ = _run(index, tmp_path)
     secrets = [f for f in findings if f.kind == Kind.SECRET]
@@ -45,7 +50,7 @@ def test_duplicate_manifest_and_text_observations_count_once(tmp_path, index):
     assert len(env_evidence) == 1
     assert project.confidence < 0.85  # a single mention is not a confirmed agent
     (tmp_path / "Dockerfile").unlink()
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-" + "b" * 40 + "\n")
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-" + fixture_key("openai-b", 40) + "\n")
     findings, _ = _run(index, tmp_path)
     secret = next(f for f in findings if f.kind == Kind.SECRET)
     assert secret.metadata["count"] == 1 and len(secret.evidence) == 1
@@ -76,7 +81,7 @@ def test_git_metadata_decoding_is_lenient_and_isolated(tmp_path, index, monkeypa
 
 def test_emit_phase_failures_are_isolated_per_finding(tmp_path, index, monkeypatch):
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
-    (tmp_path / "config.py").write_text("OPENAI_API_KEY = 'sk-proj-" + "c" * 40 + "'\n")
+    (tmp_path / "config.py").write_text("OPENAI_API_KEY = 'sk-proj-" + fixture_key("openai-c", 40) + "'\n")
 
     def boom(self, *args, **kwargs):
         raise RuntimeError("synthetic")

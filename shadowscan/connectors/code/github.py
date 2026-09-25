@@ -101,6 +101,8 @@ class GitHubConnector(BaseConnector):
         "include_forks": "scan forks (default false)",
         "max_repos": "cap on repositories (default 500)",
         "scan_timeout": "matching budget in seconds per file (default 2)",
+        "strict_coverage": "see code.filesystem (default false)",
+        "include_tests": "see code.filesystem (default false)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "clone_depth": "git clone depth (default 1)",
         "topics": "only repositories with any of these topics",
@@ -231,7 +233,7 @@ class GitHubConnector(BaseConnector):
         full = repo.get("full_name") or Path(local).name
         owner_login = (repo.get("owner") or {}).get("login")
         cfg = {
-            **{k: v for k, v in self.ctx.config.items() if k in {"exclude", "max_file_size", "max_files", "scan_timeout", "scan_secrets", "use_git"}},
+            **{k: v for k, v in self.ctx.config.items() if k in {"exclude", "max_file_size", "max_files", "scan_timeout", "scan_secrets", "use_git", "strict_coverage", "include_tests"}},
             "path": local,
             "label": f"github:{full}",
             "account": owner_login,

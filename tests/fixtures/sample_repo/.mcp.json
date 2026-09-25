@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_EXAMPLE0000000000000000000000000000"}},
+    "github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "q7Vd2Lx9Kp4Rz8Tw1Nb6Hc3Jf5Mg0YsE"}},
     "postgres": {"command": "docker", "args": ["run", "-i", "mcp/postgres", "postgresql://user:pass@db/prod"]},
     "zapier": {"url": "https://mcp.zapier.com/api/mcp/s/abc123/mcp", "type": "http"}
   }

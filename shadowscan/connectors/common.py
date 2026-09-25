@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable
 from typing import Any
@@ -180,8 +181,43 @@ def classify_permissions(index: SignatureIndex, finding: Finding, scopes: Iterab
 _PLACEHOLDER = re.compile(r"^(?:x{3,}|\*{3,}|<[^>]+>|\$\{[^}]+\}|your[_-]?[a-z_]*|changeme|redacted|placeholder|todo|null|none)$", re.IGNORECASE)
 
 
+# Documentation and test fixtures use recognisable fake credentials. Real keys
+# are random: they never contain long runs of one character, marker words or
+# very low character diversity.
+_PLACEHOLDER_MARKER = re.compile(
+    r"(?i)(?:example|dummy|fake|placeholder|sample|redacted|changeme|your[_-]?(?:api[_-]?)?(?:key|token|secret)|x{6,}|\*{4,})"
+)
+_KNOWN_KEY_PREFIX = re.compile(
+    r"^(?:sk-(?:ant-(?:api|admin)\d{2}-|proj-|svcacct-|admin-|or-v1-)?|hf_|AIza|xox[abposr]-|gh[pousr]_|github_pat_|gsk_|pplx-|r8_|fw_|nvapi-|AKIA|ASIA)"
+)
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*\s*[=:]\s*[\"']?(.*?)[\"']?$")
+_REPEATED_RUN = re.compile(r"(.)\1{11,}")
+
+
+def _shannon_entropy(text: str) -> float:
+    counts: dict[str, int] = {}
+    for char in text:
+        counts[char] = counts.get(char, 0) + 1
+    return -sum((n / len(text)) * math.log2(n / len(text)) for n in counts.values())
+
+
 def looks_like_placeholder(value: str) -> bool:
-    return bool(_PLACEHOLDER.match(value.strip()))
+    candidate = value.strip()
+    if _PLACEHOLDER.match(candidate):
+        return True
+    assignment = _ASSIGNMENT.match(candidate)
+    if assignment:  # context-bound patterns capture NAME=value
+        candidate = assignment.group(1).strip()
+        if not candidate or _PLACEHOLDER.match(candidate):
+            return True
+    if _PLACEHOLDER_MARKER.search(candidate):
+        return True
+    body = _KNOWN_KEY_PREFIX.sub("", candidate, count=1)
+    if body.lower().startswith(("test-", "test_")):
+        body = body[5:]
+    if _REPEATED_RUN.search(body):
+        return True
+    return len(body) >= 16 and _shannon_entropy(body) < 2.5
 
 
 def merge_metadata(finding: Finding, **kwargs: Any) -> None:

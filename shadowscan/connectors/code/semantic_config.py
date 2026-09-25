@@ -340,7 +340,12 @@ def structured_code_matches(
 
 
 def _matches(index: SignatureIndex, signature: str, projection: str) -> list[Match]:
-    matches = [match for match in index.match_code(projection, None) if match.signature_id == signature]
+    matches = [
+        match for match in index.match_code(projection, None)
+        # n8n model nodes (lmChatOpenAi, lmChatAnthropic...) also name the
+        # provider that receives the workflow's data.
+        if match.signature_id == signature or (signature == "platform.n8n" and match.signature.category == "provider")
+    ]
     for match in matches:
         # Projection offsets are not source line numbers. Do not claim an
         # unrelated source line is the evidence location.
@@ -348,7 +353,7 @@ def _matches(index: SignatureIndex, signature: str, projection: str) -> list[Mat
         match.extra["structured_config"] = True
         if signature == "platform.n8n":
             node_type = json.loads(projection).get("type", "")
-            match.extra["verified_agent"] = node_type in {
+            match.extra["verified_agent"] = match.signature_id == signature and node_type in {
                 "@n8n/n8n-nodes-langchain.agent", "@n8n/n8n-nodes-langchain.agentTool",
                 "@n8n/n8n-nodes-langchain.openAiAssistant",
             }

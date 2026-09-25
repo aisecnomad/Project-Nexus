@@ -167,8 +167,9 @@ def test_codeowners_parent_symlink_is_not_followed(tmp_path, run_connector):
     assert ctx.stats.errors
 
 
+@pytest.mark.parametrize("strict", [False, True])
 @pytest.mark.parametrize("kind", ["file", "directory"])
-def test_source_symlink_is_skipped_and_marks_scan_incomplete(tmp_path, run_connector, kind):
+def test_source_symlink_is_skipped_and_marks_scan_incomplete(tmp_path, run_connector, kind, strict):
     repo = tmp_path / "repo"
     repo.mkdir()
     private = tmp_path / "private"
@@ -180,11 +181,14 @@ def test_source_symlink_is_skipped_and_marks_scan_incomplete(tmp_path, run_conne
     else:
         (repo / "agent").symlink_to(private, target_is_directory=True)
 
-    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=strict)
     assert any("framework.langgraph" in finding.frameworks for finding in findings)
     assert not any("private business notes" in str(finding.to_dict()) for finding in findings)
-    assert ctx.stats.incomplete
-    assert any("symbolic link" in issue for issue in ctx.stats.errors)
+    # The link is never followed. Content outside the repository is reported as
+    # skipped; strict_coverage makes that incomplete coverage.
+    assert ctx.stats.incomplete is strict
+    diagnostics = ctx.stats.errors if strict else ctx.stats.warnings
+    assert any("symbolic link" in issue for issue in diagnostics)
 
 
 def test_explicitly_excluded_symlink_is_outside_scan_scope(tmp_path, run_connector):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from unittest.mock import Mock
 
 import pytest
@@ -17,6 +18,10 @@ from shadowscan.connectors.cloud.oci import OciConnector
 from shadowscan.models import ScanStats
 from shadowscan.utils.http import HttpError
 from shadowscan.utils.redaction import REDACTED, sanitize
+
+
+def fixture_key(seed: str, length: int) -> str:
+    return hashlib.sha256(seed.encode()).hexdigest()[:length]
 
 
 def context(index, **config):
@@ -59,6 +64,7 @@ def test_aws_layer_name_and_ssm_parameter_arn(index):
 
 
 def test_aws_clients_carry_explicit_timeouts(index, monkeypatch):
+    pytest.importorskip("botocore")
     connector = AwsConnector(context(index, account_id="123456789012"))
     session = Mock()
     connector._session = session
@@ -90,7 +96,7 @@ def test_azure_app_settings_are_redacted_in_dumps_but_analyzed_live(index):
     record = {
         "_kind": "appsettings", "id": "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
         "name": "app", "kind": "functionapp",
-        "environment": {"OPENAI_API_KEY": "sk-proj-" + "a" * 40, "SENDGRID_KEY": "SG.opaque-value-1234567890"},
+        "environment": {"OPENAI_API_KEY": "sk-proj-" + fixture_key("openai-a", 40), "SENDGRID_KEY": "SG.opaque-value-1234567890"},
     }
     dumped = sanitize(record)
     assert set(dumped["environment"].values()) == {REDACTED}
@@ -126,6 +132,7 @@ def test_azure_foundry_projects_inherit_subscription_and_location(index, monkeyp
 
 
 def test_oci_clients_are_cached_per_region_with_timeouts(index):
+    pytest.importorskip("oci")
     connector = OciConnector(context(index))
     connector._config = {"region": "us-ashburn-1"}
 
