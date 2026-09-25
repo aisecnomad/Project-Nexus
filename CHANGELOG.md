@@ -2,6 +2,11 @@
 
 ## 0.1.1 — Unreleased
 
+### Markdown report safety
+
+- Defang bare HTTP(S) and `www.` URLs in untrusted report text so copied Markdown
+  does not automatically turn attacker-controlled values into clickable links.
+
 ### Community policy consistency
 
 - Add a documentation issue form, keep detection reports and private security
