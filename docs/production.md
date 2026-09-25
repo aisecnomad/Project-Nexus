@@ -10,6 +10,39 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## September 25 migration and acceptance
+
+Slack findings now use the immutable workspace ID as `account`; workspace names
+are display metadata. Update inventory account bindings and collect a fresh
+Slack baseline after upgrading. An offline
+export must include a valid team record or an explicit operator-supplied
+`team_id`; conflicting workspace identities cannot establish attributed findings.
+Teams records without valid app identity make collection incomplete while valid
+neighboring observations remain available.
+
+Use the [offline acceptance verifier](../tools/acceptance/README.md) to check the
+required evidence for the intended deployment scope. It checks artifact identity,
+freshness and declared review/metric requirements. It does not authenticate
+reviewers, prove that a supplied receipt came from a real tenant, or turn synthetic
+tests into operational evidence. Keep receipts and human attestations in controlled
+audit storage and review their origin. Unsupported live connectors still require
+their own acceptance work; they cannot inherit an AWS or Slack result.
+
+The manually invoked [release-evidence workflow](../.github/workflows/release.yml)
+requires a successful main-branch CI run for the exact selected commit. It builds
+and checks the wheel, retains a runtime dependency SBOM and hashes, and produces
+GitHub artifact provenance. It does not publish to PyPI, create a release, or
+declare tenant acceptance. Review and retain its artifacts before a separate
+maintainer publication decision.
+
+After merge and successful push CI, dispatch **Release candidate evidence** on
+`main` with `expected_commit` set to the full current main SHA and `ci_run_id`
+set to that commit's successful CI run ID. The workflow rejects stale commits,
+PR-only runs and other workflows. Retain `release-candidate-<SHA>` and
+`release-attestations-<SHA>` together; hosted retention is 90 days. Verify the
+candidate's `SHA256SUMS` and GitHub attestations before publication. The runtime
+SBOM covers locked Python core/cloud dependencies, not operating-system packages.
+
 ## Install from a reviewed revision
 
 Check out an audited full commit SHA before installation. README and example

@@ -17,6 +17,9 @@ python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/public_corpus.json \
   --output /tmp/nexus-public-eval.json
 python -m tools.evaluation.evaluate \
+  --corpus tools/evaluation/review_corpus.json \
+  --output /tmp/nexus-review-eval.json
+python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/independent_corpus.json \
   --annotations tools/evaluation/independent_annotations.json \
   --output /tmp/nexus-independent-eval.json
@@ -50,6 +53,14 @@ entries. An MCP case can also require an exact active server count and names,
 and forbid any agent finding. These cases test known boundary behavior and were
 used to guide the implementation. Its precision/recall values are **synthetic
 regression scores**, not independently measured field accuracy.
+
+`review_corpus.json` is a separate authored regression set for the September 25
+findings: local-module collisions, ordinary provider calls, tool-schema-only
+requests, and supported agent construction/loops. It was written after observing
+the defects and is not a fresh holdout. The existing independent corpus and its
+annotation ledger remain frozen; adding regression cases does not refresh their
+independence. The [acceptance verifier](../tools/acceptance/README.md) requires
+separate declared human-reviewed holdout evidence for deployment decisions.
 
 Source masking is a bounded lexical filter. Ruby regular expressions and `%q`
 literals, PHP heredoc interpolation, C# raw strings with multiple interpolation
@@ -139,6 +150,16 @@ the tiny selected sample does not calibrate that score.
    enter an analyst queue. Revalidate on a new holdout after changing the
    signatures or classification logic. A zero-error small sample gives little
    information about uncommon production patterns.
+
+The additional provider-loop recognizer currently covers linked Python OpenAI
+Chat Completions calls, model-returned tool-call arguments, dispatch and tool
+results appended to the same request history. Dispatch must target an explicitly
+declared inline tool name or a callable selected by the model-returned function
+name; parsing or converting arguments is insufficient. It does not resolve arbitrary
+helper functions, the Responses API, JavaScript provider loops or runtime imports.
+Unrecognized patterns can still produce integration findings; they are not proof
+that an agent is absent. A framework constructor alone also cannot establish that
+the configured graph makes autonomous model decisions at runtime.
 
 ## Read-only tenant canary procedure
 
