@@ -618,6 +618,24 @@ class FilesystemConnector(BaseConnector):
                     return
                 yield rel, p, proj, info.st_size
 
+    def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
+        """Return the share of ``budget`` a file must have left before the walk may start it.
+
+        Files the reader never opens (over ``max_file_size``, which only
+        records an error, or neither source, configuration nor a file-name
+        signal) reserve nothing, so they cannot end the walk under a short
+        deadline.
+        """
+        if size > self.max_file_size:
+            return 0.0
+        name = path.name
+        ext = path.suffix.lower()
+        will_read = (
+            ext in SOURCE_EXTENSIONS or ext in TEXT_CONFIG_EXTENSIONS or name.lower().startswith(".env")
+            or is_manifest_name(name) or "." not in name or bool(self.index.match_file(rel))
+        )
+        return budget if will_read else 0.0
+
     def _stop_at_deadline(
         self, root: Path, examined: int, entries: Iterator[tuple[str, Path, str, int]], deadline: float, margin: float,
     ) -> None:
@@ -665,13 +683,25 @@ class FilesystemConnector(BaseConnector):
         examined = 0
         for rel, path, proj_root, size in entries:
             budget = scan_timeout_for_size(self.scan_timeout, size)
-            if deadline is not None and time.monotonic() + budget + margin > deadline:
-                # Cooperative deadline: never start a file whose budget could
-                # run into the margin. Findings collected so far are returned
-                # and the engine keeps them; only a result that arrives after
-                # the deadline is discarded.
-                self._stop_at_deadline(root, examined, entries, deadline, margin)
-                break
+            reserve = self._reserved_budget(rel, path, size, budget)
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining < reserve + margin:
+                    if remaining > margin + self.scan_timeout:
+                        # Only this file's size-scaled budget does not fit; the
+                        # walk can still cover ordinary files, so record the
+                        # gap for this file alone and keep going.
+                        self.ctx.error(
+                            f"code.filesystem: {rel}: skipped; the remaining connector deadline cannot cover "
+                            f"its {reserve:.0f}s matching budget",
+                        )
+                        continue
+                    # Cooperative deadline: never start a file whose budget
+                    # could run into the margin. Findings collected so far are
+                    # returned and the engine keeps them; only a result that
+                    # arrives after the deadline is discarded.
+                    self._stop_at_deadline(root, examined, entries, deadline, margin)
+                    break
             examined += 1
             try:
                 with self.index.scan_budget(seconds=budget):

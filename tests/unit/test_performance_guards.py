@@ -495,3 +495,32 @@ def test_precompiled_file_globs_equal_fnmatch(index):
         matched += bool(got)
     assert matched > 50
     assert all(m.value == "a/b/CLAUDE.md" for m in index.match_file("a\\b\\CLAUDE.md"))
+
+
+def test_unreadable_entries_reserve_no_deadline_budget(tmp_path, index, monkeypatch):
+    # An oversize, non-skippable source file first in walk order must not end
+    # the walk: it is never read, so it reserves no matching budget.
+    (tmp_path / "a_big.py").write_bytes(b"#" * (2 * 1024 * 1024))
+    for number in range(3):
+        (tmp_path / f"z_agent_{number}.py").write_text(LANGCHAIN)
+    clock = _fake_clock(monkeypatch, step=1.0)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 5.5)
+    findings = FilesystemConnector(ctx).run()
+    assert ctx.stats.objects_examined >= 2
+    assert any("a_big.py" in error and "max_file_size" in error for error in ctx.stats.errors)
+    assert not any("deadline reached after 0 of" in error for error in ctx.stats.errors)
+    assert any("framework.langchain" in finding.frameworks for finding in findings)
+
+
+def test_one_large_file_that_does_not_fit_is_skipped_without_ending_the_walk(tmp_path, index, monkeypatch):
+    # A 900 KiB source file needs more budget than a short deadline allows; the
+    # walk skips it with its own error and still analyzes the ordinary files.
+    (tmp_path / "a_large.py").write_text("x = 1\n" * (900 * 1024 // 6))
+    for number in range(2):
+        (tmp_path / f"z_agent_{number}.py").write_text(LANGCHAIN)
+    clock = _fake_clock(monkeypatch, step=0.5)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 6.0)
+    findings = FilesystemConnector(ctx).run()
+    assert any("a_large.py: skipped; the remaining connector deadline cannot cover" in error for error in ctx.stats.errors)
+    assert ctx.stats.objects_examined >= 1 and ctx.stats.incomplete
+    assert any("framework.langchain" in finding.frameworks for finding in findings)
