@@ -104,9 +104,18 @@ override and private-endpoint policies, output changes and rollout checks.
 positive, finite completion deadline for each connector, defaulting to 120 seconds.
 It starts when the connector worker begins; split filesystem roots share that
 connector's deadline. Legacy `options.connector_timeout` and `--connector-timeout`
-are deprecated compatibility aliases. Configure only one YAML key; supplying
-both is rejected. Legacy YAML `connector_timeout: null` uses the 120-second
-default; it does not disable the deadline.
+are deprecated compatibility aliases; the YAML alias logs a deprecation warning
+once per process. Configure only one YAML key; supplying both is rejected.
+Legacy YAML `connector_timeout: null` uses the 120-second default; it does not
+disable the deadline.
+
+Setup failures that name only paths, option names and positions are printed
+verbatim by the CLI: a missing inventory path or signature directory, a
+malformed signature pack (file and document number), an unknown connector key,
+and YAML syntax errors in the configuration (line and column, never the source
+line). Any other exception raised while a scan is being set up is masked as
+`scan setup failed` with its type name, because third-party error text can
+echo credentials.
 
 On expiry, the engine discards that connector's results, records incomplete
 coverage and the reason, retains other completed connectors' findings, and

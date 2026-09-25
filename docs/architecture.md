@@ -34,7 +34,8 @@
 | `shadowscan/registry.py` | inventory formats and reconciliation, capability-card stub generation |
 | `shadowscan/risk.py` | additive, explainable risk model |
 | `shadowscan/engine.py` | parallel connector execution, merge, correlation, reconciliation, scoring |
-| `shadowscan/config.py` | YAML config with `${ENV}` expansion, `--set` parsing |
+| `shadowscan/config.py` | YAML config with `${ENV}` expansion, `--set` parsing, connector key validation |
+| `shadowscan/errors.py` | `SetupError`: setup failures whose messages are credential-free and printed verbatim by the CLI |
 | `shadowscan/reporters/` | output formats |
 | `shadowscan/cli.py` | `scan`, `run`, `code`, `gateway`, `jwt`, `connectors`, `signatures`, `inventory`, `diff` |
 

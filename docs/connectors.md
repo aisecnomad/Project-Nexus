@@ -31,6 +31,11 @@ See [scan state and runtime correlation](scanning.md) for incremental scans,
 gateway workload bindings and completion semantics.
 
 `shadowscan connectors` prints the up-to-date option list for every connector.
+A configuration key that a built-in connector does not read is rejected when
+the YAML file or `--set` option is parsed (`connector 'identity.okta' does not
+accept 'fetch_tokenz'`), so a typo cannot silently disable an option. Keys
+starting with an underscore are reserved for the engine. Third-party plugins
+are not imported while parsing, so their keys are not checked at that point.
 
 ## Connector entry keys
 
