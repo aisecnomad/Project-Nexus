@@ -518,11 +518,11 @@ def bound_source_matches(
         if binding not in module_cache:
             if language == "python":
                 statement = f"from {binding.module} import {binding.symbol.split('.')[0]}" if binding.symbol else f"import {binding.module}"
-                matches = index.match_imports(statement, language)
+                matches = list(index.match_import_statement(statement, language))
                 if matches and is_local_module is not None and is_local_module(binding.module):
                     matches = []
             else:
-                matches = index.match_imports(f"import {{ example }} from '{binding.module}'", language)
+                matches = list(index.match_import_statement(f"import {{ example }} from '{binding.module}'", language))
                 matches += index.match_dependency("npm", binding.module)
                 if binding.module.startswith("@langchain/langgraph"):
                     matches = [m for m in matches if m.signature_id != "framework.langchain"]
@@ -550,10 +550,13 @@ def bound_source_matches(
                                extra={"verified_agent": False}))
         # Some signatures describe capabilities conveyed by a particular
         # imported tool. Retain those as supporting evidence, never an agent.
-        if language == "python":
+        resolved = {m.signature_id for m in module_matches(binding)}
+        if language == "python" and resolved:
+            # Only matches of signatures this import resolves to are kept, so
+            # an unresolved import (most of them) needs no code pass at all.
             statement = f"from {binding.module} import {binding.symbol}" if binding.symbol else f"import {binding.module}"
             for match in index.match_code(statement, language):
-                if match.signature_id in {m.signature_id for m in module_matches(binding)}:
+                if match.signature_id in resolved:
                     match.line = line
                     match.extra["verified_agent"] = False
                     found.append(match)
