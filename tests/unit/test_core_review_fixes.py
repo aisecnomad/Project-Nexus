@@ -58,6 +58,8 @@ def test_one_oversized_finding_is_omitted_without_discarding_the_others(index):
     ("CLAUDE_CODE_OAUTH_TOKEN=abcdefabcdefabcdefabcdef", "abcdefabcdef"),
     ("hugging_face_hub_token = 'hf_synthetic_value_without_known_prefix_shape'", "synthetic_value"),
     ("https://example.com/callback?litellm_master_key=sk-1234&model=gpt", "sk-1234"),
+    ('os.environ["DATABRICKS_TOKEN"] = "synthetic-databricks-token-value-0000"', "synthetic-databricks"),
+    ("process.env['AZURE_OPENAI_KEY'] = '0123456789abcdef0123456789abcdef'", "0123456789abcdef"),
 ])
 def test_environment_style_credential_names_are_redacted_in_text(line, value):
     clean = sanitize_text(line)
