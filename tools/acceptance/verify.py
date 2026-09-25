@@ -233,6 +233,13 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
              "human_annotation_ledger_required")
     _require(isinstance(corpus.get("metadata"), dict) and corpus["metadata"].get("type") == "adjudicated",
              "adjudicated_holdout_required")
+    # Reject the aggregate family before invoking annotation/corpus validators:
+    # newer evaluators reject it themselves, and the acceptance gate must retain
+    # its stable private error code across both validation orders.
+    candidate_cases = corpus.get("cases")
+    if isinstance(candidate_cases, list):
+        _require(not any(isinstance(case, dict) and case.get("family") == "all"
+                         for case in candidate_cases), "reserved_evaluation_family")
     # Work from the same bounded bytes whose digests were checked. Existing corpus
     # and ledger validators reopen files; private snapshots prevent a source file
     # change between digest validation and semantic validation.
