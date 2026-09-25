@@ -1,0 +1,41 @@
+name: Welcome
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  greeting:
+    if: github.repository == 'aisecnomad/Project-Nexus'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/first-interaction@1c4688942c71f71d4f5502a26ea67c331730fa4d # v3.1.0
+        with:
+          issue_message: |
+            Welcome. Thanks for opening an issue.
+
+            Before we can help:
+            - Never paste credentials, JWTs, tenant exports, or unsanitized scan output.
+            - Security and redaction failures go to a [private advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new), not a public issue.
+            - Use a [form](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) if this was opened as a blank issue.
+
+            New here? Read [SUPPORT.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SUPPORT.md) and look for [`good first issue`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+          pr_message: |
+            Welcome. Thanks for the pull request.
+
+            Checks we will run: signatures, ruff, mypy, pip-audit, pytest with the 80% floor, per-connector coverage, evaluation corpora.
+
+            Please:
+            - Do not include live credentials, JWTs, or tenant exports.
+            - Sign off commits (`git commit -s`) if you can; DCO is requested, not yet enforced.
+            - Update `CHANGELOG.md` under Unreleased for user-facing changes.
+
+            Guide: [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md).
