@@ -34,7 +34,24 @@ def test_polyglot_examples_do_not_create_agents(tmp_path: Path, run_connector, f
     path.write_text(inert + live)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
-    assert [finding for finding in findings if finding.kind == Kind.AGENT]
+    # Lexing establishes the call is source, but cannot establish its library.
+    # These intentionally unbound snippets remain inspectable weak candidates.
+    assert findings and all(finding.kind == Kind.FRAMEWORK_USAGE for finding in findings)
+    assert all(finding.confidence < 0.85 for finding in findings)
+    assert any(e.signal.startswith("code:") for finding in findings for e in finding.evidence)
+
+
+@pytest.mark.parametrize(("filename", "source", "signature"), [
+    ("agent.go", 'package main\nimport "github.com/tmc/langchaingo/agents"\nfunc run() { agents.NewExecutor(ctx, model) }\n', "framework.langchaingo"),
+    ("Agent.java", 'import dev.langchain4j.service.AiServices;\nclass App { void run() { AiServices.builder(Foo.class); } }\n', "framework.langchain4j"),
+    ("Agent.cs", 'using Microsoft.Extensions.AI;\nclass App { void Run() { AIFunctionFactory.Create(foo); } }\n', "framework.microsoft-extensions-ai"),
+    ("agent.rs", 'use rig::agent::AgentBuilder;\nfn main() { let x = AgentBuilder::new(); }\n', "framework.rig"),
+])
+def test_polyglot_agent_idioms_require_matching_library_evidence(tmp_path, run_connector, filename, source, signature):
+    (tmp_path / filename).write_text(source)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert any(f.kind == Kind.AGENT and signature in f.frameworks for f in findings)
 
 
 def test_go_import_strings_remain_visible_but_ordinary_literals_are_ignored(tmp_path: Path, run_connector):
@@ -148,9 +165,8 @@ def test_php_markup_is_inert_but_embedded_php_remains_code(tmp_path: Path, run_c
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
-    agents = [finding for finding in findings if finding.kind == Kind.AGENT]
-    assert len(agents) == 1
-    assert any(evidence.location == "agent.php:2" for evidence in agents[0].evidence)
+    assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
+    assert any(evidence.location == "agent.php:2" for finding in findings for evidence in finding.evidence)
 
 
 def test_html_only_php_template_is_inert(tmp_path: Path, run_connector):
@@ -172,6 +188,5 @@ def test_php_echo_expression_is_executable(tmp_path: Path, run_connector):
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
-    agents = [finding for finding in findings if finding.kind == Kind.AGENT]
-    assert len(agents) == 1
-    assert any(evidence.location == "template.php:2" for evidence in agents[0].evidence)
+    assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
+    assert any(evidence.location == "template.php:2" for finding in findings for evidence in finding.evidence)

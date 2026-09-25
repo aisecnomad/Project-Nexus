@@ -310,12 +310,12 @@
       "assertions": {"max_agent_findings": 0}
     },
     {
-      "id": "php-echo-agent",
+      "id": "php-unbound-echo-helper",
       "family": "agent",
-      "description": "A short PHP echo tag contains an executable function call",
+      "description": "A short PHP echo tag calls an unbound helper; its name alone does not establish a LangChain agent",
       "files": {"template.php": "<p>create_agent($model, $tools)</p>\n<?= create_agent($model, $tools) ?>\n"},
       "target": {"kind": "agent", "signature": "framework.langchain"},
-      "present": true
+      "present": false
     },
     {
       "id": "coding-agent-config",

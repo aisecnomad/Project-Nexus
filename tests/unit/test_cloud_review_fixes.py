@@ -12,7 +12,7 @@ from unittest import mock
 import pytest
 
 from shadowscan.connectors.base import ConnectorContext
-from shadowscan.connectors.cloud.aws import AwsConnector, _actions_from_docs
+from shadowscan.connectors.cloud.aws import AwsConnector, _iam_policy_signals
 from shadowscan.models import ScanStats
 from shadowscan.utils.redaction import REDACTED, sanitize
 
@@ -140,15 +140,19 @@ def test_bedrock_agent_reads_collapsed_draft_from_older_exports_without_incomple
     assert finding.metadata["version_models"] == {"DRAFT": "amazon.nova-pro-v1:0"} and not ctx.stats.warnings
 
 
-@pytest.mark.parametrize("statement, expected", [
-    ({"Effect": "Allow", "NotAction": ["iam:*", "organizations:*"], "Resource": "*"}, {"*"}),
-    ({"Effect": "Allow", "NotAction": "iam:*", "Resource": "*"}, {"*"}),
-    ({"Effect": "Allow", "NotAction": ["*"], "Resource": "*"}, set()),
-    ({"Effect": "Deny", "NotAction": ["iam:*"], "Resource": "*"}, set()),
-    ({"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": "*"}, {"s3:GetObject"}),
+@pytest.mark.parametrize("statement, explicit, potential", [
+    ({"Effect": "Allow", "NotAction": ["iam:*", "organizations:*"], "Resource": "*"}, set(), True),
+    ({"Effect": "Allow", "NotAction": "iam:*", "Resource": "*"}, set(), True),
+    ({"Effect": "Allow", "NotAction": ["*"], "Resource": "*"}, set(), False),
+    ({"Effect": "Deny", "NotAction": ["iam:*"], "Resource": "*"}, set(), False),
+    ({"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": "*"}, {"s3:GetObject"}, False),
 ])
-def test_not_action_allow_statements_grant_everything_not_listed(statement, expected):
-    assert _actions_from_docs([{"Version": "2012-10-17", "Statement": [statement]}]) == expected
+def test_not_action_allow_statements_grant_everything_not_listed(statement, explicit, potential):
+    actions, _patterns, potential_actions, _limits = _iam_policy_signals([{"Version": "2012-10-17", "Statement": [statement]}])
+    assert actions == explicit
+    assert bool(potential_actions) is potential
+    if potential:
+        assert "bedrock:InvokeModel" in potential_actions and not any(a.startswith("iam:") for a in potential_actions)
 
 
 @pytest.mark.parametrize("actions, reported", [

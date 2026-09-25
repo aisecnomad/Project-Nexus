@@ -1,0 +1,36 @@
+schema: shadowscan.tenant-canary/v1
+mode: replay
+expectation: complete
+connector:
+  name: cloud.aws
+  input: aws-records.jsonl
+  account_id: "123456789012"
+  regions: [us-east-1]
+  services: [lambda]
+scope:
+  account_id: "123456789012"
+  regions: [us-east-1]
+  services: [lambda]
+ground_truth:
+  owner: example-fixture-author
+  reviewed_at: "2026-09-24"
+  source: synthetic supplied fixture; no live tenant attestation
+  independent_of_scanner: true
+controls:
+  - id: model-client
+    record:
+      _kind: lambda
+      FunctionArn: arn:aws:lambda:us-east-1:123456789012:function:canary-model-client
+    finding:
+      resource: arn:aws:lambda:us-east-1:123456789012:function:canary-model-client
+      kind: cloud-resource
+      present: true
+    rationale: Explicit OpenAI endpoint configuration is model-client infrastructure, without evidence of an agent loop.
+  - id: report-worker
+    record:
+      _kind: lambda
+      FunctionArn: arn:aws:lambda:us-east-1:123456789012:function:canary-report-worker
+    finding:
+      resource: arn:aws:lambda:us-east-1:123456789012:function:canary-report-worker
+      present: false
+    rationale: Independently inspected report worker has only logging configuration and no AI integrations.

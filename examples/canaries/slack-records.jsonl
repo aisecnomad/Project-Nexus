@@ -1,0 +1,3 @@
+{"_kind":"team","id":"TEXAMPLE","name":"example-workspace"}
+{"_kind":"approved_app","app":{"id":"ACANARYAI","name":"OpenAI","description":"Calls OpenAI for responses"},"scopes":[]}
+{"_kind":"approved_app","app":{"id":"ACANARYBENIGN","name":"Time Clock","description":"Team attendance check-in helper"},"scopes":[]}

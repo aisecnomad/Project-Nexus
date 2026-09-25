@@ -124,11 +124,11 @@ class N8nConnector(_AutomationBase):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for w in records:
+            self.ctx.examined()
             if not self._valid_workflow(w):
                 # Error bodies ({"message": ...}) must not pass as an empty inventory.
-                self.ctx.warn("lowcode.n8n: unsupported or malformed workflow record; coverage incomplete")
+                self.ctx.warn("lowcode.n8n: missing or invalid workflow graph; definition coverage unknown")
                 continue
-            self.ctx.examined()
             f = self._guarded_finding(w, self._n8n_finding, "workflow")
             if f:
                 yield f
@@ -137,11 +137,12 @@ class N8nConnector(_AutomationBase):
         return (
             self._record_fields_valid(w, strings=("name", "createdAt", "updatedAt"), mappings=("homeProject",), arrays=("nodes", "tags"))
             and isinstance(w.get("nodes"), list)
-            and all(isinstance(n, dict) for n in w["nodes"])
         )
 
     def _n8n_finding(self, w: dict[str, Any]) -> Finding | None:
-        nodes = w.get("nodes") or []
+        nodes = [node for node in w["nodes"] if self._record_fields_valid(node, required=("type",), strings=("name",), mappings=("parameters",))]
+        if len(nodes) != len(w["nodes"]):
+            self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
         types = [str(n.get("type", "")) for n in nodes]
         ai_steps = [f"{n.get('name')} ({n.get('type')})" for n in nodes if re.search(r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace|\.agent$|mcp", str(n.get("type", "")), re.I)]
         triggers = [t for t in types if re.search(r"trigger|cron|schedule|webhook", t, re.I)]

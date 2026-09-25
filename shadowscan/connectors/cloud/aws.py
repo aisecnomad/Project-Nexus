@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
+from fnmatch import fnmatchcase
 from itertools import islice
 from typing import Any, ClassVar
 
@@ -51,10 +52,33 @@ from shadowscan.utils.text import truncate
 DEFAULT_REGIONS = ["us-east-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"]
 KNOWN_SERVICES = frozenset({"bedrock", "agentcore", "lambda", "ecs", "sagemaker", "stepfunctions", "qbusiness", "lex", "iam", "secrets", "cloudtrail"})
 LLM_ACTION_PREFIXES = ("bedrock:", "bedrock-agentcore:", "sagemaker:invoke", "qbusiness:", "lex:", "q:", "kendra:")
-# Service wildcards that include the invoke actions above without sharing their prefix.
-LLM_SERVICE_WILDCARDS = frozenset({"sagemaker:*"})
 CLOUDTRAIL_EVENTS = ["InvokeModel", "InvokeModelWithResponseStream", "Converse", "ConverseStream", "InvokeAgent", "InvokeFlow", "InvokeInlineAgent", "InvokeAgentRuntime", "RetrieveAndGenerate", "InvokeEndpoint", "ChatSync"]
 MAX_LIST_PAGES = 1000
+# Representative AI operations, not a complete IAM action catalogue. These
+# establish potential access from NotAction; they never establish effective
+# authorization or exhaustively evaluate a policy.
+_AI_ACTION_CANDIDATES = (
+    "bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream",
+    "bedrock:InvokeAgent",
+    "bedrock:InvokeFlow", "bedrock:InvokeInlineAgent", "bedrock:RetrieveAndGenerate",
+    "bedrock-agentcore:InvokeAgentRuntime", "sagemaker:InvokeEndpoint",
+    "sagemaker:InvokeEndpointAsync", "sagemaker:InvokeEndpointWithResponseStream",
+    "qbusiness:ChatSync", "qbusiness:Chat", "lex:RecognizeText",
+    "lex:RecognizeUtterance", "lex:StartConversation", "q:SendMessage",
+    "kendra:Query", "kendra:Retrieve",
+)
+
+
+def _action_has_ai_scope(action: str, resource_services: set[str] | None = None) -> bool:
+    """Whether an action expression can refer to an AI service in this scope."""
+    if "[" in action or "]" in action:
+        return False  # IAM uses * and ?, not fnmatch character classes.
+    scopes = {"*"} if resource_services is None else resource_services
+    lowered = action.lower()
+    service = lowered.split(":", 1)[0]
+    if lowered.startswith(LLM_ACTION_PREFIXES) and any(fnmatchcase(service, scope) for scope in scopes):
+        return True
+    return any(fnmatchcase(candidate.lower(), lowered) and any(fnmatchcase(candidate.split(":", 1)[0], scope) for scope in scopes) for candidate in _AI_ACTION_CANDIDATES)
 
 
 def _resource_id(value: Any) -> str:
@@ -122,18 +146,26 @@ class AwsConnector(BaseConnector):
 
         # Apply finite transport/retry bounds to STS as well as inventory calls.
         return Config(connect_timeout=10, read_timeout=30,
+                      ignore_configured_endpoint_urls=True,
                       retries={"mode": "standard", "total_max_attempts": 3})
 
     def _session_(self) -> Any:
         if self._session is not None:
             return self._session
         import boto3
+        from botocore.loaders import Loader
         from botocore.session import Session
 
         profile = self.ctx.get("profile", env="AWS_PROFILE")
         # Configure this session only: process-wide environment changes race with
         # concurrent scans and can unexpectedly enable metadata access elsewhere.
         sdk_session = Session(profile=profile)
+        # Endpoint rules are executable destination configuration too. Ignore
+        # AWS_DATA_PATH and ~/.aws/models; both can override signed service
+        # destinations even when configured endpoint URLs are disabled.
+        sdk_session.register_component("data_loader", Loader(
+            extra_search_paths=[Loader.BUILTIN_DATA_PATH], include_default_search_paths=False,
+        ))
         sdk_session.set_default_client_config(self._sdk_config())
         allow_instance = allow_instance_credentials(self.ctx.get("allow_instance_credentials", False))
         configure_aws_session(sdk_session, allow_instance=allow_instance)
@@ -147,7 +179,7 @@ class AwsConnector(BaseConnector):
             if role:
                 sts = session.client("sts", config=self._sdk_config())
                 creds = sts.assume_role(RoleArn=role, RoleSessionName="shadowscan")["Credentials"]
-                session = boto3.Session(aws_access_key_id=creds["AccessKeyId"], aws_secret_access_key=creds["SecretAccessKey"], aws_session_token=creds["SessionToken"])
+                session = boto3.Session(aws_access_key_id=creds["AccessKeyId"], aws_secret_access_key=creds["SecretAccessKey"], aws_session_token=creds["SessionToken"], botocore_session=sdk_session)
             account = session.client("sts", config=self._sdk_config()).get_caller_identity()["Account"]
             if not isinstance(account, str) or len(account) != 12 or not account.isascii() or not account.isdigit():
                 raise ValueError("invalid STS account identifier")
@@ -204,7 +236,12 @@ class AwsConnector(BaseConnector):
                         self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
                     return
         except Exception as exc:  # noqa: BLE001 - preserve pages already yielded
-            self.ctx.warn(f"cloud.aws: {op} collection failed ({type(exc).__name__})")
+            response = getattr(exc, "response", None)
+            error = response.get("Error") if isinstance(response, dict) else None
+            code = error.get("Code") if isinstance(error, dict) else None
+            denied = isinstance(code, str) and code in {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}
+            detail = f"access denied ({code})" if denied else type(exc).__name__
+            self.ctx.warn(f"cloud.aws: {op} collection failed ({detail})")
 
     def _paginate(self, client: Any, op: str, key: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
         for page in self._pages(client, op, **kwargs):
@@ -369,6 +406,16 @@ class AwsConnector(BaseConnector):
             if n > self.max_lambda:
                 self.ctx.warn(f"cloud.aws: max_lambda reached in {region}", incomplete=True)
                 break
+            environment = fn.get("Environment", {})
+            environment_known = isinstance(environment, dict) and "Error" not in environment
+            variables = environment.get("Variables", {}) if isinstance(environment, dict) else {}
+            if not isinstance(variables, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in variables.items()):
+                environment_known = False
+                variables = {k: v for k, v in variables.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(variables, dict) else {}
+            if not environment_known:
+                # Do not echo the provider error: it can contain sensitive
+                # configuration. Preserve known variables and other signals.
+                self.ctx.warn("cloud.aws: Lambda environment unavailable or malformed; configuration coverage unknown")
             rec = {
                 "_kind": "lambda",
                 "_region": region,
@@ -377,7 +424,8 @@ class AwsConnector(BaseConnector):
                 "Runtime": fn.get("Runtime"),
                 "Role": fn.get("Role"),
                 "Handler": fn.get("Handler"),
-                "Environment": (fn.get("Environment") or {}).get("Variables") or {},
+                "Environment": variables,
+                "environment_coverage": "observed" if environment_known else "unknown",
                 "Layers": [layer.get("Arn") for layer in fn.get("Layers") or []],
                 "LastModified": fn.get("LastModified"),
                 "PackageType": fn.get("PackageType"),
@@ -601,8 +649,12 @@ class AwsConnector(BaseConnector):
                 if unresolved:
                     self.ctx.warn(f"cloud.aws: unresolved attached policies for {item.get('Arn')}: {', '.join(str(p) for p in unresolved)}", incomplete=True)
                 docs += [policies.get(p.get("PolicyArn"), {}) for p in item.get("AttachedManagedPolicies") or []]
-                actions = _actions_from_docs(docs)
-                if any(a.lower().startswith(LLM_ACTION_PREFIXES) or a == "*" or a.lower() in LLM_SERVICE_WILDCARDS for a in actions):
+                actions, ai_patterns, potential_actions, limitations = _iam_policy_signals(docs)
+                if item.get("PermissionsBoundary"):
+                    limitations.add("permissions-boundary-not-evaluated")
+                if limitations:
+                    self.ctx.warn("cloud.aws: IAM policy analysis is partial (" + ", ".join(sorted(limitations)) + "); effective authorization is not evaluated")
+                if potential_actions or ai_patterns:
                     yield {
                         "_kind": "iam-principal",
                         "type": item["_type"].replace("DetailList", ""),
@@ -612,6 +664,9 @@ class AwsConnector(BaseConnector):
                         "last_used": str((item.get("RoleLastUsed") or {}).get("LastUsedDate")) if item.get("RoleLastUsed") else None,
                         "assume_role_policy": item.get("AssumeRolePolicyDocument"),
                         "actions": sorted(actions),
+                        "ai_action_patterns": sorted(ai_patterns),
+                        "potential_actions": sorted(potential_actions),
+                        "policy_limitations": sorted(limitations),
                         "attached_policies": [p.get("PolicyName") for p in item.get("AttachedManagedPolicies") or []],
                         "tags": {t["Key"]: t.get("Value") for t in item.get("Tags") or []},
                     }
@@ -857,6 +912,9 @@ class AwsConnector(BaseConnector):
     def _h_lambda(self, rec: dict[str, Any]) -> Finding | None:
         arn = rec.get("FunctionArn")
         f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Lambda function: {rec.get('FunctionName')}", resource=_resource_id(arn or rec.get("FunctionName")), resource_type="lambda-function", account=self._arn_account(arn), region=rec.get("_region"), last_seen=rec.get("LastModified"))
+        if rec.get("environment_coverage") == "unknown":
+            # Preserve coverage when sanitized collection records are rescanned.
+            self.ctx.warn("cloud.aws: Lambda environment coverage is unknown")
         scan_env(self.index, f, rec.get("Environment"), location=arn)
         for layer in rec.get("Layers") or []:
             # arn:aws:lambda:REGION:ACCOUNT:layer:NAME:VERSION -> NAME
@@ -878,7 +936,7 @@ class AwsConnector(BaseConnector):
             return None
         f.add_evidence(Evidence(signal="aws:lambda", description=f"Function '{rec.get('FunctionName')}' ({rec.get('Runtime') or rec.get('PackageType')}), role {rec.get('Role')}", location=arn, weight=0.2))
         f.owner = (rec.get("Tags") or {}).get("owner") or (rec.get("Tags") or {}).get("Owner") or (rec.get("Tags") or {}).get("team")
-        f.metadata.update({"runtime": rec.get("Runtime"), "role": rec.get("Role"), "handler": rec.get("Handler"), "layers": rec.get("Layers"), "image": rec.get("ImageUri"), "env_names": sorted((rec.get("Environment") or {}).keys())[:40], "tags": rec.get("Tags")})
+        f.metadata.update({"runtime": rec.get("Runtime"), "role": rec.get("Role"), "handler": rec.get("Handler"), "layers": rec.get("Layers"), "image": rec.get("ImageUri"), "env_names": sorted((rec.get("Environment") or {}).keys())[:40], "environment_coverage": rec.get("environment_coverage", "unspecified"), "tags": rec.get("Tags")})
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_ecs_task_definition(self, rec: dict[str, Any]) -> Finding | None:
@@ -974,11 +1032,27 @@ class AwsConnector(BaseConnector):
 
     def _h_iam_principal(self, rec: dict[str, Any]) -> Finding | None:
         actions = rec.get("actions") or []
-        f = cloud_finding(self.name, "aws", kind=Kind.IAM_GRANT, title=f"IAM {rec.get('type')} with LLM/agent permissions: {rec.get('name')}", resource=_resource_id(rec.get("arn") or rec.get("name")), resource_type=f"iam-{str(rec.get('type', 'principal')).lower()}", account=self._arn_account(rec.get("arn")), first_seen=rec.get("created"), last_seen=rec.get("last_used"), surface=Surface.IDENTITY)
-        llm = scan_iam_actions(self.index, f, actions, location=rec.get("arn"))
-        wildcard = [a for a in actions if a == "*" or a.endswith(":*")]
-        if not llm and not wildcard:
+        if not isinstance(actions, list) or any(not isinstance(action, str) for action in actions):
+            raise ValueError("invalid IAM actions")
+        ai_patterns = rec.get("ai_action_patterns", [action for action in actions if _action_has_ai_scope(action)])
+        if not isinstance(ai_patterns, list) or any(not isinstance(action, str) or action not in actions or not _action_has_ai_scope(action) for action in ai_patterns):
+            raise ValueError("invalid AI action patterns")
+        potential = rec.get("potential_actions") or []
+        limitations = rec.get("policy_limitations") or []
+        if not isinstance(potential, list) or any(not isinstance(action, str) for action in potential):
+            raise ValueError("invalid potential IAM actions")
+        if not isinstance(limitations, list) or any(not isinstance(limit, str) for limit in limitations):
+            raise ValueError("invalid IAM policy limitations")
+        if limitations:
+            self.ctx.warn("cloud.aws: IAM policy evidence has unevaluated semantics; effective authorization is unknown")
+        if not ai_patterns and not potential:
             return None
+        f = cloud_finding(self.name, "aws", kind=Kind.IAM_GRANT, title=f"IAM {rec.get('type')} with potential LLM/agent access: {rec.get('name')}", resource=_resource_id(rec.get("arn") or rec.get("name")), resource_type=f"iam-{str(rec.get('type', 'principal')).lower()}", account=self._arn_account(rec.get("arn")), first_seen=rec.get("created"), last_seen=rec.get("last_used"), surface=Surface.IDENTITY)
+        llm = [action for action in scan_iam_actions(self.index, f, actions, location=rec.get("arn")) if action in ai_patterns]
+        for action in potential:
+            apply_matches(f, self.index.match_scope(action), location=rec.get("arn"), weight_scale=0.3)
+        # Ancillary privileges remain evidence only after an AI grant exists.
+        wildcard = [a for a in actions if "*" in a or "?" in a]
         trust = json.dumps(rec.get("assume_role_policy") or {})
         principals = []
         for svc in ("lambda.amazonaws.com", "bedrock.amazonaws.com", "bedrock-agentcore.amazonaws.com", "ecs-tasks.amazonaws.com", "sagemaker.amazonaws.com", "states.amazonaws.com", "ec2.amazonaws.com", "eks.amazonaws.com", "apprunner.amazonaws.com"):
@@ -986,7 +1060,7 @@ class AwsConnector(BaseConnector):
                 principals.append(svc)
         if "oidc-provider" in trust or "token.actions.githubusercontent.com" in trust:
             principals.append("oidc-federated")
-        f.add_evidence(Evidence(signal="aws:iam", description=f"{rec.get('type')} '{rec.get('name')}' allows {', '.join(llm[:8])}{' + wildcards ' + ', '.join(wildcard[:3]) if wildcard else ''}; trusted by {', '.join(principals) or 'users/accounts'}", location=rec.get("arn"), weight=0.45 if llm else 0.25))
+        f.add_evidence(Evidence(signal="aws:iam", description=f"Policy evidence for {rec.get('type')} '{rec.get('name')}': explicit actions {', '.join(llm[:8]) or 'none'}{' + wildcards ' + ', '.join(wildcard[:3]) if wildcard else ''}{'; potential NotAction grants ' + ', '.join(potential[:8]) if potential else ''}; trusted by {', '.join(principals) or 'users/accounts'}. Effective authorization is not evaluated.", location=rec.get("arn"), weight=0.45 if llm else 0.25))
         if "bedrock.amazonaws.com" in principals or "bedrock-agentcore.amazonaws.com" in principals:
             f.add_framework("cloud.aws-bedrock-agents")
             f.add_tag("agent-execution-role")
@@ -994,7 +1068,7 @@ class AwsConnector(BaseConnector):
             f.add_tag("wildcard-permissions")
         name_hint(self.index, f, rec.get("name"))
         f.owner = (rec.get("tags") or {}).get("owner") or (rec.get("tags") or {}).get("Owner")
-        f.metadata.update({"principal_type": rec.get("type"), "llm_actions": llm[:40], "wildcards": wildcard[:10], "attached_policies": rec.get("attached_policies"), "trusted_services": principals, "action_count": len(actions)})
+        f.metadata.update({"principal_type": rec.get("type"), "llm_actions": llm[:40], "ai_action_patterns": ai_patterns, "potential_actions": potential, "policy_limitations": limitations, "effective_permissions": "not-evaluated", "wildcards": wildcard[:10], "attached_policies": rec.get("attached_policies"), "trusted_services": principals, "action_count": len(actions)})
         return done(f, self.index, Kind.IAM_GRANT)
 
     # ------------------------------------------------------------ cloudtrail
@@ -1043,32 +1117,95 @@ class AwsConnector(BaseConnector):
         return done(f, self.index, Kind.GATEWAY_CALLER)
 
 
-def _actions_from_docs(docs: list[Any]) -> set[str]:
+def _iam_policy_signals(docs: list[Any]) -> tuple[set[str], set[str], set[str], set[str]]:
+    """Collect policy evidence without claiming effective permissions.
+
+    NotAction has an open-ended action universe. Check representative AI
+    operations only, scoped to the resource's service, and disclose that the
+    complement, resource/action compatibility and policy evaluation are partial.
+    Conditions, denies and boundaries can restrict every observation here.
+    """
     actions: set[str] = set()
+    ai_patterns: set[str] = set()
+    potential: set[str] = set()
+    limitations: set[str] = set()
+
+    def strings(value: Any) -> list[str] | None:
+        values = [value] if isinstance(value, str) else value
+        if not isinstance(values, list) or not values or any(not isinstance(v, str) or not v.strip() for v in values):
+            return None
+        return values
+
     for doc in docs:
         if isinstance(doc, str):
             try:
                 doc = json.loads(doc)
             except json.JSONDecodeError:
+                limitations.add("malformed-policy")
                 continue
         if not isinstance(doc, dict):
+            limitations.add("malformed-policy")
             continue
-        stmts = doc.get("Statement") or []
+        stmts = doc.get("Statement")
         if isinstance(stmts, dict):
             stmts = [stmts]
+        if not isinstance(stmts, list) or not stmts:
+            limitations.add("missing-policy-statements")
+            continue
         for st in stmts:
-            if not isinstance(st, dict) or st.get("Effect") != "Allow":
+            if not isinstance(st, dict) or not isinstance(st.get("Effect"), str) or st["Effect"] not in {"Allow", "Deny"}:
+                limitations.add("malformed-policy-statement")
                 continue
-            acts = st.get("Action") or []
-            if isinstance(acts, str):
-                acts = [acts]
-            actions.update(str(a) for a in acts)
-            excluded = st.get("NotAction")
-            if excluded is not None:
-                # An Allow with NotAction grants every action except those listed;
-                # unless everything is excluded, treat it as the wildcard it is.
-                if isinstance(excluded, str):
-                    excluded = [excluded]
-                if not any(str(a).strip() == "*" for a in (excluded if isinstance(excluded, list) else [])):
-                    actions.add("*")
-    return actions
+            if st["Effect"] == "Deny":
+                limitations.add("explicit-deny-not-evaluated")
+                continue
+            if "Condition" in st:
+                limitations.add("conditions-not-evaluated")
+            if "NotResource" in st:
+                limitations.add("notresource-not-evaluated")
+            if "Principal" in st or "NotPrincipal" in st:
+                limitations.add("resource-policy-principals-not-evaluated")
+            if ("Action" in st) == ("NotAction" in st):
+                limitations.add("malformed-action-expression")
+                continue
+            resources = strings(st.get("Resource"))
+            if resources is None and "NotResource" not in st:
+                limitations.add("missing-or-malformed-resource")
+            services: set[str] = set()
+            for resource in resources or []:
+                parts = resource.split(":", 5)
+                if resource == "*":
+                    services.add("*")
+                elif len(parts) == 6 and parts[0] == "arn" and parts[2] and "[" not in parts[2] and "]" not in parts[2]:
+                    services.add(parts[2].lower())
+                else:
+                    limitations.add("resource-scope-not-evaluated")
+            if "Action" in st:
+                explicit = strings(st["Action"])
+                if explicit is None:
+                    limitations.add("malformed-action-expression")
+                else:
+                    actions.update(explicit)
+                    # Keep explicit policy evidence when resource scope is
+                    # unknown, with the limitation above. Known non-AI resource
+                    # scopes must not turn '*' into an AI grant.
+                    scope = None if resources is None else services
+                    ai_patterns.update(action for action in explicit if _action_has_ai_scope(action, scope))
+                continue
+            limitations.add("notaction-partially-evaluated")
+            excluded = strings(st["NotAction"])
+            if excluded is None or any("[" in action or "]" in action for action in excluded):
+                limitations.add("malformed-action-expression")
+                continue
+            if resources is None or "NotResource" in st:
+                continue
+            for action in _AI_ACTION_CANDIDATES:
+                service = action.split(":", 1)[0]
+                if any(fnmatchcase(service, scope) for scope in services) and not any(fnmatchcase(action.lower(), pattern.lower()) for pattern in excluded):
+                    potential.add(action)
+    return actions, ai_patterns, potential, limitations
+
+
+def _actions_from_docs(docs: list[Any]) -> set[str]:
+    """Explicit Allow/Action signals; collection also inspects policy limitations."""
+    return _iam_policy_signals(docs)[0]

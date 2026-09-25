@@ -40,7 +40,13 @@ from shadowscan.connectors.code.ownership import (
 from shadowscan.connectors.code.ownership import (
     codeowners_match as _codeowners_match,
 )
+from shadowscan.connectors.code.semantic_config import (
+    agent_manifest_kind,
+    parse_agent_manifest,
+    structured_code_matches,
+)
 from shadowscan.connectors.code.source_ranges import noncode_ranges
+from shadowscan.connectors.code.source_semantics import bound_source_matches
 from shadowscan.connectors.common import apply_matches, finalize, looks_like_placeholder
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
@@ -475,9 +481,6 @@ class FilesystemConnector(BaseConnector):
 
                     # 1. file-name signals (config files of agents / MCP / A2A ...)
                     file_matches = self.index.match_file(rel)
-                    for m in file_matches:
-                        if m.signature_id != "protocol.mcp":
-                            self._record(proj, m, rel, None)
 
                     is_source = ext in SOURCE_EXTENSIONS
                     is_text_cfg = ext in TEXT_CONFIG_EXTENSIONS or lower.startswith(".env") or is_manifest_name(name) or "." not in name
@@ -506,6 +509,24 @@ class FilesystemConnector(BaseConnector):
                         self.ctx.error(f"code.filesystem: {rel}: structured sanitization incomplete ({type(exc).__name__}); excerpts withheld")
                         safe_text = ""
                     safe_lines = safe_text.splitlines()
+
+                    card_kind = agent_manifest_kind(rel)
+                    card_valid = False
+                    if card_kind:
+                        validation = parse_agent_manifest(rel, text, card_kind)
+                        for issue in validation.errors:
+                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                        card_valid = validation.valid
+                    for m in file_matches:
+                        if m.signature_id == "protocol.mcp":
+                            continue
+                        # A suggestive filename establishes neither a valid
+                        # manifest nor an agent. Keep coding-agent file evidence
+                        # and validated product schemas; do not invent agents.
+                        if card_kind and not card_valid:
+                            continue
+                        m.extra["verified_agent"] = card_valid
+                        self._record(proj, m, rel, None)
 
                     def excerpt(line_number: int | None, secret: str | None = None) -> str:
                         return _excerpt(safe_lines, line_number or 1, secret)
@@ -586,17 +607,33 @@ class FilesystemConnector(BaseConnector):
                             if ignored else self.index.match_code(content_text, lang)
                         )
                         for m in code_matches:
+                            if lang in {"python", "javascript"}:
+                                if m.signature.category == "framework":
+                                    continue  # bound calls below establish the library
+                                m.extra["verified_agent"] = False
+                            else:
+                                # Other languages have lexical filtering but
+                                # no import binder. Their code signatures need
+                                # corroborating library evidence at emit time.
+                                m.extra["lexical_source"] = lang
                             record_content_match(m, excerpt(m.line))
+                        if lang in {"python", "javascript"}:
+                            for m in bound_source_matches(self.index, content_text, lang, ignored):
+                                record_content_match(m, excerpt(m.line))
                     elif not is_nonexecutable:
-                        for m in self.index.match_code(content_text, None):
+                        config_errors: list[str] = []
+                        structured = [] if is_mcp else structured_code_matches(self.index, rel, content_text, errors=config_errors)
+                        for issue in config_errors:
+                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                        for m in structured:
                             # MCP configs are structured data. A disabled server
                             # may contain sample commands that look like agent
                             # code; only the parsed protocol marker is relevant.
                             if is_mcp and m.signature_id != "protocol.mcp":
                                 continue
-                            record_content_match(m, excerpt(m.line))
+                            record_content_match(m, None)
                             if m.signature.category in {"platform", "cloud-service"} and m.agent_indicator and ext in {".json", ".yaml", ".yml"} and not is_mcp:
-                                workflow_files.setdefault(rel, []).append((m, excerpt(m.line)))
+                                workflow_files.setdefault(rel, []).append((m, ""))
                     if not is_nonexecutable and not is_mcp:
                         for m in self.index.match_envs_in_text(content_text):
                             record_content_match(m, excerpt(m.line))
@@ -606,16 +643,7 @@ class FilesystemConnector(BaseConnector):
                     # 4. special files
                     if active_mcp:
                         mcp_files.append((rel, mcp_servers))
-                    card_kind = None
-                    if lower in {"agent.json", "agent-card.json", "agent_card.json"} and ".well-known" in rel or lower in {"agent-card.json", "agent_card.json"}:
-                        card_kind = "a2a"
-                    elif lower.startswith("declarativeagent") and ext == ".json":
-                        card_kind = "m365"
-                    elif lower == "langgraph.json":
-                        card_kind = "langgraph"
-                    elif lower == "agents.yaml" and "config" in rel:
-                        card_kind = "crewai"
-                    if card_kind:
+                    if card_kind and card_valid:
                         # Texts are retained until the emit phase; bound that memory.
                         if len(card_files) >= _MAX_CARD_FILES:
                             self.ctx.error(f"code.filesystem: {rel}: agent manifest limit ({_MAX_CARD_FILES}) reached; manifest skipped")
@@ -957,10 +985,37 @@ class FilesystemConnector(BaseConnector):
 
     def _emit_project(self, label: str, root: Path, proj: _Project) -> Iterator[Finding]:
         tech_matches = [(m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}]
-        if tech_matches:
+        if any(m.signature.category != "heuristic" for m, _, _ in tech_matches):
+            library_evidence = {m.signature_id for m, _, _ in tech_matches if m.signal.type in {"import", "dependency"}}
+
+            def verified_indicator(match: Match) -> bool:
+                if match.signature.category == "heuristic" or match.signature_id == "protocol.mcp":
+                    return False
+                if "verified_agent" in match.extra:
+                    return bool(match.extra["verified_agent"])
+                if match.extra.get("lexical_source") and match.signature.category == "framework":
+                    return match.agent_indicator and match.signature_id in library_evidence
+                return match.agent_indicator
+
             f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
-            for m, rel, snip in tech_matches:
+            uncorroborated = {m.signature_id for m, _, _ in tech_matches
+                              if m.extra.get("lexical_source") and m.signature.category == "framework"
+                              and m.signature_id not in library_evidence}
+            # Decisive evidence must survive the per-signature report quota.
+            for m, rel, snip in sorted(tech_matches, key=lambda item: not verified_indicator(item[0])):
+                if m.extra.get("lexical_source") and m.signature.category == "framework" and m.signature_id not in library_evidence:
+                    m.weight = min(m.weight, 0.6)
                 apply_matches(f, [m], location=rel, snippet=snip)
+            # Repeated observations of one technology are correlated evidence.
+            # Generic idioms share a single supporting group; loops in several
+            # worker files must never accumulate into a confirmed AI agent.
+            for evidence in f.evidence:
+                category = evidence.attributes.get("category")
+                evidence.attributes["confidence_group"] = (
+                    "heuristic-support" if category == "heuristic" else
+                    "uncorroborated-lexical" if evidence.signature in uncorroborated else
+                    evidence.signature or evidence.signal
+                )
             git = self._git_info(root, proj.root)
             f.metadata.update(git)
             if git.get("last_commit"):
@@ -980,8 +1035,7 @@ class FilesystemConnector(BaseConnector):
             # use. MCP code/config alone establishes a tool server/client, not
             # an agent capable of choosing actions or planning.
             f.metadata["agent_indicators"] = sum(
-                m.agent_indicator and m.signal.type in {"code", "file"}
-                and m.signature_id != "protocol.mcp"
+                verified_indicator(m) and m.signal.type in {"code", "file"}
                 for m, _, _ in tech_matches
             )
             finalize(f, self.index)
@@ -1059,15 +1113,12 @@ class FilesystemConnector(BaseConnector):
         return f
 
     def _card_finding(self, label: str, root: Path, rel: str, text: str, kind: str) -> Finding | None:
-        data: Any = None
-        try:
-            data = bounded_safe_load(text) if rel.endswith((".yaml", ".yml")) else json.loads(text)
-        except (ValueError, RecursionError, yaml.YAMLError):
-            self.ctx.error(f"code.filesystem: {rel}: invalid agent manifest")
+        validation = parse_agent_manifest(rel, text, kind)
+        if not validation.valid:
+            for issue in validation.errors:
+                self.ctx.error(f"code.filesystem: {rel}: {issue}")
             return None
-        if not isinstance(data, dict):
-            self.ctx.error(f"code.filesystem: {rel}: agent manifest must be an object")
-            return None
+        data = validation.data
         # Retain sibling credential context before projecting descriptive fields.
         # An opaque secret may also appear in a description, URL or dependency.
         data = sanitize(data)
