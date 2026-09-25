@@ -20,7 +20,14 @@ export must include a valid team record or an explicit operator-supplied
 Teams records without valid app identity make collection incomplete while valid
 neighboring observations remain available.
 
-Use the [offline acceptance verifier](../tools/acceptance/README.md) to check the
+Code findings can change after this scanner update: an import-bound OpenAI
+Responses API function loop is promoted only when request, selected dispatch
+and matching feedback are linked, and provider loop analysis rejects unreachable
+literal branches and locally shadowed execution calls. Reconcile a fresh code
+baseline and review changed finding identities before using `--fail-on` as an
+enforcement gate. Offline source tests establish these paths, not runtime use.
+
+Use the [offline acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) to check the
 required evidence for the intended deployment scope. It checks artifact identity,
 freshness and declared review/metric requirements. It does not authenticate
 reviewers, prove that a supplied receipt came from a real tenant, or turn synthetic
@@ -28,7 +35,7 @@ tests into operational evidence. Keep receipts and human attestations in control
 audit storage and review their origin. Unsupported live connectors still require
 their own acceptance work; they cannot inherit an AWS or Slack result.
 
-The manually invoked [release-evidence workflow](../.github/workflows/release.yml)
+The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
 requires a successful main-branch CI run for the exact selected commit. It builds
 and checks the wheel, retains a runtime dependency SBOM and hashes, and produces
 GitHub artifact provenance. It does not publish to PyPI, create a release, or
@@ -65,7 +72,8 @@ lock and built wheel hash for each worker deployment.
 
 The runtime lock covers the core scanner and all cloud SDK extras on CPython
 3.11/3.12, Linux x86_64. It contains exact versions and permitted SHA-256 hashes;
-CI checks installation and dependency consistency on both Python versions. It is
+required CI checks installation and dependency consistency on both Python
+versions. Python 3.13 is a candidate until its hosted matrix job passes. It is
 not a universal lock for Windows, macOS, ARM or every future Python release.
 Resolve and validate a separate lock before deploying on another platform.
 
@@ -110,25 +118,31 @@ pip-compile --extra cloud --generate-hashes --strip-extras \
 Use `--upgrade` only for an intentional dependency refresh. Preserve the lock's
 supported-platform comment when regenerating. Do not bypass failed hash checks.
 
-The Dockerfile installs the runtime lock and the build lock under
-`--require-hashes`, builds the package with `--no-build-isolation`, and runs as
-UID/GID 65532. Its default base is `python:3.12-slim-bookworm` pinned to the
-multi-arch image index digest on the `FROM` line, with the resolution date and
-refresh procedure in the comment above it; the weekly `docker` entry in
-`.github/dependabot.yml` proposes digest refreshes, which are reviewed like any
-dependency change. To build at a digest your own review approved instead, pass
-`--build-arg PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:<approved-digest>`
-and retain the built image digest. The build context is an allowlist
-(`.dockerignore`) of package sources, signature data, packaging inputs and the
-two locks, so local bytecode, exports and credentials never enter the image.
-Distribution packages installed with apt stay unpinned because Debian removes
-superseded package versions from its mirrors and an exact pin fails at the next
-security update; the base digest fixes the starting package set, but
-`apt-get update` still reads the live archive, so the Dockerfile alone does not
-promise byte-for-byte reproducible images. CI smoke-tests a non-root, read-only
-and network-isolated image; build and test the deployment image at its approved
-base digest, including resource limits and output-directory permissions, before
-rollout.
+The Dockerfile installs the runtime and build locks under `--require-hashes`,
+builds the package with `--no-build-isolation`, and runs as UID/GID 65532. Its
+literal `FROM` pins the multi-arch `python:3.12-slim-trixie` image index. The
+image build checks that Git is 2.45 or newer for history enrichment.
+Review that exact digest and any Dependabot refresh before deployment:
+
+```bash
+docker build --tag shadowscan:reviewed .
+```
+
+Retain the reviewed base and built image digests. The build context is an
+allowlist (`.dockerignore`) of package sources, signature data, packaging
+inputs and the two locks. Distribution packages from `apt-get` and image
+metadata remain mutable, so the Dockerfile does not promise byte-for-byte
+reproducible images. CI smoke-tests a non-root, read-only and network-isolated
+image; build and test the deployment image, including resource limits and
+output-directory permissions, before rollout.
+
+The [Kubernetes offline Job example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-job.yaml) has a 20-minute
+active deadline, a placeholder for a reviewed image digest, and a matching
+NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
+reviewed `/input` volume before running it. For live API collection, use a
+separate Job and enforce a network path through an approved egress proxy; a
+standard Kubernetes NetworkPolicy cannot filter destinations by DNS name.
+
 Opt-in Git history enrichment requires Git 2.45+;
 verify the distribution Git version if that feature is needed. Keep runtime
 secrets out of the build context.
@@ -255,6 +269,17 @@ wall-clock deadline and terminate the disposable worker when it expires.
 SDK connect/read limits and bounded retries reduce blocking; none guarantees a
 universal hard deadline for the whole scan.
 
+For CLI scans, `--job-deadline-seconds 600` or
+`options.job_deadline_seconds: 600` also arms a process watchdog covering plugin
+discovery, engine setup, collection and report output. The value must be positive
+and finite; omission or YAML `null` leaves it disabled. Expiry terminates the
+scanner with exit `3`, without guaranteeing a final report or cleanup. A blocked
+output stream cannot delay that exit. Successful and failed completed CLI
+invocations disarm their watchdog. `Engine` embedding does not arm it: the host
+application owns process supervision. Keep the external job deadline and process
+group/container cleanup to reap child processes and bound native code that holds
+the interpreter lock indefinitely.
+
 Code scans follow a documented coverage policy. Symbolic links that resolve
 inside the scan root are skipped silently because their targets are scanned at
 their real path; links leaving the root and files over `max_file_size` are
@@ -289,6 +314,14 @@ when another selector matches successfully.
 Use disposable, resource-limited workers for untrusted repository scans. Keep
 scanner state and output outside the repository under review. Avoid handing
 production credentials to a job that executes repository-controlled build steps.
+For GitHub/GitLab remote repository scans, preflight estimates and process-group
+cancellation reduce ordinary runaway clone cost but do not guarantee a hard
+aggregate byte, writable disk or time bound on every platform. Give each
+disposable worker an operating-system/container writable disk quota, memory and
+process limits, a separate job wall-clock deadline and a cleanup policy for
+abandoned workspaces. A worker's soft connector timeout is not a disk quota or
+a hard kill for every child process. A local checkout example, such as
+`examples/github-action-code-scan.yml`, does not exercise the remote clone path.
 
 ## Output and inventory migration
 
@@ -439,24 +472,22 @@ lost user attribution before using their counts as governance evidence.
 
 ### Merge gate and review status
 
-The repository has a single maintainer. As of 2026-09-24 every pull request was
-merged by that maintainer's own account and, apart from Dependabot updates,
-authored by it or by the AI assistant it used; no change on `main` carries an
-approving review from a second person. Merged pull requests, the version string and the maintainer's own
-hardening logs under `docs/hardening-logs/` are therefore not evidence of an
-independent review. The review and merge policy, including how a second
-reviewer is recorded, is in [CONTRIBUTING.md](../CONTRIBUTING.md#review-and-merge-policy).
-
-Ruleset
+At this follow-up review on 2026-09-24, ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
-is configured to require the `test (3.11)`, `test (3.12)` and `analyze` checks,
-an up-to-date branch and one approving review, but on 2026-09-24 its enforcement
-was **disabled**. A disabled ruleset blocks nothing, and a ruleset that asks for
-a review is not evidence that a review happened. Keep the CodeQL job's displayed
-name `analyze` if the required check is ever restored.
+is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an up-to-date
+branch, and one approving review. Its live enforcement is **active**, with no
+bypass actors configured on this required-check ruleset. `Protect main` is also
+active. Earlier review notes describing disabled enforcement are historical.
+Keep the CodeQL job's displayed name `analyze` consistent with the required check.
 
-None of this is verifiable from a checkout. Rulesets, branch protection and pull
-request approvals are repository settings that can change at any time, so an
+At the 2026-09-24 review, the repository had a single maintainer and no merged
+change carried an approving review from a second person. A merged pull request,
+the version string, and the internal AI-assisted hardening logs are not evidence
+of independent review. The review and merge policy is in
+[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy).
+
+Rulesets, branch protection and pull request approvals are repository settings
+that can change at any time, so an
 operator who needs an independently reviewed revision must inspect the live
 state when selecting the commit and retain the output with the deployment
 evidence:
@@ -475,17 +506,19 @@ gh pr view <number> --repo aisecnomad/Project-Nexus --json author,mergedBy,revie
 An approving review counts only when it comes from an account other than the
 author's and was submitted on the final commit of the pull request. A successful
 workflow run is necessary but does not supply that approval. Recheck the live
-ruleset and pull request status at release time because repository settings can
-change.
+ruleset and pull request status at release time. Do not weaken the rules to
+self-merge.
 
 The CI workflow installs the hash-locked core/cloud runtime dependency set and validates signatures, lint, typing, dependency advisories, tests
 with a minimum 80% statement coverage, wheel creation, installed-wheel validation
-outside the source checkout and offline SARIF output. Both Python jobs enforce a
+outside the source checkout and offline SARIF output. The required Python 3.11
+and 3.12 jobs enforce a
 75% statement-coverage floor for each built-in connector module, so a
 well-tested engine cannot conceal an untested provider. Coverage proves
 execution of code paths in tests; it does not prove provider compatibility or
-complete tenant inventory. The required Python 3.12 job also builds the Docker
-image and checks its non-root UID, signature assets and
+complete tenant inventory. The new Python 3.13 matrix job awaits a successful
+hosted run and inclusion in branch protection. It builds the Docker image and
+checks its non-root UID, signature assets and
 network-isolated scan with a read-only root filesystem and resource limits.
 Focused regressions cover the review findings, private-address enforcement,
 public-key verification, plugin policy, artifact permissions and replay integrity.
@@ -503,13 +536,29 @@ regressions. It does not measure field precision, recall or the calibration of
 the heuristic confidence score. Before turning on `--fail-on` for an estate,
 label a representative held-out set from that estate, include inactive configs,
 commented/string-only source, disabled integrations and genuinely executing
-agents, and review errors by connector and severity. Set a documented acceptable
-false-alert and miss rate for each high-impact workflow; keep human triage while
-those acceptance metrics are measured.
+agents, and review errors by connector and severity. For code-filesystem cases,
+run the acceptance command with a separately reviewed, SHA-256-frozen policy:
+
+```bash
+python -m tools.evaluation.accept \
+  --corpus /restricted/holdout.json \
+  --policy /restricted/acceptance-policy.json \
+  --annotations /restricted/holdout-annotations.json \
+  --output /restricted/acceptance-result.json
+```
+
+The gate rejects synthetic/public samples and requires a frozen, SHA-256-bound
+two-reviewer ledger plus predeclared sample floors and Wilson lower bounds per
+family. Ledger declarations do not authenticate reviewer independence or prove
+tenant completeness. Set a documented acceptable false-alert
+and miss rate for each high-impact workflow; keep human triage while those
+acceptance metrics are measured.
 
 ## Rollout acceptance
 
-Before broad deployment, retain evidence for each intended connector instance:
+Before broad deployment, retain evidence for each intended connector instance.
+The [canary proof packet](evaluation.md#read-only-tenant-canary-procedure) lists
+the concrete status, denominator, control and reviewer artifacts:
 
 1. Run a read-only canary with the actual audit identity. Record the expected
    tenant/account, regions and collection scope, then verify known agents and
@@ -583,3 +632,7 @@ requires a new scan.
 See the [consolidated hardening log](hardening-logs/consolidated-review-2026-09-24.md)
 for the maintainer's verification notes and implementation choices. It is an
 internal, AI-assisted work log, not an independent review.
+
+The [round 2 production review](production-review-2026-09-24-round2.md) records
+the later verified corrections to export sanitization, Bedrock/IAM/OCI collection,
+JWT classification, gateway detection and report rendering performance.

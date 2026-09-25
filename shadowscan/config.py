@@ -68,7 +68,7 @@ _OPTION_FIELDS = {
     "min_confidence", "fail_on", "dump_records", "workdir", "parallel", "incremental",
     "state_dir", "plugins", "allow_signature_override", "allow_private_origin",
     "allow_instance_credentials", "allow_credential_mixing", "connector_timeout_seconds", "connector_timeout",
-    "risk_basis", "risk_weights",
+    "risk_basis", "risk_weights", "job_deadline_seconds",
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 # Keys every connector accepts: BaseConnector / ConnectorContext read the input
@@ -218,6 +218,7 @@ class ScanConfig:
     allow_instance_credentials: bool = False
     allow_credential_mixing: bool = False
     connector_timeout_seconds: float = 120.0
+    job_deadline_seconds: float | None = None  # CLI process deadline; embedding callers own supervision
     risk_basis: str = "combined"
     risk_weights: dict[str, Any] = field(default_factory=dict)
     source: str | None = None
@@ -240,6 +241,7 @@ class ScanConfig:
         self.allow_instance_credentials = _boolean_option(self.allow_instance_credentials, "allow_instance_credentials")
         self.allow_credential_mixing = _boolean_option(self.allow_credential_mixing, "allow_credential_mixing")
         self.connector_timeout_seconds = validate_connector_timeout_seconds(self.connector_timeout_seconds)
+        self.job_deadline_seconds = validate_job_deadline_seconds(self.job_deadline_seconds)
         self.incremental = _boolean_option(self.incremental, "incremental")
         if self.fail_on is not None and (not isinstance(self.fail_on, str) or self.fail_on not in _RISK_LEVELS):
             raise ConfigValidationError("options.fail_on must be critical, high, medium, low, info, or null")
@@ -265,7 +267,8 @@ class ScanConfig:
         if any(source is not credentialed for source in code for credentialed in live):
             raise ConfigValidationError(
                 "code scanning and live credentialed connectors require separate scans; "
-                "set options.allow_credential_mixing to true only for reviewed inputs"
+                "set options.allow_credential_mixing to true (or pass --allow-credential-mixing) "
+                "only for reviewed inputs"
             )
 
     @classmethod
@@ -334,6 +337,7 @@ class ScanConfig:
             allow_instance_credentials=_boolean_option(opts.get("allow_instance_credentials", False), "allow_instance_credentials"),
             allow_credential_mixing=_boolean_option(opts.get("allow_credential_mixing", False), "allow_credential_mixing"),
             connector_timeout_seconds=validate_connector_timeout(timeout),
+            job_deadline_seconds=validate_job_deadline_seconds(opts.get("job_deadline_seconds")),
             risk_basis=opts.get("risk_basis", "combined"),
             risk_weights=opts.get("risk_weights", {}),
             source=source,
@@ -466,6 +470,16 @@ def validate_connector_timeout_seconds(value: Any) -> float:
 def validate_connector_timeout(value: Any) -> float:
     """Validate the deprecated spelling with the canonical finite deadline."""
     return validate_connector_timeout_seconds(value)
+
+
+def validate_job_deadline_seconds(value: Any) -> float | None:
+    """Optional CLI process deadline; null leaves supervision to the caller."""
+    if value is None:
+        return None
+    try:
+        return validate_connector_timeout_seconds(value)
+    except ConfigValidationError:
+        raise ConfigValidationError("job_deadline_seconds must be a positive finite number or null") from None
 
 
 def validate_min_confidence(value: Any) -> float:

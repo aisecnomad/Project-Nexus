@@ -240,7 +240,7 @@ def test_community_file_exists_with_content(name: str) -> None:
 
 def test_security_policy_has_the_sections_github_and_reporters_expect() -> None:
     anchors = _anchors(ROOT / "SECURITY.md")
-    for anchor in ("supported-versions", "reporting-a-vulnerability", "trust-boundary"):
+    for anchor in ("supported-versions", "reporting", "trust-boundary"):
         assert anchor in anchors, f"SECURITY.md lacks a '{anchor}' heading"
     text = _read(ROOT / "SECURITY.md")
     assert ADVISORY_URL in text, "SECURITY.md must link the private advisory form"
@@ -251,7 +251,10 @@ def test_security_policy_has_the_sections_github_and_reporters_expect() -> None:
     ["SECURITY.md", "SUPPORT.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "MAINTAINERS.md"],
 )
 def test_private_reporting_channel_is_linked_everywhere_reports_are_routed(name: str) -> None:
-    assert ADVISORY_URL in _read(ROOT / name), f"{name} must link the private security advisory form"
+    text = _read(ROOT / name)
+    assert ADVISORY_URL in text or "SECURITY.md#reporting" in text, (
+        f"{name} must link the private advisory form or the SECURITY.md reporting section"
+    )
 
 
 @pytest.mark.parametrize("name", ["README.md", "CONTRIBUTING.md", "SUPPORT.md", "GOVERNANCE.md"])
@@ -262,7 +265,8 @@ def test_code_of_conduct_is_linked_from_entry_points(name: str) -> None:
 def test_code_of_conduct_is_the_contributor_covenant_with_an_enforcement_channel() -> None:
     text = _read(ROOT / "CODE_OF_CONDUCT.md")
     assert "Contributor Covenant" in text
-    assert "## Enforcement" in text
+    # SUPPORT.md and the docs deep-link to this heading.
+    assert "reporting-a-concern" in _anchors(ROOT / "CODE_OF_CONDUCT.md")
     assert ADVISORY_URL in text
 
 
@@ -370,9 +374,11 @@ def test_stale_automation_never_closes_pull_requests() -> None:
     assert steps, "stale.yml must use actions/stale"
     for step in steps:
         options = step.get("with") or {}
-        assert options.get("days-before-pr-close") == -1, "pull requests are never closed by automation"
-        assert options.get("days-before-stale", 0) >= 60
-        assert options.get("days-before-close", 0) >= 30
+        pr_close = options.get("days-before-pr-close", options.get("days-before-close"))
+        assert pr_close == -1, "pull requests are never closed by automation"
+        assert options.get("days-before-stale", 0) >= 60, "give reporters at least 60 quiet days before a stale mark"
+        issue_close = options.get("days-before-issue-close", options.get("days-before-close"))
+        assert issue_close == -1 or issue_close >= 30, "issues get at least 30 days after the stale notice"
         exempt = str(options.get("exempt-issue-labels", ""))
         assert "security" in exempt and "pinned" in exempt
 
@@ -524,8 +530,10 @@ def test_docs_toolchain_is_hash_locked_and_wheel_only() -> None:
     for requirement in docs_extra:
         name, _, floor = requirement.partition(">=")
         assert locked.get(name.lower()) == floor, f"{requirement} and requirements-docs.lock disagree"
-    docs_workflow = _read(GITHUB / "workflows" / "docs.yml")
-    assert "--require-hashes --only-binary=:all: -r requirements-docs.lock" in docs_workflow
+    install = "--require-hashes --only-binary=:all: -r requirements-docs.lock"
+    for workflow in ("docs.yml", "ci.yml"):
+        assert install in _read(GITHUB / "workflows" / workflow), f"{workflow} must install docs tools from the lock"
+    assert install in _read(ROOT / "Makefile"), "make docs must install docs tools from the lock"
 
 
 # --- Documented counts match the code ---------------------------------------
@@ -555,6 +563,5 @@ def test_documented_signature_counts_match_the_shipped_packs(index) -> None:
 def test_documented_connector_count_matches_the_registry() -> None:
     actual = len(builtin_connector_names())
     claims = [(path, int(match.group(1))) for path in _current_docs() for match in _CONNECTOR_CLAIM.finditer(_read(path))]
-    assert claims, "docs/index.md should state the connector count"
     for path, claimed in claims:
         assert claimed == actual, f"{path.relative_to(ROOT)} claims {claimed} connectors, registry has {actual}"

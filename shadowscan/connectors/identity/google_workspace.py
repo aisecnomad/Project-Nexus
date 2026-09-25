@@ -20,6 +20,7 @@ import time
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 from requests import RequestException
 
@@ -87,7 +88,9 @@ class GoogleWorkspaceConnector(BaseConnector):
                     self.ctx.warn("identity.google-workspace: user record missing primaryEmail")
                     continue
                 try:
-                    data = self.http.get_json(f"/admin/directory/v1/users/{email}/tokens")
+                    # "@" is a legal path character; encode everything else so a
+                    # user key cannot alter the request path or query.
+                    data = self.http.get_json(f"/admin/directory/v1/users/{quote(email, safe='@')}/tokens")
                 except (HttpError, RequestException, ValueError) as exc:
                     status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
                     token_errors[status] = token_errors.get(status, 0) + 1
@@ -113,6 +116,10 @@ class GoogleWorkspaceConnector(BaseConnector):
 
     @staticmethod
     def _is_native_offline_record(data: dict[str, Any]) -> bool:
+        # The Admin SDK list envelope carries a ``kind`` like every Google
+        # object, but it is a collection of tokens, not a token record.
+        if data.get("kind") == "admin#directory#tokenList":
+            return False
         # A user and its tokens form one provider record. Unwrapping only the
         # token array here would discard the granting user's attribution.
         return ("tokens" in data and any(key in data for key in ("user", "userEmail", "userKey"))) or BaseConnector._is_native_offline_record(data)

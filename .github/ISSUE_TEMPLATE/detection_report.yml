@@ -1,5 +1,5 @@
-name: Detection report (false positive or false negative)
-description: A finding that should not have fired, or an agent, framework, or credential that ShadowScan missed.
+name: Detection quality report
+description: A finding that should not have fired, an agent, framework or credential that ShadowScan missed, or a misleading classification or score.
 labels: [detection]
 body:
   - type: markdown
@@ -9,13 +9,15 @@ body:
         everyone. Each accepted report becomes a labeled regression case.
 
         **Do not paste credentials, JWTs, private tenant exports, or unsanitized scan
-        output.** Replace secrets with `${REDACTED}`, trim exports to the record that
-        matters, and rename hosts, tenants, and accounts if they identify your
-        organization. Public open-source repositories can be referenced by URL and
-        commit. A credential that ShadowScan *failed to redact* is a security
+        output.** Use minimal synthetic or public, permissioned examples: replace
+        secrets with `${REDACTED}`, trim exports to the record that matters, and
+        rename hosts, tenants and accounts that identify your organization. A public
+        repository can be referenced by URL and commit. A credential that ShadowScan
+        *failed to redact*, or any bypass with a security impact, is a security
         problem: report it through a
         [private security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new)
-        instead of this form.
+        instead of this form. A static source indicator is not proof of runtime
+        execution, and `shadow: true` means unmatched against the supplied inventory.
 
   - type: dropdown
     id: kind
@@ -23,18 +25,19 @@ body:
       label: Report type
       options:
         - False positive (a finding fired but nothing agent-related is there)
-        - False negative (an agent, framework, provider, or credential was missed)
-        - Misattribution (right finding, wrong framework, provider, kind, or capability)
-        - Wrong score (confidence, risk level, or shadow status looks wrong)
+        - Missed detection (an agent, framework, provider or credential was not reported)
+        - Misattribution (right finding, wrong framework, provider, kind or capability)
+        - Incorrect classification or confidence (the score, risk level or shadow status looks wrong)
+        - Incorrect coverage or completeness (the scan reported complete or incomplete wrongly)
     validations:
       required: true
 
   - type: input
     id: version
     attributes:
-      label: ShadowScan version or commit
-      description: Output of `shadowscan --version` or the full commit SHA you installed from.
-      placeholder: "0.1.1 or commit abc1234"
+      label: Full commit SHA or version
+      description: The full commit SHA you installed from; `0.1.1` alone cannot identify an unreleased revision.
+      placeholder: "commit 0123456789abcdef0123456789abcdef01234567"
     validations:
       required: true
 
@@ -53,40 +56,54 @@ body:
       required: true
 
   - type: input
+    id: connector
+    attributes:
+      label: Connector and collection mode
+      placeholder: "code.filesystem, offline"
+    validations:
+      required: true
+
+  - type: input
     id: signature
     attributes:
       label: Signature or signal involved
       description: |
-        The `frameworks`, `model_providers`, or `evidence[].signal` values from the finding,
+        The `frameworks`, `model_providers` or `evidence[].signal` values from the finding,
         or the output of `shadowscan signatures test <value>` for the thing that was missed.
       placeholder: "framework.langchain, provider.openai, secret: provider.anthropic"
 
   - type: textarea
-    id: input
+    id: reproducer
     attributes:
-      label: Minimal input that reproduces it
+      label: Minimal safe reproducer
       description: |
-        The smallest sanitized snippet, file layout, log line, or export record that
-        triggers (or fails to trigger) the finding. For a public repository, a URL and
-        commit SHA is enough. Wrap code in a fenced block.
+        The smallest sanitized snippet, file layout, log line or export record that
+        triggers (or fails to trigger) the finding, with the sanitized command and
+        relevant configuration. For a public repository, a URL pinned to a commit is
+        enough. Wrap code in a fenced block.
       render: text
     validations:
       required: true
 
   - type: textarea
-    id: finding
+    id: actual
     attributes:
-      label: Finding as reported (sanitized)
+      label: Actual result (sanitized)
       description: |
-        The JSON finding from `--format json`, or the table row. Remove or replace any
-        value that identifies a tenant, account, person, or secret.
-      render: json
+        The JSON finding from `--format json` or the table row, with the signature ID,
+        classification, exit code and any coverage warnings. Remove or replace any value
+        that identifies a tenant, account, person or secret.
+      render: text
+    validations:
+      required: true
 
   - type: textarea
     id: expected
     attributes:
-      label: What should ShadowScan have reported?
-      description: The expected kind, framework, provider, capability, or that nothing should fire, and why.
+      label: Expected result and rationale
+      description: |
+        The expected kind, framework, provider, capability or score, or that nothing
+        should fire, and why. Distinguish an SDK import from an agent loop.
     validations:
       required: true
 
@@ -95,6 +112,6 @@ body:
     attributes:
       label: Before you submit
       options:
-        - label: I removed credentials, tokens, private exports, and identifying tenant or account data.
+        - label: I removed credentials, tokens, private exports and identifying tenant or account data.
           required: true
         - label: I am willing to turn this into a labeled evaluation case under `tools/evaluation/`.

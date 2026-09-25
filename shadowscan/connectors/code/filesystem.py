@@ -84,7 +84,7 @@ from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, 
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
-from shadowscan.utils.text import notebook_to_source, read_text, redact, truncate
+from shadowscan.utils.text import notebook_to_source, parse_timestamp, read_text, redact, truncate
 
 DEFAULT_EXCLUDES = {
     ".git",
@@ -554,8 +554,11 @@ class FilesystemConnector(BaseConnector):
 
     # ------------------------------------------------------------------ walk
     def _excluded(self, rel: str, name: str) -> bool:
-        if name in self.exclude_names:
-            return True
+        """Directory exclusion: configured names and globs."""
+        return name in self.exclude_names or self._excluded_file(rel)
+
+    def _excluded_file(self, rel: str) -> bool:
+        """File exclusion: globs only, so a file named like an excluded directory is still scanned."""
         for g in self.exclude_globs:
             if PurePosixPath(rel).match(g) or PurePosixPath(rel).match(g.rstrip("/") + "/*"):
                 return True
@@ -654,7 +657,7 @@ class FilesystemConnector(BaseConnector):
                 proj = rel_dir
             for fn in sorted(filenames):
                 rel = fn if rel_dir == "." else f"{rel_dir}/{fn}"
-                if self.exclude_globs and self._excluded(rel, fn):
+                if self._excluded_file(rel):
                     continue
                 p = Path(dirpath) / fn
                 try:
@@ -797,8 +800,10 @@ class FilesystemConnector(BaseConnector):
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                     if text is None:
                         continue
+                    raw_notebook: str | None = None
                     if ext == ".ipynb":
                         notebook_errors: list[str] = []
+                        raw_notebook = text
                         text = notebook_to_source(text, notebook_errors)
                         for issue in dict.fromkeys(notebook_errors):
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
@@ -807,9 +812,16 @@ class FilesystemConnector(BaseConnector):
                     # failure reaches the per-file boundary. Redacting the
                     # text for excerpts waits until a match needs one, which
                     # most files never do.
-                    structure = _structured_context(rel, text)
+                    try:
+                        structure = _structured_context(rel, text)
+                    except (YAMLResourceLimitError, SanitizationLimitError) as exc:
+                        # Detection still runs, but without an established
+                        # structured context none of this file's excerpts can
+                        # safely be emitted.
+                        self.ctx.error(f"code.filesystem: {rel}: structured sanitization incomplete ({type(exc).__name__}); excerpts withheld")
+                        structure = None
                     source: str = text
-                    safe_lines: list[str] | None = None
+                    safe_lines: list[str] | None = [] if structure is None else None
 
                     card_kind = agent_manifest_kind(rel)
                     card_valid = False
@@ -830,13 +842,55 @@ class FilesystemConnector(BaseConnector):
                         self._record(proj, m, rel, None)
 
                     def redacted_lines() -> list[str]:
-                        nonlocal safe_lines
+                        nonlocal safe_lines, structure
+                        if structure is None:
+                            return []
                         if safe_lines is None:
-                            safe_lines = _redacted_source(source, structure).splitlines()
+                            try:
+                                safe_lines = _redacted_source(source, structure).splitlines()
+                            except (YAMLResourceLimitError, SanitizationLimitError) as exc:
+                                self.ctx.error(f"code.filesystem: {rel}: structured sanitization incomplete ({type(exc).__name__}); excerpts withheld")
+                                structure = None
+                                safe_lines = []
                         return safe_lines
 
                     def excerpt(line_number: int | None, secret: str | None = None) -> str:
                         return _excerpt(redacted_lines(), line_number or 1, secret)
+
+                    # Credential detection runs first and in its own isolation so a
+                    # slow or over-budget content pass cannot hide a real key. Notebook
+                    # outputs and markdown cells are scanned from the raw document.
+                    if self.scan_secrets:
+                        try:
+                            seen_secrets: set[tuple[str, str, int | None]] = set()
+                            for raw in (text, raw_notebook):
+                                if raw is None or (raw == text and seen_secrets):
+                                    continue
+                                raw_lines: list[str] | None = None
+                                if raw is raw_notebook and raw_notebook != text and structure is not None:
+                                    try:
+                                        raw_lines = sanitize_text(raw).splitlines()
+                                    except SanitizationLimitError:
+                                        self.ctx.error(f"code.filesystem: {rel}: notebook excerpt sanitization incomplete; excerpts withheld")
+                                for m in self.index.match_secrets(raw):
+                                    key = (m.signature_id, m.value, m.line)
+                                    if key in seen_secrets:
+                                        continue
+                                    seen_secrets.add(key)
+                                    reason = placeholder_reason(m.value)
+                                    if reason:
+                                        self._record_example_credential(proj, m, rel, reason)
+                                        continue
+                                    if raw is raw_notebook and raw_notebook != text:
+                                        snippet = _excerpt(raw_lines, m.line or 1, m.value) if raw_lines is not None else ""
+                                    else:
+                                        snippet = excerpt(m.line, m.value)
+                                    secret_hits.setdefault(rel, []).append((m, snippet))
+                                    self._record(proj, m, rel, None)
+                        except ConnectorError:
+                            raise
+                        except Exception as exc:  # noqa: BLE001 - keep the content passes and other files
+                            self.ctx.error(f"code.filesystem: {rel}: credential detection incomplete ({type(exc).__name__})")
 
                     is_mcp = self._looks_like_mcp_config(rel, name, text) or (
                         lower == "server.json" and '"mcpServers"' in text
@@ -985,22 +1039,19 @@ class FilesystemConnector(BaseConnector):
                             record_content_match(m, excerpt(m.line))
                         for m in self.index.match_domains_in_text(content_text):
                             record_content_match(m, excerpt(m.line))
-                    if self.scan_secrets:
-                        for m in self.index.match_secrets(text):
-                            reason = placeholder_reason(m.value)
-                            if reason:
-                                self._record_example_credential(proj, m, rel, reason)
-                                continue
-                            secret_hits.setdefault(rel, []).append((m, excerpt(m.line, m.value)))
-                            self._record(proj, m, rel, None)
-
                     # 4. special files
                     if active_mcp:
                         mcp_files.append((rel, mcp_servers))
                     if card_kind and card_valid:
-                        card_files.append((rel, text, card_kind))
+                        if len(card_files) >= _MAX_CARD_FILES:
+                            self.ctx.error(f"code.filesystem: {rel}: agent manifest limit ({_MAX_CARD_FILES}) reached; manifest skipped")
+                        else:
+                            card_files.append((rel, text, card_kind))
                     if ext in {".md", ".mdc"} and (".claude/agents/" in rel or ".github/agents/" in rel or ".cursor/rules/" in rel or ".windsurf/rules/" in rel):
-                        proj.agent_defs.append(self._parse_agent_definition(rel, text))
+                        if len(proj.agent_defs) >= _MAX_AGENT_DEFINITIONS:
+                            self.ctx.error(f"code.filesystem: {rel}: agent definition limit ({_MAX_AGENT_DEFINITIONS}) reached; definition skipped")
+                        else:
+                            proj.agent_defs.append(self._parse_agent_definition(rel, text))
             except ConnectorError:
                 # Cancellation or an exhausted deadline ends the walk; it must
                 # not become one "file analysis incomplete" error per file.
@@ -1020,12 +1071,16 @@ class FilesystemConnector(BaseConnector):
         for proj in projects.values():
             try:
                 yield from self._emit_project(label, root, proj, covered_files)
+            except ConnectorError:
+                raise
             except Exception as exc:  # noqa: BLE001 - retain findings from other projects
                 self.ctx.error(f"code.filesystem: {proj.root}: project analysis incomplete ({type(exc).__name__})")
         for rel, servers in mcp_files:
             try:
                 with self.index.scan_budget(seconds=self.scan_timeout):
                     yield self._mcp_finding(label, root, rel, servers)
+            except ConnectorError:
+                raise
             except Exception as exc:  # noqa: BLE001 - retain findings from other configurations
                 self.ctx.error(f"code.filesystem: {rel}: MCP analysis incomplete ({type(exc).__name__})")
         for rel, text, kind in card_files:
@@ -1034,11 +1089,15 @@ class FilesystemConnector(BaseConnector):
                     f = self._card_finding(label, root, rel, text, kind)
                     if f:
                         yield f
+            except ConnectorError:
+                raise
             except Exception as exc:  # noqa: BLE001 - retain findings from other manifests
                 self.ctx.error(f"code.filesystem: {rel}: agent manifest analysis incomplete ({type(exc).__name__})")
         for rel, hits in workflow_files.items():
             try:
                 yield self._workflow_finding(label, root, rel, [*hits, *workflow_providers.get(rel, [])])
+            except ConnectorError:
+                raise
             except Exception as exc:  # noqa: BLE001 - retain findings from other files
                 self.ctx.error(f"code.filesystem: {rel}: workflow analysis incomplete ({type(exc).__name__})")
         for rel, infra_hits in infra_files.items():
@@ -1047,6 +1106,8 @@ class FilesystemConnector(BaseConnector):
                     label, root, rel, infra_hits, infra_names.get(rel, []),
                     wildcards=iam_wildcards.get(infra_project.get(rel, ""), []), models=infra_models.get(rel, []),
                 )
+            except ConnectorError:
+                raise
             except Exception as exc:  # noqa: BLE001 - retain findings from other files
                 self.ctx.error(f"code.filesystem: {rel}: infrastructure analysis incomplete ({type(exc).__name__})")
         for rel, hits in secret_hits.items():
@@ -1204,7 +1265,7 @@ class FilesystemConnector(BaseConnector):
         target = "." if rel_root == "." else rel_root
         try:
             out = subprocess.run(
-                [*metadata_git_argv_prefix(), "-C", str(root), "log", "--no-show-signature", "--no-ext-diff", "--no-textconv", "-1", "--format=%an|%ae|%cI", "--", target],
+                [*metadata_git_argv_prefix(), "-C", str(root), "log", "--no-show-signature", "--no-ext-diff", "--no-textconv", "-1", "--format=%an%x00%ae%x00%cI", "--", target],
                 capture_output=True,
                 # Author bytes follow the repository's i18n.logOutputEncoding;
                 # a strict decode would abort the whole project's findings.
@@ -1215,7 +1276,11 @@ class FilesystemConnector(BaseConnector):
                 check=False,
             )
             if out.returncode == 0 and out.stdout.strip():
-                an, ae, ci = (out.stdout.strip().split("|") + ["", "", ""])[:3]
+                # NUL separators: an author name may itself contain "|".
+                an, ae, ci = (out.stdout.strip("\r\n").split("\x00") + ["", "", ""])[:3]
+                if parse_timestamp(ci) is None:
+                    self.ctx.warn("code.filesystem: git metadata has an unparseable commit timestamp; enrichment skipped")
+                    return {}
                 return {"last_author": an, "last_author_email": ae, "last_commit": ci}
             if out.returncode == 0:
                 return {}
@@ -1548,8 +1613,8 @@ class FilesystemConnector(BaseConnector):
                 "version": data.get("version"),
                 "protocol_version": data.get("protocolVersion"),
                 "skills": [s.get("name") or s.get("id") for s in data.get("skills", []) or [] if isinstance(s, dict)],
-                "capabilities": data.get("capabilities"),
-                "security_schemes": list((data.get("securitySchemes") or {}).keys()) if isinstance(data.get("securitySchemes"), dict) else data.get("authentication"),
+                "capabilities": _clip(data.get("capabilities")),
+                "security_schemes": _clip(list((data.get("securitySchemes") or {}).keys()) if isinstance(data.get("securitySchemes"), dict) else data.get("authentication")),
             }
             if data.get("url"):
                 apply_matches(f, self.index.match_domains_in_text(str(data["url"])), location=rel)
@@ -1574,8 +1639,8 @@ class FilesystemConnector(BaseConnector):
             f.add_framework("framework.langgraph")
             f.add_evidence(Evidence(signal="file:framework.langgraph", description="langgraph.json deployment manifest", location=rel, weight=0.95, signature="framework.langgraph"))
             graphs = data.get("graphs", {}) or {}
-            f.metadata["graphs"] = list(graphs.keys()) if isinstance(graphs, dict) else graphs
-            f.metadata["dependencies"] = data.get("dependencies")
+            f.metadata["graphs"] = _clip(list(graphs.keys()) if isinstance(graphs, dict) else graphs)
+            f.metadata["dependencies"] = _clip(data.get("dependencies"))
             env = data.get("env")
             f.metadata["env_names"] = sorted(env) if isinstance(env, dict) else []
             if isinstance(env, str):
@@ -1672,8 +1737,27 @@ class FilesystemConnector(BaseConnector):
                 for k in ("name", "description", "tools", "model", "permissionMode", "mode", "globs", "alwaysApply"):
                     if k in fm:
                         v = fm[k]
-                        info[k] = truncate(sanitize_text(v), 200) if isinstance(v, str) else sanitize(v)
+                        info[k] = truncate(sanitize_text(v), 200) if isinstance(v, str) else _clip(sanitize(v))
         return info
+
+
+_MAX_CARD_FILES = 200
+_MAX_AGENT_DEFINITIONS = 50
+_CLIP_ITEMS = 50
+_CLIP_CHARS = 200
+
+
+def _clip(value: Any, depth: int = 0) -> Any:
+    """Bound a projected metadata value so aggregates stay within the sanitizer budget."""
+    if isinstance(value, str):
+        return truncate(value, _CLIP_CHARS)
+    if depth >= 4:
+        return None if isinstance(value, (dict, list, tuple)) else value
+    if isinstance(value, dict):
+        return {str(k)[:_CLIP_CHARS]: _clip(v, depth + 1) for k, v in list(value.items())[:_CLIP_ITEMS]}
+    if isinstance(value, (list, tuple)):
+        return [_clip(v, depth + 1) for v in value[:_CLIP_ITEMS]]
+    return value
 
 
 def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int = 160) -> str:

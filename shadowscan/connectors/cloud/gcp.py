@@ -46,6 +46,7 @@ AI_SERVICES = {"aiplatform.googleapis.com": "Vertex AI", "generativelanguage.goo
 
 class GcpConnector(BaseConnector):
     name: ClassVar[str] = "cloud.gcp"
+    _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = True
     surface: ClassVar[Surface] = Surface.CLOUD
     provider: ClassVar[str | None] = "gcp"
     requires: ClassVar[list[str]] = []

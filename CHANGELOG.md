@@ -4,40 +4,87 @@
 
 ### Project and community (2026-09-25)
 
-No scanner behaviour changes. This pass makes the repository's community
-profile complete, internally consistent and tested:
+No scanner behaviour changes. This pass reconciles the community profile work
+that landed through #62 with a second pass, and makes the result tested so it
+cannot silently regress:
 
-- `GOVERNANCE.md` now describes the actual single-maintainer model, including
-  that no change on `main` carries a second person's approving review, instead
-  of a ruleset-enforced review gate that the repository does not enforce; the
-  documentation site's contributing page says the same.
-- `SECURITY.md` gains a full reporting section: the advisory channel, what is in
-  and out of scope, what to include, what to expect from a single maintainer,
-  a 90-day coordinated disclosure default and a safe-harbor statement.
-- New issue forms: `documentation.yml` (previously linked from SUPPORT.md but
-  missing) and `detection_report.yml` for false positives, misses,
-  misattributions and scoring reports, with a matching `detection` label. The
-  new-issue chooser also links SUPPORT.md.
-- `CONTRIBUTING.md` links the Contributor Covenant and lists the ways to
-  contribute, from documentation to review; README gains a Community section.
-- Workflows grant write permissions per job rather than per workflow, every
-  job has a timeout, the stale bot never closes pull requests and waits 90 + 30
-  days on issues, and a new Labels workflow keeps the tracker equal to
-  `.github/labels.yml` using the runner's `gh` CLI (no new action to pin).
-- The documentation build installs from the new hash-locked
-  `requirements-docs.lock`; the HTML minifier plugin is dropped because its
-  dependencies publish no wheels.
+- `GOVERNANCE.md` states the historical review record plainly (every merge by
+  the maintainer's own account, no second-person approval on `main`), separates
+  automated gates from review, lists what changes when a second maintainer
+  joins, and gains a section on changing the document itself.
+- `SECURITY.md` gains a full reporting section under the existing `Reporting`
+  heading: scope in and out, what to include, what to expect from a single
+  maintainer, a 90-day coordinated-disclosure default and a safe-harbor
+  statement. No response SLA is invented.
+- Issue forms: `documentation.yml` (linked from SUPPORT.md since #62 but
+  missing) is added; the two detection forms are merged into one
+  `detection_report.yml` with a `detection` label and a mandatory sanitization
+  checkbox; the usage question form gets a `question` label.
+- Workflows: the stale bot and CodeQL grant write permissions per job rather
+  than per workflow; the Docs workflow and the CI docs job install from the new
+  hash-locked, wheel-only `requirements-docs.lock`; a new Labels workflow keeps
+  the tracker equal to `.github/labels.yml` using the runner's `gh` CLI, adding
+  no action to pin; the deprecated Dependabot `reviewers` key is removed in
+  favour of CODEOWNERS.
 - `tests/test_repository_policy.py` fails CI when a Markdown link or heading
-  anchor is broken, an action is not pinned to a full commit SHA, a checkout
-  persists credentials, a workflow holds write permissions at the top level or
-  could publish a release, an issue form uses an undefined label, the pre-commit
-  ruff/mypy revisions drift from the CI pins, the Makefile drifts from the CI
-  gates, or a documented signature, signal or connector count is stale.
-- `make typecheck` and `make evaluate` run the same paths and corpora as CI;
-  `make policy` runs the repository policy tests; `.editorconfig` and
-  `.gitattributes` are added; the Dependabot `reviewers` key, superseded by
-  CODEOWNERS, is removed; documented signature and connector counts are
-  corrected (212 signatures, 990 signals, 27 connectors).
+  anchor is broken, an action is not pinned to a full commit SHA with a version
+  comment, a checkout persists credentials, a workflow holds write permissions
+  at the top level or could publish a release, the stale bot could close a
+  pull request, an issue form uses an undefined label, the pre-commit ruff or
+  mypy revision drifts from the CI pin, the Makefile drifts from the CI gates,
+  `CITATION.cff` disagrees with `pyproject.toml`, or a documented signature,
+  signal or connector count is stale.
+- `make docs` builds strictly from the lock and `make policy` runs the policy
+  tests; `.editorconfig` and `.gitattributes` are added; pre-commit's mypy
+  revision matches the CI pin; README gains a fuller community table and a
+  License section; the install guide no longer says Python 3.13 awaits
+  validation, since CI has covered it.
+
+### Private holdout and CLI job deadline gates
+
+- Reject bundled corpora and AI annotation ledgers from holdout acceptance;
+  validate the human-review declaration used for the actual evaluation and read
+  acceptance policies and annotations with bounded, symlink-free file access.
+- Add optional `--job-deadline-seconds` / `options.job_deadline_seconds` for CLI
+  scans. The cancellable process watchdog exits `3` when setup, scanning or output
+  exceeds the deadline; external process supervision remains required.
+
+### Follow-up trust-boundary review (2026-09-24)
+
+- Reject duplicate fields and nonfinite numbers in provider API JSON before
+  interpreting collection, pagination or signing-key data.
+- Mark offline Slack cursors and AWS truncation markers incomplete, retaining
+  observed records while refusing a clean result for uncollected pages.
+- Require intact, unambiguous code identities and recognized caller assurance
+  before attaching runtime activity; clear stale derived observations.
+- Sanitize imported findings before publishing report comparisons and require
+  explicit, matching connector completion evidence before resolving findings.
+- Render terminal control characters visibly in untrusted CLI display values.
+- Bound evaluation corpus reads, reject the reserved aggregate family name,
+  and bind annotation checks to the exact corpus snapshot being evaluated.
+
+### Control-assurance fixes (2026-09-24)
+
+- Redact long sensitive assignment keys before source evidence enters JSON or SARIF; bind Power Platform Dataverse token audiences and destinations to validated organization origins.
+- Preserve valid neighboring provider records while marking provider errors, malformed Slack responses, missing collections and invalid pagination incomplete.
+- Reduce generic-code false positives, recognize OpenAI Responses function dispatch, and fail closed on ambiguous source masking.
+- Bound remote clone time, preflight provider repository size, avoid cloning when a usable size estimate is unavailable, terminate clone descendants on cancellation, remove partial checkouts and mark API fallbacks incomplete.
+- Add a frozen holdout acceptance gate, tenant canary procedure, safer contributor guidance and a GitHub Action example. Field accuracy still needs independent review and live canaries.
+
+### Scanner assurance and release evidence (2026-09-25)
+
+- Recognize import-bound OpenAI Responses API function loops only when the
+  model-selected call is dispatched and its result returns in the next request
+  with matching call identity. Unreachable literal branches and locally
+  shadowed execution names no longer establish provider tool loops.
+- The offline acceptance verifier excludes previously evaluated source snapshots,
+  validates the evaluator's known-gap report, and supports frozen per-kind
+  sample and error limits. Its operator declarations still require independent
+  human review and real tenant validation before rollout.
+- The release candidate workflow binds a successful exact-commit main CI run
+  to a wheel, hash-locked runtime and build dependencies, SBOM and retained
+  provenance. The reviewed container base and consumer CI example are pinned;
+  the workflow does not publish a package or authorize deployment.
 
 ### Detection precision, coverage policy and risk explainability
 
@@ -152,27 +199,35 @@ Fixes and additions:
   workflow. Neither tool creates human review, live tenant results, a published
   release, or a production acceptance claim from offline tests.
 
+### Production review round 2 (2026-09-24)
+
+- Stop treating every environment value of a cloud inventory record as a credential to remove from sibling fields: a benign setting such as `STAGE=prod` or `WORKERS=4` no longer redacts ARNs, account IDs and names out of SageMaker findings and `--dump-records` exports, which also restores stable finding IDs when an export is re-analysed offline. Environment values remain withheld in exports, and values under sensitive names or in recognizable credential formats are still removed everywhere. SageMaker findings now record environment variable names only, like Lambda findings.
+- Snapshot Bedrock agent DRAFT details instead of storing the agent record inside itself; the previous self-reference collapsed to a redaction marker in record exports and marked every re-analysed agent incomplete. Older exports with the collapsed entry are read without a coverage warning.
+- Evaluate IAM `NotAction` allow statements (everything not listed is granted) and treat `sagemaker:*` as an LLM invoke grant during live collection, matching the offline analysis.
+- Report OCI custom (fine-tuned) models by `type: CUSTOM` / base model reference instead of a vendor test that excluded every real custom model.
+- A `bedrock-logging` export record without a `loggingConfig` key, or carrying an error body, is unknown coverage rather than a "logging DISABLED" finding.
+- Verify unchanged findings by digest instead of re-running the full credential sanitizer on every engine stage and reporter; rendering 5,000 findings to JSON drops from about 18 s to under 2 s, and sanitization semantics are unchanged (any later mutation is re-sanitized in full).
+- Load signature packs once per CLI invocation instead of twice (a reused `Engine` still reloads packs between runs).
+- Show the configuration policy reason when scan setup is rejected (for example the code-scan and live-credential separation rule) instead of a generic message; the rule's message now names `--allow-credential-mixing`.
+- Render `shadowscan connectors` config keys with real styling instead of literal `[bold]`/`[dim]` markup.
+- Sort Entra delegated scopes so `permissions` are reproducible across runs.
+- JWT classification: `client_name`, `app_displayname` and `azp_name` count as agent hints only when their value matches an AI product or agent name signature (every Entra v1 delegated token carries `app_displayname`, so ordinary user tokens were reported as agents); a user-subject token with an RFC 8693 actor and agent claims is `delegated-agent`, never weaker than the same token without `act`; nested claim values are sanitized before truncation so no token prefix is persisted.
+- Entra service-principal findings use the scanned tenant as `account` (the publisher tenant is kept as `metadata.owner_tenant`); Google Workspace accepts the Admin SDK `tokenList` envelope and URL-encodes user keys; Atlassian validates `products`; Make pagination isolates invalid pages.
+- n8n, Make, Workato and Notion exports containing a provider error body are incomplete coverage instead of an empty inventory; one malformed record in Teams, n8n, Make, Zapier, Workato, Notion, generic SaaS or live Slack lists is skipped with a warning instead of aborting the connector.
+- Gateway: response-side tool calls count when inspected requests carried no tool definitions (LiteLLM with body logging off), Bedrock Converse `toolUse`/`stopReason` are recognised, activity buckets use UTC, `llm_hosts_only` keeps requests to known LLM hosts on unlisted paths, Vertex and Portkey/Helicone detection use structural fields, a token in a user or principal field is sanitized before the label is shortened, LiteLLM rows without key material are `service` callers rather than pseudonymised credentials, `identity.arn` wins over the `identity` object, prose `message` wrappers keep the structured event, retained labels and samples are bounded, and a caller's first model/provider/host label survives an exhausted detail budget. Opaque credential labels skip display-name matching.
+- Code connectors: cooperative cancellation now stops the tree walk instead of being recorded as one error per remaining file; credential detection runs first and in its own isolation, so a content pass that exceeds its regex budget, a structured file that exceeds the sanitizer budget (excerpts withheld) or notebook outputs and markdown cells no longer hide a real key; one unsafe tree path in API mode skips that file rather than the repository; agent definitions (50 per project) and retained agent manifests (200) are bounded with an incomplete-scan error; directory exclusion names no longer skip files of the same name; `Containerfile` is parsed like a Dockerfile; per-repository diagnostics share the 1000-entry cap; Git author fields use NUL separators with a validated timestamp; Ruby `=begin` blocks scan in linear time; a Python 3.12 tokenizer error mid-file marks the file ambiguous instead of silently masking the remainder; multi-line structured secrets keep excerpt line numbers aligned.
+- Environment-style credential names in text (`AZURE_OPENAI_KEY`, `DATABRICKS_TOKEN`, `MODAL_TOKEN_SECRET`, `LITELLM_MASTER_KEY`, ...) have their assigned values redacted in source excerpts, evidence and URL queries (indexed targets such as `os.environ["DATABRICKS_TOKEN"]` included); record field names keep their narrower sensitivity so provider inventories are not over-redacted. A connector's other findings survive one finding that exceeds the sanitizer's output budget.
+- Tests that assert successful Git history enrichment skip with a clear reason when the local Git lacks `--no-lazy-fetch` (2.45+) instead of failing; CI enables pip caching and mypy checks untyped function bodies.
+
 ### Detection and collection assurance (2026-09-24)
 
-- Require corroborating AI evidence and bound source constructors to imported
-  frameworks; resolve common Python and JavaScript/TypeScript aliases. Repeated
-  generic loops and subprocess calls cannot establish confirmed agents.
-- Validate agent manifests and project operational configuration fields before
-  matching signatures. Descriptions and empty configuration files cannot prove
-  an agent exists.
-- Preserve unknown Lambda environment coverage, recognize potential IAM
-  `NotAction` grants with policy limitations, and validate Slack collection
-  schemas and workspace scope. Preserve observed Slack records on later network
-  failures and report missing n8n workflow definitions as incomplete.
-- Add a frozen, negative-heavy public corpus with separate AI labeling passes,
-  source provenance and annotation-integrity checks in CI. This does not establish
-  independently measured production accuracy.
-- Add read-only AWS and Slack tenant canaries with explicit known controls,
-  scope and coverage assertions, permission-denied controls, and private reports.
-  Offline replay and unavailable credentials cannot produce live acceptance.
+- Require corroborating AI evidence and bind constructors to imported frameworks; resolve common Python and JavaScript/TypeScript aliases. Generic loops and subprocess calls cannot establish confirmed agents.
+- Validate agent manifests and operational configuration; descriptions and empty files cannot establish agent presence.
+- Preserve unknown Lambda coverage, identify potential IAM NotAction grants with explicit analysis limits, validate Slack workspace scope and report missing n8n definitions as incomplete.
+- Add a frozen negative-heavy public corpus with separate AI labeling passes, provenance and annotation checks in CI. This is not field accuracy.
+- Add read-only AWS and Slack tenant canaries with explicit controls, scope and coverage assertions, permission-denied tests and private reports. Offline replay does not establish live acceptance.
 
-Live tenant acceptance remains a deployment gate. Neither these changes nor an
-offline test result constitute evidence that a production tenant was scanned.
+Live tenant acceptance remains a deployment gate. Neither offline tests nor static findings prove a production tenant was scanned.
 
 ### Final reconciliation after PR #33 (2026-09-24)
 

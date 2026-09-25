@@ -6,12 +6,12 @@ signatures:
     name: Tool / function registration idioms
     category: heuristic
     vendor: null
+    # Registering a tool does not establish that a model can select or run it.
     capabilities: [tool-use]
     signals:
       - type: code
-        patterns: ['^[^\S\r\n]*@(?:[a-z_]+\.)?tool\b', '@function_tool\b', '@kernel_function\b', '@mcp\.tool\b', '\bStructuredTool\b', '\bTool\s*\(\s*name\s*=', '\btools\s*=\s*\[\s*[A-Za-z_]', '\btools\s*:\s*\[\s*\{', '\bFunctionDeclaration\s*\(', '\bFunctionTool\s*\(', '\bToolSet\s*\(', '\bregister_tool\s*\(', '\bregisterTool\s*\(', '\bdefineTool\s*\(', '\btool_registry\b', '\bavailable_tools\b']
+        patterns: ['^[^\S\r\n]*@(?:[a-z_]+\.)?tool\b', '@function_tool\b', '@kernel_function\b', '@mcp\.tool\b', '\bStructuredTool\b', '\bTool\s*\(\s*name\s*=', '\btools\s*=\s*\[\s*[A-Za-z_]', '\btools\s*=\s*[A-Za-z_]\w*', '\btools\s*:\s*\[\s*\{', '\bFunctionDeclaration\s*\(', '\bFunctionTool\s*\(', '\bToolSet\s*\(', '\bregister_tool\s*\(', '\bregisterTool\s*\(', '\bdefineTool\s*\(', '\btool_registry\b', '\bavailable_tools\b']
         weight: 0.35
-        agent_indicator: true
 
   - id: heuristic.system-prompt
     name: Agent persona / system prompt
@@ -29,9 +29,51 @@ signatures:
     capabilities: [autonomous]
     signals:
       - type: code
-        patterns: ['\bmax_iterations\s*=', '\bmax_steps\s*=', '\bmaxSteps\s*:', '\bmax_turns\s*=', '\bmaxTurns\s*:', '\bmax_tool_calls\b', '\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\bReAct\b', '\breact_agent\b', '\bscratchpad\b', '\bwhile\s+(?:True|not\s+done|not\s+finished|iterations?\s*<)', '\bfor\s+_?\s*(?:step|iteration|turn)\s+in\s+range\(', '\bstop_reason\s*[!=]=\s*["'']tool_use["'']', '\bfinish_reason\s*[!=]=\s*["'']tool_calls["'']', '\bthought\s*[:=]\s*', '(?i)\bchain[- ]of[- ]thought\b', '\bhandoff\b', '\bsubagent\b', '\bsub_agents?\b', '\bsupervisor\b']
+        patterns: ['\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\breact_agent\b', '\bstop_reason\s*[!=]=\s*["'']tool_use["'']', '\bfinish_reason\s*[!=]=\s*["'']tool_calls["'']']
         weight: 0.35
         agent_indicator: true
+      - type: code
+        # Limits, loop counters and planning vocabulary are supporting evidence,
+        # but also occur in ordinary applications. A bare while True is not an
+        # AI signal and must never turn a queue consumer into an agent.
+        patterns: ['\bmax_iterations\s*=', '\bmax_steps\s*=', '\bmaxSteps\s*:', '\bmax_turns\s*=', '\bmaxTurns\s*:', '\bmax_tool_calls\b', '\bReAct\b', '\bscratchpad\b', '\bthought\s*[:=]\s*', '(?i)\bchain[- ]of[- ]thought\b', '\bhandoff\b', '\bsubagent\b', '\bsub_agents?\b', '\bsupervisor\b']
+        weight: 0.2
+
+  - id: heuristic.function-call-branch
+    name: Model function-call response branch
+    category: heuristic
+    vendor: null
+    description: Executable Python or JavaScript code checks for a model function-call response.
+    capabilities: [tool-use]
+    signals:
+      - type: code
+        languages: [python, javascript]
+        patterns: ['\b[A-Za-z_]\w*\.type\s*(?:===|==)\s*["'']function_call["'']']
+        weight: 0.3
+
+  - id: heuristic.named-tool-lookup
+    name: Function-call name dispatched to a tool
+    category: heuristic
+    vendor: null
+    description: Executable Python or JavaScript code invokes a tool resolved by model function-call name.
+    capabilities: [tool-use]
+    signals:
+      - type: code
+        languages: [python, javascript]
+        patterns: ['\b[A-Za-z_]\w*\s*\[\s*[A-Za-z_]\w*\.name\s*\]\s*\(', '\b[A-Za-z_]\w*\.get\(\s*[A-Za-z_]\w*\.name\s*\)\s*\(']
+        weight: 0.3
+
+  - id: heuristic.function-call-result
+    name: Function-call arguments passed to a local handler
+    category: heuristic
+    vendor: null
+    description: A handler result assigned from a model function-call response's arguments.
+    capabilities: [tool-use]
+    signals:
+      - type: code
+        languages: [python, javascript]
+        patterns: ['\b[A-Za-z_]\w*\s*=\s*(?:await\s+)?[A-Za-z_]\w*\(\s*[A-Za-z_]\w*\.arguments\s*\)']
+        weight: 0.3
 
   - id: heuristic.code-execution
     name: Model-driven code / shell execution

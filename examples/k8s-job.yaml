@@ -1,5 +1,7 @@
 # Disposable ShadowScan Job. Keep live tenant credentials off any Job that
-# mounts an untrusted repository. Pin the image digest before rollout.
+# mounts an untrusted repository. Replace the image digest before rollout.
+# The second document denies egress for this offline job when the cluster CNI
+# enforces NetworkPolicy. Populate /input with a reviewed read-only volume.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -8,6 +10,10 @@ spec:
   backoffLimit: 0
   activeDeadlineSeconds: 1200
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: shadowscan
+        shadowscan-mode: offline
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
@@ -20,7 +26,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: shadowscan
-          image: shadowscan:reviewed
+          image: registry.example.com/shadowscan@sha256:REPLACE_WITH_APPROVED_64_HEX_DIGEST
           imagePullPolicy: IfNotPresent
           args: ["code", "/input", "--format", "sarif", "-o", "/output/shadowscan.sarif"]
           securityContext:
@@ -55,3 +61,15 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 2Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shadowscan-offline-deny-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: shadowscan
+      shadowscan-mode: offline
+  policyTypes: [Egress]
+  egress: []

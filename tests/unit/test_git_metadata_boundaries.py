@@ -120,7 +120,7 @@ def test_opt_in_metadata_uses_offline_policy_even_with_local_transport_config(tm
     (tmp_path / ".git").mkdir()
     # Inspect the policy without executing a helper, transport, or attacker code.
     (tmp_path / ".git" / "config").write_text('[protocol "ext"]\nallow = always\n')
-    call = Mock(return_value=SimpleNamespace(returncode=0, stdout="Known|known@example.test|2026-09-23T00:00:00Z\n"))
+    call = Mock(return_value=SimpleNamespace(returncode=0, stdout="Known\x00known@example.test\x002026-09-23T00:00:00Z\n"))
     monkeypatch.setattr(subprocess, "run", call)
     connector = FilesystemConnector(_context(index, use_git=True))
     assert connector._git_info(tmp_path, ".")["last_author_email"] == "known@example.test"

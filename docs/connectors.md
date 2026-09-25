@@ -115,6 +115,13 @@ identity in `metadata.source_snapshot`; API blob bytes are checked against their
 enumerated Git object IDs.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
+`clone_max_bytes` (default 256 MiB) checks GitHub's reported repository size
+before cloning, and `clone_timeout_seconds` (default 120) bounds each clone.
+An oversized repository or missing/malformed size estimate falls back to sampled
+API mode without launching Git and marks coverage incomplete. A failed clone or
+Git being unavailable for explicit `mode: clone` also marks the scan incomplete.
+The provider's size is an estimate, not a download or disk quota. Run remote
+scans with a host/container wall-clock limit and a writable disk quota.
 
 Options: `org` (env `GITHUB_ORG`), `user` or `repos`; `token` (env
 `GITHUB_TOKEN`, falling back to `github_token` / env `GH_TOKEN`); `api_url`,
@@ -132,6 +139,12 @@ Live API records cannot choose internal offline paths or dispatch fields. Code
 findings retain the scanned Git tree/commit identity in
 `metadata.source_snapshot`, and API mode pins tree pagination to an immutable
 commit before downloading files.
+`clone_max_bytes` and `clone_timeout_seconds` have the same defaults and
+incomplete-scan semantics as `code.github`. GitLab project details are queried
+for size statistics when the listing omits them. If no usable estimate is
+available, the connector falls back to sampled API mode without launching Git.
+A size estimate cannot bound actual checkout bytes; enforce a writable disk
+quota on the worker.
 
 Options: `group` (env `GITLAB_GROUP`) or `projects`; `token` (env
 `GITLAB_TOKEN`); `api_url` (env `GITLAB_API_URL`), `mode`, `include_archived`,
@@ -298,6 +311,12 @@ and privileged/data scopes (`keep_all: true` to emit everything).
 All cloud connectors need the matching extra (`shadowscan[aws|gcp|azure|oci]`)
 for live mode, or a JSONL record dump for offline mode. They use read-only
 list/describe/get calls only.
+
+Cloud record exports withhold every environment value of a function, app or
+container. Those values are ordinary configuration rather than credentials, so
+they are not also removed from sibling fields such as ARNs; values under
+sensitive names and recognizable credential formats are removed everywhere.
+Findings record environment variable names only.
 
 ### `cloud.aws`
 Bedrock Agents (action groups, knowledge bases, aliases, collaborators,

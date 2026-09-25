@@ -62,7 +62,7 @@ def test_git_metadata_decoding_is_lenient_and_isolated(tmp_path, index, monkeypa
 
     def fake_run(argv, **kwargs):
         captured.update(kwargs)
-        return subprocess.CompletedProcess(argv, 0, stdout="Jos�|j@example.test|2026-01-01T00:00:00Z", stderr="")
+        return subprocess.CompletedProcess(argv, 0, stdout="Jos�\x00j@example.test\x002026-01-01T00:00:00Z", stderr="")
 
     monkeypatch.setattr(fs_module.subprocess, "run", fake_run)
     assert connector._git_info(tmp_path, ".")["last_author_email"] == "j@example.test"

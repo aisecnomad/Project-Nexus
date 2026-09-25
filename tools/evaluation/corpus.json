@@ -792,79 +792,225 @@
       "id": "env-sample-placeholder-key",
       "family": "secret",
       "description": "A placeholder key in .env.sample is an example credential, not a leaked secret",
-      "files": {".env.sample": "ANTHROPIC_API_KEY=sk-ant-api03-REPLACE_ME_WITH_REAL_KEY\nOPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"},
-      "target": {"kind": "secret"},
+      "files": {
+        ".env.sample": "ANTHROPIC_API_KEY=sk-ant-api03-REPLACE_ME_WITH_REAL_KEY\nOPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
+      },
+      "target": {
+        "kind": "secret"
+      },
       "present": false,
-      "assertions": {"max_agent_findings": 0}
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "config-hardcoded-key",
       "family": "secret",
       "description": "A synthetic but well-formed provider key assigned in source is a secret finding",
-      "files": {"config.py": "OPENAI_API_KEY = \"sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h\"\n"},
-      "target": {"kind": "secret", "signature": "provider.openai"},
+      "files": {
+        "config.py": "OPENAI_API_KEY = \"sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h\"\n"
+      },
+      "target": {
+        "kind": "secret",
+        "signature": "provider.openai"
+      },
       "present": true
     },
     {
       "id": "readme-key-only-usage",
       "family": "framework-usage",
       "description": "A README containing only a provider key does not establish LLM usage in the repository",
-      "files": {"README.md": "# Demo\nExport your key before running: sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h\n"},
-      "target": {"kind": "framework-usage", "signature": "provider.openai"},
+      "files": {
+        "README.md": "# Demo\nExport your key before running: sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.openai"
+      },
       "present": false,
-      "assertions": {"max_agent_findings": 0}
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "env-names-only-usage",
       "family": "framework-usage",
       "description": "Provider environment variable names in .env.example establish likely, not confirmed, LLM usage",
-      "files": {".env.example": "OPENAI_API_KEY=\nANTHROPIC_API_KEY=\nGEMINI_API_KEY=\n"},
-      "target": {"kind": "framework-usage", "signature": "provider.openai"},
+      "files": {
+        ".env.example": "OPENAI_API_KEY=\nANTHROPIC_API_KEY=\nGEMINI_API_KEY=\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.openai"
+      },
       "present": true,
-      "assertions": {"max_agent_findings": 0}
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "devops-heuristics-only-agent",
       "family": "agent",
       "description": "Vendor-neutral automation idioms without any AI dependency are not an agent",
-      "files": {"deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
-      "target": {"kind": "agent"},
+      "files": {
+        "deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
       "present": false,
-      "assertions": {"max_agent_findings": 0}
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "devops-heuristics-only-usage",
       "family": "framework-usage",
       "description": "Vendor-neutral automation idioms without any AI dependency are not LLM usage either",
-      "files": {"deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
-      "target": {"kind": "framework-usage"},
+      "files": {
+        "deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"
+      },
+      "target": {
+        "kind": "framework-usage"
+      },
       "present": false
     },
     {
       "id": "py-langgraph-agent-with-heuristics",
       "family": "agent",
       "description": "The same automation idioms next to a LangGraph import describe a real agent",
-      "files": {"agent.py": "import subprocess\nfrom langgraph.graph import StateGraph\n\ngraph = StateGraph(dict)\nwhile True:\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
-      "target": {"kind": "agent", "signature": "framework.langgraph"},
+      "files": {
+        "agent.py": "import subprocess\nfrom langgraph.graph import StateGraph\n\ngraph = StateGraph(dict)\nwhile True:\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
       "present": true
     },
     {
       "id": "env-names-with-heuristics-agent",
       "family": "agent",
       "description": "Provider environment variable names next to vendor-neutral automation idioms are not an agent",
-      "files": {".env.example": "OPENAI_API_KEY=\n", "deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
-      "target": {"kind": "agent"},
+      "files": {
+        ".env.example": "OPENAI_API_KEY=\n",
+        "deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
       "present": false,
-      "assertions": {"max_agent_findings": 0}
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "env-names-import-with-heuristics-agent",
       "family": "agent",
       "description": "An OpenAI import next to the same idioms establishes LLM usage; vendor-neutral loops and subprocess calls still cannot confirm an agent",
-      "files": {".env.example": "OPENAI_API_KEY=\n", "app.py": "from openai import OpenAI\n", "deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"},
-      "target": {"kind": "framework-usage", "signature": "provider.openai"},
+      "files": {
+        ".env.example": "OPENAI_API_KEY=\n",
+        "app.py": "from openai import OpenAI\n",
+        "deploy.py": "import subprocess\n\nwhile True:\n    supervisor = get_supervisor()\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.openai"
+      },
       "present": true,
-      "assertions": {"max_agent_findings": 0}
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "py-plain-poll-loop",
+      "family": "agent",
+      "description": "An ordinary queue consumer is not an autonomous AI agent",
+      "files": {
+        "worker.py": "def worker():\n    while True:\n        poll_queue()\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "py-generic-tool-decorator",
+      "family": "agent",
+      "description": "A bare tool decorator is neither LangChain attribution nor agent execution",
+      "files": {
+        "helper.py": "@tool\ndef serialize(value):\n    return str(value)\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.langchain"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "py-responses-tool-dispatch",
+      "family": "agent",
+      "description": "An OpenAI Responses model call and active named tool dispatch identify an agent",
+      "files": {
+        "worker.py": "from openai import OpenAI\nclient = OpenAI()\nTOOLS = {'lookup': lookup}\nresponse = client.responses.create(model='gpt-4o', tools=TOOLS, input='query')\nfor item in response.output:\n    if item.type == 'function_call':\n        result = TOOLS[item.name](item.arguments)\n        client.responses.create(input=[{'type': 'function_call_output', 'call_id': item.call_id, 'output': result}])\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.openai"
+      },
+      "present": true
+    },
+    {
+      "id": "py-responses-direct-dispatch",
+      "family": "agent",
+      "description": "A model call with named tools, a function-call response and assigned handler result identifies an agent",
+      "files": {
+        "worker.py": "from openai import OpenAI\nclient = OpenAI()\nresponse = client.responses.create(model='gpt-4o', tools=TOOLS, input='query')\ncalls = [item for item in response.output if item.type == 'function_call']\nfor item in calls:\n    answer = lookup(item.arguments)\n    conversation.append({'type': 'function_call_output', 'call_id': item.call_id, 'output': answer})\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.openai"
+      },
+      "present": true
+    },
+    {
+      "id": "py-responses-no-tool-dispatch",
+      "family": "agent",
+      "description": "A model response branch without named tool dispatch is not sufficient",
+      "files": {
+        "worker.py": "from openai import OpenAI\nclient = OpenAI()\nresponse = client.responses.create(model='gpt-4o', tools=TOOLS, input='query')\nfor item in response.output:\n    if item.type == 'function_call':\n        print(item.name)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.openai"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "py-responses-dispatch-other-file",
+      "family": "agent",
+      "description": "Independent model calls and tool lookup helpers in separate files are not joined into an agent",
+      "files": {
+        "request.py": "from openai import OpenAI\nclient.responses.create(model='gpt-4o', tools=TOOLS)\n",
+        "helper.py": "if item.type == 'function_call':\n    result = TOOLS[item.name](item.arguments)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.openai"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
     }
   ]
 }

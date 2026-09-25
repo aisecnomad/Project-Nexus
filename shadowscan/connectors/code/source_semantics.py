@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import regex
 
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
+from shadowscan.connectors.code.responses_loops import responses_tool_loop_lines
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
@@ -541,12 +542,20 @@ def bound_source_matches(
                     match.extra["verified_agent"] = False
                     found.append(match)
     provider_requests: set[int] = set()
+    responses_requests: set[int] = set()
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
         loop_request = _LOOP_REQUESTS.get(call.binding.module)
         if (tree is not None and call.node is not None and loop_request is not None
                 and loop_request[0] in signatures and call.binding.symbol in loop_request[1]):
             provider_requests.add(id(call.node))
+        if (tree is not None and call.node is not None and "provider.openai" in signatures
+                and call.binding.module == "openai"
+                and call.binding.symbol in {
+                    "OpenAI.responses.create", "AsyncOpenAI.responses.create",
+                    "AzureOpenAI.responses.create", "AsyncAzureOpenAI.responses.create",
+                }):
+            responses_requests.add(id(call.node))
         symbol = _symbol_tail(call.binding.symbol)
         canonical = symbol + call.arguments
         for signature in signatures.values():
@@ -596,6 +605,14 @@ def bound_source_matches(
                 Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
                        description="import-bound model-selected tool dispatch with conversation feedback"),
                 "provider tool-selection/dispatch/feedback loop", 0.9, line=line,
+                extra={"verified_agent": True},
+            ))
+        for line in responses_tool_loop_lines(tree, responses_requests):
+            found.append(Match(
+                protocol,
+                Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
+                       description="import-bound Responses function dispatch with ordered conversation feedback"),
+                "OpenAI Responses tool-selection/dispatch/feedback loop", 0.9, line=line,
                 extra={"verified_agent": True},
             ))
     return found

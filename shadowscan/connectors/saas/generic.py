@@ -17,6 +17,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 
 DEFAULT_FIELDS: dict[str, list[str]] = {
     "name": ["name", "app", "app_name", "application", "app name", "application name", "display_name", "displayName", "title", "integration", "product"],
@@ -68,7 +69,12 @@ class GenericSaaSConnector(BaseConnector):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:
             self.ctx.examined()
-            f = self._finding(rec)
+            try:
+                f = self._finding(rec)
+            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"saas.generic: skipped a malformed app record ({type(exc).__name__}){detail}")
+                continue
             if f:
                 yield f
 
@@ -77,9 +83,10 @@ class GenericSaaSConnector(BaseConnector):
         if not name:
             return None
         raw_scopes = self._get(rec, "scopes")
-        scopes = raw_scopes if isinstance(raw_scopes, list) else [s.strip() for s in re.split(r"[,;\s]+", str(raw_scopes or "")) if s.strip()]
+        # JSON exports may carry non-string list members; coerce rather than crash.
+        scopes = [str(s) for s in raw_scopes if s not in (None, "")] if isinstance(raw_scopes, list) else [s.strip() for s in re.split(r"[,;\s]+", str(raw_scopes or "")) if s.strip()]
         urls = self._get(rec, "url")
-        url_list = urls if isinstance(urls, list) else [u.strip() for u in re.split(r"[,;\s]+", str(urls or "")) if u.strip()]
+        url_list = [str(u) for u in urls if u not in (None, "")] if isinstance(urls, list) else [u.strip() for u in re.split(r"[,;\s]+", str(urls or "")) if u.strip()]
         app_id = self._get(rec, "id")
         f = Finding(
             surface=Surface.SAAS,

@@ -123,15 +123,48 @@ def _pairs(node: ast.AST) -> dict[str, ast.expr] | None:
 
 
 def _imports(tree: ast.AST, budget: _Budget) -> dict[str, str]:
-    """Map local names to the dotted module or attribute they import."""
+    """Map imports that cannot be shadowed to their dotted targets.
+
+    The provider request binder already rejects shadowed SDK clients. Sink
+    provenance must be at least as strict: an imported ``subprocess`` can be
+    replaced by a local dry-run object before the apparent dispatch.
+    """
     names: dict[str, str] = {}
+    bindings: dict[str, int] = {}
+
+    def bound(name: str) -> None:
+        bindings[name] = bindings.get(name, 0) + 1
+
     for node in budget.walk(tree, nested_scopes=True):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                names[alias.asname or alias.name.split(".", 1)[0]] = alias.name if alias.asname else alias.name.split(".", 1)[0]
-        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                local = alias.asname or alias.name.split(".", 1)[0]
+                bound(local)
+                names[local] = alias.name if alias.asname else local
+        elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
-                names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+                local = alias.asname or alias.name
+                bound(local)
+                if node.module and not node.level:
+                    names[local] = f"{node.module}.{alias.name}"
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bound(node.id)
+        elif isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if root := _root(node):
+                bound(root)  # imported namespace or member was mutated
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound(node.name)
+        elif isinstance(node, ast.arg):
+            bound(node.arg)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            bound(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            bound(node.rest)
+    for name, count in bindings.items():
+        if count != 1:
+            names.pop(name, None)
+        if name in {"exec", "eval"} and name not in names:
+            names[name] = ""  # a local binding shadows the builtin sink
     return names
 
 
@@ -318,11 +351,18 @@ def _tool_iteration(
     body: list[ast.stmt], local: dict[str, str], history: str, budget: _Budget,
     declared_tools: set[str], imports: dict[str, str], collected: set[str],
 ) -> bool:
-    for action in body:
+    for number, action in enumerate(body):
         budget.tick()
         if isinstance(action, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
             return False
         if isinstance(action, ast.If):
+            if isinstance(action.test, ast.Constant):
+                # A literal guard has exactly one reachable branch. Keep the
+                # following statements on that same path so a guaranteed
+                # break/return cannot turn later feedback into loop evidence.
+                selected = action.body if bool(action.test.value) else action.orelse
+                return _tool_iteration([*selected, *body[number + 1:]], local, history, budget,
+                                       declared_tools, imports, collected)
             # Branch-local proof: nothing bound inside a branch is trusted after it.
             if any(_tool_iteration(branch, local.copy(), history, budget, declared_tools, imports, collected)
                    for branch in (action.body, action.orelse)):
@@ -339,11 +379,15 @@ def _statements(
     statements: list[ast.stmt], values: dict[str, str], history: str, budget: _Budget,
     declared_tools: set[str], imports: dict[str, str],
 ) -> bool:
-    for statement in statements:
+    for number, statement in enumerate(statements):
         budget.tick()
         if isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
             return False
         if isinstance(statement, ast.If):
+            if isinstance(statement.test, ast.Constant):
+                selected = statement.body if bool(statement.test.value) else statement.orelse
+                return _statements([*selected, *statements[number + 1:]], values, history, budget,
+                                   declared_tools, imports)
             if any(_statements(branch, values.copy(), history, budget, declared_tools, imports)
                    for branch in (statement.body, statement.orelse)):
                 return True

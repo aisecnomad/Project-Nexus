@@ -9,6 +9,7 @@ import contextvars
 import ipaddress
 import json
 import logging
+import math
 import random
 import re
 import socket
@@ -72,6 +73,24 @@ def _positive_byte_limit(value: int | None, default: int) -> int:
     if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
         raise ValueError("max_bytes must be a positive integer")
     return limit
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Do not let duplicate fields overwrite observations or pagination state."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            # API responses may reflect credentials in field names or values.
+            raise ValueError("Duplicate JSON field")
+        result[key] = value
+    return result
+
+
+def _finite_json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("Nonfinite JSON number")
+    return number
 
 
 METADATA_HOSTS = frozenset(
@@ -452,14 +471,24 @@ class HttpClient:
             resp.close()
 
     def read_json_response(self, resp: requests.Response, *, max_bytes: int | None = None) -> Any:
-        """Decode one JSON response while enforcing the configured body limit."""
+        """Decode bounded, unambiguous JSON before trusting provider fields.
+
+        Repeated keys can otherwise replace populated collections with empty
+        ones, hide pagination continuations, or change JWK selection fields.
+        Reject nonfinite values, including numeric overflow, before analysis.
+        """
         body = self.read_response_bytes(resp, max_bytes=max_bytes)
         if not body:
             return None
         try:
-            return json.loads(body)
-        except (ValueError, RecursionError) as exc:
-            raise ValueError("Invalid JSON response") from exc
+            return json.loads(
+                body,
+                object_pairs_hook=_unique_json_object,
+                parse_float=_finite_json_float,
+                parse_constant=_finite_json_float,
+            )
+        except (ValueError, RecursionError):
+            raise ValueError("Invalid JSON response") from None
 
     def get_json(self, path: str, *, max_bytes: int | None = None, **kwargs: Any) -> Any:
         limit = _positive_byte_limit(max_bytes, self.max_response_bytes)

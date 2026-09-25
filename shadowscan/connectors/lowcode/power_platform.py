@@ -16,9 +16,10 @@ API objects (kind inferred from shape).
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from typing import Any, ClassVar
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from requests import RequestException
 
@@ -31,6 +32,60 @@ from shadowscan.utils.text import get_path
 BAP = "https://api.bap.microsoft.com"
 FLOW = "https://api.flow.microsoft.com"
 PAPPS = "https://api.powerplatform.com"
+
+# Environment records are provider data, not an operator's authorization to
+# acquire a token for an arbitrary OAuth resource and send it to that host.
+# Microsoft publishes these Dataverse organization domains, including its
+# sovereign clouds. Match the entire hostname rather than a string suffix.
+# See https://learn.microsoft.com/power-platform/admin/new-datacenter-regions
+# and https://learn.microsoft.com/power-platform/admin/microsoft-dynamics-365-government.
+_DATAVERSE_HOST = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:api\.)?"
+    r"(?:crm[0-9]*\.dynamics\.com|crm\.dynamics\.cn|"
+    r"crm\.microsoftdynamics\.(?:de|us)|crm\.appsplatform\.us)",
+    re.ASCII,
+)
+
+
+def _dataverse_origin(instance_url: Any, environment: dict[str, Any], tenant: Any) -> str:
+    """Bind the OAuth audience and destination to a canonical Dataverse origin."""
+    if not isinstance(instance_url, str) or len(instance_url) > 512 or not instance_url.startswith("https://"):
+        raise ValueError("invalid Dataverse organization URL")
+    try:
+        parsed = urlsplit(instance_url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        raise ValueError("invalid Dataverse organization URL") from None
+    if (
+        parsed.scheme != "https" or not hostname or not _DATAVERSE_HOST.fullmatch(hostname.lower())
+        or parsed.username is not None or parsed.password is not None or port is not None
+        or parsed.path not in ("", "/") or parsed.query or parsed.fragment
+        or parsed.netloc.lower() != hostname.lower()
+    ):
+        raise ValueError("invalid Dataverse organization URL")
+    if not isinstance(environment, dict):
+        raise ValueError("invalid Dataverse environment metadata")
+    properties = environment.get("properties")
+    if not isinstance(properties, dict):
+        raise ValueError("invalid Dataverse environment metadata")
+    metadata = properties.get("linkedEnvironmentMetadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("invalid Dataverse environment metadata")
+    domain_name = metadata.get("domainName")
+    if domain_name is not None and (
+        not isinstance(domain_name, str) or domain_name.lower() != hostname.split(".", 1)[0].lower()
+    ):
+        raise ValueError("Dataverse organization URL disagrees with environment metadata")
+    # Older BAP responses omit the tenant ID. When present, do not use this
+    # tenant's credentials against an environment attributed to another one.
+    for declared_tenant in (environment.get("tenantId"), properties.get("tenantId"), metadata.get("tenantId")):
+        if declared_tenant is not None and (
+            not isinstance(declared_tenant, str) or not isinstance(tenant, str)
+            or declared_tenant.casefold() != tenant.casefold()
+        ):
+            raise ValueError("Dataverse environment tenant disagrees with token tenant")
+    return "https://" + hostname.lower()
 
 AI_CONNECTORS = {
     "shared_openai": "OpenAI (independent publisher)",
@@ -128,10 +183,20 @@ class PowerPlatformConnector(BaseConnector):
                     yield app
             except (HttpError, RequestException, RuntimeError, ValueError) as exc:
                 self.ctx.warn(f"lowcode.power-platform: apps in {name}: {self._failure_reason(exc)}")
+            properties = env.get("properties")
+            metadata = properties.get("linkedEnvironmentMetadata") if isinstance(properties, dict) else None
+            if self.include_bots and metadata is not None and not isinstance(metadata, dict):
+                self.ctx.warn("lowcode.power-platform: Dataverse environment metadata is malformed; bot coverage unknown")
+                continue
             instance_url = get_path(env, "properties.linkedEnvironmentMetadata.instanceUrl")
             if self.include_bots and instance_url:
                 try:
-                    dv = self._client(instance_url.rstrip("/"), f"{instance_url.rstrip('/')}/.default")
+                    origin = _dataverse_origin(instance_url, env, self.tenant)
+                except ValueError:
+                    self.ctx.warn("lowcode.power-platform: Dataverse environment origin is untrusted; bot coverage unknown")
+                    continue
+                try:
+                    dv = self._client(origin, f"{origin}/.default")
                     for bot in dv.paginate_odata("/api/data/v9.2/bots", params={"$select": "botid,name,schemaname,statecode,statuscode,createdon,modifiedon,publishedon,authenticationmode,accesscontrolpolicy,authenticationtrigger,configuration,language,_ownerid_value,_createdby_value"}):
                         bot["_kind"] = "bot"
                         bot["_environment"] = display or name

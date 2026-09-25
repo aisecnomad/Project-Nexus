@@ -30,6 +30,10 @@
   color: "fbca04"
   description: False positive, false negative, misattribution, or scoring report.
 
+- name: question
+  color: "d876e3"
+  description: Usage question about installation, configuration, or results.
+
 # Priority
 - name: "priority: critical"
   color: "b60205"

@@ -48,7 +48,7 @@ audit: ## Audit dependencies for known vulnerabilities
 	pip-audit --progress-spinner off
 
 .PHONY: evaluate
-evaluate: ## Run all detection evaluation corpora (same set as CI)
+evaluate: ## Run the bundled detection regression corpora
 	python -m tools.evaluation.evaluate
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/public_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/realistic_corpus.json
@@ -57,13 +57,15 @@ evaluate: ## Run all detection evaluation corpora (same set as CI)
 		--annotations tools/evaluation/independent_annotations.json
 
 .PHONY: check
-check: lint typecheck signatures audit test coverage-gate evaluate ## Run all quality gates (CI equivalent)
+.NOTPARALLEL: check
+check: lint typecheck signatures audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
 
 # --- Build -----------------------------------------------------------------
 
 .PHONY: build
 build: ## Build distributable wheel
+	python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 	python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 
 .PHONY: wheel-validate
@@ -77,7 +79,7 @@ wheel-validate: build ## Validate the wheel installs and works outside checkout
 	rm -rf /tmp/shadowscan-wheel-test
 
 .PHONY: docker
-docker: ## Build the disposable worker container
+docker: ## Build worker from the reviewed Dockerfile base digest
 	docker build --tag shadowscan:local .
 
 .PHONY: docker-test

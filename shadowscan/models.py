@@ -471,8 +471,19 @@ class Finding:
             if not isinstance(item.get("signal"), str) or not isinstance(item.get("description"), str):
                 raise ValueError("finding evidence must have a string signal and description")
             _validate_number(item.get("weight", 0.5), "evidence weight", minimum=0, maximum=1)
-        d["evidence"] = [Evidence(**{name: value for name, value in item.items() if name in _EVIDENCE_FIELDS})
-                         for item in evidence]
+        d["evidence"] = []
+        for item in evidence:
+            values = {name: value for name, value in item.items() if name in _EVIDENCE_FIELDS}
+            observation = Evidence(**values)
+            # Evidence.__post_init__ sanitizes in isolation. Preserve its raw
+            # input until the owning Finding can discover credentials across
+            # all sibling fields; otherwise a secret in evidence.attributes
+            # is erased before its opaque copy in title/metadata is known.
+            # These observations remain local until cls.__post_init__ performs
+            # the collective, schema- and generated-identity-aware export pass.
+            for name, value in values.items():
+                setattr(observation, name, value)
+            d["evidence"].append(observation)
         return cls(**d)
 
 

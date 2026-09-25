@@ -54,7 +54,7 @@ shadowscan = "shadowscan.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/aisecnomad/Project-Nexus"
-Documentation = "https://aisecnomad.github.io/Project-Nexus/"
+Documentation = "https://github.com/aisecnomad/Project-Nexus/tree/main/docs"
 Repository = "https://github.com/aisecnomad/Project-Nexus"
 Changelog = "https://github.com/aisecnomad/Project-Nexus/blob/main/CHANGELOG.md"
 Issues = "https://github.com/aisecnomad/Project-Nexus/issues"

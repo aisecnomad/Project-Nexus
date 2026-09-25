@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -138,7 +137,8 @@ def test_repository_symlink_escape_is_rejected(tmp_path):
 @pytest.mark.parametrize("cls,record", [(GitHubConnector, {"full_name": "org/repo", "clone_url": "https://evil.example/repo.git"}), (GitLabConnector, {"path_with_namespace": "org/repo", "http_url_to_repo": "https://evil.example/repo.git"})])
 def test_clone_refuses_metadata_credential_destination(cls, record, tmp_path, index, monkeypatch):
     run = Mock()
-    monkeypatch.setattr("subprocess.run", run)
+    monkeypatch.setattr("shadowscan.connectors.code.github.run_bounded_clone", run)
+    monkeypatch.setattr("shadowscan.connectors.code.gitlab.run_bounded_clone", run)
     connector = cls(ConnectorContext(config={"token": "synthetic-token"}, index=index))
     with pytest.raises(ValueError):
         connector._clone(record, str(tmp_path))
@@ -147,11 +147,12 @@ def test_clone_refuses_metadata_credential_destination(cls, record, tmp_path, in
 
 @pytest.mark.parametrize("cls,record,origin", [(GitHubConnector, {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"}, "https://github.com/"), (GitLabConnector, {"path_with_namespace": "org/repo", "http_url_to_repo": "https://gitlab.com/org/repo.git"}, "https://gitlab.com/")])
 def test_clone_credential_header_is_origin_scoped(cls, record, origin, tmp_path, index, monkeypatch):
-    run = Mock(return_value=SimpleNamespace(returncode=0))
-    monkeypatch.setattr("subprocess.run", run)
+    run = Mock(return_value=True)
+    monkeypatch.setattr("shadowscan.connectors.code.github.run_bounded_clone", run)
+    monkeypatch.setattr("shadowscan.connectors.code.gitlab.run_bounded_clone", run)
     connector = cls(ConnectorContext(config={"token": "synthetic-token"}, index=index))
     assert connector._clone(record, str(tmp_path))
-    env = run.call_args.kwargs["env"]
+    env = run.call_args.args[1]
     settings = {env[f"GIT_CONFIG_KEY_{n}"]: env[f"GIT_CONFIG_VALUE_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))}
     assert "http.extraheader" not in settings
     assert settings[f"http.{origin}.extraheader"].startswith("Authorization: Basic ")

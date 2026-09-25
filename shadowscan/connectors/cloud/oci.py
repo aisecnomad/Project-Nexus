@@ -35,6 +35,7 @@ def _resource_id(value: Any) -> str:
 
 class OciConnector(BaseConnector):
     name: ClassVar[str] = "cloud.oci"
+    _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = True
     surface: ClassVar[Surface] = Surface.CLOUD
     provider: ClassVar[str | None] = "oci"
     requires: ClassVar[list[str]] = ["oci"]
@@ -220,9 +221,11 @@ class OciConnector(BaseConnector):
                 yield {"_kind": "genai-cluster", "_region": region, "_compartment": comp, **self._d(cl)}
             for m in self._all(genai.list_models, comp):
                 d = self._d(m)
-                if d.get("vendor") not in {"cohere", "meta", None} or "FINE_TUNE" in str(d.get("capabilities")) and d.get("base_model_id"):
-                    if d.get("base_model_id"):
-                        yield {"_kind": "genai-custom-model", "_region": region, "_compartment": comp, **d}
+                # Custom (fine-tuned) models are type CUSTOM and reference a base model;
+                # FINE_TUNE is a capability that *base* models advertise, and OCI custom
+                # models are built on the same vendors as the base catalogue.
+                if d.get("type") == "CUSTOM" or d.get("base_model_id"):
+                    yield {"_kind": "genai-custom-model", "_region": region, "_compartment": comp, **d}
         except AttributeError:
             self.ctx.warn("cloud.oci: generative_ai unavailable in installed SDK", incomplete=True)
         try:

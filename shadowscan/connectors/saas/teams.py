@@ -20,6 +20,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path
 
@@ -107,7 +108,12 @@ class TeamsConnector(BaseConnector):
                                     "appDefinitions": [definition] if definition else [], "_from_install": True}
         for app_id, app in apps.items():
             self.ctx.examined()
-            f = self._app_finding(app_id, app, installs.get(app_id, []))
+            try:
+                f = self._app_finding(app_id, app, installs.get(app_id, []))
+            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"saas.microsoft-teams: skipped a malformed app record ({type(exc).__name__}){detail}")
+                continue
             if f:
                 yield f
 

@@ -13,16 +13,26 @@ import json
 from typing import Any
 
 from shadowscan.models import Evidence, Finding, Surface
+from shadowscan.utils.redaction import REDACTED
 from shadowscan.utils.text import parse_timestamp, to_iso
+
+
+def _usable_code_identity(code: Finding) -> bool:
+    """Lossy report identities must never establish an exact workload binding."""
+    return (
+        isinstance(code.resource, str) and bool(code.resource) and REDACTED not in code.resource
+        and all(value is None or (isinstance(value, str) and REDACTED not in value)
+                for value in (code.provider, code.account, code.region))
+    )
 
 
 def correlate_runtime(findings: list[Finding]) -> None:
     """Attach runtime_activity metadata without increasing risk or confidence."""
     bound: dict[str, list[tuple[Finding, dict[str, Any]]]] = {}
-    code_identities: dict[str, set[tuple[str | None, str | None, str]]] = {}
+    code_identities: dict[str, set[tuple[str | None, str | None, str | None, str]]] = {}
     for code in findings:
         if code.surface == Surface.CODE:
-            code_identities.setdefault(code.resource, set()).add((code.provider, code.account, code.connector))
+            code_identities.setdefault(code.resource, set()).add((code.provider, code.account, code.region, code.connector))
     for gateway in findings:
         if gateway.surface != Surface.GATEWAY:
             continue
@@ -32,21 +42,25 @@ def correlate_runtime(findings: list[Finding]) -> None:
         for observation in observations:
             if (not isinstance(observation, dict)
                     or observation.get("identity_basis") != "configured-exact-caller-and-scope"
-                    or observation.get("identity_assurance") == "unverified"):
+                    or observation.get("identity_assurance") not in ("operator-asserted", "provider-authenticated-field")):
                 continue
             resources = observation.get("code_resources", [])
             if isinstance(resources, list):
                 for resource in resources:
-                    if isinstance(resource, str):
+                    if isinstance(resource, str) and resource and REDACTED not in resource:
                         bound.setdefault(resource, []).append((gateway, observation))
 
     for code in findings:
-        if code.surface != Surface.CODE or not code.frameworks:
+        if code.surface != Surface.CODE:
             continue
         # Repeated calls must replace earlier results, including after cache use.
         code.evidence[:] = [ev for ev in code.evidence if ev.signal != "runtime:gateway-observed"]
+        code.metadata.pop("runtime_activity", None)
+        if not code.frameworks:
+            continue
+        usable_identity = _usable_code_identity(code)
         ambiguous = len(code_identities.get(code.resource, set())) > 1
-        relevant = [] if ambiguous else bound.get(code.resource, [])
+        relevant = [] if ambiguous or not usable_identity else bound.get(code.resource, [])
         matches = []
         missing_timestamps = False
         for gateway, observation in relevant:
@@ -105,9 +119,19 @@ def correlate_runtime(findings: list[Finding]) -> None:
                 attributes={"gateway_finding_ids": sorted({match["gateway_finding_id"] for match in matches}), "frameworks": activity["frameworks"]},
             ))
         else:
+            if not usable_identity:
+                reason = "redacted-or-missing-code-identity"
+            elif ambiguous:
+                reason = "ambiguous-code-resource"
+            elif not relevant:
+                reason = "no-trusted-workload-binding"
+            elif missing_timestamps:
+                reason = "missing-event-timestamps"
+            else:
+                reason = "no-matching-framework-in-linked-telemetry"
             activity = {
                 "status": "unknown" if not relevant or missing_timestamps else "unobserved",
-                "reason": "ambiguous-code-resource" if ambiguous else "no-trusted-workload-binding" if not relevant else "missing-event-timestamps" if missing_timestamps else "no-matching-framework-in-linked-telemetry",
+                "reason": reason,
                 "events": 0,
                 "frameworks": [],
                 "window": None,

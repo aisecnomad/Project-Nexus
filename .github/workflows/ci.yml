@@ -9,9 +9,25 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the hash-locked documentation toolchain
+        run: |
+          python -m pip install --upgrade --only-binary=:all: pip==26.2.1
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-docs.lock
+      - name: Validate docs without deployment
+        run: mkdocs build --strict
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -23,6 +39,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
+          # Hash-locked installs are safe to cache; the key follows both pin files.
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock
+            requirements-ci-constraints.txt
       - name: Check requirements-build.lock matches the pyproject build-system pins
         run: |
           python - <<'PY'
@@ -107,6 +128,8 @@ jobs:
       - name: Build and validate disposable worker
         if: matrix.python == '3.13'
         run: |
+          set -euo pipefail
+          # The literal Dockerfile FROM pins the reviewed multi-arch index.
           docker build --tag shadowscan:ci .
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --entrypoint python shadowscan:ci \

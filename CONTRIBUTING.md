@@ -5,43 +5,47 @@ everything from setting up your environment to getting a PR merged.
 
 ## Code of conduct
 
-This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). Security
-scanning tools protect organizations; contributors hold themselves to the same
-standard, which includes keeping credentials, tenant exports and unredacted
-findings out of every public space.
+Participation is governed by the [Code of conduct](CODE_OF_CONDUCT.md), including
+its reporting and enforcement process. For usage questions, start with the
+[Support guide](SUPPORT.md). Report vulnerabilities through the
+[security policy](SECURITY.md#reporting), never through a public issue.
 
-## Ways to contribute
+## Choose a contribution
 
-You do not need to write a connector to help. In rough order of how quickly a
-first contribution lands:
-
-- **Documentation**: fix a wrong statement, add a missing option, tighten a
-  page. Use the [documentation form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=documentation.yml)
+- **Documentation:** fix a confusing step, add a synthetic example, or improve
+  an explanation. No live tenant or cloud credentials are needed. Use the
+  [documentation form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=documentation.yml)
   or send the pull request directly.
-- **Detection reports**: a false positive, a missed framework or a
-  misattributed provider, filed through the
-  [detection report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml)
-  with a sanitized minimal input. Accepted reports become labeled cases in
-  `tools/evaluation/`.
-- **Signatures and evaluation cases**: YAML packs under
-  `shadowscan/signatures/data/` and regression cases under `tools/evaluation/`.
-- **Offline fixtures and tests**: sanitized export shapes under
-  `tests/fixtures/` that raise a connector's coverage.
-- **Connectors**: see [Writing a connector](#writing-a-connector).
-- **Review**: reading other people's pull requests is the contribution the
-  project needs most; see [Review and merge policy](#review-and-merge-policy).
+- **Detection quality:** provide a minimal positive or negative fixture with the
+  expected outcome and why it is correct. A dependency name alone does not prove
+  an agent is running. File it with the
+  [detection quality report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml);
+  accepted reports become labeled regression cases under `tools/evaluation/`.
+- **Bugs:** use the [bug report form](https://github.com/aisecnomad/Project-Nexus/issues/new/choose)
+  and include the full scanner commit, command, expected result and a sanitized
+  reproducer. Search existing issues first; add evidence to an existing report
+  where possible.
+- **Connectors or architecture:** open a proposal before implementing a large
+  change so maintainers can agree on scope, permissions and offline fixtures.
+- **Review:** explain what you inspected and verified, including limits. Review
+  from someone who did not author the change is especially valuable.
 
-Issues labeled [`good first issue`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-and [`help wanted`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
-are scoped for newcomers. For anything larger than a focused fix, open an issue
-first so the approach is agreed before the work. [SUPPORT.md](SUPPORT.md) routes
-questions and problems that are not contributions.
+Browse [open issues](https://github.com/aisecnomad/Project-Nexus/issues) or propose
+a small improvement if no suitable issue exists. You can ask for scope guidance
+on the issue before starting; there is no expectation to build a large feature
+as your first contribution.
 
 ## Getting started
+
+Use Python 3.11 or newer and Git. Fork the repository on GitHub if you need a
+branch you can push; clone your fork in that case. In a local checkout:
 
 ```bash
 git clone https://github.com/aisecnomad/Project-Nexus.git
 cd Project-Nexus
+python -m venv .venv
+source .venv/bin/activate             # Windows: .venv\Scripts\Activate.ps1
+git switch -c fix/short-description
 python -m pip install -e ".[all]"    # dev + cloud + docs extras
 make install-hooks                   # pre-commit hooks (recommended)
 ```
@@ -60,17 +64,20 @@ approved plugin runs with scanner privileges.
 
 ## Quality gates
 
-Every PR must pass these checks (run locally with `make check`):
+Run `make check` for the main local quality gates. CI is the authoritative
+merge check and additionally builds and validates the installed wheel, exercises
+SARIF output and the container, and runs CodeQL. The CI workflow defines the
+exact supported Python matrix and dependency pins.
 
 | Gate | Command | Requirement |
 |------|---------|-------------|
 | Lint | `ruff check shadowscan tests tools` | No errors |
 | Types | `mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release` | No errors |
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate |
-| Connectors | `python -m tools.coverage_gate` | ≥ 75% per connector |
+| Connectors | `make coverage-gate` (after tests) | ≥ 75% per connector |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Audit | `pip-audit` | No known vulnerabilities |
-| Evaluation | `python -m tools.evaluation.evaluate` | No regressions |
+| Evaluation | `make evaluate` | All bundled corpora pass |
 
 The same gates as individual commands:
 
@@ -81,6 +88,8 @@ ruff check shadowscan tests tools
 mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
 pip-audit --progress-spinner off
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
+make coverage-gate
+make evaluate
 ```
 
 The cloud SDKs (`boto3`, `google-auth`, `azure-identity`, `oci`) are optional
@@ -89,7 +98,21 @@ extras for users, but the test suite is gated with them installed, so use
 `requirements.lock`, which contains every cloud SDK. Offline fixtures cover the
 cloud connectors; do not commit live tenant exports.
 
+Do not commit private adjudicated evaluation corpora.
+
 ## Pull requests
+
+1. Make one focused change on your branch. For a documentation-only change,
+   check the affected links and run `mkdocs build --strict` if the site changes.
+2. Run the checks relevant to your change, then the full gates before requesting
+   review for code changes. Explain any check you could not run and why.
+3. Push your branch to your fork and open a pull request against `main`. Link the
+   related issue with `Fixes #123` only when the PR resolves it completely.
+4. Explain the problem, the resulting behavior and the validation performed.
+   Draft PRs are welcome when you want feedback before the implementation is done.
+5. Address review feedback and rerun affected checks after updating the branch.
+   If the PR received independent approval, request renewed review after
+   changing the approved commit. The requirements below apply to the final commit.
 
 - Target `main`. Do not push reviewed security changes directly.
 - Keep findings fail-closed: a limit, malformed export, or denied API must mark
@@ -101,14 +124,10 @@ cloud connectors; do not commit live tenant exports.
   affects rollout, finding identity, or credential policy.
 - Include regression tests for bug fixes.
 - Use the PR template checklist — it matches the CI gates.
-- Keep pull requests focused. One behaviour change per pull request is easier
-  to review, to bisect and to describe in `CHANGELOG.md`.
-- Write the description for a reviewer who was not there: what changed, why,
-  how it was verified, and what an operator has to do differently.
-- Repository policy is tested. `tests/test_repository_policy.py` checks that
-  Markdown links resolve, workflows stay pinned and read-only by default, and
-  issue forms use labels that exist; run it when you touch `.github/` or a
-  top-level document.
+- Repository policy is tested. `tests/test_repository_policy.py` (`make policy`)
+  checks that Markdown links and anchors resolve, workflows stay pinned and
+  read-only by default, issue forms use labels that exist, and documented counts
+  match the shipped code; run it when you touch `.github/` or a top-level document.
 
 ## Writing a connector
 
@@ -137,58 +156,53 @@ See [docs/signatures.md](docs/signatures.md) for the schema and authoring guide.
 
 ## Review and merge policy
 
-ShadowScan currently has a single maintainer. As of 2026-09-24 every pull
-request in the repository's history was merged by that maintainer's own
-account; apart from Dependabot updates, every commit was authored by that
-account or, for the initial import, attributed to the AI assistant it used. No
-change on `main` carries an approving review from a second person. Do not read
-a merged pull request, a green check or a version number as evidence that
-someone other than the author examined the change.
+ShadowScan currently has a single maintainer. The maintainer reviews changes,
+checks validation and is accountable for merges. CI and CodeQL must pass on the
+current PR revision, conflicts must be resolved, and substantive review feedback
+must be addressed. Prefer independent human review for routine changes; the
+current single-maintainer process does not guarantee it. AI-assisted review is
+advisory and is never an independent human approval.
 
-What every change receives before it is merged:
+Before merging, the maintainer checks:
 
-- the CI workflow: signature validation, lint, typing, dependency advisory
-  audit, tests with an overall and a per-connector coverage floor, labeled
-  detection-case evaluation, wheel build and installed-wheel checks, an offline
-  SARIF scan and, on Python 3.12, the container smoke test;
-- CodeQL analysis;
-- weekly Dependabot update pull requests for Python and GitHub Actions
-  dependencies (`.github/dependabot.yml`);
-- AI-assisted code review where it is configured on the repository. This is a
-  repository setting, not part of the checked-in workflows, and its output is
-  advisory. Much of the hardening work was itself AI-assisted; the maintainer
-  reads the result and is accountable for what is merged.
+- The PR targets `main`, conflicts are resolved, and current CI and CodeQL
+  checks pass. This includes signature validation, lint, typing, dependency
+  audit, coverage, detection evaluation, and package and smoke checks.
+- The change respects the trust model, documents compatibility changes, and
+  includes appropriate validation. An AI-assisted change must meet the same
+  requirements as any other contribution.
+- The review record describes what was checked and any remaining limitation.
+  If an independent approval exists, it must cover the final commit; a later
+  push requires renewed review before that approval can be relied on.
 
-These checks establish implementation behaviour. They are not an independent
-review, and none of them can be confirmed from a checkout: rulesets, branch
-protection and pull request approvals are repository settings that can change
-at any time. [docs/production.md](docs/production.md#merge-gate-and-review-status)
-gives operators the commands to inspect the live state.
+The historical review status is documented in
+[merge gate and review status](docs/production.md#merge-gate-and-review-status).
+Do not read a merged pull request, green check, AI review or version number as
+evidence that a second person examined the change. Repository settings are
+separate from this policy: inspect the
+[live rules](https://github.com/aisecnomad/Project-Nexus/rules) and PR checks
+before merging. Do not disable checks or review rules to make a merge possible,
+and do not describe an unenforced requirement as an active platform gate.
 
-Independent human review is required before any tagged release. No tag exists
-yet; the `0.1.1` version string names an unreleased candidate. For an operator
-who needs an externally reviewed revision, that review is the bar: pin the full
-commit SHA that was reviewed, keep the review record with the deployment
-evidence, and do not infer review from a version number or a merged pull
-request.
+**Independent human review is required before any tagged release.** The
+reviewer must not have authored or produced the change. A review is recorded as
+a GitHub pull request approval from an account other than the author's. Inspect
+the review author, state and `commit_id` with
+`gh api repos/aisecnomad/Project-Nexus/pulls/<number>/reviews`, and compare that
+commit to the current PR head. When the project has a second reviewer, enable
+the ruleset's required approval for routine changes instead of relying on
+convention. Never manufacture an approval or treat an AI reviewer as that person.
 
-A second reviewer is recorded as a pull request approval from a GitHub account
-other than the author's, submitted on the final commit of the branch
-(`gh pr review <number> --repo aisecnomad/Project-Nexus --approve`). The
-approval appears in the pull request's review list and in
-`gh api repos/aisecnomad/Project-Nexus/pulls/<number>/reviews`; an approval
-followed by a further push does not cover the pushed commits. The author of a
-change cannot supply this approval, and a review is only independent when the
-reviewer did not produce the change. When a second maintainer exists, enable
-the ruleset's required approving review instead of relying on convention. Do
-not weaken rulesets to self-merge, and do not describe a review gate that the
-repository settings do not enforce.
+For deployment, pin the full reviewed commit SHA and retain its review and
+acceptance evidence. No tag exists yet; `0.1.1` names an unreleased candidate.
+Independent review of a release does not itself establish live tenant acceptance.
+See [governance](GOVERNANCE.md) for release and decision responsibilities.
 
 ## Security reports
 
-Use a [private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new)
-and follow [SECURITY.md](SECURITY.md#reporting-a-vulnerability). Do not include
-credentials, private exports, or exploit details in public issues.
+Follow the [security reporting instructions](SECURITY.md#reporting) to submit a
+private report. Do not include credentials, private exports, or exploit details
+in public issues.
 
 ## Developer Certificate of Origin
 

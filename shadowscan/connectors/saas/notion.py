@@ -16,6 +16,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorError, _positive_
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient
 from shadowscan.utils.text import get_path
 
@@ -67,12 +68,29 @@ class NotionConnector(BaseConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for u in records:
+            if not self._valid_user_record(u):
+                self.ctx.warn("saas.notion: unsupported or malformed user record or provider error; coverage incomplete")
+                continue
             if u.get("type") != "bot" and "bot" not in u:
                 continue
             self.ctx.examined()
-            f = self._bot_finding(u)
+            try:
+                f = self._bot_finding(u)
+            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"saas.notion: skipped a malformed integration record ({type(exc).__name__}){detail}")
+                continue
             if f:
                 yield f
+
+    def _valid_user_record(self, u: Any) -> bool:
+        # Error bodies are {"object": "error", "status": ..., "code": ..., "message": ...}
+        # and must never pass as an empty inventory.
+        return (
+            self._record_fields_valid(u, strings=("object", "type", "id", "name", "avatar_url"), mappings=("bot", "person"))
+            and u.get("object") in (None, "user")
+            and any(isinstance(u.get(key), str) and u[key].strip() for key in ("id", "name"))
+        )
 
     def _bot_finding(self, u: dict[str, Any]) -> Finding | None:
         name = u.get("name") or u.get("id")

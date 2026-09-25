@@ -4,7 +4,7 @@
 [![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://aisecnomad.github.io/Project-Nexus/)
+[![Docs](https://img.shields.io/badge/docs-source-blue.svg)](https://github.com/aisecnomad/Project-Nexus/tree/main/docs)
 
 **ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
 
@@ -91,7 +91,7 @@ Offline analysis can run in CI, on an analyst laptop or against a SIEM export.
 
 ## Frameworks & products recognised
 
-212 signatures / 990 signals, YAML-defined with explicit opt-in overrides:
+215 signatures / 994 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -170,7 +170,7 @@ shadowscan code . --inventory agent-card.yaml
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 
 # 3. Real estate: one config, live connectors, secrets from the environment
-shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif --fail-on high
+shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif
 
 # 4. Single connector, ad-hoc
 shadowscan run identity.entra --set tenant_id=$AZURE_TENANT_ID
@@ -208,7 +208,6 @@ options:
   connector_timeout_seconds: 120    # soft deadline; also enforce a host job timeout
   parallel: 4                        # worker threads; use 1-2 for CPU-bound offline scans
   min_confidence: 0.3
-  fail_on: high
   dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs
 connectors:
   - name: identity.entra
@@ -263,6 +262,10 @@ cannot establish an agent unless `--include-tests` is set.
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
 scans as unsuccessful, while preserving findings from successfully assessed inputs.
+Enable `--fail-on` only after a [frozen, independently adjudicated holdout](docs/evaluation.md#gate-a-frozen-holdout)
+and [read-only tenant canary](docs/evaluation.md#read-only-tenant-canary-procedure)
+establish an acceptable threshold for that environment. A complete static scan
+does not prove that an agent executed or that every eligible resource was collected.
 The CLI normally exits promptly after a connector deadline even when a blocked
 worker cannot be joined. A filesystem publication already in progress can still
 delay timeout handling; enforce a host job timeout for hard limits.
@@ -363,15 +366,37 @@ turns shadow findings into card skeletons for review. See
 pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
 ruff check shadowscan tests tools
-mypy shadowscan tools/evaluation
+mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
 pip-audit --progress-spinner off
 pytest -q --cov=shadowscan --cov-fail-under=80
 shadowscan scan -c examples/shadowscan.offline.yaml
 ```
 
-The test suite needs the `cloud` extra: one OCI test module imports the SDK at
-collection time, so without it pytest stops with a collection error before any
-test runs. See [CONTRIBUTING.md](CONTRIBUTING.md#quality-gates).
+Install the `cloud` extra for the same connector coverage as CI. Tests that
+require missing optional SDKs can skip, so a core-only run does not validate all
+connectors. See [CONTRIBUTING.md](CONTRIBUTING.md#getting-started).
+
+## Community and contributing
+
+Contributions are welcome from developers, security practitioners, technical
+writers and people testing the scanner against their own authorized data.
+A small documentation fix or a reproducible false-positive report is useful.
+
+| I want to… | Start here |
+|---|---|
+| Learn, ask a question or troubleshoot a scan | [Support guide](SUPPORT.md) |
+| Report a bug, request a feature or a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
+| Report a false positive, a missed framework or a wrong score | [Detection quality report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml) |
+| Make a first contribution | [Contributor guide](CONTRIBUTING.md) and the [`good first issue`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label |
+| Understand decisions, review and release requirements | [Governance](GOVERNANCE.md), [Maintainers](MAINTAINERS.md), [Roadmap](ROADMAP.md) |
+| Report a vulnerability privately | [Security policy](SECURITY.md#reporting) |
+| Understand participation standards or report harmful conduct | [Code of conduct](CODE_OF_CONDUCT.md) |
+| See what changed, or cite the project | [Changelog](CHANGELOG.md), [CITATION.cff](CITATION.cff) |
+
+Use synthetic, minimal examples in public reports. Scan results can contain
+credentials, personal data and sensitive inventory even after redaction. The
+project has a single maintainer and is actively looking for reviewers and
+co-maintainers; see [MAINTAINERS.md](MAINTAINERS.md#becoming-a-reviewer-or-maintainer).
 
 ## Safety notes
 
@@ -382,28 +407,6 @@ test runs. See [CONTRIBUTING.md](CONTRIBUTING.md#quality-gates).
 
 Deployment behavior, migration options, and limits are documented in
 [SECURITY.md](SECURITY.md) and [docs/production.md](docs/production.md).
-
-## Community
-
-ShadowScan is developed in the open and welcomes contributions of every size.
-The fastest ways in are documentation fixes, detection reports and signature or
-fixture additions; a connector is the largest unit of work.
-
-| I want to… | Go to |
-|---|---|
-| Ask a question or get unblocked | [SUPPORT.md](SUPPORT.md) |
-| Report a bug, request a feature or a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
-| Report a false positive, a missed framework or a wrong score | [Detection report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml) |
-| Report a credential leak, redaction failure or other vulnerability | [Private security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new), per [SECURITY.md](SECURITY.md) |
-| Contribute code, signatures, fixtures or docs | [CONTRIBUTING.md](CONTRIBUTING.md) and the [`good first issue`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label |
-| Understand who decides what, and how that changes | [GOVERNANCE.md](GOVERNANCE.md), [MAINTAINERS.md](MAINTAINERS.md), [ROADMAP.md](ROADMAP.md) |
-| See what changed | [CHANGELOG.md](CHANGELOG.md) |
-| Cite the project | [CITATION.cff](CITATION.cff) |
-
-Everyone participating is expected to follow the
-[code of conduct](CODE_OF_CONDUCT.md). The project has a single maintainer and
-is actively looking for reviewers and co-maintainers; see
-[MAINTAINERS.md](MAINTAINERS.md#becoming-a-reviewer-or-maintainer).
 
 ## License
 

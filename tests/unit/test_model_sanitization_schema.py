@@ -1,5 +1,7 @@
 """Dataclass attributes are independent values, never positional CLI arguments."""
 
+import re
+
 import pytest
 
 from shadowscan.models import Evidence, Finding, Kind, Risk, RiskFactor, Surface
@@ -47,3 +49,92 @@ def test_singleton_wrappers_preserve_real_nested_argv_and_cross_field_redaction(
                       metadata={"argv": ["--token", secret]})
     assert finding.title == f"Echoed {REDACTED}"
     assert finding.metadata["argv"] == ["--token", REDACTED]
+
+
+def _finding(**overrides) -> Finding:
+    values = dict(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT, title="Agent",
+                  resource="github:acme/app", resource_type="repository")
+    values.update(overrides)
+    return Finding(**values)
+
+
+def test_sanitize_verifies_unchanged_state_by_digest_and_redacts_every_later_mutation(monkeypatch):
+    from shadowscan import models
+
+    calls = []
+    original = models.sanitize
+
+    def counting(value, **kwargs):
+        calls.append(1)
+        return original(value, **kwargs)
+
+    monkeypatch.setattr(models, "sanitize", counting)
+    finding = _finding()
+    assert len(calls) == 1, "construction performs one full pass"
+    finding.sanitize()
+    finding.to_dict()
+    assert len(calls) == 1, "an unchanged finding is not re-scanned"
+    finding.title = "uses sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
+    assert finding.to_dict()["title"] == f"uses {REDACTED}" and len(calls) == 2
+    finding.metadata["nested"] = {"api_key": "opaque-configured-value"}
+    assert finding.to_dict()["metadata"]["nested"]["api_key"] == REDACTED and len(calls) == 3
+    # Evidence construction runs its own pass (one call); the finding then needs one more.
+    finding.evidence.append(Evidence(signal="x", description="Authorization: Bearer abcdef0123456789"))
+    assert "abcdef0123456789" not in finding.to_dict()["evidence"][0]["description"] and len(calls) == 5
+    finding.risk = Risk(score=10, factors=[RiskFactor("f", "password=hunter2-value", 1)])
+    assert finding.to_dict()["risk"]["factors"][0]["description"] == f"password={REDACTED}" and len(calls) == 6
+    finding.to_dict()
+    assert len(calls) == 6
+
+
+@pytest.mark.parametrize("pattern_name,source", [
+    ("_INDEXED_ASSIGNMENT_KEY", 'config["password"] = "opaque-cached-value"'),
+    ("_TARGET_ATTRIBUTE", 'config["password"].primary = "opaque-cached-value"'),
+])
+def test_replaced_indexed_redaction_pattern_invalidates_sanitized_state(monkeypatch, pattern_name, source):
+    from shadowscan.utils import redaction
+
+    original = getattr(redaction, pattern_name)
+    with monkeypatch.context() as patch:
+        patch.setattr(redaction, pattern_name, re.compile(r"(?!)"))
+        finding = _finding(metadata={"source": source})
+        assert finding.metadata["source"] == source
+    assert getattr(redaction, pattern_name) is original
+    assert "opaque-cached-value" not in finding.to_dict()["metadata"]["source"]
+
+
+def test_sanitization_bookkeeping_never_enters_reports_and_cannot_be_imported():
+    finding = _finding()
+    exported = finding.to_dict()
+    assert "_clean_digest" not in exported
+    forged = Finding.from_dict({**exported, "_clean_digest": "0" * 64,
+                                "title": "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"})
+    assert forged.title == REDACTED
+    assert forged == Finding.from_dict(forged.to_dict()), "cache state is excluded from equality"
+
+
+def test_failed_sanitization_pass_records_no_verified_state():
+    from shadowscan.utils.redaction import SanitizationLimitError
+
+    finding = _finding()
+    finding.connector = "code.filesystem sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
+    with pytest.raises(SanitizationLimitError):
+        finding.sanitize()
+    assert finding._clean_digest is None, "a failed pass never marks the state verified"
+    assert REDACTED in finding.connector, "the rejected identity field is withheld even though the finding is omitted"
+
+
+def test_state_digest_rejects_an_aliased_dag_before_expanding_it():
+    from shadowscan.utils.redaction import SanitizationLimitError
+
+    node: list = ["x"]
+    for _ in range(40):
+        node = [node, node]  # 2**40 leaves if expanded by repr
+    finding = _finding()
+    finding.metadata["dag"] = node
+    with pytest.raises(SanitizationLimitError):
+        finding.sanitize()
+    with pytest.raises(SanitizationLimitError):
+        from shadowscan.models import _clean_state
+
+        _clean_state(finding._digest_state(), bounded=False)

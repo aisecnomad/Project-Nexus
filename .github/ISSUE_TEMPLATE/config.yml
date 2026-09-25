@@ -5,11 +5,6 @@ contact_links:
     about: >
       Report credential leaks, redaction failures, or security vulnerabilities
       through a private advisory. Do not open a public issue.
-  - name: Support and documentation
+  - name: Support and contribution routes
     url: https://github.com/aisecnomad/Project-Nexus/blob/main/SUPPORT.md
-    about: >
-      Where to take a question, a bug, a feature idea, or a security problem, and
-      what the project does not provide.
-  - name: Questions and discussion
-    url: https://github.com/aisecnomad/Project-Nexus/discussions
-    about: Ask questions, share scan results (sanitized), or discuss use cases.
+    about: Find setup help, troubleshooting steps, and safe reporting routes.

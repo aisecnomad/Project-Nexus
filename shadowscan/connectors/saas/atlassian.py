@@ -38,7 +38,13 @@ class AtlassianConnector(BaseConnector):
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.site = str(ctx.get("site", env="ATLASSIAN_SITE") or "").rstrip("/")
-        self.products = ctx.get("products") or ["jira", "confluence"]
+        products = ctx.get("products") or ["jira", "confluence"]
+        if isinstance(products, str):
+            # A bare string would otherwise be iterated character by character.
+            products = [item.strip() for item in products.split(",") if item.strip()]
+        if not isinstance(products, list) or not products or any(item not in {"jira", "confluence"} for item in products):
+            raise ConnectorError("saas.atlassian: products must list only 'jira' and/or 'confluence'")
+        self.products: list[str] = list(dict.fromkeys(products))
 
     def collect(self) -> Iterable[dict[str, Any]]:
         email = self.ctx.get("email", env="ATLASSIAN_EMAIL")

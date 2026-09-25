@@ -1,83 +1,79 @@
 # Support
 
-This page tells you where to take a question, a bug, or a security problem.
+ShadowScan is an unreleased, volunteer-maintained project. Support is best
+effort; there is no guaranteed response time, commercial support commitment,
+or production service-level agreement. A version string or successful scan
+does not establish production acceptance for your environment.
 
-ShadowScan inspects identity providers, cloud accounts, SaaS tenants, and
-source repositories. **Never paste credentials, JWTs, private tenant exports,
-or unsanitized scan output into a public issue, pull request, or discussion.**
-Replace secrets with `${REDACTED}`.
+## Choose the right route
 
-## I have a question
+| Need | Route |
+|---|---|
+| Installation, configuration or scan semantics | [Documentation](https://github.com/aisecnomad/Project-Nexus/tree/main/docs) and the troubleshooting steps below |
+| Usage question | [Usage question form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=question.yml) |
+| Reproducible bug, false positive or missed detection | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
+| Feature or connector proposal | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose); describe the use case and required permissions |
+| Vulnerability, credential disclosure or unsafe scanner behavior | [Security reporting policy](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md#reporting) and the [private advisory form](https://github.com/aisecnomad/Project-Nexus/security/advisories/new); keep exploit details private |
+| Participation or conduct concern | [Code of conduct](https://github.com/aisecnomad/Project-Nexus/blob/main/CODE_OF_CONDUCT.md#reporting-a-concern) |
+| Contribute a fix or review | [Contributor guide](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md) |
 
-Open a [GitHub Discussion](https://github.com/aisecnomad/Project-Nexus/discussions)
-if Discussions are enabled, otherwise open a documentation issue.
+Search [existing issues](https://github.com/aisecnomad/Project-Nexus/issues)
+before opening a new topic. Add new reproduction evidence to an existing report
+instead of posting duplicates.
 
-Useful questions:
+## Troubleshoot before reporting
 
-- How do I pin a reviewed commit SHA?
-- Which connector covers this platform?
-- How should an Agent Card bind to a resource?
-- How do I interpret `shadow`, `confidence`, or exit code 3?
+1. Record the full scanner commit SHA, Python version, operating system and
+   affected connector. In a source checkout, use `git rev-parse HEAD`; for an
+   installed wheel, retain the source SHA from the build or installation record.
+   `0.1.1` alone cannot identify an unreleased revision.
+2. Check [connector documentation](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/connectors.md)
+   for supported input modes, required SDK extras and read-only permissions.
+   Do not broaden permissions simply to make an error disappear.
+3. Reduce the problem to one connector and the smallest synthetic input that
+   reproduces it. Compare against the bundled offline example when possible.
+4. Read the report's completion state and sanitized diagnostics. An incomplete
+   scan is not evidence that a tenant or repository has no findings. See
+   [scan semantics](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/scanning.md)
+   for limits, skipped inputs and exit codes.
+5. For a suspected detection error, explain the expected classification and its
+   evidence. Static dependencies do not prove execution, and `shadow: true`
+   means unmatched against the inventory supplied for that scan.
 
-## I found a bug
-
-Use the [bug report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=bug_report.yml).
+## What makes a useful report
 
 Include:
 
-- `shadowscan --version` or the full commit SHA you installed
-- The sanitized command and configuration
-- The surface and collection mode
-- The exit code (`0`, `2`, `3`, or a crash)
+- The revision and environment from step 1.
+- The exact command with secrets, account identifiers and private paths removed.
+- Minimal configuration and synthetic input needed to reproduce the problem.
+- Expected behavior, actual behavior and the process exit code.
+- Relevant sanitized diagnostics and whether the problem occurs offline or
+  needs a live provider. State which permissions were granted without sharing
+  credentials.
+- For detection reports, the expected signature or finding class, and why the
+  example is a positive or negative case.
 
-## I want a feature or a new connector
+Do not attach whole scan reports, JWTs, live tenant exports, environment dumps,
+private source trees or credential-bearing URLs. Automated redaction cannot
+identify every secret or sensitive business detail. Inspect every attachment
+before posting it publicly; use private security reporting if the reproduction
+would expose a vulnerability or confidential data.
 
-- Feature: [feature request form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=feature_request.yml)
-- New platform: [connector request form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=connector_request.yml)
+## Supported revisions and triage
 
-## The docs are wrong or missing
+Only the current `main` branch receives fixes; the project has no released
+version or backport commitment. Report the exact revision you used even if it
+is older. A maintainer may ask you to try a reviewed newer revision in an
+isolated environment to determine whether the problem is already fixed.
 
-Use the [documentation form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=documentation.yml)
-or send a small pull request. Docs-only fixes are the fastest first
-contribution.
+Maintainers prioritize impact, reproducibility and available capacity. Security
+and data-integrity concerns need private assessment first; actionable bugs and
+regressions generally come before new integrations. A request for more evidence
+is not a promise of a fix or delivery date. If you can contribute a reproducer,
+documentation improvement or review, link it to the issue.
 
-## I want to contribute code
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[code of conduct](CODE_OF_CONDUCT.md). Look for issues labeled
-[`good first issue`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-or [`help wanted`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
-
-## I found a security problem
-
-Do **not** open a public issue.
-
-Use a
-[private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new)
-and follow [SECURITY.md](SECURITY.md).
-
-That includes:
-
-- Credential leaks in reports or logs
-- Redaction failures
-- Path traversal or unexpected file reads
-- CI or release-evidence integrity issues
-- Anything that could expose a scanned tenant
-
-## What this project does not provide
-
-- Managed scanning as a service
-- A published package or signed release (0.1.1 is an unreleased candidate)
-- A guarantee that a finding means an agent executed
-- Emergency incident response for your organization
-
-Install from a reviewed full commit SHA. See the
-[production guide](docs/production.md).
-
-## Maintainer response
-
-There is currently a single maintainer. Response times vary. Security
-advisories are read before public issues.
-
-If you do not get a reply, it is still fine to send a focused pull request
-for docs, signatures, fixtures, or tests.
+For deployment decisions, use the
+[production and acceptance guidance](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md).
+Community support, regression fixtures and an AI-assisted code review do not
+replace your own security review or live tenant acceptance.

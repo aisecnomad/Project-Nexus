@@ -167,6 +167,56 @@ def test_disconnected_or_inert_anthropic_tool_code_is_not_an_agent(tmp_path, run
     assert not any(finding.kind == Kind.AGENT for finding in findings)
 
 
+@pytest.mark.parametrize("source", [
+    ANTHROPIC_LOOP.split("    for block in response.content:")[0]
+    + '    results = []\n    for block in response.content:\n'
+    + '        if False:\n'
+    + '            output = bash(**block.input)\n'
+    + '            results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})\n'
+    + '    messages.append({"role": "user", "content": results})\n',
+    ANTHROPIC_LOOP.replace('    for block in response.content:\n', '    if True:\n        break\n    for block in response.content:\n'),
+    ANTHROPIC_LOOP.replace('        if block.type == "tool_use":\n', '        if True:\n            break\n        if block.type == "tool_use":\n'),
+])
+def test_literal_guards_cannot_create_unreachable_tool_feedback(tmp_path, run_connector, source):
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize("source", [
+    ANTHROPIC_LOOP.replace('        if block.type == "tool_use":\n', '        if False:\n            break\n        if block.type == "tool_use":\n'),
+    ANTHROPIC_LOOP.replace('        if block.type == "tool_use":\n', '        if True:\n            if block.type == "tool_use":\n')
+    .replace('            output = subprocess.run(', '                output = subprocess.run(')
+    .replace('            messages.append({"role": "user",', '                messages.append({"role": "user",'),
+])
+def test_literal_guards_keep_reachable_tool_feedback(tmp_path, run_connector, source):
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize("source", [
+    ANTHROPIC_LOOP.replace(
+        '            output = subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout',
+        '            subprocess = dry_run\n'
+        '            output = subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout',
+    ),
+    ANTHROPIC_LOOP.replace('import subprocess\n', 'from subprocess import run\n').replace(
+        '            output = subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout',
+        '            run = dry_run\n'
+        '            output = run(block.input["command"], shell=True, capture_output=True, text=True)',
+    ),
+    ANTHROPIC_LOOP.replace('import subprocess\n', '').replace(
+        '            output = subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout',
+        '            exec = dry_run\n            output = exec(block.input["command"])',
+    ),
+])
+def test_shadowed_execution_sink_cannot_verify_dispatch(tmp_path, run_connector, source):
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
 def test_local_provider_module_cannot_establish_a_tool_loop(tmp_path, run_connector):
     (tmp_path / "openai.py").write_text("raise RuntimeError('local source must never execute')\n")
     findings, ctx = scan(tmp_path, run_connector)
