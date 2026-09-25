@@ -24,7 +24,7 @@ lint: ## Run ruff linter
 
 .PHONY: typecheck
 typecheck: ## Run mypy type checker
-	mypy shadowscan tools/evaluation tools/canaries
+	mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
 
 .PHONY: test
 test: ## Run test suite with coverage
@@ -48,9 +48,11 @@ audit: ## Audit dependencies for known vulnerabilities
 	pip-audit --progress-spinner off
 
 .PHONY: evaluate
-evaluate: ## Run all detection evaluation corpora
+evaluate: ## Run all detection evaluation corpora (same set as CI)
 	python -m tools.evaluation.evaluate
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/public_corpus.json
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/realistic_corpus.json
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
 		--annotations tools/evaluation/independent_annotations.json
 
@@ -101,14 +103,18 @@ demo-sarif: ## Run offline demo with SARIF output
 # --- Docs ------------------------------------------------------------------
 
 .PHONY: docs
-docs: ## Build documentation site locally
-	pip install -q mkdocs-material mkdocs-minify-plugin
-	mkdocs build
+docs: ## Build documentation site locally (strict, same as CI)
+	python -m pip install -q --require-hashes --only-binary=:all: -r requirements-docs.lock
+	mkdocs build --strict
 
 .PHONY: docs-serve
 docs-serve: ## Serve documentation site with live reload
-	pip install -q mkdocs-material mkdocs-minify-plugin
+	python -m pip install -q --require-hashes --only-binary=:all: -r requirements-docs.lock
 	mkdocs serve
+
+.PHONY: policy
+policy: ## Check repository policy: links, pinned actions, permissions, issue forms
+	python -m pytest -q tests/test_repository_policy.py
 
 # --- Cleanup ---------------------------------------------------------------
 

@@ -1,32 +1,48 @@
 name: Stale issues
 
+# Marks inactive issues so triage can see them. A single maintainer's silence is
+# not the reporter's fault, so pull requests are never closed by automation and
+# issues are only closed after a stale warning has gone unanswered for a month.
 on:
   schedule:
     - cron: "0 6 * * 1"  # Monday 06:00 UTC
   workflow_dispatch:
 
 permissions:
-  issues: write
-  pull-requests: write
+  contents: read
 
 jobs:
   stale:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+      pull-requests: write
     steps:
       - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
         with:
           stale-issue-message: >
-            This issue has been automatically marked as stale because it has
-            not had recent activity. It will be closed in 14 days if no further
-            activity occurs. If this issue is still relevant, please comment or
-            remove the stale label.
+            This issue has had no activity for 90 days and has been marked stale
+            so it shows up in triage. It will be closed in 30 days if nothing
+            further happens. If it is still relevant, add a comment (a short
+            "still applies at commit <sha>" is enough) or ask for the `pinned`
+            label and it will stay open.
+          close-issue-message: >
+            Closing after 30 days without activity following the stale notice.
+            This is housekeeping, not a judgement on the report: reopen it, or
+            open a new issue linking here, if it still applies.
           stale-pr-message: >
-            This PR has been automatically marked as stale because it has not
-            had recent activity. It will be closed in 14 days if no further
-            activity occurs.
-          days-before-stale: 60
-          days-before-close: 14
-          exempt-issue-labels: "security,pinned"
+            This pull request has had no activity for 90 days and has been
+            marked stale. It will not be closed automatically. If you are still
+            working on it, rebase onto `main` and push; if you would like the
+            maintainer to take it over, say so here.
+          days-before-stale: 90
+          days-before-close: 30
+          days-before-pr-close: -1
+          exempt-issue-labels: "security,pinned,good first issue,help wanted,connector-request"
           exempt-pr-labels: "security,pinned"
+          exempt-all-milestones: true
           stale-issue-label: "stale"
           stale-pr-label: "stale"
+          remove-stale-when-updated: true
+          operations-per-run: 100

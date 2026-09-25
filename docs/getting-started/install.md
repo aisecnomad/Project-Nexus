@@ -58,7 +58,7 @@ See [Production deployment](../production.md) for secure container usage.
 ```bash
 shadowscan --version
 shadowscan --help
-python -m shadowscan.signatures.validate  # validates 178 signatures / 790 signals
+python -m shadowscan.signatures.validate  # validates 212 signatures / 990 signals
 ```
 
 ## Dependencies

@@ -5,8 +5,37 @@ everything from setting up your environment to getting a PR merged.
 
 ## Code of conduct
 
-Be respectful, constructive, and professional. Security scanning tools protect
-organizations; contributors should hold themselves to the same standard.
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). Security
+scanning tools protect organizations; contributors hold themselves to the same
+standard, which includes keeping credentials, tenant exports and unredacted
+findings out of every public space.
+
+## Ways to contribute
+
+You do not need to write a connector to help. In rough order of how quickly a
+first contribution lands:
+
+- **Documentation**: fix a wrong statement, add a missing option, tighten a
+  page. Use the [documentation form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=documentation.yml)
+  or send the pull request directly.
+- **Detection reports**: a false positive, a missed framework or a
+  misattributed provider, filed through the
+  [detection report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml)
+  with a sanitized minimal input. Accepted reports become labeled cases in
+  `tools/evaluation/`.
+- **Signatures and evaluation cases**: YAML packs under
+  `shadowscan/signatures/data/` and regression cases under `tools/evaluation/`.
+- **Offline fixtures and tests**: sanitized export shapes under
+  `tests/fixtures/` that raise a connector's coverage.
+- **Connectors**: see [Writing a connector](#writing-a-connector).
+- **Review**: reading other people's pull requests is the contribution the
+  project needs most; see [Review and merge policy](#review-and-merge-policy).
+
+Issues labeled [`good first issue`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+and [`help wanted`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+are scoped for newcomers. For anything larger than a focused fix, open an issue
+first so the approach is agreed before the work. [SUPPORT.md](SUPPORT.md) routes
+questions and problems that are not contributions.
 
 ## Getting started
 
@@ -72,6 +101,14 @@ cloud connectors; do not commit live tenant exports.
   affects rollout, finding identity, or credential policy.
 - Include regression tests for bug fixes.
 - Use the PR template checklist — it matches the CI gates.
+- Keep pull requests focused. One behaviour change per pull request is easier
+  to review, to bisect and to describe in `CHANGELOG.md`.
+- Write the description for a reviewer who was not there: what changed, why,
+  how it was verified, and what an operator has to do differently.
+- Repository policy is tested. `tests/test_repository_policy.py` checks that
+  Markdown links resolve, workflows stay pinned and read-only by default, and
+  issue forms use labels that exist; run it when you touch `.github/` or a
+  top-level document.
 
 ## Writing a connector
 
@@ -149,8 +186,9 @@ repository settings do not enforce.
 
 ## Security reports
 
-Use a private GitHub security advisory. Do not include credentials, private
-exports, or exploit details in public issues.
+Use a [private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new)
+and follow [SECURITY.md](SECURITY.md#reporting-a-vulnerability). Do not include
+credentials, private exports, or exploit details in public issues.
 
 ## Developer Certificate of Origin
 

@@ -1,0 +1,100 @@
+name: Detection report (false positive or false negative)
+description: A finding that should not have fired, or an agent, framework, or credential that ShadowScan missed.
+labels: [detection]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Detection reports improve the signature packs and the evaluation corpus for
+        everyone. Each accepted report becomes a labeled regression case.
+
+        **Do not paste credentials, JWTs, private tenant exports, or unsanitized scan
+        output.** Replace secrets with `${REDACTED}`, trim exports to the record that
+        matters, and rename hosts, tenants, and accounts if they identify your
+        organization. Public open-source repositories can be referenced by URL and
+        commit. A credential that ShadowScan *failed to redact* is a security
+        problem: report it through a
+        [private security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new)
+        instead of this form.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Report type
+      options:
+        - False positive (a finding fired but nothing agent-related is there)
+        - False negative (an agent, framework, provider, or credential was missed)
+        - Misattribution (right finding, wrong framework, provider, kind, or capability)
+        - Wrong score (confidence, risk level, or shadow status looks wrong)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: ShadowScan version or commit
+      description: Output of `shadowscan --version` or the full commit SHA you installed from.
+      placeholder: "0.1.1 or commit abc1234"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Code (filesystem / GitHub / GitLab)
+        - Identity (Okta / Entra / Google Workspace / Auth0 / JWT)
+        - Gateway (logs)
+        - Low-code (Power Platform / Salesforce / ServiceNow / n8n / Make / Zapier / Workato)
+        - SaaS (Slack / Teams / GitHub Apps / Atlassian / Notion / Zoom / generic)
+        - Cloud (AWS / GCP / Azure / OCI)
+    validations:
+      required: true
+
+  - type: input
+    id: signature
+    attributes:
+      label: Signature or signal involved
+      description: |
+        The `frameworks`, `model_providers`, or `evidence[].signal` values from the finding,
+        or the output of `shadowscan signatures test <value>` for the thing that was missed.
+      placeholder: "framework.langchain, provider.openai, secret: provider.anthropic"
+
+  - type: textarea
+    id: input
+    attributes:
+      label: Minimal input that reproduces it
+      description: |
+        The smallest sanitized snippet, file layout, log line, or export record that
+        triggers (or fails to trigger) the finding. For a public repository, a URL and
+        commit SHA is enough. Wrap code in a fenced block.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: finding
+    attributes:
+      label: Finding as reported (sanitized)
+      description: |
+        The JSON finding from `--format json`, or the table row. Remove or replace any
+        value that identifies a tenant, account, person, or secret.
+      render: json
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should ShadowScan have reported?
+      description: The expected kind, framework, provider, capability, or that nothing should fire, and why.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before you submit
+      options:
+        - label: I removed credentials, tokens, private exports, and identifying tenant or account data.
+          required: true
+        - label: I am willing to turn this into a labeled evaluation case under `tools/evaluation/`.

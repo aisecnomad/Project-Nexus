@@ -6,9 +6,15 @@ Thank you for your interest in contributing to ShadowScan.
 
 1. Read the [security policy](security.md) — ShadowScan handles audit
    credentials and security findings.
-2. Check [existing issues](https://github.com/aisecnomad/Project-Nexus/issues)
+2. Read the [code of conduct](https://github.com/aisecnomad/Project-Nexus/blob/main/CODE_OF_CONDUCT.md).
+3. Check [existing issues](https://github.com/aisecnomad/Project-Nexus/issues)
    for related work.
-3. For significant changes, open an issue first to discuss the approach.
+4. For significant changes, open an issue first to discuss the approach.
+
+Documentation fixes, detection reports, signatures, fixtures and evaluation
+cases are the fastest first contributions; the repository's
+[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#ways-to-contribute)
+lists them with the forms to use.
 
 ## Development setup
 
@@ -63,8 +69,15 @@ approved plugin runs with scanner privileges.
 
 ## Review gate
 
-The author of a change cannot supply the required independent approving
-review. Do not weaken repository rulesets to self-merge.
+ShadowScan has a single maintainer, and no change on `main` currently carries an
+approving review from a second person. Automated gates establish behaviour; they
+are not review. Independent human review is required before any tagged
+release, and the author of a change can never supply it. Do not weaken
+repository rulesets to self-merge, and do not describe a review gate that the
+repository settings do not enforce. The full policy, including how a second
+reviewer is recorded, is in the
+[review and merge policy](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy)
+and the project's [governance](governance.md).
 
 ## Writing a connector
 

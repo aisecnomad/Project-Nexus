@@ -6,7 +6,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://aisecnomad.github.io/Project-Nexus/)
 
-**ShadowScan is an Open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
+**ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
 
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps and cloud accounts. It fingerprints frameworks and
@@ -91,7 +91,7 @@ Offline analysis can run in CI, on an analyst laptop or against a SIEM export.
 
 ## Frameworks & products recognised
 
-211 signatures / 912 signals, YAML-defined with explicit opt-in overrides:
+212 signatures / 990 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -147,7 +147,7 @@ python -m pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Pro
 The current `0.1.1` source version is an unreleased candidate; the version
 string does not imply a published or signed artifact. These VCS installs resolve
 transitive dependencies at install time. For deployment, use the locked install
-below. Python 3.11+ is required; CI covers 3.11 and 3.12. Core dependencies
+below. Python 3.11+ is required; CI covers 3.11, 3.12 and 3.13. Core dependencies
 include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
@@ -371,7 +371,7 @@ shadowscan scan -c examples/shadowscan.offline.yaml
 
 The test suite needs the `cloud` extra: one OCI test module imports the SDK at
 collection time, so without it pytest stops with a collection error before any
-test runs. See [CONTRIBUTING.md](CONTRIBUTING.md#development).
+test runs. See [CONTRIBUTING.md](CONTRIBUTING.md#quality-gates).
 
 ## Safety notes
 
@@ -383,4 +383,28 @@ test runs. See [CONTRIBUTING.md](CONTRIBUTING.md#development).
 Deployment behavior, migration options, and limits are documented in
 [SECURITY.md](SECURITY.md) and [docs/production.md](docs/production.md).
 
-License: Apache-2.0.
+## Community
+
+ShadowScan is developed in the open and welcomes contributions of every size.
+The fastest ways in are documentation fixes, detection reports and signature or
+fixture additions; a connector is the largest unit of work.
+
+| I want to… | Go to |
+|---|---|
+| Ask a question or get unblocked | [SUPPORT.md](SUPPORT.md) |
+| Report a bug, request a feature or a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
+| Report a false positive, a missed framework or a wrong score | [Detection report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml) |
+| Report a credential leak, redaction failure or other vulnerability | [Private security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new), per [SECURITY.md](SECURITY.md) |
+| Contribute code, signatures, fixtures or docs | [CONTRIBUTING.md](CONTRIBUTING.md) and the [`good first issue`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label |
+| Understand who decides what, and how that changes | [GOVERNANCE.md](GOVERNANCE.md), [MAINTAINERS.md](MAINTAINERS.md), [ROADMAP.md](ROADMAP.md) |
+| See what changed | [CHANGELOG.md](CHANGELOG.md) |
+| Cite the project | [CITATION.cff](CITATION.cff) |
+
+Everyone participating is expected to follow the
+[code of conduct](CODE_OF_CONDUCT.md). The project has a single maintainer and
+is actively looking for reviewers and co-maintainers; see
+[MAINTAINERS.md](MAINTAINERS.md#becoming-a-reviewer-or-maintainer).
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

@@ -2,6 +2,43 @@
 
 ## 0.1.1 — Unreleased
 
+### Project and community (2026-09-25)
+
+No scanner behaviour changes. This pass makes the repository's community
+profile complete, internally consistent and tested:
+
+- `GOVERNANCE.md` now describes the actual single-maintainer model, including
+  that no change on `main` carries a second person's approving review, instead
+  of a ruleset-enforced review gate that the repository does not enforce; the
+  documentation site's contributing page says the same.
+- `SECURITY.md` gains a full reporting section: the advisory channel, what is in
+  and out of scope, what to include, what to expect from a single maintainer,
+  a 90-day coordinated disclosure default and a safe-harbor statement.
+- New issue forms: `documentation.yml` (previously linked from SUPPORT.md but
+  missing) and `detection_report.yml` for false positives, misses,
+  misattributions and scoring reports, with a matching `detection` label. The
+  new-issue chooser also links SUPPORT.md.
+- `CONTRIBUTING.md` links the Contributor Covenant and lists the ways to
+  contribute, from documentation to review; README gains a Community section.
+- Workflows grant write permissions per job rather than per workflow, every
+  job has a timeout, the stale bot never closes pull requests and waits 90 + 30
+  days on issues, and a new Labels workflow keeps the tracker equal to
+  `.github/labels.yml` using the runner's `gh` CLI (no new action to pin).
+- The documentation build installs from the new hash-locked
+  `requirements-docs.lock`; the HTML minifier plugin is dropped because its
+  dependencies publish no wheels.
+- `tests/test_repository_policy.py` fails CI when a Markdown link or heading
+  anchor is broken, an action is not pinned to a full commit SHA, a checkout
+  persists credentials, a workflow holds write permissions at the top level or
+  could publish a release, an issue form uses an undefined label, the pre-commit
+  ruff/mypy revisions drift from the CI pins, the Makefile drifts from the CI
+  gates, or a documented signature, signal or connector count is stale.
+- `make typecheck` and `make evaluate` run the same paths and corpora as CI;
+  `make policy` runs the repository policy tests; `.editorconfig` and
+  `.gitattributes` are added; the Dependabot `reviewers` key, superseded by
+  CODEOWNERS, is removed; documented signature and connector counts are
+  corrected (212 signatures, 990 signals, 27 connectors).
+
 ### Detection precision, coverage policy and risk explainability
 
 Behavior changes (review before upgrading an enforcement gate):

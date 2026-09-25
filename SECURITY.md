@@ -120,7 +120,85 @@ candidate. Only the current `main` branch receives fixes, and fixes land there
 without a backport. Report issues against the full commit SHA of `main` or of
 the pinned revision you deployed, not against a version number.
 
-## Reporting
+## Reporting a vulnerability
 
-Use a private GitHub security advisory or contact the maintainer privately.
-Do not include credentials, private exports or exploit details in public issues.
+Report security problems through a
+[private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new).
+That is the only reporting channel; there is no security mailing list. Do not
+open a public issue, pull request or discussion for anything in scope below,
+and do not include credentials, private exports or exploit details anywhere
+public.
+
+### What is in scope
+
+- Credentials, JWTs or other secrets that reach a report, a record dump, a log
+  line, an error message or incremental state despite redaction.
+- Reading files outside the scan root or following symlinks that the
+  documentation says are not followed.
+- Requests that leave the configured origin, downgrade TLS, or reach private,
+  loopback, link-local or metadata addresses without `allow_private_origin`.
+- A limit, malformed export, denied API or timeout that produces an empty,
+  complete-looking scan (exit 0) instead of an incomplete one (exit 3).
+- Plugin, signature-pack or inventory inputs that bypass the allowlist,
+  override built-in identifiers without opt-in, or approve a finding they
+  should not.
+- Integrity of the CI, Scorecard and release-evidence workflows, including an
+  unpinned action or a job with more permissions than it needs.
+
+### What is out of scope
+
+- Findings that are heuristically wrong (a false positive, a missed framework,
+  a misattributed provider). File a public
+  [detection report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml)
+  unless the report itself would expose a secret.
+- Vulnerabilities in third-party platforms that ShadowScan merely inspects.
+  Report those to the vendor.
+- Issues that require a compromised operator workstation, CI runner,
+  configuration file or installed Python package. These are trusted by the
+  [trust boundary](#trust-boundary).
+- Denial of service against your own scan through pathological inputs beyond
+  the documented resource limits.
+
+### What to include
+
+- The full commit SHA you tested (`shadowscan --version` prints the package
+  version only, which is not enough because no version has been released).
+- The connector, surface and collection mode involved.
+- A minimal, sanitized reproduction: a trimmed export record, a synthetic
+  token, or a public repository and commit. Replace real secrets with
+  placeholders that keep the shape (`sk-REDACTED`, `${REDACTED}`).
+- The impact as you understand it: what reaches which artifact, and who can
+  read it.
+
+### What to expect
+
+ShadowScan has a single maintainer, and response times are not guaranteed.
+Advisories are read before public issues. When a report is confirmed:
+
+1. The advisory is acknowledged and the affected code paths are identified.
+2. A fix lands on `main` with a regression test. There are no release branches
+   or backports; the fix is available at the merge commit.
+3. `CHANGELOG.md`, and `docs/production.md` when rollout or finding identity
+   changes, describe the fix without reproducing the exploit.
+4. The advisory is published with credit to the reporter, unless the reporter
+   asks otherwise, once the fix is on `main`.
+
+If you have not heard back within 14 days, comment on the advisory. If the
+advisory route is unavailable to you, open a public issue that says only that
+you need a private channel, with no details, and the maintainer will open an
+advisory and invite you.
+
+### Coordinated disclosure
+
+Please give the project the chance to fix the problem before publishing
+details. The default embargo is 90 days from the initial report, shorter if a
+fix is on `main` sooner and longer only by agreement. Operators install from a
+pinned commit, so "the fix is on `main`" is what unblocks them, not a tag.
+
+### Safe harbor
+
+Good-faith research against your own checkouts, your own tenants and the
+bundled fixtures is welcome. Do not test against tenants, repositories or
+accounts you are not authorized to assess, and do not access, modify or retain
+data that is not yours. The project will not pursue or support action against
+researchers who follow this policy and report through the advisory channel.
