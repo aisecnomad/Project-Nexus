@@ -47,6 +47,9 @@
 
 ### Scanner assurance and release evidence (2026-09-25)
 
+- Preserve observed ServiceNow native agents if optional name or OAuth
+  signature matching times out, mark coverage incomplete, and skip repeated
+  matching for remaining records.
 - Keep YAML manifest artifact matching within its existing one-second shared
   deadline during parallel scans, while allowing a chunk the manifest pattern
   budget; exhausted deadlines still make coverage incomplete.

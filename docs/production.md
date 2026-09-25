@@ -73,8 +73,9 @@ lock and built wheel hash for each worker deployment.
 The runtime lock covers the core scanner and all cloud SDK extras on CPython
 3.11/3.12, Linux x86_64. It contains exact versions and permitted SHA-256 hashes;
 required CI checks installation and dependency consistency on both Python
-versions. Python 3.13 is a candidate until its hosted matrix job passes. It is
-not a universal lock for Windows, macOS, ARM or every future Python release.
+versions. CI also tests Python 3.13; validate its target environment separately
+before deploying with that interpreter. The lock is not universal for Windows,
+macOS, ARM or every future Python release.
 Resolve and validate a separate lock before deploying on another platform.
 
 From the reviewed checkout, in a clean virtual environment:
@@ -308,6 +309,12 @@ factors and `options.risk_basis: danger` bases `level` and `--fail-on` on it.
 Review [scan state and runtime correlation](scanning.md) and the changelog
 before raising an enforcement gate on a scanner upgrade.
 
+A ServiceNow agent remains a native finding if optional display-name or OAuth
+signature matching times out before the agents are emitted. The connector marks
+coverage incomplete and skips repeated matching; exit 3 remains mandatory.
+OAuth findings whose classification could not finish are omitted, and native
+findings must not be interpreted as fully enriched.
+
 Saved provider errors and unsupported/malformed export records also make scans
 incomplete. Valid neighbors remain available. Explicit empty inventories such
 as `[]` remain valid; an authorization-error document is not an empty inventory.
@@ -527,8 +534,8 @@ and 3.12 jobs enforce a
 75% statement-coverage floor for each built-in connector module, so a
 well-tested engine cannot conceal an untested provider. Coverage proves
 execution of code paths in tests; it does not prove provider compatibility or
-complete tenant inventory. The new Python 3.13 matrix job awaits a successful
-hosted run and inclusion in branch protection. It builds the Docker image and
+complete tenant inventory. The Python 3.13 matrix job tests the candidate; verify its inclusion in the
+live branch rules before treating it as a required gate. It builds the Docker image and
 checks its non-root UID, signature assets and
 network-isolated scan with a read-only root filesystem and resource limits.
 Focused regressions cover the review findings, private-address enforcement,

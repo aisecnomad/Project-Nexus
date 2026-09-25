@@ -26,6 +26,8 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.common import apply_matches, finalize, name_matches
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures import Match
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import truncate
 
@@ -77,6 +79,8 @@ class ServiceNowConnector(BaseConnector):
         if self.instance and not self.instance.startswith("http"):
             self.instance = f"https://{self.instance}"
         self.http: HttpClient | None = None
+        self._name_matching_limited = False
+        self._oauth_matching_limited = False
 
     def _auth(self) -> None:
         if not self.instance:
@@ -162,6 +166,8 @@ class ServiceNowConnector(BaseConnector):
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        self._name_matching_limited = False
+        self._oauth_matching_limited = False
         agents: list[dict[str, Any]] = []
         tools: dict[str, list[dict[str, Any]]] = {}
         usecases: list[dict[str, Any]] = []
@@ -200,6 +206,19 @@ class ServiceNowConnector(BaseConnector):
             my_triggers = [t for k, ts in triggers.items() for t in ts if k in key_candidates]
             yield self._usecase_finding(u, my_triggers)
 
+    def _optional_name_matches(self, *texts: str | None) -> list[Match]:
+        if self._name_matching_limited:
+            return []
+        try:
+            return name_matches(self.index, *texts)
+        except MatchTimeoutError:
+            # A name hint is optional for native agents and recognisable flows.
+            # Keep observed records, disclose lost enrichment, and avoid retrying
+            # the same expensive matching on every remaining record.
+            self._name_matching_limited = True
+            self.ctx.warn("lowcode.servicenow: display-name matching timed out; coverage incomplete")
+            return []
+
     def _agent_finding(self, a: dict[str, Any], tools: list[dict[str, Any]]) -> Finding:
         name = _val(a.get("name")) or _val(a.get("sys_id"))
         f = Finding(
@@ -225,7 +244,7 @@ class ServiceNowConnector(BaseConnector):
             f.add_evidence(Evidence(signal="servicenow:script-tool", description="Agent has script tools (server-side JavaScript execution)", weight=0.4))
         if str(_val(a.get("autonomous"))).lower() in {"true", "1", "yes"} or "autonomous" in str(_val(a.get("agent_type")) or "").lower():
             f.add_capability("autonomous")
-        apply_matches(f, name_matches(self.index, name, _val(a.get("description"))), weight_scale=0.4)
+        apply_matches(f, self._optional_name_matches(name, _val(a.get("description"))), weight_scale=0.4)
         f.metadata.update({"active": _val(a.get("active")), "description": truncate(_val(a.get("description"))), "instructions": truncate(_val(a.get("instructions")), 300), "role": _val(a.get("role")), "model": _val(a.get("model")) or _val(a.get("llm_model")), "tools": [{"name": _val(t.get("name")), "type": _val(t.get("type")) or _val(t.get("tool_type"))} for t in tools][:30], "tool_types": tool_types})
         finalize(f, self.index)
         f.kind = Kind.AGENT
@@ -258,7 +277,7 @@ class ServiceNowConnector(BaseConnector):
     def _flow_finding(self, rec: dict[str, Any]) -> Finding | None:
         name = _val(rec.get("name")) or ""
         text = f"{name} {_val(rec.get('description')) or ''} {_val(rec.get('sys_scope')) or ''}"
-        matches = name_matches(self.index, text)
+        matches = self._optional_name_matches(text)
         low = text.lower()
         if not matches and not any(k in low for k in ("now assist", "generative", "gen ai", "genai", "gpt", "llm", "sn_generative_ai", "sn_aia", "ai agent")):
             return None
@@ -297,7 +316,16 @@ class ServiceNowConnector(BaseConnector):
             last_seen=_val(rec.get("sys_updated_on")),
         )
         scopes = [s.strip() for s in str(_val(rec.get("oauth_entity_scope")) or "").split(",") if s.strip()]
-        assess_app(self.index, f, name=name, urls=[_val(rec.get("redirect_url"))], scopes=scopes, client_id=_val(rec.get("client_id")))
+        if self._oauth_matching_limited:
+            return None
+        try:
+            assess_app(self.index, f, name=name, urls=[_val(rec.get("redirect_url"))], scopes=scopes, client_id=_val(rec.get("client_id")))
+        except MatchTimeoutError:
+            # OAuth classification depends on those matches; skip this record
+            # and later OAuth enrichment, but continue with native agents.
+            self._oauth_matching_limited = True
+            self.ctx.warn("lowcode.servicenow: OAuth signature matching timed out; coverage incomplete")
+            return None
         if not f.frameworks:
             return None
         f.add_evidence(Evidence(signal="servicenow:oauth_entity", description=f"OAuth {_val(rec.get('type')) or 'client'} '{name}' (active={_val(rec.get('active'))}), refresh token lifespan {_val(rec.get('refresh_token_lifespan'))}s", weight=0.3))
