@@ -47,6 +47,9 @@
 
 ### Scanner assurance and release evidence (2026-09-25)
 
+- Keep YAML manifest artifact matching within its existing one-second shared
+  deadline during parallel scans, while allowing a chunk the manifest pattern
+  budget; exhausted deadlines still make coverage incomplete.
 - Recognize import-bound OpenAI Responses API function loops only when the
   model-selected call is dispatched and its result returns in the next request
   with matching call identity. Unreachable literal branches and locally

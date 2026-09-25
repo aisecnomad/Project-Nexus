@@ -55,25 +55,29 @@ def pattern_timeout(default: float = REGEX_TIMEOUT_SECONDS) -> float:
     return min(default, remaining)
 
 
-def _run_regex(operation: Callable[[float], Any], context: str) -> Any:
+def _run_regex(operation: Callable[[float], Any], context: str, *, max_seconds: float | None = None) -> Any:
     """Retry clear scheduler contention within the original execution budget.
 
     regex can charge CPU used by other threads while a scanner is suspended,
     including between iterator construction and its first next(). Only retry
-    when this thread used less than half its original pattern budget. Genuine
-    expensive matching, exhausted input deadlines and repeated contention still
-    fail closed; retries never receive a fresh cumulative CPU budget.
+    when this thread used less than half its original pattern budget. Manifest
+    parsing can supply its separate per-pattern ceiling; every attempt remains
+    subject to the same cumulative CPU and active per-input wall deadlines.
+    Genuine expensive matching and repeated contention still fail closed.
     """
-    budget = _remaining_timeout()
+    def remaining_timeout() -> float:
+        return _remaining_timeout() if max_seconds is None else pattern_timeout(max_seconds)
+
+    budget = remaining_timeout()
     started = time.thread_time()
     for attempt in range(_MAX_CONTENTION_RETRIES + 1):
         elapsed = time.thread_time() - started
-        remaining = min(_remaining_timeout(), budget - elapsed)
+        remaining = min(remaining_timeout(), budget - elapsed)
         if remaining <= 0:
             raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete")
         try:
             result = operation(remaining)
-            _remaining_timeout()
+            remaining_timeout()
             if time.thread_time() - started >= budget:
                 raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete")
             return result

@@ -251,6 +251,13 @@ separate expanded-structure and total-work budget, so valid YAML aliases cannot
 cause unbounded report serialization. CODEOWNERS patterns use bounded iterative
 matching with a per-lookup work budget.
 
+YAML manifest artifact matching uses a shared one-second deadline and gives
+each bounded line chunk no more than the remaining manifest pattern budget.
+Concurrent collection can take over the signature matcher’s separate 100 ms
+ceiling while still remaining inside that manifest deadline and any active
+per-input scan deadline. Exhausting either deadline marks the code scan
+incomplete (exit 3).
+
 A limit hit is a diagnostic and incomplete coverage, not proof of absence. Exit 3
 must remain a failed gate in CI. Exit 2 means a complete scan exceeded the chosen
 risk threshold. `connector_timeout_seconds` defaults to 120 seconds and must be a strictly positive

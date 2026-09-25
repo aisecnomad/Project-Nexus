@@ -25,8 +25,36 @@ WRITE_SCOPES = {
 }
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Reject duplicate keys before PyYAML silently discards policy entries."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        self.flatten_mapping(node)
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    "while reading a repository YAML file", node.start_mark,
+                    f"duplicate YAML key {key!r}", key_node.start_mark,
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
 def _load(path: Path) -> Any:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return yaml.load(path.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
+
+
+@pytest.mark.parametrize("contents", [
+    "name: Detection\nlabels: [detection]\nlabels: [bug]\n",
+    "permissions:\n  contents: read\n  contents: write\n",
+])
+def test_policy_loader_rejects_duplicate_keys(tmp_path: Path, contents: str) -> None:
+    path = tmp_path / "policy.yml"
+    path.write_text(contents, encoding="utf-8")
+    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate YAML key"):
+        _load(path)
 
 
 def _triggers(workflow: dict[str, Any]) -> Any:
@@ -151,3 +179,8 @@ def test_label_sync_only_mutates_labels_from_main() -> None:
     job = workflow["jobs"]["sync"]
     assert job.get("if") == "github.ref == 'refs/heads/main'"
     assert _write_scopes(job["permissions"]) == {"issues"}
+    install = next(step["run"] for step in job["steps"] if step.get("name", "").startswith("Install hash-locked PyYAML"))
+    sync = next(step["run"] for step in job["steps"] if step.get("name", "").startswith("Create or update every label"))
+    assert "python -m venv" in install and "requirements.lock" in install
+    assert "--require-hashes --only-binary=:all:" in install
+    assert '"$RUNNER_TEMP/labels-venv/bin/python" - <<' in sync
