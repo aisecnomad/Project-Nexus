@@ -61,7 +61,7 @@ unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
-`scan_secrets`, `use_git`, `label`. When using labeled `paths`, supply unique
+`scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 
 ### `code.github`
