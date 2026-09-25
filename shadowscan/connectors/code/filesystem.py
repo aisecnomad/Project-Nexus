@@ -37,7 +37,6 @@ from __future__ import annotations
 import errno
 import fnmatch
 import hashlib
-import json
 import os
 import re
 import stat
@@ -66,11 +65,12 @@ from shadowscan.connectors.code.ownership import (
 )
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
+    is_agent_config_path,
     parse_agent_manifest,
     structured_code_matches,
 )
 from shadowscan.connectors.code.source_ranges import noncode_ranges
-from shadowscan.connectors.code.source_semantics import bound_source_matches
+from shadowscan.connectors.code.source_semantics import SourceBudgetExceeded, bound_source_matches
 from shadowscan.connectors.common import (
     apply_matches,
     cap_confidence,
@@ -82,9 +82,15 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
+from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
+from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
 from shadowscan.utils.text import notebook_to_source, parse_timestamp, read_text, redact, truncate
+
+# Saved outputs (plots, tables, logs) routinely push small notebooks past
+# max_file_size. Their code cells are still analyzed up to this size.
+DEFAULT_MAX_NOTEBOOK_SIZE = 20 * 1024 * 1024
 
 DEFAULT_EXCLUDES = {
     ".git",
@@ -459,6 +465,8 @@ class FilesystemConnector(BaseConnector):
         "max_file_size": "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs matches it (default 1,000,000 bytes)",
         "oversize_skip_globs": "case-insensitive file name globs; a file over max_file_size matching one is skipped with a warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts)",
         "max_files": "stop after this many files (default 100000)",
+        "max_notebook_size": "bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even when saved outputs make the file larger than max_file_size (default 20 MiB); outputs of such a notebook are not scanned for credentials",
+        "max_ast_nodes": "Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger file keeps its lexical evidence and is reported as partially analyzed: a warning under test paths, an error elsewhere",
         "scan_timeout": "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan_timeout when higher",
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
@@ -479,8 +487,14 @@ class FilesystemConnector(BaseConnector):
         self.max_file_size = int(ctx.get("max_file_size", 1_000_000))
         self.max_files = int(ctx.get("max_files", 100_000))
         self.scan_timeout = float(ctx.get("scan_timeout", 2.0))
+        self.max_ast_nodes = ctx.get("max_ast_nodes")
+        self.max_notebook_size = ctx.get("max_notebook_size", DEFAULT_MAX_NOTEBOOK_SIZE)
+        if type(self.max_notebook_size) is not int or self.max_notebook_size < 1:
+            raise ConnectorError("code.filesystem: max_notebook_size must be a positive integer")
         if self.max_file_size < 1 or self.max_files < 1 or not 0 < self.scan_timeout <= 60:
             raise ConnectorError("code.filesystem: limits must be positive; scan_timeout must be at most 60 seconds")
+        if self.max_ast_nodes is not None and (type(self.max_ast_nodes) is not int or not 1_000 <= self.max_ast_nodes <= 2_000_000):
+            raise ConnectorError("code.filesystem: max_ast_nodes must be an integer between 1000 and 2000000")
         self.oversize_skip_globs = _validated_globs(ctx.get("oversize_skip_globs", list(DEFAULT_OVERSIZE_SKIP_GLOBS)))
         self.scan_secrets = bool(ctx.get("scan_secrets", True))
         self.use_git = ctx.get("use_git", False)
@@ -572,6 +586,12 @@ class FilesystemConnector(BaseConnector):
             if PurePosixPath(rel).match(g) or PurePosixPath(rel).match(g.rstrip("/") + "/*"):
                 return True
         return False
+
+    def _size_limit(self, name: str) -> int:
+        """Bytes the reader accepts for ``name``: notebooks may carry large saved outputs."""
+        if name.lower().endswith(".ipynb"):
+            return max(self.max_file_size, self.max_notebook_size)
+        return self.max_file_size
 
     def _oversize_skippable(self, rel: str, name: str) -> bool:
         """Whether an oversize file is generated, locked or binary content per ``oversize_skip_globs``."""
@@ -682,7 +702,7 @@ class FilesystemConnector(BaseConnector):
             except OSError:
                 self.ctx.error(f"code.filesystem: could not inspect {root.name}")
                 return
-            if size > self.max_file_size and self._oversize_skippable(root.name, root.name):
+            if size > self._size_limit(root.name) and self._oversize_skippable(root.name, root.name):
                 self._skip_oversize(root.name, size)
                 return
             yield root.name, root, ".", size
@@ -729,7 +749,7 @@ class FilesystemConnector(BaseConnector):
                     continue
                 if not stat.S_ISREG(info.st_mode):
                     continue
-                if info.st_size > self.max_file_size and self._oversize_skippable(rel, fn):
+                if info.st_size > self._size_limit(fn) and self._oversize_skippable(rel, fn):
                     self._skip_oversize(rel, info.st_size)
                     continue
                 if _never_read_by_name(fn):
@@ -748,7 +768,7 @@ class FilesystemConnector(BaseConnector):
         signal) reserve nothing, so they cannot end the walk under a short
         deadline.
         """
-        if size > self.max_file_size:
+        if size > self._size_limit(path.name):
             return 0.0
         name = path.name
         ext = path.suffix.lower()
@@ -849,7 +869,7 @@ class FilesystemConnector(BaseConnector):
                     if not (is_source or is_text_cfg or file_matches):
                         continue
                     read_errors: list[str] = []
-                    text = read_text(path, self.max_file_size, read_errors)
+                    text = read_text(path, self._size_limit(name), read_errors)
                     for issue in read_errors:
                         if issue == "file exceeds max_file_size" and not self.strict_coverage:
                             self.ctx.warn(f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete", incomplete=True)
@@ -860,11 +880,27 @@ class FilesystemConnector(BaseConnector):
                     raw_notebook: str | None = None
                     if ext == ".ipynb":
                         notebook_errors: list[str] = []
-                        raw_notebook = text
+                        oversized_notebook = len(text) > self.max_file_size
+                        raw_notebook = None if oversized_notebook else text
                         text = notebook_to_source(text, notebook_errors)
                         for issue in dict.fromkeys(notebook_errors):
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                         lang = "python"
+                        if len(text) > self.max_file_size:
+                            message = f"code.filesystem: {rel}: skipped, notebook code cells exceed max_file_size"
+                            if self.strict_coverage:
+                                self.ctx.error(message)
+                            else:
+                                self.ctx.warn(f"{message}; enable strict_coverage to treat this as incomplete", incomplete=False)
+                            continue
+                        if oversized_notebook:
+                            # Code cells are analyzed as usual. Saved outputs
+                            # are not read for credentials at this size.
+                            self.ctx.warn(
+                                f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
+                                "saved outputs not scanned for credentials",
+                                incomplete=self.strict_coverage,
+                            )
                     # Structured files are parsed now so a resource-limit
                     # failure reaches the per-file boundary. Redacting the
                     # text for excerpts waits until a match needs one, which
@@ -1047,13 +1083,23 @@ class FilesystemConnector(BaseConnector):
                             self.index.match_code(content_text, lang, ignore_spans=ignored)
                             if ignored else self.index.match_code(content_text, lang)
                         )
-                        bound = (
-                            bound_source_matches(
-                                self.index, content_text, lang, ignored,
-                                is_local_module=is_local_module if lang == "python" else None,
-                            )
-                            if lang in {"python", "javascript"} else []
-                        )
+                        bound: list[Match] = []
+                        if lang in {"python", "javascript"}:
+                            try:
+                                bound = bound_source_matches(
+                                    self.index, content_text, lang, ignored,
+                                    is_local_module=is_local_module if lang == "python" else None,
+                                    max_ast_nodes=self.max_ast_nodes,
+                                )
+                            except SourceBudgetExceeded as exc:
+                                # The budget is a property of the file, not of
+                                # the scan: keep its lexical evidence. Test code
+                                # is discounted evidence, so it only warns.
+                                message = f"code.filesystem: {rel}: import-bound analysis skipped ({exc}); lexical evidence retained"
+                                if not self.include_tests and _is_test_path(rel):
+                                    self.ctx.warn(message, incomplete=self.strict_coverage)
+                                else:
+                                    self.ctx.error(message)
                         # Execution sinks describe a model-driven capability only
                         # when this same file invokes a model, framework or
                         # tool-calling protocol; elsewhere they are build tooling.
@@ -1079,7 +1125,12 @@ class FilesystemConnector(BaseConnector):
                         config_errors: list[str] = []
                         structured = [] if is_mcp else structured_code_matches(self.index, rel, content_text, errors=config_errors)
                         for issue in config_errors:
-                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                            if is_agent_config_path(rel):
+                                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                            else:
+                                # Only the structured projection is lost; the
+                                # lexical passes below still read this text.
+                                self.ctx.warn(f"code.filesystem: {rel}: {issue}; structured checks skipped", incomplete=self.strict_coverage)
                         for m in structured:
                             # MCP configs are structured data. A disabled server
                             # may contain sample commands that look like agent
@@ -1836,18 +1887,6 @@ def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int 
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-def _load_json_lenient(text: str) -> Any:
-    """Parse JSON, tolerating JSONC comments and trailing commas only when needed.
-
-    Stripping comments is a pure-Python character loop; ordinary JSON must not
-    pay for it on every file.
-    """
-    try:
-        return json.loads(text)
-    except ValueError:
-        return json.loads(_strip_json_comments(text))
-
-
 def _project_root(root: Path, rel: str) -> str:
     """The project a file at ``rel`` belongs to, as ``_iter_entries`` assigns it.
 
@@ -2082,63 +2121,3 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
     names = [tuple(server) for server in out]
     cleaned = sanitize((data, [[server[key] for key in keys] for server, keys in zip(out, names, strict=True)]))[1]
     return [dict(zip(keys, values, strict=True)) for keys, values in zip(names, cleaned, strict=True)]
-
-
-def _strip_json_comments(text: str) -> str:
-    """Tolerate JSONC comments and trailing commas without rewriting strings."""
-    out: list[str] = []
-    i = 0
-    in_string = False
-    while i < len(text):
-        char = text[i]
-        if in_string:
-            out.append(char)
-            if char == "\\" and i + 1 < len(text):
-                i += 1
-                out.append(text[i])
-            elif char == '"':
-                in_string = False
-        elif char == '"':
-            in_string = True
-            out.append(char)
-        elif text.startswith("//", i):
-            end = text.find("\n", i + 2)
-            i = len(text) if end == -1 else end
-            out.append("\n")
-            continue
-        elif text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            if end == -1:
-                raise ValueError("unterminated JSON comment")
-            out.append(" " + "\n" * text.count("\n", i, end + 2))
-            i = end + 2
-            continue
-        else:
-            out.append(char)
-        i += 1
-    stripped = "".join(out)
-    out = []
-    in_string = False
-    i = 0
-    while i < len(stripped):
-        char = stripped[i]
-        if in_string:
-            out.append(char)
-            if char == "\\" and i + 1 < len(stripped):
-                i += 1
-                out.append(stripped[i])
-            elif char == '"':
-                in_string = False
-        elif char == '"':
-            in_string = True
-            out.append(char)
-        elif char == ",":
-            end = i + 1
-            while end < len(stripped) and stripped[end].isspace():
-                end += 1
-            if end == len(stripped) or stripped[end] not in "}]":
-                out.append(char)
-        else:
-            out.append(char)
-        i += 1
-    return "".join(out)

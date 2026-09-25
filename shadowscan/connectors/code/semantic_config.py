@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from shadowscan.signatures.matcher import Match, SignatureIndex
+from shadowscan.utils.jsonc import load_json_lenient
 from shadowscan.utils.safe_yaml import bounded_safe_load, bounded_safe_load_all
 
 
@@ -297,6 +298,23 @@ def _coding_agent_signals(rel: str, data: dict[str, Any]) -> Iterator[tuple[str,
         yield "coding-agent.gemini-cli", json.dumps({"approvalMode": "yolo"})
 
 
+# Files whose parsed content is itself coding-agent policy. A syntax error in
+# one of them hides a permission decision, so it keeps the scan incomplete.
+# Elsewhere a parse failure only skips the structured projection: lexical
+# signatures still run over the same text.
+_AGENT_CONFIG_FILES = {
+    ".claude": {"settings.json", "settings.local.json"},
+    ".codex": {"config.toml"},
+    ".gemini": {"settings.json"},
+}
+
+
+def is_agent_config_path(rel: str) -> bool:
+    """Whether ``rel`` is a coding-agent settings file read by this module."""
+    path = PurePosixPath(rel)
+    return any(directory in path.parts and path.name in names for directory, names in _AGENT_CONFIG_FILES.items())
+
+
 def structured_code_matches(
     index: SignatureIndex, rel: str, text: str, errors: list[str] | None = None,
 ) -> list[Match]:
@@ -316,8 +334,9 @@ def structured_code_matches(
     try:
         if extension in {".yaml", ".yml"}:
             documents = bounded_safe_load_all(text)
-        elif extension == ".json":
-            documents = [json.loads(text)]
+        elif extension in {".json", ".jsonc"}:
+            # VS Code settings, dev containers and tsconfig files are JSONC.
+            documents = [load_json_lenient(text)]
         elif extension == ".toml":
             documents = [tomllib.loads(text)]
         elif extension in {".xml", ".props", ".targets", ".csproj", ".fsproj", ".vbproj"}:

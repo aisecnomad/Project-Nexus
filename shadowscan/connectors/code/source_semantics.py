@@ -35,6 +35,14 @@ MAX_BOUND_CALLS = 512
 MAX_CALL_TEXT = 8192
 
 
+class SourceBudgetExceeded(MatchTimeoutError):
+    """A file exceeded a structural analysis budget (AST nodes or nesting depth).
+
+    Unlike a matching deadline, this is a property of the file itself: callers
+    keep its lexical evidence and report the import-bound analysis as partial.
+    """
+
+
 @dataclass(frozen=True)
 class _Binding:
     module: str
@@ -194,7 +202,7 @@ class _PythonBindings(ast.NodeVisitor):
         binding = self._resolve(node.func)
         if binding and (self.relevant is None or self.relevant(binding)):
             if len(self.calls) >= MAX_BOUND_CALLS:
-                raise MatchTimeoutError("source binding call limit exceeded")
+                raise SourceBudgetExceeded("source binding call limit exceeded")
             start = self._offset(node.func.end_lineno or node.lineno, node.func.end_col_offset or 0)
             end = self._offset(node.end_lineno or node.lineno, node.end_col_offset or 0)
             keywords = " ".join(f"{keyword.arg}=" for keyword in node.keywords if keyword.arg)
@@ -372,12 +380,13 @@ class _PythonBindings(ast.NodeVisitor):
 
 
 def _python_bindings(
-    text: str, relevant: Callable[[_Binding], bool] | None = None,
+    text: str, relevant: Callable[[_Binding], bool] | None = None, max_nodes: int | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
+    limit = MAX_AST_NODES if max_nodes is None else max_nodes
     for count, _ in enumerate(ast.walk(tree)):
-        if count >= MAX_AST_NODES:
-            raise MatchTimeoutError("source binding AST limit exceeded")
+        if count >= limit:
+            raise SourceBudgetExceeded("source binding AST limit exceeded")
     visitor = _PythonBindings(text, relevant)
     visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
@@ -473,7 +482,7 @@ def _javascript_bindings(
         if relevant is not None and not relevant(binding):
             continue
         if len(calls) >= MAX_BOUND_CALLS:
-            raise MatchTimeoutError("source binding call limit exceeded")
+            raise SourceBudgetExceeded("source binding call limit exceeded")
         opening = match.end() - 1
         depth, end = 1, opening + 1
         while end < min(len(masked), opening + MAX_CALL_TEXT) and depth:
@@ -489,7 +498,7 @@ def _javascript_bindings(
 
 def bound_source_matches(
     index: SignatureIndex, text: str, language: str, ignored: list[tuple[int, int]],
-    *, is_local_module: Callable[[str], bool] | None = None,
+    *, is_local_module: Callable[[str], bool] | None = None, max_ast_nodes: int | None = None,
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
@@ -520,11 +529,11 @@ def bound_source_matches(
     tree = None
     try:
         if language == "python":
-            calls, imports, tree = _python_bindings(text, relevant)
+            calls, imports, tree = _python_bindings(text, relevant, max_ast_nodes)
         else:
             calls, imports = _javascript_bindings(text, ignored, relevant)
     except RecursionError as exc:
-        raise MatchTimeoutError("source binding recursion limit exceeded") from exc
+        raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
     except (SyntaxError, ValueError):
         return []
 
