@@ -1011,11 +1011,14 @@ class SignatureIndex:
             if "." not in raw:
                 continue
             host = raw.lower().strip(".")
+            mcp_path = bool(_MCP_PATH_RX.match(text, m.end()))
             # DNS names are bounded by the protocol. Consume each entire token
-            # once instead of retrying a suffix from every dot on malformed input.
-            if host in seen or len(host) > 253 or "." not in host:
+            # once (per MCP/non-MCP path) instead of retrying a suffix from
+            # every dot on malformed input.
+            key = host + "/mcp" if mcp_path else host
+            if key in seen or len(host) > 253 or "." not in host:
                 continue
-            seen.add(host)
+            seen.add(key)
             labels = host.split(".")
             if len(labels[-1]) < 2 or not labels[-1].isalpha() or any(
                 not label or len(label) > 63 or not label[0].isalnum() or not label[-1].isalnum()
@@ -1027,6 +1030,13 @@ class SignatureIndex:
             matches = self._match_plain_host(host, _plain_search) if host.isascii() else self.match_domain(host)
             if not matches:
                 continue
+            if (len({match.signature_id for match in matches}) > 1 and not any("mcp" in label for label in labels)
+                    and any(match.signature_id == _MCP_SIGNATURE for match in matches)):
+                # A host shared with another product (and not named for MCP,
+                # like mcp.zapier.com) is MCP only on an MCP path.
+                matches = [match for match in matches if (match.signature_id == _MCP_SIGNATURE) == mcp_path]
+                if not matches:
+                    continue
             if newlines is None:
                 newlines = [newline.start() for newline in re.finditer("\n", text)]
             line = bisect_right(newlines, m.start()) + 1
@@ -1073,6 +1083,10 @@ class SignatureIndex:
 
 
 _HOST_TOKEN_RX = re.compile(r"[a-z0-9.-]+", re.IGNORECASE)
+# MCP endpoints on a shared API host are path-scoped: GitHub serves its remote
+# MCP server at api.githubcopilot.com/mcp/ beside the Copilot API itself.
+_MCP_PATH_RX = re.compile(r"(?::\d{1,5})?/(?:mcp|sse)(?=[/?#\"'\s)\]]|$)", re.IGNORECASE)
+_MCP_SIGNATURE = "protocol.mcp"
 # Underscores delimit disjoint alphanumeric groups; neither tokenizer has nested
 # ambiguous repetition. Both operate under the shared input deadline.
 _ENV_RX = re.compile(r"\b[A-Z][A-Z0-9]{2,}(?:_[A-Z0-9]+){1,6}\b")

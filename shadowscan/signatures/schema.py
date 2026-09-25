@@ -22,7 +22,7 @@ SIGNAL_COMMON = {"type", "weight", "capabilities", "agent_indicator", "descripti
 SIGNAL_FIELDS = {
     "dependency": {"ecosystem", "names", "prefixes", "exclude_names", "exclude_prefixes"},
     "import": {"languages", "patterns"},
-    "code": {"languages", "patterns"},
+    "code": {"languages", "patterns", "ambiguous"},
     "file": {"globs"},
     "env": {"names", "patterns"},
     "domain": {"values"},
@@ -217,7 +217,7 @@ def validate_signal_shape(value: Any, context: str) -> dict[str, Any]:
             # Range first: math.isfinite overflows on arbitrarily large ints.
             if type(item) not in (float, int) or not 0 < item <= 1 or not math.isfinite(item):
                 raise ValueError(f"{context}.weight: expected a finite number greater than 0 and at most 1")
-        elif key == "agent_indicator":
+        elif key in {"agent_indicator", "ambiguous"}:
             if type(item) is not bool:
                 raise ValueError(f"{context}.{key}: expected a boolean")
         elif key == "ecosystem":
