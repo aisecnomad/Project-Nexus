@@ -101,12 +101,15 @@ The install commands below use the files in this checked out tree. Check that
 lock and built wheel hash for each worker deployment.
 
 The runtime lock covers the core scanner and all cloud SDK extras on CPython
-3.11/3.12, Linux x86_64. It contains exact versions and permitted SHA-256 hashes;
-required CI checks installation and dependency consistency on both Python
-versions. CI also tests Python 3.13; validate its target environment separately
-before deploying with that interpreter. The lock is not universal for Windows,
-macOS, ARM or every future Python release.
-Resolve and validate a separate lock before deploying on another platform.
+3.11, 3.12 and 3.13, Linux x86_64. It contains exact versions and permitted
+SHA-256 hashes; CI checks installation and dependency consistency on all three
+interpreters. Linux x86_64 is the only validated target. Other POSIX systems
+such as macOS may run the scanner but are unvalidated and need their own lock;
+Windows is not supported at all, because the confined file reader
+(`O_NOFOLLOW`, `O_DIRECTORY`, `dir_fd`) is unavailable there and the scanner
+refuses to read any input rather than weaken that policy. The lock is not
+universal for ARM or every future Python release either. Resolve and validate a
+separate lock before deploying on another platform.
 
 From the reviewed checkout, in a clean virtual environment:
 
@@ -137,8 +140,8 @@ prevent silent runtime artifact substitution; they do not establish that a
 dependency is safe.
 
 Regenerate intentionally in a clean Linux environment with Python 3.12 and
-`pip-tools==7.5.3`, review the dependency diff and advisory results, and let both
-CI matrix jobs verify the result:
+`pip-tools==7.5.3`, review the dependency diff and advisory results, and let every
+CI matrix job verify the result:
 
 ```bash
 pip-compile --extra cloud --generate-hashes --strip-extras \
@@ -273,7 +276,7 @@ turn Git or the scanner into a process sandbox.
 
 ## Resource limits and incomplete scans
 
-Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded content by default. Pagination rejects missing or malformed collection arrays and records an incomplete scan when a response exceeds its limit. Review unusually large provider pages against their API contract before raising a per-client or per-request limit. GitLab file downloads remain capped at 512 KiB per file.
+Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded content by default. Pagination rejects missing or malformed collection arrays and records an incomplete scan when a response exceeds its limit. Review unusually large provider pages against their API contract before raising a per-client or per-request limit. GitLab file downloads remain capped at 512 KB (512,000 bytes) per file.
 
 
 YAML parsing checks input size, composed nodes, alias count, nesting, expanded
@@ -378,6 +381,10 @@ record-export directories are created as 0700; existing non-private directories
 are rejected without changing their permissions. Use dedicated directories for
 these outputs.
 
+The Markdown reporter defangs bare HTTP(S) and `www.` strings in untrusted text
+fields. This keeps repository names, diagnostics and evidence descriptions from
+becoming automatically clickable when reports are pasted into a ticket or wiki.
+
 Dump filenames include the original connector configuration ordinal and a safe
 label. Repeated names or normalization-colliding labels no longer overwrite each
 other. Selecting a subset with `--only` retains the original ordinal. Use the
@@ -466,7 +473,7 @@ Incremental state uses nonblocking advisory `flock` per cache slot
 atomic writes and current-input fingerprint checks.
 Keep state in a dedicated private directory outside the scanned repository. A
 busy read lock causes a cache miss; a busy write lock skips that publication.
-Platforms without `fcntl` fall back to full scans. Symlinked, non-owner or non-private lock files are
+Incremental state needs POSIX advisory locking (`fcntl`); platforms without it are ones the confined file reader already refuses, so no scan runs there. Symlinked, non-owner or non-private lock files are
 rejected. Use local filesystems with working advisory locks; a lock is not a
 distributed coordination service or a security boundary against another process
 with the same user ID.
@@ -520,18 +527,23 @@ lost user attribution before using their counts as governance evidence.
 
 ### Merge gate and review status
 
-At this follow-up review on 2026-09-24, ruleset
+Ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
 is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an up-to-date
-branch, and one approving review. Its live enforcement is **active**, with no
-bypass actors configured on this required-check ruleset. `Protect main` is also
-active. Earlier review notes describing disabled enforcement are historical.
-Keep the CodeQL job's displayed name `analyze` consistent with the required check.
+branch, and one approving review from a reviewer with write access, alongside
+`Protect main`. Its enforcement state has changed more than once during 2026-09:
+the 2026-09-24 review recorded it disabled, and on 2026-09-25 (13:10 UTC) a merge
+attempted without an approving review was refused with "Repository rule
+violations found", so it was enforced at that moment. Treat neither observation
+as permanent; only the live commands below describe the current state. Keep the
+CodeQL job's displayed name `analyze` consistent with the required check.
 
-At the 2026-09-24 review, the repository had a single maintainer and no merged
-change carried an approving review from a second person. A merged pull request,
-the version string, and the internal AI-assisted hardening logs are not evidence
-of independent review. The review and merge policy is in
+Whatever the ruleset's state, the history is unchanged: the repository has a
+single maintainer, and no change merged to `main` through 2026-09-25 (including
+#62, #65 and #42) carries an approving review from a second person. A repository
+administrator can bypass or reconfigure rules, so a merged pull request, the
+version string and the internal AI-assisted hardening logs are not evidence of
+independent review. The review and merge policy is in
 [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy).
 
 Rulesets, branch protection and pull request approvals are repository settings
@@ -559,19 +571,19 @@ self-merge.
 
 The CI workflow installs the hash-locked core/cloud runtime dependency set and validates signatures, lint, typing, dependency advisories, tests
 with a minimum 80% statement coverage, wheel creation, installed-wheel validation
-outside the source checkout and offline SARIF output. The required Python 3.11
-and 3.12 jobs enforce a
-75% statement-coverage floor for each built-in connector module, so a
-well-tested engine cannot conceal an untested provider. Coverage proves
-execution of code paths in tests; it does not prove provider compatibility or
-complete tenant inventory. The Python 3.13 matrix job tests the candidate;
-verify its inclusion in the live branch rules before treating it as a required
-gate. It builds the Docker image and
-checks its non-root UID, signature assets and
+outside the source checkout and offline SARIF output. All three matrix jobs
+(Python 3.11, 3.12 and 3.13) enforce a 75% statement-coverage floor for each
+built-in connector module, so a well-tested engine cannot conceal an untested
+provider. Coverage proves execution of code paths in tests; it does not prove
+provider compatibility or complete tenant inventory. The Python 3.13 job has
+passed on hosted runners; the ruleset above names only `test (3.11)`,
+`test (3.12)` and `analyze` as required checks, so verify its inclusion in the
+live branch rules before treating it as a required gate. The 3.13 job also
+builds the Docker image and checks its non-root UID, signature assets and
 network-isolated scan with a read-only root filesystem and resource limits.
 Focused regressions cover the review findings, private-address enforcement,
 public-key verification, plugin policy, artifact permissions and replay integrity.
-Dependabot checks Python and GitHub Actions dependencies weekly.
+Dependabot checks Python, GitHub Actions and Docker base-image dependencies weekly.
 
 Automated and mocked provider-contract checks do not validate a tenant's actual
 permissions, enabled services, data retention or export trust chain. Before an
@@ -687,6 +699,7 @@ See the [consolidated hardening log](hardening-logs/consolidated-review-2026-09-
 for the maintainer's verification notes and implementation choices. It is an
 internal, AI-assisted work log, not an independent review.
 
-The [round 2 production review](production-review-2026-09-24-round2.md) records
+The [round 2 production review](production-review-2026-09-24-round2.md), also an
+internal AI-assisted work log rather than an independent review, records
 the later verified corrections to export sanitization, Bedrock/IAM/OCI collection,
 JWT classification, gateway detection and report rendering performance.

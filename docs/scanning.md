@@ -9,7 +9,7 @@ Two situations are deliberately outside a repository's own content:
   scan root loses nothing (the target is scanned at its real path) and is
   skipped silently. A link that leaves the root, or cannot be resolved, is
   skipped with a warning.
-* **Oversize files** (`max_file_size`, default 1 MiB, e.g. recorded HTTP
+* **Oversize files** (`max_file_size`, default 1,000,000 bytes, e.g. recorded HTTP
   cassettes) are skipped with a warning.
 
 With `strict_coverage: true` (`--strict-coverage`) both become errors and the

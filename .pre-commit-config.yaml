@@ -5,16 +5,24 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # Fixtures reproduce foreign files byte for byte and the retained licence
+      # texts are digest-bound to their upstream copies; never rewrite them.
       - id: trailing-whitespace
+        exclude: ^(tests/fixtures/|tools/evaluation/independent_licenses/)
       - id: end-of-file-fixer
+        exclude: ^(tests/fixtures/|tools/evaluation/independent_licenses/)
+      # mkdocs.yml uses Material's `!!python/name:` tags, which the safe loader
+      # rejects; `mkdocs build --strict` in CI validates that file instead.
       - id: check-yaml
         args: [--allow-multiple-documents]
-        exclude: ^shadowscan/signatures/data/
+        exclude: ^(shadowscan/signatures/data/|mkdocs\.yml$)
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=500]
       - id: detect-private-key
+        # Synthetic PEM markers exercise the redaction tests.
+        exclude: ^tests/unit/test_redaction_security\.py$
       - id: no-commit-to-branch
         args: [--branch=main]
 
@@ -23,7 +31,7 @@ repos:
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
-      # ruff-format is not adopted yet: 173 files would be reformatted.
+      # ruff-format is not adopted yet; most files would be reformatted.
 
   # Keep the ruff and mypy revs equal to the pins in requirements-ci-constraints.txt
   # so the hooks run the same versions as CI (tests/test_repository_policy.py checks).
@@ -50,5 +58,8 @@ repos:
         name: Check for hardcoded secret patterns
         entry: python tools/check_secrets.py
         language: system
-        types: [python, yaml]
-        exclude: ^(tests/fixtures/|shadowscan/signatures/data/)
+        # `types` is an AND filter; `types_or` selects Python or YAML files.
+        types_or: [python, yaml]
+        # Tests and fixtures hold synthetic credential-shaped strings on purpose
+        # (the scanner's own detection and redaction tests need real shapes).
+        exclude: ^(tests/|shadowscan/signatures/data/)

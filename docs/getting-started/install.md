@@ -1,9 +1,9 @@
 # Installation
 
 For deployment on Linux x86_64, use a reviewed full commit SHA and the
-repository's hash-locked runtime dependencies. The required CI gates cover
-Python 3.11 and 3.12. Python 3.13 awaits successful hosted matrix validation;
-see [production deployment](../production.md#install-from-a-reviewed-revision)
+repository's hash-locked runtime dependencies. CI validates Python 3.11, 3.12
+and 3.13 on Linux x86_64; see
+[production deployment](../production.md#install-from-a-reviewed-revision)
 for the release evidence and platform limits.
 
 ```bash
