@@ -33,6 +33,21 @@
 - Bound remote clone time, preflight provider repository size, avoid cloning when a usable size estimate is unavailable, terminate clone descendants on cancellation, remove partial checkouts and mark API fallbacks incomplete.
 - Add a frozen holdout acceptance gate, tenant canary procedure, safer contributor guidance and a GitHub Action example. Field accuracy still needs independent review and live canaries.
 
+### Scanner assurance and release evidence (2026-09-25)
+
+- Recognize import-bound OpenAI Responses API function loops only when the
+  model-selected call is dispatched and its result returns in the next request
+  with matching call identity. Unreachable literal branches and locally
+  shadowed execution names no longer establish provider tool loops.
+- The offline acceptance verifier excludes previously evaluated source snapshots,
+  validates the evaluator's known-gap report, and supports frozen per-kind
+  sample and error limits. Its operator declarations still require independent
+  human review and real tenant validation before rollout.
+- The release candidate workflow binds a successful exact-commit main CI run
+  to a wheel, hash-locked runtime and build dependencies, SBOM and retained
+  provenance. The reviewed container base and consumer CI example are pinned;
+  the workflow does not publish a package or authorize deployment.
+
 ### Detection precision, coverage policy and risk explainability
 
 Behavior changes (review before upgrading an enforcement gate):
