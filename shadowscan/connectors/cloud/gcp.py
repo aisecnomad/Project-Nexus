@@ -20,20 +20,33 @@ import re
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
+
+from requests import RequestException, Session
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.cloud.common import cloud_finding, done, name_hint, scan_env, scan_iam_actions
+from shadowscan.connectors.cloud.common import (
+    cloud_finding,
+    done,
+    name_hint,
+    scan_env,
+    scan_iam_actions,
+    string_list,
+)
+from shadowscan.connectors.cloud.credentials import allow_instance_credentials, require_local_adc
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
 
 DEFAULT_LOCATIONS = ["us-central1", "us-east4", "us-west1", "europe-west1", "europe-west4", "asia-southeast1", "asia-northeast1"]
+MAX_LIST_PAGES = 500
 AI_SERVICES = {"aiplatform.googleapis.com": "Vertex AI", "generativelanguage.googleapis.com": "Gemini API", "dialogflow.googleapis.com": "Dialogflow", "discoveryengine.googleapis.com": "Vertex AI Search / Agent Builder / Agentspace", "notebooks.googleapis.com": "Vertex AI Workbench", "speech.googleapis.com": "Speech", "documentai.googleapis.com": "Document AI", "contactcenteraiplatform.googleapis.com": "CCAI"}
 
 
 class GcpConnector(BaseConnector):
     name: ClassVar[str] = "cloud.gcp"
+    _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = True
     surface: ClassVar[Surface] = Surface.CLOUD
     provider: ClassVar[str | None] = "gcp"
     requires: ClassVar[list[str]] = []
@@ -42,17 +55,28 @@ class GcpConnector(BaseConnector):
         "projects": "list of project ids (default: all projects visible to the credentials)",
         "locations": f"Vertex/Dialogflow locations (default {DEFAULT_LOCATIONS})",
         "access_token": "OAuth token (env GOOGLE_OAUTH_ACCESS_TOKEN); otherwise Application Default Credentials via google-auth",
+        "credentials_file": "explicit Google credentials file (env GOOGLE_APPLICATION_CREDENTIALS); otherwise local gcloud ADC",
+        "allow_instance_credentials": "allow metadata-based Application Default Credentials (default false; inherited from options)",
         "audit_days": "look back N days in Cloud Audit Logs for Vertex callers (default 0 = off)",
         "max_projects": "default 200",
+        "max_pages": "cap on pages per paginated call, at least 1 (default 1000; resource lists stop at 500 pages and audit-log queries at 50 pages regardless)",
         "input": "offline: JSONL dump of records",
     }
     offline_formats: ClassVar[str] = "JSONL dump of records"
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
-        self.locations = ctx.get("locations") or DEFAULT_LOCATIONS
+        try:
+            # Locations are interpolated into API hostnames.
+            self.locations = string_list(ctx.get("locations"), "locations", pattern=r"[a-z0-9-]+") or DEFAULT_LOCATIONS
+            self.projects = string_list(ctx.get("projects"), "projects", pattern=r"[A-Za-z0-9._:-]+") or []
+        except ValueError as exc:
+            raise ConnectorError(f"cloud.gcp: {exc}") from None
         self.audit_days = int(ctx.get("audit_days", 0))
         self.max_projects = int(ctx.get("max_projects", 200))
+        if self.max_projects < 1:
+            raise ConnectorError("cloud.gcp: max_projects must be positive")
+        self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
         self.http: HttpClient | None = None
 
     def _auth(self) -> None:
@@ -63,44 +87,120 @@ class GcpConnector(BaseConnector):
                 import google.auth.transport.requests
             except ImportError as exc:
                 raise ConnectorError("cloud.gcp: install google-auth (pip install 'shadowscan[gcp]') or provide access_token") from exc
-            creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-            creds.refresh(google.auth.transport.requests.Request())
+            # google-auth otherwise uses its own 120-second transport default,
+            # including discovery/refresh requests outside our HttpClient.
+            allow_instance = allow_instance_credentials(self.ctx.get("allow_instance_credentials", False))
+
+            class CredentialSession(Session):
+                """Retain OAuth status bodies within the complete HTTP policy."""
+
+                def __init__(self) -> None:
+                    super().__init__()
+                    self.trust_env = False
+                    self.client = HttpClient(allow_private_origin=allow_instance, max_retries=0, max_response_bytes=1024 * 1024)
+
+                def request(self, method: Any, url: Any, *args: Any, **kwargs: Any) -> Any:
+                    if args:
+                        # google-auth supplies HTTP options by keyword.
+                        raise TypeError("Credential transport requires keyword HTTP options")
+                    if allow_instance and urlsplit(url).scheme == "http":
+                        # IMDS requires HTTP. Opt-in permits that transport, but
+                        # never redirects credentials and still bounds its body.
+                        kwargs["allow_redirects"] = False
+                        kwargs["stream"] = True
+                        response = super().request(method, url, **kwargs)
+                        if 300 <= response.status_code < 400:
+                            response.close()
+                            raise ValueError("Cloud credential endpoint redirects are refused")
+                        response._content = self.client.read_response_bytes(response)
+                        response._content_consumed = True  # type: ignore[attr-defined]
+                        return response
+                    kwargs["stream"] = False
+                    return self.client.request(method, url, raise_for_status=False, **kwargs)
+
+                def close(self) -> None:
+                    self.client.session.close()
+                    super().close()
+
+            class BoundedRequest(google.auth.transport.requests.Request):
+                def __call__(self, *args: Any, **kwargs: Any) -> Any:
+                    if not allow_instance:
+                        # A file-based workload identity can itself reference IMDS.
+                        # Apply public destination/socket policy during refresh too.
+                        validate_url(kwargs.get("url") or args[0], allow_private=False)
+                    timeout = kwargs.pop("timeout", 30)
+                    kwargs["timeout"] = min(float(timeout), 30) if timeout is not None else 30
+                    return super().__call__(*args, **kwargs)
+
+            request = BoundedRequest(session=CredentialSession())
+
+            scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+            credentials_file = self.ctx.get("credentials_file", env="GOOGLE_APPLICATION_CREDENTIALS")
+            if allow_instance and not credentials_file:
+                creds, _ = google.auth.default(scopes=scopes, request=request)
+            else:
+                # Local-only mode never calls the default ADC chain, which may
+                # silently fall through to instance metadata or external hooks.
+                if not allow_instance:
+                    credentials_file = require_local_adc(credentials_file)
+                creds, _ = google.auth.load_credentials_from_file(credentials_file, scopes=scopes, request=request)
+            creds.refresh(request)
             token = creds.token
         self.http = HttpClient(headers={"Authorization": f"Bearer {token}"})
 
     def _get(self, url: str, **params: Any) -> Any:
         assert self.http
         try:
-            return self.http.get_json(url, params=params or None)
-        except HttpError as exc:
-            if exc.status in (400, 403, 404, 429):
-                self.log.debug("gcp %s: %s", url, exc.status)
-                if exc.status == 403 and "SERVICE_DISABLED" not in exc.body and "has not been used" not in exc.body:
-                    self.ctx.warn(f"cloud.gcp: access denied for {url.split('?')[0]}")
-                return None
-            raise
+            data = self.http.get_json(url, params=params or None)
+            if data is None:
+                self.ctx.warn(f"cloud.gcp: empty response for {url.split('?')[0]}")
+            return data
+        except (HttpError, RequestException, ValueError) as exc:
+            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            self.ctx.warn(f"cloud.gcp: collection failed for {url.split('?')[0]} ({status})")
+            return None
 
     def _pages(self, url: str, items_key: str, **params: Any) -> Iterator[dict[str, Any]]:
-        assert self.http
         token: str | None = None
-        while True:
+        seen: set[str] = set()
+        for _ in range(min(MAX_LIST_PAGES, self.max_pages)):
             p = dict(params)
             if token:
                 p["pageToken"] = token
             data = self._get(url, **p)
-            if not data:
+            if data is None:
+                return  # _get has already recorded the collection failure
+            if not isinstance(data, dict) or "error" in data:
+                self.ctx.warn(f"cloud.gcp: invalid response for {url}")
                 return
-            yield from data.get(items_key, []) or []
+            # Aggregated list APIs may succeed while omitting unavailable regions.
+            # Keep reachable observations, but never turn partial success into a
+            # complete inventory (Cloud Functions v2 and Cloud Run v2 contract).
+            unreachable = data.get("unreachable", [])
+            if not isinstance(unreachable, list) or any(not isinstance(loc, str) or not loc for loc in unreachable):
+                self.ctx.warn(f"cloud.gcp: invalid unreachable locations for {url}")
+            elif unreachable:
+                self.ctx.warn(f"cloud.gcp: {len(unreachable)} unreachable location(s) for {url}; coverage unknown")
+            items = data.get(items_key, [])
+            if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+                self.ctx.warn(f"cloud.gcp: invalid {items_key} page for {url}")
+                return
+            yield from items
             token = data.get("nextPageToken")
-            if not token:
+            if token is None or token == "":
                 return
+            if not isinstance(token, str) or token in seen:
+                self.ctx.warn(f"cloud.gcp: invalid or repeated pagination token for {url}")
+                return
+            seen.add(token)
+        self.ctx.warn(f"cloud.gcp: pagination limit reached for {url}")
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
-        projects = self.ctx.get("projects") or []
+        projects: Iterable[str] = list(self.projects)
         if not projects:
-            projects = [p["projectId"] for p in self._pages("https://cloudresourcemanager.googleapis.com/v1/projects", "projects", filter="lifecycleState:ACTIVE") if p.get("projectId")]
+            projects = (p["projectId"] for p in self._pages("https://cloudresourcemanager.googleapis.com/v1/projects", "projects", filter="lifecycleState:ACTIVE") if p.get("projectId"))
         for i, project in enumerate(projects):
             if i >= self.max_projects:
                 self.ctx.warn("cloud.gcp: max_projects reached")
@@ -126,20 +226,47 @@ class GcpConnector(BaseConnector):
                 for eng in self._pages(f"https://discoveryengine.googleapis.com/v1/projects/{project}/locations/{loc}/collections/default_collection/engines", "engines"):
                     yield {"_kind": "discovery-engine", "_project": project, "_location": loc, **eng}
         if "run.googleapis.com" in enabled:
-            for svc in self._pages(f"https://run.googleapis.com/v2/projects/{project}/locations/-/services", "services"):
-                yield {"_kind": "cloud-run-service", "_project": project, **svc}
+            # Cloud Run v2 services.list rejects the '-' wildcard. Enumerate
+            # project-visible locations through the documented v1 locations API.
+            seen_locations: set[str] = set()
+            for location in self._pages(f"https://run.googleapis.com/v1/projects/{project}/locations", "locations"):
+                run_location = location.get("locationId")
+                if not isinstance(run_location, str) or not re.fullmatch(r"[a-z][a-z0-9-]*[0-9]", run_location):
+                    self.ctx.warn(f"cloud.gcp: invalid Cloud Run location for {project}; coverage unknown")
+                    continue
+                if run_location in seen_locations:
+                    continue
+                seen_locations.add(run_location)
+                for svc in self._pages(f"https://run.googleapis.com/v2/projects/{project}/locations/{run_location}/services", "services"):
+                    yield {**svc, "_kind": "cloud-run-service", "_project": project, "_location": run_location}
         if "cloudfunctions.googleapis.com" in enabled:
             for fn in self._pages(f"https://cloudfunctions.googleapis.com/v2/projects/{project}/locations/-/functions", "functions"):
                 yield {"_kind": "cloud-function", "_project": project, **fn}
         assert self.http
         try:
             policy = self.http.post_json(f"https://cloudresourcemanager.googleapis.com/v1/projects/{project}:getIamPolicy", json={})
-            yield {"_kind": "iam-policy", "_project": project, "bindings": (policy or {}).get("bindings", [])}
-        except HttpError as exc:
-            self.log.debug("gcp iam policy %s: %s", project, exc.status)
+            if not isinstance(policy, dict) or "error" in policy:
+                self.ctx.warn(f"cloud.gcp: invalid IAM policy response for {project}")
+            else:
+                yield {"_kind": "iam-policy", "_project": project, "bindings": policy.get("bindings", [])}
+        except (HttpError, RequestException, ValueError) as exc:
+            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            self.ctx.warn(f"cloud.gcp: IAM policy not readable for {project} ({status})")
         for sa in self._pages(f"https://iam.googleapis.com/v1/projects/{project}/serviceAccounts", "accounts"):
-            keys = self._get(f"https://iam.googleapis.com/v1/{sa['name']}/keys", keyTypes="USER_MANAGED") or {}
-            yield {"_kind": "service-account", "_project": project, "user_managed_keys": len(keys.get("keys", [])), **sa}
+            name = sa.get("name")
+            if not isinstance(name, str) or not re.fullmatch(r"projects/[A-Za-z0-9._:-]+/serviceAccounts/[^/?#\s]+", name):
+                self.ctx.warn(f"cloud.gcp: invalid service account identifier for {project}; coverage unknown")
+                continue
+            keys = self._get(f"https://iam.googleapis.com/v1/{name}/keys", keyTypes="USER_MANAGED")
+            key_list = keys.get("keys", []) if isinstance(keys, dict) and "error" not in keys else None
+            count = len(key_list) if isinstance(key_list, list) and all(isinstance(key, dict) for key in key_list) else None
+            complete = count is not None
+            if not complete:
+                self.ctx.warn(f"cloud.gcp: service account key inventory unavailable for {name}; coverage unknown")
+            # Access-denied and malformed responses must not be reported as zero keys.
+            yield {**sa, "_kind": "service-account", "_project": project,
+                   "user_managed_keys": count,
+                   "key_coverage": "observed" if complete else "unknown"}
         if "apikeys.googleapis.com" in enabled:
             for key in self._pages(f"https://apikeys.googleapis.com/v2/projects/{project}/locations/global/keys", "keys"):
                 yield {"_kind": "api-key", "_project": project, **key}
@@ -154,54 +281,78 @@ class GcpConnector(BaseConnector):
         since = (datetime.now(UTC) - timedelta(days=self.audit_days)).isoformat()
         body = {"resourceNames": [f"projects/{project}"], "filter": f'protoPayload.serviceName=("aiplatform.googleapis.com" OR "dialogflow.googleapis.com" OR "discoveryengine.googleapis.com") AND (protoPayload.methodName:("Predict" OR "GenerateContent" OR "StreamGenerateContent" OR "Query" OR "DetectIntent" OR "Converse" OR "Answer")) AND timestamp>="{since}"', "pageSize": 1000, "orderBy": "timestamp desc"}
         token: str | None = None
-        pages = 0
-        while pages < 50:
+        seen: set[str] = set()
+        for _ in range(min(50, self.max_pages)):
             if token:
                 body["pageToken"] = token
             try:
                 data = self.http.post_json("https://logging.googleapis.com/v2/entries:list", json=body)
-            except HttpError as exc:
-                self.ctx.warn(f"cloud.gcp: audit logs not readable for {project} ({exc.status})")
+            except (HttpError, RequestException) as exc:
+                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                self.ctx.warn(f"cloud.gcp: audit logs not readable for {project} ({status})")
                 return
-            for e in (data or {}).get("entries", []):
+            if not isinstance(data, dict) or "error" in data or not isinstance(data.get("entries", []), list):
+                self.ctx.warn(f"cloud.gcp: invalid audit log response for {project}")
+                return
+            for e in data.get("entries", []):
+                if not isinstance(e, dict) or not isinstance(e.get("protoPayload") or {}, dict):
+                    self.ctx.warn(f"cloud.gcp: invalid audit log entry for {project}")
+                    continue
                 pp = e.get("protoPayload") or {}
                 yield {"_kind": "audit-event", "_project": project, "principal": get_path(pp, "authenticationInfo.principalEmail"), "method": pp.get("methodName"), "resource": pp.get("resourceName"), "timestamp": e.get("timestamp"), "userAgent": get_path(pp, "requestMetadata.callerSuppliedUserAgent"), "ip": get_path(pp, "requestMetadata.callerIp"), "delegation": get_path(pp, "authenticationInfo.serviceAccountDelegationInfo")}
-            token = (data or {}).get("nextPageToken")
-            pages += 1
-            if not token:
+            token = data.get("nextPageToken")
+            if token is None or token == "":
                 return
+            if not isinstance(token, str) or token in seen:
+                self.ctx.warn(f"cloud.gcp: invalid or repeated audit pagination token for {project}")
+                return
+            seen.add(token)
+        self.ctx.warn(f"cloud.gcp: audit pagination limit reached for {project}")
 
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
-        callers: dict[str, dict[str, Any]] = {}
+        callers: dict[tuple[str | None, str], dict[str, Any]] = {}
+        handlers = {name[3:].replace("_", "-"): getattr(self, name) for name in dir(type(self)) if name.startswith("_h_")}
         for rec in records:
-            kind = rec.get("_kind")
             self.ctx.examined()
-            if kind == "audit-event":
-                key = rec.get("principal") or "unknown"
-                agg = callers.setdefault(key, {"events": 0, "methods": {}, "resources": {}, "agents": {}, "first": None, "last": None, "project": rec.get("_project"), "delegated": False})
-                agg["events"] += 1
-                agg["methods"][rec.get("method")] = agg["methods"].get(rec.get("method"), 0) + 1
-                r = re.sub(r"projects/[^/]+/", "", str(rec.get("resource") or ""))[:120]
-                agg["resources"][r] = agg["resources"].get(r, 0) + 1
-                if rec.get("userAgent"):
-                    agg["agents"][rec["userAgent"]] = agg["agents"].get(rec["userAgent"], 0) + 1
-                if rec.get("delegation"):
-                    agg["delegated"] = True
-                t = rec.get("timestamp")
-                if t:
-                    agg["first"] = t if not agg["first"] or t < agg["first"] else agg["first"]
-                    agg["last"] = t if not agg["last"] or t > agg["last"] else agg["last"]
+            kind = rec.get("_kind") if isinstance(rec, dict) else None
+            if not isinstance(kind, str) or kind not in handlers.keys() | {"audit-event"}:
+                self.ctx.warn("cloud.gcp: record has missing, invalid, or unsupported _kind")
                 continue
-            handler = getattr(self, f"_h_{kind.replace('-', '_')}", None) if kind else None
-            if handler:
-                result = handler(rec)
+            try:
+                if kind == "audit-event":
+                    for field in ("principal", "method", "resource", "userAgent", "timestamp", "_project"):
+                        if rec.get(field) is not None and not isinstance(rec[field], str):
+                            raise ValueError("event field")
+                    # One principal may call multiple projects. Preserve the
+                    # resource project as part of each observation's identity.
+                    key = (rec.get("_project"), rec.get("principal") or "unknown")
+                    agg = callers.setdefault(key, {"events": 0, "methods": {}, "resources": {}, "agents": {}, "first": None, "last": None, "project": rec.get("_project"), "delegated": False})
+                    agg["events"] += 1
+                    agg["methods"][rec.get("method")] = agg["methods"].get(rec.get("method"), 0) + 1
+                    r = re.sub(r"projects/[^/]+/", "", str(rec.get("resource") or ""))[:120]
+                    agg["resources"][r] = agg["resources"].get(r, 0) + 1
+                    if rec.get("userAgent"):
+                        agg["agents"][rec["userAgent"]] = agg["agents"].get(rec["userAgent"], 0) + 1
+                    if rec.get("delegation"):
+                        agg["delegated"] = True
+                    t = rec.get("timestamp")
+                    if t:
+                        agg["first"] = t if not agg["first"] or t < agg["first"] else agg["first"]
+                        agg["last"] = t if not agg["last"] or t > agg["last"] else agg["last"]
+                    continue
+                result = handlers[kind](rec)
                 if isinstance(result, Finding):
                     yield result
                 elif result:
                     yield from result
-        for principal, agg in callers.items():
-            yield self._caller_finding(principal, agg)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.gcp: record has invalid fields for its _kind")
+        for (_, principal), agg in callers.items():
+            try:
+                yield self._caller_finding(principal, agg)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.ctx.warn("cloud.gcp: invalid aggregated caller fields")
 
     def _h_project(self, rec: dict[str, Any]) -> Finding | None:
         services = rec.get("ai_services") or []
@@ -318,17 +469,22 @@ class GcpConnector(BaseConnector):
                 for m in b.get("members") or []:
                     per_member.setdefault(m, []).append(role)
         for member, roles in per_member.items():
-            f = cloud_finding(self.name, "gcp", kind=Kind.IAM_GRANT, title=f"IAM member with AI roles in {project}: {member}", resource=f"projects/{project}/iam/{member}", resource_type="iam-binding", account=project, surface=Surface.IDENTITY)
+            roles = sorted(set(roles))
+            broad_roles = [role for role in roles if role in {"roles/owner", "roles/editor"}]
+            f = cloud_finding(self.name, "gcp", kind=Kind.IAM_GRANT, title=f"IAM member with AI or broad project access in {project}: {member}", resource=f"projects/{project}/iam/{member}", resource_type="iam-binding", account=project, surface=Surface.IDENTITY)
             llm = scan_iam_actions(self.index, f, roles, location=f"projects/{project}")
-            if not llm:
+            if not llm and not broad_roles:
                 continue
             f.add_evidence(Evidence(signal="gcp:iam", description=f"{member} holds {', '.join(roles)}", weight=0.45 if member.startswith("serviceAccount:") else 0.25))
+            if broad_roles:
+                f.add_tag("broad-project-access")
+                f.add_evidence(Evidence(signal="gcp:iam-broad-role", description=f"Broad project grant ({', '.join(broad_roles)}) can enable AI access, subject to applicable policies and service availability; this is access evidence, not observed AI execution.", location=f"projects/{project}", weight=0.25))
             if member.startswith("serviceAccount:"):
                 f.add_tag("service-account")
             if member.startswith(("allUsers", "allAuthenticatedUsers")):
                 f.add_tag("public-principal")
             name_hint(self.index, f, member)
-            f.metadata.update({"member": member, "roles": roles})
+            f.metadata.update({"member": member, "roles": roles, "broad_roles": broad_roles, "evidence_class": "access-grant"})
             yield done(f, self.index, Kind.IAM_GRANT)
 
     def _h_service_account(self, rec: dict[str, Any]) -> Finding | None:
@@ -337,10 +493,13 @@ class GcpConnector(BaseConnector):
         name_hint(self.index, f, rec.get("displayName"), rec.get("description"), email.split("@")[0])
         if not f.frameworks:
             return None
-        f.add_evidence(Evidence(signal="gcp:service-account", description=f"Service account '{rec.get('displayName') or email}' with {rec.get('user_managed_keys', 0)} user-managed key(s); disabled={rec.get('disabled', False)}", weight=0.35))
-        if rec.get("user_managed_keys"):
+        keys = rec.get("user_managed_keys")
+        keys_known = isinstance(keys, int) and not isinstance(keys, bool) and keys >= 0 and rec.get("key_coverage") != "unknown"
+        key_description = f"{keys} user-managed key(s)" if keys_known else "unknown user-managed key inventory"
+        f.add_evidence(Evidence(signal="gcp:service-account", description=f"Service account '{rec.get('displayName') or email}' with {key_description}; disabled={rec.get('disabled', False)}", weight=0.35))
+        if isinstance(keys, int) and keys_known and keys > 0:
             f.add_tag("user-managed-keys")
-        f.metadata.update({"email": email, "keys": rec.get("user_managed_keys"), "disabled": rec.get("disabled")})
+        f.metadata.update({"email": email, "keys": keys if keys_known else None, "key_coverage": "observed" if keys_known else "unknown", "disabled": rec.get("disabled")})
         return done(f, self.index, Kind.SERVICE_IDENTITY)
 
     def _h_api_key(self, rec: dict[str, Any]) -> Finding | None:
@@ -349,7 +508,7 @@ class GcpConnector(BaseConnector):
         unrestricted = not targets
         if not ai_targets and not unrestricted:
             return None
-        f = cloud_finding(self.name, "gcp", kind=Kind.SECRET, title=f"API key {'for ' + ', '.join(AI_SERVICES[t] for t in ai_targets) if ai_targets else '(unrestricted)'}: {rec.get('displayName') or rec.get('uid')}", resource=rec.get("name") or rec.get("uid"), resource_type="api-key", account=rec.get("_project"), first_seen=rec.get("createTime"), last_seen=rec.get("updateTime"))
+        f = cloud_finding(self.name, "gcp", kind=Kind.SECRET, title=f"API key {'for ' + ', '.join(AI_SERVICES[t] for t in ai_targets) if ai_targets else '(unrestricted)'}: {rec.get('displayName') or rec.get('uid')}", resource=str(rec.get("name") or rec.get("uid") or ""), resource_type="api-key", account=rec.get("_project"), first_seen=rec.get("createTime"), last_seen=rec.get("updateTime"))
         if "generativelanguage.googleapis.com" in ai_targets or unrestricted:
             f.add_model_provider("provider.google-gemini")
         if "aiplatform.googleapis.com" in ai_targets:

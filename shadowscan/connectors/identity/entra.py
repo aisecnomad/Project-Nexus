@@ -19,17 +19,18 @@ from its shape.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
 
+from requests import RequestException
+
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.common import finalize, scope_matches
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 
 GRAPH = "https://graph.microsoft.com/v1.0"
-MS_GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000"
 FIRST_PARTY_OWNER = "f8cdef31-a31e-4b4a-93e4-5f571e91255a"  # Microsoft services tenant
 
 
@@ -63,22 +64,34 @@ class EntraConnector(BaseConnector):
             secret = self.ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
             if not (self.tenant and cid and secret):
                 raise ConnectorError("identity.entra: tenant_id, client_id and client_secret (or access_token) are required")
-            resp = HttpClient().post(
+            client = HttpClient()
+            resp = client.post(
                 f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token",
                 data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret, "scope": "https://graph.microsoft.com/.default"},
             )
-            token = resp.json()["access_token"]
+            token = client.read_json_response(resp)["access_token"]
         self.http = HttpClient(GRAPH, headers={"Authorization": f"Bearer {token}", "ConsistencyLevel": "eventual"})
+
+    def _pages(self, path: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
+        assert self.http
+        try:
+            yield from self.http.paginate_odata(path, **kwargs)
+        except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            if path.endswith("/appRoleAssignments"):
+                self.ctx.warn(f"identity.entra: appRoleAssignments unreadable for {path} ({status}); app-only permission inventory incomplete")
+            else:
+                self.ctx.warn(f"identity.entra: collection incomplete for {path} ({status})")
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
         sp_select = "id,appId,displayName,appDisplayName,publisherName,servicePrincipalType,accountEnabled,createdDateTime,tags,appOwnerOrganizationId,homepage,replyUrls,signInAudience,verifiedPublisher,notes,appRoleAssignmentRequired,appRoles,oauth2PermissionScopes,description,loginUrl"
-        sps = list(self.http.paginate_odata("/servicePrincipals", params={"$select": sp_select, "$top": 999}))
+        sps = list(self._pages("/servicePrincipals", params={"$select": sp_select, "$top": 999}))
         role_names: dict[str, str] = {}
         for sp in sps:
-            for role in sp.get("appRoles") or []:
+            for role in (sp.get("appRoles") or []) + (sp.get("oauth2PermissionScopes") or []):
                 if role.get("id") and role.get("value"):
                     role_names[role["id"]] = role["value"]
         yield {"_kind": "roleMap", "roles": role_names}
@@ -87,29 +100,23 @@ class EntraConnector(BaseConnector):
             sp.pop("appRoles", None)
             sp.pop("oauth2PermissionScopes", None)
             yield sp
-        for grant in self.http.paginate_odata("/oauth2PermissionGrants", params={"$top": 999}):
+        for grant in self._pages("/oauth2PermissionGrants", params={"$top": 999}):
             grant["_kind"] = "oauth2PermissionGrant"
             yield grant
         lookups = 0
         for sp in sps:
+            if sp.get("appOwnerOrganizationId") == FIRST_PARTY_OWNER and not self.include_first_party:
+                continue
             if lookups >= self.max_lookups:
                 self.ctx.warn("identity.entra: max_app_role_lookups reached; app-only permissions partial")
                 break
-            if sp.get("appOwnerOrganizationId") == FIRST_PARTY_OWNER and not self.include_first_party:
-                continue
             lookups += 1
-            try:
-                for a in self.http.paginate_odata(f"/servicePrincipals/{sp['id']}/appRoleAssignments", params={"$top": 999}):
-                    a["_kind"] = "appRoleAssignment"
-                    yield a
-            except HttpError as exc:
-                self.log.debug("appRoleAssignments %s: %s", sp.get("id"), exc)
-        try:
-            for app in self.http.paginate_odata("/applications", params={"$select": "id,appId,displayName,createdDateTime,requiredResourceAccess,passwordCredentials,keyCredentials,web,spa,publicClient,signInAudience,notes,tags,description", "$top": 999}):
-                app["_kind"] = "application"
-                yield app
-        except HttpError as exc:
-            self.ctx.warn(f"identity.entra: applications not readable: {exc.status}")
+            for a in self._pages(f"/servicePrincipals/{sp['id']}/appRoleAssignments", params={"$top": 999}):
+                a["_kind"] = "appRoleAssignment"
+                yield a
+        for app in self._pages("/applications", params={"$select": "id,appId,displayName,createdDateTime,requiredResourceAccess,passwordCredentials,keyCredentials,web,spa,publicClient,signInAudience,notes,tags,description", "$top": 999}):
+            app["_kind"] = "application"
+            yield app
 
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -119,12 +126,15 @@ class EntraConnector(BaseConnector):
         applications: list[dict[str, Any]] = []
         role_names: dict[str, str] = {}
         for rec in records:
-            kind = rec.get("_kind") or _infer_kind(rec)
+            kind = self._record_kind(rec)
+            if kind is None:
+                self.ctx.warn("identity.entra: unsupported or malformed Graph record; coverage incomplete")
+                continue
             if kind == "roleMap":
                 role_names.update(rec.get("roles") or {})
             elif kind == "servicePrincipal":
                 sps[rec["id"]] = rec
-                for role in rec.get("appRoles") or []:
+                for role in (rec.get("appRoles") or []) + (rec.get("oauth2PermissionScopes") or []):
                     if role.get("id") and role.get("value"):
                         role_names[role["id"]] = role["value"]
             elif kind == "oauth2PermissionGrant":
@@ -145,6 +155,48 @@ class EntraConnector(BaseConnector):
             if f:
                 yield f
 
+    def _record_kind(self, rec: dict[str, Any]) -> str | None:
+        if not self._record_fields_valid(
+            rec,
+            strings=("_kind", "id", "appId", "displayName", "appDisplayName", "publisherName", "notes", "description", "servicePrincipalType", "appOwnerOrganizationId", "scope", "consentType", "principalId", "clientId", "appRoleId", "homepage", "loginUrl"),
+            mappings=("verifiedPublisher", "web", "spa", "publicClient", "roles"),
+            arrays=("appRoles", "oauth2PermissionScopes", "replyUrls", "requiredResourceAccess", "passwordCredentials", "keyCredentials", "tags"),
+        ):
+            return None
+        kind = rec.get("_kind") or _infer_kind(rec)
+        required = {
+            "servicePrincipal": ("id",), "application": ("appId",),
+            "oauth2PermissionGrant": ("clientId",), "appRoleAssignment": ("principalId", "appRoleId"),
+            "roleMap": (),
+        }
+        if kind not in required or not self._record_fields_valid(rec, required=required[kind]):
+            return None
+        if kind == "oauth2PermissionGrant" and not isinstance(rec.get("scope"), str):
+            return None
+        if kind == "roleMap":
+            roles = rec.get("roles")
+            if not isinstance(roles, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in roles.items()):
+                return None
+        if not self._record_fields_valid(rec.get("verifiedPublisher") or {}, strings=("displayName",)):
+            return None
+        if rec.get("accountEnabled") is not None and not isinstance(rec["accountEnabled"], bool):
+            return None
+        if any(not isinstance(url, str) for url in rec.get("replyUrls") or []):
+            return None
+        for field in ("appRoles", "oauth2PermissionScopes"):
+            if any(not self._record_fields_valid(role, strings=("id", "value")) for role in rec.get(field) or []):
+                return None
+        for field in ("web", "spa", "publicClient"):
+            config = rec.get(field) or {}
+            if not self._record_fields_valid(config, arrays=("redirectUris",)) or any(not isinstance(uri, str) for uri in config.get("redirectUris") or []):
+                return None
+        for access in rec.get("requiredResourceAccess") or []:
+            if not self._record_fields_valid(access, arrays=("resourceAccess",)):
+                return None
+            if any(not self._record_fields_valid(permission, strings=("id", "type")) for permission in access.get("resourceAccess") or []):
+                return None
+        return kind
+
     def _sp_finding(self, sp: dict[str, Any], grants: list[dict[str, Any]], roles: list[dict[str, Any]], role_names: dict[str, str]) -> Finding | None:
         first_party = sp.get("appOwnerOrganizationId") == FIRST_PARTY_OWNER
         sp_type = sp.get("servicePrincipalType") or "Application"
@@ -157,7 +209,7 @@ class EntraConnector(BaseConnector):
                 admin_consented = True
             elif g.get("principalId"):
                 principals.add(g["principalId"])
-        app_perms = sorted({role_names.get(r.get("appRoleId"), r.get("appRoleId")) for r in roles if r.get("appRoleId")})
+        app_perms = sorted({role_names.get(role_id, role_id) for r in roles if isinstance(role_id := r.get("appRoleId"), str) and role_id})
         machine = sp_type == "ManagedIdentity" or bool(app_perms)
         user_consented = bool(principals) or admin_consented
         kind = identity_kind_for(user_consented=user_consented, machine=machine)
@@ -170,7 +222,8 @@ class EntraConnector(BaseConnector):
             resource=f"entra:sp:{sp.get('id')}",
             resource_type=f"service-principal/{sp_type}",
             provider="entra",
-            account=self.tenant or sp.get("appOwnerOrganizationId"),
+            # appOwnerOrganizationId is the publisher's tenant, not the scanned one.
+            account=self.tenant,
             first_seen=sp.get("createdDateTime"),
         )
         assess_app(
@@ -180,7 +233,8 @@ class EntraConnector(BaseConnector):
             publisher=sp.get("publisherName") or ((sp.get("verifiedPublisher") or {}).get("displayName")),
             description=" ".join(x for x in [sp.get("notes"), sp.get("description")] if x),
             urls=[sp.get("homepage"), sp.get("loginUrl"), *(sp.get("replyUrls") or [])],
-            scopes=list(delegated) + app_perms,
+            # Sets iterate in hash order; sort so reports are reproducible across runs.
+            scopes=sorted(delegated) + app_perms,
             client_id=sp.get("appId"),
         )
         if first_party and not f.frameworks and not self.include_first_party:
@@ -211,6 +265,7 @@ class EntraConnector(BaseConnector):
                 "publisher": sp.get("publisherName"),
                 "verified_publisher": (sp.get("verifiedPublisher") or {}).get("displayName"),
                 "first_party": first_party,
+                "owner_tenant": sp.get("appOwnerOrganizationId"),
                 "account_enabled": sp.get("accountEnabled"),
                 "sign_in_audience": sp.get("signInAudience"),
                 "tags": sp.get("tags"),
@@ -227,10 +282,22 @@ class EntraConnector(BaseConnector):
 
     def _app_registration_finding(self, app: dict[str, Any], sp: dict[str, Any] | None, role_names: dict[str, str]) -> Finding | None:
         name = app.get("displayName") or app.get("appId")
-        requested: list[str] = []
+        requested_roles: set[str] = set()
+        requested_scopes: set[str] = set()
+        requested_untyped: set[str] = set()
         for rra in app.get("requiredResourceAccess") or []:
             for ra in rra.get("resourceAccess") or []:
-                requested.append(role_names.get(ra.get("id"), ra.get("id")))
+                permission_id = ra.get("id")
+                if not permission_id:
+                    continue
+                permission = role_names.get(str(permission_id), str(permission_id))
+                if ra.get("type") == "Role":
+                    requested_roles.add(permission)
+                elif ra.get("type") == "Scope":
+                    requested_scopes.add(permission)
+                else:
+                    requested_untyped.add(permission)
+        requested = sorted(requested_roles | requested_scopes | requested_untyped)
         f = Finding(
             surface=Surface.IDENTITY,
             connector=self.name,
@@ -243,15 +310,20 @@ class EntraConnector(BaseConnector):
             first_seen=app.get("createdDateTime"),
         )
         redirect_uris = [*((app.get("web") or {}).get("redirectUris") or []), *((app.get("spa") or {}).get("redirectUris") or []), *((app.get("publicClient") or {}).get("redirectUris") or [])]
-        assess_app(self.index, f, name=name, description=" ".join(x for x in [app.get("notes"), app.get("description")] if x), urls=redirect_uris, scopes=requested, client_id=app.get("appId"))
+        # requiredResourceAccess declares what an app *asks* for. Only the
+        # service principal's grants/assignments prove permissions were granted.
+        assess_app(self.index, f, name=name, description=" ".join(x for x in [app.get("notes"), app.get("description")] if x), urls=redirect_uris, client_id=app.get("appId"))
+        requested_classes = sorted({m.signature_id for m in scope_matches(self.index, requested)})
         secrets = app.get("passwordCredentials") or []
         certs = app.get("keyCredentials") or []
-        if not f.frameworks and not any(t in {"policy.llm-access-scopes", "policy.privileged-scopes", "policy.data-access-scopes"} for t in f.tags):
+        if not f.frameworks and not set(requested_classes) & {"policy.llm-access-scopes", "policy.privileged-scopes", "policy.data-access-scopes"}:
             return None
-        f.add_evidence(Evidence(signal="entra:app-registration", description=f"Tenant-owned app registration '{name}' with {len(secrets)} client secret(s), {len(certs)} certificate(s); requested permissions: {', '.join(str(r) for r in requested)[:300]}", location=f"https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Overview/appId/{app.get('appId')}", weight=0.3))
+        f.add_evidence(Evidence(signal="entra:app-registration", description=f"Tenant-owned app registration '{name}' with {len(secrets)} client secret(s), {len(certs)} certificate(s); requested permissions (grant not verified): {', '.join(requested)[:300]}", location=f"https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Overview/appId/{app.get('appId')}", weight=0.3))
+        if requested:
+            f.add_tag("permissions-requested")
         if secrets:
             f.add_tag("client-secret")
-        f.metadata.update({"app_id": app.get("appId"), "requested_permissions": requested[:40], "client_secrets": len(secrets), "certificates": len(certs), "sign_in_audience": app.get("signInAudience"), "tags": app.get("tags"), "has_service_principal": sp is not None})
+        f.metadata.update({"app_id": app.get("appId"), "requested_permissions": requested[:40], "requested_application_permissions": sorted(requested_roles)[:40], "requested_delegated_scopes": sorted(requested_scopes)[:40], "requested_untyped_permissions": sorted(requested_untyped)[:40], "requested_permission_classes": requested_classes, "client_secrets": len(secrets), "certificates": len(certs), "sign_in_audience": app.get("signInAudience"), "tags": app.get("tags"), "has_service_principal": sp is not None})
         finalize(f, self.index)
         f.kind = Kind.SERVICE_IDENTITY
         return f

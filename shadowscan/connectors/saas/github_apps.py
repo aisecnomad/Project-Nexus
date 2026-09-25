@@ -11,11 +11,13 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
+from requests import RequestException
+
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.http import HttpClient
+from shadowscan.utils.http import HttpClient, HttpError
 
 
 class GitHubAppsConnector(BaseConnector):
@@ -39,20 +41,80 @@ class GitHubAppsConnector(BaseConnector):
         token = self.ctx.get("token", env="GITHUB_TOKEN")
         if not (self.org and token):
             raise ConnectorError("saas.github-apps: org and token required")
-        http = HttpClient(self.api_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
-        for inst in http.paginate_link(f"/orgs/{self.org}/installations", params={"per_page": 100}, item_key="installations"):
-            inst["_kind"] = "installation"
-            yield inst
-        billing = http.try_get_json(f"/orgs/{self.org}/copilot/billing")
-        if billing:
-            yield {"_kind": "copilot_billing", **billing}
-        for pat in http.try_get_json(f"/orgs/{self.org}/personal-access-tokens", params={"per_page": 100}, default=[]) or []:
-            pat["_kind"] = "pat"
-            yield pat
+        http = HttpClient(self.api_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True))
+        try:
+            for inst in http.paginate_link(f"/orgs/{self.org}/installations", params={"per_page": 100}, item_key="installations"):
+                yield {**inst, "_kind": "installation"}
+        except (HttpError, RequestException, ValueError, RuntimeError) as exc:
+            self._collection_warning("installation inventory", exc)
+        try:
+            billing = http.try_get_json(f"/orgs/{self.org}/copilot/billing", ok_statuses={404})
+            if billing is not None:
+                if isinstance(billing, dict):
+                    yield {**billing, "_kind": "copilot_billing"}
+                else:
+                    self.ctx.warn("saas.github-apps: invalid Copilot billing response; coverage incomplete")
+        except (HttpError, RequestException, ValueError, RuntimeError) as exc:
+            self._collection_warning("Copilot billing", exc)
+        try:
+            for pat in http.paginate_link(f"/orgs/{self.org}/personal-access-tokens", params={"per_page": 100}):
+                yield {**pat, "_kind": "pat"}
+        except (HttpError, RequestException, ValueError, RuntimeError) as exc:
+            self._collection_warning("fine-grained PAT inventory", exc)
+
+    def _collection_warning(self, source: str, exc: Exception) -> None:
+        # Sources need different grants. Keep findings from available sources,
+        # report incomplete coverage, and never echo a provider's response body.
+        reason = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+        self.ctx.warn(f"saas.github-apps: {source} unavailable ({reason}); coverage incomplete")
+
+    @staticmethod
+    def _identifier(value: Any) -> bool:
+        return (isinstance(value, str) and bool(value.strip())) or (type(value) is int and value > 0)
+
+    def _valid_provider_record(self, rec: dict[str, Any], kind: Any) -> bool:
+        if kind == "installation":
+            if not self._record_fields_valid(
+                rec,
+                strings=("app_slug", "target_type", "html_url", "repository_selection", "created_at", "updated_at", "suspended_at"),
+                mappings=("permissions", "account"), arrays=("events",),
+            ):
+                return False
+            perms = rec.get("permissions") or {}
+            account = rec.get("account") or {}
+            return (
+                any(self._identifier(rec.get(key)) for key in ("id", "app_id", "app_slug"))
+                and all(rec.get(key) is None or self._identifier(rec[key]) for key in ("id", "app_id", "client_id"))
+                and self._record_fields_valid(account, strings=("login",))
+                and all(isinstance(k, str) and isinstance(v, str) for k, v in perms.items())
+                and all(isinstance(event, str) for event in (rec.get("events") or []))
+            )
+        if kind == "pat":
+            if not self._record_fields_valid(
+                rec,
+                strings=("token_name", "repository_selection", "access_granted_at", "token_last_used_at", "token_expires_at"),
+                mappings=("owner", "permissions"),
+            ):
+                return False
+            return (
+                any(self._identifier(rec.get(key)) for key in ("token_id", "token_name"))
+                and (rec.get("token_id") is None or self._identifier(rec["token_id"]))
+                and self._record_fields_valid(rec.get("owner") or {}, strings=("login",))
+                and all(
+                    isinstance(group, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in group.items())
+                    for group in (rec.get("permissions") or {}).values()
+                )
+            )
+        if kind == "copilot_billing":
+            return self._record_fields_valid(rec, strings=("plan_type",), mappings=("seat_breakdown",)) and isinstance(rec.get("seat_breakdown"), dict)
+        return False
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:
-            kind = rec.get("_kind") or ("copilot_billing" if "seat_breakdown" in rec else "pat" if "token_id" in rec else "installation")
+            kind = (rec.get("_kind") or ("copilot_billing" if "seat_breakdown" in rec else "pat" if "token_id" in rec else "installation")) if isinstance(rec, dict) else None
+            if not self._valid_provider_record(rec, kind):
+                self.ctx.warn("saas.github-apps: unsupported or malformed provider record; coverage incomplete")
+                continue
             self.ctx.examined()
             if kind == "installation":
                 f = self._installation_finding(rec)

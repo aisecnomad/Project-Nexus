@@ -1,0 +1,79 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "requirements-docs.lock"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "SECURITY.md"
+      - "CONTRIBUTING.md"
+      - "GOVERNANCE.md"
+      - "CODE_OF_CONDUCT.md"
+      - "SUPPORT.md"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "requirements-docs.lock"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "SECURITY.md"
+      - "CONTRIBUTING.md"
+      - "GOVERNANCE.md"
+      - "CODE_OF_CONDUCT.md"
+      - "SUPPORT.md"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish after GitHub Pages is configured to use GitHub Actions
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install MkDocs
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-docs.lock
+      - name: Build docs
+        run: mkdocs build --strict
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: github.event_name != 'pull_request'
+        with:
+          path: site/
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

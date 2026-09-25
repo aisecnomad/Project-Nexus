@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import csv
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -11,15 +13,16 @@ from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.reporters import FORMATS, render
+from shadowscan.reporters.html import _JS
 
 
-def _result(fixtures):
+def _result(fixtures, index):
     cfg = ScanConfig(connectors=[ConnectorSpec(name="code.filesystem", config={"path": str(fixtures / "sample_repo"), "label": "repo"})], inventory=[str(Path(__file__).parents[1] / "fixtures" / "inventory" / "ops-provisioning-04.yaml")])
-    return Engine(cfg).run()
+    return Engine(cfg, index).run()
 
 
-def test_all_formats_render(fixtures):
-    result = _result(fixtures)
+def test_all_formats_render(fixtures, index):
+    result = _result(fixtures, index)
     out = render(result, "json")
     data = json.loads(out)
     assert data["summary"]["total"] == len(result.findings) and data["findings"][0]["risk"]["factors"]
@@ -33,7 +36,25 @@ def test_all_formats_render(fixtures):
     assert md.startswith("# ShadowScan report") and "## Findings" in md and "Risk factors" in md
     html = render(result, "html")
     assert "<!doctype html>" in html and "tr class='row'" in html and "SHADOW" in html
+    script_hash = base64.b64encode(hashlib.sha256(_JS.encode("utf-8")).digest()).decode("ascii")
+    assert f"script-src 'sha256-{script_hash}'" in html
+    assert "default-src 'none'" in html and "name='referrer' content='no-referrer'" in html
     assert set(FORMATS) == {"table", "csv", "html", "json", "markdown", "sarif"}
+
+
+def test_markdown_report_defangs_untrusted_bare_urls(fixtures, index):
+    result = _result(fixtures, index)
+    finding = result.findings[0]
+    finding.title = "Visit https://attacker.example/path or www.attacker.example"
+    finding.evidence[0].description = "The source also referenced HTTP://login.attacker.example"
+
+    report = render(result, "markdown")
+
+    assert "hxxps://attacker.example/path" in report
+    assert r"www\[.\]attacker.example" in report
+    assert "hxxp://login.attacker.example" in report
+    assert "https://attacker.example/path" not in report
+    assert "HTTP://login.attacker.example" not in report
 
 
 def test_cli_code_scan_and_outputs(tmp_path: Path, fixtures):
@@ -77,7 +98,8 @@ def test_cli_scan_config_diff_and_stubs(tmp_path: Path, fixtures):
     assert runner.invoke(main, ["scan", "-c", str(cfg), "--only", "cloud.aws", "--format", "json", "-o", str(a)]).exit_code == 0
     assert runner.invoke(main, ["scan", "-c", str(cfg), "--format", "json", "-o", str(b)]).exit_code == 0
     res = runner.invoke(main, ["diff", str(a), str(b)])
-    assert res.exit_code == 0 and "new" in res.output and "Slack" in res.output
+    assert res.exit_code == 3 and "new" in res.output and "Slack" in res.output
+    assert "scope differs" in res.output
     stubs = tmp_path / "stubs"
     res = runner.invoke(main, ["inventory", "stubs", str(b), "-o", str(stubs)])
     assert res.exit_code == 0 and list(stubs.glob("*.yaml"))

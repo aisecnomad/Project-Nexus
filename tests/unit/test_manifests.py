@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from shadowscan.connectors.code.manifests import parse_manifest
 
 
@@ -54,3 +56,45 @@ def test_env_file_and_cloudformation():
 
 def test_non_manifest_returns_none():
     assert parse_manifest("src/app.py", "print('hi')") is None
+
+
+def test_parallel_manifest_parsing_preserves_all_artifacts():
+    compose = "services:\n" + "".join(
+        f"  agent{i}:\n    image: ghcr.io/acme/agent:1\n    environment:\n      OPENAI_API_KEY: placeholder\n"
+        for i in range(100)
+    )
+    terraform = "\n".join(
+        f'resource "aws_bedrockagent_agent" "agent{i}" {{\n  agent_name = "agent{i}"\n}}'
+        for i in range(100)
+    )
+    jobs = [("compose.yaml", compose), ("main.tf", terraform)] * 18
+
+    def scan(job):
+        result = parse_manifest(*job)
+        assert result is not None and not result.errors
+        return [(artifact.kind, artifact.value, artifact.line, artifact.extra) for artifact in result.artifacts]
+
+    expected = [scan(job) for job in jobs[:2]]
+    assert len(expected[0]) == 200 and len(expected[1]) == 100
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(scan, jobs))
+    assert results == expected * 18
+
+
+def test_yaml_artifacts_keep_source_lines_across_chunks():
+    lines = ["services:"] + [f"  padding{i}: # {'x' * 55}" for i in range(120)]
+    lines += [
+        "  -",
+        "    OPENAI_API_KEY: example",
+        "    image: ghcr.io/acme/agent:1",
+        "    uses: actions/checkout@v4",
+        "    token: ${{ secrets.CI_TOKEN }}",
+    ]
+    result = parse_manifest("compose.yaml", "\n".join(lines) + "\n")
+    assert result is not None and not result.errors
+    assert {(artifact.kind, artifact.value, artifact.line) for artifact in result.artifacts} == {
+        ("env", "OPENAI_API_KEY", 123),
+        ("image", "ghcr.io/acme/agent:1", 124),
+        ("action", "actions/checkout@v4", 125),
+        ("secret_ref", "CI_TOKEN", 126),
+    }

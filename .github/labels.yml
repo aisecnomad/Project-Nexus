@@ -1,0 +1,103 @@
+# Labels for the ShadowScan issue tracker.
+#
+# The Labels workflow (.github/workflows/labels.yml) creates or updates every
+# label listed here on each push to main that changes this file; it never
+# deletes a label. Issue forms under .github/ISSUE_TEMPLATE/ may only apply
+# labels that exist here (tests/test_repository_policy.py checks this).
+
+# Type
+- name: bug
+  color: "d73a4a"
+  description: Something is not working correctly.
+
+- name: enhancement
+  color: "a2eeef"
+  description: New feature or request.
+
+- name: connector-request
+  color: "0075ca"
+  description: Request for a new connector.
+
+- name: documentation
+  color: "0075ca"
+  description: Improvements or additions to documentation.
+
+- name: security
+  color: "e4e669"
+  description: Security-related change or report.
+
+- name: detection
+  color: "fbca04"
+  description: False positive, false negative, misattribution, or scoring report.
+
+- name: question
+  color: "d876e3"
+  description: Usage question about installation, configuration, or results.
+
+# Priority
+- name: "priority: critical"
+  color: "b60205"
+  description: Must be fixed immediately.
+
+- name: "priority: high"
+  color: "d93f0b"
+  description: Important, should be fixed soon.
+
+# Surface
+- name: "surface: code"
+  color: "c5def5"
+  description: Code connectors (filesystem, GitHub, GitLab).
+
+- name: "surface: identity"
+  color: "c5def5"
+  description: Identity connectors (Okta, Entra, Google, Auth0, JWT).
+
+- name: "surface: gateway"
+  color: "c5def5"
+  description: Gateway connector (logs).
+
+- name: "surface: lowcode"
+  color: "c5def5"
+  description: Low-code connectors (Power Platform, Salesforce, ServiceNow, etc).
+
+- name: "surface: saas"
+  color: "c5def5"
+  description: SaaS connectors (Slack, Teams, GitHub Apps, etc).
+
+- name: "surface: cloud"
+  color: "c5def5"
+  description: Cloud connectors (AWS, GCP, Azure, OCI).
+
+# Status
+- name: "good first issue"
+  color: "7057ff"
+  description: Good for newcomers.
+
+- name: "help wanted"
+  color: "008672"
+  description: Extra attention is needed.
+
+- name: stale
+  color: "ffffff"
+  description: Automatically marked as stale.
+
+- name: pinned
+  color: "006b75"
+  description: Exempt from stale-issue automation.
+
+# Dependencies
+- name: dependencies
+  color: "0366d6"
+  description: Pull requests that update a dependency.
+
+- name: python
+  color: "2b67c6"
+  description: Python dependency update.
+
+- name: github-actions
+  color: "000000"
+  description: GitHub Actions dependency update.
+
+- name: docker
+  color: "0db7ed"
+  description: Docker dependency update.

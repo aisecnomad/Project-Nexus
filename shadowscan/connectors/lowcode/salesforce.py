@@ -17,10 +17,12 @@ Offline export: SOQL/Tooling query results (records carry ``attributes.type``) o
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from requests import RequestException
+
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.common import apply_matches, finalize, name_matches
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -38,7 +40,8 @@ QUERIES: dict[str, tuple[str, str]] = {
     "GenAiFunctionDefinition": ("tooling", "SELECT Id, DeveloperName, MasterLabel, Description, InvocationTarget, InvocationTargetType, CreatedDate FROM GenAiFunctionDefinition"),
     "GenAiPromptTemplate": ("tooling", "SELECT Id, DeveloperName, MasterLabel, Description, Type, CreatedDate, LastModifiedDate, CreatedBy.Name FROM GenAiPromptTemplate"),
     "ConnectedApplication": ("data", "SELECT Id, Name, CreatedDate, LastModifiedDate, CreatedBy.Name, OptionsAllowAdminApprovedUsersOnly, OptionsRefreshTokenValidityMetric, MobileSessionTimeout FROM ConnectedApplication"),
-    "OauthToken": ("data", "SELECT Id, AppName, UserId, User.Username, LastUsedDate, UseCount, CreatedDate, DeleteToken, AccessToken FROM OauthToken"),
+    # Token values are never read by the analysis; do not request them.
+    "OauthToken": ("data", "SELECT Id, AppName, UserId, User.Username, LastUsedDate, UseCount, CreatedDate FROM OauthToken"),
     "FlowDefinitionView": ("data", "SELECT Id, ApiName, Label, Description, ProcessType, TriggerType, IsActive, ActiveVersionId, LastModifiedDate, LastModifiedBy FROM FlowDefinitionView WHERE IsActive = true"),
 }
 
@@ -54,6 +57,7 @@ class SalesforceConnector(BaseConnector):
         "client_id": "connected app consumer key for client-credentials flow (env SFDC_CLIENT_ID)",
         "client_secret": "env SFDC_CLIENT_SECRET",
         "api_version": f"default {API}",
+        "max_pages": "maximum pages per query, capped at 1000 (default 1000)",
         "input": "offline: JSON export of SOQL / Tooling query results",
     }
 
@@ -72,27 +76,93 @@ class SalesforceConnector(BaseConnector):
             secret = self.ctx.get("client_secret", env="SFDC_CLIENT_SECRET")
             if not (cid and secret):
                 raise ConnectorError("lowcode.salesforce: access_token or client_id/client_secret required")
-            resp = HttpClient().post(f"{self.instance}/services/oauth2/token", data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret})
-            token = resp.json()["access_token"]
+            client = HttpClient()
+            resp = client.post(f"{self.instance}/services/oauth2/token", data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret})
+            token = client.read_json_response(resp)["access_token"]
         self.http = HttpClient(self.instance, headers={"Authorization": f"Bearer {token}"})
 
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
+        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
         for kind, (api, soql) in QUERIES.items():
             path = f"/services/data/{self.api}/query" if api == "data" else f"/services/data/{self.api}/tooling/query"
-            try:
-                data = self.http.get_json(path, params={"q": soql})
-            except HttpError as exc:
-                self.log.debug("salesforce %s: %s", kind, exc)
-                self.ctx.warn(f"lowcode.salesforce: {kind} not queryable ({exc.status})")
-                continue
-            while data:
-                for rec in data.get("records", []):
-                    rec["_kind"] = kind
-                    yield rec
+            seen: set[str] = set()
+            for page in range(max_pages):
+                if path in seen:
+                    self.ctx.warn(f"lowcode.salesforce: repeated pagination link for {kind}")
+                    break
+                seen.add(path)
+                try:
+                    data = self.http.get_json(path, params={"q": soql} if page == 0 else None)
+                except (HttpError, RequestException, ValueError, RuntimeError) as exc:
+                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    self.ctx.warn(f"lowcode.salesforce: {kind} collection incomplete ({status})")
+                    break
+                if not isinstance(data, dict) or not isinstance(data.get("records"), list):
+                    self.ctx.warn(f"lowcode.salesforce: invalid records page for {kind}")
+                    break
+                if self._is_error_record(data):
+                    self.ctx.warn(f"lowcode.salesforce: provider error in {kind} page; coverage incomplete")
+                for rec in data["records"]:
+                    if not isinstance(rec, dict):
+                        self.ctx.warn(f"lowcode.salesforce: invalid record in {kind} page")
+                        continue
+                    yield {**rec, "_kind": kind}
                 nxt = data.get("nextRecordsUrl")
-                data = self.http.get_json(nxt) if nxt else None
+                if not isinstance(data.get("done"), bool):
+                    self.ctx.warn(f"lowcode.salesforce: invalid done flag for {kind}")
+                    break
+                if data["done"]:
+                    if nxt:
+                        self.ctx.warn(f"lowcode.salesforce: conflicting continuation for {kind}")
+                    break
+                if not isinstance(nxt, str) or not nxt.strip():
+                    self.ctx.warn(f"lowcode.salesforce: incomplete {kind} page without nextRecordsUrl")
+                    break
+                path = nxt
+            else:
+                self.ctx.warn(f"lowcode.salesforce: pagination limit reached for {kind}")
+
+    @classmethod
+    def _unwrap(cls, data: Any, on_error: Callable[[str], None] | None = None) -> Iterator[dict[str, Any]]:
+        # SOQL uses continuation fields that differ from the common export
+        # formats. Preserve the observed rows while recording lost coverage.
+        if isinstance(data, dict) and "records" in data and not cls._is_native_offline_record(data):
+            if ("done" in data and data["done"] is not True) or data.get("nextRecordsUrl") not in (None, ""):
+                message = "Salesforce export has incomplete or invalid query continuation"
+                if on_error is None:
+                    raise ConnectorError(message)
+                on_error(message)
+        yield from super()._unwrap(data, on_error)
+
+    def _valid_provider_record(self, rec: dict[str, Any], kind: Any) -> bool:
+        if not isinstance(kind, str) or kind not in QUERIES:
+            return False
+        if not self._record_fields_valid(
+            rec,
+            strings=("Id", "DeveloperName", "MasterLabel", "Name", "Description", "CreatedDate", "LastModifiedDate", "LastUsedDate", "BotDefinitionId", "Status", "AppName", "UserId", "ApiName", "Label", "TriggerType"),
+            mappings=("attributes", "CreatedBy", "User"),
+        ):
+            return False
+        for field, name in (("CreatedBy", "Name"), ("User", "Username")):
+            if rec.get(field) is not None and not self._record_fields_valid(rec[field], strings=(name,)):
+                return False
+        modifier = rec.get("LastModifiedBy")
+        if modifier is not None and not isinstance(modifier, str) and not self._record_fields_valid(modifier, strings=("Name",)):
+            return False
+        if kind == "OauthToken":
+            uses = rec.get("UseCount")
+            valid_uses = uses is None or (isinstance(uses, int) and not isinstance(uses, bool) and uses >= 0) or (isinstance(uses, str) and uses.isascii() and uses.isdigit())
+            if valid_uses and isinstance(uses, str):
+                try:
+                    int(uses)
+                except ValueError:
+                    valid_uses = False
+            return bool(rec.get("AppName") and (get_path(rec, "User.Username") or rec.get("UserId")) and valid_uses)
+        if kind == "BotVersion":
+            return bool(rec.get("BotDefinitionId"))
+        return bool(rec.get("Id") or rec.get("DeveloperName") or rec.get("ApiName") or (kind == "ConnectedApplication" and rec.get("Name")))
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -105,9 +175,16 @@ class SalesforceConnector(BaseConnector):
         apps: list[dict[str, Any]] = []
         tokens: dict[str, dict[str, Any]] = {}
         for rec in records:
-            kind = rec.get("_kind") or get_path(rec, "attributes.type") or ""
+            kind = (rec.get("_kind") or get_path(rec, "attributes.type") or "") if isinstance(rec, dict) else ""
+            if not self._valid_provider_record(rec, kind):
+                self.ctx.warn("lowcode.salesforce: unsupported or malformed provider record; coverage incomplete")
+                continue
             if kind == "BotDefinition":
-                bots[rec.get("Id") or rec.get("DeveloperName")] = rec
+                bot_id = rec.get("Id") or rec.get("DeveloperName")
+                if not isinstance(bot_id, str) or not bot_id.strip():
+                    self.ctx.warn("lowcode.salesforce: BotDefinition has no valid Id or DeveloperName")
+                    continue
+                bots[bot_id] = rec
             elif kind == "BotVersion":
                 versions.setdefault(rec.get("BotDefinitionId", ""), []).append(rec)
             elif kind == "GenAiPlannerDefinition":

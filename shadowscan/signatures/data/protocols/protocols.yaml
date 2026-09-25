@@ -43,7 +43,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+(?:mcp|fastmcp)\b', '^\s*from\s+mcp\.server\b', '^\s*from\s+mcp\.client\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+(?:mcp|fastmcp)\b', '^[^\S\r\n]*from\s+mcp\.server\b', '^[^\S\r\n]*from\s+mcp\.client\b']
         weight: 0.9
       - type: import
         languages: [javascript]
@@ -55,25 +55,25 @@ signatures:
         weight: 0.9
       - type: import
         languages: [rust]
-        patterns: ['^\s*use\s+rmcp::']
+        patterns: ['^[^\S\r\n]*use\s+rmcp::']
         weight: 0.9
       - type: import
         languages: [java]
-        patterns: ['^\s*import\s+io\.modelcontextprotocol\.']
+        patterns: ['^[^\S\r\n]*import\s+io\.modelcontextprotocol\.']
         weight: 0.9
       - type: import
         languages: [dotnet]
-        patterns: ['^\s*using\s+ModelContextProtocol\b']
+        patterns: ['^[^\S\r\n]*using\s+ModelContextProtocol\b']
         weight: 0.9
       - type: code
         patterns: ['\bFastMCP\s*\(', '@mcp\.tool\b', '@server\.(?:tool|list_tools|call_tool)\b', '\bnew\s+McpServer\s*\(', '\bserver\.(?:tool|registerTool)\s*\(', '\bStdioServerTransport\s*\(', '\bStreamableHTTPServerTransport\s*\(', '\bSSEServerTransport\s*\(', '\bstdio_server\s*\(', '\bSseServerTransport\s*\(', '\bStreamableHTTPSessionManager\s*\(', '\bMcpServer\.Create\s*\(', '\bserver\.NewMCPServer\s*\(', '\[McpServerTool', '\bMultiServerMCPClient\s*\(', '\bClientSession\s*\(', '\bstdio_client\s*\(', '\bstreamablehttp_client\s*\(', '\bsse_client\s*\(', '\bMCPServerStdio\s*\(', '\bMCPServerStreamableHttp\s*\(', '\bMcpToolset\s*\(', '\bMCPClient\s*\(', '\bmcp\.run\s*\(']
         weight: 0.9
       - type: code
-        patterns: ['"mcpServers"\s*:', '"mcp"\s*:\s*\{\s*"servers"', '^\s*mcpServers\s*:', '\[mcp_servers\.[A-Za-z0-9_-]+\]', '\[mcp\.servers\.[A-Za-z0-9_-]+\]']
+        patterns: ['"mcpServers"\s*:', '"mcp"\s*:\s*\{\s*"servers"', '^[^\S\r\n]*mcpServers\s*:', '\[mcp_servers\.[A-Za-z0-9_-]+\]', '\[mcp\.servers\.[A-Za-z0-9_-]+\]']
         weight: 0.95
         description: MCP client configuration block
       - type: file
-        globs: [".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json", ".cursor/mcp.json", ".vscode/mcp.json", "claude_desktop_config.json", ".roo/mcp.json", ".windsurf/mcp_config.json", "cline_mcp_settings.json", ".kiro/settings/mcp.json", ".amazonq/mcp.json", ".codeium/windsurf/mcp_config.json", "**/.mcp.json", "**/mcp.json", "**/mcp-config.json", "**/mcp_config.json", "**/mcp-servers.json", "**/claude_desktop_config.json", "**/cline_mcp_settings.json", "**/.cursor/mcp.json", "**/.vscode/mcp.json", "**/.roo/mcp.json", "**/.windsurf/mcp_config.json", "**/.kiro/settings/mcp.json", "**/.amazonq/mcp.json", "smithery.yaml", "**/smithery.yaml", "server.json", "**/.well-known/mcp.json"]
+        globs: [".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json", ".cursor/mcp.json", ".vscode/mcp.json", "claude_desktop_config.json", ".roo/mcp.json", ".windsurf/mcp_config.json", "cline_mcp_settings.json", ".kiro/settings/mcp.json", ".amazonq/mcp.json", ".codeium/windsurf/mcp_config.json", "**/.mcp.json", "**/mcp.json", "**/mcp-config.json", "**/mcp_config.json", "**/mcp-servers.json", "**/claude_desktop_config.json", "**/cline_mcp_settings.json", "**/.cursor/mcp.json", "**/.vscode/mcp.json", "**/.roo/mcp.json", "**/.windsurf/mcp_config.json", "**/.kiro/settings/mcp.json", "**/.amazonq/mcp.json", "smithery.yaml", "**/smithery.yaml", "**/.well-known/mcp.json"]
         weight: 0.9
       - type: image
         patterns: ['mcp/[a-z0-9-]+', 'ghcr\.io/github/github-mcp-server', 'modelcontextprotocol/', 'mcp-server']
@@ -123,7 +123,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+a2a\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+a2a\b']
         weight: 0.95
       - type: import
         languages: [javascript]
@@ -157,7 +157,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+acp_sdk\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+acp_sdk\b']
         weight: 0.95
 
   - id: protocol.openai-function-calling
@@ -167,6 +167,11 @@ signatures:
     description: Generic tool-calling request shapes (OpenAI style `tools`/`tool_choice`, Anthropic `tools`, Gemini `function_declarations`). Marks the caller as tool-enabled.
     capabilities: [tool-use]
     signals:
+      - type: code
+        description: Tool-calling request/response shapes (Anthropic, OpenAI, Bedrock Converse, Gemini) anchored on code syntax
+        patterns: ['[{,(]\s*["'']input_schema["'']\s*:', '[{,]\s*["'']type["'']\s*:\s*["'']tool_(?:use|result)["'']', '[{,]\s*["'']tool_use_id["'']\s*:', '\btool_use_id\s*=', '\.(?:stop_reason|type)\s*[!=]=\s*["'']tool_use["'']', '[{,]\s*["'']role["'']\s*:\s*["'']tool["'']', '[{,]\s*["'']tool_call_id["'']\s*:', '\.finish_reason\s*[!=]=\s*["'']tool_calls["'']', '[{,]\s*["'']toolConfig["'']\s*:', '\btoolConfig\s*=', '[{,]\s*["'']tool(?:Use|Result)["'']\s*:', '[{,]\s*["'']function_declarations["'']\s*:']
+        weight: 0.4
+        agent_indicator: true
       - type: code
         patterns: ['\btool_choice\s*[=:]', '"tool_choice"\s*:', '\bparallel_tool_calls\b', '\btools\s*=\s*\[\s*\{?\s*["'']?type["'']?\s*[:=]\s*["'']function["'']', '"tools"\s*:\s*\[\s*\{\s*"type"\s*:\s*"function"', '"function_declarations"\s*:', '\bfunction_declarations\s*=', '"functions"\s*:\s*\[\s*\{\s*"name"', '\bfunction_call\s*=\s*["'']auto["'']', '"input_schema"\s*:\s*\{', '\btool_calls\b', '\btoolCalls\b', '\btool_use\b', '"type"\s*:\s*"tool_use"']
         weight: 0.4

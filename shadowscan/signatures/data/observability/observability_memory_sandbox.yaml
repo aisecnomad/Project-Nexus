@@ -43,7 +43,7 @@ signatures:
         weight: 0.6
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+langfuse\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+langfuse\b']
         weight: 0.6
       - type: env
         names: [LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST, LANGFUSE_BASE_URL]
@@ -95,7 +95,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+agentops\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+agentops\b']
         weight: 0.8
       - type: env
         names: [AGENTOPS_API_KEY]
@@ -186,7 +186,7 @@ signatures:
         weight: 0.8
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+mem0\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+mem0\b']
         weight: 0.8
       - type: env
         names: [MEM0_API_KEY]
@@ -264,7 +264,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+e2b(?:_code_interpreter|_desktop)?\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+e2b(?:_code_interpreter|_desktop)?\b']
         weight: 0.9
       - type: env
         names: [E2B_API_KEY, E2B_TEMPLATE]
@@ -332,14 +332,16 @@ signatures:
     signals:
       - type: dependency
         ecosystem: pypi
-        names: [tavily-python, langchain-tavily, serpapi, google-search-results, exa-py, exa_py, firecrawl-py, firecrawl, duckduckgo-search, ddgs, crawl4ai, apify-client, scrapegraphai, linkup-sdk, jina, brave-search, langchain-exa, langchain-community]
+        names: [tavily-python, langchain-tavily, serpapi, google-search-results, exa-py, exa_py, firecrawl-py, firecrawl, duckduckgo-search, ddgs, crawl4ai, apify-client, scrapegraphai, linkup-sdk, jina, brave-search, langchain-exa]
         weight: 0.45
       - type: dependency
         ecosystem: npm
         names: ["@tavily/core", tavily, serpapi, "exa-js", "@mendable/firecrawl-js", "firecrawl", "duck-duck-scrape", "apify-client", "@brave/brave-search", "linkup-sdk"]
         weight: 0.5
       - type: code
-        patterns: ['\bTavily(?:Search|SearchResults|Client|Extract)\s*\(', '\bSerpAPIWrapper\s*\(', '\bDuckDuckGoSearch(?:Run|Results)\s*\(', '\bGoogleSearchAPIWrapper\s*\(', '\bBingSearchAPIWrapper\s*\(', '\bFirecrawlApp\s*\(', '\bExa\s*\(', '\bWebSearchTool\s*\(', '\bWebSearch\b', '"type"\s*:\s*"web_search(?:_preview)?(?:_20\d{6})?"', '\bgoogle_search\b', '\bGoogleSearch\s*\(', '\bgrounding\s*=\s*True', '\bBingGroundingTool\s*\(']
+        # Generic WebSearchTool( / google_search identifiers are covered by
+        # heuristic.browsing; BingGroundingTool( belongs to Azure AI Foundry.
+        patterns: ['\bTavily(?:Search|SearchResults|Client|Extract)\s*\(', '\bSerpAPIWrapper\s*\(', '\bDuckDuckGoSearch(?:Run|Results)\s*\(', '\bGoogleSearchAPIWrapper\s*\(', '\bBingSearchAPIWrapper\s*\(', '\bFirecrawlApp\s*\(', '\bExa\s*\(', '\bWebSearch\b', '"type"\s*:\s*"web_search(?:_preview)?(?:_20\d{6})?"', '\bGoogleSearch\s*\(', '\bgrounding\s*=\s*True']
         weight: 0.55
         agent_indicator: true
       - type: env

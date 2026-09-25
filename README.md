@@ -1,39 +1,78 @@
 # Project Nexus · ShadowScan
 
-**ShadowScan finds the AI agents nobody registered.**
+[![CI](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Docs](https://img.shields.io/badge/docs-source-blue.svg)](https://github.com/aisecnomad/Project-Nexus/tree/main/docs)
 
-It sweeps the six places agents hide — code repositories, identity providers,
-LLM gateway logs, low-code platforms, SaaS apps and cloud accounts — fingerprints
-the frameworks and model providers they use, scores their risk, and reconciles
-every discovery against your sanctioned inventory of
-[Agent Capability Cards](Agent%20Card). What is left over is
-*shadow*.
+**ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
+
+It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
+low-code platforms, SaaS apps, and cloud accounts. It fingerprints frameworks and
+model providers, scores findings, and reconciles discoveries against your approved
+registry of
+[Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
+Counts and severity labels need an analyst review before they drive enforcement.
+
+Example findings (totals vary as signatures evolve):
 
 ```
-$ shadowscan scan -c shadowscan.yaml --inventory inventory/ --format html -o report.html
+$ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
-│ 97 findings  •  94 shadow (inventory: 3 registered agents)                  │
-│ critical 14  high 47  medium 35  low 1  •  code 12 identity 21 cloud 27 …   │
+│ 101 findings  •  97 shadow (inventory: 3 registered agents)                 │
+│ critical 14  high 52  medium 35  •  code 12 identity 19 cloud 27 …          │
 ╰────────────────────────────────────────────────────────────────────────────╯
+ CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
  CRITICAL 95  SHADOW  code      mcp-server   MCP configuration: .mcp.json (inline GitHub PAT, Zapier remote MCP, docker/postgres)
- CRITICAL 90  SHADOW  cloud     agent        Bedrock AgentCore runtime: strands_support_agent (plaintext OPENAI_API_KEY, public network)
- CRITICAL 77  SHADOW  identity  token        JWT (delegated-agent) for 0oa2svc-client from okta (RFC 8693 actor chain, okta.users.manage)
- CRITICAL 75  SHADOW  gateway   caller       Agentic caller 'research-agent-prod': 200 requests via LangChain, 100% tool use, 24x7
- HIGH     73  SHADOW  lowcode   agent        Copilot Studio agent: HR Helper (generative answers, flow actions, no authentication)
- MEDIUM   33  ops-provisioning-04  cloud  agent  Bedrock Agent: ops-provisioning-04   ← registered, owner inherited from its card
+ CRITICAL 90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
+ HIGH     73  SHADOW  lowcode   agent        Copilot Studio agent: HR Helper
+ MEDIUM   33  ops-provisioning-04  cloud  agent  Bedrock Agent: ops-provisioning-04   ← registered via its card's resource binding; owner from the AWS resource tag
 ```
 
 ## Why
 
-Agents are no longer only Python scripts. They are Copilot Studio bots built by
-HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
+Agents are no longer only Python scripts.
+They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
 Bedrock Agents provisioned by Terraform, MCP servers wired into every
-developer's editor, service principals with `Mail.ReadWrite` acting on behalf
-of nobody, and JWTs carrying an `act` claim. Each surface has its own
-discovery API and its own vocabulary. ShadowScan normalises all of them into
-one finding model with evidence, so you can answer three questions for every
-agent in the estate: *who owns it, what can it do, and did anyone approve it?*
+developer's editor, service principals with `Mail.ReadWrite` acting on behalf of nobody, and JWTs carrying an `act` claim.
+Each surface has its own discovery API and its own vocabulary.
+ShadowScan normalizes these observations into one finding model with evidence,
+so investigators or auditors can ask: *Who owns this AI Agent? What can it do, and is it
+registered in the registry supplied for this scan?*
+
+| Observation | What it establishes | Next check |
+|---|---|---|
+| Source dependency, import, or configuration | A repository contains a potential integration. | Inspect executable code and deployment; comments, examples, and unused dependencies can mislead. |
+| Cloud or SaaS resource | The collector observed a configured resource within its granted scope. | Check resource state and authenticated runtime telemetry before claiming execution. |
+| Gateway event | The supplied log contains a request or tool-use signal. | Verify the log's origin, caller binding, and observation window before attributing it to a deployed agent. |
+| `shadow: true` | No single explicit binding in the **supplied** inventory matched the finding. | Confirm the inventory's scope and freshness; an unmatched finding alone does not prove unauthorized use. |
+
+Confidence is a heuristic evidence score, not a measured probability. Detection
+quality depends on the repositories, providers, tenant permissions, and log
+provenance in your environment. The bundled evaluation corpora are
+author-written regression cases, including multi-file cases with documented
+misses, not a field precision or recall estimate. See
+[evaluation](docs/evaluation.md) and
+[rollout acceptance](docs/production.md#rollout-acceptance) before using a risk
+threshold as a production gate.
+
+The [assurance results](docs/assurance-results.md) preserve the baseline and
+subsequent results on a frozen, independently AI-labeled corpus of 42 public
+files (30 negatives). [Read-only AWS and Slack canaries](docs/canaries.md)
+validate named tenant controls when approved credentials are supplied; offline
+replay does not establish live tenant acceptance.
+
+Deployment evidence can be checked with the offline
+[acceptance verifier](tools/acceptance/README.md). It requires current source and
+signature identities, declared human-reviewed holdout evidence, and live tenant
+receipts for supported live deployment scopes. It validates supplied evidence;
+it cannot authenticate reviewer independence or manufacture tenant acceptance.
+The [release-evidence workflow](.github/workflows/release.yml) builds a candidate
+wheel and retains hashes, a runtime dependency SBOM, and provenance after the
+selected commit passes CI. Artifact provenance does not establish deployment
+acceptance, and the workflow does not publish a release.
 
 ## Surfaces & connectors
 
@@ -43,80 +82,115 @@ agent in the estate: *who owns it, what can it do, and did anyone approve it?*
 | **Identity** | `identity.okta`, `identity.entra`, `identity.google-workspace`, `identity.auth0`, `identity.jwt` | OAuth apps & consent grants to AI SaaS, service apps / service principals / managed identities with LLM or data permissions, app registrations that look like agents, JWT classification (human / service / workload / delegated-agent) with privilege and hygiene analysis |
 | **Gateway** | `gateway.logs` | Callers reconstructed from LiteLLM, Portkey, Kong AI, Cloudflare AI Gateway, Helicone, Langfuse, Bedrock invocation logs, Azure OpenAI diagnostics, Vertex audit logs, OpenAI/Anthropic usage exports, nginx/envoy/ALB access logs or any JSON: models, frameworks (from user agents), tool-use ratio, 24x7 activity, volume, cost |
 | **Low-code** | `lowcode.power-platform`, `lowcode.salesforce`, `lowcode.servicenow`, `lowcode.n8n`, `lowcode.make`, `lowcode.zapier`, `lowcode.workato` | Copilot Studio agents & topics, Power Automate/Apps using AI connectors, Agentforce planners/topics/actions, Einstein bots, prompt templates, Now Assist AI agents/tools/triggers, automation workflows with AI or agent steps |
-| **SaaS** | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | Bots and apps with their scopes, pending install requests, Teams apps with bots / Copilot agents, GitHub Apps (AI reviewers, coding agents) and their permissions, Rovo/Marketplace apps, Notion integrations, Zoom meeting bots, any CSV/JSON app inventory (CASB exports) |
+| **SaaS** | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | Bots and apps with their scopes, pending install requests, Teams apps with bots / Copilot agents, GitHub Apps (AI reviewers, coding agents) and their permissions, Rovo/Marketplace apps, Notion integrations, Zoom approved and account-created Marketplace apps (approval does not prove installation), any CSV/JSON app inventory (CASB exports) |
 | **Cloud** | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci` | Bedrock Agents / AgentCore / Flows / Q Business / Lex, Lambda/ECS/SageMaker/Step Functions with LLM signals, Vertex AI Agent Engine, Dialogflow CX, Agentspace, Cloud Run/Functions, Azure OpenAI deployments, AI Foundry agents, Bot Service, Logic Apps, Function/Container apps, OCI Generative AI Agents, Digital Assistant, GenAI endpoints, IAM roles/bindings/policies granting LLM access, secret *names*, API keys, CloudTrail / audit-log LLM callers |
 
-Every connector runs **live** (API credentials) or **offline** (a JSON/CSV/log
-export, or a record dump from a previous live run), so the same detection
-logic works in a CI job, on an analyst laptop, or from a SIEM export.
+Connectors support **live** API collection, **offline** JSON/CSV/log exports,
+or both; see the connector guide for the supported modes and provider scope.
+Offline analysis can run in CI, on an analyst laptop or against a SIEM export.
 
 ## Frameworks & products recognised
 
-178 signatures / 790 signals, YAML-defined and overridable:
+215 signatures / 994 signals, YAML-defined with explicit opt-in overrides:
 
-* **Orchestrators** – LangChain, LangGraph, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
+* **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
 * **Coding agents** – Claude Code, GitHub Copilot coding agent, Cursor, Windsurf, Cline, Roo, OpenAI Codex, Gemini CLI/Jules, Amazon Q/Kiro, Goose, Aider, Continue, Cody/Amp, Junie, AGENTS.md, PR review bots (CodeRabbit, Sweep, Ellipsis, Greptile, Qodo…)
-* **Platforms / gateways** – LiteLLM, Portkey, Kong AI Gateway, Helicone, OpenAI AgentKit, Dify, Flowise, Langflow, n8n, Make, Zapier, Workato, Copilot Studio, Power Platform AI connectors, M365 declarative agents, Agentforce, Now Assist, Retool, Open WebUI/LibreChat/AnythingLLM, Coze/Relevance/Lindy/Vellum…
-* **Model providers** – OpenAI, Anthropic, Gemini API, Vertex AI, Bedrock, Azure OpenAI, Mistral, Cohere, Groq, Together, Fireworks, OpenRouter, Ollama, vLLM, Hugging Face, xAI, DeepSeek, Perplexity, Replicate, Cerebras, SambaNova, NVIDIA NIM, OCI Generative AI, watsonx, Databricks, Cloudflare Workers AI, Snowflake Cortex (deps, imports, endpoints, env vars, user agents, model ids, **key formats**)
-* **Observability / memory / sandboxes** – LangSmith, Langfuse, Phoenix, AgentOps, Traceloop, Weave, Braintrust…, Mem0, Zep, vector stores, E2B, Daytona, web search/scrape tool providers
-* **AI SaaS as OAuth apps** – ChatGPT, Claude, Gemini, Copilot, Perplexity, Glean, meeting note-takers (Otter, Fireflies, Read.ai, Fathom, tl;dv, Gong…), writing/coding/automation/research/media products, browser AI extensions
+* **Platforms/gateways** – LiteLLM, Portkey, Kong AI Gateway, Helicone, OpenAI AgentKit, Dify, Flowise, Langflow, n8n, Make, Zapier, Workato, Copilot Studio, Power Platform AI connectors, M365 declarative agents, Agentforce, Now Assist, IBM watsonx Orchestrate, Retool, Open WebUI/LibreChat/AnythingLLM, Coze/Relevance/Lindy/Vellum…
+* **Model providers** – OpenAI, Anthropic, Gemini API, Vertex AI, Bedrock, Azure OpenAI, Mistral, Cohere, Groq, Together, Fireworks, OpenRouter, Ollama, vLLM, SGLang, llama.cpp, LM Studio, LocalAI, Llama Stack, Meta Llama API, Hugging Face, xAI, DeepSeek, Alibaba DashScope/Qwen, Moonshot/Kimi, AI21, Perplexity, Replicate, Cerebras, SambaNova, NVIDIA NIM, OCI Generative AI, watsonx, Databricks, Cloudflare Workers AI, Snowflake Cortex (deps, imports, endpoints, env vars, user agents, model IDs, **key formats**)
+* **Observability/memory/sandboxes** – LangSmith, Langfuse, Phoenix, AgentOps, Traceloop, Weave, Braintrust…, Mem0, Zep, vector stores, E2B, Daytona, web search/scrape tool providers
+* **AI SaaS as OAuth apps** – ChatGPT, Claude, Gemini, Copilot, Perplexity, Mistral Le Chat, DeepSeek, Qwen, Kimi, Grok, Poe, Character.ai, Glean, meeting note-takers (Otter, Fireflies, Read.ai, Fathom, tl;dv, Gong…), writing/coding/automation/research/media products, browser AI extensions
 * **Permission policies** – privileged, data-access and LLM-access scope classes across Graph, Google, Okta, Slack, GitHub, GitLab, Salesforce, Atlassian, Zoom, Notion, HubSpot, AWS IAM, Azure RBAC, GCP IAM, OCI
 
 `shadowscan signatures list` shows everything; `shadowscan signatures test <value>`
 tells you what a package, host, user agent, model id, scope or file path maps to.
 
+
 ## Install
 
+Select the full 40-character commit SHA after reviewing its changes and CI
+results. Set `SHADOWSCAN_REVISION` to that SHA; do not use a moving branch or an
+unpublished tag in a deployment job. Install the core scanner **or** the cloud
+extra in a clean virtual environment:
+
 ```bash
-pip install "git+https://github.com/aisecnomad/Project-Nexus.git"           # core (code, identity, gateway, low-code, SaaS via REST)
-pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git"   # + boto3, google-auth, azure-identity, oci
+SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
+python -m pip install "git+https://github.com/aisecnomad/Project-Nexus.git@${SHADOWSCAN_REVISION}"
 ```
 
-Python 3.11+. Dependencies are deliberately small: `click`, `rich`, `PyYAML`,
-`requests`, `PyJWT`. Cloud SDKs are optional extras; every cloud connector also
-accepts an offline record dump.
+For cloud collection, install the extra from the same reviewed revision:
+
+```bash
+SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
+python -m pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@${SHADOWSCAN_REVISION}"
+```
+
+The current `0.1.1` source version is an unreleased candidate; the version
+string does not imply a published or signed artifact. These VCS installs resolve
+transitive dependencies at install time. For deployment, use the locked install
+below. Python 3.11+ is required; CI covers 3.11, 3.12, and 3.13. Core dependencies
+include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
+`PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
+also accepts an offline record dump.
+
+For deployment on Linux x86_64 with Python 3.11 to 3.13, the checked-in
+`requirements.lock` pins and hashes the core and all cloud runtime dependencies.
+Build and retain a wheel from the selected commit; see
+[locked installs and release evidence](docs/production.md#install-from-a-reviewed-revision).
+The [consumer GitHub Action example](examples/github-action-code-scan.yml) requires
+the repository variable `SHADOWSCAN_REVISION` to hold that reviewed full SHA;
+it fails until the variable is set.
 
 ## Quick start
 
 ```bash
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
-shadowscan code . --inventory inventory/
+shadowscan code . --inventory agent-card.yaml
 
-# 2. Try every connector against the bundled fixtures (offline demo)
+# 2. Try every fixture-backed connector offline (demo; 25 of 27 connectors ship fixtures)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 
 # 3. Real estate: one config, live connectors, secrets from the environment
-shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif --fail-on high
+shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif
 
 # 4. Single connector, ad-hoc
 shadowscan run identity.entra --set tenant_id=$AZURE_TENANT_ID
 shadowscan run cloud.aws --set regions=us-east-1,eu-west-1 --dump-records ./exports
-shadowscan run cloud.aws --input ./exports/cloud_aws.jsonl        # re-analyse later, offline
+# Read exports/manifest.json and use the exported filename for this instance:
+shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # re-analyse later, offline
 
 # 5. Logs and tokens
 shadowscan gateway litellm-spend.jsonl bedrock-invocations/ egress-proxy.log
-shadowscan jwt "$TOKEN" --jwks-url https://acme.okta.com/oauth2/default/v1/keys
+shadowscan jwt --file ./token.jwt --jwks-url https://acme.okta.com/oauth2/default/v1/keys
 
 # 6. Register what you found
 shadowscan inventory stubs report.json -o inventory/pending/    # capability-card stubs for shadow agents
-shadowscan diff last-week.json today.json                        # what is new / resolved / changed
+shadowscan diff last-week.json today.json                        # what is new / resolved/changed
 ```
+
+Steps 1 and 2 need a repository checkout: `agent-card.yaml`, `examples/` and
+the sample exports under `tests/fixtures/` are not shipped in the wheel. Steps
+5 and 6 use your own logs, token, and an earlier JSON report
+(`--format json -o report.json`); sample gateway logs live under
+`tests/fixtures/gateway/` in a checkout.
 
 ### Configuration
 
 ```yaml
 # shadowscan.yaml
 inventory: [./inventory]              # Agent Capability Cards, agents.yaml or CSV
-signatures: [./custom-signatures]     # optional: extra or overriding packs
+signatures: [./custom-signatures]     # optional: extra packs; overrides require opt-in
 options:
+  plugins: []                        # exact names of reviewed third-party connectors
+  allow_signature_override: false
+  allow_private_origin: false        # opt in only for trusted private HTTPS APIs
+  allow_credential_mixing: false     # separate repository scans from live tenant access
+  allow_instance_credentials: false # cloud metadata credentials require explicit opt-in
+  connector_timeout_seconds: 120    # soft deadline; also enforce a host job timeout
+  parallel: 4                        # worker threads; use 1-2 for CPU-bound offline scans
   min_confidence: 0.3
-  fail_on: high
-  dump_records: ./exports             # keep raw API records for evidence / offline re-runs
+  dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs
 connectors:
-  - name: code.github
-    org: acme
-    token: ${GITHUB_TOKEN}
   - name: identity.entra
     tenant_id: ${AZURE_TENANT_ID}
     client_id: ${AZURE_CLIENT_ID}
@@ -125,21 +199,70 @@ connectors:
     service_account_file: ./sa.json
     admin_email: admin@acme.com
   - name: gateway.logs
+    label: litellm-prod                # names this entry in --only, progress and exports
     input: ./exports/litellm-spend.jsonl
   - name: lowcode.power-platform
     tenant_id: ${AZURE_TENANT_ID}
     client_id: ${AZURE_CLIENT_ID}
     client_secret: ${AZURE_CLIENT_SECRET}
   - name: saas.slack
+    enabled: false                     # keep the entry, skip it on this run
     token: ${SLACK_TOKEN}
   - name: cloud.aws
     regions: [us-east-1, eu-west-1]
     cloudtrail_days: 7
 ```
 
-`shadowscan connectors` lists every connector with its configuration keys,
-required extras and offline format. See [docs/connectors.md](docs/connectors.md)
-for credentials and least-privilege scopes per connector.
+`shadowscan connectors` lists every connector with its configuration keys and
+required extras; `shadowscan connectors --json` also includes each connector's
+offline export formats. Every entry also accepts `enabled` (default true) and
+`label` (a distinct id when a connector runs more than once). See
+[docs/connectors.md](docs/connectors.md) for entry keys, credentials and
+least-privilege scopes per connector. Run repository scans in
+a separate job/configuration from live tenant collection. Mixing these credential
+boundaries requires an explicit `allow_credential_mixing` exception; keep the
+separation for untrusted repositories. Cloud instance-metadata credentials require
+`allow_instance_credentials: true`; use an explicit audit identity by default.
+
+Use `--incremental` to reuse completed scans of unchanged local checkouts and
+static cloud exports. Live APIs and gateway logs are refreshed on every run.
+Configure `gateway.logs.correlation_bindings` to link a code resource to a
+specific gateway caller and scope; matching timestamped framework fingerprints
+then appear in `metadata.runtime_activity`, including the observation window
+and any production label claimed in the logs. Treat caller and environment
+fields according to the export's provenance; ShadowScan does not authenticate
+the source of an imported log. See [scan state and runtime correlation](docs/scanning.md)
+for configuration, limitations, and migration guidance.
+
+Oversize files and symbolic links that leave the scan root are skipped with a
+warning; `--strict-coverage` (`strict_coverage: true`) makes them incomplete
+coverage instead. Links that stay inside the root never reduce coverage because
+their targets are scanned directly. Evidence found only in test or fixture code
+cannot establish an agent unless `--include-tests` is set.
+
+The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
+`--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
+scans as unsuccessful, while preserving findings from successfully assessed inputs.
+Enable `--fail-on` only after a [frozen, independently adjudicated holdout](docs/evaluation.md#gate-a-frozen-holdout)
+and [read-only tenant canary](docs/evaluation.md#read-only-tenant-canary-procedure)
+establish an acceptable threshold for that environment. A complete static scan
+does not prove that an agent executed or that every eligible resource was collected.
+The CLI normally exits promptly after a connector deadline even when a blocked
+worker cannot be joined. A filesystem publication already in progress can still
+delay timeout handling; enforce a host job timeout for hard limits.
+Confidence thresholds must be finite numbers from 0 to 1; invalid CLI or YAML
+values stop the scan before the risk gate runs.
+
+Git history enrichment is disabled by default. Set connector `use_git: true`
+only for a reviewed local checkout when author/history metadata is needed;
+metadata commands cannot fetch missing objects. Every explicit `--only` selector
+must match an enabled connector name or label. Unsupported records and saved API
+error responses cannot establish an empty, successful inventory.
+
+After upgrading from reports without the v2 finding-identity schema, regenerate
+your comparison baseline. Findings now keep their identity when inferred classification changes;
+legacy baselines cannot establish resolution under the new identity schema.
+See [deployment and migration](docs/production.md) for the rollout checks.
 
 ## What a finding looks like
 
@@ -156,28 +279,45 @@ for credentials and least-privilege scopes per connector.
   "shadow": true, "registry_match": null,
   "risk": {"score": 90, "level": "critical", "factors": [
       {"id": "shadow", "description": "not present in the sanctioned agent inventory", "weight": 25},
-      {"id": "tag:plaintext-credential", "description": "plaintext credential in environment / configuration", "weight": 25},
+      {"id": "tag:plaintext-credential", "description": "plaintext credential in environment/configuration", "weight": 25},
       {"id": "no-owner", "description": "no identifiable owner", "weight": 10}, "..."]},
   "evidence": [
       {"signal": "aws:agentcore-runtime", "description": "AgentCore runtime 'strands_support_agent' (READY) role arn:aws:iam::…", "weight": 0.97},
-      {"signal": "secret:provider.openai", "description": "Plaintext OpenAI API key in environment variable OPENAI_API_KEY: sk-p…KLMN", "weight": 0.6}],
+      {"signal": "secret: provider.openai", "description": "Plaintext OpenAI API key in environment variable OPENAI_API_KEY: sk-p…KLMN", "weight": 0.6}],
   "metadata": {"status": "READY", "protocol": "HTTP", "network": "PUBLIC", "related": ["ss-…"]}
 }
 ```
 
-* **confidence** is a noisy-OR of evidence weights — how sure we are this is an agent / agent enabler (not just "a project that imports `openai`").
-* **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence.
-* **shadow** is `true` when no inventory entry matched by resource pattern, agent id or name; the matched entry lends its owner to the finding.
+* **confidence** combines evidence weights with noisy-OR. Correlated source evidence is grouped first, so repeated matches cannot inflate the score. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
+* **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence. The listed factors always add up to `score`; confidence scaling and the 0–100 bounds appear as factors.
+* **danger_score** is the same model without the governance factors (inventory registration and ownership): what the agent can do, independent of whether anyone approved it. Set `options.risk_basis: danger` to base `level` and `--fail-on` on it, and `options.risk_weights` to tune weights (see [Risk policy](#risk-policy)).
+* **shadow** is `true` unless exactly one inventory entry matches an explicit resource pattern and its configured scope restrictions; names only suggest entries for review. An approved entry lends its owner to the finding.
 * **related** links findings across surfaces (the Terraform that provisions an agent ↔ the agent in the account ↔ the role calling Bedrock ↔ the CloudTrail caller).
 
 Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
-findings carry file:line locations), `csv`, `markdown`, `html` (self-contained,
-filterable, with evidence drill-down).
+findings carry file: line locations), `csv`, `markdown`, `html` (self-contained,
+filterable, with evidence drill-down). In `csv` output a cell that starts with
+`=`, `+`, `-`, `@`, a tab or a newline is prefixed with a literal `'` so
+spreadsheets treat it as text (common for `@team` owners); strip that prefix
+when consuming the file programmatically, or use `json`.
+
+### Risk policy
+
+```yaml
+options:
+  risk_basis: danger          # combined (default) | danger: level from capabilities, not registration
+  risk_weights:               # integers -100..100; unknown groups, kinds or governance keys are rejected
+    capabilities: {code-exec: 25}
+    tags: {meeting-bot: 20}
+    providers: {provider.deepseek: 20}
+    kinds: {agent: 20}
+    governance: {shadow: 15, no-owner: 5, registered: -10}
+```
 
 ## Sanctioned inventory
 
-Drop your Agent Capability Cards in a directory. The card's `metadata.agent_id`
-and an optional `discovery:` block bind it to concrete resources:
+Drop your Agent Cards in a directory. The card's `metadata.agent_id`
+identifies the registration; explicit `discovery.resources` bind it to concrete resources:
 
 ```yaml
 metadata:
@@ -186,7 +326,7 @@ metadata:
 discovery:
   resources:
     - "arn:aws:bedrock:*:123456789012:agent/AGENT1"
-    - "github:acme/infra-agents"
+    - "github: acme/infra-agents"
   names: ["ops provisioning agent"]
 ```
 
@@ -197,26 +337,59 @@ turns shadow findings into card skeletons for review. See
 ## Extending
 
 * **Signatures** are YAML; add a pack directory with `--signatures` / `signatures:`
-  to add products or override weights. Schema and authoring guide in
+  to add products. Replacing built-in signatures requires explicit opt-in. Schema and authoring guide in
   [docs/signatures.md](docs/signatures.md).
 * **Connectors** implement `collect()` (live) and `analyze()` (records → findings)
-  and register through the `shadowscan.connectors` entry-point group. See
+  and register through the `shadowscan.connectors` entry-point group. Execution
+  requires an exact-name `options.plugins` allowlist entry. See
   [docs/architecture.md](docs/architecture.md).
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-ruff check shadowscan tests
-pytest -q
+pip install -e ".[cloud,dev]"
+python -m shadowscan.signatures.validate
+ruff check shadowscan tests tools
+mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+pip-audit --progress-spinner off
+pytest -q --cov=shadowscan --cov-fail-under=80
 shadowscan scan -c examples/shadowscan.offline.yaml
 ```
 
+Install the `cloud` extra for the same connector coverage as CI. Tests that
+require missing optional SDKs can be skipped, so a core-only run does not validate all
+connectors. See [CONTRIBUTING.md](CONTRIBUTING.md#getting-started).
+
+## Community and contributing
+
+Contributions are welcome from developers, security practitioners, technical
+writers and people testing the scanner against their own authorized data.
+A small documentation fix or a reproducible false-positive report is useful.
+
+| I want to… | Start here |
+|---|---|
+| Learn, ask a question or troubleshoot a scan | [Support guide](SUPPORT.md) |
+| Report a bug, request a feature or a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
+| Report a false positive, a missed framework or a wrong score | [Detection quality report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml) |
+| Make a first contribution | [Contributor guide](CONTRIBUTING.md) and the [`good first issue`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label |
+| Understand decisions, review and release requirements | [Governance](GOVERNANCE.md), [Maintainers](MAINTAINERS.md), [Roadmap](ROADMAP.md) |
+| Report a vulnerability privately | [Security policy](SECURITY.md#reporting) |
+| Understand participation standards or report harmful conduct | [Code of conduct](CODE_OF_CONDUCT.md) |
+| See what changed, or cite the project | [Changelog](CHANGELOG.md), [CITATION.cff](CITATION.cff) |
+
+Use synthetic, minimal examples in public reports. Scan results can contain
+credentials, personal data, and sensitive inventory even after redaction.
+
 ## Safety notes
 
-* Credentials found in code, environments or configs are always **redacted** before they are stored in evidence.
+* Known credential formats, sensitive configuration fields, and credential-bearing URLs are **redacted** before findings or sanitized record exports are persisted. Redaction cannot identify every arbitrary secret; reports still contain security-sensitive inventory data.
 * Secret stores (Secrets Manager, Key Vault, Secret Manager, OCI Vault) are read for **names only**.
 * JWTs are never persisted; findings reference a truncated hash.
-* Connectors never modify anything; every API call is read-only.
+* Built-in collectors inspect provider resources using read operations. Scope the audit identity to the documented read permissions and review any enabled third-party plugin separately.
 
-License: Apache-2.0.
+Deployment behavior, migration options, and limits are documented in
+[SECURITY.md](SECURITY.md) and [docs/production.md](docs/production.md).
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

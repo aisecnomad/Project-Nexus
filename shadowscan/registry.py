@@ -19,9 +19,9 @@ The inventory can be supplied as:
 * a simple inventory list ``agents: [{id, name, owner, resources, names}]`` (YAML/JSON)
 * a CSV with columns ``agent_id, name, owner, resources`` (resources separated by ``|``)
 
-Matching precedence: explicit resource pattern > agent id contained in the
-resource id > name / alias equality against the finding's title, resource tail
-or ``metadata`` name fields.
+Automatic approval requires an explicit, case-sensitive resource pattern and
+all configured ``surfaces``, ``providers``, ``accounts`` and ``regions`` constraints. Names
+and aliases are review suggestions only; they never confer sanctioned status.
 """
 
 from __future__ import annotations
@@ -30,15 +30,36 @@ import csv
 import fnmatch
 import json
 import re
+from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from shadowscan.models import Finding
+from shadowscan.errors import SetupError, SetupPathError
+from shadowscan.models import Finding, Surface
+from shadowscan.utils.files import policy_files, policy_glob, read_policy_text, require_no_symlinks
+from shadowscan.utils.identity import has_aws_account_scope
+from shadowscan.utils.redaction import REDACTED, sanitize_text
+from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
 NAME_FIELDS = ("agent_name", "name", "names", "display_name", "displayName", "app_slug", "okta_name", "developer_name", "schema_name", "caller", "principal", "function_name", "repository", "project", "agents", "agent_definitions")
+_MAX_NAME_PATTERNS = 4096
+
+
+def _has_usable_resource_identity(finding: Finding) -> bool:
+    return isinstance(finding.resource, str) and bool(finding.resource) and REDACTED not in finding.resource
+
+
+def _has_usable_scope_identity(finding: Finding) -> bool:
+    # These fields can distinguish otherwise identical resource IDs. Redaction
+    # also turns different accounts/providers/regions into the same placeholder.
+    return all(
+        value is None or (isinstance(value, str) and REDACTED not in value)
+        for value in (finding.provider, finding.account, finding.region)
+    )
 
 
 def _meta_names(finding: Finding) -> set[str]:
@@ -67,9 +88,23 @@ class InventoryEntry:
     names: list[str] = field(default_factory=list)
     frameworks: list[str] = field(default_factory=list)
     surfaces: list[str] = field(default_factory=list)
+    providers: list[str] = field(default_factory=list)
+    accounts: list[str] = field(default_factory=list)
+    regions: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     source: str | None = None
     card: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Direct users of the public model must not bypass parser type checks.
+        path = Path(self.source or "<entry>")
+        values = {name: getattr(self, name) for name in _SIMPLE_FIELDS if hasattr(self, name)}
+        for name in ("agent_id", "name", "owner"):
+            _optional_string(values, name, path, "entry")
+        if not self.agent_id:
+            raise _invalid(path, "entry.agent_id", "a nonempty string is required")
+        for name in _LIST_FIELDS - {"aliases"}:
+            setattr(self, name, _string_list(values, name, path, "entry"))
 
     def all_names(self) -> list[str]:
         out = [self.agent_id]
@@ -83,25 +118,30 @@ class Inventory:
     def __init__(self, entries: list[InventoryEntry] | None = None):
         self.entries: list[InventoryEntry] = entries or []
         self.sources: list[str] = []
+        # Bound the cache even when callers repeatedly replace inventory entries.
+        self._name_patterns: OrderedDict[str, re.Pattern[str]] = OrderedDict()
 
     def __len__(self) -> int:
         return len(self.entries)
 
     # ---------------------------------------------------------------- load
     @classmethod
-    def load(cls, paths: list[str | Path]) -> Inventory:
+    def load(cls, paths: Sequence[str | Path]) -> Inventory:
         inv = cls()
         for p in paths:
             path = Path(p).expanduser()
             files: list[Path]
-            if any(ch in str(path) for ch in "*?["):
-                files = sorted(Path().glob(str(path)))
-            elif path.is_dir():
-                files = sorted(f for f in path.rglob("*") if f.suffix.lower() in {".yaml", ".yml", ".json", ".csv"})
-            elif path.exists():
+            if path.is_dir():
+                files = list(policy_files(path, {".yaml", ".yml", ".json", ".csv"}))
+            elif path.exists() or path.is_symlink():
+                require_no_symlinks(path)
                 files = [path]
+            elif any(ch in str(path) for ch in "*?["):
+                files = sorted(policy_glob(path))
             else:
-                raise FileNotFoundError(f"inventory path not found: {p}")
+                # A missing path is reported by name only: the message must stay
+                # safe for the CLI to print verbatim (see shadowscan.errors).
+                raise SetupPathError(sanitize_text(f"inventory path not found: {p}"))
             for f in files:
                 inv.entries.extend(cls._load_file(f))
                 inv.sources.append(str(f))
@@ -109,121 +149,308 @@ class Inventory:
 
     @classmethod
     def _load_file(cls, path: Path) -> list[InventoryEntry]:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            text = read_policy_text(path)
+        except (OSError, UnicodeError, ValueError):
+            raise _invalid(path, "document", "could not read bounded regular UTF-8 inventory") from None
         if path.suffix.lower() == ".csv":
-            out = []
-            for row in csv.DictReader(text.splitlines()):
-                aid = row.get("agent_id") or row.get("id") or row.get("name")
-                if not aid:
-                    continue
-                out.append(
-                    InventoryEntry(
-                        agent_id=str(aid),
-                        name=row.get("name"),
-                        owner=row.get("owner") or row.get("owner_team"),
-                        resources=[r.strip() for r in str(row.get("resources") or "").split("|") if r.strip()],
-                        names=[n.strip() for n in str(row.get("names") or row.get("aliases") or "").split("|") if n.strip()],
-                        source=str(path),
-                        card=dict(row),
-                    )
-                )
-            return out
-        if path.suffix.lower() == ".json":
-            data: Any = json.loads(text)
-            docs = [data]
-        else:
-            docs = list(yaml.safe_load_all(_strip_cite_markers(text)))
+            return cls._load_csv(text, path)
+        try:
+            if path.suffix.lower() == ".json":
+                docs = [json.loads(text, object_pairs_hook=_unique_json_object)]
+            else:
+                docs = list(yaml.load_all(_strip_cite_markers(text), Loader=_InventoryLoader))
+        except (json.JSONDecodeError, yaml.YAMLError, _DuplicateKeyError):
+            # Parser errors include source excerpts, which can contain credentials.
+            raise _invalid(path, "document", "invalid syntax or duplicate mapping key") from None
+        if not docs:
+            raise _invalid(path, "document", "empty inventory; use agents: [] for an empty inventory")
         out: list[InventoryEntry] = []
-        for doc in docs:
-            if not doc:
-                continue
-            if isinstance(doc, dict) and isinstance(doc.get("agents"), list):
-                for item in doc["agents"]:
-                    e = cls._entry_from_simple(item, path)
-                    if e:
-                        out.append(e)
+        for number, doc in enumerate(docs, 1):
+            location = f"document {number}"
+            if isinstance(doc, dict) and "agents" in doc:
+                _check_fields(doc, {"agents"}, path, location)
+                if not isinstance(doc["agents"], list):
+                    raise _invalid(path, f"{location}.agents", "expected a list of inventory entries")
+                items = doc["agents"]
             elif isinstance(doc, list):
-                for item in doc:
-                    e = cls._entry_from_simple(item, path) if isinstance(item, dict) and "metadata" not in item else cls._entry_from_card(item, path)
-                    if e:
-                        out.append(e)
+                items = doc
             elif isinstance(doc, dict):
-                e = cls._entry_from_card(doc, path) if "metadata" in doc else cls._entry_from_simple(doc, path)
-                if e:
-                    out.append(e)
+                items = [doc]
+            else:
+                raise _invalid(path, location, "expected an entry, a list of entries, or an agents mapping")
+            for number, item in enumerate(items, 1):
+                entry_location = f"{location}.entry {number}"
+                if not isinstance(item, dict):
+                    raise _invalid(path, entry_location, "expected an inventory mapping")
+                parser = cls._entry_from_card if "metadata" in item else cls._entry_from_simple
+                out.append(parser(item, path, entry_location))
         return out
 
+    @classmethod
+    def _load_csv(cls, text: str, path: Path) -> list[InventoryEntry]:
+        # Use the same typed entry parser after the CSV-only pipe-list adaptation.
+        reader = csv.DictReader(text.splitlines(), strict=True)
+        try:
+            headers = reader.fieldnames
+            if not headers or any(not header.strip() for header in headers):
+                raise _invalid(path, "CSV header", "expected nonempty column names")
+            headers = [header.strip() for header in headers]
+            if len(headers) != len(set(headers)):
+                raise _invalid(path, "CSV header", "duplicate column names")
+            _check_fields(dict.fromkeys(headers), _SIMPLE_FIELDS, path, "CSV header")
+            if not {"id", "agent_id", "name"}.intersection(headers):
+                raise _invalid(path, "CSV header", "agent_id, id, or name is required")
+            reader.fieldnames = headers
+            out: list[InventoryEntry] = []
+            for row in reader:
+                location = f"CSV row {reader.line_num}"
+                if None in row or any(value is None for value in row.values()):
+                    raise _invalid(path, location, "column count does not match the header")
+                item: dict[str, Any] = dict(row)
+                for name in _LIST_FIELDS:
+                    if name in row:
+                        value = row[name].strip()
+                        item[name] = [part.strip() for part in value.split("|")] if value else []
+                # Blank optional CSV cells are absent, not invalid empty strings.
+                item = {name: value for name, value in item.items() if value != ""}
+                out.append(cls._entry_from_simple(item, path, location))
+            return out
+        except csv.Error:
+            raise _invalid(path, "CSV document", "invalid CSV syntax") from None
+
     @staticmethod
-    def _entry_from_card(doc: dict[str, Any], path: Path) -> InventoryEntry | None:
-        meta = doc.get("metadata") or {}
+    def _entry_from_card(doc: dict[str, Any], path: Path, location: str = "entry") -> InventoryEntry:
+        if not isinstance(doc, dict) or not isinstance(doc.get("metadata"), dict):
+            raise _invalid(path, f"{location}.metadata", "expected a mapping")
+        meta = doc["metadata"]
+        disc = doc.get("discovery", {})
+        if not isinstance(disc, dict):
+            raise _invalid(path, f"{location}.discovery", "expected a mapping")
+        _check_fields(disc, _LIST_FIELDS - {"tags"}, path, f"{location}.discovery")
+        for name in ("agent_id", "id", "name", "display_name", "owner_team", "owner", "owner_email", "classification"):
+            _optional_string(meta, name, path, f"{location}.metadata")
         aid = meta.get("agent_id") or meta.get("id") or meta.get("name")
         if not aid:
-            return None
-        disc = doc.get("discovery") or {}
-        frameworks = list(disc.get("frameworks") or [])
+            raise _invalid(path, f"{location}.metadata", "agent_id, id, or name is required")
+        lists = {name: _string_list(disc, name, path, f"{location}.discovery") for name in _LIST_FIELDS - {"tags"}}
+        tags = _string_list(meta, "tags", path, f"{location}.metadata")
+        if meta.get("classification"):
+            tags.append(meta["classification"].strip())
         return InventoryEntry(
-            agent_id=str(aid),
-            name=meta.get("name") or meta.get("display_name"),
-            owner=meta.get("owner_team") or meta.get("owner") or meta.get("owner_email"),
-            resources=[str(r) for r in disc.get("resources") or []],
-            names=[str(n) for n in disc.get("names") or disc.get("aliases") or []],
-            frameworks=frameworks,
-            surfaces=[str(s) for s in disc.get("surfaces") or []],
-            tags=[str(t) for t in (meta.get("tags") or []) + ([meta["classification"]] if meta.get("classification") else [])],
+            agent_id=aid.strip(),
+            name=_first_string(meta, "name", "display_name"),
+            owner=_first_string(meta, "owner_team", "owner", "owner_email"),
+            resources=lists["resources"],
+            names=lists["names"] or lists["aliases"],
+            frameworks=lists["frameworks"],
+            surfaces=lists["surfaces"],
+            providers=lists["providers"],
+            accounts=lists["accounts"],
+            regions=lists["regions"],
+            tags=tags,
             source=str(path),
             card=doc,
         )
 
     @staticmethod
-    def _entry_from_simple(item: dict[str, Any], path: Path) -> InventoryEntry | None:
+    def _entry_from_simple(item: dict[str, Any], path: Path, location: str = "entry") -> InventoryEntry:
+        if not isinstance(item, dict):
+            raise _invalid(path, location, "expected an inventory mapping")
+        _check_fields(item, _SIMPLE_FIELDS, path, location)
+        for name in _SIMPLE_FIELDS - _LIST_FIELDS:
+            _optional_string(item, name, path, location)
         aid = item.get("id") or item.get("agent_id") or item.get("name")
         if not aid:
-            return None
+            raise _invalid(path, location, "id, agent_id, or name is required")
+        lists = {name: _string_list(item, name, path, location) for name in _LIST_FIELDS}
         return InventoryEntry(
-            agent_id=str(aid),
-            name=item.get("name"),
-            owner=item.get("owner") or item.get("owner_team"),
-            resources=[str(r) for r in item.get("resources") or []],
-            names=[str(n) for n in item.get("names") or item.get("aliases") or []],
-            frameworks=[str(f) for f in item.get("frameworks") or []],
-            surfaces=[str(s) for s in item.get("surfaces") or []],
-            tags=[str(t) for t in item.get("tags") or []],
+            agent_id=aid.strip(),
+            name=_first_string(item, "name"),
+            owner=_first_string(item, "owner", "owner_team"),
+            resources=lists["resources"],
+            names=lists["names"] or lists["aliases"],
+            frameworks=lists["frameworks"],
+            surfaces=lists["surfaces"],
+            providers=lists["providers"],
+            accounts=lists["accounts"],
+            regions=lists["regions"],
+            tags=lists["tags"],
             source=str(path),
             card=item,
         )
 
     # --------------------------------------------------------------- match
     def match(self, finding: Finding) -> InventoryEntry | None:
+        """Return one unambiguous, explicitly scoped resource approval.
+
+        Case folding resource IDs can approve a different object (for example,
+        a case-sensitive cloud ARN or repository path). Unknown scopes and
+        conflicting inventory identities fail closed.
+        """
+        finding.metadata.pop("registry_suggestions", None)
+        finding.metadata.pop("registry_match_reason", None)
+        # Finding construction redacts credentials before reconciliation. A
+        # lossy resource ID is not an identity: distinct repositories, URLs or
+        # cloud objects can all become the same ".../[REDACTED]" string. Even
+        # an explicitly authored wildcard must not approve such a finding.
+        if not _has_usable_resource_identity(finding):
+            finding.metadata["registry_match_reason"] = "redacted-or-missing-resource-identity"
+            return None
+        if not _has_usable_scope_identity(finding):
+            finding.metadata["registry_match_reason"] = "redacted-scope-identity"
+            return None
+        if not has_aws_account_scope(finding.provider, finding.account, finding.resource):
+            finding.metadata["registry_match_reason"] = "missing-aws-account-scope"
+            return None
+        matches = [
+            entry for entry in self.entries
+            if self._scope_matches(entry, finding)
+            and any(fnmatch.fnmatchcase(finding.resource or "", pattern) for pattern in entry.resources)
+        ]
+        if len(matches) == 1:
+            finding.metadata.pop("registry_suggestions", None)
+            return matches[0]
+        if len(matches) > 1:
+            finding.metadata["registry_suggestions"] = sorted({e.agent_id for e in matches})
+            finding.metadata["registry_match_reason"] = "ambiguous-resource-approval"
+            return None
+        suggestions = self.suggest(finding)
+        if suggestions:
+            finding.metadata["registry_suggestions"] = [entry.agent_id for entry in suggestions]
+            finding.metadata["registry_match_reason"] = "name-only-review-required"
+        return None
+
+    @staticmethod
+    def _scope_matches(entry: InventoryEntry, finding: Finding) -> bool:
+        return (
+            (not entry.surfaces or finding.surface.value in entry.surfaces)
+            and (not entry.providers or finding.provider in entry.providers)
+            and (not entry.accounts or finding.account in entry.accounts)
+            and (not entry.regions or finding.region in entry.regions)
+        )
+
+    def _name_pattern(self, name: str) -> re.Pattern[str]:
+        pattern = self._name_patterns.get(name)
+        if pattern is None:
+            pattern = self._name_patterns[name] = re.compile(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])")
+            if len(self._name_patterns) > _MAX_NAME_PATTERNS:
+                self._name_patterns.popitem(last=False)
+        else:
+            self._name_patterns.move_to_end(name)
+        return pattern
+
+    def suggest(self, finding: Finding) -> list[InventoryEntry]:
+        """Return name hints for human review; never use them for approval."""
         res = (finding.resource or "").lower()
         title = (finding.title or "").lower()
         names = _meta_names(finding)
-        tail = res.rsplit("/", 1)[-1].rsplit(":", 1)[-1]
-        # 1. explicit resource patterns
-        for e in self.entries:
-            for pat in e.resources:
-                if fnmatch.fnmatchcase(res, pat.lower()) or fnmatch.fnmatchcase(finding.resource or "", pat):
-                    return e
-        # 2. agent id contained in the resource id
-        for e in self.entries:
-            aid = e.agent_id.lower()
-            if len(aid) >= 4 and (aid == tail or f"/{aid}" in res or f":{aid}" in res or res.endswith(aid) or aid in names):
-                return e
-        # 3. name / alias equality (whole word) against title and name fields
+        out = []
         for e in self.entries:
             for n in e.all_names():
                 if len(n) < 4:
                     continue
-                if n in names or re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", title) or re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", res):
-                    return e
-        return None
+                pattern = self._name_pattern(n)
+                if n in names or pattern.search(title) or pattern.search(res):
+                    out.append(e)
+                    break
+        return out
+
+
+class InventoryValidationError(SetupError, ValueError):
+    """Malformed inventory cannot participate in approval or risk scoring.
+
+    Messages name the file, the location inside it and a fixed reason; they
+    are sanitized and safe to print verbatim.
+    """
+
+
+def _invalid(path: Path, location: str, message: str) -> InventoryValidationError:
+    return InventoryValidationError(sanitize_text(f"invalid inventory {path}: {location}: {message}"))
+
+
+_LIST_FIELDS = {"resources", "names", "aliases", "frameworks", "surfaces", "providers", "accounts", "regions", "tags"}
+_SIMPLE_FIELDS = _LIST_FIELDS | {"id", "agent_id", "name", "owner", "owner_team"}
+
+
+def _check_fields(value: dict, allowed: set[str], path: Path, location: str) -> None:
+    if any(not isinstance(key, str) or key not in allowed for key in value):
+        # Do not echo arbitrary unknown keys: they may themselves contain secrets.
+        raise _invalid(path, location, "unsupported field; allowed fields: " + ", ".join(sorted(allowed)))
+
+
+def _optional_string(value: dict, name: str, path: Path, location: str) -> None:
+    if name in value and value[name] is not None and (not isinstance(value[name], str) or not value[name].strip()):
+        raise _invalid(path, f"{location}.{name}", "expected a nonempty string")
+
+
+def _first_string(value: dict, *names: str) -> str | None:
+    return next((value[name].strip() for name in names if value.get(name)), None)
+
+
+def _string_list(value: dict, name: str, path: Path, location: str) -> list[str]:
+    if name not in value:
+        return []
+    items = value[name]
+    if not isinstance(items, list) or any(not isinstance(item, str) or not item.strip() for item in items):
+        raise _invalid(path, f"{location}.{name}", "expected a list of nonempty strings (quote numeric identifiers)")
+    if name == "resources" and any(_CITE.search(item) for item in items):
+        # Citation markers in a resource pattern can silently turn a specific
+        # approval into a glob if stripped. Require the author to correct it.
+        raise _invalid(path, f"{location}.{name}", "citation marker in resource pattern")
+    if name == "surfaces" and any(item.strip() not in {surface.value for surface in Surface} for item in items):
+        raise _invalid(path, f"{location}.{name}", "contains an unknown discovery surface")
+    return [item.strip() for item in items]
+
+
+class _DuplicateKeyError(ValueError):
+    pass
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateKeyError("duplicate inventory key")
+        result[key] = value
+    return result
+
+
+class _InventoryLoader(BoundedSafeLoader):
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
+        self.flatten_mapping(node)
+        mapping: dict = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if not isinstance(key, str):
+                raise _DuplicateKeyError("inventory mapping keys must be strings")
+            if key in mapping:
+                raise _DuplicateKeyError("duplicate inventory key")
+            mapping[key] = self.construct_object(value_node, deep=deep)
+        return mapping
 
 
 _CITE = re.compile(r"\[cite(?:_start)?(?::[^\]]*)?\]")
 
 
 def _strip_cite_markers(text: str) -> str:
-    """The sample capability card carries `[cite_start]` / `[cite: n]` markers from a document export; ignore them."""
-    return "\n".join(_CITE.sub("", line) for line in text.splitlines())
+    """Ignore standalone export markers only before YAML content starts.
+
+    A global substitution would broaden a quoted ``agent-[cite_start]*``
+    resource approval to ``agent-*`` before the inventory parser could reject
+    it. Even a marker alone at column zero can be part of a multiline YAML
+    scalar; after the document begins, preserve every line for validation.
+    """
+    result: list[str] = []
+    preamble = True
+    for line in text.splitlines(keepends=True):
+        if preamble and line == line.lstrip() and _CITE.fullmatch(line.strip()):
+            result.append(line[len(line.rstrip("\r\n")):])
+            continue
+        result.append(line)
+        if line.strip() and not line.lstrip().startswith("#"):
+            preamble = False
+    return "".join(result)
 
 
 def card_stub_for(finding: Finding) -> dict[str, Any]:
@@ -250,10 +477,23 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
         "security_controls": {"egress_proxy_required": True, "sandbox_type": None, "kill_switch_enabled": False},
         "risk_scoring": {"AARS_initial_score": finding.risk.score, "blast_radius": finding.risk.level.value},
         "discovery": {
-            "resources": [finding.resource],
-            "names": [n for n in {str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}],
+            # The discovered ID is literal. Hand-authored resource entries may
+            # still deliberately use wildcards; generated approvals never do.
+            # Redacted resource or scope values can collide across objects.
+            # Leave this approval unbound pending an exact, reviewed identity.
+            "resources": [] if not (
+                _has_usable_resource_identity(finding)
+                and _has_usable_scope_identity(finding)
+                and has_aws_account_scope(finding.provider, finding.account, finding.resource)
+            ) else [
+                finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})
+            ],
+            "names": sorted({str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}),
             "frameworks": finding.frameworks,
             "surfaces": [finding.surface.value],
+            "providers": [finding.provider] if finding.provider else [],
+            "accounts": [finding.account] if finding.account else [],
+            "regions": [finding.region] if finding.region else [],
         },
     }
 

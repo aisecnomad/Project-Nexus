@@ -6,12 +6,12 @@ signatures:
     name: Tool / function registration idioms
     category: heuristic
     vendor: null
+    # Registering a tool does not establish that a model can select or run it.
     capabilities: [tool-use]
     signals:
       - type: code
-        patterns: ['^\s*@(?:[a-z_]+\.)?tool\b', '@function_tool\b', '@kernel_function\b', '@mcp\.tool\b', '\bStructuredTool\b', '\bTool\s*\(\s*name\s*=', '\btools\s*=\s*\[\s*[A-Za-z_]', '\btools\s*:\s*\[\s*\{', '\bFunctionDeclaration\s*\(', '\bFunctionTool\s*\(', '\bToolSet\s*\(', '\bregister_tool\s*\(', '\bregisterTool\s*\(', '\bdefineTool\s*\(', '\btool_registry\b', '\bavailable_tools\b']
+        patterns: ['^[^\S\r\n]*@(?:[a-z_]+\.)?tool\b', '@function_tool\b', '@kernel_function\b', '@mcp\.tool\b', '\bStructuredTool\b', '\bTool\s*\(\s*name\s*=', '\btools\s*=\s*\[\s*[A-Za-z_]', '\btools\s*=\s*[A-Za-z_]\w*', '\btools\s*:\s*\[\s*\{', '\bFunctionDeclaration\s*\(', '\bFunctionTool\s*\(', '\bToolSet\s*\(', '\bregister_tool\s*\(', '\bregisterTool\s*\(', '\bdefineTool\s*\(', '\btool_registry\b', '\bavailable_tools\b']
         weight: 0.35
-        agent_indicator: true
 
   - id: heuristic.system-prompt
     name: Agent persona / system prompt
@@ -29,9 +29,51 @@ signatures:
     capabilities: [autonomous]
     signals:
       - type: code
-        patterns: ['\bmax_iterations\s*=', '\bmax_steps\s*=', '\bmaxSteps\s*:', '\bmax_turns\s*=', '\bmaxTurns\s*:', '\bmax_tool_calls\b', '\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\bReAct\b', '\breact_agent\b', '\bscratchpad\b', '\bwhile\s+(?:True|not\s+done|not\s+finished|iterations?\s*<)', '\bfor\s+_?\s*(?:step|iteration|turn)\s+in\s+range\(', '\bstop_reason\s*==\s*["'']tool_use["'']', '\bfinish_reason\s*==\s*["'']tool_calls["'']', '\bthought\s*[:=]\s*', '(?i)\bchain[- ]of[- ]thought\b', '\bhandoff\b', '\bsubagent\b', '\bsub_agents?\b', '\bsupervisor\b']
+        patterns: ['\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\breact_agent\b', '\bstop_reason\s*[!=]=\s*["'']tool_use["'']', '\bfinish_reason\s*[!=]=\s*["'']tool_calls["'']']
         weight: 0.35
         agent_indicator: true
+      - type: code
+        # Limits, loop counters and planning vocabulary are supporting evidence,
+        # but also occur in ordinary applications. A bare while True is not an
+        # AI signal and must never turn a queue consumer into an agent.
+        patterns: ['\bmax_iterations\s*=', '\bmax_steps\s*=', '\bmaxSteps\s*:', '\bmax_turns\s*=', '\bmaxTurns\s*:', '\bmax_tool_calls\b', '\bReAct\b', '\bscratchpad\b', '\bthought\s*[:=]\s*', '(?i)\bchain[- ]of[- ]thought\b', '\bhandoff\b', '\bsubagent\b', '\bsub_agents?\b', '\bsupervisor\b']
+        weight: 0.2
+
+  - id: heuristic.function-call-branch
+    name: Model function-call response branch
+    category: heuristic
+    vendor: null
+    description: Executable Python or JavaScript code checks for a model function-call response.
+    capabilities: [tool-use]
+    signals:
+      - type: code
+        languages: [python, javascript]
+        patterns: ['\b[A-Za-z_]\w*\.type\s*(?:===|==)\s*["'']function_call["'']']
+        weight: 0.3
+
+  - id: heuristic.named-tool-lookup
+    name: Function-call name dispatched to a tool
+    category: heuristic
+    vendor: null
+    description: Executable Python or JavaScript code invokes a tool resolved by model function-call name.
+    capabilities: [tool-use]
+    signals:
+      - type: code
+        languages: [python, javascript]
+        patterns: ['\b[A-Za-z_]\w*\s*\[\s*[A-Za-z_]\w*\.name\s*\]\s*\(', '\b[A-Za-z_]\w*\.get\(\s*[A-Za-z_]\w*\.name\s*\)\s*\(']
+        weight: 0.3
+
+  - id: heuristic.function-call-result
+    name: Function-call arguments passed to a local handler
+    category: heuristic
+    vendor: null
+    description: A handler result assigned from a model function-call response's arguments.
+    capabilities: [tool-use]
+    signals:
+      - type: code
+        languages: [python, javascript]
+        patterns: ['\b[A-Za-z_]\w*\s*=\s*(?:await\s+)?[A-Za-z_]\w*\(\s*[A-Za-z_]\w*\.arguments\s*\)']
+        weight: 0.3
 
   - id: heuristic.code-execution
     name: Model-driven code / shell execution
@@ -85,8 +127,20 @@ signatures:
     capabilities: [autonomous]
     signals:
       - type: code
-        patterns: ['^\s*(?:cron|schedule):\s*["'']?[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+', '\bschedule\.every\(', '\b@(?:app\.)?(?:cron|scheduled|periodic_task|repeat_every)\b', '\bCronTrigger\b', '\bAPScheduler\b', '\bBackgroundScheduler\b', '\bcelery\.(?:beat|task)\b', '\b@celery\.task\b', '\baws_events\.Rule\b', '\bschedule_expression\s*=', '\bScheduleExpression\b', '\bcron\(\s*[0-9*]', '\brate\(\s*\d+\s+(?:minute|hour|day)s?\s*\)', 'triggers:\s*\n\s*-?\s*schedule', '\bon:\s*\n\s*schedule:', '\bsqs_trigger\b', '\bEventBridge\b', '\bPubSub\b[^\n]*\bagent\b', '\b@functions_framework\b', '\btemporalio\b', '\bworkflow\.run\b']
+        patterns: ['^[^\S\r\n]*(?:cron|schedule):\s*["'']?[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+', '\bschedule\.every\(', '\b@(?:app\.)?(?:cron|scheduled|periodic_task|repeat_every)\b', '\bCronTrigger\b', '\bAPScheduler\b', '\bBackgroundScheduler\b', '\bcelery\.(?:beat|task)\b', '\b@celery\.task\b', '\baws_events\.Rule\b', '\bschedule_expression\s*=', '\bScheduleExpression\b', '\bcron\(\s*[0-9*]', '\brate\(\s*\d+\s+(?:minute|hour|day)s?\s*\)', 'triggers:\s*\n\s*-?\s*schedule', '\bon:\s*\n\s*schedule:', '\bsqs_trigger\b', '\bEventBridge\b', '\bPubSub\b[^\n]*\bagent\b', '\b@functions_framework\b', '\btemporalio\b', '\bworkflow\.run\b']
         weight: 0.2
+
+  - id: heuristic.llm-command-execution
+    name: Command / code execution in a file that calls a model
+    category: heuristic
+    vendor: null
+    description: Shell, process and dynamic-code sinks. The code scanner records them only when the same file invokes an LLM provider, agent framework or tool-calling protocol.
+    capabilities: [code-exec]
+    risk_notes: ["Model output that reaches a shell or interpreter enables full compromise through prompt injection."]
+    signals:
+      - type: code
+        patterns: ['\bsubprocess\.(?:run|Popen|call|check_output|check_call)\s*\([^\n]*\bshell\s*=\s*True', '\bos\.(?:system|popen)\s*\(\s*(?!["''])', '(?<![\w.])(?:exec|eval)\s*\(\s*(?!["''\)])', '\bchild_process\b[^\n]*\b(?:exec|execSync|spawn|spawnSync)\b', '\b(?:execSync|spawnSync)\s*\(\s*(?!["''`])', '\bexec\.Command(?:Context)?\s*\(', '\bRuntime\.getRuntime\(\)\s*\.exec\s*\(', '\bnew\s+ProcessBuilder\s*\(']
+        weight: 0.5
 
   - id: heuristic.llm-env-names
     name: Generic LLM / agent environment variables
@@ -107,3 +161,28 @@ signatures:
       - type: code
         patterns: ['(?i)\b(?:openai|anthropic|gemini|google|groq|mistral|cohere|together|fireworks|openrouter|deepseek|xai|perplexity|huggingface|hf|replicate|azure_openai|litellm|langsmith|langchain|pinecone|tavily|e2b|serpapi|elevenlabs|voyage|jina)_?(?:api_?)?(?:key|token|secret)\s*[=:]\s*["''][A-Za-z0-9_\-]{16,}["'']', '(?i)\bapi_key\s*=\s*["''](?:sk-|AIza|gsk_|hf_|r8_|xai-|pplx-|tvly-|e2b_)[A-Za-z0-9_\-]{10,}["'']']
         weight: 0.6
+
+  - id: heuristic.unattributed-api-key
+    name: sk- style API key of an unknown vendor
+    category: heuristic
+    vendor: null
+    description: A credential in the common `sk-` shape that no provider signature claims (DeepSeek, DashScope, Moonshot and other OpenAI-compatible hosts issue such keys); the vendor cannot be attributed from the value alone.
+    risk_notes: ["Hard-coded credentials; rotate and move to a secret store."]
+    signals:
+      - type: secret
+        # Excludes every sk- prefix owned by a vendor signature (Anthropic, OpenRouter,
+        # Langfuse, LiteLLM, OpenAI project / service-account / admin keys) and the
+        # OpenAI key marker, so a key never counts twice.
+        patterns: ['\bsk-(?!ant-|or-|lf-|litellm-|proj-|svcacct-|admin-)(?![A-Za-z0-9]{20}T3BlbkFJ)[A-Za-z0-9_-]{32,}\b']
+        weight: 0.4
+        description: sk- style API key (vendor unknown)
+
+  - id: heuristic.agent-construction
+    name: Agent object construction
+    category: heuristic
+    vendor: null
+    description: A generic Agent(...) / new Agent({...}) constructor shared by many SDKs (Agno, Pydantic AI, Strands, OpenAI Agents, Mastra...); supporting evidence only, the framework is attributed by its import or dependency.
+    signals:
+      - type: code
+        patterns: ['\bAgent\s*\(\s*(?:model|tools|system_prompt|instructions|llm)\s*=', '\bnew\s+Agent\s*\(\s*\{\s*(?:name|model|instructions|tools)\s*:']
+        weight: 0.35

@@ -5,7 +5,7 @@ Live (Entra app registered as a Power Platform *application user* / tenant admin
 * environments – ``api.bap.microsoft.com`` admin API
 * flows        – ``api.flow.microsoft.com`` admin listing per environment (connection references reveal
                  ``shared_openai`` / ``shared_azureopenai`` / ``shared_aibuilder`` / ``shared_microsoftcopilotstudio``...)
-* apps         – ``api.powerapps.com`` admin listing (connection references)
+* apps         – ``api.powerplatform.com`` admin listing (connection references)
 * bots         – Dataverse ``bots`` + ``botcomponents`` of each environment (Copilot Studio agents, topics,
                  generative-answer components, actions, authentication mode)
 
@@ -16,8 +16,12 @@ API objects (kind inferred from shape).
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from typing import Any, ClassVar
+from urllib.parse import quote, urlsplit
+
+from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import apply_matches, blob_matches, finalize, name_matches
@@ -27,7 +31,61 @@ from shadowscan.utils.text import get_path
 
 BAP = "https://api.bap.microsoft.com"
 FLOW = "https://api.flow.microsoft.com"
-PAPPS = "https://api.powerapps.com"
+PAPPS = "https://api.powerplatform.com"
+
+# Environment records are provider data, not an operator's authorization to
+# acquire a token for an arbitrary OAuth resource and send it to that host.
+# Microsoft publishes these Dataverse organization domains, including its
+# sovereign clouds. Match the entire hostname rather than a string suffix.
+# See https://learn.microsoft.com/power-platform/admin/new-datacenter-regions
+# and https://learn.microsoft.com/power-platform/admin/microsoft-dynamics-365-government.
+_DATAVERSE_HOST = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:api\.)?"
+    r"(?:crm[0-9]*\.dynamics\.com|crm\.dynamics\.cn|"
+    r"crm\.microsoftdynamics\.(?:de|us)|crm\.appsplatform\.us)",
+    re.ASCII,
+)
+
+
+def _dataverse_origin(instance_url: Any, environment: dict[str, Any], tenant: Any) -> str:
+    """Bind the OAuth audience and destination to a canonical Dataverse origin."""
+    if not isinstance(instance_url, str) or len(instance_url) > 512 or not instance_url.startswith("https://"):
+        raise ValueError("invalid Dataverse organization URL")
+    try:
+        parsed = urlsplit(instance_url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        raise ValueError("invalid Dataverse organization URL") from None
+    if (
+        parsed.scheme != "https" or not hostname or not _DATAVERSE_HOST.fullmatch(hostname.lower())
+        or parsed.username is not None or parsed.password is not None or port is not None
+        or parsed.path not in ("", "/") or parsed.query or parsed.fragment
+        or parsed.netloc.lower() != hostname.lower()
+    ):
+        raise ValueError("invalid Dataverse organization URL")
+    if not isinstance(environment, dict):
+        raise ValueError("invalid Dataverse environment metadata")
+    properties = environment.get("properties")
+    if not isinstance(properties, dict):
+        raise ValueError("invalid Dataverse environment metadata")
+    metadata = properties.get("linkedEnvironmentMetadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("invalid Dataverse environment metadata")
+    domain_name = metadata.get("domainName")
+    if domain_name is not None and (
+        not isinstance(domain_name, str) or domain_name.lower() != hostname.split(".", 1)[0].lower()
+    ):
+        raise ValueError("Dataverse organization URL disagrees with environment metadata")
+    # Older BAP responses omit the tenant ID. When present, do not use this
+    # tenant's credentials against an environment attributed to another one.
+    for declared_tenant in (environment.get("tenantId"), properties.get("tenantId"), metadata.get("tenantId")):
+        if declared_tenant is not None and (
+            not isinstance(declared_tenant, str) or not isinstance(tenant, str)
+            or declared_tenant.casefold() != tenant.casefold()
+        ):
+            raise ValueError("Dataverse environment tenant disagrees with token tenant")
+    return "https://" + hostname.lower()
 
 AI_CONNECTORS = {
     "shared_openai": "OpenAI (independent publisher)",
@@ -78,11 +136,12 @@ class PowerPlatformConnector(BaseConnector):
             return self._tokens[scope]
         if not (self.tenant and self.client_id and self.client_secret):
             raise ConnectorError("lowcode.power-platform: tenant_id, client_id, client_secret required")
-        resp = HttpClient().post(
+        client = HttpClient()
+        resp = client.post(
             f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token",
             data={"grant_type": "client_credentials", "client_id": self.client_id, "client_secret": self.client_secret, "scope": scope},
         )
-        tok = resp.json()["access_token"]
+        tok = client.read_json_response(resp)["access_token"]
         self._tokens[scope] = tok
         return tok
 
@@ -92,33 +151,52 @@ class PowerPlatformConnector(BaseConnector):
     # --------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         bap = self._client(BAP, "https://service.powerapps.com/.default")
-        envs = bap.get_json("/providers/Microsoft.BusinessAppPlatform/scopes/admin/environments", params={"api-version": "2021-04-01"})
-        for env in (envs or {}).get("value", []):
+        for env in bap.paginate_odata(
+            "/providers/Microsoft.BusinessAppPlatform/scopes/admin/environments",
+            params={"api-version": "2021-04-01"},
+        ):
             name = env.get("name")
             display = get_path(env, "properties.displayName")
             if self.only_envs and name not in self.only_envs and display not in self.only_envs:
                 continue
+            if not isinstance(name, str) or not name:
+                self.ctx.warn("lowcode.power-platform: environment missing name; child resources cannot be listed")
+                continue
             env["_kind"] = "environment"
             yield env
+            env_id = quote(name, safe="")
             flow = self._client(FLOW, "https://service.flow.microsoft.com/.default")
             try:
-                for fl in flow.paginate_odata(f"/providers/Microsoft.ProcessSimple/scopes/admin/environments/{name}/v2/flows", params={"api-version": "2016-11-01", "$top": 250}):
+                for fl in flow.paginate_odata(f"/providers/Microsoft.ProcessSimple/scopes/admin/environments/{env_id}/v2/flows", params={"api-version": "2016-11-01", "$top": 250}):
                     fl["_kind"] = "flow"
                     fl["_environment"] = display or name
                     yield fl
-            except HttpError as exc:
-                self.ctx.warn(f"lowcode.power-platform: flows in {name}: {exc.status}")
+            except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+                self.ctx.warn(f"lowcode.power-platform: flows in {name}: {self._failure_reason(exc)}")
             try:
-                for app in bap.paginate_odata(f"/providers/Microsoft.PowerApps/scopes/admin/environments/{name}/apps", params={"api-version": "2016-11-01", "$top": 250}):
+                # AdminApps uses a distinct credential audience from the legacy BAP
+                # environment API. HttpClient pins all nextLink pages to this origin.
+                apps = self._client(PAPPS, "https://api.powerplatform.com/.default")
+                for app in apps.paginate_odata(f"/powerapps/environments/{env_id}/apps", params={"api-version": "2024-10-01", "$top": 250}):
                     app["_kind"] = "app"
                     app["_environment"] = display or name
                     yield app
-            except HttpError as exc:
-                self.ctx.warn(f"lowcode.power-platform: apps in {name}: {exc.status}")
+            except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+                self.ctx.warn(f"lowcode.power-platform: apps in {name}: {self._failure_reason(exc)}")
+            properties = env.get("properties")
+            metadata = properties.get("linkedEnvironmentMetadata") if isinstance(properties, dict) else None
+            if self.include_bots and metadata is not None and not isinstance(metadata, dict):
+                self.ctx.warn("lowcode.power-platform: Dataverse environment metadata is malformed; bot coverage unknown")
+                continue
             instance_url = get_path(env, "properties.linkedEnvironmentMetadata.instanceUrl")
             if self.include_bots and instance_url:
                 try:
-                    dv = self._client(instance_url.rstrip("/"), f"{instance_url.rstrip('/')}/.default")
+                    origin = _dataverse_origin(instance_url, env, self.tenant)
+                except ValueError:
+                    self.ctx.warn("lowcode.power-platform: Dataverse environment origin is untrusted; bot coverage unknown")
+                    continue
+                try:
+                    dv = self._client(origin, f"{origin}/.default")
                     for bot in dv.paginate_odata("/api/data/v9.2/bots", params={"$select": "botid,name,schemaname,statecode,statuscode,createdon,modifiedon,publishedon,authenticationmode,accesscontrolpolicy,authenticationtrigger,configuration,language,_ownerid_value,_createdby_value"}):
                         bot["_kind"] = "bot"
                         bot["_environment"] = display or name
@@ -127,15 +205,24 @@ class PowerPlatformConnector(BaseConnector):
                         comp["_kind"] = "botcomponent"
                         comp["_environment"] = display or name
                         yield comp
-                except HttpError as exc:
-                    self.ctx.warn(f"lowcode.power-platform: Dataverse {instance_url}: {exc.status}")
+                except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+                    self.ctx.warn(f"lowcode.power-platform: Dataverse in {name}: {self._failure_reason(exc)}")
+
+    @staticmethod
+    def _failure_reason(exc: HttpError | RequestException | RuntimeError | ValueError) -> str:
+        # Pagination exceptions are generic; never include server-supplied URLs
+        # (which can contain opaque skip tokens) in scan warnings.
+        return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         bots: dict[str, dict[str, Any]] = {}
         components: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
-            kind = rec.get("_kind") or _infer(rec)
+            kind = self._record_kind(rec)
+            if kind is None:
+                self.ctx.warn("lowcode.power-platform: unsupported or malformed provider record; coverage incomplete")
+                continue
             if kind == "flow":
                 self.ctx.examined()
                 f = self._flow_finding(rec)
@@ -147,12 +234,37 @@ class PowerPlatformConnector(BaseConnector):
                 if f:
                     yield f
             elif kind == "bot":
-                bots[str(rec.get("botid") or rec.get("id") or rec.get("name"))] = rec
+                bots[str(rec.get("botid") or rec.get("id") or rec.get("schemaname"))] = rec
             elif kind == "botcomponent":
                 components.setdefault(str(rec.get("_parentbotid_value") or rec.get("parentbotid") or ""), []).append(rec)
         for bid, bot in bots.items():
             self.ctx.examined()
             yield self._bot_finding(bot, components.get(bid, []))
+
+    def _record_kind(self, rec: dict[str, Any]) -> str | None:
+        if not self._record_fields_valid(
+            rec, strings=("_kind", "id", "name", "type", "botid", "botcomponentid", "schemaname", "_parentbotid_value", "parentbotid", "_environment"),
+            mappings=("properties",),
+        ):
+            return None
+        kind = rec.get("_kind") or _infer(rec)
+        identifiers = {
+            "environment": ("name", "id"), "flow": ("name", "id"), "app": ("name", "id"),
+            "bot": ("botid", "id", "schemaname"), "botcomponent": ("botcomponentid", "id"),
+        }
+        if kind not in identifiers or not any(isinstance(rec.get(key), str) and rec[key].strip() for key in identifiers[kind]):
+            return None
+        if kind == "botcomponent" and not (rec.get("_parentbotid_value") or rec.get("parentbotid")):
+            return None
+        props = rec.get("properties") or {}
+        if not self._record_fields_valid(props, strings=("displayName",), mappings=("definitionSummary",)):
+            return None
+        summary = props.get("definitionSummary") or {}
+        if not self._record_fields_valid(summary, arrays=("triggers", "actions")):
+            return None
+        if any(not self._record_fields_valid(item, strings=("type", "kind", "swaggerOperationId")) for field in ("triggers", "actions") for item in summary.get(field) or []):
+            return None
+        return kind
 
     # ---------------------------------------------------------------- flows
     def _ai_refs(self, blob: str) -> list[tuple[str, str]]:
@@ -243,7 +355,7 @@ class PowerPlatformConnector(BaseConnector):
             connector=self.name,
             kind=Kind.AGENT,
             title=f"Copilot Studio agent: {name}",
-            resource=f"power-platform:bot:{bot.get('botid') or bot.get('schemaname') or name}",
+            resource=f"power-platform:bot:{bot.get('botid') or bot.get('id') or bot.get('schemaname')}",
             resource_type="copilot-studio-agent",
             provider="power-platform",
             account=env,

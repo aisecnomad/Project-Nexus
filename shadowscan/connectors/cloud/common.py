@@ -14,13 +14,26 @@ from shadowscan.utils.text import redact
 _SECRETISH = re.compile(r"(?i)(?:key|token|secret|password|passwd|credential|apikey|api_key)")
 
 
+def string_list(value: Any, name: str, *, pattern: str | None = None) -> list[str] | None:
+    """Normalize CLI/YAML list settings without iterating a scalar's characters."""
+    if value is None:
+        return None
+    items = [value] if isinstance(value, str) else value
+    if not isinstance(items, list) or any(not isinstance(item, str) for item in items):
+        raise ValueError(f"{name} must be a string or a list of strings")
+    cleaned = list(dict.fromkeys(item.strip() for item in items if item.strip()))
+    if pattern is not None and any(not re.fullmatch(pattern, item) for item in cleaned):
+        raise ValueError(f"{name} contains an invalid value")
+    return cleaned or None
+
+
 def cloud_finding(
     connector: str,
     provider: str,
     *,
     kind: Kind,
     title: str,
-    resource: str,
+    resource: str | None,
     resource_type: str,
     account: str | None,
     region: str | None = None,
@@ -29,6 +42,8 @@ def cloud_finding(
     last_seen: str | None = None,
     surface: Surface = Surface.CLOUD,
 ) -> Finding:
+    if not isinstance(resource, str) or not resource.strip():
+        raise ValueError("cloud record is missing a nonempty resource identifier")
     return Finding(
         surface=surface,
         connector=connector,
@@ -58,12 +73,16 @@ def scan_env(index: SignatureIndex, finding: Finding, env: dict[str, Any] | None
         if matches:
             matched_names.append(str(name))
             apply_matches(finding, matches, location=location)
-        if isinstance(value, str) and value and not looks_like_placeholder(value) and not value.startswith(("${", "{{", "arn:", "projects/")):
+        if isinstance(value, str) and value and not value.startswith(("${", "{{", "arn:", "projects/")):
+            # Judge each matched credential rather than the surrounding value,
+            # so a URL or note containing a marker word cannot hide a real key.
             for m in index.match_secrets(value):
+                if looks_like_placeholder(m.value):
+                    continue
                 finding.add_tag("plaintext-credential")
                 finding.add_evidence(Evidence(signal=f"secret:{m.signature_id}", description=f"Plaintext {m.signal.description or m.signature.name} in environment variable {name}: {redact(m.value)}", location=location, weight=0.6, signature=m.signature_id))
                 finding.add_model_provider(m.signature_id) if m.signature.category == "provider" else None
-            is_secretish = _SECRETISH.search(str(name)) and len(value) >= 16 and not value.startswith(("http", "/", "@Microsoft.KeyVault", "{", "$"))
+            is_secretish = _SECRETISH.search(str(name)) and len(value) >= 16 and not value.startswith(("http", "/", "@Microsoft.KeyVault", "{", "$")) and not looks_like_placeholder(value)
             provider_key = next((m for m in matches if m.signature.category == "provider"), None) if matches else None
             if is_secretish and provider_key:
                 finding.add_tag("plaintext-credential")

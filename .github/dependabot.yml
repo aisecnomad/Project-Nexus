@@ -1,0 +1,66 @@
+# Review routing comes from CODEOWNERS; the deprecated `reviewers` key is not
+# used. requirements.lock and requirements-docs.lock are refreshed by hand with
+# pip-tools (see docs/production.md and the lock headers); Dependabot tracks
+# the version ranges in pyproject.toml and the exact pins in
+# requirements-ci-constraints.txt. A ruff or mypy bump there must carry the
+# matching .pre-commit-config.yaml rev, which tests/test_repository_consistency.py
+# checks.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - python
+    groups:
+      cloud-sdks:
+        patterns:
+          - "boto3"
+          - "google-auth"
+          - "azure-identity"
+          - "oci"
+      dev-tools:
+        patterns:
+          - "ruff"
+          - "mypy"
+          - "pytest*"
+          - "pip-audit"
+          - "pre-commit"
+      core:
+        patterns:
+          - "click"
+          - "rich"
+          - "PyYAML"
+          - "requests"
+          - "urllib3"
+          - "PyJWT"
+          - "regex"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - docker
+    ignore:
+      # Refresh the Dockerfile base image digest only. The interpreter line
+      # follows the supported matrix in pyproject.toml and CI, not Docker Hub.
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

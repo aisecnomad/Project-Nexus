@@ -27,10 +27,10 @@ import json
 import re
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
-from shadowscan.connectors.base import BaseConnector, ConnectorError
+from shadowscan.connectors.base import BaseConnector, ConnectorError, _NoDump
 from shadowscan.connectors.common import (
     apply_matches,
     classify_permissions,
@@ -39,21 +39,36 @@ from shadowscan.connectors.common import (
     name_matches,
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
+from shadowscan.utils.jwks import fetch_jwks, verification_algorithms, verify_against_jwks
+from shadowscan.utils.redaction import sanitize_text
 from shadowscan.utils.text import parse_timestamp, to_iso
 
 _JWT_RX = re.compile(r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*$")
 USER_CLAIMS = ("upn", "preferred_username", "email", "unique_name", "name", "given_name", "family_name", "username", "cognito:username", "oid_user")
 AGENT_CLAIM_KEYS = ("agent_id", "agent", "agent_name", "agentid", "x-agent-id", "bot", "bot_id", "client_name", "app_displayname", "azp_name", "workload", "spiffe_id", "delegation", "on_behalf_of", "obo", "actor", "act", "may_act", "purpose", "tool", "tools")
+# Client-naming claims are present on ordinary user tokens (every Entra v1
+# delegated token carries app_displayname). Their *value* must match an AI
+# product / agent name signature before they count as an agent hint.
+_AGENT_NAMING_CLAIMS = frozenset({"client_name", "app_displayname", "azp_name"})
+_KUBERNETES_LEGACY_CLAIMS = (
+    "kubernetes.io/serviceaccount/namespace",
+    "kubernetes.io/serviceaccount/secret.name",
+    "kubernetes.io/serviceaccount/service-account.name",
+    "kubernetes.io/serviceaccount/service-account.uid",
+)
 
 
-class JwtConnector(BaseConnector):
+class JwtConnector(BaseConnector, _NoDump):
     name: ClassVar[str] = "identity.jwt"
     surface: ClassVar[Surface] = Surface.IDENTITY
     provider: ClassVar[str | None] = "jwt"
     description: ClassVar[str] = "Classify JWTs as human, service or agent (delegated) identities and assess their privileges."
     config_keys: ClassVar[dict[str, str]] = {
         "tokens": "list of JWT strings",
-        "jwks_url": "optional JWKS endpoint for signature verification",
+        "jwks_url": "optional operator-trusted JWKS endpoint for signature verification",
+        "expected_issuer": "optional exact expected issuer; otherwise signature-only verification",
+        "allowed_algorithms": "optional nonempty subset of RS256, ES256, EdDSA, PS256",
         "input": "file with one token per line or JSON list / objects with `token`",
     }
     offline_formats: ClassVar[str] = "text (one JWT per line) / JSON"
@@ -62,64 +77,129 @@ class JwtConnector(BaseConnector):
         tokens = self.ctx.get("tokens") or []
         if not tokens:
             raise ConnectorError("identity.jwt: provide 'tokens' or an input file")
+        if not isinstance(tokens, list):
+            raise ConnectorError("identity.jwt: tokens must be a list")
         for t in tokens:
             yield {"token": t}
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
-        p = Path(path)
-        text = p.read_text(encoding="utf-8", errors="replace")
-        stripped = text.strip()
-        if stripped.startswith(("[", "{")):
-            try:
-                data = json.loads(stripped)
-            except json.JSONDecodeError:
-                data = None
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, str):
-                        yield {"token": item}
-                    elif isinstance(item, dict):
-                        yield item
-                return
-            if isinstance(data, dict):
-                yield data
-                return
-        for line in text.splitlines():
-            line = line.strip().strip('"').removeprefix("Bearer ").strip()
-            if _JWT_RX.match(line):
-                yield {"token": line}
+        suffixes = {".json", ".jsonl", ".ndjson", ".txt", ".jwt"}
+        for source in self._offline_files(path, suffixes):
+            text = self._read_offline_text(source)
+            if text is None:
+                continue
+            stripped = text.strip()
+            if not stripped:
+                self.ctx.error("identity.jwt: empty token export; use [] for an empty token list")
+                continue
+            if source.suffix.lower() in {".jsonl", ".ndjson"}:
+                for number, line in enumerate(text.splitlines(), 1):
+                    if not line.strip():
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except (json.JSONDecodeError, RecursionError, ValueError):
+                        self.ctx.error(f"identity.jwt: invalid JSON record at line {number}")
+                        continue
+                    yield from self._token_records(data)
+            elif source.suffix.lower() == ".json" or stripped.startswith(("[", "{")):
+                try:
+                    data = json.loads(stripped)
+                except (json.JSONDecodeError, RecursionError, ValueError):
+                    self.ctx.error("identity.jwt: invalid JSON token export")
+                    continue
+                yield from self._token_records(data)
+            else:
+                for number, line in enumerate(text.splitlines(), 1):
+                    if not line.strip():
+                        continue
+                    token = line.strip().strip('"').removeprefix("Bearer ").strip()
+                    if _JWT_RX.fullmatch(token):
+                        yield {"token": token}
+                    else:
+                        self.ctx.error(f"identity.jwt: invalid token record at line {number}")
+
+    def _token_records(self, data: Any) -> Iterator[dict[str, Any]]:
+        records = data if isinstance(data, list) else [data]
+        for number, record in enumerate(records, 1):
+            if isinstance(record, str):
+                yield {"token": record}
+            elif self._valid_record(record):
+                yield record
+            else:
+                self.ctx.error(f"identity.jwt: invalid token export record {number}")
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         jwks_url = self.ctx.get("jwks_url")
+        try:
+            verification_algorithms(self.ctx.get("allowed_algorithms"))
+            expected_issuer = self.ctx.get("expected_issuer")
+            if expected_issuer is not None and (not isinstance(expected_issuer, str) or not expected_issuer):
+                raise ValueError("expected_issuer must be a nonempty string")
+        except ValueError as exc:
+            raise ConnectorError(f"identity.jwt: {exc}") from exc
+        self._jwks_cache: dict[str, Any] = {}
         for rec in records:
             token = rec.get("token") or rec.get("jwt") or rec.get("access_token") or rec.get("id_token")
-            if not token or not _JWT_RX.match(str(token).strip()):
+            if not isinstance(token, str) or not _JWT_RX.fullmatch(token.strip()):
+                self.ctx.error("identity.jwt: record is missing a valid JWT token")
                 continue
             self.ctx.examined()
-            f = self.analyze_token(str(token).strip(), jwks_url=jwks_url, context=rec.get("context") or rec.get("source"))
+            try:
+                f = self.analyze_token(str(token).strip(), jwks_url=jwks_url, context=rec.get("context") or rec.get("source"))
+            except (ValueError, TypeError, OverflowError, RecursionError, KeyError, MatchTimeoutError) as exc:
+                # Hostile claims (huge numbers, odd types) must not stop the
+                # analysis of every later token in the input.
+                detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
+                self.ctx.warn(f"identity.jwt: token analysis failed ({type(exc).__name__}){detail}")
+                continue
             if f:
                 yield f
+
+    def _jwks_document(self, jwks_url: str) -> dict[str, Any]:
+        """Fetch each configured key set once per run, including its failure."""
+        if not hasattr(self, "_jwks_cache"):
+            self._jwks_cache = {}
+        cached = self._jwks_cache.get(jwks_url)
+        if cached is None:
+            try:
+                cached = fetch_jwks(jwks_url)
+            except Exception as exc:  # noqa: BLE001 - remembered so every token reports the same outcome
+                cached = exc
+            self._jwks_cache[jwks_url] = cached
+        if isinstance(cached, BaseException):
+            # Re-raising one cached exception otherwise retains a traceback
+            # frame for every token analyzed after an unavailable key set.
+            raise cached.with_traceback(None)
+        return cached
 
     # -------------------------------------------------------------- analysis
     def analyze_token(self, token: str, jwks_url: str | None = None, context: str | None = None) -> Finding | None:
         import jwt as pyjwt
 
+        if len(token) > 131072:
+            self.ctx.warn("identity.jwt: token exceeds analysis byte limit")
+            return None
         try:
             header = pyjwt.get_unverified_header(token)
             claims = pyjwt.decode(token, options={"verify_signature": False, "verify_exp": False, "verify_aud": False})
-        except pyjwt.PyJWTError as exc:
-            self.ctx.warn(f"identity.jwt: cannot decode token: {exc}")
+        except (pyjwt.PyJWTError, RecursionError, ValueError) as exc:
+            self.ctx.warn(f"identity.jwt: cannot decode token ({type(exc).__name__})")
             return None
         verified: bool | None = None
         if jwks_url:
             try:
-                client = pyjwt.PyJWKClient(jwks_url)
-                key = client.get_signing_key_from_jwt(token)
-                pyjwt.decode(token, key.key, algorithms=[header.get("alg", "RS256")], options={"verify_exp": False, "verify_aud": False})
-                verified = True
+                verified = verify_against_jwks(
+                    token,
+                    jwks_url,
+                    header,
+                    expected_issuer=self.ctx.get("expected_issuer"),
+                    allowed_algorithms=self.ctx.get("allowed_algorithms"),
+                    document_loader=self._jwks_document,
+                )
             except Exception as exc:  # noqa: BLE001
                 verified = False
-                self.ctx.warn(f"identity.jwt: signature verification failed: {exc}")
+                self.ctx.warn(f"identity.jwt: signature verification failed ({type(exc).__name__})")
 
         digest = hashlib.sha256(token.encode()).hexdigest()[:16]
         iss = str(claims.get("iss") or "")
@@ -163,11 +243,23 @@ class JwtConnector(BaseConnector):
             identity_type = "workload"
             reasons.append("SPIFFE workload identity")
             f.add_tag("spiffe")
-        if family == "keycloak" and str(sub).startswith("service-account-") or str(claims.get("preferred_username", "")).startswith("service-account-"):
+        if family == "keycloak" and (
+            str(sub).startswith("service-account-")
+            or str(claims.get("preferred_username", "")).startswith("service-account-")
+        ):
             identity_type = "service"
             reasons.append("Keycloak service account")
+        agent_hints: dict[str, Any] = {}
+        for key in AGENT_CLAIM_KEYS:
+            if key not in claims or key in {"act", "may_act"}:
+                continue
+            if key in _AGENT_NAMING_CLAIMS and not name_matches(self.index, str(claims[key])):
+                continue
+            agent_hints[key] = claims[key]
         if "act" in claims or "may_act" in claims:
-            identity_type = "delegated-agent" if identity_type != "human" else "delegated"
+            # A user-subject token whose claims identify an agent is an agent
+            # acting on behalf of that user; delegation never weakens the class.
+            identity_type = "delegated-agent" if identity_type != "human" or agent_hints else "delegated"
             actor = claims.get("act") or {}
             chain = []
             while isinstance(actor, dict):
@@ -179,7 +271,6 @@ class JwtConnector(BaseConnector):
         azp = claims.get("azp") or claims.get("appid") or claims.get("client_id") or claims.get("cid")
         if azp and aud_list and str(azp) not in aud_list and identity_type == "human":
             reasons.append(f"authorised party {azp} differs from audience (token issued to a client acting for the user)")
-        agent_hints = {k: claims[k] for k in AGENT_CLAIM_KEYS if k in claims and k not in {"act", "may_act"}}
         if agent_hints:
             reasons.append(f"agent-related claims: {', '.join(agent_hints)}")
             f.add_tag("agent-claims")
@@ -224,8 +315,16 @@ class JwtConnector(BaseConnector):
         weight = {"human": 0.05, "delegated": 0.35, "service": 0.5, "workload": 0.5, "agent": 0.6, "delegated-agent": 0.75}[identity_type]
         f.add_evidence(Evidence(signal=f"jwt:{identity_type}", description=f"Identity type '{identity_type}' for sub={sub or '?'} iss={iss or '?'}" + (f" ({'; '.join(reasons)})" if reasons else ""), weight=weight))
         if verified is not None:
-            f.add_evidence(Evidence(signal="jwt:signature", description="signature verified against JWKS" if verified else "signature NOT verified", weight=0.0))
+            expected_issuer = self.ctx.get("expected_issuer")
+            verified_description = (
+                "signature and configured issuer verified; expiry and audience NOT validated"
+                if expected_issuer else "signature verified against configured JWKS; issuer, expiry and audience NOT validated"
+            )
+            f.add_evidence(Evidence(signal="jwt:signature", description=verified_description if verified else "signature NOT verified", weight=0.0))
             f.metadata["verified"] = verified
+            f.metadata["verification_scope"] = "signature-and-issuer" if expected_issuer else "signature-only"
+            f.metadata["issuer_verified"] = bool(verified and expected_issuer)
+            f.metadata["authorization_validated"] = False
         f.add_tag(f"identity:{identity_type}")
         f.title = f"JWT ({identity_type}) for {sub or azp or '?'} from {family}"
         f.owner = str(claims.get("email") or claims.get("upn") or claims.get("preferred_username") or "") or None
@@ -244,36 +343,73 @@ class JwtConnector(BaseConnector):
                 "kid": header.get("kid"),
                 "lifetime_hours": round(lifetime_h, 1) if lifetime_h else None,
                 "scopes": scopes[:40],
-                "agent_claims": {k: (v if isinstance(v, (str, int, bool)) else json.dumps(v)[:200]) for k, v in agent_hints.items()},
+                # Sanitize before shortening: a nested token loses its
+                # recognizable three-segment shape once truncated.
+                "agent_claims": {k: (v if isinstance(v, (str, int, bool)) else sanitize_text(json.dumps(v))[:200]) for k, v in agent_hints.items()},
                 "claim_names": sorted(claims.keys()),
                 "context": context,
             }
         )
         finalize(f, self.index)
         f.kind = Kind.TOKEN
+        f.sanitize()
         return f
 
 
+def _has_kubernetes_service_account_claims(claims: dict[str, Any]) -> bool:
+    """Recognize documented JWT claim fields, not URL substrings or trust.
+
+    Bound tokens use a structured ``kubernetes.io`` object; legacy tokens
+    use these exact service-account claim names with string values. Claim
+    names are opaque identifiers, so do not URL-decode or prefix-match them.
+    """
+    structured = claims.get("kubernetes.io")
+    if isinstance(structured, dict) and structured:
+        return True
+    return any(isinstance(value, str) and bool(value.strip()) for value in (
+        claims.get(key) for key in _KUBERNETES_LEGACY_CLAIMS
+    ))
+
+
 def _issuer_family(iss: str, claims: dict[str, Any]) -> str:
-    i = iss.lower()
-    if "login.microsoftonline.com" in i or "sts.windows.net" in i or "login.windows.net" in i or "tid" in claims and "aud" in claims and ("appid" in claims or "azp" in claims):
+    """Describe an issuer namespace, never establish token trust.
+
+    Parse the hostname before matching provider domains: substrings in paths,
+    userinfo, query strings or attacker-controlled suffixes prove nothing.
+    Generic claims such as ``gty`` are not provider identifiers.
+    """
+    try:
+        parsed = urlsplit(iss)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if parsed.username or parsed.password:
+            host = ""
+    except ValueError:
+        return "custom" if iss else "unknown"
+    if parsed.scheme not in {"https", "http", "spiffe"}:
+        # Google documents this exact scheme-less issuer value.
+        host = "accounts.google.com" if iss == "accounts.google.com" else ""
+
+    def domain(name: str) -> bool:
+        return host == name or host.endswith("." + name)
+
+    if host in {"login.microsoftonline.com", "sts.windows.net", "login.windows.net", "login.microsoftonline.us", "login.chinacloudapi.cn"}:
         return "entra"
-    if "okta.com" in i or "oktapreview.com" in i or "okta-emea.com" in i:
+    if any(domain(name) for name in ("okta.com", "oktapreview.com", "okta-emea.com")):
         return "okta"
-    if "accounts.google.com" in i or i.endswith("googleapis.com") or "google" in i:
+    if host == "accounts.google.com" or domain("googleapis.com"):
         return "google"
-    if ".auth0.com" in i or claims.get("gty"):
+    if domain("auth0.com"):
         return "auth0"
-    if "cognito-idp" in i:
+    if re.fullmatch(r"cognito-idp\.[a-z0-9-]+\.amazonaws\.com(?:\.cn)?", host):
         return "cognito"
-    if "/realms/" in i:
+    if host and "/realms/" in parsed.path:
         return "keycloak"
-    if "spiffe://" in i or str(claims.get("sub", "")).startswith("spiffe://"):
+    if parsed.scheme == "spiffe" and host or str(claims.get("sub", "")).startswith("spiffe://"):
         return "spiffe"
-    if "github.com" in i or "token.actions.githubusercontent.com" in i:
+    if host == "token.actions.githubusercontent.com":
         return "github-actions"
-    if "gitlab" in i:
+    if host == "gitlab.com":
         return "gitlab"
-    if "kubernetes" in i or "serviceaccount" in i or "kubernetes.io" in json.dumps(claims)[:500]:
+    if domain("kubernetes.default.svc") or _has_kubernetes_service_account_claims(claims):
         return "kubernetes"
     return "custom" if iss else "unknown"

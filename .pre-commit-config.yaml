@@ -1,0 +1,65 @@
+# Pre-commit hooks for ShadowScan development.
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # Fixtures reproduce foreign files byte for byte and the retained licence
+      # texts are digest-bound to their upstream copies; never rewrite them.
+      - id: trailing-whitespace
+        exclude: ^(tests/fixtures/|tools/evaluation/independent_licenses/)
+      - id: end-of-file-fixer
+        exclude: ^(tests/fixtures/|tools/evaluation/independent_licenses/)
+      # mkdocs.yml uses Material's `!!python/name:` tags, which the safe loader
+      # rejects; `mkdocs build --strict` in CI validates that file instead.
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+        exclude: ^(shadowscan/signatures/data/|mkdocs\.yml$)
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: detect-private-key
+        # Synthetic PEM markers exercise the redaction tests.
+        exclude: ^tests/unit/test_redaction_security\.py$
+      - id: no-commit-to-branch
+        args: [--branch=main]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      # ruff-format is not adopted yet; most files would be reformatted.
+
+  # Keep the ruff and mypy revs equal to the pins in requirements-ci-constraints.txt
+  # so the hooks run the same versions as CI (tests/test_repository_policy.py checks).
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.1
+    hooks:
+      - id: mypy
+        files: ^shadowscan/
+        additional_dependencies:
+          - types-PyYAML
+          - types-requests
+        args: [--ignore-missing-imports]
+
+  - repo: local
+    hooks:
+      - id: signature-validate
+        name: Validate signature schemas
+        entry: python -m shadowscan.signatures.validate
+        language: system
+        pass_filenames: false
+        files: ^shadowscan/signatures/
+
+      - id: no-hardcoded-secrets
+        name: Check for hardcoded secret patterns
+        entry: python tools/check_secrets.py
+        language: system
+        # `types` is an AND filter; `types_or` selects Python or YAML files.
+        types_or: [python, yaml]
+        # Tests and fixtures hold synthetic credential-shaped strings on purpose
+        # (the scanner's own detection and redaction tests need real shapes).
+        exclude: ^(tests/|shadowscan/signatures/data/)

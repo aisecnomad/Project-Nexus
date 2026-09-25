@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from shadowscan.connectors.base import ConnectorContext
+from shadowscan.connectors.code.filesystem import FilesystemConnector, _nearest_root
 from shadowscan.models import Kind
 
 
@@ -48,7 +50,7 @@ def test_sample_repo_scan(run_connector, fixtures):
     assert len(secrets) == 1 and secrets[0].metadata["path"] == "services/research-agent/app/config.py"
     assert {"provider.openai", "provider.anthropic"} <= set(secrets[0].model_providers)
     for e in secrets[0].evidence:
-        assert "sk-proj-abcdefghijklmnopqrstuvwxyz" not in (e.description + (e.snippet or "")), "secret must be redacted"
+        assert "sk-proj-3OoFmQTsHfOvesPLUXvRXpfToFF2XPOcdJ2kMQJ2g0" not in (e.description + (e.snippet or "")), "secret must be redacted"
 
     infra = {f.metadata["path"]: f for f in kinds[Kind.INFRA]}
     assert "cloud.aws-bedrock-agents" in infra["infra/terraform/bedrock.tf"].frameworks
@@ -77,6 +79,27 @@ def test_scan_detects_frameworks_from_source_only(tmp_path: Path, run_connector)
     findings, _ = run_connector("code.filesystem", path=str(tmp_path))
     f = findings[0]
     assert f.kind == Kind.AGENT and "framework.aws-strands" in f.frameworks and "code-exec" in f.capabilities
+
+
+def test_project_root_walk_uses_active_ancestors_for_nested_and_wide_repos(tmp_path: Path, index):
+    for relative in ("first", "first/nested", "second"):
+        project = tmp_path / relative
+        project.mkdir(parents=True, exist_ok=True)
+        (project / "pyproject.toml").write_text("[project]\nname='example'\n")
+        (project / "bot.py").write_text("from langchain import agents\n")
+    files = FilesystemConnector(ConnectorContext(config={"path": str(tmp_path)}, index=index))._iter_files(tmp_path)
+    assigned = {rel: project for rel, _, project in files if rel.endswith("bot.py")}
+    assert assigned == {
+        "first/bot.py": "first", "first/nested/bot.py": "first/nested", "second/bot.py": "second",
+    }
+
+    active = ["."]
+    for number in range(4000):
+        sibling = f"repo-{number}"
+        assert _nearest_root(sibling, active) == "."
+        active.append(sibling)
+        assert _nearest_root(f"{sibling}/src", active) == sibling
+        assert len(active) == 2  # completed sibling roots must not accumulate
 
 
 def test_mcp_toml_and_vscode_variants(tmp_path: Path, run_connector):

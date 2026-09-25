@@ -16,7 +16,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [java]
-        patterns: ['^\s*import\s+dev\.langchain4j\.']
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.']
         weight: 0.9
       - type: code
         patterns: ['\bAiServices\.builder\s*\(', '\bAiServices\.create\s*\(', '@Tool\s*(?:\(|\n)', '\bAgenticServices\.']
@@ -37,7 +37,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [java]
-        patterns: ['^\s*import\s+org\.springframework\.ai\.']
+        patterns: ['^[^\S\r\n]*import\s+org\.springframework\.ai\.']
         weight: 0.9
       - type: code
         patterns: ['\bChatClient\.(?:builder|create)\s*\(', '\bToolCallback\b', '@Tool\s*\(\s*(?:name|description)\s*=', '\bMethodToolCallbackProvider\b', '\bSyncMcpToolCallbackProvider\b']
@@ -59,7 +59,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [rust]
-        patterns: ['^\s*use\s+rig::']
+        patterns: ['^[^\S\r\n]*use\s+rig::']
         weight: 0.9
       - type: code
         patterns: ['\.agent\s*\(\s*"[^"]+"\s*\)', '\bAgentBuilder\b']
@@ -155,7 +155,7 @@ signatures:
         weight: 0.75
       - type: import
         languages: [dotnet]
-        patterns: ['^\s*using\s+Microsoft\.Extensions\.AI\b']
+        patterns: ['^[^\S\r\n]*using\s+Microsoft\.Extensions\.AI\b']
         weight: 0.75
       - type: code
         patterns: ['\bUseFunctionInvocation\s*\(', '\bAIFunctionFactory\.Create\s*\(']
@@ -188,10 +188,20 @@ signatures:
         weight: 0.95
       - type: import
         languages: [dotnet]
-        patterns: ['^\s*using\s+Microsoft\.Agents\.(?:Builder|Hosting|Core|Authentication)\b']
+        patterns: ['^[^\S\r\n]*using\s+Microsoft\.Agents\.(?:Builder|Hosting|Core|Authentication)\b']
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+microsoft_agents\b']
+        weight: 0.95
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@microsoft/agents-(?:hosting|activity|copilotstudio-client)']
         weight: 0.95
       - type: code
-        patterns: ['\bAgentApplication\s*\(', '\bAgentApplicationOptions\b', '\bCloudAdapter\s*\(', '\bCopilotClient\s*\(', '\bCopilotStudioClient\s*\(']
+        # CloudAdapter( is inherited from Bot Framework and CopilotClient( belongs
+        # to platform.copilot-studio; only SDK-specific classes are claimed here.
+        patterns: ['\bAgentApplication\s*\(', '\bAgentApplicationOptions\b']
         weight: 0.85
 
   - id: framework.bot-framework
@@ -216,7 +226,9 @@ signatures:
         prefixes: ["Microsoft.Bot."]
         weight: 0.75
       - type: code
-        patterns: ['\bActivityHandler\b', '\bBotFrameworkAdapter\s*\(', '\bCloudAdapter\s*\(', '\bTeamsActivityHandler\b']
+        # CloudAdapter( alone is shared with the M365 Agents SDK; require the
+        # Bot Framework authentication object it is constructed with.
+        patterns: ['\bActivityHandler\b', '\bBotFrameworkAdapter\s*\(', '\bCloudAdapter\s*\(\s*(?:new\s+)?(?:[A-Za-z_]+\.)?(?:Configuration)?[Bb]otFrameworkAuthentication\b', '\bTeamsActivityHandler\b']
         weight: 0.6
       - type: env
         names: [MICROSOFTAPPID, MICROSOFTAPPPASSWORD, MICROSOFTAPPTENANTID, MICROSOFTAPPTYPE, BOT_ID, BOT_PASSWORD]
@@ -332,7 +344,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+(?:copilotkit|ag_ui)\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+(?:copilotkit|ag_ui)\b']
         weight: 0.9
       - type: env
         names: [COPILOT_CLOUD_PUBLIC_API_KEY, COPILOTKIT_API_KEY]
@@ -350,7 +362,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+rasa(?:_sdk)?\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+rasa(?:_sdk)?\b']
         weight: 0.9
       - type: image
         patterns: ['rasa/rasa', 'rasa/rasa-pro', 'rasa/rasa-sdk']
@@ -398,7 +410,7 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+browser_use\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+browser_use\b']
         weight: 0.97
       - type: env
         names: [BROWSER_USE_API_KEY]
@@ -446,7 +458,7 @@ signatures:
         weight: 0.95
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+openhands\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+openhands\b']
         weight: 0.95
       - type: image
         patterns: ['all-hands-ai/openhands', 'all-hands-ai/runtime', 'docker\.all-hands\.dev']
@@ -469,7 +481,7 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^\s*(?:from|import)\s+nova_act\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+nova_act\b']
         weight: 0.97
       - type: env
         names: [NOVA_ACT_API_KEY]

@@ -1,0 +1,216 @@
+{
+  "schema": 1,
+  "retrieval": "Full-file Git blobs from public GitHub repositories; files were not executed.",
+  "collected_on": "2026-09-24",
+  "corpus_sha256": "128cf2c972cb13b11bafe141d584b910828899d689d5a457135ad7746f98eff3",
+  "neutral_packet_sha256": "1a34734a7cb11d43ea5f4bb7ea3569aca247529208de0df51797a5b641f0519e",
+  "repositories": [
+    {
+      "repo": "celery/celery",
+      "commit": "eb3dfa3844288ee35c94a08267cc5e075d42b278",
+      "license": "BSD-3-Clause",
+      "license_source_path": "LICENSE",
+      "license_source_url": "https://github.com/celery/celery/blob/eb3dfa3844288ee35c94a08267cc5e075d42b278/LICENSE",
+      "license_sha256": "c358cdf77f28bbab50d4a754e123118339c15230349e82bf66489cece3ac093a",
+      "retained_license": "independent_licenses/celery__celery.LICENSE.txt",
+      "case_ids": [
+        "independent-005",
+        "independent-014",
+        "independent-023",
+        "independent-027"
+      ]
+    },
+    {
+      "repo": "crossbeam-rs/crossbeam",
+      "commit": "38dacb462261fcd64edcb308aed9cbf95c8c82c3",
+      "license": "MIT",
+      "license_source_path": "LICENSE-MIT",
+      "license_source_url": "https://github.com/crossbeam-rs/crossbeam/blob/38dacb462261fcd64edcb308aed9cbf95c8c82c3/LICENSE-MIT",
+      "license_sha256": "5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab",
+      "retained_license": "independent_licenses/crossbeam-rs__crossbeam.LICENSE.txt",
+      "case_ids": [
+        "independent-012",
+        "independent-038"
+      ]
+    },
+    {
+      "repo": "dagrejs/graphlib",
+      "commit": "d649cb32a827619da09959c89d8973aaf2370b4e",
+      "license": "MIT",
+      "license_source_path": "LICENSE",
+      "license_source_url": "https://github.com/dagrejs/graphlib/blob/d649cb32a827619da09959c89d8973aaf2370b4e/LICENSE",
+      "license_sha256": "6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015",
+      "retained_license": "independent_licenses/dagrejs__graphlib.LICENSE.txt",
+      "case_ids": [
+        "independent-016",
+        "independent-024",
+        "independent-040"
+      ]
+    },
+    {
+      "repo": "expressjs/express",
+      "commit": "9a34acf03cb818ff3f8bc40e44176e277a25cbb9",
+      "license": "MIT",
+      "license_source_path": "LICENSE",
+      "license_source_url": "https://github.com/expressjs/express/blob/9a34acf03cb818ff3f8bc40e44176e277a25cbb9/LICENSE",
+      "license_sha256": "95a5762890e5c1c9808921cef095661fc482c5e1f0bba31446ac85595df6237c",
+      "retained_license": "independent_licenses/expressjs__express.LICENSE.txt",
+      "case_ids": [
+        "independent-020",
+        "independent-025",
+        "independent-037",
+        "independent-042"
+      ]
+    },
+    {
+      "repo": "huggingface/smolagents",
+      "commit": "227ef5e49ddd82339295939072f0223249aa8d38",
+      "license": "Apache-2.0",
+      "license_source_path": "LICENSE",
+      "license_source_url": "https://github.com/huggingface/smolagents/blob/227ef5e49ddd82339295939072f0223249aa8d38/LICENSE",
+      "license_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "retained_license": "independent_licenses/huggingface__smolagents.LICENSE.txt",
+      "case_ids": [
+        "independent-001",
+        "independent-026"
+      ]
+    },
+    {
+      "repo": "ninja-build/ninja",
+      "commit": "c8b233e8053c03d2fd57389035b47d36e98e69a8",
+      "license": "Apache-2.0",
+      "license_source_path": "COPYING",
+      "license_source_url": "https://github.com/ninja-build/ninja/blob/c8b233e8053c03d2fd57389035b47d36e98e69a8/COPYING",
+      "license_sha256": "eb7e9ab9690124c5c9f42bdc81383d886a3dede26345b6ed15bbad7caf81f7ea",
+      "retained_license": "independent_licenses/ninja-build__ninja.LICENSE.txt",
+      "case_ids": [
+        "independent-003",
+        "independent-028"
+      ]
+    },
+    {
+      "repo": "openai/openai-agents-js",
+      "commit": "4ef9008b08bda5e969bf7dc24c576103009dc611",
+      "license": "MIT",
+      "license_source_path": "LICENSE",
+      "license_source_url": "https://github.com/openai/openai-agents-js/blob/4ef9008b08bda5e969bf7dc24c576103009dc611/LICENSE",
+      "license_sha256": "969d1c8178ad9a1ae2ff1e67534151d4cc58a2626274b272f918995bccd3a6ad",
+      "retained_license": "independent_licenses/openai__openai-agents-js.LICENSE.txt",
+      "case_ids": [
+        "independent-011",
+        "independent-031"
+      ]
+    },
+    {
+      "repo": "openai/openai-agents-python",
+      "commit": "d303ce87e60f55e4a7c9b2c313cddba73de5f6f9",
+      "license": "MIT",
+      "license_source_path": "LICENSE",
+      "license_source_url": "https://github.com/openai/openai-agents-python/blob/d303ce87e60f55e4a7c9b2c313cddba73de5f6f9/LICENSE",
+      "license_sha256": "13df7812ca53ecaae1cb4a868844bb598373047ae1d580e4debfbef1dd5b6915",
+      "retained_license": "independent_licenses/openai__openai-agents-python.LICENSE.txt",
+      "case_ids": [
+        "independent-006",
+        "independent-021",
+        "independent-022",
+        "independent-032",
+        "independent-034"
+      ]
+    },
+    {
+      "repo": "openai/openai-node",
+      "commit": "5d258e4e82d7655fa82a4688fc04c53359417d27",
+      "license": "Apache-2.0",
+      "license_source_path": "LICENSE",
+      "license_source_url": "https://github.com/openai/openai-node/blob/5d258e4e82d7655fa82a4688fc04c53359417d27/LICENSE",
+      "license_sha256": "636eb7d79da9bb6d515a4b3fd417aa26679eb3cf16396ddab4bc55fa74e616e4",
+      "retained_license": "independent_licenses/openai__openai-node.LICENSE.txt",
+      "case_ids": [
+        "independent-004",
+        "independent-015",
+        "independent-019",
+        "independent-035"
+      ]
+    },
+    {
+      "repo": "openai/openai-python",
+      "commit": "09c5b6f13f716ad4e417fd7ba9209a8a057e0383",
+      "license": "Apache-2.0",
+      "license_source_path": "LICENSE",
+      "license_source_url": "https://github.com/openai/openai-python/blob/09c5b6f13f716ad4e417fd7ba9209a8a057e0383/LICENSE",
+      "license_sha256": "636eb7d79da9bb6d515a4b3fd417aa26679eb3cf16396ddab4bc55fa74e616e4",
+      "retained_license": "independent_licenses/openai__openai-python.LICENSE.txt",
+      "case_ids": [
+        "independent-002",
+        "independent-008",
+        "independent-017",
+        "independent-029"
+      ]
+    },
+    {
+      "repo": "pydantic/pydantic-ai",
+      "commit": "d49b5b62cf86d9ce14b99d72bcbbdcb6efab5c4f",
+      "license": "MIT",
+      "license_source_path": "LICENSE",
+      "license_source_url": "https://github.com/pydantic/pydantic-ai/blob/d49b5b62cf86d9ce14b99d72bcbbdcb6efab5c4f/LICENSE",
+      "license_sha256": "bc0e89738f36944c8106e1947c3d69631f9c33b8f1bcb60ec4f89d677d2dfcf4",
+      "retained_license": "independent_licenses/pydantic__pydantic-ai.LICENSE.txt",
+      "case_ids": [
+        "independent-013",
+        "independent-018",
+        "independent-033",
+        "independent-036"
+      ]
+    },
+    {
+      "repo": "robfig/cron",
+      "commit": "bc59245fe10efaed9d51b56900192527ed733435",
+      "license": "MIT",
+      "license_source_path": "LICENSE",
+      "license_source_url": "https://github.com/robfig/cron/blob/bc59245fe10efaed9d51b56900192527ed733435/LICENSE",
+      "license_sha256": "8f650581478707182f3306d9a86676d4e03e2d4edc868344378cf4d6fe6c927a",
+      "retained_license": "independent_licenses/robfig__cron.LICENSE.txt",
+      "case_ids": [
+        "independent-039",
+        "independent-041"
+      ]
+    },
+    {
+      "repo": "sindresorhus/p-limit",
+      "commit": "a8a6fbec4e0e866d6d779b10889bb4f5567e70eb",
+      "license": "MIT",
+      "license_source_path": "license",
+      "license_source_url": "https://github.com/sindresorhus/p-limit/blob/a8a6fbec4e0e866d6d779b10889bb4f5567e70eb/license",
+      "license_sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3",
+      "retained_license": "independent_licenses/sindresorhus__p-limit.LICENSE.txt",
+      "case_ids": [
+        "independent-010"
+      ]
+    },
+    {
+      "repo": "sindresorhus/p-queue",
+      "commit": "180ab9e25cd10b6f548767d7176076b50d25e188",
+      "license": "MIT",
+      "license_source_path": "license",
+      "license_source_url": "https://github.com/sindresorhus/p-queue/blob/180ab9e25cd10b6f548767d7176076b50d25e188/license",
+      "license_sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3",
+      "retained_license": "independent_licenses/sindresorhus__p-queue.LICENSE.txt",
+      "case_ids": [
+        "independent-009",
+        "independent-030"
+      ]
+    },
+    {
+      "repo": "sindresorhus/p-retry",
+      "commit": "1472907affe8d6107aba5884abc36d6361b3042e",
+      "license": "MIT",
+      "license_source_path": "license",
+      "license_source_url": "https://github.com/sindresorhus/p-retry/blob/1472907affe8d6107aba5884abc36d6361b3042e/license",
+      "license_sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3",
+      "retained_license": "independent_licenses/sindresorhus__p-retry.LICENSE.txt",
+      "case_ids": [
+        "independent-007"
+      ]
+    }
+  ]
+}

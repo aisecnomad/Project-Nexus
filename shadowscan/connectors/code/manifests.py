@@ -8,13 +8,35 @@ they never raise on malformed input, they just return what they can.
 from __future__ import annotations
 
 import json
-import re
 import tomllib
+import xml.etree.ElementTree as ET
+from bisect import bisect_left
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
+from time import monotonic
 from typing import Any
 
+import regex as re
 import yaml
+
+from shadowscan.signatures.matcher import _run_regex, pattern_timeout
+from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
+
+# Regex execution here runs outside the signature matcher. A per-pattern
+# ceiling well above the matcher's 100 ms keeps ordinary large manifests from
+# timing out under GIL contention between parallel connectors, while the
+# filesystem connector's per-file scan budget still caps the total.
+MANIFEST_PATTERN_SECONDS = 1.0
+
+
+def _pattern_timeout() -> float:
+    return pattern_timeout(MANIFEST_PATTERN_SECONDS)
+
+# Keep bounded regex calls on their calling thread. Releasing/reacquiring the
+# GIL for each tiny match can spend a 100ms wall deadline waiting behind other
+# connector threads. ``concurrent=False`` retains regex-engine preemption for
+# hostile patterns while avoiding that scheduling overhead.
 
 
 @dataclass(slots=True)
@@ -40,6 +62,25 @@ class Artifact:
 class ManifestResult:
     deps: list[Dep] = field(default_factory=list)
     artifacts: list[Artifact] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+def _mapping(value: Any, result: ManifestResult, section: str) -> dict[str, Any]:
+    if value is None and section != "document":
+        return {}
+    if isinstance(value, dict):
+        return value
+    result.errors.append(f"{section} must be an object")
+    return {}
+
+
+def _sequence(value: Any, result: ManifestResult, section: str) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    result.errors.append(f"{section} must be an array")
+    return []
 
 
 MANIFEST_FILENAMES = {
@@ -97,32 +138,36 @@ MANIFEST_FILENAMES = {
     "Modelfile",
 }
 
-_REQ_LINE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(\[[^\]]*\])?\s*([<>=!~;@ ].*)?$")
+_REQ_LINE = re.compile(r"^[ \t]*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(\[[^\]]*\])?\s*([<>=!~;@ ].*)?$")
 _GIT_URL = re.compile(r"(?:git\+)?(?:https?|ssh|git)://[^\s#]+?/([A-Za-z0-9_.-]+?)(?:\.git)?(?:@[^\s#]+)?(?:#.*)?$")
 
 
 def parse_requirements(text: str) -> ManifestResult:
     res = ManifestResult()
     for i, raw in enumerate(text.splitlines(), 1):
-        line = raw.split("#", 1)[0].strip()
-        if not line or line.startswith(("-", "--")):
+        line = raw.strip()
+        if line.startswith(("-e ", "--editable ")):
+            line = line.split(None, 1)[1].strip()
+        if not line or line.startswith("#") or line.startswith("-"):
             continue
         if line.startswith(("http://", "https://", "git+", "ssh://", "git://")) or "://" in line:
-            egg = re.search(r"#egg=([A-Za-z0-9_.-]+)", line)
+            # The fragment is part of a VCS requirement, not a comment.
+            egg = re.search(r"(?:#|&)egg=([A-Za-z0-9_.-]+)", line, timeout=_pattern_timeout(), concurrent=False)
             if egg:
                 res.deps.append(Dep("pypi", egg.group(1), line, i))
                 continue
-            m = _GIT_URL.search(line)
+            m = _GIT_URL.search(line.split("#", 1)[0], timeout=_pattern_timeout(), concurrent=False)
             if m:
                 res.deps.append(Dep("pypi", m.group(1), line, i))
             continue
+        line = line.split("#", 1)[0].strip()
         if "@" in line and not line.startswith("-e"):
             # PEP 508 direct reference: name @ url
             name = line.split("@", 1)[0].strip()
-            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*(\[[^\]]*\])?", name):
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*(\[[^\]]*\])?", name, timeout=_pattern_timeout(), concurrent=False):
                 res.deps.append(Dep("pypi", name.split("[", 1)[0], line, i))
                 continue
-        m = _REQ_LINE.match(line)
+        m = _REQ_LINE.match(line, timeout=_pattern_timeout(), concurrent=False)
         if m:
             res.deps.append(Dep("pypi", m.group(1), (m.group(3) or "").strip() or None, i))
     return res
@@ -130,7 +175,7 @@ def parse_requirements(text: str) -> ManifestResult:
 
 def _pep508_name(spec: str) -> str | None:
     spec = spec.strip()
-    m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)", spec)
+    m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)", spec, timeout=_pattern_timeout(), concurrent=False)
     return m.group(1) if m else None
 
 
@@ -139,30 +184,32 @@ def parse_pyproject(text: str) -> ManifestResult:
     try:
         data = tomllib.loads(text)
     except (tomllib.TOMLDecodeError, ValueError):
-        return parse_requirements(text)
-    project = data.get("project", {}) or {}
-    for spec in project.get("dependencies", []) or []:
+        res.errors.append("invalid TOML")
+        return res
+    project = _mapping(data.get("project"), res, "project")
+    for spec in _sequence(project.get("dependencies"), res, "project.dependencies"):
         if isinstance(spec, str) and (n := _pep508_name(spec)):
             res.deps.append(Dep("pypi", n, spec))
-    for group, specs in (project.get("optional-dependencies", {}) or {}).items():
-        for spec in specs or []:
+    for group, specs in _mapping(project.get("optional-dependencies"), res, "project.optional-dependencies").items():
+        for spec in _sequence(specs, res, "project.optional-dependencies group"):
             if isinstance(spec, str) and (n := _pep508_name(spec)):
                 res.deps.append(Dep("pypi", n, spec, dev=group in {"dev", "test", "tests", "lint"}))
-    for group, specs in (data.get("dependency-groups", {}) or {}).items():
-        for spec in specs or []:
+    for group, specs in _mapping(data.get("dependency-groups"), res, "dependency-groups").items():
+        for spec in _sequence(specs, res, "dependency-groups group"):
             if isinstance(spec, str) and (n := _pep508_name(spec)):
                 res.deps.append(Dep("pypi", n, spec, dev=True))
-    poetry = (data.get("tool", {}) or {}).get("poetry", {}) or {}
-    for name, spec in (poetry.get("dependencies", {}) or {}).items():
+    tool = _mapping(data.get("tool"), res, "tool")
+    poetry = _mapping(tool.get("poetry"), res, "tool.poetry")
+    for name, spec in _mapping(poetry.get("dependencies"), res, "tool.poetry.dependencies").items():
         if name.lower() != "python":
             res.deps.append(Dep("pypi", name, json.dumps(spec) if not isinstance(spec, str) else spec))
-    for gname, group in (poetry.get("group", {}) or {}).items():
-        for name, spec in (group.get("dependencies", {}) or {}).items():
+    for gname, group in _mapping(poetry.get("group"), res, "tool.poetry.group").items():
+        for name, spec in _mapping(_mapping(group, res, "tool.poetry.group entry").get("dependencies"), res, "group.dependencies").items():
             res.deps.append(Dep("pypi", name, str(spec), dev=True))
-    for name, spec in (poetry.get("dev-dependencies", {}) or {}).items():
+    for name, spec in _mapping(poetry.get("dev-dependencies"), res, "tool.poetry.dev-dependencies").items():
         res.deps.append(Dep("pypi", name, str(spec), dev=True))
-    uv = (data.get("tool", {}) or {}).get("uv", {}) or {}
-    for spec in uv.get("dev-dependencies", []) or []:
+    uv = _mapping(tool.get("uv"), res, "tool.uv")
+    for spec in _sequence(uv.get("dev-dependencies"), res, "tool.uv.dev-dependencies"):
         if isinstance(spec, str) and (n := _pep508_name(spec)):
             res.deps.append(Dep("pypi", n, spec, dev=True))
     # image / env style hints sometimes live in pyproject (e.g. tool.langgraph)
@@ -174,9 +221,10 @@ def parse_pipfile(text: str) -> ManifestResult:
     try:
         data = tomllib.loads(text)
     except (tomllib.TOMLDecodeError, ValueError):
+        res.errors.append("invalid TOML")
         return res
     for section, dev in (("packages", False), ("dev-packages", True)):
-        for name, spec in (data.get(section, {}) or {}).items():
+        for name, spec in _mapping(data.get(section), res, section).items():
             res.deps.append(Dep("pypi", name, str(spec), dev=dev))
     return res
 
@@ -187,8 +235,8 @@ _STR = re.compile(r"""["']([^"']+)["']""")
 
 def parse_setup_py(text: str) -> ManifestResult:
     res = ManifestResult()
-    for m in _SETUP_REQ.finditer(text):
-        for s in _STR.findall(m.group(1)):
+    for m in _SETUP_REQ.finditer(text, timeout=_pattern_timeout(), concurrent=False):
+        for s in _STR.findall(m.group(1), timeout=_pattern_timeout(), concurrent=False):
             n = _pep508_name(s)
             if n:
                 res.deps.append(Dep("pypi", n, s))
@@ -199,7 +247,7 @@ def parse_setup_cfg(text: str) -> ManifestResult:
     res = ManifestResult()
     in_reqs = False
     for line in text.splitlines():
-        if re.match(r"^\s*(install_requires|tests_require)\s*=", line):
+        if re.match(r"^[ \t]*(install_requires|tests_require)\s*=", line, timeout=_pattern_timeout(), concurrent=False):
             in_reqs = True
             rest = line.split("=", 1)[1].strip()
             if rest and (n := _pep508_name(rest)):
@@ -218,17 +266,22 @@ def parse_setup_cfg(text: str) -> ManifestResult:
 def parse_conda_env(text: str) -> ManifestResult:
     res = ManifestResult()
     try:
-        data = yaml.safe_load(text) or {}
-    except yaml.YAMLError:
+        data = bounded_safe_load(text)
+    except YAMLResourceLimitError:
+        res.errors.append("YAML safety limit exceeded")
         return res
-    for item in data.get("dependencies", []) or []:
+    except yaml.YAMLError:
+        res.errors.append("invalid YAML")
+        return res
+    data = _mapping(data, res, "document")
+    for item in _sequence(data.get("dependencies"), res, "dependencies"):
         if isinstance(item, str):
             name = re.split(r"[=<>!~ ]", item, 1)[0]
             if "::" in name:
                 name = name.split("::", 1)[1]
             res.deps.append(Dep("conda", name, item))
         elif isinstance(item, dict) and "pip" in item:
-            for spec in item["pip"] or []:
+            for spec in _sequence(item["pip"], res, "dependencies.pip"):
                 if isinstance(spec, str) and (n := _pep508_name(spec)):
                     res.deps.append(Dep("pypi", n, spec))
     return res
@@ -239,36 +292,39 @@ def parse_package_json(text: str) -> ManifestResult:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
+        res.errors.append("invalid JSON")
         return res
-    if not isinstance(data, dict):
-        return res
+    data = _mapping(data, res, "document")
     for section, dev in (
         ("dependencies", False),
         ("devDependencies", True),
         ("peerDependencies", False),
         ("optionalDependencies", False),
     ):
-        for name, spec in (data.get(section, {}) or {}).items():
+        for name, spec in _mapping(data.get(section), res, section).items():
+            if not isinstance(spec, str):
+                res.errors.append(f"{section} dependency version must be a string")
+                continue
             res.deps.append(Dep("npm", name, str(spec), dev=dev))
-    scripts = data.get("scripts", {}) or {}
+    scripts = _mapping(data.get("scripts"), res, "scripts")
     for _, cmd in scripts.items():
         if isinstance(cmd, str):
-            for pkg in re.findall(r"npx\s+(?:-y\s+)?(@?[A-Za-z0-9_./-]+)", cmd):
+            for pkg in re.findall(r"npx\s+(?:-y\s+)?(@?[A-Za-z0-9_./-]+)", cmd, timeout=_pattern_timeout(), concurrent=False):
                 res.deps.append(Dep("npm", pkg.split("@", 1)[0] if not pkg.startswith("@") else "@" + pkg[1:].split("@", 1)[0], cmd))
     return res
 
 
 _GO_REQUIRE_BLOCK = re.compile(r"require\s*\((.*?)\)", re.S)
-_GO_REQUIRE_LINE = re.compile(r"^\s*require\s+(\S+)\s+(\S+)", re.M)
-_GO_MOD_LINE = re.compile(r"^\s*(\S+)\s+(v\S+)", re.M)
+_GO_REQUIRE_LINE = re.compile(r"^[ \t]*require\s+(\S+)\s+(\S+)", re.M)
+_GO_MOD_LINE = re.compile(r"^[ \t]*(\S+)\s+(v\S+)", re.M)
 
 
 def parse_go_mod(text: str) -> ManifestResult:
     res = ManifestResult()
-    for block in _GO_REQUIRE_BLOCK.findall(text):
-        for m in _GO_MOD_LINE.finditer(block):
+    for block in _GO_REQUIRE_BLOCK.findall(text, timeout=_pattern_timeout(), concurrent=False):
+        for m in _GO_MOD_LINE.finditer(block, timeout=_pattern_timeout(), concurrent=False):
             res.deps.append(Dep("go", m.group(1), m.group(2)))
-    for m in _GO_REQUIRE_LINE.finditer(text):
+    for m in _GO_REQUIRE_LINE.finditer(text, timeout=_pattern_timeout(), concurrent=False):
         res.deps.append(Dep("go", m.group(1), m.group(2)))
     return res
 
@@ -278,36 +334,53 @@ def parse_cargo_toml(text: str) -> ManifestResult:
     try:
         data = tomllib.loads(text)
     except (tomllib.TOMLDecodeError, ValueError):
+        res.errors.append("invalid TOML")
         return res
+    workspace = _mapping(data.get("workspace"), res, "workspace")
     sections = [
-        (data.get("dependencies", {}) or {}, False),
-        (data.get("dev-dependencies", {}) or {}, True),
-        (data.get("build-dependencies", {}) or {}, True),
-        ((data.get("workspace", {}) or {}).get("dependencies", {}) or {}, False),
+        (_mapping(data.get("dependencies"), res, "dependencies"), False),
+        (_mapping(data.get("dev-dependencies"), res, "dev-dependencies"), True),
+        (_mapping(data.get("build-dependencies"), res, "build-dependencies"), True),
+        (_mapping(workspace.get("dependencies"), res, "workspace.dependencies"), False),
     ]
-    for target in (data.get("target", {}) or {}).values():
+    for target in _mapping(data.get("target"), res, "target").values():
         if isinstance(target, dict):
-            sections.append((target.get("dependencies", {}) or {}, False))
+            sections.append((_mapping(target.get("dependencies"), res, "target dependencies"), False))
+        else:
+            res.errors.append("target entry must be an object")
     for section, dev in sections:
         for name, spec in section.items():
             real = spec.get("package", name) if isinstance(spec, dict) else name
+            if not isinstance(real, str):
+                res.errors.append("dependency package name must be a string")
+                continue
             res.deps.append(Dep("cargo", real, str(spec), dev=dev))
     return res
 
 
-_POM_DEP = re.compile(r"<dependency>\s*(.*?)\s*</dependency>", re.S)
-_POM_TAG = re.compile(r"<(groupId|artifactId|version|scope)>\s*([^<]+?)\s*</\1>")
-
-
 def parse_pom(text: str) -> ManifestResult:
     res = ManifestResult()
-    for m in _POM_DEP.finditer(text):
-        tags = dict(_POM_TAG.findall(m.group(1)))
+    # XML comments often contain sample dependencies. Parse the document rather
+    # than extracting <dependency> tags with a regex, which treats comments as
+    # active configuration. Maven POMs also commonly use a default namespace.
+    # No DTD is needed for dependency extraction; reject entities to keep
+    # parsing an untrusted repository bounded even with older Expat versions.
+    if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
+        res.errors.append("POM DTD/entity declarations are unsupported")
+        return res
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        res.errors.append("invalid POM XML")
+        return res
+
+    for dependency in root.iter():
+        if dependency.tag.rsplit("}", 1)[-1] != "dependency":
+            continue
+        tags = {child.tag.rsplit("}", 1)[-1]: (child.text or "").strip() for child in dependency}
         g, a = tags.get("groupId"), tags.get("artifactId")
         if g and a:
             res.deps.append(Dep("maven", f"{g}:{a}", tags.get("version"), dev=tags.get("scope") == "test"))
-    for m in re.finditer(r"<(?:artifactId)>\s*([^<]+?)\s*</artifactId>", text):
-        pass
     return res
 
 
@@ -319,9 +392,9 @@ _GRADLE_PLATFORM = re.compile(r"""(?:platform|enforcedPlatform)\s*\(\s*["']([^"'
 
 def parse_gradle(text: str) -> ManifestResult:
     res = ManifestResult()
-    for m in _GRADLE_DEP.finditer(text):
+    for m in _GRADLE_DEP.finditer(text, timeout=_pattern_timeout(), concurrent=False):
         res.deps.append(Dep("maven", f"{m.group(2)}:{m.group(3)}", m.group(4), dev=m.group(1).startswith("test")))
-    for m in _GRADLE_PLATFORM.finditer(text):
+    for m in _GRADLE_PLATFORM.finditer(text, timeout=_pattern_timeout(), concurrent=False):
         res.deps.append(Dep("maven", f"{m.group(1)}:{m.group(2)}", m.group(3)))
     return res
 
@@ -333,21 +406,21 @@ _NUGET_REF_NOVER = re.compile(r"""<(?:PackageReference|PackageVersion)\s+[^>]*?I
 def parse_nuget(text: str) -> ManifestResult:
     res = ManifestResult()
     seen: set[str] = set()
-    for m in _NUGET_REF.finditer(text):
+    for m in _NUGET_REF.finditer(text, timeout=_pattern_timeout(), concurrent=False):
         seen.add(m.group(1))
         res.deps.append(Dep("nuget", m.group(1), m.group(2)))
-    for m in _NUGET_REF_NOVER.finditer(text):
+    for m in _NUGET_REF_NOVER.finditer(text, timeout=_pattern_timeout(), concurrent=False):
         if m.group(1) not in seen:
             res.deps.append(Dep("nuget", m.group(1)))
     return res
 
 
-_GEM = re.compile(r"""^\s*gem\s+["']([^"']+)["'](?:\s*,\s*["']([^"']+)["'])?""", re.M)
+_GEM = re.compile(r"""^[ \t]*gem\s+["']([^"']+)["'](?:\s*,\s*["']([^"']+)["'])?""", re.M)
 
 
 def parse_gemfile(text: str) -> ManifestResult:
     res = ManifestResult()
-    for m in _GEM.finditer(text):
+    for m in _GEM.finditer(text, timeout=_pattern_timeout(), concurrent=False):
         res.deps.append(Dep("rubygems", m.group(1), m.group(2)))
     return res
 
@@ -357,130 +430,207 @@ def parse_composer(text: str) -> ManifestResult:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
+        res.errors.append("invalid JSON")
         return res
+    data = _mapping(data, res, "document")
     for section, dev in (("require", False), ("require-dev", True)):
-        for name, spec in (data.get(section, {}) or {}).items():
+        for name, spec in _mapping(data.get(section), res, section).items():
             if "/" in name:
                 res.deps.append(Dep("composer", name, str(spec), dev=dev))
     return res
 
 
-_DOCKER_FROM = re.compile(r"^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)", re.I | re.M)
-_DOCKER_ENV = re.compile(r"^\s*(?:ENV|ARG)\s+([A-Z][A-Z0-9_]+)", re.I | re.M)
-_DOCKER_ENV_MULTI = re.compile(r"^\s*ENV\s+(.+)$", re.I | re.M)
+_DOCKER_FROM = re.compile(r"^[ \t]*FROM\s+(?:--platform=\S+\s+)?(\S+)", re.I | re.M)
+_DOCKER_ENV = re.compile(r"^[ \t]*(?:ENV|ARG)\s+([A-Z][A-Z0-9_]+)", re.I | re.M)
+_DOCKER_ENV_MULTI = re.compile(r"^[ \t]*ENV\s+(.+)$", re.I | re.M)
 _DOCKER_PIP = re.compile(r"pip3?\s+install\s+([^&|;\n\\]+)", re.I)
 _DOCKER_NPM = re.compile(r"(?:npm\s+(?:install|i|add)|yarn\s+add|pnpm\s+(?:add|install))\s+([^&|;\n\\]+)", re.I)
 _DOCKER_UV = re.compile(r"uv\s+(?:pip\s+install|add)\s+([^&|;\n\\]+)", re.I)
 
 
+class _LineIndex:
+    """Map match offsets to line numbers with one newline scan per input.
+
+    Counting newlines from the start of the text for every match is quadratic
+    and, because the regex iterator timeout also charges caller work, made
+    ordinary large manifests trip the 0.1 s per-pattern limit.
+    """
+
+    __slots__ = ("_offsets", "_text")
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self._offsets: list[int] | None = None
+
+    def at(self, position: int) -> int:
+        if self._offsets is None:
+            self._offsets = [match.start() for match in re.finditer("\n", self._text)]
+        return bisect_left(self._offsets, position) + 1
+
+
+def _unique_artifacts(artifacts: list[Artifact]) -> list[Artifact]:
+    """Drop repeated observations of one value on one line (e.g. ``ENV A=`` matched twice)."""
+    seen: set[tuple[str, str, int | None, str]] = set()
+    unique: list[Artifact] = []
+    for artifact in artifacts:
+        key = (artifact.kind, artifact.value, artifact.line, repr(artifact.extra))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(artifact)
+    return unique
+
+
 def parse_dockerfile(text: str) -> ManifestResult:
     res = ManifestResult()
-    for m in _DOCKER_FROM.finditer(text):
+    lines = _LineIndex(text)
+    for m in _DOCKER_FROM.finditer(text, timeout=_pattern_timeout(), concurrent=False):
         img = m.group(1)
         if img.lower() != "scratch" and "$" not in img:
-            res.artifacts.append(Artifact("image", img, text.count("\n", 0, m.start()) + 1))
-    for m in _DOCKER_ENV_MULTI.finditer(text):
-        for name in re.findall(r"([A-Z][A-Z0-9_]+)\s*=", m.group(1)):
-            res.artifacts.append(Artifact("env", name, text.count("\n", 0, m.start()) + 1))
-    for m in _DOCKER_ENV.finditer(text):
-        res.artifacts.append(Artifact("env", m.group(1), text.count("\n", 0, m.start()) + 1))
+            res.artifacts.append(Artifact("image", img, lines.at(m.start())))
+    for m in _DOCKER_ENV_MULTI.finditer(text, timeout=_pattern_timeout(), concurrent=False):
+        for name in re.findall(r"([A-Z][A-Z0-9_]+)\s*=", m.group(1), timeout=_pattern_timeout(), concurrent=False):
+            res.artifacts.append(Artifact("env", name, lines.at(m.start())))
+    for m in _DOCKER_ENV.finditer(text, timeout=_pattern_timeout(), concurrent=False):
+        res.artifacts.append(Artifact("env", m.group(1), lines.at(m.start())))
     for rx in (_DOCKER_PIP, _DOCKER_UV):
-        for m in rx.finditer(text):
+        for m in rx.finditer(text, timeout=_pattern_timeout(), concurrent=False):
             for tok in m.group(1).split():
-                if tok.startswith("-") or tok in {"install", "."} or "=" in tok and not re.match(r"^[A-Za-z0-9_.-]+==", tok):
+                if tok.startswith("-") or tok in {"install", "."} or "=" in tok and not re.match(r"^[A-Za-z0-9_.-]+==", tok, timeout=_pattern_timeout(), concurrent=False):
                     continue
                 n = _pep508_name(tok)
                 if n and n.lower() not in {"pip", "setuptools", "wheel", "poetry", "uv", "pipenv", "r"}:
-                    res.deps.append(Dep("pypi", n, tok, text.count("\n", 0, m.start()) + 1))
-    for m in _DOCKER_NPM.finditer(text):
+                    res.deps.append(Dep("pypi", n, tok, lines.at(m.start())))
+    for m in _DOCKER_NPM.finditer(text, timeout=_pattern_timeout(), concurrent=False):
         for tok in m.group(1).split():
             if tok.startswith("-") or tok in {"install", "add"}:
                 continue
             name = tok if tok.startswith("@") else tok.split("@", 1)[0]
             if name.startswith("@"):
                 name = "@" + name[1:].split("@", 1)[0]
-            res.deps.append(Dep("npm", name, tok, text.count("\n", 0, m.start()) + 1))
+            res.deps.append(Dep("npm", name, tok, lines.at(m.start())))
     return res
 
 
-_YAML_IMAGE = re.compile(r"^\s*(?:-\s*)?image\s*:\s*['\"]?([^'\"\s#]+)", re.M)
-_YAML_REPO = re.compile(r"^\s*repository\s*:\s*['\"]?([^'\"\s#]+)", re.M)
-_YAML_ENV_KEY = re.compile(r"^\s*-?\s*(?:name\s*:\s*)?['\"]?([A-Z][A-Z0-9_]{2,})['\"]?\s*[:=]", re.M)
-_YAML_USES = re.compile(r"^\s*-?\s*uses\s*:\s*['\"]?([^'\"\s#]+)", re.M)
+_YAML_IMAGE = re.compile(r"^[ \t]*(?:-[ \t]*)?image[ \t]*:[ \t]*['\"]?([^'\"\s#]+)", re.M)
+_YAML_REPO = re.compile(r"^[ \t]*repository[ \t]*:[ \t]*['\"]?([^'\"\s#]+)", re.M)
+_YAML_ENV_KEY = re.compile(r"^[ \t]*+-?[ \t]*+(?:name[ \t]*+:[ \t]*+)?['\"]?([A-Z][A-Z0-9_]{2,})['\"]?[ \t]*+[:=]", re.M)
+_YAML_USES = re.compile(r"^[ \t]*+-?[ \t]*+uses[ \t]*+:[ \t]*+['\"]?([^'\"\s#]+)", re.M)
 _SECRETS_REF = re.compile(r"\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}")
-_GITLAB_IMAGE = re.compile(r"^\s*image\s*:\s*(?:name\s*:\s*)?['\"]?([^'\"\s#]+)", re.M)
+_GITLAB_IMAGE = re.compile(r"^[ \t]*image\s*:\s*(?:name\s*:\s*)?['\"]?([^'\"\s#]+)", re.M)
+
+
+def _yaml_line_matches(pattern: re.Pattern[str], text: str, deadline: float) -> Iterator[re.Match[str]]:
+    """Keep each regex deadline short without charging a whole file's matches to it.
+
+    The patterns passed here are line-bound. An exceptionally long single line
+    remains intact and still has the regex timeout; it cannot evade the limit.
+    The shared deadline also bounds the total cost of all ordinary chunks.
+    """
+    start = 0
+    while start < len(text):
+        end = min(start + 4096, len(text))
+        if end < len(text):
+            newline = text.rfind("\n", start, end)
+            if newline < start:
+                newline = text.find("\n", end)
+            end = len(text) if newline < 0 else newline + 1
+        remaining = min(deadline - monotonic(), _pattern_timeout())
+        if remaining <= 0:
+            raise TimeoutError("YAML manifest matching exceeded its time budget")
+        # Materialize only this bounded line chunk before caller processing;
+        # regex iterators otherwise charge artifact construction and unrelated
+        # worker CPU to matching. Reuse the matcher contention retry budget.
+        matches = _run_regex(
+            lambda timeout: list(pattern.finditer(text, start, end, timeout=min(timeout, remaining), concurrent=False)),
+            "YAML manifest",
+            max_seconds=remaining,
+        )
+        if monotonic() > deadline:
+            raise TimeoutError("YAML manifest matching exceeded its time budget")
+        yield from matches
+        start = end
 
 
 def parse_compose_or_k8s(text: str) -> ManifestResult:
     """docker-compose, Kubernetes manifests, Helm values, CI configs: images + env keys."""
     res = ManifestResult()
-    for m in _YAML_IMAGE.finditer(text):
-        res.artifacts.append(Artifact("image", m.group(1), text.count("\n", 0, m.start()) + 1))
-    for m in _YAML_REPO.finditer(text):
+    deadline = monotonic() + _pattern_timeout()
+    lines = _LineIndex(text)
+    for m in _yaml_line_matches(_YAML_IMAGE, text, deadline):
+        res.artifacts.append(Artifact("image", m.group(1), lines.at(m.start())))
+    for m in _yaml_line_matches(_YAML_REPO, text, deadline):
         val = m.group(1)
         if "/" in val and not val.startswith(("http", "git@")):
-            res.artifacts.append(Artifact("image", val, text.count("\n", 0, m.start()) + 1))
-    for m in _YAML_ENV_KEY.finditer(text):
-        res.artifacts.append(Artifact("env", m.group(1), text.count("\n", 0, m.start()) + 1))
-    for m in _YAML_USES.finditer(text):
-        res.artifacts.append(Artifact("action", m.group(1), text.count("\n", 0, m.start()) + 1))
-    for m in _SECRETS_REF.finditer(text):
-        res.artifacts.append(Artifact("secret_ref", m.group(1), text.count("\n", 0, m.start()) + 1))
+            res.artifacts.append(Artifact("image", val, lines.at(m.start())))
+    for m in _yaml_line_matches(_YAML_ENV_KEY, text, deadline):
+        res.artifacts.append(Artifact("env", m.group(1), lines.at(m.start())))
+    for m in _yaml_line_matches(_YAML_USES, text, deadline):
+        res.artifacts.append(Artifact("action", m.group(1), lines.at(m.start())))
+    remaining = deadline - monotonic()
+    if remaining <= 0:
+        raise TimeoutError("YAML manifest matching exceeded its time budget")
+    # Secret references can span lines; scan these with the same shared budget.
+    for m in _SECRETS_REF.finditer(text, timeout=min(0.1, remaining, _pattern_timeout()), concurrent=False):
+        res.artifacts.append(Artifact("secret_ref", m.group(1), lines.at(m.start())))
     return res
 
 
-_TF_RESOURCE = re.compile(r"""^\s*(?:resource|data)\s+["']([A-Za-z0-9_]+)["']\s+["']([^"']+)["']""", re.M)
-_TF_MODULE_SOURCE = re.compile(r"""^\s*source\s*=\s*["']([^"']+)["']""", re.M)
-_CFN_TYPE = re.compile(r"""^\s*(?:"Type"|Type)\s*:\s*['"]?((?:AWS|Alexa|Custom)::[A-Za-z0-9:]+)""", re.M)
+_TF_RESOURCE = re.compile(r"""^[ \t]*(?:resource|data)\s+["']([A-Za-z0-9_]+)["']\s+["']([^"']+)["']""", re.M)
+_TF_MODULE_SOURCE = re.compile(r"""^[ \t]*source\s*=\s*["']([^"']+)["']""", re.M)
+_CFN_TYPE = re.compile(r"""^[ \t]*(?:"Type"|Type)\s*:\s*['"]?((?:AWS|Alexa|Custom)::[A-Za-z0-9:]+)""", re.M)
 _ARM_TYPE = re.compile(r"""["']type["']\s*:\s*["']((?:Microsoft|Oracle|Google)\.[A-Za-z0-9./]+)["']""", re.I)
-_BICEP_RESOURCE = re.compile(r"""^\s*resource\s+\w+\s+['"]([A-Za-z0-9./]+)@[^'"]+['"]""", re.M)
+_BICEP_RESOURCE = re.compile(r"""^[ \t]*resource\s+\w+\s+['"]([A-Za-z0-9./]+)@[^'"]+['"]""", re.M)
 _PULUMI_TYPE = re.compile(r"""\b(?:aws|gcp|azure|azure_native|azurerm|oci)[.:][a-z_]+[.:][A-Z][A-Za-z]+""")
 _CDK_IMPORT = re.compile(r"""(?:from\s+aws_cdk\s+import\s+([^\n]+)|aws-cdk-lib/([a-z_-]+)|@aws-cdk/([a-z_-]+)|aws_cdk\.([a-z_]+))""")
 
 
-_TF_DISPLAY = re.compile(r"""^\s*(?:agent_name|display_name|function_name|name|bot_name|app_name|workflow_name)\s*=\s*["']([^"'$]+)["']""", re.M)
+_TF_DISPLAY = re.compile(r"""^[ \t]*(?:agent_name|display_name|function_name|name|bot_name|app_name|workflow_name)\s*=\s*["']([^"'$]+)["']""", re.M)
 
 
 def parse_terraform(text: str) -> ManifestResult:
     res = ManifestResult()
-    starts = [(m.start(), m) for m in _TF_RESOURCE.finditer(text)]
+    lines = _LineIndex(text)
+    starts = [(m.start(), m) for m in _TF_RESOURCE.finditer(text, timeout=_pattern_timeout(), concurrent=False)]
     for i, (pos, m) in enumerate(starts):
         end = starts[i + 1][0] if i + 1 < len(starts) else len(text)
         block = text[pos:end]
-        dm = _TF_DISPLAY.search(block)
+        dm = _TF_DISPLAY.search(block, timeout=_pattern_timeout(), concurrent=False)
         extra = {"name": m.group(2)}
         if dm:
             extra["display_name"] = dm.group(1)
-        res.artifacts.append(Artifact("iac", m.group(1), text.count("\n", 0, m.start()) + 1, extra))
-    for m in _TF_MODULE_SOURCE.finditer(text):
-        res.artifacts.append(Artifact("module", m.group(1), text.count("\n", 0, m.start()) + 1))
-    for m in re.finditer(r"image\s*=\s*['\"]([^'\"$]+)['\"]", text):
-        res.artifacts.append(Artifact("image", m.group(1), text.count("\n", 0, m.start()) + 1))
-    for m in re.finditer(r"['\"]([A-Z][A-Z0-9_]{2,})['\"]\s*[=:]", text):
-        res.artifacts.append(Artifact("env", m.group(1), text.count("\n", 0, m.start()) + 1))
-    for m in re.finditer(r"^\s*([A-Z][A-Z0-9_]{2,})\s*=\s*", text, re.M):
-        res.artifacts.append(Artifact("env", m.group(1), text.count("\n", 0, m.start()) + 1))
+        res.artifacts.append(Artifact("iac", m.group(1), lines.at(m.start()), extra))
+    for m in _TF_MODULE_SOURCE.finditer(text, timeout=_pattern_timeout(), concurrent=False):
+        res.artifacts.append(Artifact("module", m.group(1), lines.at(m.start())))
+    for m in re.finditer(r"image\s*=\s*['\"]([^'\"$]+)['\"]", text, timeout=_pattern_timeout(), concurrent=False):
+        res.artifacts.append(Artifact("image", m.group(1), lines.at(m.start())))
+    for m in re.finditer(r"['\"]([A-Z][A-Z0-9_]{2,})['\"]\s*[=:]", text, timeout=_pattern_timeout(), concurrent=False):
+        res.artifacts.append(Artifact("env", m.group(1), lines.at(m.start())))
+    for m in re.finditer(r"^[ \t]*([A-Z][A-Z0-9_]{2,})\s*=\s*", text, re.M, timeout=_pattern_timeout(), concurrent=False):
+        res.artifacts.append(Artifact("env", m.group(1), lines.at(m.start())))
     return res
 
 
 def parse_cloudformation(text: str) -> ManifestResult:
     res = ManifestResult()
-    for m in _CFN_TYPE.finditer(text):
-        res.artifacts.append(Artifact("iac", m.group(1), text.count("\n", 0, m.start()) + 1))
+    lines = _LineIndex(text)
+    for m in _CFN_TYPE.finditer(text, timeout=_pattern_timeout(), concurrent=False):
+        res.artifacts.append(Artifact("iac", m.group(1), lines.at(m.start())))
     res.artifacts.extend(parse_compose_or_k8s(text).artifacts)
     return res
 
 
 def parse_arm_or_bicep(text: str) -> ManifestResult:
     res = ManifestResult()
-    for m in _ARM_TYPE.finditer(text):
-        res.artifacts.append(Artifact("iac", m.group(1), text.count("\n", 0, m.start()) + 1))
-    for m in _BICEP_RESOURCE.finditer(text):
-        res.artifacts.append(Artifact("iac", m.group(1), text.count("\n", 0, m.start()) + 1))
+    lines = _LineIndex(text)
+    for m in _ARM_TYPE.finditer(text, timeout=_pattern_timeout(), concurrent=False):
+        res.artifacts.append(Artifact("iac", m.group(1), lines.at(m.start())))
+    for m in _BICEP_RESOURCE.finditer(text, timeout=_pattern_timeout(), concurrent=False):
+        res.artifacts.append(Artifact("iac", m.group(1), lines.at(m.start())))
     return res
 
 
-_ENV_FILE_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
+_ENV_FILE_LINE = re.compile(r"^[ \t]*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 
 
 def parse_env_file(text: str) -> ManifestResult:
@@ -489,7 +639,7 @@ def parse_env_file(text: str) -> ManifestResult:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        m = _ENV_FILE_LINE.match(line)
+        m = _ENV_FILE_LINE.match(line, timeout=_pattern_timeout(), concurrent=False)
         if m:
             val = m.group(2).strip().strip("'\"")
             res.artifacts.append(Artifact("env", m.group(1), i, {"has_value": bool(val), "value": val}))
@@ -498,21 +648,34 @@ def parse_env_file(text: str) -> ManifestResult:
 
 def parse_wrangler(text: str) -> ManifestResult:
     res = ManifestResult()
-    if re.search(r"^\s*\[ai\]", text, re.M) or re.search(r'"ai"\s*:\s*\{', text):
+    lines = _LineIndex(text)
+    if re.search(r"^[ \t]*\[ai\]", text, re.M, timeout=_pattern_timeout(), concurrent=False) or re.search(r'"ai"\s*:\s*\{', text, timeout=_pattern_timeout(), concurrent=False):
         res.artifacts.append(Artifact("iac", "cloudflare_workers_ai_binding", None))
-    for m in re.finditer(r"^\s*([A-Z][A-Z0-9_]{2,})\s*=", text, re.M):
-        res.artifacts.append(Artifact("env", m.group(1), text.count("\n", 0, m.start()) + 1))
+    for m in re.finditer(r"^[ \t]*([A-Z][A-Z0-9_]{2,})\s*=", text, re.M, timeout=_pattern_timeout(), concurrent=False):
+        res.artifacts.append(Artifact("env", m.group(1), lines.at(m.start())))
     return res
 
 
 def parse_modelfile(text: str) -> ManifestResult:
     res = ManifestResult()
-    for m in re.finditer(r"^\s*FROM\s+(\S+)", text, re.M | re.I):
-        res.artifacts.append(Artifact("model", m.group(1), text.count("\n", 0, m.start()) + 1))
+    lines = _LineIndex(text)
+    for m in re.finditer(r"^[ \t]*FROM\s+(\S+)", text, re.M | re.I, timeout=_pattern_timeout(), concurrent=False):
+        res.artifacts.append(Artifact("model", m.group(1), lines.at(m.start())))
     return res
 
 
 def parse_manifest(relpath: str, text: str) -> ManifestResult | None:
+    """Parse untrusted input, reporting malformed input without losing the scan."""
+    try:
+        result = _parse_manifest(relpath, text)
+    except (ValueError, TypeError, AttributeError, RecursionError, yaml.YAMLError) as exc:
+        return ManifestResult(errors=[f"manifest parsing failed ({type(exc).__name__})"])
+    if result is not None:
+        result.artifacts = _unique_artifacts(result.artifacts)
+    return result
+
+
+def _parse_manifest(relpath: str, text: str) -> ManifestResult | None:
     """Dispatch on file name / extension. Returns None when the file is not a manifest."""
     p = PurePosixPath(relpath.replace("\\", "/"))
     name = p.name
@@ -559,27 +722,31 @@ def parse_manifest(relpath: str, text: str) -> ManifestResult | None:
     if lower.startswith(".env") and not lower.endswith((".py", ".js", ".ts")):
         return parse_env_file(text)
     if lower.endswith((".yml", ".yaml")):
-        if re.search(r"^\s*AWSTemplateFormatVersion|^\s*Transform\s*:\s*['\"]?AWS::Serverless", text, re.M):
+        if re.search(r"^[ \t]*AWSTemplateFormatVersion|^[ \t]*Transform\s*:\s*['\"]?AWS::Serverless", text, re.M, timeout=_pattern_timeout(), concurrent=False):
             return parse_cloudformation(text)
         return parse_compose_or_k8s(text)
     if lower.endswith(".json") and ("azuredeploy" in lower or '"$schema"' in text[:2000] and "deploymenttemplate" in text[:2000].lower()):
         return parse_arm_or_bicep(text)
-    if lower.endswith(".json") and re.search(r'"AWSTemplateFormatVersion"|"Transform"\s*:\s*"AWS::Serverless', text[:4000]):
+    if lower.endswith(".json") and re.search(r'"AWSTemplateFormatVersion"|"Transform"\s*:\s*"AWS::Serverless', text[:4000], timeout=_pattern_timeout(), concurrent=False):
         return parse_cloudformation(text)
     if ".github" in parts and "workflows" in parts:
         return parse_compose_or_k8s(text)
     return None
 
 
+_MANIFEST_FILENAMES_LOWER = frozenset(n.lower() for n in MANIFEST_FILENAMES)
+
+
 def is_manifest_name(name: str) -> bool:
     lower = name.lower()
-    if name in MANIFEST_FILENAMES or lower in {n.lower() for n in MANIFEST_FILENAMES}:
+    if name in MANIFEST_FILENAMES or lower in _MANIFEST_FILENAMES_LOWER:
         return True
     return (
         (lower.startswith("requirements") and lower.endswith((".txt", ".in")))
         or lower.endswith((".csproj", ".fsproj", ".vbproj", ".tf", ".bicep", ".gradle"))
         or lower.startswith("dockerfile")
         or lower.endswith(".dockerfile")
+        or lower == "containerfile"
         or lower.startswith(".env")
         or lower.startswith("wrangler.")
     )

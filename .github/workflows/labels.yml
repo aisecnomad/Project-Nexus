@@ -1,0 +1,90 @@
+name: Labels
+
+# Keeps the issue tracker's labels identical to .github/labels.yml, the file
+# that issue forms and SUPPORT.md link to. Labels are created or updated, never
+# deleted, so a label removed from the file has to be retired by hand. The job
+# uses the runner's preinstalled gh CLI rather than a third-party action, so it
+# adds no dependency to pin.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/labels.yml"
+      - ".github/workflows/labels.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: labels
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install hash-locked PyYAML in an isolated environment
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          text = Path("requirements.lock").read_text(encoding="utf-8")
+          match = re.search(r"^pyyaml==.*?(?=^\S|\Z)", text, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+          if match is None:
+              raise SystemExit("requirements.lock has no PyYAML pin")
+          (Path(os.environ["RUNNER_TEMP"]) / "pyyaml.txt").write_text(match.group(0), encoding="utf-8")
+          PY
+          python -m venv "$RUNNER_TEMP/labels-venv"
+          "$RUNNER_TEMP/labels-venv/bin/python" -m pip install \
+            --require-hashes --only-binary=:all: -r "$RUNNER_TEMP/pyyaml.txt"
+      - name: Create or update every label in .github/labels.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          "$RUNNER_TEMP/labels-venv/bin/python" - <<'PY'
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          import yaml
+
+          labels = yaml.safe_load(Path(".github/labels.yml").read_text(encoding="utf-8"))
+          if not isinstance(labels, list) or not labels:
+              sys.exit(".github/labels.yml must be a non-empty list of labels")
+          names = [label.get("name") for label in labels]
+          if len(set(names)) != len(names):
+              sys.exit("duplicate label names in .github/labels.yml")
+          failures = 0
+          for label in labels:
+              name, color, description = label.get("name"), label.get("color"), label.get("description", "")
+              if not isinstance(name, str) or not name.strip():
+                  sys.exit(f"label without a name: {label!r}")
+              if not isinstance(color, str) or not re.fullmatch(r"[0-9a-fA-F]{6}", color):
+                  sys.exit(f"label {name!r} needs a six-digit hex color, got {color!r}")
+              if not isinstance(description, str) or len(description) > 100:
+                  sys.exit(f"label {name!r} description must be a string of at most 100 characters")
+              command = ["gh", "label", "create", name, "--color", color, "--description", description, "--force"]
+              completed = subprocess.run(command, capture_output=True, text=True)
+              if completed.returncode != 0:
+                  failures += 1
+                  print(f"failed: {name}: {completed.stderr.strip()}", file=sys.stderr)
+              else:
+                  print(f"synced: {name}")
+          sys.exit(1 if failures else 0)
+          PY

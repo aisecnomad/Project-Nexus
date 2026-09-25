@@ -1,6 +1,19 @@
 # Drop into .github/workflows/ of any repository: scans the checkout for
 # agent frameworks, MCP configs, coding-agent configs, IaC and LLM credentials
 # and uploads the results to GitHub code scanning as SARIF.
+#
+# Set the repository variable SHADOWSCAN_REVISION to a reviewed full commit SHA.
+# This fails closed until the operator selects and verifies a scanner revision;
+# a floating branch would execute new scanner code without that review.
+# Leave SHADOWSCAN_FAIL_ON unset during analyst review. Set it to low, medium,
+# high or critical only after independent detection validation and a read-only
+# canary establish an acceptable gate for this repository. An incomplete scan
+# still exits 3 in either mode. See docs/evaluation.md and docs/production.md.
+# This example deliberately does not auto-load inventory/ from the checkout:
+# pull requests could change those approvals. Supply a separately reviewed,
+# pinned inventory from a trusted location if approval matching is required.
+# It scans the local checkout. If you add remote repository connectors, give
+# their disposable worker a writable disk quota as well as a job timeout.
 name: ShadowScan
 on:
   pull_request:
@@ -11,17 +24,67 @@ on:
 permissions:
   contents: read
   security-events: write
+  actions: read   # upload-sarif reads the workflow run; required in private repositories
 jobs:
   shadowscan:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install "git+https://github.com/aisecnomad/Project-Nexus.git"
-      - run: shadowscan code . --inventory inventory/ --format sarif -o shadowscan.sarif --fail-on critical
-        continue-on-error: true
-      - uses: github/codeql-action/upload-sarif@v3
+      - name: Install reviewed ShadowScan revision
+        env:
+          SHADOWSCAN_REVISION: ${{ vars.SHADOWSCAN_REVISION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$SHADOWSCAN_REVISION" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Set SHADOWSCAN_REVISION to an approved 40-character commit SHA" >&2
+            exit 1
+          fi
+          scanner_dir="$RUNNER_TEMP/project-nexus"
+          git init -q "$scanner_dir"
+          git -C "$scanner_dir" remote add origin https://github.com/aisecnomad/Project-Nexus.git
+          git -C "$scanner_dir" fetch --no-tags --depth 1 origin "$SHADOWSCAN_REVISION"
+          git -C "$scanner_dir" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$scanner_dir" rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
+          # The reviewed tree supplies exact runtime and build backend hashes.
+          python -m pip install --upgrade --only-binary=:all: pip==26.2.1
+          python -m pip install --require-hashes --only-binary=:all: \
+            -r "$scanner_dir/requirements-build.lock"
+          python -m pip install --require-hashes --only-binary=:all: \
+            -r "$scanner_dir/requirements.lock"
+          python -m pip wheel --no-deps --no-build-isolation \
+            --wheel-dir "$RUNNER_TEMP" "$scanner_dir"
+          python -m pip install --no-deps "$RUNNER_TEMP"/shadowscan-*.whl
+          python -m pip check
+          python -m shadowscan.signatures.validate
+      - name: Scan checkout
+        shell: bash
+        env:
+          SHADOWSCAN_FAIL_ON: ${{ vars.SHADOWSCAN_FAIL_ON }}
+        run: |
+          args=(code . --format sarif -o "$RUNNER_TEMP/shadowscan.sarif")
+          if [ -n "$SHADOWSCAN_FAIL_ON" ]; then
+            case "$SHADOWSCAN_FAIL_ON" in
+              low|medium|high|critical) args+=(--fail-on "$SHADOWSCAN_FAIL_ON") ;;
+              *) echo "SHADOWSCAN_FAIL_ON must be low, medium, high or critical" >&2; exit 1 ;;
+            esac
+          fi
+          shadowscan "${args[@]}"
+      - name: Check for SARIF report
+        id: report
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/shadowscan.sarif" ]; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        if: always() && steps.report.outputs.exists == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
-          sarif_file: shadowscan.sarif
+          sarif_file: ${{ runner.temp }}/shadowscan.sarif

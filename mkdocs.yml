@@ -1,0 +1,112 @@
+site_name: ShadowScan
+site_description: Discover shadow AI agents across your enterprise.
+# Reserved deployment URL; Pages must be enabled before publishing the site.
+# Public documentation links currently point to the source under docs/.
+site_url: https://aisecnomad.github.io/Project-Nexus/
+repo_url: https://github.com/aisecnomad/Project-Nexus
+repo_name: aisecnomad/Project-Nexus
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - search.highlight
+    - search.suggest
+  icon:
+    repo: fontawesome/brands/github
+
+# Keep links to repository files absolute, so the rendered site and GitHub
+# Markdown resolve them consistently. Fail strict builds for broken site links.
+validation:
+  links:
+    not_found: warn
+    unrecognized_links: warn
+    absolute_links: warn
+  nav:
+    omitted_files: info
+
+# The HTML minifier plugin is deliberately not used: its dependencies publish
+# no wheels, and the Docs workflow installs the toolchain wheel-only from the
+# hash-locked requirements-docs.lock.
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets:
+      check_paths: true
+      base_path: ["."]
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/install.md
+      - Quick start: getting-started/quickstart.md
+      - Configuration: getting-started/configuration.md
+  - Connectors:
+      - Overview: connectors.md
+      - Code: connectors/code.md
+      - Identity: connectors/identity.md
+      - Gateway: connectors/gateway.md
+      - Low-code: connectors/lowcode.md
+      - SaaS: connectors/saas.md
+      - Cloud: connectors/cloud.md
+  - Concepts:
+      - Architecture: architecture.md
+      - Signatures: signatures.md
+      - Inventory: inventory.md
+      - Scanning: scanning.md
+      - Risk scoring: concepts/risk.md
+  - Operations:
+      - Production deployment: production.md
+      - Evaluation: evaluation.md
+      - CI integration: operations/ci.md
+  - Community: community.md
+  - Development:
+      - Contributing: contributing.md
+      - Governance: governance.md
+      - ADRs: adrs/index.md
+  - Security: security.md
+  - Changelog: changelog.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/aisecnomad/Project-Nexus

@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest a new connector, signature, reporter, or capability.
+labels: [enhancement]
+body:
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - New connector
+        - New signature or detection rule
+        - New reporter / output format
+        - CLI improvement
+        - Inventory / Agent Card feature
+        - Performance / scalability
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that ShadowScan does not support today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should this work? Include example commands, configuration, or output.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or alternatives have you tried?
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to submit a pull request for this feature.

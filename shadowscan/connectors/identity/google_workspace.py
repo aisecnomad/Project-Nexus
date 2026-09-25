@@ -20,6 +20,9 @@ import time
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, ClassVar
+from urllib.parse import quote
+
+from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize
@@ -64,41 +67,94 @@ class GoogleWorkspaceConnector(BaseConnector):
         self._auth()
         assert self.http
         count = 0
-        for user in self.http.paginate_token("/admin/directory/v1/users", params={"customer": self.customer, "maxResults": 500, "projection": "basic"}, items_key="users"):
-            count += 1
-            if count > self.max_users:
-                self.ctx.warn("identity.google-workspace: max_users reached")
-                return
-            email = user.get("primaryEmail")
-            if user.get("suspended"):
-                continue
-            try:
-                data = self.http.get_json(f"/admin/directory/v1/users/{email}/tokens")
-            except HttpError as exc:
-                self.log.debug("tokens for %s: %s", email, exc)
-                continue
-            for tok in (data or {}).get("items", []) or []:
-                tok["userEmail"] = email
-                yield tok
+        token_errors: dict[str, int] = {}
+        try:
+            for user in self.http.paginate_token(
+                "/admin/directory/v1/users",
+                params={"customer": self.customer, "maxResults": 500, "projection": "basic"},
+                items_key="users", expected_empty_kind="admin#directory#users",
+            ):
+                count += 1
+                if count > self.max_users:
+                    self.ctx.warn("identity.google-workspace: max_users reached")
+                    break
+                if not isinstance(user, dict):
+                    self.ctx.warn("identity.google-workspace: invalid user record")
+                    continue
+                email = user.get("primaryEmail")
+                if user.get("suspended"):
+                    continue
+                if not isinstance(email, str) or not email:
+                    self.ctx.warn("identity.google-workspace: user record missing primaryEmail")
+                    continue
+                try:
+                    # "@" is a legal path character; encode everything else so a
+                    # user key cannot alter the request path or query.
+                    data = self.http.get_json(f"/admin/directory/v1/users/{quote(email, safe='@')}/tokens")
+                except (HttpError, RequestException, ValueError) as exc:
+                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    token_errors[status] = token_errors.get(status, 0) + 1
+                    continue
+                # Google omits empty repeated fields, but only an identified
+                # token-list envelope can establish that the user has no tokens.
+                if (not isinstance(data, dict) or self._is_error_record(data)
+                        or ("items" not in data and data.get("kind") != "admin#directory#tokenList")
+                        or not isinstance(data.get("items", []), list)):
+                    self.ctx.warn(f"identity.google-workspace: invalid token response for {email}")
+                    continue
+                for tok in data.get("items", []):
+                    if not isinstance(tok, dict):
+                        self.ctx.warn(f"identity.google-workspace: invalid token record for {email}")
+                        continue
+                    yield {**tok, "userEmail": email}
+        except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            self.ctx.warn(f"identity.google-workspace: user enumeration incomplete ({status})")
+        if token_errors:
+            details = ", ".join(f"{status}: {total}" for status, total in sorted(token_errors.items()))
+            self.ctx.warn(f"identity.google-workspace: OAuth tokens unreadable for {sum(token_errors.values())} user(s) ({details}); app inventory incomplete")
+
+    @staticmethod
+    def _is_native_offline_record(data: dict[str, Any]) -> bool:
+        # The Admin SDK list envelope carries a ``kind`` like every Google
+        # object, but it is a collection of tokens, not a token record.
+        if data.get("kind") == "admin#directory#tokenList":
+            return False
+        # A user and its tokens form one provider record. Unwrapping only the
+        # token array here would discard the granting user's attribution.
+        return ("tokens" in data and any(key in data for key in ("user", "userEmail", "userKey"))) or BaseConnector._is_native_offline_record(data)
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         apps: dict[str, dict[str, Any]] = {}
         for rec in records:
-            tokens = rec.get("tokens") if isinstance(rec.get("tokens"), list) else [rec]
+            if not self._record_fields_valid(rec, strings=("user", "userEmail", "userKey")):
+                self.ctx.warn("identity.google-workspace: malformed token record or provider error; coverage incomplete")
+                continue
+            if "tokens" in rec and not isinstance(rec["tokens"], list):
+                self.ctx.warn("identity.google-workspace: user tokens must be an array; coverage incomplete")
+                continue
+            tokens = rec.get("tokens", [rec])
             user = rec.get("user") or rec.get("userEmail") or rec.get("userKey")
+            if "tokens" in rec and not user:
+                self.ctx.warn("identity.google-workspace: per-user token export is missing user identity")
             for tok in tokens:
-                cid = tok.get("clientId")
-                if not cid:
+                if not self._record_fields_valid(tok, required=("clientId",), strings=("displayText", "userEmail", "userKey"), arrays=("scopes",)):
+                    self.ctx.warn("identity.google-workspace: invalid token record or missing clientId; coverage incomplete")
                     continue
+                scopes = tok.get("scopes") or []
+                if any(not isinstance(scope, str) or not scope.strip() for scope in scopes):
+                    self.ctx.warn("identity.google-workspace: invalid token scope; coverage incomplete")
+                    scopes = [scope for scope in scopes if isinstance(scope, str) and scope.strip()]
+                cid = tok["clientId"]
                 self.ctx.examined()
                 agg = apps.setdefault(cid, {"clientId": cid, "displayText": tok.get("displayText"), "scopes": set(), "users": set(), "anonymous": tok.get("anonymous"), "nativeApp": tok.get("nativeApp")})
-                agg["scopes"].update(tok.get("scopes") or [])
+                agg["scopes"].update(scopes)
                 u = tok.get("userEmail") or tok.get("userKey") or user
                 if u:
                     agg["users"].add(u)
                 if tok.get("displayText") and not agg["displayText"]:
                     agg["displayText"] = tok["displayText"]
-        for cid, agg in apps.items():
+        for agg in apps.values():
             f = self._app_finding(agg)
             if f:
                 yield f
@@ -146,5 +202,6 @@ def _dwd_token(sa_file: Path, subject: str, scopes: str) -> str:
         algorithm="RS256",
         headers={"kid": info.get("private_key_id")},
     )
-    resp = HttpClient().post(info.get("token_uri", "https://oauth2.googleapis.com/token"), data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion})
-    return resp.json()["access_token"]
+    client = HttpClient()
+    resp = client.post(info.get("token_uri", "https://oauth2.googleapis.com/token"), data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion})
+    return client.read_json_response(resp)["access_token"]

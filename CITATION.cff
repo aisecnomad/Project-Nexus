@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+title: ShadowScan
+message: >-
+  If you use ShadowScan in research or an internal security
+  program, please cite this repository.
+type: software
+authors:
+  - name: Project Nexus contributors
+    website: https://github.com/aisecnomad/Project-Nexus
+repository-code: https://github.com/aisecnomad/Project-Nexus
+url: https://github.com/aisecnomad/Project-Nexus/tree/main/docs
+abstract: >-
+  ShadowScan discovers evidence of AI agents and related
+  integrations across code repositories, identity providers,
+  LLM gateway logs, low-code platforms, SaaS apps, and cloud
+  accounts, then reconciles findings against an approved
+  inventory of Agent Cards.
+keywords:
+  - shadow-ai
+  - ai-agents
+  - mcp
+  - security
+  - inventory
+  - langchain
+  - sarif
+license: Apache-2.0
+version: 0.1.1
+# date-released is omitted: 0.1.1 is an unreleased candidate on main.
