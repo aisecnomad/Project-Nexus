@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12"]
+        python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,7 +73,7 @@ jobs:
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m shadowscan.signatures.validate
           "$RUNNER_TEMP/shadowscan-wheel/bin/shadowscan" --help
       - name: Build and validate disposable worker
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.13'
         run: |
           docker build --tag shadowscan:ci .
           docker run --rm --network none --read-only --cap-drop ALL \
