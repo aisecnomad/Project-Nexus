@@ -62,6 +62,22 @@ bytes, checks report label provenance, recomputes metrics from individual result
 and requires current scanner source/signature fingerprints. Evaluation output has
 no execution timestamp, so `evaluated_at` is explicitly an operator declaration.
 
+The verifier rejects a holdout that repeats an exact file's bytes or recorded
+repository/commit/path from the five bundled evaluated corpora: synthetic,
+public, realistic multi-file, AI-labeled independent, and September 25 review.
+It also rejects repeated files and source
+locations within the holdout. Repository names are compared without case;
+commit and path remain exact. Declare **every additional previously evaluated
+corpus** in optional `evaluation.prior_corpora`, as an array of the same
+`{"path": ..., "sha256": ...}` references (at most 32). The verifier checks
+their hashes and rejects reused source bytes/locations. It cannot discover an
+omitted private corpus, near duplicates or a source previously shown to a
+reviewer outside these records; check those during independent selection. The
+family name `all` is reserved for aggregate metrics and is rejected before
+the verifier summarizes results. The adjudicated holdout cannot use any
+`known_gap` flag; its evaluator report must include an empty `known_gaps`
+summary and must mark every case as `known_gap: false`.
+
 The operator chooses `min_cases`, `min_positive_cases`, `min_negative_cases`,
 `min_precision`, `min_recall`, and `min_specificity`. There are no automatic claims
 that these thresholds are adequate for a particular risk appetite. Existing corpus
@@ -72,6 +88,28 @@ The gate compares **point estimates**, not confidence intervals or calibrated
 probabilities. Review sample uncertainty, strata, coverage and operational budgets
 outside this gate. A report with classification errors can meet operator-selected
 metrics; structural assertion failures always fail the gate.
+
+For an enforcement decision, specify optional `policy.per_kind` so strong aggregate
+scores cannot conceal misses for an important target kind. Its keys must exactly
+match the holdout's target finding kinds. Each kind requires positive and negative
+sample minima (at least one each) and maximum false positive/negative counts.
+For example, an agent-only policy can add:
+
+```json
+"per_kind": {
+  "agent": {
+    "min_positive_cases": 25,
+    "min_negative_cases": 75,
+    "max_false_positives": 0,
+    "max_false_negatives": 0
+  }
+}
+```
+
+These counts are illustrative, not measured field performance. An existing
+manifest without `per_kind` remains valid and uses its original aggregate
+thresholds. The decision now includes per-kind confusion matrices even when
+per-kind limits were not supplied, so reviewers can inspect what was covered.
 
 ## Tenant evidence
 

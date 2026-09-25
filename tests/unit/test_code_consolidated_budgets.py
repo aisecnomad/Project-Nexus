@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, Lock
 from time import monotonic
-from types import SimpleNamespace
 
 import pytest
 
@@ -201,11 +200,12 @@ def test_nested_repository_scan_inherits_cancellation_and_publication_fence(tmp_
 def test_clone_process_is_bounded_by_connector_deadline(tmp_path, index, monkeypatch, cls, record):
     timeouts = []
 
-    def fake_clone(*args, **kwargs):
-        timeouts.append(kwargs["timeout"])
-        return SimpleNamespace(returncode=0)
+    class FakeProc:
+        def wait(self, timeout):
+            timeouts.append(timeout)
+            return 0
 
-    monkeypatch.setattr(f"{cls.__module__}.subprocess.run", fake_clone)
+    monkeypatch.setattr("shadowscan.utils.git.subprocess.Popen", lambda *args, **kwargs: FakeProc())
     context = ConnectorContext(index=index, deadline=monotonic() + 2)
     assert cls(context)._clone(record, str(tmp_path / "repo"))
     assert len(timeouts) == 1 and 0 < timeouts[0] <= 2

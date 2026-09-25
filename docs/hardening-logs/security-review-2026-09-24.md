@@ -12,7 +12,7 @@
 > the engine and every connector; the cloud, identity and low-code collectors
 > against real tenant permissions rather than mocked responses; the dependency
 > lock, wheel build and container process; and the repository and CI settings
-> that this log takes as given. See [CONTRIBUTING.md](../../CONTRIBUTING.md)
+> that this log takes as given. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md)
 > for the review policy and [deployment and migration](../production.md) for
 > the current rollout guide.
 
@@ -86,14 +86,14 @@ Additional hardening:
 - Replaced the abbreviated license notice with the full canonical Apache-2.0
   license text from https://www.apache.org/licenses/LICENSE-2.0.txt.
 
-The main changed modules are [HTTP](../../shadowscan/utils/http.py),
-[configuration](../../shadowscan/config.py), [engine](../../shadowscan/engine.py),
-[incremental cache](../../shadowscan/incremental.py),
-[AWS](../../shadowscan/connectors/cloud/aws.py),
-[Azure](../../shadowscan/connectors/cloud/azure.py),
-[GCP](../../shadowscan/connectors/cloud/gcp.py),
-[OCI](../../shadowscan/connectors/cloud/oci.py), and
-[Google Workspace](../../shadowscan/connectors/identity/google_workspace.py).
+The main changed modules are [HTTP](https://github.com/aisecnomad/Project-Nexus/blob/main/shadowscan/utils/http.py),
+[configuration](https://github.com/aisecnomad/Project-Nexus/blob/main/shadowscan/config.py), [engine](https://github.com/aisecnomad/Project-Nexus/blob/main/shadowscan/engine.py),
+[incremental cache](https://github.com/aisecnomad/Project-Nexus/blob/main/shadowscan/incremental.py),
+[AWS](https://github.com/aisecnomad/Project-Nexus/blob/main/shadowscan/connectors/cloud/aws.py),
+[Azure](https://github.com/aisecnomad/Project-Nexus/blob/main/shadowscan/connectors/cloud/azure.py),
+[GCP](https://github.com/aisecnomad/Project-Nexus/blob/main/shadowscan/connectors/cloud/gcp.py),
+[OCI](https://github.com/aisecnomad/Project-Nexus/blob/main/shadowscan/connectors/cloud/oci.py), and
+[Google Workspace](https://github.com/aisecnomad/Project-Nexus/blob/main/shadowscan/connectors/identity/google_workspace.py).
 
 ## Optimization and design decisions
 

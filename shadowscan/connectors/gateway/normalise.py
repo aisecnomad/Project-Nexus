@@ -149,6 +149,22 @@ def _identity(*candidates: tuple[str, Any]) -> tuple[str, Any]:
     return candidates[-1]
 
 
+def _scalar(value: Any) -> str | int | None:
+    """Identity candidates must be scalars: an object's repr is not a caller."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    return value
+
+
+def _scalar_path(rec: dict[str, Any], *paths: str) -> str | int | None:
+    """Skip malformed identity objects and keep looking for a usable scalar."""
+    for path in paths:
+        value = _scalar(get_path(rec, path))
+        if value:
+            return value
+    return None
+
+
 # ------------------------------------------------------ tool-use detection
 
 _TOOL_MESSAGE_TYPES = {"function_call", "function_call_output", "tool_use", "tool_result"}
@@ -193,6 +209,9 @@ def _declared_tools(obj: dict[str, Any]) -> bool:
 
 
 def _mapping_has_tools(obj: dict[str, Any]) -> bool | None:
+    if not obj:
+        # An empty body was not inspected; it is not evidence of no tools.
+        return None
     choice = obj.get("tool_choice")
     if choice == "none" or isinstance(choice, dict) and choice.get("type") == "none":
         return False
@@ -249,7 +268,7 @@ def _has_tool_calls(obj: Any) -> bool | None:
             if called is True:
                 return True
             explicit_empty = explicit_empty or called is False
-            if item.get("stop_reason") == "tool_use" or item.get("finish_reason") in {"tool_calls", "function_call"}:
+            if item.get("stop_reason") == "tool_use" or item.get("stopReason") == "tool_use" or item.get("finish_reason") in {"tool_calls", "function_call"}:
                 finish_marker = True
             pending.extend(value for value in item.values() if isinstance(value, (dict, list)))
     return finish_marker and not explicit_empty
@@ -263,7 +282,7 @@ def _item_tool_calls(item: dict[str, Any]) -> bool | None:
         return True
     if "tool_calls" in item and calls in (None, [], {}, "", False):
         explicit_empty = True
-    for key in ("function_call", "functionCall", "tool_use"):
+    for key in ("function_call", "functionCall", "tool_use", "toolUse"):
         value = _embedded_json(item.get(key))
         if isinstance(value, dict) and value:
             return True
@@ -285,7 +304,15 @@ def _looks_bedrock(rec: dict[str, Any]) -> bool:
 
 
 def _looks_vertex(rec: dict[str, Any]) -> bool:
-    return "protoPayload" in rec and "aiplatform" in json.dumps(rec.get("protoPayload", {}))[:500]
+    payload = rec.get("protoPayload")
+    if not isinstance(payload, dict):
+        return False
+    service, method = payload.get("serviceName"), payload.get("methodName")
+    return (
+        isinstance(service, str) and "aiplatform" in service
+        or isinstance(method, str) and method.startswith("google.cloud.aiplatform.")
+        or "aiplatform" in json.dumps(payload)[:500]
+    )
 
 
 def _looks_azure_openai(rec: dict[str, Any]) -> bool:
@@ -311,13 +338,15 @@ def _looks_cloudflare(rec: dict[str, Any]) -> bool:
 def _looks_portkey(rec: dict[str, Any]) -> bool:
     if "trace_id" in rec and "virtual_key" in rec:
         return True
+    if _looks_access_log(rec):
+        return False
     dump = json.dumps(rec)
     return "portkey" in dump[:500].lower() or "x-portkey" in dump[:2000].lower()
 
 
 def _looks_helicone(rec: dict[str, Any]) -> bool:
     dump = json.dumps(rec)
-    return "helicone" in dump[:1000].lower() or ("request_properties" in rec and "helicone-request-id" in dump[:5000].lower())
+    return (not _looks_access_log(rec) and "helicone" in dump[:1000].lower()) or ("request_properties" in rec and "helicone-request-id" in dump[:5000].lower())
 
 
 def _looks_langfuse(rec: dict[str, Any]) -> bool:
@@ -388,9 +417,14 @@ def _normalise_litellm(rec: dict[str, Any]) -> Event:
     team = rec.get("team_id") or get_path(rec, "metadata.user_api_key_team_id", "metadata.user_api_key_team_alias")
     user = _first(rec, "user", "end_user") or get_path(rec, "metadata.user_api_key_user_id", "metadata.user_api_key_user_email")
     request = _first(rec, "proxy_server_request", "request") or get_path(rec, "metadata.proxy_server_request.body")
+    if key:
+        caller, kind = f"litellm-key:{key}", "api-key"
+    else:
+        # An alias is an ordinary service label, not credential material.
+        caller, kind = f"litellm-alias:{alias or 'anonymous'}", "service"
     return Event(
-        caller=f"litellm-key:{key or alias or 'anonymous'}",
-        caller_kind="api-key",
+        caller=caller,
+        caller_kind=kind,
         caller_label=alias or str(key or "anonymous"),
         timestamp=_timestamp(rec, "startTime", "start_time", "endTime", "timestamp"),
         model=_first(rec, "model", "model_group"),
@@ -725,7 +759,7 @@ def _normalise_access_log(rec: dict[str, Any]) -> Event:
     return Event(
         caller=f"access:{caller}",
         caller_kind=kind,
-        caller_label=str(caller)[:120],
+        caller_label=str(caller),
         timestamp=parse_timestamp(get_path(rec, "time", "timestamp", "@timestamp", "time_local", "time_iso8601", "start_time", "date", "ts", "datetime")),
         model=get_path(rec, "model", "x_model", "request_model", "llm_model"),
         host=get_path(rec, "host", "http_host", "server_name", "upstream_host", "authority", "http.host", "cs-host", "x-forwarded-host", "domain"),
@@ -761,8 +795,8 @@ def _generic_tool_calls(rec: dict[str, Any]) -> bool | None:
 
 
 def _normalise_generic(rec: dict[str, Any]) -> Event | None:
-    key = get_path(rec, "api_key", "apiKey", "api_key_id", "key", "key_id", "key_alias", "virtual_key", "token_id", "client_id", "clientId")
-    principal = get_path(rec, "principal", "principal_id", "identity", "identity.arn", "caller", "service", "service_name", "app", "application", "app_name", "source", "team", "team_id", "org", "project")
+    key = _scalar_path(rec, "api_key", "apiKey", "api_key_id", "key", "key_id", "key_alias", "virtual_key", "token_id", "client_id", "clientId")
+    principal = _scalar_path(rec, "principal", "principal_id", "identity.arn", "identity", "caller", "service", "service_name", "app", "application", "app_name", "source", "team", "team_id", "org", "project")
     user = get_path(rec, "user", "user_id", "userId", "username", "email", "end_user", "sub", "actor")
     ua = get_path(rec, "user_agent", "userAgent", "http_user_agent", "headers.user-agent", "request.headers.user-agent", "metadata.user_agent")
     ip = get_path(rec, "ip", "client_ip", "source_ip", "remote_addr", "callerIp")
@@ -772,7 +806,7 @@ def _normalise_generic(rec: dict[str, Any]) -> Event | None:
     return Event(
         caller=f"{kind}:{who}",
         caller_kind=kind,
-        caller_label=str(who)[:120],
+        caller_label=str(who),
         timestamp=parse_timestamp(get_path(rec, "timestamp", "time", "@timestamp", "ts", "created_at", "createdAt", "start_time", "startTime", "date", "datetime", "event_time")),
         model=get_path(rec, "model", "model_id", "modelId", "model_name", "deployment", "engine", "llm", "response.model", "request.model"),
         provider=get_path(rec, "provider", "llm_provider", "custom_llm_provider", "vendor", "platform"),

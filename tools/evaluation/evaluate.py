@@ -27,6 +27,7 @@ from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.models import Kind
 from shadowscan.signatures import get_index
+from shadowscan.utils.files import read_policy_text
 
 DEFAULT_CORPUS = Path(__file__).with_name("corpus.json")
 MAX_CORPUS_BYTES = 2_000_000
@@ -87,12 +88,12 @@ def _safe_name(name: Any) -> bool:
 
 def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
     """Parse a bounded, declarative corpus. Case files are text and never run."""
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_CORPUS_BYTES:
-        raise CorpusError("corpus must be a regular, nonsymlink file of at most 2 MB")
-    raw = path.read_bytes()
     try:
-        data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
-    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        # Use the same descriptor-based read as other policy inputs: checking a
+        # path before an unbounded read leaves symlink/replacement races open.
+        raw = read_policy_text(path, max_bytes=MAX_CORPUS_BYTES).encode("utf-8")
+        data = json.loads(raw, object_pairs_hook=_unique_pairs)
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
         raise CorpusError("corpus is not valid, unambiguous UTF-8 JSON") from exc
     data = _keys(data, {"schema", "metadata", "cases"}, set(), "corpus")
     if type(data["schema"]) is not int or data["schema"] != 1:
@@ -122,6 +123,8 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
         ids.add(case_id)
         if not isinstance(family, str) or not _ID.fullmatch(family):
             raise CorpusError(f"{where}: family must be a slug")
+        if family == "all":
+            raise CorpusError(f"{where}: family 'all' is reserved for aggregate metrics")
         if not isinstance(desc, str) or not 1 <= len(desc) <= 500:
             raise CorpusError(f"{where}: description must be 1 to 500 characters")
         if type(obj["present"]) is not bool:
@@ -178,8 +181,8 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
             )
             if (
                 len(files) != 1
-                or source["path"] not in files
                 or not all(isinstance(v, str) and v and len(v) <= 500 for v in source.values())
+                or source["path"] not in files
                 or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", source["repo"])
                 or not re.fullmatch(r"[0-9a-f]{40}", source["commit"])
                 or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"])
@@ -275,6 +278,10 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Binary detection scores per labeled case; no assertion of field validity."""
     groups: dict[str, list[dict[str, Any]]] = {"all": rows}
     for row in rows:
+        # Defend direct callers as well as the corpus parser. Appending an
+        # 'all' family into this aggregate would mutate the list being iterated.
+        if row["family"] == "all":
+            raise CorpusError("family 'all' is reserved for aggregate metrics")
         groups.setdefault(row["family"], []).append(row)
     summary: dict[str, Any] = {}
     for family, group in sorted(groups.items()):
@@ -370,6 +377,8 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
         from tools.evaluation.annotations import validate_annotations
 
         annotation_report = validate_annotations(path, annotations)
+        if annotation_report["corpus_sha256"] != corpus_digest:
+            raise CorpusError("corpus changed between evaluation and annotation validation")
     index = get_index()
     rows: list[dict[str, Any]] = []
     durations: list[float] = []

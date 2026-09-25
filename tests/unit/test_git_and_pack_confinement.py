@@ -64,15 +64,11 @@ def test_github_clone_skips_hostile_branch(index, monkeypatch):
     connector = GitHubConnector(ctx)
     captured: dict[str, list[str]] = {}
 
-    def fake_run(cmd, **kwargs):
+    def fake_clone(cmd, env, ctx, timeout):
         captured["cmd"] = list(cmd)
+        return True
 
-        class R:
-            returncode = 0
-
-        return R()
-
-    monkeypatch.setattr(github_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(github_mod, "run_bounded_clone", fake_clone)
     monkeypatch.setattr(github_mod.shutil, "which", lambda _: "/usr/bin/git")
     assert connector._clone(
         {"full_name": "acme/app", "clone_url": "https://github.com/acme/app.git", "default_branch": "--upload-pack=evil"},

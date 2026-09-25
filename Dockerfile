@@ -19,29 +19,20 @@
 # digest (the Docker-Content-Digest of the tag's OCI index, which covers the
 # linux/amd64 manifest), resolved from Docker Hub on 2026-09-25. Debian 13
 # (trixie) ships Git 2.47; `use_git` history enrichment needs 2.45+, and the
-# build below fails on an older git. The digest lives on a literal FROM line
-# because Dependabot's docker parser reads only literal FROM lines; the weekly
-# docker entry in .github/dependabot.yml proposes digest refreshes. To refresh
-# by hand, run
+# build below fails on an older git. Review Dependabot's proposed digest
+# refreshes. The literal FROM cannot be substituted by a mutable build argument.
+# To refresh by hand, run
 #   docker buildx imagetools inspect python:3.12-slim-trixie
-# and copy the top-level Digest (equivalently, the Docker-Content-Digest header
-# of GET https://registry-1.docker.io/v2/library/python/manifests/3.12-slim-trixie
-# requested with Accept: application/vnd.oci.image.index.v1+json), then update
-# the date in this comment.
-#
-# PYTHON_IMAGE selects the base and defaults to the pinned stage below. Build an
-# immutable deployment image at a digest your own review approved instead:
-#   docker build --build-arg PYTHON_IMAGE=python:3.12-slim-trixie@sha256:<digest> .
-ARG PYTHON_IMAGE=pinned-base
-FROM python:3.12-slim-trixie@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS pinned-base
-FROM ${PYTHON_IMAGE}
+# and copy the top-level image index Digest into this literal FROM line after
+# reviewing its source and updating the resolution date above.
+FROM python:3.12-slim-trixie@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9
 
 LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Project-Nexus" \
       org.opencontainers.image.description="ShadowScan disposable scan worker" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # apt packages are deliberately not version-pinned: Debian removes superseded
-# package versions from its mirrors, so an exact pin fails at the next bookworm
+# package versions from its mirrors, so an exact pin fails at the next trixie
 # security update instead of reproducing the build. The base image digest fixes
 # the package set the build starts from; apt-get update still reads the live
 # archive, so the image is not byte-for-byte reproducible from this file alone.

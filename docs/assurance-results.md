@@ -30,7 +30,7 @@ share AI-model capabilities. This is not human certification or field accuracy.
 
 The corpus SHA-256 remains
 `128cf2c972cb13b11bafe141d584b910828899d689d5a457135ad7746f98eff3`.
-[Recorded reports](../tools/evaluation/results/README.md) preserve the initial
+[Recorded reports](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/evaluation/results/README.md) preserve the initial
 failures and subsequent observations. The first implementation was an uncommitted
 intermediate tree, without a source fingerprint; that report records observations
 but cannot identify an exact reproducible implementation. The final report hashes

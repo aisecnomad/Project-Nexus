@@ -152,7 +152,7 @@ class RiskPolicy:
     @classmethod
     def from_options(cls, weights: Mapping[str, Any] | None = None, basis: str = "combined") -> RiskPolicy:
         """Validate ``options.risk_weights`` / ``options.risk_basis``; raise ValueError on any problem."""
-        if basis not in RISK_BASES:
+        if not isinstance(basis, str) or basis not in RISK_BASES:
             raise ValueError("risk_basis must be combined or danger")
         weights = {} if weights is None else weights
         if not isinstance(weights, Mapping):

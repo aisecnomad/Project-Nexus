@@ -25,6 +25,7 @@ python -m tools.evaluation.evaluate \
 python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/realistic_corpus.json \
   --output /tmp/nexus-realistic-eval.json
+python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/review_corpus.json \
   --output /tmp/nexus-review-eval.json
 python -m tools.evaluation.evaluate \
@@ -73,6 +74,15 @@ that score means "no regression on the rules we already know about", not
 "accurate on real repositories". Its precision/recall values are **synthetic
 regression scores**, not independently measured field accuracy.
 
+Source masking is a bounded lexical filter. Ruby `%q` strings with supported
+delimiters are masked; `%Q` interpolation and unterminated percent strings mark
+the scan incomplete. Ruby regular expressions, PHP heredoc interpolation, C#
+raw strings with multiple interpolation delimiters, and Scala interpolation
+need more dialect-specific handling. Such constructs can be missed or
+misclassified; an identified unterminated literal or ambiguous heredoc marks
+the scan incomplete. Review source evidence before using these languages to
+enforce a production policy gate.
+
 `tools/evaluation/realistic_corpus.json` holds multi-file repository
 snapshots (3 to 8 files each) written from scratch to resemble real projects:
 a FastAPI service with a LangGraph agent, a Next.js app on the Vercel AI SDK
@@ -119,7 +129,7 @@ findings: local-module collisions, ordinary provider calls, tool-schema-only
 requests, and supported agent construction/loops. It was written after observing
 the defects and is not a fresh holdout. The existing independent corpus and its
 annotation ledger remain frozen; adding regression cases does not refresh their
-independence. The [acceptance verifier](../tools/acceptance/README.md) requires
+independence. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) requires
 separate declared human-reviewed holdout evidence for deployment decisions.
 
 Source masking is a bounded lexical filter. Ruby regular expressions and `%q`
@@ -149,6 +159,9 @@ first labels or scanner observations. Both reviewers agreed on all 42 cases
 before the first evaluation. The annotation ledger records both decisions and
 their reasons and binds them to the exact corpus SHA-256. CI rejects missing
 votes, unresolved disagreements, changed labels and content-digest mismatches.
+The evaluator checks that the annotation digest matches the exact snapshot it
+loaded for scanning, and rejects a corpus changed between those reads. Corpus
+reads are bounded and reject symbolic links in every path component.
 This is recorded independent **AI** annotation, not independent human validation
 or authenticated third-party certification. Selection is purposive; the sample
 does not estimate the prevalence or accuracy of a production estate.
@@ -164,7 +177,8 @@ alongside them. [Assurance results](assurance-results.md) preserve the first
 observations and subsequent regression results.
 
 Metrics use **one binary target per case**, selected by finding kind and optional
-signature ID. `TP` means the target is present in the case and detected; `FP`
+signature ID. The family name `all` is reserved for aggregate metrics and cannot
+be used as a case's family. `TP` means the target is present in the case and detected; `FP`
 means absent but detected; `FN` means present and missed; `TN` means absent and
 not detected. Precision is `TP/(TP+FP)`, recall is `TP/(TP+FN)`, specificity
 is `TN/(TN+FP)`. Undefined denominators are JSON `null`. Additional assertions
@@ -196,7 +210,7 @@ the tiny selected sample does not calibrate that score.
    limits the corpus to 500 cases, 20 text files per case, 32 KB per file, 1 MB
    combined case content, and 2 MB of JSON. Larger real repositories need a
    separate offline scan and a repository-level annotation protocol. Keep the
-source and labels access controlled; the JSON report never prints file
+   source and labels access controlled; the JSON report never prints file
    content or evidence snippets but may contain finding signature IDs and MCP
    server names.
 4. Freeze the holdout before tuning. Report counts and precision/recall with
@@ -208,13 +222,95 @@ source and labels access controlled; the JSON report never prints file
    signatures or classification logic. A zero-error small sample gives little
    information about uncommon production patterns.
 
-The additional provider-loop recognizer currently covers linked Python OpenAI
+### Gate a frozen holdout
+
+The bundled synthetic and selected public cases are development regressions;
+the acceptance command refuses both as release evidence. After independent
+annotation, keep the adjudicated corpus outside the public repository. Record
+the sampling frame, sampling seed, snapshots, two blinded reviewers, disagreements,
+adjudication, exclusions and license/retention decisions in a restricted review
+record. `metadata.type: "adjudicated"` is a declaration, **not** verification of
+independence. A reviewer must check that record and approve the policy *before*
+the scanner scores or labels are revealed.
+
+Create a separate JSON policy using the SHA-256 of the exact corpus bytes. Include
+`all` and every `family` actually present in the corpus. For example, this is a
+**format illustration**, not a recommended threshold or a field result:
+
+```json
+{
+  "schema": 1,
+  "corpus_sha256": "REPLACE_WITH_LOWERCASE_64_CHARACTER_SHA256",
+  "groups": {
+    "all": {
+      "min_positive_cases": 60,
+      "min_negative_cases": 60,
+      "min_precision_lower95": 0.8,
+      "min_recall_lower95": 0.8,
+      "min_specificity_lower95": 0.8
+    },
+    "agent": {
+      "min_positive_cases": 60,
+      "min_negative_cases": 60,
+      "min_precision_lower95": 0.8,
+      "min_recall_lower95": 0.8,
+      "min_specificity_lower95": 0.8
+    }
+  }
+}
+```
+
+Set the digest, review the policy, then run this on a controlled worker with no
+live credentials:
+
+```bash
+sha256sum /restricted/holdout.json
+python -m tools.evaluation.accept \
+  --corpus /restricted/holdout.json \
+  --policy /restricted/acceptance-policy.json \
+  --annotations /restricted/holdout-annotations.json \
+  --output /restricted/acceptance-result.json
+```
+
+The command requires a private corpus outside the source checkout and a
+SHA-256-bound, two-reviewer ledger declaring
+`independent-human-double-label-before-scan`. Bundled suites and AI annotation
+records remain regression evidence. It rescans every case with complete, stable
+observations and checks the method on the evaluated ledger. The ledger records
+declarations; a reviewer still needs to verify the sampling and review process. It
+checks the frozen corpus digest, all required groups, minimum positive and
+negative counts, structural assertions and the predeclared precision, recall and
+specificity **lower endpoints of two-sided 95% Wilson intervals**. It accepts a
+bounded number of errors if the predeclared endpoints still pass; it does not
+silently demand perfect classification. Undefined rates fail the gate. Exit `0`
+passes, `1` fails a bound/assertion, and `2` means invalid inputs, incomplete
+coverage or an output error. The private `0600` summary will not overwrite an
+existing file; it contains counts and failures, not source content. Retain the
+scanner and signature commit, corpus/policy digests, the full labeled result
+from `tools.evaluation.evaluate`, reviewer decisions and CI logs in the
+restricted release record. Changing labels, exclusions, scanner signatures or
+sampling after seeing results requires a new blinded holdout and reviewed policy.
+
+This is a code-filesystem **case-level** gate. The sampled file units and
+framework/kind groups cannot prove whole-repository recall, a specific
+language's accuracy, credential safety, cloud/identity completeness or active
+runtime execution. Review per-language/framework error slices and a separate
+tenant canary before selecting `--fail-on`. A scanner can pass this gate and
+still miss a rare production pattern.
+
+One provider-loop recognizer covers linked Python OpenAI
 Chat Completions calls, model-returned tool-call arguments, dispatch and tool
 results appended to the same request history. Dispatch must target an explicitly
 declared inline tool name or a callable selected by the model-returned function
-name; parsing or converting arguments is insufficient. It does not resolve arbitrary
-helper functions, the Responses API, JavaScript provider loops or runtime imports.
-Unrecognized patterns can still produce integration findings; they are not proof
+name; parsing or converting arguments is insufficient. Another recognizer covers
+Python OpenAI Responses tool loops when the returned
+function name and arguments reach a dispatched handler, its result is fed back
+with the matching call ID, the originating call is forwarded into the request
+history, and the same input can reach another model request.
+This recognizer follows bounded direct loops and simple branch conditions.
+Neither recognizer resolves arbitrary helper functions, complex interprocedural
+flows, JavaScript provider loops or runtime imports. Unrecognized patterns can
+still produce integration findings; they are not proof
 that an agent is absent. A framework constructor alone also cannot establish that
 the configured graph makes autonomous model decisions at runtime.
 
@@ -249,3 +345,18 @@ identity collision and incomplete coverage condition. Test rescanning an
 unchanged snapshot and one controlled change for stable IDs and state behavior.
 Set an operational error budget, alert volume, scan duration and release gates
 from these canary measurements, then sign off before enforcing a policy gate.
+
+Retain a proof packet **per connector instance**, with the following artifacts:
+
+| Artifact | Acceptance evidence |
+|---|---|
+| Frozen scope | Tenant/account ID, regions, granted API scopes, audit principal, collection period, snapshot/commit, scanner and signature revision, and SHA-256 of selected inputs. |
+| Full scan status | Access-controlled JSON report with `summary.complete=true`, all connector `stats` and zero uninvestigated errors, warnings, skips or truncations. Scanner exit `3` blocks acceptance. |
+| Independent denominator | Console or separately queried provider counts for eligible objects/pages and the explicit API or configuration filters that define inclusion. An empty scanner result is insufficient. |
+| Positive and negative traces | Resource IDs and analyst adjudication for known eligible agents, harmless frameworks, disabled servers and a deliberately denied permission; the denied case must report incomplete coverage. |
+| Runtime attribution | For runtime claims, bounded gateway event window with principal, resource identity, correlation outcome and retained false matches; source references alone remain static evidence. |
+| Operational result | Alert volume, misses, duplicates, scan duration and resource use under realistic load, plus reviewer sign-off, rollback revision and rerun procedure. |
+
+Sanitize and restrict these artifacts under the tenant's data-handling policy.
+This repository's automated checks do **not** run such a live canary or claim
+independent field precision/recall.

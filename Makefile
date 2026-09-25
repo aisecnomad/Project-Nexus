@@ -24,7 +24,7 @@ lint: ## Run ruff linter
 
 .PHONY: typecheck
 typecheck: ## Run mypy type checker
-	mypy shadowscan tools/evaluation tools/canaries
+	mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
 
 .PHONY: test
 test: ## Run test suite with coverage
@@ -48,20 +48,24 @@ audit: ## Audit dependencies for known vulnerabilities
 	pip-audit --progress-spinner off
 
 .PHONY: evaluate
-evaluate: ## Run all detection evaluation corpora
+evaluate: ## Run the bundled detection regression corpora
 	python -m tools.evaluation.evaluate
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/public_corpus.json
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/realistic_corpus.json
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
 		--annotations tools/evaluation/independent_annotations.json
 
 .PHONY: check
-check: lint typecheck signatures audit test coverage-gate evaluate ## Run all quality gates (CI equivalent)
+.NOTPARALLEL: check
+check: lint typecheck signatures audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
 
 # --- Build -----------------------------------------------------------------
 
 .PHONY: build
 build: ## Build distributable wheel
+	python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 	python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 
 .PHONY: wheel-validate
@@ -75,7 +79,7 @@ wheel-validate: build ## Validate the wheel installs and works outside checkout
 	rm -rf /tmp/shadowscan-wheel-test
 
 .PHONY: docker
-docker: ## Build the disposable worker container
+docker: ## Build worker from the reviewed Dockerfile base digest
 	docker build --tag shadowscan:local .
 
 .PHONY: docker-test
@@ -102,12 +106,12 @@ demo-sarif: ## Run offline demo with SARIF output
 
 .PHONY: docs
 docs: ## Build documentation site locally
-	pip install -q mkdocs-material mkdocs-minify-plugin
+	python -m pip install -q --only-binary=:all: -c requirements-ci-constraints.txt "mkdocs-material==9.7.7"
 	mkdocs build
 
 .PHONY: docs-serve
 docs-serve: ## Serve documentation site with live reload
-	pip install -q mkdocs-material mkdocs-minify-plugin
+	python -m pip install -q --only-binary=:all: -c requirements-ci-constraints.txt "mkdocs-material==9.7.7"
 	mkdocs serve
 
 # --- Cleanup ---------------------------------------------------------------

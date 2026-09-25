@@ -12,7 +12,7 @@
 > the engine and every connector; the cloud, identity and low-code collectors
 > against real tenant permissions rather than mocked responses; the dependency
 > lock, wheel build and container process; and the repository and CI settings
-> that this log takes as given. See [CONTRIBUTING.md](../../CONTRIBUTING.md)
+> that this log takes as given. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md)
 > for the review policy and [deployment and migration](../production.md) for
 > the current rollout guide.
 

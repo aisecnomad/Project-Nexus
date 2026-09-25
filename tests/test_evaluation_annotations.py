@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 from pathlib import Path
 
@@ -68,6 +69,28 @@ def test_changed_corpus_invalidates_frozen_labels(annotated_corpus):
     corpus.write_text(corpus.read_text() + "\n")
     with pytest.raises(CorpusError, match="digest mismatch"):
         validate_annotations(corpus, _write(path, ledger))
+
+
+def test_evaluation_uses_the_exact_snapshot_verified_by_annotations(annotated_corpus, monkeypatch):
+    corpus, path, ledger = annotated_corpus
+    module = importlib.import_module("tools.evaluation.evaluate")
+    original_load = module.load_corpus
+
+    def replace_after_first_read(source):
+        snapshot = original_load(source)
+        # Simulate a concurrent edit between the evaluator's read and the
+        # annotation validator's independent read of the same pathname.
+        changed = json.loads(corpus.read_text())
+        changed["cases"][0]["description"] = "A different frozen snapshot"
+        _write(corpus, changed)
+        ledger["corpus_sha256"] = hashlib.sha256(corpus.read_bytes()).hexdigest()
+        _write(path, ledger)
+        return snapshot
+
+    monkeypatch.setattr(module, "load_corpus", replace_after_first_read)
+    monkeypatch.setattr(module, "_scan_case", lambda *args: pytest.fail("unverified snapshot was scanned"))
+    with pytest.raises(CorpusError, match="changed between evaluation and annotation"):
+        evaluate(corpus, annotations=path)
 
 
 @pytest.mark.parametrize("method", [[], {}, None, True])

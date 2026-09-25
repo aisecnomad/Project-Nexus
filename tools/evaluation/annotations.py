@@ -36,15 +36,22 @@ def validate_annotations(corpus: Path, annotations: Path) -> dict[str, Any]:
         raise CorpusError("unsupported annotation method; record the actual labeling process")
     if not isinstance(ledger["selection"], str) or not 1 <= len(ledger["selection"]) <= 2000:
         raise CorpusError("selection must describe the sampling limitations")
-    if metadata["type"] not in {"public-pinned", "adjudicated"} or any(case.source is None for case in cases):
-        raise CorpusError("independent public evaluation requires attributed source for every case")
     positives = sum(case.present for case in cases)
     negatives = len(cases) - positives
-    if len(cases) < 20 or not positives or negatives < 2 * positives:
-        raise CorpusError("corpus requires at least 20 cases, positives, and at least two negatives per positive")
+    public_review = (
+        metadata["type"] == "public-pinned"
+        or ledger["method"] == "independent-ai-double-label-before-scan"
+    )
     repositories = sorted({case.source["repo"] for case in cases if case.source})
-    if len(repositories) < 3:
-        raise CorpusError("corpus requires at least three independent source repositories")
+    if public_review:
+        if any(case.source is None for case in cases):
+            raise CorpusError("public or AI-labeled evaluation requires attributed source for every case")
+        if len(cases) < 20 or not positives or negatives < 2 * positives:
+            raise CorpusError("public corpus requires at least 20 cases, positives, and two negatives per positive")
+        if len(repositories) < 3:
+            raise CorpusError("public corpus requires at least three independent source repositories")
+    elif metadata["type"] != "adjudicated" or len(cases) < 2 or not positives or not negatives:
+        raise CorpusError("private human holdouts require at least one positive and one negative case")
     reviewers = ledger["reviewers"]
     if not isinstance(reviewers, list) or len(reviewers) != 2:
         raise CorpusError("exactly two independently recorded reviewers are required")
