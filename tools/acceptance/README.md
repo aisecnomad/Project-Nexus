@@ -65,8 +65,15 @@ no execution timestamp, so `evaluated_at` is explicitly an operator declaration.
 The verifier rejects a holdout that repeats an exact file's bytes or recorded
 repository/commit/path from the five bundled evaluated corpora: synthetic,
 public, realistic multi-file, AI-labeled independent, and September 25 review.
-It also rejects repeated files and source
-locations within the holdout. Repository names are compared without case;
+Both this verifier and `tools.evaluation.accept` use the same source-overlap
+validator. They reject repeated nonblank file contents and source locations
+across holdout cases, including renamed copies and partial overlap between
+multi-file cases. A case is one sampling unit: repeated files within that one
+case do not add observations. Empty package scaffolding is allowed between
+otherwise distinct holdout cases, but repeated entirely blank cases are rejected.
+The prior-corpus exclusion remains strict even for empty files. These exact checks
+do not establish statistical independence or detect near duplicates.
+Repository names are compared without case;
 commit and path remain exact. Declare **every additional previously evaluated
 corpus** in optional `evaluation.prior_corpora`, as an array of the same
 `{"path": ..., "sha256": ...}` references (at most 32). The verifier checks

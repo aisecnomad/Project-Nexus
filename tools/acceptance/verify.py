@@ -25,7 +25,9 @@ from shadowscan.utils.output import write_private_text
 from tools.canaries.run import _source_provenance
 from tools.evaluation.annotations import validate_annotations
 from tools.evaluation.evaluate import (
-    DEFAULT_CORPUS,
+    DEFAULT_CORPUS as DEFAULT_CORPUS,
+)
+from tools.evaluation.evaluate import (
     Case,
     _assertions,
     _source_fingerprint,
@@ -33,6 +35,7 @@ from tools.evaluation.evaluate import (
     load_corpus,
     summarize,
 )
+from tools.evaluation.sources import SourceOverlapError, bundled_source_index
 
 SCHEMA = "shadowscan.production-evidence/v1"
 REPORT_SCHEMA = "shadowscan.production-evidence-report/v1"
@@ -178,44 +181,19 @@ def _exclude_evaluated_cases(cases: list[Case], corpus_digest: str, base: Path,
     # family would append to its input while iterating and never terminate.
     _require(all(case.family != "all" for case in cases), "reserved_evaluation_family")
     _require(isinstance(additional, list) and len(additional) <= 32, "invalid_prior_corpora")
-    prior_digests: set[str] = set()
-    prior_files: set[str] = set()
-    prior_locations: set[tuple[str, str, str]] = set()
-
-    def record(prior: list[Case], digest: str) -> None:
-        prior_digests.add(digest)
-        for case in prior:
-            prior_files.update(hashlib.sha256(content.encode("utf-8")).hexdigest() for content in case.files.values())
-            if case.source:
-                prior_locations.add((case.source["repo"].casefold(), case.source["commit"], case.source["path"]))
-
-    for path in (DEFAULT_CORPUS, *(DEFAULT_CORPUS.with_name(name) for name in
-                                    ("public_corpus.json", "realistic_corpus.json",
-                                     "independent_corpus.json", "review_corpus.json"))):
-        _, prior, digest = load_corpus(path)
-        record(prior, digest)
+    sources = bundled_source_index()
     with tempfile.TemporaryDirectory(prefix="nexus-prior-evaluations-") as temp:
         for number, ref in enumerate(additional):
             _, raw = _artifact(ref, base)
             snapshot = Path(temp) / f"prior-{number}.json"
             snapshot.write_text(raw, encoding="utf-8")
             _, prior, digest = load_corpus(snapshot)
-            record(prior, digest)
+            sources.add(prior, digest)
 
-    _require(corpus_digest not in prior_digests, "holdout_reuses_evaluated_corpus")
-    holdout_files: set[str] = set()
-    holdout_locations: set[tuple[str, str, str]] = set()
-    for case in cases:
-        for content in case.files.values():
-            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-            _require(digest not in prior_files, "holdout_reuses_evaluated_source")
-            _require(digest not in holdout_files, "duplicate_holdout_source")
-            holdout_files.add(digest)
-        if case.source:
-            location = (case.source["repo"].casefold(), case.source["commit"], case.source["path"])
-            _require(location not in prior_locations, "holdout_reuses_evaluated_source")
-            _require(location not in holdout_locations, "duplicate_holdout_source")
-            holdout_locations.add(location)
+    try:
+        sources.check_holdout(cases, corpus_digest)
+    except SourceOverlapError as exc:
+        raise EvidenceError(str(exc)) from exc
 
 
 def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime,

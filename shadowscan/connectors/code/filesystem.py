@@ -1482,6 +1482,9 @@ class FilesystemConnector(BaseConnector):
                 verified_indicator(m) and m.signal.type in {"code", "file"} and not in_tests(rel)
                 for m, rel, _ in tech_matches
             )
+            if any(m.extra.get("agent_classification") == "openai-responses-tool-dispatch"
+                   and verified_indicator(m) and not in_tests(rel) for m, rel, _ in tech_matches):
+                f.metadata["agent_classification"] = "openai-responses-tool-dispatch"
             if discount_tests and all(_is_test_path(rel) for _, rel, _ in tech_matches):
                 f.add_tag("test-code-only")
             finalize(f, self.index)

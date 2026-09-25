@@ -46,6 +46,14 @@ def run(question):
             messages.extend([call, output])
 '''
 
+SINGLE_DISPATCH = '''from openai import OpenAI
+client = OpenAI()
+response = client.responses.create(model="example", input="question", tools=tools)
+for item in response.output:
+    if item.type == "function_call":
+        result = handlers[item.name](item.arguments)
+'''
+
 
 def scan(tmp_path, run_connector, source=DIRECT):
     (tmp_path / "app.py").write_text(source)
@@ -124,6 +132,8 @@ def test_forwarding_current_call_before_output_establishes_context(tmp_path, run
     FILTERED.replace('item.type == "function_call"', 'item.type == "message"'),
     FILTERED.replace("lookup(call.arguments)", "lookup('fixed')"),
     FILTERED.replace("        for call in calls:", "        calls = cached_calls\n        for call in calls:"),
+    FILTERED.replace('if item.type == "function_call"]', 'if item.type == "function_call" if False]'),
+    FILTERED.replace('if item.type == "function_call"]', 'if item.type == "function_call" if item.type == "message"]'),
 ])
 def test_disconnected_responses_evidence_stays_supporting(tmp_path, run_connector, source):
     findings, ctx = scan(tmp_path, run_connector, source)
@@ -167,4 +177,96 @@ def test_budget_exhaustion_marks_scan_incomplete(tmp_path, run_connector, monkey
     findings, ctx = scan(tmp_path, run_connector)
     assert ctx.stats.incomplete
     assert any("MatchTimeoutError" in message for message in ctx.stats.errors)
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize("source", [
+    # A local API sharing provider method names supplies no model provenance.
+    '''class Responses:
+    def create(self):
+        return []
+responses = Responses()
+events = responses.create()
+for item in events:
+    if item.type == "function_call":
+        handlers[item.name](item.arguments)
+''',
+    # A genuine text request cannot lend provenance to a separate dispatcher.
+    '''from openai import OpenAI
+client = OpenAI()
+def summarize(text):
+    return client.responses.create(model="example", input=text)
+def dispatch(events):
+    for item in events:
+        if item.type == "function_call":
+            handlers[item.name](item.arguments)
+''',
+    # Matching dispatch text in an empty loop is never executable evidence.
+    '''from openai import OpenAI
+client = OpenAI()
+response = client.responses.create(model="example", input="hello")
+for item in []:
+    if item.type == "function_call":
+        handlers[item.name](item.arguments)
+''',
+])
+def test_lexical_responses_fragments_cannot_override_semantics(tmp_path, run_connector, source):
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert findings  # Supporting observations remain available to analysts.
+    assert all(finding.kind == Kind.FRAMEWORK_USAGE for finding in findings)
+    assert all(finding.metadata["agent_indicators"] == 0 for finding in findings)
+
+
+@pytest.mark.parametrize("include_tests", [False, True])
+def test_responses_dispatch_respects_test_only_policy(tmp_path, run_connector, include_tests):
+    # The single action is connected and also matches the obsolete lexical
+    # fallback; only the explicit include_tests setting may make it decisive.
+    (tmp_path / "test_agent.py").write_text(SINGLE_DISPATCH)
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), scan_secrets=False, use_git=False,
+        include_tests=include_tests,
+    )
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert len(findings) == 1
+    assert (findings[0].kind == Kind.AGENT) is include_tests
+    assert ("test-code-only" in findings[0].tags) is not include_tests
+
+
+@pytest.mark.parametrize("source", [
+    SINGLE_DISPATCH.replace("for item in response.output:", "for item in cached.output:"),
+    SINGLE_DISPATCH.replace("for item in response.output:", "response = cached\nfor item in response.output:"),
+    SINGLE_DISPATCH.replace("for item in response.output:", "for item in []:"),
+    SINGLE_DISPATCH.replace('if item.type == "function_call":', 'if item.type == "message":'),
+    SINGLE_DISPATCH.replace('if item.type == "function_call":', 'if False:\n        if item.type == "function_call":\n            pass'),
+    SINGLE_DISPATCH.replace("        result = handlers", "        item = cached\n        result = handlers"),
+    SINGLE_DISPATCH.replace("        result = handlers", "        continue\n        result = handlers"),
+    SINGLE_DISPATCH.replace("        result = handlers", "        item.arguments = stale\n        result = handlers"),
+    SINGLE_DISPATCH.replace("item.arguments)", "other.arguments)"),
+    SINGLE_DISPATCH.replace("item.name]", "other.name]"),
+    SINGLE_DISPATCH.replace("tools=tools", "tools=[]"),
+    SINGLE_DISPATCH.replace("response = client.responses.create", "return\nresponse = client.responses.create"),
+    SINGLE_DISPATCH.replace("from openai import OpenAI", "from local_client import OpenAI"),
+    SINGLE_DISPATCH.replace("client = OpenAI()", "client = OpenAI()\nclient = local_client"),
+])
+def test_single_dispatch_requires_reachable_import_bound_response(tmp_path, run_connector, source):
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_single_dispatch_is_not_reported_as_repeating_autonomy(tmp_path, run_connector):
+    findings, ctx = scan(tmp_path, run_connector, SINGLE_DISPATCH)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert len(findings) == 1
+    assert findings[0].kind == Kind.AGENT
+    assert "autonomous" not in findings[0].capabilities
+    assert any("selected-action dispatch" in evidence.description for evidence in findings[0].evidence)
+
+
+def test_single_dispatch_cannot_join_incompatible_paths(tmp_path, run_connector):
+    source = SINGLE_DISPATCH.replace("response = client.responses.create", "if disabled:\n    return\nresponse = client.responses.create")
+    source = source.replace("        result = handlers", "        if disabled:\n            result = handlers")
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
     assert not any(finding.kind == Kind.AGENT for finding in findings)

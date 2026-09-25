@@ -12,6 +12,34 @@ passing unit suite does not establish complete coverage of a particular estate.
 
 ## September 25 migration and acceptance
 
+Rebuild finding and comparison baselines after adopting the scanner-boundary
+corrections. Google Workspace customer attribution, unresolved permission/workflow
+identities, and semantic provider-dispatch classification can change finding IDs,
+registry status or finding kinds. Review existing inventory bindings and retain the
+previous pinned scanner and reports for rollback. Unresolved identity is evidence
+for investigation, not a resource that can be approved through an inventory card.
+
+For Google Workspace, add `admin.directory.customer.readonly` to the audit
+identity's approved scopes before live collection. The read-only customer lookup
+must establish a concrete customer ID, even for an empty tenant. Offline runs
+require that verified ID in `customer`. Regenerate accountless Google Workspace
+inventory cards with an explicit customer binding; an old globally scoped OAuth
+client card no longer approves grants across tenants. Re-run tenant acceptance
+after changing audit permissions. No live Google tenant validation is implied by
+the mocked provider-contract tests.
+
+Source excerpts now redact sensitive environment-call arguments, and repository
+connector debug diagnostics omit raw exception payloads. Run the synthetic report
+and log checks before distributing reports; redaction remains a defense in depth
+control, not permission to publish private source or unrestricted tenant exports.
+
+The two holdout acceptance paths share source-overlap checks. Copying or renaming
+previously evaluated source does not create new independent observations; repeated
+holdout sources cannot satisfy sample minima or tighten uncertainty estimates.
+Freeze a fresh independently human-labeled sample and its policy before evaluation.
+Neither these checks nor a passing regression suite supplies that human review or
+real tenant canary evidence.
+
 Slack findings now use the immutable workspace ID as `account`; workspace names
 are display metadata. Update inventory account bindings and collect a fresh
 Slack baseline after upgrading. An offline
@@ -20,10 +48,12 @@ export must include a valid team record or an explicit operator-supplied
 Teams records without valid app identity make collection incomplete while valid
 neighboring observations remain available.
 
-Code findings can change after this scanner update: an import-bound OpenAI
-Responses API function loop is promoted only when request, selected dispatch
-and matching feedback are linked, and provider loop analysis rejects unreachable
-literal branches and locally shadowed execution calls. Reconcile a fresh code
+Code findings can change after this scanner update. A single OpenAI Responses
+action requires an import-bound request and source-linked model-selected dispatch;
+it supplies tool-use evidence without asserting repeated autonomous execution.
+An iterative function loop additionally requires matching feedback to the next
+request. Provider analysis rejects unrelated dispatch, unreachable literal branches
+and locally shadowed execution calls. Reconcile a fresh code
 baseline and review changed finding identities before using `--fail-on` as an
 enforcement gate. Offline source tests establish these paths, not runtime use.
 
@@ -568,7 +598,12 @@ python -m tools.evaluation.accept \
 
 The gate rejects synthetic/public samples and requires a frozen, SHA-256-bound
 two-reviewer ledger plus predeclared sample floors and Wilson lower bounds per
-family. Ledger declarations do not authenticate reviewer independence or prove
+family. Both acceptance paths reject repeated nonblank source contents or pinned
+locations across holdout cases, including renamed and partially overlapping
+multi-file samples. Repeated files inside one case are one sampling unit; blank
+package scaffolding alone does not duplicate an otherwise distinct case, but
+repeated all-blank cases are rejected. Previously evaluated source exclusion
+remains strict for every file. Ledger declarations do not authenticate reviewer independence or prove
 tenant completeness. Set a documented acceptable false-alert
 and miss rate for each high-impact workflow; keep human triage while those
 acceptance metrics are measured.

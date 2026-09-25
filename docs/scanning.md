@@ -333,6 +333,14 @@ timestamped framework execution for runtime correlation.
 
 ## Precision safeguards
 
+Responses API tool dispatch requires linked source evidence from the SDK client,
+request, returned output and function-call guard to the dispatch. A single
+verified dispatch establishes `tool-use`; `autonomous` requires a verified
+iterative feedback loop. JavaScript recognition is deliberately conservative:
+it accepts a small, complete top-level program with static imports and request
+options. Extra statements, nested scopes, mutations and dynamic options cannot
+establish this proof. Unsupported shapes may still produce ordinary SDK evidence.
+
 Several rules keep weak observations from producing confirmed or high-risk
 findings. A credential whose value looks like a documentation placeholder
 (`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
