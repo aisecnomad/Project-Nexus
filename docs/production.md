@@ -65,7 +65,8 @@ lock and built wheel hash for each worker deployment.
 
 The runtime lock covers the core scanner and all cloud SDK extras on CPython
 3.11/3.12, Linux x86_64. It contains exact versions and permitted SHA-256 hashes;
-CI checks installation and dependency consistency on both Python versions. It is
+required CI checks installation and dependency consistency on both Python
+versions. Python 3.13 is a candidate until its hosted matrix job passes. It is
 not a universal lock for Windows, macOS, ARM or every future Python release.
 Resolve and validate a separate lock before deploying on another platform.
 
@@ -439,12 +440,14 @@ PR status at release time because repository settings can change.
 
 The CI workflow installs the hash-locked core/cloud runtime dependency set and validates signatures, lint, typing, dependency advisories, tests
 with a minimum 80% statement coverage, wheel creation, installed-wheel validation
-outside the source checkout and offline SARIF output. Both Python jobs enforce a
+outside the source checkout and offline SARIF output. The required Python 3.11
+and 3.12 jobs enforce a
 75% statement-coverage floor for each built-in connector module, so a
 well-tested engine cannot conceal an untested provider. Coverage proves
 execution of code paths in tests; it does not prove provider compatibility or
-complete tenant inventory. The required Python 3.12 job also builds the Docker
-image and checks its non-root UID, signature assets and
+complete tenant inventory. The new Python 3.13 matrix job awaits a successful
+hosted run and inclusion in branch protection. It builds the Docker image and
+checks its non-root UID, signature assets and
 network-isolated scan with a read-only root filesystem and resource limits.
 Focused regressions cover the review findings, private-address enforcement,
 public-key verification, plugin policy, artifact permissions and replay integrity.

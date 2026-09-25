@@ -1,5 +1,11 @@
 # Project Nexus · ShadowScan
 
+[![CI](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://aisecnomad.github.io/Project-Nexus/)
+
 **ShadowScan is an Open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
 
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
@@ -118,13 +124,15 @@ python -m pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Pro
 The current `0.1.1` source version is an unreleased candidate; the version
 string does not imply a published or signed artifact. These VCS installs resolve
 transitive dependencies at install time. For deployment, use the locked install
-below. Python 3.11+ is required; CI covers 3.11 and 3.12. Core dependencies
+below. Python 3.11+ is required; the required CI gates cover 3.11 and 3.12.
+The added 3.13 job is pending hosted validation. Core dependencies
 include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
 
 For deployment on Linux x86_64 with Python 3.11 or 3.12, the checked-in
 `requirements.lock` pins and hashes the core and all cloud runtime dependencies.
+Treat Python 3.13 as a candidate until its hosted CI job passes.
 Build and retain a wheel from the selected commit; see
 [locked installs and release evidence](docs/production.md#install-from-a-reviewed-revision).
 The [consumer GitHub Action example](examples/github-action-code-scan.yml) requires
