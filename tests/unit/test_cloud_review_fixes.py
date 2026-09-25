@@ -70,6 +70,7 @@ def test_configuration_environment_still_redacts_named_secrets_from_siblings(nam
 
 
 def test_lambda_record_export_round_trip_keeps_resource_identity(tmp_path, index):
+    pytest.importorskip("boto3")  # live collection path needs the [aws] extra
     dump = tmp_path / "aws.jsonl"
     ctx = _context(index, services=["lambda"], regions=["us-east-1"], _dump_path=str(dump))
     connector = AwsConnector(ctx)
@@ -111,6 +112,7 @@ def test_sagemaker_environment_values_never_enter_findings_or_wipe_identity(inde
 
 
 def test_bedrock_agent_draft_details_are_a_snapshot_that_survives_export(tmp_path, index):
+    pytest.importorskip("boto3")  # live collection path needs the [aws] extra
     class FakeAgents:
         def get_agent(self, agentId):
             return {"agent": {"agentId": agentId, "agentArn": f"arn:aws:bedrock:us-east-1:{ACCOUNT}:agent/{agentId}",
