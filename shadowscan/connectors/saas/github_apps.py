@@ -1,4 +1,8 @@
-"""GitHub organisation: installed GitHub Apps (AI reviewers, coding agents, CI bots) and Copilot enablement.
+"""GitHub organisation: installed AI GitHub Apps (reviewers, coding agents) and Copilot enablement.
+
+An installation is reported when it matches an AI signature or has an AI-like
+name. Other write-capable apps (dependency, deploy and CI bots) are reported
+only with ``include_unrecognized_apps``, capped at possible confidence.
 
 Live: ``GET /orgs/{org}/installations`` (org admin), ``GET /orgs/{org}/copilot/billing`` (optional),
 ``GET /orgs/{org}/personal-access-tokens`` (fine-grained PATs approved for the org, optional).
@@ -14,10 +18,14 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.common import cap_confidence, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
+
+# An installation reported only because it can write (include_unrecognized_apps)
+# is a candidate for review, never a confirmed or likely AI agent.
+UNRECOGNISED_APP_MAX_CONFIDENCE = 0.3
 
 
 class GitHubAppsConnector(BaseConnector):
@@ -30,12 +38,16 @@ class GitHubAppsConnector(BaseConnector):
         "token": "org admin token (env GITHUB_TOKEN)",
         "api_url": "default https://api.github.com",
         "input": "offline: installations JSON",
+        "include_unrecognized_apps": "also report write-capable apps with no AI signature or AI-like name, capped at possible confidence (default false)",
     }
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.org = ctx.get("org", env="GITHUB_ORG")
         self.api_url = str(ctx.get("api_url", "https://api.github.com", env="GITHUB_API_URL")).rstrip("/")
+        self.include_unrecognized = ctx.get("include_unrecognized_apps", False)
+        if not isinstance(self.include_unrecognized, bool):
+            raise ConnectorError("saas.github-apps: include_unrecognized_apps must be a boolean")
 
     def collect(self) -> Iterable[dict[str, Any]]:
         token = self.ctx.get("token", env="GITHUB_TOKEN")
@@ -146,7 +158,11 @@ class GitHubAppsConnector(BaseConnector):
         )
         assess_app(self.index, f, name=slug, description=str(inst.get("target_type")), urls=[inst.get("html_url")], scopes=scopes, client_id=str(inst.get("client_id") or ""))
         write_perms = [k for k, v in perms.items() if v in {"write", "admin"}]
-        if not f.frameworks and not write_perms:
+        # Permissions describe what an app may do, not whether it is an AI
+        # agent. Dependency, deploy and CI bots hold the same scopes, so an
+        # app needs a recognised AI signature or an AI-like name to be one.
+        recognised = bool(f.frameworks) or "ai-name-hint" in f.tags
+        if not recognised and not (self.include_unrecognized and write_perms):
             return None
         f.add_evidence(Evidence(signal="github:installation", description=f"App '{slug}' on {inst.get('repository_selection')} repositories; permissions {', '.join(scopes)[:300]}; events {', '.join(events)[:200]}", location=inst.get("html_url"), weight=0.3))
         if inst.get("repository_selection") == "all":
@@ -154,12 +170,18 @@ class GitHubAppsConnector(BaseConnector):
         if write_perms:
             f.add_tag("write-access")
             f.add_capability("saas-actions")
-        if "contents" in write_perms or "pull_requests" in write_perms:
+        # Changing workflows or dispatching runs executes code with the
+        # repository's CI credentials. Writing files or pull requests alone
+        # does not: that remains a SaaS write action.
+        if "workflows" in write_perms or "actions" in write_perms:
             f.add_capability("code-exec")
         if inst.get("suspended_at"):
             f.add_tag("suspended")
         f.metadata.update({"app_id": inst.get("app_id"), "app_slug": slug, "repository_selection": inst.get("repository_selection"), "permissions": perms, "write_permissions": write_perms, "events": events[:30], "suspended_at": inst.get("suspended_at")})
         finalize(f, self.index)
+        if not recognised:
+            f.add_tag("unrecognized-app")
+            cap_confidence(f, UNRECOGNISED_APP_MAX_CONFIDENCE)
         f.kind = Kind.BOT_APP
         return f
 

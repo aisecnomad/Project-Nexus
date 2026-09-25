@@ -75,7 +75,8 @@ def test_teams_github_apps_atlassian_notion_zoom_generic(run_connector, fixtures
     assert {f.title for f in findings} == {"Teams app with bot: Contoso Copilot Agent", "Teams app with bot: Otter.ai"}
     findings, _ = run_connector("saas.github-apps", input=str(fixtures / "saas" / "github_installations.json"), org="acme")
     slugs = {f.metadata.get("app_slug") for f in findings}
-    assert {"coderabbitai", "claude", "renovate"} <= slugs and "readme-badge" not in slugs
+    # A dependency bot's write access alone does not make it an AI agent.
+    assert {"coderabbitai", "claude"} <= slugs and not slugs & {"renovate", "readme-badge"}
     cr = next(f for f in findings if f.metadata.get("app_slug") == "coderabbitai")
     assert "all-repositories" in cr.tags and "write-access" in cr.tags and "coding-agent.pr-review-bots" in cr.frameworks
     findings, _ = run_connector("saas.atlassian", input=str(fixtures / "saas" / "atlassian_plugins.json"), site="https://acme.atlassian.net")
