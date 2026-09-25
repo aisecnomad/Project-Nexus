@@ -20,6 +20,13 @@ export must include a valid team record or an explicit operator-supplied
 Teams records without valid app identity make collection incomplete while valid
 neighboring observations remain available.
 
+Code findings can change after this scanner update: an import-bound OpenAI
+Responses API function loop is promoted only when request, selected dispatch
+and matching feedback are linked, and provider loop analysis rejects unreachable
+literal branches and locally shadowed execution calls. Reconcile a fresh code
+baseline and review changed finding identities before using `--fail-on` as an
+enforcement gate. Offline source tests establish these paths, not runtime use.
+
 Use the [offline acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) to check the
 required evidence for the intended deployment scope. It checks artifact identity,
 freshness and declared review/metric requirements. It does not authenticate
