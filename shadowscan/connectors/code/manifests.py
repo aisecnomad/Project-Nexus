@@ -544,6 +544,7 @@ def _yaml_line_matches(pattern: re.Pattern[str], text: str, deadline: float) -> 
         matches = _run_regex(
             lambda timeout: list(pattern.finditer(text, start, end, timeout=min(timeout, remaining), concurrent=False)),
             "YAML manifest",
+            max_seconds=remaining,
         )
         if monotonic() > deadline:
             raise TimeoutError("YAML manifest matching exceeded its time budget")

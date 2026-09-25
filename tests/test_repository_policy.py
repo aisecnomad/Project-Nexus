@@ -72,6 +72,7 @@ def _load(path: Path) -> Any:
 @pytest.mark.parametrize("text", [
     "labels: [bug]\nlabels: [detection]\n",
     "jobs:\n  check:\n    permissions: {}\n    permissions: {contents: write}\n",
+    "permissions:\n  contents: read\n  contents: write\n",
     "on: [push]\non: [workflow_dispatch]\n",
 ])
 def test_yaml_policy_loading_rejects_duplicate_keys(text: str) -> None:
@@ -215,3 +216,8 @@ def test_label_sync_only_mutates_labels_from_main() -> None:
     job = workflow["jobs"]["sync"]
     assert job.get("if") == "github.ref == 'refs/heads/main'"
     assert _write_scopes(job["permissions"]) == {"issues"}
+    install = next(step["run"] for step in job["steps"] if step.get("name", "").startswith("Install hash-locked PyYAML"))
+    sync = next(step["run"] for step in job["steps"] if step.get("name", "").startswith("Create or update every label"))
+    assert "python -m venv" in install and "requirements.lock" in install
+    assert "--require-hashes --only-binary=:all:" in install
+    assert '"$RUNNER_TEMP/labels-venv/bin/python" - <<' in sync
