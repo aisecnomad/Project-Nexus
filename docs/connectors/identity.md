@@ -23,6 +23,8 @@ Permissions (application): `Application.Read.All`, `DelegatedPermissionGrant.Rea
 Unresolved grant or role-assignment principals make collection incomplete while
 preserving permission evidence for investigation. Such evidence cannot establish
 an approved resource identity.
+A service principal exported with conflicting records is reported the same way,
+keeping AI evidence from up to 16 of its snapshots (64 evidence items).
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:

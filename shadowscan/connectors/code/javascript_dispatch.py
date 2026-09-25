@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
+from shadowscan.signatures.matcher import pattern_timeout
 
 MAX_TOKENS = 50_000
 _TOKEN = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*|[0-9]+(?:\.[0-9]+)?|===|==|[{}()\[\].,:;=]")
@@ -42,8 +42,11 @@ def _tokens(text: str, ignored: list[tuple[int, int]]) -> list[_Token] | None:
     offset, line = 0, 1
     while offset < len(text):
         if len(result) >= MAX_TOKENS:
-            raise MatchTimeoutError("JavaScript Responses dispatch token limit exceeded")
-        if offset % 256 == 0:
+            # The grammar accepts only a small, complete program, so a file
+            # this long is an unsupported shape: no dispatch evidence, and no
+            # coverage gap (its ordinary SDK evidence is analyzed as usual).
+            return None
+        if len(result) % 256 == 0:
             pattern_timeout()
         if span is not None and offset == span[0]:
             value = text[span[0]:span[1]]

@@ -17,6 +17,7 @@ immutable customer ID in ``customer`` for offline attribution.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import time
@@ -58,9 +59,15 @@ class GoogleWorkspaceConnector(BaseConnector):
             raise ConnectorError("identity.google-workspace: customer must be my_customer or an immutable customer ID (C...)")
         self._customer_id = google_customer_id(self.customer) if self.offline else None
         # An unknown tenant must not merge with an independently collected
-        # source containing the same public OAuth client. This identity is
-        # intentionally ephemeral until the tenant has been established.
-        self._unresolved_scope = secrets.token_hex(16)
+        # source containing the same public OAuth client. Scope unresolved
+        # findings to this instance's input or impersonated admin so repeated
+        # scans keep their IDs; an instance with neither stays ephemeral.
+        source = self.ctx.input_path or ctx.get("admin_email", env="GOOGLE_ADMIN_EMAIL")
+        if source and self.ctx.input_path:
+            source = str(Path(str(source)).expanduser().absolute())
+        self._unresolved_scope = (
+            hashlib.sha256(f"{self.name}\0{source}".encode()).hexdigest()[:32] if source else secrets.token_hex(16)
+        )
         self.max_users = int(ctx.get("max_users", 10_000))
         self.http: HttpClient | None = None
 
@@ -69,6 +76,8 @@ class GoogleWorkspaceConnector(BaseConnector):
         self._customer_id = None
         try:
             data = self.http.get_json(f"/admin/directory/v1/customers/{quote(self.customer, safe='')}")
+        except ConnectorError:
+            raise  # deadline or cancellation, never a lookup result
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
             status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
             self.ctx.warn(f"identity.google-workspace: customer identity could not be verified ({status}); coverage incomplete")

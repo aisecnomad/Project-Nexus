@@ -15,6 +15,7 @@ import re
 import token
 import tokenize
 import types
+from bisect import bisect_left
 from collections.abc import Iterator, Mapping
 from typing import Any
 from urllib.parse import unquote
@@ -462,101 +463,156 @@ def _redact_python_assignments(text: str) -> str:
     return "".join(pieces)
 
 
-def _call_string_end(text: str, start: int, budget: list[int], depth: int = 0) -> int:
-    """Consume a string, including nested interpolation, on all supported Pythons."""
-    if depth >= 64:
-        raise SanitizationLimitError("credential call nesting limit exceeded")
-    char = text[start]
-    delimiter = char * 3 if char != "`" and text.startswith(char * 3, start) else char
-    interpolated = _CALL_INTERPOLATED.search(text, max(0, start - 3), start) is not None
-    position = start + len(delimiter)
-    braces = 0
-    while position < len(text):
-        budget[0] += 1
-        if budget[0] > _MAX_REDACTION_WORK:
-            raise SanitizationLimitError("credential call work limit exceeded")
-        char = text[position]
-        if char == "\\":
-            position += 2
-            continue
-        if braces:
-            if char in "\"'`":
-                position = _call_string_end(text, position, budget, depth + 1)
-                continue
-            if char == "#":
-                following = text.find("\n", position + 1)
-                following = len(text) if following < 0 else following + 1
-                budget[0] += following - position
-                position = following
-                continue
-            if char == "{":
-                braces += 1
-                if braces >= 64:
-                    raise SanitizationLimitError("credential call nesting limit exceeded")
-            elif char == "}":
-                braces -= 1
-        elif text.startswith(delimiter, position):
-            return position + len(delimiter)
-        elif interpolated and text.startswith("{{", position):
-            position += 2
-            continue
-        elif interpolated and char == "{":
-            braces = 1
-        elif delimiter == "`" and text.startswith("${", position):
-            braces = 1
-            position += 2
-            continue
-        position += 1
-    return len(text)
+# Bounds on one call's argument list, outside strings and comments. A call past
+# them is only a problem when it pairs a credential key with a value.
+_MAX_CALL_DEPTH = 32
+_MAX_CALL_STEPS = 8 * 1024
+_OPENERS = {")": "(", "]": "[", "}": "{"}
 
 
-def _call_argument_spans(text: str, start: int, budget: list[int]) -> list[tuple[int, int]]:
-    """Boundedly split call arguments, without parsing or executing source code.
+class _CallLexer:
+    """Bounded, language-agnostic lexing of call argument lists in one text.
 
-    This small lexer accepts source fragments as well as complete Python files.
-    A malformed value is withheld through EOF; delimiters inside quoted values,
-    nested calls and comments cannot end it early.
+    Every call start is examined, including calls nested in other calls, so the
+    same characters can be lexed several times. String ends are memoized per
+    opening quote and comment ends come from line and block-comment indexes,
+    which keeps that rescanning near linear on ordinary input. The shared work
+    budget still bounds adversarial input and fails closed.
     """
-    spans: list[tuple[int, int]] = []
-    position = argument_start = start
-    brackets: list[str] = []
-    while position < len(text):
-        budget[0] += 1
-        if budget[0] > _MAX_REDACTION_WORK:
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.work = 0
+        self._strings: dict[int, int] = {}
+        self._newlines: list[int] | None = None
+        self._block_ends: list[int] | None = None
+
+    def tick(self) -> None:
+        self.work += 1
+        if self.work > _MAX_REDACTION_WORK:
             raise SanitizationLimitError("credential call work limit exceeded")
-        char = text[position]
-        if char in "\"'`":
-            position = _call_string_end(text, position, budget)
-            continue
-        if char == "#" or text.startswith(("//", "/*"), position):
-            block = text.startswith("/*", position)
-            end = text.find("*/" if block else "\n", position + 1)
-            following = len(text) if end < 0 else end + (2 if block else 1)
-            budget[0] += following - position
-            position = following
-            continue
-        if char in "([{":
-            if len(brackets) >= 64:
-                raise SanitizationLimitError("credential call nesting limit exceeded")
-            brackets.append(char)
-        elif char in ")]}":
-            if not brackets:
-                if char == ")":
-                    spans.append((argument_start, position))
-                    return spans
+
+    def line_end(self, position: int) -> int:
+        """Index just past the line containing ``position``."""
+        if self._newlines is None:
+            self._newlines = [match.start() for match in re.finditer("\n", self.text)]
+        index = bisect_left(self._newlines, position)
+        return self._newlines[index] + 1 if index < len(self._newlines) else len(self.text)
+
+    def block_end(self, position: int) -> int:
+        """Index just past the ``*/`` closing a block comment opened at ``position``."""
+        if self._block_ends is None:
+            self._block_ends = [match.start() for match in re.finditer(r"\*/", self.text)]
+        index = bisect_left(self._block_ends, position + 2)
+        return self._block_ends[index] + 2 if index < len(self._block_ends) else len(self.text)
+
+    def string_end(self, start: int, depth: int = 0) -> int:
+        """Consume a string, including nested interpolation, on all supported Pythons."""
+        cached = self._strings.get(start)
+        if cached is not None:
+            return cached
+        if depth >= 64:
+            raise SanitizationLimitError("credential call nesting limit exceeded")
+        text = self.text
+        char = text[start]
+        delimiter = char * 3 if char != "`" and text.startswith(char * 3, start) else char
+        single_line = char != "`" and len(delimiter) == 1
+        interpolated = _CALL_INTERPOLATED.search(text, max(0, start - 3), start) is not None
+        position = start + len(delimiter)
+        braces = 0
+        end = len(text)
+        while position < len(text):
+            self.tick()
+            char = text[position]
+            if char == "\\":
+                position += 2
+                continue
+            if braces:
+                if char in "\"'`":
+                    position = self.string_end(position, depth + 1)
+                    continue
+                if char == "#":
+                    position = self.line_end(position)
+                    continue
+                if char == "{":
+                    braces += 1
+                    if braces >= 64:
+                        raise SanitizationLimitError("credential call nesting limit exceeded")
+                elif char == "}":
+                    braces -= 1
+            elif text.startswith(delimiter, position):
+                end = position + len(delimiter)
                 break
-            if brackets.pop() != {")": "(", "]": "[", "}": "{"}[char]:
+            elif single_line and char == "\n":
+                # An ordinary quote ends at the line: an apostrophe in prose
+                # must not swallow the rest of the text as one string.
+                end = position
                 break
-        elif char == "," and not brackets:
-            spans.append((argument_start, position))
-            if len(spans) >= _MAX_SANITIZATION_NODES:
-                raise SanitizationLimitError("credential call argument limit exceeded")
-            argument_start = position + 1
-        position += 1
-    if budget[0] > _MAX_REDACTION_WORK:
-        raise SanitizationLimitError("credential call work limit exceeded")
-    spans.append((argument_start, len(text)))
-    return spans
+            elif interpolated and text.startswith("{{", position):
+                position += 2
+                continue
+            elif interpolated and char == "{":
+                braces = 1
+            elif delimiter == "`" and text.startswith("${", position):
+                braces = 1
+                position += 2
+                continue
+            position += 1
+        self._strings[start] = end
+        return end
+
+    def arguments(self, start: int, *, comments: bool) -> tuple[list[tuple[int, int]], str, bool]:
+        """Split the argument list whose ``(`` ends just before ``start``.
+
+        Returns the argument spans, a state and whether a comment was skipped.
+        ``closed`` found the call's own ``)``. ``open`` reached the end of the
+        text or a mismatched bracket; ``nesting`` and ``length`` stopped at a
+        bound. Unless closed, the last span runs to the end of the text, so a
+        malformed credential value is withheld through EOF. Delimiters inside
+        quoted values, nested calls and comments cannot end a value early.
+        """
+        text = self.text
+        spans: list[tuple[int, int]] = []
+        position = argument_start = start
+        brackets: list[str] = []
+        steps = 0
+        skipped_comment = False
+        state = "open"
+        while position < len(text):
+            self.tick()
+            steps += 1
+            if steps > _MAX_CALL_STEPS:
+                state = "length"
+                break
+            char = text[position]
+            if char in "\"'`":
+                position = self.string_end(position)
+                continue
+            if comments and (char == "#" or text.startswith(("//", "/*"), position)):
+                skipped_comment = True
+                position = self.block_end(position) if text.startswith("/*", position) else self.line_end(position)
+                continue
+            if char in "([{":
+                if len(brackets) >= _MAX_CALL_DEPTH:
+                    state = "nesting"
+                    break
+                brackets.append(char)
+            elif char in ")]}":
+                if not brackets:
+                    if char == ")":
+                        spans.append((argument_start, position))
+                        return spans, "closed", skipped_comment
+                    break
+                if brackets.pop() != _OPENERS[char]:
+                    break
+            elif char == "," and not brackets:
+                spans.append((argument_start, position))
+                if len(spans) >= _MAX_SANITIZATION_NODES:
+                    raise SanitizationLimitError("credential call argument limit exceeded")
+                argument_start = position + 1
+            position += 1
+        spans.append((argument_start, len(text)))
+        return spans, state, skipped_comment
 
 
 def _call_argument_start(text: str, start: int, end: int) -> int:
@@ -596,6 +652,44 @@ def _literal_credential_key(expression: str) -> bool:
     return isinstance(value, str) and _sensitive_assignment_key(value)
 
 
+def _credential_key_argument(text: str, start: int, end: int, bounded: bool) -> bool:
+    """Whether the argument ``text[start:end]`` is a literal credential key.
+
+    An unbounded trailing argument (the call never closed) is not copied whole:
+    only a plain literal at its start can name a key.
+    """
+    if bounded or end - start <= 4096:
+        return _literal_credential_key(text[start:end])
+    head = text[start:start + 4096]
+    plain = _CALL_PLAIN_KEY.match(head, _call_argument_start(head, 0, len(head)))
+    return plain is not None and _sensitive_assignment_key(plain.group("key"))
+
+
+def _credential_call_values(
+    text: str, spans: list[tuple[int, int]], closed: bool,
+) -> tuple[bool, list[tuple[int, int]]]:
+    """Whether a call pairs a literal credential key with values, and their spans."""
+    sensitive = False
+    values: list[tuple[int, int]] = []
+    positional = 0
+    for number, (start, end) in enumerate(spans):
+        bounded = closed or number < len(spans) - 1
+        keyword = _CALL_KEYWORD.match(text, _call_argument_start(text, start, end), end)
+        if keyword:
+            name = keyword.group("name")
+            if name in {"key", "name"}:
+                sensitive = sensitive or _credential_key_argument(text, keyword.end(), end, bounded)
+            elif name in {"default", "value"}:
+                values.append((keyword.end(), end))
+        else:
+            if positional == 0:
+                sensitive = sensitive or _credential_key_argument(text, start, end, bounded)
+            elif positional == 1:
+                values.append((start, end))
+            positional += 1
+    return sensitive, values
+
+
 def _redact_credential_calls(text: str) -> str:
     """Withhold values/defaults paired with literal credential keys in calls.
 
@@ -603,35 +697,32 @@ def _redact_credential_calls(text: str) -> str:
     aliases of getenv/putenv and mapping methods receive identical protection.
     Only first-position or key/name arguments identify a key. Nonsecret calls
     and read-only lookups remain intact. Keyword order does not affect safety.
+
+    ``#`` and ``//`` start comments only in some languages, and prose uses
+    parentheses freely. A call that does not close under the comment reading is
+    lexed again with the markers as text, so ``(#123)``, ``(https://...)``,
+    ``int(size // 2)`` and ``this.#field`` stay ordinary. A call past the nesting
+    or length bound fails closed only when it pairs a credential key with a
+    value; otherwise it is left alone.
     """
     if '"' not in text and "'" not in text:
         return text
+    lexer = _CallLexer(text)
     pieces: list[str] = []
     cursor = 0
-    budget = [0]
     for call in _CALL_START.finditer(text):
         if call.start() < cursor:
             continue
-        arguments = _call_argument_spans(text, call.end(), budget)
-        sensitive = False
-        values: list[tuple[int, int]] = []
-        positional = 0
-        for start, end in arguments:
-            keyword = _CALL_KEYWORD.match(text, _call_argument_start(text, start, end), end)
-            if keyword:
-                name = keyword.group("name")
-                if name in {"key", "name"}:
-                    sensitive = sensitive or _literal_credential_key(text[keyword.end():end])
-                elif name in {"default", "value"}:
-                    values.append((keyword.end(), end))
-            else:
-                if positional == 0:
-                    sensitive = sensitive or _literal_credential_key(text[start:end])
-                elif positional == 1:
-                    values.append((start, end))
-                positional += 1
+        spans, state, skipped_comment = lexer.arguments(call.end(), comments=True)
+        if state != "closed" and skipped_comment:
+            retry = lexer.arguments(call.end(), comments=False)
+            if retry[1] == "closed":
+                spans, state, _ = retry
+        sensitive, values = _credential_call_values(text, spans, state == "closed")
         if not sensitive:
             continue
+        if state in {"nesting", "length"}:
+            raise SanitizationLimitError(f"credential call {state} limit exceeded")
         for start, end in sorted(values):
             raw = text[start:end]
             if not raw.strip():

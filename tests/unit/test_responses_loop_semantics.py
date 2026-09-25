@@ -270,3 +270,59 @@ def test_single_dispatch_cannot_join_incompatible_paths(tmp_path, run_connector)
     findings, ctx = scan(tmp_path, run_connector, source)
     assert not ctx.stats.incomplete, ctx.stats.errors
     assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize("dispatch", [
+    "        handlers[item.name](item.arguments)",           # result not kept
+    "        handlers.get(item.name)(item.arguments)",       # registry lookup, result not kept
+])
+def test_single_dispatch_without_a_kept_result_is_an_agent(tmp_path, run_connector, dispatch):
+    source = SINGLE_DISPATCH.replace("        result = handlers[item.name](item.arguments)", dispatch)
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert [finding.kind for finding in findings] == [Kind.AGENT]
+
+
+def test_returned_single_dispatch_is_an_agent(tmp_path, run_connector):
+    source = '''from openai import OpenAI
+client = OpenAI()
+def answer(question):
+    response = client.responses.create(model="example", input=question, tools=tools)
+    for item in response.output:
+        if item.type == "function_call":
+            return handlers[item.name](item.arguments)
+'''
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert [finding.kind for finding in findings] == [Kind.AGENT]
+
+
+def test_unlinked_bare_local_handler_is_still_not_an_agent(tmp_path, run_connector):
+    source = SINGLE_DISPATCH.replace("        result = handlers[item.name](item.arguments)",
+                                     "        log(item.arguments)")
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_many_plain_requests_in_a_long_module_stay_within_budget(tmp_path, run_connector):
+    # Notebook exports can hold thousands of statements and many requests;
+    # reachability is only analyzed for requests followed by a selection.
+    cell = 'response_{n} = client.responses.create(model="m", input="q{n}", tools=tools)\nprint(response_{n}.output_text)\n'
+    source = ("from openai import OpenAI\nclient = OpenAI()\ntools = [{'type': 'function', 'name': 'x'}]\n"
+              + "".join(f"setting_{n} = {n}\n" for n in range(3_000))
+              + "".join(cell.format(n=n) for n in range(60)))
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert findings and not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_dispatch_after_a_return_is_unreachable(tmp_path, run_connector):
+    source = SINGLE_DISPATCH.replace("        result = handlers[item.name](item.arguments)",
+                                     "        return None\n        handlers[item.name](item.arguments)")
+    source = source.replace("response = client", "def run(tools):\n    response = client").replace(
+        "\nfor item", "\n    for item").replace("\n    if item", "\n        if item").replace(
+        "\n        return None\n        handlers", "\n            return None\n            handlers")
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)

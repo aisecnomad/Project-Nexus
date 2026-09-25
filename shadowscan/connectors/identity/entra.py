@@ -217,6 +217,18 @@ class EntraConnector(BaseConnector):
                     evidence.attributes["confidence_group"] = f"entra-conflicting-snapshot:{evidence.signal}"
                     f.add_evidence(evidence)
             if f:
+                # Nothing is known about a principal missing from the export:
+                # never report a type, publisher or first-party status for it.
+                f.metadata.update(dict.fromkeys((
+                    "app_id", "service_principal_type", "publisher", "verified_publisher",
+                    "first_party", "owner_tenant", "account_enabled",
+                )))
+                for evidence in f.evidence:
+                    if evidence.signal == "entra:service-principal" and not evidence.description.startswith("Conflicting snapshot"):
+                        evidence.description = (
+                            f"Service principal {sp_id} referenced by grants or role assignments is missing "
+                            "from the export; its type, publisher and owner are unknown"
+                        )
                 f.title = "Entra evidence for unresolved service principal"
                 f.resource = f"entra:unresolved-principal:{sp_id}"
                 f.resource_type = "unresolved-principal"

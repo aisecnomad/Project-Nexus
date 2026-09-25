@@ -194,3 +194,41 @@ def test_debug_connector_failures_never_emit_raw_exception_or_traceback(
     assert SECRET not in caplog.text and TAIL not in caplog.text
     assert "RuntimeError" in caplog.text
     assert all(record.exc_info is None for record in caplog.records)
+
+
+@pytest.mark.parametrize("line", [
+    "- Fix the release notes (#{n})\n",              # changelog references
+    "See the guide (https://example.test/{n}) first\n",  # prose links
+    "It's the {n}th entry (don't panic)\n",           # apostrophes in prose
+    "half = int(size // {n})\n",                     # Python floor division
+    "total = Math.max(this.#count, {n});\n",          # JavaScript private fields
+])
+def test_ordinary_text_never_trips_the_call_lexer(line):
+    # Comment markers are language specific and prose uses parentheses freely.
+    # None of this pairs a credential key with a value, so it must pass through
+    # unchanged, never raise and never count as an incomplete scan.
+    source = "Unrelated text with 'quotes'\n" + "".join(line.format(n=n) for n in range(200))
+    assert sanitize_text(source) == source
+
+
+def test_misread_comment_marker_cannot_withhold_the_rest_of_the_file():
+    source = "key = os.getenv('API_KEY', str(10 // 3))\nimport langchain\nprint('visible')\n"
+    safe = sanitize_text(source)
+    assert "10 // 3" not in safe and REDACTED in safe
+    assert safe.splitlines()[1:] == ["import langchain", "print('visible')"]
+
+
+def test_unclosed_calls_before_a_long_tail_stay_linear():
+    script = '''
+import time
+from shadowscan.utils.redaction import sanitize_text
+source = "".join(f"step{n}(#\\\\n" for n in range(60)) + "plain line\\\\n" * 200_000
+started = time.perf_counter()
+assert sanitize_text(source) == source
+assert time.perf_counter() - started < 5
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[2],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

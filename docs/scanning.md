@@ -339,7 +339,8 @@ verified dispatch establishes `tool-use`; `autonomous` requires a verified
 iterative feedback loop. JavaScript recognition is deliberately conservative:
 it accepts a small, complete top-level program with static imports and request
 options. Extra statements, nested scopes, mutations and dynamic options cannot
-establish this proof. Unsupported shapes may still produce ordinary SDK evidence.
+establish this proof. Unsupported shapes, including files longer than such a
+program can be, still produce ordinary SDK evidence and leave coverage complete.
 
 Several rules keep weak observations from producing confirmed or high-risk
 findings. A credential whose value looks like a documentation placeholder

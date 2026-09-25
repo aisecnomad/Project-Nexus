@@ -148,7 +148,7 @@ class N8nConnector(_AutomationBase):
         )
         if not identified:
             self.ctx.warn("lowcode.n8n: workflow has no valid provider id; identity coverage incomplete")
-            workflow_id = hashlib.sha256(json.dumps(w, sort_keys=True).encode()).hexdigest()
+            workflow_id = hashlib.sha256(json.dumps(w, sort_keys=True, default=str).encode()).hexdigest()
         nodes = [node for node in w["nodes"] if self._record_fields_valid(node, required=("type",), strings=("name",), mappings=("parameters",))]
         if len(nodes) != len(w["nodes"]):
             self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")

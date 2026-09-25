@@ -6,7 +6,6 @@ import pytest
 
 from shadowscan.connectors.code import javascript_dispatch
 from shadowscan.connectors.code.source_ranges import noncode_ranges
-from shadowscan.signatures.matcher import MatchTimeoutError
 
 SOURCE = '''import OpenAI from "openai";
 const client = new OpenAI();
@@ -125,7 +124,18 @@ def test_truncation_cannot_crash_or_supply_dispatch(length):
     assert javascript_dispatch.javascript_responses_dispatch_lines(text, ignored, {2}) == []
 
 
-def test_token_budget_fails_closed(monkeypatch):
+def test_file_longer_than_the_grammar_is_a_plain_non_match(monkeypatch):
+    # Only a small, complete program can match, so a longer file is an
+    # unsupported shape: no dispatch evidence, and no incomplete scan.
     monkeypatch.setattr(javascript_dispatch, "MAX_TOKENS", 5)
-    with pytest.raises(MatchTimeoutError, match="token limit"):
-        _recognize(SOURCE)
+    assert _recognize(SOURCE) == []
+
+
+def test_mid_size_javascript_file_stays_complete_with_its_evidence(tmp_path, run_connector):
+    # A file far larger than the dispatch grammar is an unsupported shape, not
+    # an analysis gap: its ordinary SDK evidence is kept and the scan completes.
+    (tmp_path / "package.json").write_text('{"name": "demo", "dependencies": {"openai": "^5.0.0"}}')
+    (tmp_path / "app.js").write_text(SOURCE + "".join(f"const v{n} = compute({n}, other{n});\n" for n in range(6_000)))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any("provider.openai" in finding.model_providers for finding in findings)

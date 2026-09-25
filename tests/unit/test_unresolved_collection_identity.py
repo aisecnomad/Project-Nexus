@@ -299,3 +299,24 @@ def test_entra_conflicting_evidence_limit_keeps_a_publishable_finding(monkeypatc
     assert findings[0].metadata["conflicting_principal_evidence_truncated"] is True
     assert sum("evidence limit reached" in warning for warning in ctx.stats.warnings) == 1
     assert_unresolved(findings[0])
+
+
+def test_n8n_yaml_blueprint_without_id_keeps_its_evidence(run_connector, tmp_path):
+    # YAML exports carry values JSON cannot encode, such as timestamps.
+    source = tmp_path / "workflow.yaml"
+    source.write_text("name: Blueprint\nnodes:\n  - name: Agent\n    type: '@n8n/n8n-nodes-langchain.agent'\n"
+                      "    parameters:\n      notBefore: 2024-01-01T00:00:00Z\n")
+    findings, ctx = run_connector("lowcode.n8n", input=str(source))
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert len(findings) == 1
+    assert_unresolved(findings[0])
+
+
+def test_entra_unresolved_principal_invents_no_attributes(run_connector, fixtures):
+    findings, _ = run_connector("identity.entra", input=str(fixtures / "assurance" / "entra_orphan_permissions.json"))
+    unresolved = next(f for f in findings if f.metadata.get("identity_unresolved"))
+    for key in ("app_id", "service_principal_type", "publisher", "first_party", "owner_tenant", "account_enabled"):
+        assert unresolved.metadata[key] is None, key
+    described = " ".join(evidence.description for evidence in unresolved.evidence)
+    assert "third-party" not in described and "first-party" not in described
+    assert "unknown" in described

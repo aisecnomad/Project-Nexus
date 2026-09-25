@@ -156,3 +156,13 @@ def test_configured_offline_scope_can_be_corroborated_by_export(tmp_path, run_co
 def test_customer_configuration_never_accepts_domain_or_placeholder(run_connector, customer):
     with pytest.raises(ConnectorError, match="immutable customer ID"):
         run_connector("identity.google-workspace", customer=customer)
+
+
+def test_unresolved_offline_findings_keep_their_ids_across_runs(tmp_path, fixtures, index):
+    # Unresolved findings stay isolated per input, but a repeated scan of the
+    # same export must not churn their IDs (SARIF fingerprints, triage keys).
+    source = fixtures / "identity" / "google_workspace_scoped_tokens.json"
+    config = ScanConfig(connectors=[ConnectorSpec("identity.google-workspace", {"input": str(source)})])
+    first, second = Engine(config, index).run(), Engine(config, index).run()
+    assert [f.id for f in first.findings] == [f.id for f in second.findings]
+    assert all(f.metadata["identity_unresolved"] is True for f in first.findings)
