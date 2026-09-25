@@ -80,7 +80,8 @@ def test_multiline_structured_secret_keeps_excerpt_lines_aligned(tmp_path, index
     )
     findings, ctx = _scan(index, tmp_path)
     domain_evidence = [e for f in findings for e in f.evidence if e.signal.startswith("domain:")]
-    assert domain_evidence and all(e.location == "config.toml:5" and "api.openai.com" in (e.snippet or "") for e in domain_evidence)
+    expected = 'endpoint = "https://api.openai.com/v1"'
+    assert domain_evidence and all(e.location == "config.toml:5" and e.snippet == expected for e in domain_evidence)
     assert "abcdefgh" not in json.dumps([f.to_dict() for f in findings])
 
 
