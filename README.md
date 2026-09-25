@@ -119,7 +119,9 @@ Build and retain a wheel from the selected commit; see
 [locked installs and release evidence](docs/production.md#install-from-a-reviewed-revision).
 The [consumer GitHub Action example](examples/github-action-code-scan.yml) requires
 the repository variable `SHADOWSCAN_REVISION` to hold that reviewed full SHA;
-it fails until the variable is set.
+it fails until the variable is set. It checks out that exact scanner commit,
+installs its hash-locked runtime dependencies, builds a wheel with pinned build
+tools, and installs the wheel without resolving new runtime dependencies.
 
 ## Quick start
 

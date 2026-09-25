@@ -72,13 +72,32 @@ pip-compile --extra cloud --generate-hashes --strip-extras \
 Use `--upgrade` only for an intentional dependency refresh. Preserve the lock's
 supported-platform comment when regenerating. Do not bypass failed hash checks.
 
-The Dockerfile uses this runtime lock and UID/GID 65532. Supply an approved base
-image digest through `--build-arg PYTHON_IMAGE=python@sha256:<approved-digest>`
-and retain the built image digest. The default base tag and distribution packages
-and isolated build tooling are mutable; the Dockerfile alone does not promise
-byte-for-byte reproducible images. CI smoke-tests a non-root, read-only and
-network-isolated image; build and test the deployment image at its approved base
-digest, including resource limits and output-directory permissions, before rollout.
+The Dockerfile uses this runtime lock and UID/GID 65532. It **requires** the
+64-character hex digest of an approved `python:3.12-slim-bookworm` image index:
+
+```bash
+PYTHON_BASE_DIGEST="REPLACE_WITH_APPROVED_64_HEX_DIGEST"
+[[ "$PYTHON_BASE_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+docker build --build-arg "PYTHON_BASE_DIGEST=$PYTHON_BASE_DIGEST" \
+  --tag shadowscan:reviewed .
+```
+
+No base digest is supplied by default. Retain both the reviewed base digest and
+the built image digest. CI resolves the current upstream tag to an index digest
+for its smoke test and prints it, but this is **not** an approved deployment
+digest. Distribution packages from `apt-get`, build tooling and image metadata
+remain mutable, so the Dockerfile does not promise byte-for-byte reproducible
+images. CI smoke-tests a non-root, read-only and network-isolated image; build
+and test the deployment image at its approved digest, including resource limits
+and output-directory permissions, before rollout.
+
+The [Kubernetes offline Job example](../examples/k8s-job.yaml) has a 20-minute
+active deadline, a placeholder for a reviewed image digest, and a matching
+NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
+reviewed `/input` volume before running it. For live API collection, use a
+separate Job and enforce a network path through an approved egress proxy; a
+standard Kubernetes NetworkPolicy cannot filter destinations by DNS name.
+
 Opt-in Git history enrichment requires Git 2.45+;
 verify the distribution Git version if that feature is needed. Keep runtime
 secrets out of the build context.

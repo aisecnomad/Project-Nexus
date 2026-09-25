@@ -4,7 +4,8 @@
 # Run from a non-root Linux account. Match the host UID/GID so the private bind
 # mount is writable without making report directories world-writable.
 #   mkdir -p out && chmod 700 out
-#   docker build -t shadowscan:reviewed .
+#   docker build --build-arg PYTHON_BASE_DIGEST=<approved-64-hex-digest> \
+#     -t shadowscan:reviewed .
 #   docker run --rm --read-only --user "$(id -u):$(id -g)" \
 #     --cap-drop ALL --security-opt no-new-privileges \
 #     --tmpfs /tmp:mode=1777 --env HOME=/tmp \
@@ -14,10 +15,10 @@
 #
 # Drop --network none for live API collection. Never mount production
 # credential files into a container that also mounts an untrusted repo.
-# Supply an approved image digest for immutable deployment builds:
-#   docker build --build-arg PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:<digest> .
-ARG PYTHON_IMAGE=python:3.12-slim-bookworm
-FROM ${PYTHON_IMAGE}
+# Supply an approved digest for every build. Omitting it makes FROM invalid;
+# the repository and tag cannot be replaced by a mutable build argument.
+ARG PYTHON_BASE_DIGEST
+FROM python:3.12-slim-bookworm@sha256:${PYTHON_BASE_DIGEST}
 
 LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Project-Nexus" \
       org.opencontainers.image.description="ShadowScan disposable scan worker" \

@@ -51,6 +51,15 @@ and forbid any agent finding. These cases test known boundary behavior and were
 used to guide the implementation. Its precision/recall values are **synthetic
 regression scores**, not independently measured field accuracy.
 
+Custom Python OpenAI Responses loops are promoted to agents only for selected
+statically verified shapes: a repeated import-bound `responses.create` call,
+`function_call` selection, a handler resolved from the selected name or a
+matching declared tool, and `function_call_output` fed to the next input.
+Arbitrary dynamic dispatch and feedback shapes, Chat Completions, Anthropic,
+and JavaScript custom loops are outside this proof and can remain supporting
+LLM usage. Static evidence does not establish runtime execution. These focused
+regressions do not measure recall for custom agents in the field.
+
 Source masking is a bounded lexical filter. Ruby regular expressions and `%q`
 literals, PHP heredoc interpolation, C# raw strings with multiple interpolation
 delimiters, and Scala interpolation need more dialect-specific handling. Such
