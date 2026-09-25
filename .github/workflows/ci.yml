@@ -94,6 +94,14 @@ jobs:
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off
+      - name: Audit hash-locked runtime and build dependencies
+        run: |
+          # Fail if a locked package cannot be checked, even when an installed
+          # environment audit permits an intentionally skipped editable package.
+          pip-audit --require-hashes --strict --progress-spinner off \
+            --disable-pip --no-deps -r requirements.lock
+          pip-audit --require-hashes --strict --progress-spinner off \
+            --disable-pip --no-deps -r requirements-build.lock
       - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
         run: |

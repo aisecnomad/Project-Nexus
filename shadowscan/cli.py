@@ -45,7 +45,7 @@ from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures import Match, SignatureIndex, get_index
-from shadowscan.utils.deadline import arm_job_deadline
+from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
 from shadowscan.utils.output import prepare_private_directory, terminal_text, write_private_text
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 
@@ -54,6 +54,7 @@ err_console = Console(stderr=True)
 log = logging.getLogger("shadowscan.cli")
 LEVELS = ["critical", "high", "medium", "low", "info"]
 SETUP_FAILED = "scan setup failed; check connector configuration, signature packs and inventory"
+_JOB_DEADLINE_CONTEXT_KEY = "shadowscan.cli.job_deadline_watchdog"
 
 
 def _load_report(path: str) -> dict[str, Any]:
@@ -138,17 +139,21 @@ def _log_masked_failure(stage: str, exc: BaseException) -> None:
 
 
 def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, max_rows: int | None, only: list[str] | None = None) -> None:
-    # Arm before plugin discovery, engine setup and report output. Always disarm
-    # on normal exits/errors so reusable CLI invocations cannot kill their host.
+    # Reuse a CLI-option watchdog already running during command preparation;
+    # YAML-only and direct callers arm a local watchdog for engine/output work.
     try:
         cfg.validate_security_options()
     except SetupError as exc:
         raise click.ClickException(str(exc)) from None
-    watchdog = arm_job_deadline(cfg.job_deadline_seconds) if cfg.job_deadline_seconds is not None else None
+    ctx = click.get_current_context(silent=True)
+    watchdog: JobDeadline | None = ctx.meta.get(_JOB_DEADLINE_CONTEXT_KEY) if ctx is not None else None
+    if watchdog is None and cfg.job_deadline_seconds is not None:
+        watchdog = arm_job_deadline(cfg.job_deadline_seconds)
+    owned_deadline = ctx is None or ctx.meta.get(_JOB_DEADLINE_CONTEXT_KEY) is None
     try:
         _run_and_emit_with_deadline(cfg, fmt, output, verbose, max_rows, only)
     finally:
-        if watchdog is not None:
+        if watchdog is not None and owned_deadline:
             watchdog.cancel()
 
 
@@ -223,13 +228,20 @@ def _connector_timeout_option(ctx: click.Context, param: click.Parameter, value:
 
 def _job_deadline_option(ctx: click.Context, param: click.Parameter, value: float | None) -> float | None:
     try:
-        return validate_job_deadline_seconds(value)
+        seconds = validate_job_deadline_seconds(value)
     except ValueError as exc:
         raise click.BadParameter(str(exc)) from exc
+    if seconds is not None:
+        # An eager option callback runs before command arguments and other
+        # option callbacks; Click closes the context even on usage errors.
+        watchdog = arm_job_deadline(seconds)
+        ctx.meta[_JOB_DEADLINE_CONTEXT_KEY] = watchdog
+        ctx.call_on_close(watchdog.cancel)
+    return seconds
 
 
 output_options = [
-    click.option("--job-deadline-seconds", type=float, callback=_job_deadline_option, help="CLI process deadline, including setup and output; exits 3 on expiry (default: disabled); use an external supervisor to reap subprocesses"),
+    click.option("--job-deadline-seconds", type=float, callback=_job_deadline_option, is_eager=True, help="CLI process deadline, including setup and output; exits 3 on expiry (default: disabled); use an external supervisor to reap subprocesses"),
     click.option("--allow-instance-credentials/--deny-instance-credentials", default=None, help="explicitly allow cloud instance or managed-identity credentials"),
     click.option("--allow-credential-mixing/--deny-credential-mixing", default=None, help="allow reviewed source inputs alongside live credentialed connectors"),
     click.option("--connector-timeout-seconds", "--connector-timeout", "connector_timeout_seconds", type=float, callback=_connector_timeout_option, help="per-connector completion deadline in seconds (default: 120); --connector-timeout is a deprecated alias; blocking calls cannot be forcibly stopped"),

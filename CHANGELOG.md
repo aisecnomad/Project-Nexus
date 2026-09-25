@@ -10,6 +10,8 @@
 - Add optional `--job-deadline-seconds` / `options.job_deadline_seconds` for CLI
   scans. The cancellable process watchdog exits `3` when setup, scanning or output
   exceeds the deadline; external process supervision remains required.
+- Start an explicit CLI deadline before reading JWTs from stdin, so an open,
+  silent input pipe cannot hold the process past its configured deadline.
 
 ### Follow-up trust-boundary review (2026-09-24)
 

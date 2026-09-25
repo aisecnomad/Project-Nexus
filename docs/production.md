@@ -271,10 +271,14 @@ universal hard deadline for the whole scan.
 
 For CLI scans, `--job-deadline-seconds 600` or
 `options.job_deadline_seconds: 600` also arms a process watchdog covering plugin
-discovery, engine setup, collection and report output. The value must be positive
-and finite; omission or YAML `null` leaves it disabled. Expiry terminates the
-scanner with exit `3`, without guaranteeing a final report or cleanup. A blocked
-output stream cannot delay that exit. Successful and failed completed CLI
+discovery, engine setup, collection and report output. The explicit CLI option
+starts during option processing, before command preparation, including connector
+metadata discovery for `run` and stdin reads for `jwt`. A YAML-only deadline starts
+after the configuration has been read and validated. Use an external supervisor
+to bound process startup, Click argument parsing and YAML preflight. The value
+must be positive and finite; omission or YAML `null` leaves it disabled. Expiry
+terminates the scanner with exit `3`, without guaranteeing a final report or
+cleanup. A blocked output stream cannot delay that exit. Completed CLI
 invocations disarm their watchdog. `Engine` embedding does not arm it: the host
 application owns process supervision. Keep the external job deadline and process
 group/container cleanup to reap child processes and bound native code that holds
