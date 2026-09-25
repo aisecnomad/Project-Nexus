@@ -7,6 +7,7 @@ signature settings; disabling secret discovery must never disable redaction.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import heapq
 import io
@@ -83,6 +84,11 @@ _INDEXED_ASSIGNMENT_KEY = re.compile(
     r"\[[ \t\r\n]*(?P<quote>[\"'`])(?P<key>[A-Za-z_][A-Za-z0-9_.-]{0,100})"
     r"(?P=quote)"
 )
+_CALL_START = re.compile(r"(?<![\w.])[A-Za-z_][A-Za-z0-9_.]*[ \t]*\(")
+_CALL_KEYWORD = re.compile(r"\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)")
+_CALL_INTERPOLATED = re.compile(r"(?i)(?<!\w)(?:[ft]r?|r[ft])$")
+_CALL_LITERAL = re.compile(r"(?i)(?:[rub]{0,2})[\"']")
+_CALL_PLAIN_KEY = re.compile(r"(?i)[rub]{0,2}(?P<quote>[\"'])(?P<key>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)")
 _TARGET_ATTRIBUTE = re.compile(r"\.[A-Za-z_$][A-Za-z0-9_$]*")
 _MAPPING_VALUE = re.compile(
     r"(?<![\w.-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
@@ -456,6 +462,191 @@ def _redact_python_assignments(text: str) -> str:
     return "".join(pieces)
 
 
+def _call_string_end(text: str, start: int, budget: list[int], depth: int = 0) -> int:
+    """Consume a string, including nested interpolation, on all supported Pythons."""
+    if depth >= 64:
+        raise SanitizationLimitError("credential call nesting limit exceeded")
+    char = text[start]
+    delimiter = char * 3 if char != "`" and text.startswith(char * 3, start) else char
+    interpolated = _CALL_INTERPOLATED.search(text, max(0, start - 3), start) is not None
+    position = start + len(delimiter)
+    braces = 0
+    while position < len(text):
+        budget[0] += 1
+        if budget[0] > _MAX_REDACTION_WORK:
+            raise SanitizationLimitError("credential call work limit exceeded")
+        char = text[position]
+        if char == "\\":
+            position += 2
+            continue
+        if braces:
+            if char in "\"'`":
+                position = _call_string_end(text, position, budget, depth + 1)
+                continue
+            if char == "#":
+                following = text.find("\n", position + 1)
+                following = len(text) if following < 0 else following + 1
+                budget[0] += following - position
+                position = following
+                continue
+            if char == "{":
+                braces += 1
+                if braces >= 64:
+                    raise SanitizationLimitError("credential call nesting limit exceeded")
+            elif char == "}":
+                braces -= 1
+        elif text.startswith(delimiter, position):
+            return position + len(delimiter)
+        elif interpolated and text.startswith("{{", position):
+            position += 2
+            continue
+        elif interpolated and char == "{":
+            braces = 1
+        elif delimiter == "`" and text.startswith("${", position):
+            braces = 1
+            position += 2
+            continue
+        position += 1
+    return len(text)
+
+
+def _call_argument_spans(text: str, start: int, budget: list[int]) -> list[tuple[int, int]]:
+    """Boundedly split call arguments, without parsing or executing source code.
+
+    This small lexer accepts source fragments as well as complete Python files.
+    A malformed value is withheld through EOF; delimiters inside quoted values,
+    nested calls and comments cannot end it early.
+    """
+    spans: list[tuple[int, int]] = []
+    position = argument_start = start
+    brackets: list[str] = []
+    while position < len(text):
+        budget[0] += 1
+        if budget[0] > _MAX_REDACTION_WORK:
+            raise SanitizationLimitError("credential call work limit exceeded")
+        char = text[position]
+        if char in "\"'`":
+            position = _call_string_end(text, position, budget)
+            continue
+        if char == "#" or text.startswith(("//", "/*"), position):
+            block = text.startswith("/*", position)
+            end = text.find("*/" if block else "\n", position + 1)
+            following = len(text) if end < 0 else end + (2 if block else 1)
+            budget[0] += following - position
+            position = following
+            continue
+        if char in "([{":
+            if len(brackets) >= 64:
+                raise SanitizationLimitError("credential call nesting limit exceeded")
+            brackets.append(char)
+        elif char in ")]}":
+            if not brackets:
+                if char == ")":
+                    spans.append((argument_start, position))
+                    return spans
+                break
+            if brackets.pop() != {")": "(", "]": "[", "}": "{"}[char]:
+                break
+        elif char == "," and not brackets:
+            spans.append((argument_start, position))
+            if len(spans) >= _MAX_SANITIZATION_NODES:
+                raise SanitizationLimitError("credential call argument limit exceeded")
+            argument_start = position + 1
+        position += 1
+    if budget[0] > _MAX_REDACTION_WORK:
+        raise SanitizationLimitError("credential call work limit exceeded")
+    spans.append((argument_start, len(text)))
+    return spans
+
+
+def _call_argument_start(text: str, start: int, end: int) -> int:
+    """Skip whitespace, continuation lines and comments before an argument."""
+    while start < end:
+        if text[start].isspace():
+            start += 1
+        elif text.startswith(("\\\n", "\\\r\n"), start):
+            start += 3 if text.startswith("\\\r\n", start) else 2
+        elif text[start] == "#" or text.startswith(("//", "/*"), start):
+            block = text.startswith("/*", start)
+            following = text.find("*/" if block else "\n", start + 1, end)
+            start = end if following < 0 else following + (2 if block else 1)
+        else:
+            return start
+    return start
+
+
+def _literal_credential_key(expression: str) -> bool:
+    """Read only a literal string key; never evaluate an arbitrary expression."""
+    expression = expression[_call_argument_start(expression, 0, len(expression)):].strip()
+    plain = _CALL_PLAIN_KEY.fullmatch(expression)
+    if plain:
+        return _sensitive_assignment_key(plain.group("key"))
+    if not expression or not (_CALL_LITERAL.match(expression) or expression.startswith("(")):
+        return False
+    # Literal evaluation is bounded separately from the linear call lexer. Long
+    # keys still receive the ordinary sensitive-name check without an AST.
+    if len(expression) > 4096:
+        return _sensitive_assignment_key(expression.strip("\"'"))
+    try:
+        value = ast.literal_eval(expression)
+    except (ValueError, SyntaxError, RecursionError):
+        return False
+    if isinstance(value, bytes):
+        value = value.decode("ascii", errors="replace")
+    return isinstance(value, str) and _sensitive_assignment_key(value)
+
+
+def _redact_credential_calls(text: str) -> str:
+    """Withhold values/defaults paired with literal credential keys in calls.
+
+    The credential key, not the callable's spelling, establishes sensitivity:
+    aliases of getenv/putenv and mapping methods receive identical protection.
+    Only first-position or key/name arguments identify a key. Nonsecret calls
+    and read-only lookups remain intact. Keyword order does not affect safety.
+    """
+    if '"' not in text and "'" not in text:
+        return text
+    pieces: list[str] = []
+    cursor = 0
+    budget = [0]
+    for call in _CALL_START.finditer(text):
+        if call.start() < cursor:
+            continue
+        arguments = _call_argument_spans(text, call.end(), budget)
+        sensitive = False
+        values: list[tuple[int, int]] = []
+        positional = 0
+        for start, end in arguments:
+            keyword = _CALL_KEYWORD.match(text, _call_argument_start(text, start, end), end)
+            if keyword:
+                name = keyword.group("name")
+                if name in {"key", "name"}:
+                    sensitive = sensitive or _literal_credential_key(text[keyword.end():end])
+                elif name in {"default", "value"}:
+                    values.append((keyword.end(), end))
+            else:
+                if positional == 0:
+                    sensitive = sensitive or _literal_credential_key(text[start:end])
+                elif positional == 1:
+                    values.append((start, end))
+                positional += 1
+        if not sensitive:
+            continue
+        for start, end in sorted(values):
+            raw = text[start:end]
+            if not raw.strip():
+                continue
+            pieces.append(text[cursor:start])
+            # Preserve physical line numbers and surrounding call arguments.
+            spaces = raw[:len(raw) - len(raw.lstrip(" \t"))]
+            pieces.append(spaces + '"' + REDACTED + '"' + "\n" * raw.count("\n"))
+            cursor = end
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
 def _sensitive_key(key: str) -> bool:
     normalized = _KEY_NORMALISE.sub("", key.lower())
     return normalized in _SENSITIVE_NAMES or normalized.endswith(_SENSITIVE_SUFFIXES)
@@ -553,6 +744,7 @@ def sanitize_text(text: str) -> str:
         raise SanitizationLimitError("text sanitization size limit exceeded")
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
+    text = _redact_credential_calls(text)
     text = _redact_python_assignments(text)
     text = _redact_yaml_multiline_values(text)
     text = _redact_mapping_values(text)

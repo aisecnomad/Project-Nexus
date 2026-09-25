@@ -1,0 +1,4 @@
+[
+  {"nodes": [{"name": "Agent", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}}]},
+  {"id": "known-workflow", "name": "Known", "nodes": [{"name": "Agent", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}}]}
+]

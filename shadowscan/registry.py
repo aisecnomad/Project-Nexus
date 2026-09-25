@@ -41,7 +41,7 @@ import yaml
 from shadowscan.errors import SetupError, SetupPathError
 from shadowscan.models import Finding, Surface
 from shadowscan.utils.files import policy_files, policy_glob, read_policy_text, require_no_symlinks
-from shadowscan.utils.identity import has_aws_account_scope
+from shadowscan.utils.identity import has_aws_account_scope, has_google_workspace_account_scope
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
@@ -303,6 +303,12 @@ class Inventory:
         if not has_aws_account_scope(finding.provider, finding.account, finding.resource):
             finding.metadata["registry_match_reason"] = "missing-aws-account-scope"
             return None
+        if not has_google_workspace_account_scope(finding.provider, finding.account):
+            finding.metadata["registry_match_reason"] = "missing-google-workspace-account-scope"
+            return None
+        if finding.metadata.get("identity_unresolved") is True:
+            finding.metadata["registry_match_reason"] = "unresolved-resource-identity"
+            return None
         matches = [
             entry for entry in self.entries
             if self._scope_matches(entry, finding)
@@ -327,6 +333,9 @@ class Inventory:
             (not entry.surfaces or finding.surface.value in entry.surfaces)
             and (not entry.providers or finding.provider in entry.providers)
             and (not entry.accounts or finding.account in entry.accounts)
+            # Older generated cards omitted the tenant. A global OAuth client
+            # resource cannot confer approval across unrelated customers.
+            and (finding.provider != "google-workspace" or bool(entry.accounts))
             and (not entry.regions or finding.region in entry.regions)
         )
 
@@ -485,6 +494,8 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
                 _has_usable_resource_identity(finding)
                 and _has_usable_scope_identity(finding)
                 and has_aws_account_scope(finding.provider, finding.account, finding.resource)
+                and has_google_workspace_account_scope(finding.provider, finding.account)
+                and finding.metadata.get("identity_unresolved") is not True
             ) else [
                 finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})
             ],

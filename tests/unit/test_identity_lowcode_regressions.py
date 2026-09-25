@@ -85,6 +85,8 @@ def test_google_token_denial_marks_scan_incomplete_and_preserves_other_users(mon
             yield {"primaryEmail": "second@example.test"}
 
         def get_json(self, path):
+            if path == "/admin/directory/v1/customers/my_customer":
+                return {"id": "C01234567"}
             if "second@example.test" in path:
                 raise HttpError(403, "https://admin.googleapis.com/admin/directory/v1/users/second/tokens")
             return {"items": [{"clientId": "client-1", "displayText": "Fireflies.ai", "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]}]}

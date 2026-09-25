@@ -140,6 +140,15 @@ class N8nConnector(_AutomationBase):
         )
 
     def _n8n_finding(self, w: dict[str, Any]) -> Finding | None:
+        # Exported blueprints can contain useful AI evidence without a provider
+        # object ID. A display name (or the string "None") is not that identity.
+        workflow_id = w.get("id")
+        identified = (isinstance(workflow_id, str) and bool(workflow_id.strip())) or (
+            isinstance(workflow_id, int) and not isinstance(workflow_id, bool) and workflow_id > 0
+        )
+        if not identified:
+            self.ctx.warn("lowcode.n8n: workflow has no valid provider id; identity coverage incomplete")
+            workflow_id = hashlib.sha256(json.dumps(w, sort_keys=True).encode()).hexdigest()
         nodes = [node for node in w["nodes"] if self._record_fields_valid(node, required=("type",), strings=("name",), mappings=("parameters",))]
         if len(nodes) != len(w["nodes"]):
             self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
@@ -148,8 +157,8 @@ class N8nConnector(_AutomationBase):
         triggers = [t for t in types if re.search(r"trigger|cron|schedule|webhook", t, re.I)]
         models = [str(get_path(n, "parameters.model.value", "parameters.model", "parameters.modelId.value", "parameters.options.model")) for n in nodes if get_path(n, "parameters.model", "parameters.modelId")]
         f = self._workflow_finding(
-            wid=str(w.get("id") or w.get("name")),
-            name=str(w.get("name")),
+            wid=str(workflow_id),
+            name=w.get("name") or "Unnamed workflow",
             blob=json.dumps({"nodes": [{"type": n.get("type"), "parameters": n.get("parameters")} for n in nodes]}, default=str)[:300_000],
             owner=get_path(w, "homeProject.name", "shared.0.project.name", "owner", "createdBy"),
             account=self.ctx.get("api_url", env="N8N_API_URL"),
@@ -159,9 +168,13 @@ class N8nConnector(_AutomationBase):
             triggers=triggers,
             ai_steps=ai_steps,
             kind=Kind.AGENT if any(t.endswith(".agent") or t.endswith("agentTool") for t in types) else Kind.WORKFLOW,
+            resource_type="workflow" if identified else "unresolved-workflow",
             extra={"node_count": len(nodes), "node_types": sorted(set(types))[:40], "tags": [t.get("name") for t in w.get("tags") or [] if isinstance(t, dict)]},
         )
         if f:
+            if not identified:
+                f.metadata["identity_unresolved"] = True
+                f.add_tag("unresolved-identity")
             apply_matches(f, model_matches(self.index, *models), weight_scale=0.5)
             f.models = sorted({m for m in models if m and m != "None"})
             if any("toolCode" in t or "executeCommand" in t or "n8n-nodes-base.code" in t or "ssh" in t.lower() for t in types):

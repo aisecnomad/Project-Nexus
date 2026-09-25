@@ -20,16 +20,26 @@ app-only `appRoleAssignments` (role ids resolved to names such as
 Microsoft SPs are skipped unless they match AI signatures (Copilot).
 Permissions (application): `Application.Read.All`, `DelegatedPermissionGrant.Read.All`,
 `Directory.Read.All`. Or pass `access_token`.
+Unresolved grant or role-assignment principals make collection incomplete while
+preserving permission evidence for investigation. Such evidence cannot establish
+an approved resource identity.
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
 "Fireflies has Gmail + Calendar for 214 users". Auth: service account with
 domain-wide delegation impersonating an admin (`service_account_file` +
 `admin_email`; scopes `admin.directory.user.readonly`,
-`admin.directory.user.security`) or `access_token`.
+`admin.directory.user.security`, `admin.directory.customer.readonly`) or an
+`access_token` with those scopes. Live collection resolves the authenticated
+immutable customer ID with `customers.get` before listing users. A configured
+concrete `customer` must match; `my_customer` and email domains are not identities.
 Offline exports may contain individual token records or per-user objects such
 as `{"user":"user@example.com","tokens":[...]}`. The latter retains user
-attribution whether supplied as one object or inside an array.
+attribution whether supplied as one object or inside an array. Offline runs must
+set `customer` to a verified immutable customer ID. Missing or conflicting scope
+makes collection incomplete and retained observations nonapprovable. Regenerate
+older Google Workspace inventory cards with the explicit customer in
+`discovery.accounts`; an accountless OAuth client binding cannot approve a grant.
 
 ### `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their

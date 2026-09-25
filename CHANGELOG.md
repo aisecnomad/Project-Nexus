@@ -18,6 +18,22 @@
 - Accept GitHub's actual workflow-run path in the release evidence gate and
   require successful exact-commit CI and CodeQL before building a candidate.
 
+### Scanner boundaries and acceptance consistency
+
+- Redact sensitive environment-call arguments before publishing source evidence,
+  and keep repository-connector exception logging free of raw exception payloads.
+- Bind Google Workspace observations and registry approvals to an immutable
+  customer identity. Unresolved identities remain visible for investigation but
+  cannot establish approval or complete collection.
+- Preserve unresolved Entra permission evidence, reject contradictory AWS account
+  envelopes, and require usable identity for n8n workflow observations.
+- Remove the duplicate lexical agent-promotion path. Provider dispatch findings
+  must pass source-semantic provenance checks and the configured test-code policy.
+- Share source-overlap validation between the holdout acceptance tools so repeated
+  examples cannot inflate sample counts or statistical confidence.
+- These changes require fresh finding baselines and acceptance evidence. Offline
+  regressions do not establish independent human review or live tenant acceptance.
+
 ### Markdown report safety
 
 - Defang bare HTTP(S) and `www.` URLs in untrusted report text so copied Markdown
