@@ -51,6 +51,10 @@ class Case:
     present: bool
     assertions: dict[str, Any]
     source: dict[str, str] | None = None
+    # A documented scanner miss or false positive. The case still runs and is
+    # counted in the metrics, but it does not fail the run; a known gap that
+    # passes is reported so the flag can be removed.
+    known_gap: bool = False
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -107,7 +111,7 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
         obj = _keys(
             item,
             {"id", "family", "description", "files", "target", "present"},
-            {"assertions", "source"},
+            {"assertions", "source", "known_gap"},
             where,
         )
         case_id, family, desc = obj["id"], obj["family"], obj["description"]
@@ -120,6 +124,9 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
             raise CorpusError(f"{where}: description must be 1 to 500 characters")
         if type(obj["present"]) is not bool:
             raise CorpusError(f"{where}: present must be boolean")
+        known_gap = obj.get("known_gap", False)
+        if type(known_gap) is not bool:
+            raise CorpusError(f"{where}: known_gap must be boolean")
         target = _keys(obj["target"], {"kind"}, {"signature"}, f"{where} target")
         try:
             kind = Kind(target["kind"])
@@ -131,10 +138,10 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
         assertions = _keys(
             obj.get("assertions", {}),
             set(),
-            {"max_agent_findings", "server_count", "server_names"},
+            {"max_agent_findings", "max_secret_findings", "server_count", "server_names"},
             f"{where} assertions",
         )
-        for key in ("max_agent_findings", "server_count"):
+        for key in ("max_agent_findings", "max_secret_findings", "server_count"):
             if key in assertions and (type(assertions[key]) is not int or not 0 <= assertions[key] <= 20):
                 raise CorpusError(f"{where}: {key} must be an integer from 0 to 20")
         if "server_names" in assertions and (
@@ -183,7 +190,9 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
                 raise CorpusError(f"{where}: source snapshot digest mismatch")
         if meta["type"] == "public-pinned" and source is None:
             raise CorpusError(f"{where}: public pinned cases require source attribution")
-        cases.append(Case(case_id, family, desc, files, kind, sig, obj["present"], assertions, source))
+        cases.append(
+            Case(case_id, family, desc, files, kind, sig, obj["present"], assertions, source, known_gap)
+        )
     return meta, cases, hashlib.sha256(raw).hexdigest()
 
 
@@ -234,6 +243,12 @@ def _assertions(case: Case, findings: list[dict[str, Any]]) -> list[str]:
             failures.append(
                 f"agent findings: expected at most {case.assertions['max_agent_findings']}; got {observed}"
             )
+    if "max_secret_findings" in case.assertions:
+        observed = sum(f["kind"] == Kind.SECRET.value for f in findings)
+        if observed > case.assertions["max_secret_findings"]:
+            failures.append(
+                f"secret findings: expected at most {case.assertions['max_secret_findings']}; got {observed}"
+            )
     if "server_count" in case.assertions:
         observed = sum(f["server_count"] for f in mcp)
         if observed != case.assertions["server_count"]:
@@ -278,6 +293,23 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "specificity": tn / (tn + fp) if tn + fp else None,
         }
     return summary
+
+
+def known_gaps(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Separate documented misses and false positives from regressions.
+
+    Flagged cases stay in the metrics so the scores stay honest. ``failing``
+    lists the gaps still open; ``passing`` lists flagged cases that now pass
+    and whose ``known_gap`` flag should be removed so they guard against
+    regression.
+    """
+    flagged = [row for row in rows if row["known_gap"]]
+    return {
+        "count": len(flagged),
+        "failing": [row["id"] for row in flagged if not row["correct"]],
+        "passing": [row["id"] for row in flagged if row["correct"]],
+        "regressions": [row["id"] for row in rows if not row["known_gap"] and not row["correct"]],
+    }
 
 
 def calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -353,6 +385,7 @@ def evaluate(path: Path, *, repeats: int = 1) -> dict[str, Any]:
                     "predicted": bool(matching),
                     "score": score,
                     "correct": case.present == bool(matching) and not assertion_failures,
+                    "known_gap": case.known_gap,
                     "assertion_failures": assertion_failures,
                     "findings": iterations[0][1],
                     "median_ms": round(statistics.median(duration for duration, _ in iterations) * 1000, 3),
@@ -363,6 +396,7 @@ def evaluate(path: Path, *, repeats: int = 1) -> dict[str, Any]:
         "corpus": {**metadata, "sha256": corpus_digest},
         "cases": rows,
         "metrics": summarize(rows),
+        "known_gaps": known_gaps(rows),
         "calibration": calibration(rows),
         "performance": {
             "repeats": repeats,
@@ -373,7 +407,8 @@ def evaluate(path: Path, *, repeats: int = 1) -> dict[str, Any]:
             "p95_scan_ms": round(_percentile(durations, 0.95) * 1000, 3),
             "total_scan_s": round(sum(durations), 3),
         },
-        "passed": all(row["correct"] for row in rows),
+        # Known gaps are counted in the metrics above but never fail the run.
+        "passed": all(row["correct"] or row["known_gap"] for row in rows),
     }
 
 
@@ -400,6 +435,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Evaluation: {report['metrics']['all']} | report: {args.output}")
         else:
             sys.stdout.write(output)
+        gaps = report["known_gaps"]
+        if gaps["count"]:
+            print(
+                f"Known gaps: {gaps['count']} flagged; still failing: {gaps['failing']}; "
+                f"now passing (remove known_gap): {gaps['passing']}",
+                file=sys.stderr,
+            )
+        if gaps["regressions"]:
+            print(f"Regressions: {gaps['regressions']}", file=sys.stderr)
         return 0 if report["passed"] else 1
     except (CorpusError, OSError, RuntimeError, ValueError) as exc:
         print(f"evaluation failed: {exc}", file=sys.stderr)

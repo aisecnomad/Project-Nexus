@@ -45,7 +45,10 @@ registered in the inventory supplied for this scan?*
 
 Confidence is a heuristic evidence score, not a measured probability. Detection
 quality depends on the repositories, providers, tenant permissions and log
-provenance in your environment. See [evaluation](docs/evaluation.md) and
+provenance in your environment. The bundled evaluation corpora are
+author-written regression cases, including multi-file cases with documented
+misses, not a field precision or recall estimate. See
+[evaluation](docs/evaluation.md) and
 [rollout acceptance](docs/production.md#rollout-acceptance) before using a risk
 threshold as a production gate.
 

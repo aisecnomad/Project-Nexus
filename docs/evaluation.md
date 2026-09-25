@@ -3,9 +3,15 @@
 The evaluation tool creates one isolated temporary repository per labeled case.
 It never clones a repository, executes sample code, uses credentials, or makes
 network requests. It invokes the same `code.filesystem` connector and bundled
-signature index used by a normal scan, with Git enrichment and secret scanning
-disabled. A warning, partial scan, skipped connector, or unstable repeated scan
-stops evaluation instead of counting missing detections as true negatives.
+signature index used by a normal scan, with Git enrichment disabled and secret
+scanning enabled. A warning, partial scan, skipped connector, or unstable
+repeated scan stops evaluation instead of counting missing detections as true
+negatives.
+
+All three bundled corpora are written or selected by the maintainers. Their
+scores are regression checks on known inputs. None of them is a random or
+representative sample of repositories, so none estimates field precision,
+recall or calibration; see the held-out procedure below for that.
 
 ## Run the reproducible corpora
 
@@ -16,6 +22,9 @@ python -m tools.evaluation.evaluate --output /tmp/nexus-synthetic-eval.json
 python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/public_corpus.json \
   --output /tmp/nexus-public-eval.json
+python -m tools.evaluation.evaluate \
+  --corpus tools/evaluation/realistic_corpus.json \
+  --output /tmp/nexus-realistic-eval.json
 python -m tools.evaluation.evaluate --repeats 5 \
   --output /tmp/nexus-timing-eval.json
 python -m tools.evaluation.benchmark --files 1000 --runs 3 \
@@ -24,8 +33,16 @@ python -m tools.evaluation.benchmark --files 1000 --runs 3 \
 
 Use distinct output filenames: reports are created as private mode `0600` files
 and will not overwrite existing ones. Exit 0 means all labels and structural
-assertions passed; exit 1 means at least one regression; exit 2 means an invalid
-corpus, incomplete scan, nondeterministic observations, or output error. Pin the
+assertions passed, or that every failing case carries `known_gap: true`; exit 1
+means at least one regression on a case without that flag; exit 2 means an
+invalid corpus, incomplete scan, nondeterministic observations, or output
+error. A `known_gap` case is a documented miss or false positive. It stays in
+the metrics, so precision and recall report the scanner as it is, and the
+report's `known_gaps` section lists the flagged count, the flagged cases that
+still fail, the flagged cases that now pass (remove the flag so they guard
+against regression) and any unflagged regressions. The flag is never a reason
+to change the scanner to fit a case; the case description records why the
+scanner gets it wrong. Pin the
 scanner commit, signature pack, corpus SHA-256 (included in each report), Python
 version and platform beside the report before comparing runs. Timing includes
 connector analysis only; fixture creation, index loading and report writing
@@ -43,9 +60,51 @@ for executable Python/TypeScript calls, f-string interpolation, JavaScript
 regex followed by code, JSX text, comments, strings, README examples,
 dependency-only usage, MCP JSON/JSONC/TOML/YAML and mixed enabled/disabled MCP
 entries. An MCP case can also require an exact active server count and names,
-and forbid any agent finding. These cases test known boundary behavior and were
-used to guide the implementation. Its precision/recall values are **synthetic
+and forbid any agent or secret finding. These cases test known boundary
+behavior and were used to guide the implementation. Most are one small file
+written to exercise one rule, so the scanner is expected to score 1.0 on them;
+that score means "no regression on the rules we already know about", not
+"accurate on real repositories". Its precision/recall values are **synthetic
 regression scores**, not independently measured field accuracy.
+
+`tools/evaluation/realistic_corpus.json` holds multi-file repository
+snapshots (3 to 8 files each) written from scratch to resemble real projects:
+a FastAPI service with a LangGraph agent, a Next.js app on the Vercel AI SDK
+with an MCP client config, a Terraform Bedrock agent module, a CrewAI crew
+with YAML agents, a Semantic Kernel console app, a LangChainGo service, an
+n8n export, a Claude Code project with subagents and `.mcp.json`, an M365
+declarative agent package, a Spring AI app, an OpenAI tool loop script, a
+Dify DSL export, a LiteLLM proxy worker, a Pydantic AI notebook and an OpenAI
+Agents SDK worker as positives; and, as negatives, repositories that share
+vocabulary with agents without using any LLM: insurance agents with a
+supervisor role, a ChatGPT usage policy in prose, a Minecraft Bedrock server,
+a generated API client, text splitters without a model, a scikit-learn
+notebook with a `transformers` tokenizer, Ansible handoff and unattended
+upgrades, shell `execute_command` loops, geology buckets tagged `bedrock`, a
+user agent parser, `REPLACE_ME` placeholders, a key rotation runbook, a Slack
+standup bot, a crypto exchange client named `gemini-python`, a `copilot-css`
+theme and a monitoring agent Helm chart. Each case labels one target kind and
+signature; placeholder cases also assert that no secret finding is produced.
+
+This corpus was written to be failable and it is: at the time of writing the
+scanner scores 14 TP, 2 FP, 1 FN and 14 TN on it (precision 0.875, recall
+0.933, specificity 0.875). The three failures carry `known_gap: true` and
+explain the cause in their description: the Semantic Kernel app is reported
+as framework usage rather than an agent because only its NuGet dependency and
+`using` directives match and no C# code pattern exists for kernel builders,
+plugins or auto tool invocation; the Flask app is promoted to a LangChain
+agent because its `create_agent()` view function matches the LangChain call
+pattern and `supervisor` matches the agent loop heuristic; and the runbook's
+illustrative `sk-proj-` value is reported as a hardcoded credential because it
+is well formed and high entropy, a finding a secret scanner cannot rule out
+from the surrounding prose. Passing cases also show attribution noise that the
+binary target does not penalise: Java `@Tool(` is credited to LangChain4j next
+to Spring AI, `new Agent({ name:` is credited to Mastra next to the OpenAI
+Agents SDK, `docker-compose.yml` files raise a container workload infra
+finding, and the CrewAI `agents.yaml` model names add an Azure OpenAI
+provider. Like the other corpora, this one is author-written: the authors
+chose the frameworks, the file layouts and the distractors, so its rates
+describe these 31 cases only and are not a field precision estimate.
 
 Source masking is a bounded lexical filter. Ruby regular expressions and `%q`
 literals, PHP heredoc interpolation, C# raw strings with multiple interpolation
@@ -72,8 +131,9 @@ signature ID. `TP` means the target is present in the case and detected; `FP`
 means absent but detected; `FN` means present and missed; `TN` means absent and
 not detected. Precision is `TP/(TP+FP)`, recall is `TP/(TP+FN)`, specificity
 is `TN/(TN+FP)`. Undefined denominators are JSON `null`. Additional assertions
+(`max_agent_findings`, `max_secret_findings`, `server_count`, `server_names`)
 appear separately as `assertion_failures` and cause a failing exit even if
-target classification matches. A finding's displayed confidence is a heuristic
+target classification matches, unless the case is a flagged known gap. A finding's displayed confidence is a heuristic
 score, not an estimated probability. The report's Brier/ECE proxies use the
 maximum target finding confidence or zero for absence, and reliability bins;
 the tiny selected sample does not calibrate that score.

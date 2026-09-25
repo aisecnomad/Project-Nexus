@@ -20,21 +20,28 @@ from tools.evaluation.evaluate import (
 )
 
 
-def _corpus(files: dict[str, str], *, present: bool = False, assertions: dict | None = None) -> dict:
+def _corpus(
+    files: dict[str, str],
+    *,
+    present: bool = False,
+    assertions: dict | None = None,
+    known_gap: bool | None = None,
+) -> dict:
+    case: dict = {
+        "id": "plain-code",
+        "family": "agent",
+        "description": "A deliberately plain source file",
+        "files": files,
+        "target": {"kind": "agent", "signature": "framework.langgraph"},
+        "present": present,
+        "assertions": assertions or {},
+    }
+    if known_gap is not None:
+        case["known_gap"] = known_gap
     return {
         "schema": 1,
         "metadata": {"name": "test", "type": "synthetic", "provenance": "unit test"},
-        "cases": [
-            {
-                "id": "plain-code",
-                "family": "agent",
-                "description": "A deliberately plain source file",
-                "files": files,
-                "target": {"kind": "agent", "signature": "framework.langgraph"},
-                "present": present,
-                "assertions": assertions or {},
-            }
-        ],
+        "cases": [case],
     }
 
 
@@ -81,6 +88,24 @@ def test_pinned_public_snapshots_have_verifiable_source_attribution():
     assert len({case.source["commit"] for case in cases}) == 2
     assert {case.present for case in cases} == {True, False}
     assert all(case.source["url"].startswith("https://github.com/") for case in cases)
+
+
+def test_realistic_corpus_has_multi_file_cases_and_documented_gaps():
+    meta, cases, _ = load_corpus(DEFAULT_CORPUS.with_name("realistic_corpus.json"))
+    assert meta["type"] == "synthetic"
+    assert len(cases) >= 30
+    assert sum(c.present for c in cases) >= 14 and sum(not c.present for c in cases) >= 14
+    assert all(3 <= len(c.files) <= 8 for c in cases)
+    assert not any(c.source for c in cases)
+    # Every documented gap explains itself; placeholder cases forbid secret findings.
+    for case in cases:
+        if case.known_gap:
+            assert "Known gap:" in case.description
+        if case.family == "secret" and not case.present:
+            assert case.assertions.get("max_secret_findings") == 0
+    assert {"semantic-kernel-csharp-console", "flask-insurance-agents-crud", "readme-key-rotation-tutorial"} <= {
+        c.id for c in cases if c.known_gap
+    }
 
 
 def test_counts_have_explicit_undefined_denominators():
@@ -141,6 +166,13 @@ def test_corpus_rejects_non_boolean_label_and_invalid_assertions(tmp_path: Path)
     data["cases"][0]["assertions"] = {"server_count": True}
     with pytest.raises(CorpusError, match="server_count"):
         load_corpus(_write(tmp_path / "data.json", data))
+    data["cases"][0]["assertions"] = {"max_secret_findings": -1}
+    with pytest.raises(CorpusError, match="max_secret_findings"):
+        load_corpus(_write(tmp_path / "data.json", data))
+    data["cases"][0]["assertions"] = {}
+    data["cases"][0]["known_gap"] = "yes"
+    with pytest.raises(CorpusError, match="known_gap"):
+        load_corpus(_write(tmp_path / "data.json", data))
 
 
 def test_public_snapshot_digest_is_verified(tmp_path: Path):
@@ -175,6 +207,46 @@ def test_structural_assertion_causes_regression_even_when_label_matches(tmp_path
     assert result["metrics"]["all"]["tn"] == 1
     assert result["passed"] is False
     assert "active MCP server count" in result["cases"][0]["assertion_failures"][0]
+
+
+def test_known_gap_is_counted_in_metrics_but_does_not_fail_the_run(tmp_path: Path):
+    corpus = _write(tmp_path / "data.json", _corpus({"plain.py": "pass\n"}, present=True, known_gap=True))
+    report = evaluate(corpus)
+    assert report["metrics"]["all"]["fn"] == 1 and report["metrics"]["all"]["recall"] == 0.0
+    assert report["cases"][0]["known_gap"] is True and report["cases"][0]["correct"] is False
+    assert report["known_gaps"] == {
+        "count": 1,
+        "failing": ["plain-code"],
+        "passing": [],
+        "regressions": [],
+    }
+    assert report["passed"] is True
+    assert main(["--corpus", str(corpus)]) == 0
+
+
+def test_passing_known_gap_is_reported_for_flag_removal(tmp_path: Path):
+    corpus = _write(tmp_path / "data.json", _corpus({"plain.py": "pass\n"}, known_gap=True))
+    report = evaluate(corpus)
+    assert report["known_gaps"]["passing"] == ["plain-code"]
+    assert report["known_gaps"]["failing"] == []
+    assert report["passed"] is True
+
+
+def test_unflagged_case_defaults_to_regression(tmp_path: Path):
+    corpus = _write(tmp_path / "data.json", _corpus({"plain.py": "pass\n"}, present=True))
+    report = evaluate(corpus)
+    assert report["cases"][0]["known_gap"] is False
+    assert report["known_gaps"] == {"count": 0, "failing": [], "passing": [], "regressions": ["plain-code"]}
+    assert report["passed"] is False
+
+
+def test_max_secret_findings_assertion_catches_a_credential(tmp_path: Path):
+    files = {"config.py": 'OPENAI_API_KEY = "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h"\n'}
+    corpus = _write(tmp_path / "data.json", _corpus(files, assertions={"max_secret_findings": 0}))
+    report = evaluate(corpus)
+    assert report["metrics"]["all"]["tn"] == 1
+    assert report["passed"] is False
+    assert "secret findings: expected at most 0; got 1" in report["cases"][0]["assertion_failures"]
 
 
 def test_cli_exits_on_wrong_label_and_writes_private_report(tmp_path: Path):
