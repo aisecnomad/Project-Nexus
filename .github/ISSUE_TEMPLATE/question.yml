@@ -1,0 +1,29 @@
+name: Usage question
+description: Ask about installation, configuration, or interpreting a sanitized result.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read [SUPPORT.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SUPPORT.md) first.
+        This is a public issue. Remove credentials, private source code, tenant identifiers,
+        and sensitive findings. For vulnerabilities use a private security advisory.
+  - type: input
+    id: version
+    attributes:
+      label: Version or full commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: Include the connector and live or offline mode, without private account details.
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Link the documentation you followed and include a sanitized command and error summary.
+    validations:
+      required: true

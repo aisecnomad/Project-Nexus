@@ -235,6 +235,12 @@ class BaseConnector(ABC):
     }
     offline_formats: ClassVar[str] = "JSON / JSONL / YAML / CSV export"
     _OFFLINE_COLLECTION_KINDS: ClassVar[dict[str, str]] = {}
+    # Provider inventory records (cloud functions, apps, containers) carry
+    # environment blocks that are mostly ordinary settings. Their values are
+    # still withheld in exports, but they are not credentials to remove from
+    # sibling fields such as ARNs. Tool/agent configuration parsers keep the
+    # default: their env blocks are where secrets live.
+    _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = False
 
     def __init__(self, ctx: ConnectorContext):
         self.ctx = ctx
@@ -825,7 +831,8 @@ class BaseConnector(ABC):
                     offset = fh.tell()
                     try:
                         encoded_chars = 0
-                        for chunk in json.JSONEncoder(default=str).iterencode(sanitize(rec)):
+                        clean = sanitize(rec, env_values_are_secrets=not self._ENV_VALUES_ARE_CONFIGURATION)
+                        for chunk in json.JSONEncoder(default=str).iterencode(clean):
                             encoded_chars += len(chunk)
                             if encoded_chars > self._MAX_OFFLINE_FILE_BYTES:
                                 raise SanitizationLimitError("export record size limit exceeded")
@@ -869,7 +876,14 @@ class BaseConnector(ABC):
                 f.connector = self.name
                 if f.provider is None:
                     f.provider = self.provider
-                f.sanitize()
+                try:
+                    f.sanitize()
+                except SanitizationLimitError:
+                    # One oversized finding must not discard the others (for
+                    # example a credential finding emitted after an aggregate
+                    # that exceeds the sanitizer's output budget).
+                    self.ctx.error(f"{self.name}: finding omitted: sanitization safety limit exceeded")
+                    continue
                 findings.append(f)
             self.ctx.check_deadline()
         except ConnectorError as exc:

@@ -25,6 +25,7 @@ python -m tools.evaluation.evaluate \
 python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/realistic_corpus.json \
   --output /tmp/nexus-realistic-eval.json
+python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/review_corpus.json \
   --output /tmp/nexus-review-eval.json
 python -m tools.evaluation.evaluate \
@@ -128,7 +129,7 @@ findings: local-module collisions, ordinary provider calls, tool-schema-only
 requests, and supported agent construction/loops. It was written after observing
 the defects and is not a fresh holdout. The existing independent corpus and its
 annotation ledger remain frozen; adding regression cases does not refresh their
-independence. The [acceptance verifier](../tools/acceptance/README.md) requires
+independence. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) requires
 separate declared human-reviewed holdout evidence for deployment decisions.
 
 Source masking is a bounded lexical filter. Ruby regular expressions and `%q`
@@ -271,7 +272,12 @@ python -m tools.evaluation.accept \
   --output /restricted/acceptance-result.json
 ```
 
-The command requires a SHA-256-bound, two-reviewer annotation ledger and rescans every case with complete, stable observations. The ledger records declarations; a reviewer still needs to verify the sampling and review process. It
+The command requires a private corpus outside the source checkout and a
+SHA-256-bound, two-reviewer ledger declaring
+`independent-human-double-label-before-scan`. Bundled suites and AI annotation
+records remain regression evidence. It rescans every case with complete, stable
+observations and checks the method on the evaluated ledger. The ledger records
+declarations; a reviewer still needs to verify the sampling and review process. It
 checks the frozen corpus digest, all required groups, minimum positive and
 negative counts, structural assertions and the predeclared precision, recall and
 specificity **lower endpoints of two-sided 95% Wilson intervals**. It accepts a
@@ -298,13 +304,19 @@ runtime execution. Review per-language/framework error slices and a separate
 tenant canary before selecting `--fail-on`. A scanner can pass this gate and
 still miss a rare production pattern.
 
-The additional provider-loop recognizer currently covers linked Python OpenAI
+One provider-loop recognizer covers linked Python OpenAI
 Chat Completions calls, model-returned tool-call arguments, dispatch and tool
 results appended to the same request history. Dispatch must target an explicitly
 declared inline tool name or a callable selected by the model-returned function
-name; parsing or converting arguments is insufficient. It does not resolve arbitrary
-helper functions, the Responses API, JavaScript provider loops or runtime imports.
-Unrecognized patterns can still produce integration findings; they are not proof
+name; parsing or converting arguments is insufficient. Another recognizer covers
+Python OpenAI Responses tool loops when the returned
+function name and arguments reach a dispatched handler, its result is fed back
+with the matching call ID, the originating call is forwarded into the request
+history, and the same input can reach another model request.
+This recognizer follows bounded direct loops and simple branch conditions.
+Neither recognizer resolves arbitrary helper functions, complex interprocedural
+flows, JavaScript provider loops or runtime imports. Unrecognized patterns can
+still produce integration findings; they are not proof
 that an agent is absent. A framework constructor alone also cannot establish that
 the configured graph makes autonomous model decisions at runtime.
 

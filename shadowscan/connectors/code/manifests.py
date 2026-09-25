@@ -745,6 +745,7 @@ def is_manifest_name(name: str) -> bool:
         or lower.endswith((".csproj", ".fsproj", ".vbproj", ".tf", ".bicep", ".gradle"))
         or lower.startswith("dockerfile")
         or lower.endswith(".dockerfile")
+        or lower == "containerfile"
         or lower.startswith(".env")
         or lower.startswith("wrangler.")
     )

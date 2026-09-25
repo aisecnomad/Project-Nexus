@@ -26,6 +26,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import (
     GitHubConnector,
+    UnusualRepositoryPath,
     _OfflineRepository,
     _remote_record,
     repository_blob_id,
@@ -253,6 +254,8 @@ class GitLabConnector(BaseConnector):
             publication_lock=self.ctx.publication_lock,
         ))
         fs.ctx.stats = self.ctx.stats
+        # Share the diagnostic budget so repositories cannot each fill 1000 entries.
+        fs.ctx._diagnostic_counts = self.ctx._diagnostic_counts
         for f in fs.analyze([{"path": local}]):
             f.connector = self.name
             f.provider = "gitlab"
@@ -384,7 +387,11 @@ class GitLabConnector(BaseConnector):
         dest = os.path.join(tmp, "repo")
         os.makedirs(dest, exist_ok=True)
         for p in selected:
-            target = repository_target(dest, p)
+            try:
+                target = repository_target(dest, p)
+            except UnusualRepositoryPath:
+                self.ctx.warn("code.gitlab: unusual repository tree path skipped; source coverage partial", incomplete=True)
+                continue
             try:
                 blob_id = repository_blob_id(blobs[p].get("id"))
             except ConnectorError:

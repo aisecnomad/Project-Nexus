@@ -484,3 +484,28 @@ def test_acceptance_rejects_nonpositive_or_ambiguous_bounds(tmp_path: Path, bad_
     data["groups"]["all"]["min_precision_lower95"] = bad_value
     _write(policy, data)
     assert acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)]) == 2
+
+
+def test_acceptance_checks_method_on_the_evaluated_ledger(tmp_path: Path, monkeypatch):
+    import importlib
+
+    corpus, policy, annotations = _acceptance_inputs(tmp_path)
+    module = importlib.import_module("tools.evaluation.accept")
+    digest = hashlib.sha256(corpus.read_bytes()).hexdigest()
+    # A ledger replaced after human-method preflight must not get human status.
+    monkeypatch.setattr(module, "evaluate", lambda *args, **kwargs: {
+        "corpus": {"sha256": digest},
+        "annotation_validation": {"method": "independent-ai-double-label-before-scan"},
+    })
+    with pytest.raises(CorpusError, match="evaluated ledger"):
+        accept(corpus, policy, annotations)
+
+
+def test_acceptance_annotation_preflight_is_bounded(tmp_path: Path):
+    from tools.evaluation.annotations import MAX_ANNOTATION_BYTES
+
+    corpus, policy, annotations = _acceptance_inputs(tmp_path)
+    annotations.write_text('{"method":"independent-human-double-label-before-scan","padding":"' +
+                           'x' * MAX_ANNOTATION_BYTES + '"}')
+    with pytest.raises(CorpusError, match="annotations"):
+        accept(corpus, policy, annotations)

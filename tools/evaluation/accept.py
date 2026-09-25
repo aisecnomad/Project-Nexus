@@ -1,8 +1,8 @@
 """Gate a frozen, independently labeled corpus against predeclared detection targets.
 
-The operator supplies a private adjudicated corpus and an independently reviewed
-policy. Neither a corpus type label nor a passing score proves that sampling and
-adjudication were independent; retain the human review record separately.
+The operator supplies a private human-adjudicated corpus and an independently
+reviewed policy. A corpus type label, a passing score, or the bundled public
+sample does not prove sampling independence or field accuracy.
 """
 
 from __future__ import annotations
@@ -17,19 +17,30 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from tools.evaluation.annotations import validate_annotations
+from shadowscan.utils.files import read_policy_text
+from tools.evaluation.annotations import MAX_ANNOTATION_BYTES
 from tools.evaluation.evaluate import DEFAULT_CORPUS, Case, CorpusError, _unique_pairs, evaluate, load_corpus
 
 MAX_POLICY_BYTES = 128_000
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _BOUNDS = ("precision", "recall", "specificity")
-_Z_95 = 1.959963984540054  # two-sided Wilson 95% interval
+_Z_95 = 1.959963984540054
+_HUMAN_METHOD = "independent-human-double-label-before-scan"
+_REPOSITORY_DIR = Path(__file__).resolve().parents[2]
+
+
+def _is_bundled_release_corpus(path: Path) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    return resolved.is_relative_to(_REPOSITORY_DIR)
 
 
 def _policy(path: Path) -> tuple[dict[str, Any], str]:
     if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_POLICY_BYTES:
         raise CorpusError("policy must be a regular, nonsymlink file of at most 128 KB")
-    raw = path.read_bytes()
+    raw = read_policy_text(path, max_bytes=MAX_POLICY_BYTES).encode("utf-8")
     try:
         policy = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
     except (UnicodeDecodeError, ValueError, RecursionError) as exc:
@@ -72,6 +83,8 @@ def _policy(path: Path) -> tuple[dict[str, Any], str]:
 
 def wilson_lower95(successes: int, attempts: int) -> float | None:
     """Conservative two-sided 95% Wilson lower endpoint for a binomial rate."""
+    if successes < 0 or attempts < 0 or successes > attempts:
+        raise CorpusError("Wilson interval requires 0 <= successes <= attempts")
     if attempts == 0:
         return None
     proportion = successes / attempts
@@ -80,6 +93,21 @@ def wilson_lower95(successes: int, attempts: int) -> float | None:
         proportion + z2 / (2 * attempts)
         - _Z_95 * math.sqrt((proportion * (1 - proportion) + z2 / (4 * attempts)) / attempts)
     ) / (1 + z2 / attempts)
+
+
+def _annotation_method(annotations: Path) -> str:
+    if annotations.is_symlink() or not annotations.is_file():
+        raise CorpusError("annotations must be a regular, nonsymlink file")
+    try:
+        ledger = json.loads(
+            read_policy_text(annotations, max_bytes=MAX_ANNOTATION_BYTES),
+            object_pairs_hook=_unique_pairs,
+        )
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise CorpusError("annotations are not valid, unambiguous UTF-8 JSON") from exc
+    if not isinstance(ledger, dict) or not isinstance(ledger.get("method"), str):
+        raise CorpusError("annotations must declare a labeling method")
+    return ledger["method"]
 
 
 def _exclude_bundled_sources(cases: list[Case], digest: str) -> None:
@@ -110,7 +138,12 @@ def _exclude_bundled_sources(cases: list[Case], digest: str) -> None:
 
 
 def accept(corpus: Path, policy_path: Path, annotations: Path) -> dict[str, Any]:
-    """Execute the scanner on the corpus and compare its results to a frozen policy."""
+    """Execute the scanner on a private holdout and compare it to a frozen policy."""
+    if _is_bundled_release_corpus(corpus):
+        raise CorpusError(
+            "bundled synthetic, public-pinned and independent corpora are regression "
+            "suites; acceptance requires a private human-adjudicated holdout"
+        )
     policy, policy_digest = _policy(policy_path)
     metadata, cases, digest = load_corpus(corpus)
     if metadata["type"] != "adjudicated":
@@ -119,17 +152,22 @@ def accept(corpus: Path, policy_path: Path, annotations: Path) -> dict[str, Any]
         raise CorpusError("corpus SHA-256 differs from the frozen acceptance policy")
     if any(case.family == "all" for case in cases):
         raise CorpusError("all is a reserved metrics group; use another case family")
-    annotation_report = validate_annotations(corpus, annotations)
-    if annotation_report["method"] != "independent-human-double-label-before-scan":
-        raise CorpusError("acceptance requires a human-labeled holdout")
+    method = _annotation_method(annotations)
+    if method != _HUMAN_METHOD:
+        raise CorpusError(
+            "acceptance requires a human-labeled holdout with independent-human-double-label-before-scan; "
+            "AI-labeled public samples remain regression evidence only"
+        )
     if any(case.known_gap for case in cases):
         raise CorpusError("known gaps cannot be waived in an acceptance holdout")
     _exclude_bundled_sources(cases, digest)
     result = evaluate(corpus, repeats=2, annotations=annotations)
-    # Recheck the digest after evaluation, in case a local process changed the
-    # corpus between the initial policy check and the evaluator's read.
     if result["corpus"]["sha256"] != policy["corpus_sha256"]:
         raise CorpusError("corpus SHA-256 differs from the frozen acceptance policy")
+    # The evaluator reopens and fully validates the ledger before scanning.
+    # Bind acceptance to that validated record, not just the earlier preflight.
+    if result["annotation_validation"]["method"] != _HUMAN_METHOD:
+        raise CorpusError("evaluated ledger must declare independent-human-double-label-before-scan")
     metrics = result["metrics"]
     if set(policy["groups"]) != set(metrics):
         raise CorpusError("policy must declare exactly all observed families and the all group")
@@ -137,7 +175,7 @@ def accept(corpus: Path, policy_path: Path, annotations: Path) -> dict[str, Any]
     groups: dict[str, dict[str, Any]] = {}
     for name, counts in sorted(metrics.items()):
         requirements = policy["groups"][name]
-        failures = []
+        failures: list[str] = []
         for sign in ("positive", "negative"):
             key = f"{sign}_cases"
             minimum = requirements[f"min_{key}"]
@@ -165,11 +203,15 @@ def accept(corpus: Path, policy_path: Path, annotations: Path) -> dict[str, Any]
         "corpus_sha256": result["corpus"]["sha256"],
         "policy_sha256": policy_digest,
         "annotation_validation": result["annotation_validation"],
+        "annotation_method": method,
         "case_assertions_passed": assertions_passed,
         "all_labels_matched": result["passed"],
         "groups": groups,
         "passed": assertions_passed and all(group["passed"] for group in groups.values()),
-        "note": "Human review must verify independent sampling, labels, and tenant applicability.",
+        "note": (
+            "Human review must verify independent sampling, labels, and tenant "
+            "applicability. A passing gate is not live tenant acceptance."
+        ),
     }
 
 
@@ -177,7 +219,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, required=True, help="private adjudicated corpus JSON")
     parser.add_argument("--policy", type=Path, required=True, help="reviewed, SHA-256-bound policy JSON")
-    parser.add_argument("--annotations", type=Path, required=True, help="frozen two-reviewer label ledger bound to the corpus")
+    parser.add_argument(
+        "--annotations",
+        type=Path,
+        required=True,
+        help="frozen two-reviewer human label ledger bound to the corpus",
+    )
     parser.add_argument("--output", type=Path, help="create a private summary JSON file, mode 0600")
     args = parser.parse_args(argv)
     try:

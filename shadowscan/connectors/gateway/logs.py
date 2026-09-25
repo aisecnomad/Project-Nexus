@@ -35,7 +35,7 @@ import secrets
 from collections import Counter, OrderedDict
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -70,6 +70,13 @@ _MAX_CACHED_USER_AGENT_CHARS = 1024
 _OPAQUE_SCOPE_PREFIX = "scope:hmac-sha256:"
 _LEGACY_SCOPE_PREFIX = "scope:sha256:"
 _PUBLIC_CREDENTIAL_ID = re.compile(r"credential:sha256:[0-9a-f]{64}\Z")
+_OPAQUE_CALLER_PREFIX = "caller:hmac-sha256:"
+_OPAQUE_LABEL_PREFIXES = ("credential:hmac-sha256:", _OPAQUE_CALLER_PREFIX)
+# Retained labels are bounded only after sanitization, so a report never
+# embeds an attacker-sized model, host, owner or sample string.
+_MAX_CALLER_LABEL_CHARS = 120
+_MAX_LABEL_CHARS = 160
+_MAX_SAMPLE_CHARS = 300
 
 
 def normalise(rec: dict[str, Any], schema: str) -> Event | None:
@@ -234,10 +241,18 @@ def normalise_with_record(
             cleaned["caller"] = ev.caller
         else:
             material = json.dumps(["shadowscan.gateway.caller.v1", ev.caller], separators=(",", ":"))
-            cleaned["caller"] = f"{ev.caller_kind}:caller:hmac-sha256:{hmac.digest(scope_key, material.encode(), 'sha256').hex()}"
+            digest = hmac.digest(scope_key, material.encode(), "sha256").hex()
+            cleaned["caller"] = f"{ev.caller_kind}:{_OPAQUE_CALLER_PREFIX}{digest}"
             cleaned["caller_redacted"] = True
+            if cleaned["caller_label"] != ev.caller_label:
+                # The label carried the same credential-like value; a stable
+                # opaque label keeps callers distinguishable without it.
+                cleaned["caller_label"] = _OPAQUE_CALLER_PREFIX + digest
     if opaque_id and ev.caller_label == opaque_id:
         cleaned["caller_label"] = opaque_id
+    # Bound the label only after sanitization: truncating first can cut a
+    # token below the length its redaction pattern recognises.
+    cleaned["caller_label"] = cleaned["caller_label"][:_MAX_CALLER_LABEL_CHARS]
     cleaned["binding_caller"] = ev.binding_caller
     return Event(**cleaned), clean_record
 
@@ -369,7 +384,12 @@ def _count(counter: Counter, key: str, amount: int, dropped: Counter, dimension:
            budget: _DetailBudget | None = None) -> None:
     """Bound retained labels, counting lost requests without inventing a label."""
     if key not in counter:
-        if len(counter) >= _MAX_DISTINCT_KEYS or (budget is not None and budget.used >= _MAX_TOTAL_DETAIL_KEYS):
+        # The first label of a distribution is always retained (bounded by
+        # callers x dimensions), so an exhausted shared budget degrades detail
+        # rather than a caller's basic classification.
+        if len(counter) >= _MAX_DISTINCT_KEYS or (
+            counter and budget is not None and budget.used >= _MAX_TOTAL_DETAIL_KEYS
+        ):
             # Count requests, never distinct attacker-provided labels.
             dropped[dimension] += amount
             return
@@ -391,8 +411,10 @@ def _record_activity(c: _Caller, ev: Event) -> None:
         end = ev.interval_end or ev.timestamp
         c.last = end if not c.last or end > c.last else c.last
         if not ev.aggregated:
-            c.hours[ev.timestamp.hour] += 1
-            c.weekdays[ev.timestamp.weekday()] += 1
+            # Normalize offset-bearing exports to the same UTC activity bucket.
+            moment = ev.timestamp.astimezone(UTC)
+            c.hours[moment.hour] += 1
+            c.weekdays[moment.weekday()] += 1
 
 
 def _record_interval(c: _Caller, ev: Event, retain_interval: bool) -> bool:
@@ -411,19 +433,19 @@ def _record_interval(c: _Caller, ev: Event, retain_interval: bool) -> bool:
 def _record_distributions(c: _Caller, ev: Event, detail_budget: _DetailBudget | None) -> None:
     """Count the event's labels in every bounded per-caller distribution."""
     if ev.model:
-        _count(c.models, str(ev.model), ev.request_count, c.distribution_events_dropped, "models", detail_budget)
+        _count(c.models, str(ev.model)[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "models", detail_budget)
     if ev.provider:
-        _count(c.providers, str(ev.provider), ev.request_count, c.distribution_events_dropped, "providers", detail_budget)
+        _count(c.providers, str(ev.provider)[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "providers", detail_budget)
     if ev.host:
-        _count(c.hosts, ev.host, ev.request_count, c.distribution_events_dropped, "hosts", detail_budget)
+        _count(c.hosts, ev.host[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "hosts", detail_budget)
     if ev.user_agent:
-        _count(c.user_agents, str(ev.user_agent)[:160], ev.request_count, c.distribution_events_dropped, "user_agents", detail_budget)
+        _count(c.user_agents, str(ev.user_agent)[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "user_agents", detail_budget)
     if ev.ip:
-        _count(c.ips, ev.ip, ev.request_count, c.distribution_events_dropped, "source_ips", detail_budget)
+        _count(c.ips, ev.ip[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "source_ips", detail_budget)
     if ev.user:
-        _count(c.users, ev.user, ev.request_count, c.distribution_events_dropped, "end_users", detail_budget)
+        _count(c.users, ev.user[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "end_users", detail_budget)
     if ev.team:
-        _count(c.teams, str(ev.team), ev.request_count, c.distribution_events_dropped, "teams", detail_budget)
+        _count(c.teams, str(ev.team)[:_MAX_LABEL_CHARS], ev.request_count, c.distribution_events_dropped, "teams", detail_budget)
     if ev.path:
         # Query strings carry per-request identifiers; the operation is the path.
         _count(
@@ -447,7 +469,10 @@ def _record_usage(c: _Caller, ev: Event, total_cost: float) -> None:
         c.errors += 1
     for k, v in ev.metadata.items():
         if v not in (None, "", {}, []) and k not in c.metadata_samples:
-            c.metadata_samples[k] = v if isinstance(v, (str, int, float, bool)) else json.dumps(v, default=str)[:300]
+            if isinstance(v, str):
+                c.metadata_samples[k] = v[:_MAX_SAMPLE_CHARS]
+            else:
+                c.metadata_samples[k] = v if isinstance(v, (int, float, bool)) else json.dumps(v, default=str)[:_MAX_SAMPLE_CHARS]
 
 
 def _record_observation(c: _Caller, ev: Event, detail_budget: _DetailBudget | None) -> None:
@@ -494,7 +519,7 @@ def _tool_use_evidence(f: Finding, c: _Caller) -> None:
         f.add_capability("tool-use")
         f.add_evidence(Evidence(signal="gateway:tool-use", description=f"{c.tools_requests}/{c.tool_known} inspected requests carried tool/function definitions ({tool_ratio:.0%}); {c.tool_call_responses} responses invoked tools", weight=min(0.9, 0.4 + tool_ratio * 0.5)))
         f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
-    if c.tool_call_responses and tool_ratio is None:
+    if c.tool_call_responses and not (tool_ratio is not None and tool_ratio > 0):
         f.add_capability("tool-use")
         f.add_evidence(Evidence(signal="gateway:tool-calls", description=f"{c.tool_call_responses} responses contained tool calls", weight=0.6))
         f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
@@ -688,15 +713,24 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 continue
             # Some gateways have a model field and a descriptive message; keep
             # those events intact rather than treating the description as a log.
-            if key == "message" and any(k in rec for k in ("model", "provider", "api_key", "service")):
+            if key == "message" and any(k in rec for k in (
+                "model", "model_name", "modelId", "provider", "api_key", "apiKey",
+                "service", "user", "user_id", "principal",
+            )):
                 break
             if isinstance(body, dict):
                 yield from self._expand_record({**self._envelope_context(rec), **body}, depth + 1)
                 return
             if isinstance(body, str):
-                parsed = self._parse_line(body, key)
+                try:
+                    parsed = parse_text_line(body)
+                except (ValueError, TypeError, RecursionError):
+                    self.ctx.warn(f"gateway.logs: invalid JSON/text record at {key}")
+                    return
                 if parsed is not None:
                     yield from self._expand_record({**self._envelope_context(rec), **parsed}, depth + 1)
+                    return
+                self.ctx.warn(f"gateway.logs: unrecognized text record at {key}")
                 return
             self.ctx.warn(f"gateway.logs: {key} must be an object or string")
             return
@@ -986,7 +1020,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         if ev.path and re.search(r"/v1/(?:chat/completions|completions|responses|messages|embeddings|models|assistants|threads|runs|audio|images|files|batches|realtime)|/openai/deployments/|/generateContent|:generateContent|:streamGenerateContent|/invoke(?:-with-response-stream)?|/converse|/mcp\b|/sse\b|/a2a\b|/agents?/|/predict\b|/api/(?:chat|generate|tags)\b", text):
             return True
         if ev.schema == "access-log" and ev.path:
-            return False
+            # A known provider/agent host identifies inference traffic even
+            # when the operation is not an enumerated endpoint; static assets
+            # and health probes were excluded above.
+            return bool(ev.host and self.index.match_domain(ev.host))
         if ev.model:
             return True
         if ev.schema == "generic" and _provider_signature(self.index, ev.provider):
@@ -1078,7 +1115,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             sid = _provider_signature(self.index, p)
             if sid:
                 f.add_model_provider(sid)
-        apply_matches(f, self.index.match_name(c.label), weight_scale=0.6)
+        if c.label != REDACTED and not c.label.startswith(_OPAQUE_LABEL_PREFIXES):
+            # An opaque pseudonym cannot carry a display name; skip the pass.
+            apply_matches(f, self.index.match_name(c.label), weight_scale=0.6)
         for u, _ in c.users.most_common(3):
             apply_matches(f, self.index.match_name(str(u)), weight_scale=0.4)
         return top_models, framework_user_agent

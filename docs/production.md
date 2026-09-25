@@ -20,7 +20,14 @@ export must include a valid team record or an explicit operator-supplied
 Teams records without valid app identity make collection incomplete while valid
 neighboring observations remain available.
 
-Use the [offline acceptance verifier](../tools/acceptance/README.md) to check the
+Code findings can change after this scanner update: an import-bound OpenAI
+Responses API function loop is promoted only when request, selected dispatch
+and matching feedback are linked, and provider loop analysis rejects unreachable
+literal branches and locally shadowed execution calls. Reconcile a fresh code
+baseline and review changed finding identities before using `--fail-on` as an
+enforcement gate. Offline source tests establish these paths, not runtime use.
+
+Use the [offline acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) to check the
 required evidence for the intended deployment scope. It checks artifact identity,
 freshness and declared review/metric requirements. It does not authenticate
 reviewers, prove that a supplied receipt came from a real tenant, or turn synthetic
@@ -28,7 +35,7 @@ tests into operational evidence. Keep receipts and human attestations in control
 audit storage and review their origin. Unsupported live connectors still require
 their own acceptance work; they cannot inherit an AWS or Slack result.
 
-The manually invoked [release-evidence workflow](../.github/workflows/release.yml)
+The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
 requires a successful main-branch CI run for the exact selected commit. It builds
 and checks the wheel, retains a runtime dependency SBOM and hashes, and produces
 GitHub artifact provenance. It does not publish to PyPI, create a release, or
@@ -65,7 +72,8 @@ lock and built wheel hash for each worker deployment.
 
 The runtime lock covers the core scanner and all cloud SDK extras on CPython
 3.11/3.12, Linux x86_64. It contains exact versions and permitted SHA-256 hashes;
-CI checks installation and dependency consistency on both Python versions. It is
+required CI checks installation and dependency consistency on both Python
+versions. Python 3.13 is a candidate until its hosted matrix job passes. It is
 not a universal lock for Windows, macOS, ARM or every future Python release.
 Resolve and validate a separate lock before deploying on another platform.
 
@@ -110,25 +118,31 @@ pip-compile --extra cloud --generate-hashes --strip-extras \
 Use `--upgrade` only for an intentional dependency refresh. Preserve the lock's
 supported-platform comment when regenerating. Do not bypass failed hash checks.
 
-The Dockerfile installs the runtime lock and the build lock under
-`--require-hashes`, builds the package with `--no-build-isolation`, and runs as
-UID/GID 65532. Its default base is `python:3.12-slim-bookworm` pinned to the
-multi-arch image index digest on the `FROM` line, with the resolution date and
-refresh procedure in the comment above it; the weekly `docker` entry in
-`.github/dependabot.yml` proposes digest refreshes, which are reviewed like any
-dependency change. To build at a digest your own review approved instead, pass
-`--build-arg PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:<approved-digest>`
-and retain the built image digest. The build context is an allowlist
-(`.dockerignore`) of package sources, signature data, packaging inputs and the
-two locks, so local bytecode, exports and credentials never enter the image.
-Distribution packages installed with apt stay unpinned because Debian removes
-superseded package versions from its mirrors and an exact pin fails at the next
-security update; the base digest fixes the starting package set, but
-`apt-get update` still reads the live archive, so the Dockerfile alone does not
-promise byte-for-byte reproducible images. CI smoke-tests a non-root, read-only
-and network-isolated image; build and test the deployment image at its approved
-base digest, including resource limits and output-directory permissions, before
-rollout.
+The Dockerfile installs the runtime and build locks under `--require-hashes`,
+builds the package with `--no-build-isolation`, and runs as UID/GID 65532. Its
+literal `FROM` pins the multi-arch `python:3.12-slim-trixie` image index. The
+image build checks that Git is 2.45 or newer for history enrichment.
+Review that exact digest and any Dependabot refresh before deployment:
+
+```bash
+docker build --tag shadowscan:reviewed .
+```
+
+Retain the reviewed base and built image digests. The build context is an
+allowlist (`.dockerignore`) of package sources, signature data, packaging
+inputs and the two locks. Distribution packages from `apt-get` and image
+metadata remain mutable, so the Dockerfile does not promise byte-for-byte
+reproducible images. CI smoke-tests a non-root, read-only and network-isolated
+image; build and test the deployment image, including resource limits and
+output-directory permissions, before rollout.
+
+The [Kubernetes offline Job example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-job.yaml) has a 20-minute
+active deadline, a placeholder for a reviewed image digest, and a matching
+NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
+reviewed `/input` volume before running it. For live API collection, use a
+separate Job and enforce a network path through an approved egress proxy; a
+standard Kubernetes NetworkPolicy cannot filter destinations by DNS name.
+
 Opt-in Git history enrichment requires Git 2.45+;
 verify the distribution Git version if that feature is needed. Keep runtime
 secrets out of the build context.
@@ -254,6 +268,17 @@ cannot reuse an Engine with an active abandoned worker. Also enforce a host/job
 wall-clock deadline and terminate the disposable worker when it expires.
 SDK connect/read limits and bounded retries reduce blocking; none guarantees a
 universal hard deadline for the whole scan.
+
+For CLI scans, `--job-deadline-seconds 600` or
+`options.job_deadline_seconds: 600` also arms a process watchdog covering plugin
+discovery, engine setup, collection and report output. The value must be positive
+and finite; omission or YAML `null` leaves it disabled. Expiry terminates the
+scanner with exit `3`, without guaranteeing a final report or cleanup. A blocked
+output stream cannot delay that exit. Successful and failed completed CLI
+invocations disarm their watchdog. `Engine` embedding does not arm it: the host
+application owns process supervision. Keep the external job deadline and process
+group/container cleanup to reap child processes and bound native code that holds
+the interpreter lock indefinitely.
 
 Code scans follow a documented coverage policy. Symbolic links that resolve
 inside the scan root are skipped silently because their targets are scanned at
@@ -486,12 +511,14 @@ self-merge.
 
 The CI workflow installs the hash-locked core/cloud runtime dependency set and validates signatures, lint, typing, dependency advisories, tests
 with a minimum 80% statement coverage, wheel creation, installed-wheel validation
-outside the source checkout and offline SARIF output. Both Python jobs enforce a
+outside the source checkout and offline SARIF output. The required Python 3.11
+and 3.12 jobs enforce a
 75% statement-coverage floor for each built-in connector module, so a
 well-tested engine cannot conceal an untested provider. Coverage proves
 execution of code paths in tests; it does not prove provider compatibility or
-complete tenant inventory. The required Python 3.12 job also builds the Docker
-image and checks its non-root UID, signature assets and
+complete tenant inventory. The new Python 3.13 matrix job awaits a successful
+hosted run and inclusion in branch protection. It builds the Docker image and
+checks its non-root UID, signature assets and
 network-isolated scan with a read-only root filesystem and resource limits.
 Focused regressions cover the review findings, private-address enforcement,
 public-key verification, plugin policy, artifact permissions and replay integrity.
@@ -605,3 +632,7 @@ requires a new scan.
 See the [consolidated hardening log](hardening-logs/consolidated-review-2026-09-24.md)
 for the maintainer's verification notes and implementation choices. It is an
 internal, AI-assisted work log, not an independent review.
+
+The [round 2 production review](production-review-2026-09-24-round2.md) records
+the later verified corrections to export sanitization, Bedrock/IAM/OCI collection,
+JWT classification, gateway detection and report rendering performance.

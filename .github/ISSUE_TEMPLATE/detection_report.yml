@@ -1,0 +1,56 @@
+name: Detection quality report
+description: Report a false positive, missed agent, or misleading confidence with a safe reproducer.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use minimal synthetic or public, permissioned examples. Do not upload private reports,
+        secrets, tenant exports, or restricted code. Report bypasses with a security impact
+        through [private security advisories](https://github.com/aisecnomad/Project-Nexus/security/advisories/new).
+        A static source indicator is not proof of runtime execution.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Detection problem
+      options:
+        - False positive
+        - Missed detection
+        - Incorrect classification or confidence
+        - Incorrect coverage or completeness
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or full commit SHA
+    validations:
+      required: true
+  - type: input
+    id: connector
+    attributes:
+      label: Connector and collection mode
+      placeholder: code.filesystem, offline
+    validations:
+      required: true
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal safe reproducer
+      description: Include a sanitized command, relevant configuration, and small code sample or public URL pinned to a commit.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include the signature ID if present, finding classification, exit code, and coverage warnings. Remove sensitive evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result and rationale
+      description: Explain why the example should or should not be classified as an agent; distinguish an SDK import from an agent loop.
+    validations:
+      required: true

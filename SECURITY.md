@@ -109,8 +109,9 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   while scanning. Runtime telemetry attribution does not prove that a particular
   dependency executed.
 
-See [deployment and migration](docs/production.md), [scan semantics](docs/scanning.md),
-and [connector permissions](docs/connectors.md).
+See [deployment and migration](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md),
+[scan semantics](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/scanning.md),
+and [connector permissions](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/connectors.md).
 
 ## Supported versions
 

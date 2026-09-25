@@ -4,9 +4,9 @@
 [![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://aisecnomad.github.io/Project-Nexus/)
+[![Docs](https://img.shields.io/badge/docs-source-blue.svg)](https://github.com/aisecnomad/Project-Nexus/tree/main/docs)
 
-**ShadowScan is an Open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
+**ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved inventory.**
 
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps and cloud accounts. It fingerprints frameworks and
@@ -91,7 +91,7 @@ Offline analysis can run in CI, on an analyst laptop or against a SIEM export.
 
 ## Frameworks & products recognised
 
-211 signatures / 912 signals, YAML-defined with explicit opt-in overrides:
+215 signatures / 994 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -147,7 +147,7 @@ python -m pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Pro
 The current `0.1.1` source version is an unreleased candidate; the version
 string does not imply a published or signed artifact. These VCS installs resolve
 transitive dependencies at install time. For deployment, use the locked install
-below. Python 3.11+ is required; CI covers 3.11 and 3.12. Core dependencies
+below. Python 3.11+ is required; CI covers 3.11, 3.12 and 3.13. Core dependencies
 include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
@@ -366,15 +366,33 @@ turns shadow findings into card skeletons for review. See
 pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
 ruff check shadowscan tests tools
-mypy shadowscan tools/evaluation
+mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
 pip-audit --progress-spinner off
 pytest -q --cov=shadowscan --cov-fail-under=80
 shadowscan scan -c examples/shadowscan.offline.yaml
 ```
 
-The test suite needs the `cloud` extra: one OCI test module imports the SDK at
-collection time, so without it pytest stops with a collection error before any
-test runs. See [CONTRIBUTING.md](CONTRIBUTING.md#development).
+Install the `cloud` extra for the same connector coverage as CI. Tests that
+require missing optional SDKs can skip, so a core-only run does not validate all
+connectors. See [CONTRIBUTING.md](CONTRIBUTING.md#getting-started).
+
+## Community and contributing
+
+Contributions are welcome from developers, security practitioners, technical
+writers and people testing the scanner against their own authorized data.
+A small documentation fix or a reproducible false-positive report is useful.
+
+| I want to… | Start here |
+|---|---|
+| Learn, ask a question or troubleshoot a scan | [Support guide](SUPPORT.md) |
+| Report a bug or suggest a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
+| Make a first contribution | [Contributor guide](CONTRIBUTING.md) |
+| Understand decisions, review and release requirements | [Governance](GOVERNANCE.md) |
+| Report a vulnerability privately | [Security policy](SECURITY.md#reporting) |
+| Understand participation standards or report harmful conduct | [Code of conduct](CODE_OF_CONDUCT.md) |
+
+Use synthetic, minimal examples in public reports. Scan results can contain
+credentials, personal data and sensitive inventory even after redaction.
 
 ## Safety notes
 

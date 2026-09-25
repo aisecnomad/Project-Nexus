@@ -47,8 +47,12 @@ def _freeze(corpus: Path, policy: Path, annotations: Path, data: dict) -> None:
 
 
 def test_ai_labeled_adjudicated_corpus_is_rejected_before_scan(tmp_path: Path) -> None:
-    source = DEFAULT_CORPUS.with_name("independent_corpus.json")
-    annotations = DEFAULT_CORPUS.with_name("independent_annotations.json")
+    # Copy outside the repository so this checks the human-label declaration,
+    # independently of the earlier repository-local holdout rejection.
+    source = tmp_path / "copied_corpus.json"
+    annotations = tmp_path / "copied_annotations.json"
+    source.write_bytes(DEFAULT_CORPUS.with_name("independent_corpus.json").read_bytes())
+    annotations.write_bytes(DEFAULT_CORPUS.with_name("independent_annotations.json").read_bytes())
     policy = tmp_path / "policy.json"
     bounds = {"min_positive_cases": 1, "min_negative_cases": 1,
               "min_precision_lower95": 0.01, "min_recall_lower95": 0.01,
