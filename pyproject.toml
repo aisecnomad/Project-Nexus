@@ -27,13 +27,13 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "click>=8.1",
+  "click>=8.5.0",
   "rich>=15.0.0",
   "PyYAML>=6.0.3",
-  "requests>=2.31",
-  "urllib3>=2.0,<3",
+  "requests>=2.34.2",
+  "urllib3>=2.8.0,<3",
   "PyJWT[crypto]>=2.14.0",
-  "regex>=2024.5.15",
+  "regex>=2026.9.10",
 ]
 
 [project.optional-dependencies]
