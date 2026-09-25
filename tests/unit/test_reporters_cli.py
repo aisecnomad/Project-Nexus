@@ -42,6 +42,21 @@ def test_all_formats_render(fixtures, index):
     assert set(FORMATS) == {"table", "csv", "html", "json", "markdown", "sarif"}
 
 
+def test_markdown_report_defangs_untrusted_bare_urls(fixtures, index):
+    result = _result(fixtures, index)
+    finding = result.findings[0]
+    finding.title = "Visit https://attacker.example/path or www.attacker.example"
+    finding.evidence[0].description = "The source also referenced HTTP://login.attacker.example"
+
+    report = render(result, "markdown")
+
+    assert "hxxps://attacker.example/path" in report
+    assert r"www\[.\]attacker.example" in report
+    assert "hxxp://login.attacker.example" in report
+    assert "https://attacker.example/path" not in report
+    assert "HTTP://login.attacker.example" not in report
+
+
 def test_cli_code_scan_and_outputs(tmp_path: Path, fixtures):
     runner = CliRunner()
     out = tmp_path / "r.json"
