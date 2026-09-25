@@ -21,7 +21,7 @@ import os
 import re
 import subprocess
 import tomllib
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
@@ -29,6 +29,7 @@ from typing import Any, ClassVar
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorError
+from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
@@ -205,41 +206,6 @@ MCP_CONFIG_NAMES = {
 }
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
-_PYTHON_IMPORT_MODULE = re.compile(r"^\s*(?:from|import)\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
-
-
-def _local_python_module_lookup(root: Path, path: Path, project_root: str) -> Callable[[str], bool]:
-    """Find checkout-local modules that could shadow an imported Python SDK.
-
-    Consult the importing file's directory and checkout/project roots, including
-    the common ``src`` layout. This only inspects names and never imports code.
-    A possible local package wins over an SDK attribution when runtime sys.path
-    and editable installs cannot be known from static source alone.
-    """
-    base = root if root.is_dir() else root.parent
-    search_paths = []
-    current = path.parent
-    while current.is_relative_to(base):
-        search_paths.append(current)
-        if current == base:
-            break
-        current = current.parent
-    search_paths.extend((base / project_root / "src", base / "src"))
-    cache: dict[str, bool] = {}
-
-    def is_local(module: str) -> bool:
-        top = module.partition(".")[0]
-        if top not in cache:
-            cache[top] = any(
-                not directory.is_symlink() and (
-                    (directory / f"{top}.py").is_file()
-                    or (directory / top / "__init__.py").is_file()
-                )
-                for directory in search_paths
-            )
-        return cache[top]
-
-    return is_local
 
 
 @dataclass
@@ -601,6 +567,21 @@ class FilesystemConnector(BaseConnector):
                     # excerpts; the manifest parser handles active XML itself.
                     content_text = _without_xml_comments(text) if ext in {".xml", ".props", ".targets", ".csproj", ".fsproj", ".vbproj"} else text
                     if is_source:
+                        local_modules: dict[str, bool] = {}
+
+                        def is_local_module(module: str) -> bool:
+                            # Resolve only within the supplied directory scope.
+                            # A standalone file has no sibling/module inventory.
+                            if root.is_file():
+                                return False
+                            name = module.split(".", 1)[0]
+                            if name not in local_modules:
+                                local_modules[name] = local_module_conflict(
+                                    module, scan_root=root, source_path=path,
+                                    project_root=root if proj_root == "." else root / proj_root,
+                                )
+                            return local_modules[name]
+
                         # Malformed trailing literals are masked through EOF;
                         # preceding valid imports/code remain inspectable.
                         ignored, ambiguous = noncode_ranges(
@@ -608,16 +589,14 @@ class FilesystemConnector(BaseConnector):
                         )
                         if ambiguous:
                             self.ctx.error(f"code.filesystem: {rel}: incomplete source lexical analysis")
-                        local_python_module = _local_python_module_lookup(root, path, proj_root) if lang == "python" else None
                         imports = (
                             self.index.match_imports(content_text, lang, ignore_spans=ignored)
                             if ignored else self.index.match_imports(content_text, lang)
                         )
                         for m in imports:
-                            if local_python_module:
-                                start, end = m.extra["start"], m.extra["end"]
-                                imported = _PYTHON_IMPORT_MODULE.match(content_text[start:end])
-                                if imported and local_python_module(imported.group(1)):
+                            if lang == "python":
+                                imported = re.match(r"\s*(?:from|import)\s+([A-Za-z_]\w*(?:\.\w+)*)", m.value)
+                                if imported and is_local_module(imported.group(1)):
                                     continue
                             record_content_match(m, excerpt(m.line))
                         code_matches = (
@@ -636,7 +615,10 @@ class FilesystemConnector(BaseConnector):
                                 m.extra["lexical_source"] = lang
                             record_content_match(m, excerpt(m.line))
                         if lang in {"python", "javascript"}:
-                            for m in bound_source_matches(self.index, content_text, lang, ignored, local_python_module):
+                            for m in bound_source_matches(
+                                self.index, content_text, lang, ignored,
+                                is_local_module=is_local_module if lang == "python" else None,
+                            ):
                                 record_content_match(m, excerpt(m.line))
                     elif not is_nonexecutable:
                         config_errors: list[str] = []

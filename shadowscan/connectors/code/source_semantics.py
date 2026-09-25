@@ -22,6 +22,8 @@ from dataclasses import dataclass
 
 import regex
 
+from shadowscan.connectors.code.provider_loops import openai_tool_loop_lines
+from shadowscan.connectors.code.responses_loops import responses_tool_loop_lines
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
@@ -30,7 +32,6 @@ from shadowscan.utils.redaction import sanitize_text
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
 MAX_CALL_TEXT = 8192
-MAX_TOOL_LOOP_AST_WORK = 200_000
 
 
 @dataclass(frozen=True)
@@ -165,8 +166,7 @@ class _PythonBindings(ast.NodeVisitor):
                 raise MatchTimeoutError("source binding call limit exceeded")
             start = self._offset(node.func.end_lineno or node.lineno, node.func.end_col_offset or 0)
             end = self._offset(node.end_lineno or node.lineno, node.end_col_offset or 0)
-            self.calls.append(_Call(binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno,
-                                    node=node))
+            self.calls.append(_Call(binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno, node=node))
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
@@ -339,7 +339,7 @@ class _PythonBindings(ast.NodeVisitor):
                            for name in set(outcomes[0]) | set(outcomes[1])}
 
 
-def _python_bindings(text: str) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.Module]:
+def _python_bindings(text: str) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
     for count, _ in enumerate(ast.walk(tree)):
         if count >= MAX_AST_NODES:
@@ -347,292 +347,6 @@ def _python_bindings(text: str) -> tuple[list[_Call], list[tuple[_Binding, int]]
     visitor = _PythonBindings(text)
     visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
-
-
-def _same_scope_nodes(node: ast.AST):
-    """Walk one loop without borrowing evidence from a nested function/class."""
-    pending = [node]
-    while pending:
-        current = pending.pop()
-        if current is not node and isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
-        yield current
-        if isinstance(current, ast.If) and isinstance(current.test, ast.Constant):
-            pending.extend(current.body if current.test.value else current.orelse)
-            continue
-        pending.extend(ast.iter_child_nodes(current))
-
-
-def _member(node: ast.AST | None, owner: str, name: str) -> bool:
-    return (isinstance(node, ast.Attribute) and node.attr == name and
-            isinstance(node.value, ast.Name) and node.value.id == owner)
-
-
-def _assigned_call(node: ast.AST) -> tuple[str, ast.Call] | None:
-    if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-        name = node.targets[0].id
-        value: ast.expr | None = node.value
-    elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-        name, value = node.target.id, node.value
-    else:
-        return None
-    if isinstance(value, ast.Await):
-        value = value.value
-    return (name, value) if isinstance(value, ast.Call) else None
-
-
-def _tool_output_dict(node: ast.AST, item: str, results: set[str]) -> bool:
-    if not isinstance(node, ast.Dict):
-        return False
-    fields = {key.value: value for key, value in zip(node.keys, node.values, strict=True)
-              if isinstance(key, ast.Constant) and isinstance(key.value, str)}
-    output = fields.get("output")
-    kind = fields.get("type")
-    return (isinstance(kind, ast.Constant) and kind.value == "function_call_output"
-            and _member(fields.get("call_id"), item, "call_id")
-            and output is not None and any(isinstance(part, ast.Name) and part.id in results
-                                           for part in ast.walk(output)))
-
-
-def _function_call_filter(node: ast.AST, item: str) -> bool:
-    return (isinstance(node, ast.Compare) and
-            len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq) and
-            any(_member(part, item, "type") for part in [node.left, *node.comparators]) and
-            any(isinstance(part, ast.Constant) and part.value == "function_call"
-                for part in [node.left, *node.comparators]))
-
-
-def _item_type_condition(node: ast.AST, item: str) -> bool | None:
-    """Evaluate a simple type guard assuming a selected function_call item."""
-    if not (isinstance(node, ast.Compare) and len(node.ops) == len(node.comparators) == 1):
-        return None
-    left, right = node.left, node.comparators[0]
-    if _member(right, item, "type"):
-        left, right = right, left
-    if not (_member(left, item, "type") and isinstance(right, ast.Constant) and isinstance(right.value, str)):
-        return None
-    if isinstance(node.ops[0], ast.Eq):
-        return right.value == "function_call"
-    if isinstance(node.ops[0], ast.NotEq):
-        return right.value != "function_call"
-    return None
-
-
-def _selected_paths(statements: list[ast.stmt], item: str, consume: Callable[[int], None]) -> list[list[ast.AST]]:
-    """Keep evidence on reachable branches for an item known to be function_call."""
-    paths: list[list[ast.AST]] = [[]]
-    for statement in statements:
-        if isinstance(statement, ast.If):
-            outcome = (bool(statement.test.value) if isinstance(statement.test, ast.Constant)
-                       else _item_type_condition(statement.test, item))
-            branches = [statement.body] if outcome is True else [statement.orelse] if outcome is False else [statement.body, statement.orelse]
-            alternatives = [path for branch in branches for path in _selected_paths(branch, item, consume)]
-            if len(paths) * len(alternatives) > 64:
-                raise MatchTimeoutError("OpenAI Responses tool path limit exceeded")
-            paths = [prior + alternative for prior in paths for alternative in alternatives]
-        elif isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
-            return []
-        elif isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
-            # Nested loops have independent control flow; do not merge their
-            # tool result with an enclosing branch's feedback.
-            continue
-        else:
-            nodes = list(_same_scope_nodes(statement))
-            consume(len(nodes) * len(paths))
-            paths = [prior + nodes for prior in paths]
-    return paths
-
-
-def _declared_tool_names(tree: ast.Module, tools: ast.AST) -> set[str]:
-    if isinstance(tools, ast.Name):
-        definitions = [statement.value for statement in tree.body
-                       if isinstance(statement, ast.Assign) and
-                       any(isinstance(target, ast.Name) and target.id == tools.id for target in statement.targets)]
-        if len(definitions) != 1:
-            return set()
-        tools = definitions[0]
-    if not isinstance(tools, (ast.List, ast.Tuple)):
-        return set()
-    names: set[str] = set()
-    for definition in tools.elts:
-        if not isinstance(definition, ast.Dict):
-            continue
-        fields = {key.value: value for key, value in zip(definition.keys, definition.values, strict=True)
-                  if isinstance(key, ast.Constant) and isinstance(key.value, str)}
-        name, kind = fields.get("name"), fields.get("type")
-        if (isinstance(name, ast.Constant) and isinstance(name.value, str) and
-                isinstance(kind, ast.Constant) and kind.value == "function"):
-            names.add(name.value)
-    return names
-
-
-def _resets_input(nodes: list[ast.AST], input_name: str) -> bool:
-    for node in nodes:
-        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == input_name
-                                                for target in node.targets):
-            return True
-        if isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and isinstance(node.target, ast.Name) and node.target.id == input_name:
-            return True
-        if isinstance(node, ast.Call) and _member(node.func, input_name, "clear"):
-            return True
-    return False
-
-
-def _has_tool_feedback(nodes: list[ast.AST], item: str, input_name: str, static_tools: set[str]) -> bool:
-    dynamic_tools: set[str] = set()
-    for child in nodes:
-        assignment = _assigned_call(child)
-        if assignment and isinstance(assignment[1].func, ast.Attribute) and assignment[1].func.attr == "get":
-            if any(_member(arg, item, "name") for arg in assignment[1].args):
-                dynamic_tools.add(assignment[0])
-        elif isinstance(child, ast.Assign) and len(child.targets) == 1 and isinstance(child.targets[0], ast.Name):
-            if isinstance(child.value, ast.Subscript) and _member(child.value.slice, item, "name"):
-                dynamic_tools.add(child.targets[0].id)
-    results: set[str] = set()
-    for child in nodes:
-        assignment = _assigned_call(child)
-        if assignment is None:
-            continue
-        result, tool_call = assignment
-        if (isinstance(tool_call.func, ast.Name) and tool_call.func.id in dynamic_tools or
-                isinstance(tool_call.func, ast.Name) and tool_call.func.id in static_tools and
-                any(_member(part, item, "arguments") for part in ast.walk(tool_call))):
-            results.add(result)
-    if not results:
-        return False
-    output_dicts = {id(child) for child in nodes if _tool_output_dict(child, item, results)}
-    if not output_dicts:
-        return False
-    output_names = {
-        child.targets[0].id for child in nodes
-        if isinstance(child, ast.Assign) and len(child.targets) == 1 and
-        isinstance(child.targets[0], ast.Name) and id(child.value) in output_dicts
-    }
-    return any(
-        isinstance(child, ast.Call) and
-        (_member(child.func, input_name, "append") and
-         any(id(arg) in output_dicts or isinstance(arg, ast.Name) and arg.id in output_names
-             for arg in child.args) or
-         _member(child.func, input_name, "extend") and
-         any(isinstance(arg, (ast.List, ast.Tuple)) and
-             any(isinstance(part, ast.Name) and part.id == item for part in arg.elts) and
-             any(id(part) in output_dicts or isinstance(part, ast.Name) and part.id in output_names
-                 for part in arg.elts)
-             for arg in child.args))
-        for child in nodes
-    )
-
-
-def _can_repeat(loop: ast.For | ast.AsyncFor | ast.While) -> bool:
-    if isinstance(loop, ast.While):
-        return not (isinstance(loop.test, ast.Constant) and not loop.test.value)
-    source = loop.iter
-    if isinstance(source, (ast.List, ast.Tuple, ast.Set)):
-        return len(source.elts) > 1
-    if (isinstance(source, ast.Call) and isinstance(source.func, ast.Name) and source.func.id == "range" and
-            not source.keywords and 1 <= len(source.args) <= 3 and
-            all(isinstance(arg, ast.Constant) and type(arg.value) is int for arg in source.args)):
-        try:
-            return len(range(*(arg.value for arg in source.args))) > 1  # type: ignore[attr-defined]
-        except (OverflowError, ValueError):
-            return True
-    return True
-
-
-def _openai_tool_loop_calls(tree: ast.Module, calls: list[_Call]) -> list[_Call]:
-    """Find a complete, iterative Responses function dispatch and feedback path.
-
-    Import binding proves the model call; the AST requires its output to drive
-    execution and return a tool result to the input of that same loop. A single
-    function call, merely configured tools, or independent source idioms cannot
-    promote an SDK import to an agent.
-    """
-    model_calls = [call for call in calls if call.node is not None and
-                   call.binding.module == "openai" and call.binding.symbol.endswith(".responses.create")]
-    if not model_calls:
-        return []
-    bound = {id(call.node): call for call in model_calls if call.node is not None}
-    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    # A static handler counts only when the same named function is declared
-    # in the schema actually passed to this model call.
-    local_functions = {node.name for node in tree.body
-                       if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    loops: dict[int, ast.For | ast.AsyncFor | ast.While] = {}
-    for call in model_calls:
-        ancestor = parents.get(id(call.node))
-        while ancestor is not None:
-            if isinstance(ancestor, (ast.For, ast.AsyncFor, ast.While)):
-                loops[id(ancestor)] = ancestor
-                break
-            if isinstance(ancestor, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-                break
-            ancestor = parents.get(id(ancestor))
-    verified: list[_Call] = []
-    work = 0
-
-    def consume(amount: int) -> None:
-        nonlocal work
-        work += amount
-        if work > MAX_TOOL_LOOP_AST_WORK:
-            raise MatchTimeoutError("OpenAI Responses loop AST work limit exceeded")
-
-    for loop in loops.values():
-        if not _can_repeat(loop):
-            continue
-        nodes = list(_same_scope_nodes(loop))
-        consume(len(nodes))
-        for statement in nodes:
-            assignment = _assigned_call(statement)
-            if assignment is None:
-                continue
-            response, model_call = assignment
-            sdk_call = bound.get(id(model_call))
-            if not (sdk_call and sdk_call.binding.module == "openai" and
-                    sdk_call.binding.symbol.endswith(".responses.create")):
-                continue
-            options = {keyword.arg: keyword.value for keyword in model_call.keywords if keyword.arg}
-            input_arg = options.get("input")
-            if not (isinstance(input_arg, ast.Name) and options.get("tools") is not None):
-                continue
-            if _resets_input(nodes, input_arg.id) or any(
-                isinstance(child, (ast.Break, ast.Return, ast.Raise)) for child in loop.body
-            ):
-                continue
-            static_tools = local_functions & _declared_tool_names(tree, options["tools"])
-            # The function-call item and the feedback must be inside the same
-            # repeated model call, and the result must feed the next input.
-            selected_lists: set[str] = set()
-            for child in nodes:
-                if not (isinstance(child, ast.Assign) and len(child.targets) == 1 and
-                        isinstance(child.targets[0], ast.Name) and isinstance(child.value, ast.ListComp) and
-                        len(child.value.generators) == 1):
-                    continue
-                comprehension = child.value.generators[0]
-                if (isinstance(comprehension.target, ast.Name) and
-                        _member(comprehension.iter, response, "output") and
-                        any(_function_call_filter(condition, comprehension.target.id)
-                            for condition in comprehension.ifs)):
-                    selected_lists.add(child.targets[0].id)
-            consume(len(nodes))
-            for selection in nodes:
-                if not (isinstance(selection, (ast.For, ast.AsyncFor)) and
-                        isinstance(selection.target, ast.Name) and
-                        (_member(selection.iter, response, "output") or
-                         isinstance(selection.iter, ast.Name) and selection.iter.id in selected_lists)):
-                    continue
-                item = selection.target.id
-                has_function_filter = (isinstance(selection.iter, ast.Name) and
-                                       selection.iter.id in selected_lists or
-                                       any(_item_type_condition(child.test, item) is not None
-                                           for child in ast.walk(selection)
-                                           if isinstance(child, ast.If)))
-                if not has_function_filter:
-                    continue
-                if any(_has_tool_feedback(path, item, input_arg.id, static_tools)
-                       for path in _selected_paths(selection.body, item, consume)):
-                    verified.append(sdk_call)
-                    break
-    return list(dict.fromkeys(verified))
 
 
 def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
@@ -735,19 +449,21 @@ def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[lis
     return calls, imports
 
 
-def bound_source_matches(index: SignatureIndex, text: str, language: str, ignored: list[tuple[int, int]],
-                         is_local_python_module: Callable[[str], bool] | None = None) -> list[Match]:
+def bound_source_matches(
+    index: SignatureIndex, text: str, language: str, ignored: list[tuple[int, int]],
+    *, is_local_module: Callable[[str], bool] | None = None,
+) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
     Invalid Python cannot establish bound constructions. The caller already
     retains lexical import/supporting evidence and reports lexical ambiguity.
     """
+    tree = None
     try:
         if language == "python":
             calls, imports, tree = _python_bindings(text)
         else:
             calls, imports = _javascript_bindings(text, ignored)
-            tree = None
     except RecursionError as exc:
         raise MatchTimeoutError("source binding recursion limit exceeded") from exc
     except (SyntaxError, ValueError):
@@ -758,13 +474,10 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
     def module_matches(binding: _Binding) -> list[Match]:
         if binding not in module_cache:
             if language == "python":
-                if is_local_python_module and is_local_python_module(binding.module):
-                    # A checkout-local module can shadow the third-party SDK.
-                    # The AST proves a name binding, not its package origin.
+                statement = f"from {binding.module} import {binding.symbol.split('.')[0]}" if binding.symbol else f"import {binding.module}"
+                matches = index.match_imports(statement, language)
+                if matches and is_local_module is not None and is_local_module(binding.module):
                     matches = []
-                else:
-                    statement = f"from {binding.module} import {binding.symbol.split('.')[0]}" if binding.symbol else f"import {binding.module}"
-                    matches = index.match_imports(statement, language)
             else:
                 matches = index.match_imports(f"import {{ example }} from '{binding.module}'", language)
                 matches += index.match_dependency("npm", binding.module)
@@ -780,15 +493,31 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
                                extra={"verified_agent": False}))
         # Some signatures describe capabilities conveyed by a particular
         # imported tool. Retain those as supporting evidence, never an agent.
-        if language == "python" and not (is_local_python_module and is_local_python_module(binding.module)):
+        if language == "python":
             statement = f"from {binding.module} import {binding.symbol}" if binding.symbol else f"import {binding.module}"
             for match in index.match_code(statement, language):
                 if match.signature_id in {m.signature_id for m in module_matches(binding)}:
                     match.line = line
                     match.extra["verified_agent"] = False
                     found.append(match)
+    provider_requests: set[int] = set()
+    responses_requests: set[int] = set()
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
+        if (tree is not None and call.node is not None and "provider.openai" in signatures
+                and call.binding.module == "openai"
+                and call.binding.symbol in {
+                    "OpenAI.chat.completions.create", "AsyncOpenAI.chat.completions.create",
+                    "AzureOpenAI.chat.completions.create", "AsyncAzureOpenAI.chat.completions.create",
+                }):
+            provider_requests.add(id(call.node))
+        if (tree is not None and call.node is not None and "provider.openai" in signatures
+                and call.binding.module == "openai"
+                and call.binding.symbol in {
+                    "OpenAI.responses.create", "AsyncOpenAI.responses.create",
+                    "AzureOpenAI.responses.create", "AsyncAzureOpenAI.responses.create",
+                }):
+            responses_requests.add(id(call.node))
         symbol = _symbol_tail(call.binding.symbol)
         canonical = symbol + call.arguments
         for signature in signatures.values():
@@ -815,17 +544,21 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
                                                      description="import-bound agent construction"),
                                    sanitize_text(f"{call.binding.module}:{symbol}("), 0.9, line=call.line,
                                    extra={"verified_agent": True}))
-    if tree is not None:
-        provider = index.get("provider.openai")
-        if provider is not None:
-            for call in _openai_tool_loop_calls(tree, calls):
-                # The resolved module must match the provider signature. A
-                # checkout-local openai.py may shadow the third-party SDK.
-                if not any(m.signature_id == provider.id for m in module_matches(call.binding)):
-                    continue
-                found.append(Match(provider, Signal(type="code", weight=0.9, agent_indicator=True,
-                                                    capabilities=["tool-use", "autonomous"],
-                                                    description="iterative Responses tool dispatch and feedback"),
-                                   "OpenAI Responses function call loop", 0.9, line=call.line,
-                                   extra={"verified_agent": True}))
+    if tree is not None and (protocol := index.get("protocol.openai-function-calling")):
+        for line in openai_tool_loop_lines(tree, provider_requests):
+            found.append(Match(
+                protocol,
+                Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
+                       description="import-bound model-selected tool dispatch with conversation feedback"),
+                "OpenAI chat tool-selection/dispatch/feedback loop", 0.9, line=line,
+                extra={"verified_agent": True},
+            ))
+        for line in responses_tool_loop_lines(tree, responses_requests):
+            found.append(Match(
+                protocol,
+                Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
+                       description="import-bound Responses function dispatch with ordered conversation feedback"),
+                "OpenAI Responses tool-selection/dispatch/feedback loop", 0.9, line=line,
+                extra={"verified_agent": True},
+            ))
     return found

@@ -44,7 +44,7 @@ jobs:
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
-      - run: mypy shadowscan tools/evaluation tools/canaries
+      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
       - run: pip-audit --progress-spinner off
       - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
@@ -56,6 +56,8 @@ jobs:
           python -m tools.evaluation.evaluate --output "$RUNNER_TEMP/shadowscan-synthetic-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/public_corpus.json \
             --output "$RUNNER_TEMP/shadowscan-public-evaluation.json"
+          python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json \
+            --output "$RUNNER_TEMP/shadowscan-review-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
             --annotations tools/evaluation/independent_annotations.json \
             --output "$RUNNER_TEMP/shadowscan-independent-evaluation.json"
