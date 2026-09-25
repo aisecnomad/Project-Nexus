@@ -29,6 +29,7 @@ from typing import Any, ClassVar
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorError
+from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
@@ -640,6 +641,21 @@ class FilesystemConnector(BaseConnector):
                     # excerpts; the manifest parser handles active XML itself.
                     content_text = _without_xml_comments(text) if ext in {".xml", ".props", ".targets", ".csproj", ".fsproj", ".vbproj"} else text
                     if is_source:
+                        local_modules: dict[str, bool] = {}
+
+                        def is_local_module(module: str) -> bool:
+                            # Resolve only within the supplied directory scope.
+                            # A standalone file has no sibling/module inventory.
+                            if root.is_file():
+                                return False
+                            name = module.split(".", 1)[0]
+                            if name not in local_modules:
+                                local_modules[name] = local_module_conflict(
+                                    module, scan_root=root, source_path=path,
+                                    project_root=root if proj_root == "." else root / proj_root,
+                                )
+                            return local_modules[name]
+
                         # Malformed trailing literals are masked through EOF;
                         # preceding valid imports/code remain inspectable.
                         ignored, ambiguous = noncode_ranges(
@@ -652,13 +668,20 @@ class FilesystemConnector(BaseConnector):
                             if ignored else self.index.match_imports(content_text, lang)
                         )
                         for m in imports:
+                            if lang == "python":
+                                imported = re.match(r"\s*(?:from|import)\s+([A-Za-z_]\w*(?:\.\w+)*)", m.value)
+                                if imported and is_local_module(imported.group(1)):
+                                    continue
                             record_content_match(m, excerpt(m.line))
                         code_matches = (
                             self.index.match_code(content_text, lang, ignore_spans=ignored)
                             if ignored else self.index.match_code(content_text, lang)
                         )
                         bound = (
-                            bound_source_matches(self.index, content_text, lang, ignored)
+                            bound_source_matches(
+                                self.index, content_text, lang, ignored,
+                                is_local_module=is_local_module if lang == "python" else None,
+                            )
                             if lang in {"python", "javascript"} else []
                         )
                         # Execution sinks describe a model-driven capability only

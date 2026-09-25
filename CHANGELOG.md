@@ -46,6 +46,23 @@ Fixes and additions:
   base moves to Debian 13 (Git 2.47) and the build fails if Git is older than 2.45.
 - Dated review records moved to `docs/reviews/`.
 
+### Production acceptance fixes (2026-09-25)
+
+- Redact opaque credentials assigned through indexed Python/JavaScript targets
+  before capturing source evidence, and escape terminal control characters in
+  verbose reports.
+- Bind Slack findings to immutable workspace IDs; preserve workspace names only
+  as display metadata. Legacy offline exports need a team envelope or explicit
+  `team_id`. Refresh Slack comparison baselines after this identity correction.
+- Reject Teams records with missing or malformed resource identity, retaining
+  valid neighboring observations while reporting incomplete coverage.
+- Distinguish repository-local Python modules from third-party agent SDKs and
+  recognize supported provider-driven tool loops through structural source
+  evidence. Static construction still does not establish runtime execution.
+- Add deployment evidence validation and a manually invoked release-evidence
+  workflow. Neither tool creates human review, live tenant results, a published
+  release, or a production acceptance claim from offline tests.
+
 ### Detection and collection assurance (2026-09-24)
 
 - Require corroborating AI evidence and bound source constructors to imported

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 import regex
 
+from shadowscan.connectors.code.provider_loops import openai_tool_loop_lines
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
@@ -44,6 +45,7 @@ class _Call:
     arguments: str
     line: int
     structural_arguments: str = ""
+    node: ast.Call | None = None
 
 
 # These APIs construct agents even when their arguments have a different order
@@ -181,7 +183,7 @@ class _PythonBindings(ast.NodeVisitor):
             start = self._offset(node.func.end_lineno or node.lineno, node.func.end_col_offset or 0)
             end = self._offset(node.end_lineno or node.lineno, node.end_col_offset or 0)
             keywords = " ".join(f"{keyword.arg}=" for keyword in node.keywords if keyword.arg)
-            self.calls.append(_Call(binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno, keywords))
+            self.calls.append(_Call(binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno, keywords, node=node))
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
@@ -356,14 +358,14 @@ class _PythonBindings(ast.NodeVisitor):
 
 def _python_bindings(
     text: str, relevant: Callable[[_Binding], bool] | None = None,
-) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
+) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
     for count, _ in enumerate(ast.walk(tree)):
         if count >= MAX_AST_NODES:
             raise MatchTimeoutError("source binding AST limit exceeded")
     visitor = _PythonBindings(text, relevant)
     visitor.visit(tree)
-    return visitor.calls, visitor.imports
+    return visitor.calls, visitor.imports, tree
 
 
 def _javascript_bindings(
@@ -470,7 +472,10 @@ def _javascript_bindings(
     return calls, imports
 
 
-def bound_source_matches(index: SignatureIndex, text: str, language: str, ignored: list[tuple[int, int]]) -> list[Match]:
+def bound_source_matches(
+    index: SignatureIndex, text: str, language: str, ignored: list[tuple[int, int]],
+    *, is_local_module: Callable[[str], bool] | None = None,
+) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
     Invalid Python cannot establish bound constructions. The caller already
@@ -484,6 +489,8 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
             if language == "python":
                 statement = f"from {binding.module} import {binding.symbol.split('.')[0]}" if binding.symbol else f"import {binding.module}"
                 matches = index.match_imports(statement, language)
+                if matches and is_local_module is not None and is_local_module(binding.module):
+                    matches = []
             else:
                 matches = index.match_imports(f"import {{ example }} from '{binding.module}'", language)
                 matches += index.match_dependency("npm", binding.module)
@@ -495,16 +502,16 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
     def relevant(binding: _Binding) -> bool:
         return bool(module_matches(binding))
 
+    tree = None
     try:
-        calls, imports = (
-            _python_bindings(text, relevant) if language == "python"
-            else _javascript_bindings(text, ignored, relevant)
-        )
+        if language == "python":
+            calls, imports, tree = _python_bindings(text, relevant)
+        else:
+            calls, imports = _javascript_bindings(text, ignored, relevant)
     except RecursionError as exc:
         raise MatchTimeoutError("source binding recursion limit exceeded") from exc
     except (SyntaxError, ValueError):
         return []
-
 
     for binding, line in imports:
         for match in module_matches(binding):
@@ -520,8 +527,16 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
                     match.line = line
                     match.extra["verified_agent"] = False
                     found.append(match)
+    provider_requests: set[int] = set()
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
+        if (tree is not None and call.node is not None and "provider.openai" in signatures
+                and call.binding.module == "openai"
+                and call.binding.symbol in {
+                    "OpenAI.chat.completions.create", "AsyncOpenAI.chat.completions.create",
+                    "AzureOpenAI.chat.completions.create", "AsyncAzureOpenAI.chat.completions.create",
+                }):
+            provider_requests.add(id(call.node))
         symbol = _symbol_tail(call.binding.symbol)
         canonical = symbol + call.arguments
         for signature in signatures.values():
@@ -562,4 +577,13 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
                                                      description="import-bound agent construction"),
                                    sanitize_text(f"{call.binding.module}:{symbol}("), 0.9, line=call.line,
                                    extra={"verified_agent": True}))
+    if tree is not None and (protocol := index.get("protocol.openai-function-calling")):
+        for line in openai_tool_loop_lines(tree, provider_requests):
+            found.append(Match(
+                protocol,
+                Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
+                       description="import-bound model-selected tool dispatch with conversation feedback"),
+                "OpenAI chat tool-selection/dispatch/feedback loop", 0.9, line=line,
+                extra={"verified_agent": True},
+            ))
     return found
