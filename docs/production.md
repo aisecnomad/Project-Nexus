@@ -487,5 +487,5 @@ against its expected issuer and allowed keys. This is signature evidence, not an
 authorization or token-acceptance decision. Key rotation during the same analysis
 requires a new scan.
 
-See [the consolidated review](consolidated-review-2026-09-24.md) for verification
+See [the consolidated review](reviews/consolidated-review-2026-09-24.md) for verification
 evidence and implementation choices.

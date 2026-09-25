@@ -204,6 +204,12 @@ fields according to the export's provenance; ShadowScan does not authenticate
 the source of an imported log. See [scan state and runtime correlation](docs/scanning.md)
 for configuration, limitations, and migration guidance.
 
+Oversize files and symbolic links that leave the scan root are skipped with a
+warning; `--strict-coverage` (`strict_coverage: true`) makes them incomplete
+coverage instead. Links that stay inside the root never reduce coverage because
+their targets are scanned directly. Evidence found only in test or fixture code
+cannot establish an agent unless `--include-tests` is set.
+
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
 scans as unsuccessful, while preserving findings from successfully assessed inputs.
@@ -249,13 +255,27 @@ See [deployment and migration](docs/production.md) for the rollout checks.
 ```
 
 * **confidence** combines evidence weights with noisy-OR. Correlated source evidence is grouped first, so repeated matches cannot inflate the score. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
-* **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence.
+* **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence. The listed factors always add up to `score`; confidence scaling and the 0–100 bounds appear as factors.
+* **danger_score** is the same model without the governance factors (inventory registration and ownership): what the agent can do, independent of whether anyone approved it. Set `options.risk_basis: danger` to base `level` and `--fail-on` on it, and `options.risk_weights` to tune weights (see [Risk policy](#risk-policy)).
 * **shadow** is `true` unless exactly one inventory entry matches an explicit resource pattern and its configured scope restrictions; names only suggest entries for review. An approved entry lends its owner to the finding.
 * **related** links findings across surfaces (the Terraform that provisions an agent ↔ the agent in the account ↔ the role calling Bedrock ↔ the CloudTrail caller).
 
 Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
 findings carry file: line locations), `csv`, `markdown`, `html` (self-contained,
 filterable, with evidence drill-down).
+
+### Risk policy
+
+```yaml
+options:
+  risk_basis: danger          # combined (default) | danger: level from capabilities, not registration
+  risk_weights:               # integers -100..100; unknown groups, kinds or governance keys are rejected
+    capabilities: {code-exec: 25}
+    tags: {meeting-bot: 20}
+    providers: {provider.deepseek: 20}
+    kinds: {agent: 20}
+    governance: {shadow: 15, no-owner: 5, registered: -10}
+```
 
 ## Sanctioned inventory
 
