@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 import regex
 
-from shadowscan.connectors.code.provider_loops import openai_tool_loop_lines
+from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
@@ -81,11 +81,24 @@ _FACTORIES = {
 
 
 # A provider SDK request that offers the model tools lets the model choose
-# actions: the same evidence the Vercel AI SDK rule treats as agent construction.
+# actions. That is tool-use capability and provider attribution; only the
+# dispatch/feedback loop recognized by ``provider_loops`` shows that the program
+# executes what the model selected.
 _TOOL_REQUEST_METHODS = re.compile(
     r"(?:^|\.)(?:create|stream|parse|converse|converse_stream|generate_content|generateContent|send_message|chat)$"
 )
 _TOOL_ARGUMENTS = re.compile(r"(?<![\w$])(?:tools|toolConfig|functions|function_declarations)\s*[=:]")
+# Import-bound request calls whose response shape the loop recognizer understands.
+_LOOP_REQUESTS: dict[str, tuple[str, frozenset[str]]] = {
+    "openai": ("provider.openai", frozenset({
+        f"{client}.chat.completions.create" for client in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI")
+    })),
+    "anthropic": ("provider.anthropic", frozenset({
+        f"{client}.{api}messages.create"
+        for client in ("Anthropic", "AsyncAnthropic", "AnthropicBedrock", "AsyncAnthropicBedrock", "AnthropicVertex", "AsyncAnthropicVertex")
+        for api in ("", "beta.")
+    })),
+}
 # Keyword arguments that evidence a specific capability of a bound construction.
 _KEYWORD_CAPABILITIES: dict[str, tuple[tuple[str, str], ...]] = {
     "framework.openai-agents-sdk": (("handoffs", "multi-agent"),),
@@ -530,12 +543,9 @@ def bound_source_matches(
     provider_requests: set[int] = set()
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
-        if (tree is not None and call.node is not None and "provider.openai" in signatures
-                and call.binding.module == "openai"
-                and call.binding.symbol in {
-                    "OpenAI.chat.completions.create", "AsyncOpenAI.chat.completions.create",
-                    "AzureOpenAI.chat.completions.create", "AsyncAzureOpenAI.chat.completions.create",
-                }):
+        loop_request = _LOOP_REQUESTS.get(call.binding.module)
+        if (tree is not None and call.node is not None and loop_request is not None
+                and loop_request[0] in signatures and call.binding.symbol in loop_request[1]):
             provider_requests.add(id(call.node))
         symbol = _symbol_tail(call.binding.symbol)
         canonical = symbol + call.arguments
@@ -549,10 +559,12 @@ def bound_source_matches(
                 signature.category == "provider" and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
                 and _TOOL_ARGUMENTS.search(call.structural_arguments)
             ):
-                found.append(Match(signature, Signal(type="code", weight=0.85, agent_indicator=True, capabilities=["tool-use"],
-                                                     description="import-bound tool-calling request"),
-                                   sanitize_text(f"{call.binding.module}:{symbol}(tools="), 0.85, line=call.line,
-                                   extra={"verified_agent": True}))
+                # Schema-only requests stay tool-enabled LLM usage: the loop
+                # evidence below decides whether selected tools are executed.
+                found.append(Match(signature, Signal(type="code", weight=0.7, capabilities=["tool-use"],
+                                                     description="import-bound request offering tools"),
+                                   sanitize_text(f"{call.binding.module}:{symbol}(tools="), 0.7, line=call.line,
+                                   extra={"verified_agent": False}))
             for keyword, capability in _KEYWORD_CAPABILITIES.get(signature.id, ()):
                 if re.search(rf"(?<![\w$]){keyword}\s*[=:]", call.structural_arguments):
                     found.append(Match(signature, Signal(type="code", weight=0.6, capabilities=[capability],
@@ -578,12 +590,12 @@ def bound_source_matches(
                                    sanitize_text(f"{call.binding.module}:{symbol}("), 0.9, line=call.line,
                                    extra={"verified_agent": True}))
     if tree is not None and (protocol := index.get("protocol.openai-function-calling")):
-        for line in openai_tool_loop_lines(tree, provider_requests):
+        for line in provider_tool_loop_lines(tree, provider_requests):
             found.append(Match(
                 protocol,
                 Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
                        description="import-bound model-selected tool dispatch with conversation feedback"),
-                "OpenAI chat tool-selection/dispatch/feedback loop", 0.9, line=line,
+                "provider tool-selection/dispatch/feedback loop", 0.9, line=line,
                 extra={"verified_agent": True},
             ))
     return found

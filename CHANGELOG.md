@@ -25,10 +25,15 @@ Fixes and additions:
   signature describes. Ordinary large files (e.g. psf/requests' test suite) no
   longer fail with `source binding call limit exceeded`; diagnostics now include
   the scanner's own limit message.
-- Provider SDK requests that pass tools (`tools=`, `toolConfig=`) are recognized
-  as import-bound tool-calling agents; Anthropic, OpenAI, Bedrock Converse and
-  Gemini tool-call shapes are matched when written as dict keys or compared
-  strings; loop checks accept `!=` as well as `==`.
+- Provider SDK requests that pass tools (`tools=`, `toolConfig=`) record
+  import-bound tool-use capability and provider attribution. The agent verdict
+  still requires the model-selected dispatch and feedback loop, which is now
+  recognized for Anthropic `messages.create` as well as OpenAI chat
+  completions, including process or code execution sinks fed with the model's
+  tool input, collected `tool_result` lists and dispatch inside `if` branches.
+  Anthropic, OpenAI, Bedrock Converse and Gemini tool-call shapes are matched
+  when written as dict keys or compared strings; loop checks accept `!=` as
+  well as `==`.
 - Shell, process and dynamic-code sinks count as code execution when the same
   file invokes a model, framework or tool-calling protocol.
 - Model providers are attributed through LangChain, LlamaIndex and Vercel AI SDK

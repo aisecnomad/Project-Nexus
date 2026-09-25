@@ -70,15 +70,55 @@ def test_raw_anthropic_tool_loop_is_agent_with_code_execution(run_connector, tmp
 
 def test_raw_openai_tool_loop_is_agent(run_connector, tmp_path):
     write(tmp_path, "agent.py", '''
+        import json
+        from openai import OpenAI
+        client = OpenAI()
+        tools = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
+        messages = [{"role": "user", "content": "find the order"}]
+        while True:
+            response = client.chat.completions.create(model="gpt-4o", messages=messages, tools=tools)
+            message = response.choices[0].message
+            if not message.tool_calls:
+                break
+            messages.append(message)
+            for call in message.tool_calls:
+                result = lookup(**json.loads(call.function.arguments))
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
+    ''')
+    findings, _ = scan(run_connector, tmp_path)
+    finding = project(findings)
+    assert finding.kind == Kind.AGENT
+    assert {"tool-use", "autonomous"} <= set(finding.capabilities)
+    assert "provider.openai" in finding.model_providers
+
+
+@pytest.mark.parametrize(("source", "provider"), [
+    ('''
         from openai import OpenAI
         client = OpenAI()
         tools = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
         response = client.chat.completions.create(model="gpt-4o", messages=[], tools=tools)
         for call in response.choices[0].message.tool_calls or []:
             print(call.function.name)
-    ''')
+    ''', "provider.openai"),
+    ('''
+        import anthropic
+        client = anthropic.Anthropic()
+        tools = [{"name": "bash", "description": "run bash", "input_schema": {"type": "object"}}]
+        response = client.messages.create(model="claude-sonnet-4-5", max_tokens=1024, tools=tools, messages=[])
+        for block in response.content:
+            print(block.type, block.input)
+    ''', "provider.anthropic"),
+])
+def test_tool_schema_without_dispatch_is_tool_enabled_usage_not_agent(run_connector, tmp_path, source, provider):
+    # Offering tools proves tool-use capability and the provider, not that the
+    # program executes what the model selects (see provider_loops).
+    write(tmp_path, "app.py", source)
     findings, _ = scan(run_connector, tmp_path)
-    assert project(findings).kind == Kind.AGENT
+    finding = project(findings)
+    assert finding.kind == Kind.FRAMEWORK_USAGE
+    assert "tool-use" in finding.capabilities
+    assert provider in finding.model_providers
 
 
 def test_single_completion_without_tools_is_llm_usage_not_agent(run_connector, tmp_path):

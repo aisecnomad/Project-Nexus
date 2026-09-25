@@ -586,9 +586,9 @@
     {
       "id": "raw-anthropic-tool-loop",
       "family": "agent",
-      "description": "A hand-written Anthropic tool-use loop that executes tool input",
+      "description": "A hand-written Anthropic tool-use loop that executes tool input and feeds results back",
       "files": {
-        "bot.py": "import anthropic, subprocess\nclient = anthropic.Anthropic()\ntools = [{\"name\": \"bash\", \"input_schema\": {\"type\": \"object\"}}]\nwhile True:\n    resp = client.messages.create(model=\"m\", max_tokens=10, tools=tools, messages=[])\n    if resp.stop_reason != \"tool_use\":\n        break\n    for block in resp.content:\n        subprocess.run(block.input[\"cmd\"], shell=True)\n"
+        "bot.py": "import anthropic, subprocess\nclient = anthropic.Anthropic()\ntools = [{\"name\": \"bash\", \"input_schema\": {\"type\": \"object\"}}]\nmessages = [{\"role\": \"user\", \"content\": \"clean up\"}]\nwhile True:\n    resp = client.messages.create(model=\"m\", max_tokens=10, tools=tools, messages=messages)\n    if resp.stop_reason != \"tool_use\":\n        break\n    for block in resp.content:\n        if block.type == \"tool_use\":\n            out = subprocess.run(block.input[\"cmd\"], shell=True, capture_output=True, text=True).stdout\n            messages.append({\"role\": \"user\", \"content\": [{\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": out}]})\n"
       },
       "target": {
         "kind": "agent",
@@ -599,9 +599,9 @@
     {
       "id": "raw-openai-tool-loop",
       "family": "agent",
-      "description": "An OpenAI chat completion offered tools, with tool-call handling",
+      "description": "An OpenAI chat completion tool loop that dispatches the selected tool and feeds its result back",
       "files": {
-        "agent.py": "from openai import OpenAI\nclient = OpenAI()\nr = client.chat.completions.create(model=\"m\", messages=[], tools=[])\nfor call in r.choices[0].message.tool_calls or []:\n    print(call.function.name)\n"
+        "agent.py": "import json\nfrom openai import OpenAI\nclient = OpenAI()\ntools = [{\"type\": \"function\", \"function\": {\"name\": \"lookup\", \"parameters\": {\"type\": \"object\"}}}]\nmessages = [{\"role\": \"user\", \"content\": \"find the order\"}]\nwhile True:\n    r = client.chat.completions.create(model=\"m\", messages=messages, tools=tools)\n    msg = r.choices[0].message\n    if not msg.tool_calls:\n        break\n    messages.append(msg)\n    for call in msg.tool_calls:\n        result = lookup(**json.loads(call.function.arguments))\n        messages.append({\"role\": \"tool\", \"tool_call_id\": call.id, \"content\": json.dumps(result)})\n"
       },
       "target": {
         "kind": "agent",
@@ -619,6 +619,22 @@
       "target": {
         "kind": "agent",
         "signature": "provider.openai"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "anthropic-tool-schema-only",
+      "family": "agent",
+      "description": "Offering tools to Anthropic without executing a selected tool is tool-enabled LLM usage, not an agent",
+      "files": {
+        "app.py": "import anthropic\nclient = anthropic.Anthropic()\ntools = [{\"name\": \"bash\", \"input_schema\": {\"type\": \"object\"}}]\nresp = client.messages.create(model=\"m\", max_tokens=10, tools=tools, messages=[])\nfor block in resp.content:\n    print(block.type, block.input)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.anthropic"
       },
       "present": false,
       "assertions": {
