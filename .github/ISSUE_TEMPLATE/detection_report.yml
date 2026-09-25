@@ -33,6 +33,12 @@ body:
       placeholder: code.filesystem, offline
     validations:
       required: true
+  - type: input
+    id: signature
+    attributes:
+      label: Signature or signal involved
+      description: The `frameworks`, `model_providers` or `evidence[].signal` values from the finding, or the output of `shadowscan signatures test <value>` for a missed item.
+      placeholder: framework.langchain, provider.openai
   - type: textarea
     id: reproducer
     attributes:
@@ -54,3 +60,11 @@ body:
       description: Explain why the example should or should not be classified as an agent; distinguish an SDK import from an agent loop.
     validations:
       required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before you submit
+      options:
+        - label: I removed credentials, tokens, private exports and identifying tenant or account data.
+          required: true
+        - label: I am willing to turn this into a labeled evaluation case under `tools/evaluation/`.

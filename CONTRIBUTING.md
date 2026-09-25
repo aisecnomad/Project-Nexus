@@ -18,7 +18,9 @@ its reporting and enforcement process. For usage questions, start with the
   or submit a focused pull request.
 - **Detection quality:** provide a minimal positive or negative fixture with the
   expected outcome and why it is correct. A dependency name alone does not prove
-  an agent is running.
+  an agent is running. File it with the
+  [detection quality report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml);
+  accepted reports become labeled regression cases under `tools/evaluation/`.
 - **Bugs:** use the [bug report form](https://github.com/aisecnomad/Project-Nexus/issues/new/choose)
   and include the full scanner commit, command, expected result and a sanitized
   reproducer. Search existing issues first; add evidence to an existing report
@@ -155,8 +157,13 @@ Do not commit private adjudicated evaluation corpora.
 - Include regression tests for bug fixes.
 - Use the PR template checklist — it matches the CI gates.
 
-When changing workflows or issue forms, run `make policy` to check action pins,
-permissions, manual publishing boundaries, and issue-form structure and labels.
+Repository policy is tested. When you touch `.github/`, a top-level document or
+a docs page, run `make policy`: `tests/test_repository_policy.py` checks action
+pins, permissions, manual publishing boundaries and issue-form structure, and
+`tests/test_repository_consistency.py` checks that Markdown links and heading
+anchors resolve, that the Makefile, pre-commit hooks and docs lock match CI,
+that every CodeQL step runs the same release, and that documented counts match
+the shipped code.
 
 ## Writing a connector
 

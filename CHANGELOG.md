@@ -11,6 +11,17 @@
 - Validate workflow and issue-form safety policies. Label synchronization creates
   or updates declared labels without deleting labels; inactive issues and pull
   requests remain open for maintainer review.
+- `tests/test_repository_consistency.py` (run by `make policy`) fails CI when a
+  relative Markdown link or heading anchor is broken, a community file is
+  missing, `CITATION.cff` disagrees with `pyproject.toml`, the CI matrix
+  differs from the classifiers, the Makefile or pre-commit hooks drift from the
+  CI gates, the docs toolchain is installed outside its lock, CodeQL steps are
+  pinned to different releases, or a documented signature, signal or connector
+  count is stale. The CI docs job now installs from `requirements-docs.lock`;
+  the install guide states that CI validates Python 3.13; the detection quality
+  report asks for the signature involved and a sanitization acknowledgement;
+  README's community table links the detection form, maintainers, roadmap,
+  changelog and citation.
 
 ### Private holdout and CLI job deadline gates
 

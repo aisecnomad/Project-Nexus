@@ -116,7 +116,7 @@ docs-serve: ## Serve documentation site with live reload
 
 .PHONY: policy
 policy: ## Check workflow and issue-form safety policies
-	python -m pytest -q tests/test_repository_policy.py
+	python -m pytest -q tests/test_repository_policy.py tests/test_repository_consistency.py
 
 # --- Cleanup ---------------------------------------------------------------
 
