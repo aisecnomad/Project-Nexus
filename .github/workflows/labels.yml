@@ -32,9 +32,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Ensure PyYAML, from the hash-locked runtime lock if the runner lacks it
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install hash-locked PyYAML in an isolated environment
         run: |
-          if python -c "import yaml" 2>/dev/null; then exit 0; fi
           python - <<'PY'
           import os
           import re
@@ -46,13 +48,15 @@ jobs:
               raise SystemExit("requirements.lock has no PyYAML pin")
           (Path(os.environ["RUNNER_TEMP"]) / "pyyaml.txt").write_text(match.group(0), encoding="utf-8")
           PY
-          python -m pip install --require-hashes --only-binary=:all: -r "$RUNNER_TEMP/pyyaml.txt"
+          python -m venv "$RUNNER_TEMP/labels-venv"
+          "$RUNNER_TEMP/labels-venv/bin/python" -m pip install \
+            --require-hashes --only-binary=:all: -r "$RUNNER_TEMP/pyyaml.txt"
       - name: Create or update every label in .github/labels.yml
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          python - <<'PY'
+          "$RUNNER_TEMP/labels-venv/bin/python" - <<'PY'
           import re
           import subprocess
           import sys

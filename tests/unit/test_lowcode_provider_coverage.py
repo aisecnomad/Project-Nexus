@@ -10,6 +10,7 @@ from requests import ConnectionError
 
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.lowcode import salesforce, servicenow
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpError
 
 
@@ -69,13 +70,78 @@ def test_servicenow_invalid_page_is_incomplete(index, monkeypatch, page):
 @pytest.mark.parametrize("max_pages,expected_calls", [(1, 1), (10, 2)])
 def test_servicenow_page_limit_and_repeated_pages_are_bounded(index, monkeypatch, max_pages, expected_calls):
     monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
+    # Keep this pagination test independent of regex timing for 500 identical
+    # display names. Native agent findings do not depend on name enrichment.
+    match_names = Mock(return_value=[])
+    monkeypatch.setattr(servicenow, "name_matches", match_names)
     page = {"result": [{"sys_id": f"agent-{number}", "name": "Assistant"} for number in range(500)]}
     connector = _live(index, servicenow.ServiceNowConnector, [page, page, RuntimeError("guard against unbounded loop")], max_pages=max_pages)
     findings = connector.run()
+    assert not connector.ctx.stats.errors, connector.ctx.stats.errors
     assert len(findings) == 500
+    assert match_names.call_count == 500
     assert connector.http.get_json.call_count == expected_calls
     assert connector.ctx.stats.incomplete
-    assert not connector.ctx.stats.errors
+
+
+def test_servicenow_name_matching_timeout_preserves_native_agents(index, monkeypatch):
+    monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
+    calls = 0
+
+    def match_names(*_args):
+        nonlocal calls
+        calls += 1
+        if calls == 37:
+            raise MatchTimeoutError("untrusted display name must not be logged")
+        return []
+
+    monkeypatch.setattr(servicenow, "name_matches", match_names)
+    page = {"result": [{"sys_id": f"agent-{number}", "name": "Assistant"} for number in range(500)]}
+    connector = _live(index, servicenow.ServiceNowConnector, [page, {"result": []}])
+    findings = connector.run()
+    assert len(findings) == 500
+    assert {finding.resource for finding in findings} == {
+        f"servicenow:sn_aia_agent:agent-{number}" for number in range(500)
+    }
+    assert calls == 37  # remaining native records do not retry failed optional enrichment
+    assert connector.http.get_json.call_count == 2
+    assert connector.ctx.stats.incomplete
+    assert len(connector.ctx.stats.warnings) == 1 and not connector.ctx.stats.errors
+    assert "untrusted display name" not in " ".join(connector.ctx.stats.warnings)
+
+
+def test_servicenow_flow_name_timeout_preserves_accumulated_native_agents(tmp_path, run_connector, monkeypatch):
+    match_names = Mock(side_effect=MatchTimeoutError("opaque input must not be logged"))
+    monkeypatch.setattr(servicenow, "name_matches", match_names)
+    source = tmp_path / "servicenow.json"
+    source.write_text(json.dumps([
+        {"_table": "sn_aia_agent", "sys_id": "agent-1", "name": "Assistant"},
+        {"_table": "sys_hub_flow", "sys_id": "flow-1", "name": "Now Assist flow"},
+    ]))
+    findings, ctx = run_connector("lowcode.servicenow", input=str(source))
+    assert {finding.resource for finding in findings} == {
+        "servicenow:sn_aia_agent:agent-1", "servicenow:sys_hub_flow:flow-1",
+    }
+    assert match_names.call_count == 1
+    assert ctx.stats.incomplete and len(ctx.stats.warnings) == 1 and not ctx.stats.errors
+    assert "opaque input" not in " ".join(ctx.stats.warnings)
+
+
+def test_servicenow_oauth_timeout_preserves_accumulated_native_agents(tmp_path, run_connector, monkeypatch):
+    monkeypatch.setattr(servicenow, "name_matches", Mock(return_value=[]))
+    match_app = Mock(side_effect=MatchTimeoutError("opaque input must not be logged"))
+    monkeypatch.setattr(servicenow, "assess_app", match_app)
+    source = tmp_path / "servicenow.json"
+    source.write_text(json.dumps([
+        {"_table": "sn_aia_agent", "sys_id": "agent-1", "name": "Assistant"},
+        {"_table": "oauth_entity", "sys_id": "oauth-1", "name": "AI app"},
+        {"_table": "oauth_entity", "sys_id": "oauth-2", "name": "AI app"},
+    ]))
+    findings, ctx = run_connector("lowcode.servicenow", input=str(source))
+    assert {finding.resource for finding in findings} == {"servicenow:sn_aia_agent:agent-1"}
+    assert match_app.call_count == 1
+    assert ctx.stats.incomplete and len(ctx.stats.warnings) == 1 and not ctx.stats.errors
+    assert "opaque input" not in " ".join(ctx.stats.warnings)
 
 
 def test_servicenow_native_table_export_keeps_valid_neighbors(tmp_path, run_connector):
