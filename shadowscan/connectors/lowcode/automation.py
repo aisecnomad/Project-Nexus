@@ -95,6 +95,7 @@ class N8nConnector(_AutomationBase):
     config_keys: ClassVar[dict[str, str]] = {
         "api_url": "https://n8n.example.com/api/v1 (env N8N_API_URL)",
         "api_key": "X-N8N-API-KEY (env N8N_API_KEY)",
+        "max_pages": "cap on 250-workflow pages, at least 1 (default 1000)",
         "input": "offline: workflow list JSON or directory of exported workflows",
     }
 
@@ -150,7 +151,9 @@ class MakeConnector(_AutomationBase):
     config_keys: ClassVar[dict[str, str]] = {
         "api_url": "zone API base, e.g. https://eu1.make.com/api/v2 (env MAKE_API_URL)",
         "token": "API token (env MAKE_API_TOKEN)",
-        "team_id": "team id (or organization_id to enumerate teams)",
+        "team_id": "team id to scan; or `organization_id`",
+        "organization_id": "organization id whose teams are all scanned when `team_id` is unset",
+        "max_pages": "cap on 100-item pages per list call, at least 1 (default 1000)",
         "input": "offline: scenarios JSON (with blueprint) / ai-agents JSON / blueprint files",
     }
 
@@ -282,6 +285,7 @@ class ZapierConnector(_AutomationBase):
     description: ClassVar[str] = "Zaps with AI steps (ChatGPT, Claude, Gemini, AI by Zapier) and Zapier Agents from account exports."
     config_keys: ClassVar[dict[str, str]] = {
         "token": "OAuth bearer with `zap` scope for https://api.zapier.com/v2/zaps (env ZAPIER_TOKEN)",
+        "max_pages": "cap on 100-zap pages, at least 1 (default 1000)",
         "input": "offline: Zapier for Companies CSV/JSON export of Zaps or Agents",
     }
     offline_formats: ClassVar[str] = "CSV / JSON export"
@@ -352,8 +356,9 @@ class WorkatoConnector(_AutomationBase):
     platform_signature: ClassVar[str] = "platform.workato"
     description: ClassVar[str] = "Workato recipes using GenAI / LLM connectors and agentic recipes."
     config_keys: ClassVar[dict[str, str]] = {
-        "api_url": "default https://www.workato.com/api (EU: https://app.eu.workato.com/api)",
+        "api_url": "default https://www.workato.com/api (EU: https://app.eu.workato.com/api; env WORKATO_API_URL)",
         "token": "API client token (env WORKATO_API_TOKEN)",
+        "max_pages": "cap on 100-recipe pages, at least 1 (default 1000)",
         "input": "offline: /api/recipes JSON",
     }
 

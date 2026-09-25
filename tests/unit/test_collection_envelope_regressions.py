@@ -22,6 +22,7 @@ def _cli_scan(tmp_path, connector: str, body: object):
     source.write_text(json.dumps(body), encoding="utf-8")
     outcome = CliRunner().invoke(
         main, ["run", connector, "--input", str(source), "--format", "json", "-o", str(report), "--fail-on", "high"]
+        + (["--set", "team_id=T1"] if connector == "saas.slack" else [])
     )
     return outcome, json.loads(report.read_text(encoding="utf-8"))
 
@@ -85,7 +86,7 @@ def test_jsonl_error_with_request_id_is_incomplete_and_preserves_neighbor(tmp_pa
     output = tmp_path / "report.json"
     source.write_text(json.dumps({"error": "permission denied", "id": "req1"}) + "\n" + json.dumps(_APP) + "\n")
     outcome = CliRunner().invoke(
-        main, ["run", "saas.slack", "--input", str(source), "--format", "json", "-o", str(output), "--fail-on", "high"]
+        main, ["run", "saas.slack", "--input", str(source), "--format", "json", "-o", str(output), "--fail-on", "high", "--set", "team_id=T1"]
     )
     report = json.loads(output.read_text())
     assert outcome.exit_code == 3, outcome.output
@@ -172,8 +173,10 @@ def test_slack_missing_or_malformed_success_collection_is_incomplete(index, monk
     result = ScanResult(findings=findings, stats=[connector.ctx.stats])
     assert not result.complete
     assert connector.ctx.stats.incomplete and connector.ctx.stats.warnings
-    if path != "/admin.apps.approved.list":
+    if path not in {"/team.info", "/admin.apps.approved.list"}:
         assert len(findings) == 1
+    if path == "/team.info":
+        assert not findings  # Workspace identity must be verified before attribution.
 
 
 def test_slack_explicit_empty_collections_are_complete(index, monkeypatch):

@@ -14,26 +14,32 @@ signatures:
     capabilities: [tool-use]
     agent_indicator: false
     signals:
+      # Every langchain-* partner package counts as framework usage except the
+      # pure text utilities (see framework.langchain-utilities); LangGraph's
+      # npm packages live under the @langchain scope and are claimed there.
       - type: dependency
         ecosystem: pypi
-        names: [langchain, langchain-core, langchain-community, langchain-classic, langchain-experimental, langchain-openai, langchain-anthropic, langchain-google-genai, langchain-google-vertexai, langchain-aws, langchain-mistralai, langchain-cohere, langchain-groq, langchain-ollama, langchain-huggingface, langchain-mcp-adapters, langchain-text-splitters]
-        prefixes: [langchain]
+        names: [langchain, langchainhub]
+        prefixes: [langchain-]
+        exclude_names: [langchain-text-splitters]
         weight: 0.85
       - type: dependency
         ecosystem: npm
-        names: [langchain, "@langchain/core", "@langchain/community", "@langchain/openai", "@langchain/anthropic", "@langchain/google-genai", "@langchain/google-vertexai", "@langchain/aws", "@langchain/mcp-adapters"]
+        names: [langchain]
         prefixes: ["@langchain/"]
+        exclude_names: ["@langchain/textsplitters"]
+        exclude_prefixes: ["@langchain/langgraph"]
         weight: 0.85
       - type: import
         languages: [python]
-        patterns: ['^[^\S\r\n]*(?:from|import)\s+langchain(?:_[a-z0-9_]+)?\b']
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+langchain(?!_text_splitters\b)(?:_[a-z0-9_]+)?\b']
         weight: 0.85
       - type: import
         languages: [javascript]
-        patterns: ['from\s+["'']@?langchain(?:/[^"'']+)?["'']', 'require\(\s*["'']@?langchain']
+        patterns: ['from\s+["'']@?langchain(?!/textsplitters\b)(?:/[^"'']+)?["'']', 'require\(\s*["'']@?langchain(?!/textsplitters\b)']
         weight: 0.85
       - type: code
-        patterns: ['\bAgentExecutor\s*\(', '\binitialize_agent\s*\(', '\bcreate_(?:react|tool_calling|openai_tools|openai_functions|structured_chat|json_chat|xml|self_ask_with_search|conversational_retrieval|sql)_agent\s*\(', '\bcreate_agent\s*\(', '\bcreateReactAgent\s*\(', '\bcreateToolCallingAgent\s*\(', '\bAgentType\.']
+        patterns: ['\bAgentExecutor\s*\(', '\binitialize_agent\s*\(', '\bcreate_(?:react|tool_calling|openai_tools|openai_functions|structured_chat|json_chat|xml|self_ask_with_search|conversational_retrieval|sql)_agent\s*\(', '(?<!def )\bcreate_agent\s*\(', '\bcreateReactAgent\s*\(', '\bcreateToolCallingAgent\s*\(', '\bAgentType\.']
         weight: 0.9
         agent_indicator: true
         capabilities: [tool-use]
@@ -43,7 +49,8 @@ signatures:
         agent_indicator: true
         capabilities: [code-exec]
       - type: code
-        patterns: ['\bConversationBufferMemory\s*\(', '\bConversationSummaryMemory\s*\(', '\bMemorySaver\s*\(']
+        # MemorySaver( is a LangGraph checkpointer and is claimed there.
+        patterns: ['\bConversationBufferMemory\s*\(', '\bConversationSummaryMemory\s*\(']
         weight: 0.4
         capabilities: [memory]
       - type: code
@@ -57,13 +64,37 @@ signatures:
         patterns: ['(?i)\blangchain\b']
         weight: 0.8
 
+  - id: framework.langchain-utilities
+    name: LangChain text utilities
+    category: framework
+    vendor: LangChain, Inc.
+    description: Stand-alone LangChain utility packages (text splitters) that do not call models or tools; weak evidence of an LLM application, never of an agent.
+    agent_indicator: false
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [langchain-text-splitters]
+        weight: 0.3
+      - type: dependency
+        ecosystem: npm
+        names: ["@langchain/textsplitters"]
+        weight: 0.3
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+langchain_text_splitters\b']
+        weight: 0.3
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@langchain/textsplitters["'']']
+        weight: 0.3
+
   - id: framework.langgraph
     name: LangGraph
     category: framework
     vendor: LangChain, Inc.
     homepage: https://langchain-ai.github.io/langgraph/
     description: Graph-based stateful multi-actor agent runtime (LangGraph, LangGraph Platform).
-    capabilities: [tool-use, memory]
+    capabilities: [tool-use]
     agent_indicator: true
     signals:
       - type: dependency
@@ -170,7 +201,8 @@ signatures:
         patterns: ['\bCrew\s*\(', '@CrewBase\b', '\bcrew\s*\(\s*\)\s*\.kickoff', '\.kickoff(?:_async|_for_each)?\s*\(', '\bAgent\s*\(\s*role\s*=', '\bLLM\s*\(\s*model\s*=', '\bFlow\[[A-Za-z_]+\]']
         weight: 0.9
       - type: code
-        patterns: ['\bCodeInterpreterTool\s*\(', '\ballow_code_execution\s*=\s*True']
+        # CodeInterpreterTool( is shared by several SDKs (heuristic.code-execution).
+        patterns: ['\ballow_code_execution\s*=\s*True']
         weight: 0.6
         capabilities: [code-exec]
       - type: file
@@ -261,7 +293,9 @@ signatures:
         patterns: ['^[^\S\r\n]*(?:from|import)\s+strands(?:_tools)?\b']
         weight: 0.95
       - type: code
-        patterns: ['\bfrom\s+strands\s+import\s+Agent\b', '\bAgent\s*\(\s*(?:model|tools|system_prompt)\s*=', '\bBedrockModel\s*\(', '\bstrands_tools\b', '\bGraphBuilder\s*\(', '\bSwarm\s*\(\s*\[']
+        # A bare Agent(model=...) constructor is shared by Agno, Pydantic AI and
+        # others and is covered by heuristic.agent-construction.
+        patterns: ['\bfrom\s+strands\s+import\s+Agent\b', '\bBedrockModel\s*\(', '\bstrands_tools\b', '\bGraphBuilder\s*\(', '\bSwarm\s*\(\s*\[']
         weight: 0.8
       - type: code
         patterns: ['\bfrom\s+strands_tools\s+import\s+[^\n]*\b(?:shell|python_repl|editor|file_write)\b']
@@ -299,7 +333,9 @@ signatures:
         patterns: ['^[^\S\r\n]*using\s+Microsoft\.Agents\.AI\b']
         weight: 0.97
       - type: code
-        patterns: ['\bChatAgent\s*\(', '\bAzureAIAgentClient\s*\(', '\bAzureOpenAIResponsesClient\s*\(', '\bWorkflowBuilder\s*\(', '\bCreateAIAgent\s*\(', '\bAIAgent\b\s+\w+\s*=', '\bMagenticBuilder\s*\(', '\bHandoffBuilder\s*\(']
+        # AzureAIAgentClient( targets Azure AI Foundry Agents and is claimed there;
+        # the agent_framework import signal still attributes the framework.
+        patterns: ['\bChatAgent\s*\(', '\bAzureOpenAIResponsesClient\s*\(', '\bWorkflowBuilder\s*\(', '\bCreateAIAgent\s*\(', '\bAIAgent\b\s+\w+\s*=', '\bMagenticBuilder\s*\(', '\bHandoffBuilder\s*\(']
         weight: 0.85
       - type: user_agent
         patterns: ['(?i)agent-framework']
@@ -335,7 +371,7 @@ signatures:
         patterns: ['^[^\S\r\n]*using\s+Microsoft\.SemanticKernel\b']
         weight: 0.9
       - type: code
-        patterns: ['\b(?:ChatCompletionAgent|OpenAIAssistantAgent|AzureAIAgent|AgentGroupChat|BedrockAgent|CopilotStudioAgent)\s*\(', '@kernel_function\b', '\[KernelFunction\]', '\bFunctionChoiceBehavior\.Auto\s*\(']
+        patterns: ['\b(?:ChatCompletionAgent|OpenAIAssistantAgent|AzureAIAgent|AgentGroupChat|BedrockAgent|CopilotStudioAgent)\s*\(', '@kernel_function\b', '\[KernelFunction(?:\]|\()', '\bFunctionChoiceBehavior\.(?:Auto|Required)\s*\(', '\bKernel\.CreateBuilder\s*\(', '\.Plugins\.AddFrom(?:Type|Object|Functions)\s*[<(]', '\bToolCallBehavior\.AutoInvokeKernelFunctions\b']
         weight: 0.85
         agent_indicator: true
 
@@ -423,9 +459,14 @@ signatures:
     vendor: OpenAI
     homepage: https://openai.github.io/openai-agents-python/
     description: OpenAI's Agents SDK (Python and TypeScript) with handoffs, guardrails, tracing and hosted tools.
-    capabilities: [tool-use, multi-agent]
+    capabilities: [tool-use]
     agent_indicator: true
     signals:
+      - type: code
+        description: Hand-offs between agents
+        patterns: ['\bhandoff\s*\(', '\bhandoffs\s*[=:]\s*\[']
+        weight: 0.6
+        capabilities: [multi-agent]
       - type: dependency
         ecosystem: pypi
         names: [openai-agents]
@@ -444,16 +485,16 @@ signatures:
         patterns: ['from\s+["'']@openai/agents']
         weight: 0.97
       - type: code
-        patterns: ['\bRunner\.run(?:_sync|_streamed|Sync)?\s*\(', '@function_tool\b', '\bhandoffs\s*=\s*\[', '\bAgent\s*\(\s*name\s*=\s*["''][^"'']+["'']\s*,\s*instructions\s*=', '\bnew\s+Agent\s*\(\s*\{\s*name\s*:']
+        # new Agent({ name: ... }) is shared with Mastra and others and is covered
+        # by heuristic.agent-construction.
+        patterns: ['\bRunner\.run(?:_sync|_streamed|Sync)?\s*\(', '@function_tool\b', '\bhandoffs\s*=\s*\[', '\bAgent\s*\(\s*name\s*=\s*["''][^"'']+["'']\s*,\s*instructions\s*=']
         weight: 0.85
       - type: code
-        patterns: ['\bComputerTool\s*\(', '\bCodeInterpreterTool\s*\(', '\bLocalShellTool\s*\(']
+        # CodeInterpreterTool( / WebSearchTool( are shared identifiers covered by
+        # heuristic.code-execution and heuristic.browsing.
+        patterns: ['\bComputerTool\s*\(', '\bLocalShellTool\s*\(']
         weight: 0.6
         capabilities: [code-exec]
-      - type: code
-        patterns: ['\bWebSearchTool\s*\(']
-        weight: 0.5
-        capabilities: [browsing]
       - type: user_agent
         patterns: ['(?i)openai-agents', '(?i)Agents/Python', '(?i)agents-sdk']
         weight: 0.85
@@ -588,7 +629,8 @@ signatures:
         patterns: ['from\s+["'']@mastra/']
         weight: 0.97
       - type: code
-        patterns: ['\bnew\s+Mastra\s*\(\s*\{', '\bnew\s+Agent\s*\(\s*\{\s*name\s*:', '\bcreateTool\s*\(\s*\{']
+        # new Agent({ name: ... }) is covered by heuristic.agent-construction.
+        patterns: ['\bnew\s+Mastra\s*\(\s*\{', '\bcreateTool\s*\(\s*\{']
         weight: 0.7
 
   - id: framework.haystack
@@ -1010,3 +1052,312 @@ signatures:
         languages: [python]
         patterns: ['^[^\S\r\n]*(?:from|import)\s+embedchain\b']
         weight: 0.8
+
+  # ------------------------------------------------------- more agents
+  - id: framework.qwen-agent
+    name: Qwen-Agent
+    category: framework
+    vendor: Alibaba Cloud
+    homepage: https://github.com/QwenLM/Qwen-Agent
+    description: Agent framework on Qwen models (function calling, code interpreter, RAG) that also powers Qwen Chat.
+    capabilities: [tool-use, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [qwen-agent]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+qwen_agent\b']
+        weight: 0.95
+      - type: code
+        patterns: ['\bAssistant\s*\(\s*llm\s*=', '\bReActChat\s*\(', '\bWebUI\s*\(\s*bot\b']
+        weight: 0.7
+
+  - id: framework.nvidia-nemo-agent-toolkit
+    name: NVIDIA NeMo Agent Toolkit (AIQ)
+    category: framework
+    vendor: NVIDIA
+    homepage: https://github.com/NVIDIA/NeMo-Agent-Toolkit
+    description: NVIDIA's framework-agnostic agent toolkit (formerly Agent Intelligence / AIQ toolkit) with YAML-configured workflows, profiling and evaluation.
+    capabilities: [tool-use, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [nvidia-nat, nvidia-nat-core, nvidia-nat-langchain, nvidia-nat-crewai, nvidia-nat-llama-index, nvidia-nat-mcp, nvidia-nat-agno, nvidia-nat-semantic-kernel, aiqtoolkit, aiqtoolkit-langchain, aiqtoolkit-crewai, aiqtoolkit-llama-index, aiqtoolkit-mcp, agentiq]
+        prefixes: [nvidia-nat, aiqtoolkit]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+(?:nat|aiq)\.(?:agent|builder|cli|data_models|runtime|tool|profiler|eval|plugins|front_ends|observability)\b']
+        weight: 0.9
+      - type: code
+        patterns: ['@register_function\s*\(\s*config_type\s*=', '\b(?:nat|aiq)\s+(?:run|serve|eval|start)\s+--config_file\b', '^[^\S\r\n]*_type:\s*(?:react_agent|tool_calling_agent|rewoo_agent|reasoning_agent)\s*$']
+        weight: 0.85
+
+  - id: framework.dapr-agents
+    name: Dapr Agents
+    category: framework
+    vendor: Dapr (CNCF)
+    homepage: https://dapr.github.io/dapr-agents/
+    description: Durable, actor-based agents and multi-agent workflows on the Dapr runtime.
+    capabilities: [tool-use, multi-agent, memory]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [dapr-agents]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+dapr_agents\b']
+        weight: 0.95
+      - type: code
+        patterns: ['\bDurableAgent\s*\(', '\bDaprChatClient\s*\(']
+        weight: 0.8
+
+  - id: framework.praisonai
+    name: PraisonAI
+    category: framework
+    vendor: PraisonAI
+    homepage: https://docs.praison.ai
+    description: Low-code multi-agent framework (Python and TypeScript) with YAML-defined agents.
+    capabilities: [tool-use, multi-agent]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [praisonaiagents, praisonai, praisonai-tools]
+        prefixes: [praisonai]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: [praisonai]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+praisonai(?:agents)?\b']
+        weight: 0.95
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']praisonai["'']']
+        weight: 0.95
+      - type: code
+        patterns: ['\bPraisonAIAgents\s*\(', '\bpraisonai\s+(?:--|agents\.yaml)']
+        weight: 0.8
+
+  - id: framework.deepagents
+    name: Deep Agents (LangChain)
+    category: framework
+    vendor: LangChain, Inc.
+    homepage: https://github.com/langchain-ai/deepagents
+    description: LangGraph-based "deep" agent harness with planning, sub-agents and a virtual filesystem.
+    capabilities: [tool-use, multi-agent, memory]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [deepagents, deepagents-cli]
+        weight: 0.95
+      - type: dependency
+        ecosystem: npm
+        names: [deepagents]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+deepagents\b']
+        weight: 0.95
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']deepagents["'']']
+        weight: 0.95
+      - type: code
+        patterns: ['\b(?:async_)?create_deep_agent\s*\(', '\bcreateDeepAgent\s*\(']
+        weight: 0.9
+
+  - id: framework.swe-agent
+    name: SWE-agent
+    category: framework
+    vendor: Princeton / Stanford
+    homepage: https://swe-agent.com
+    description: Autonomous software-engineering agent that runs shell commands inside a sandboxed repository (SWE-ReX runtime).
+    capabilities: [code-exec, autonomous]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [sweagent, swe-rex]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+(?:sweagent|swerex)\b']
+        weight: 0.95
+      - type: code
+        patterns: ['\bsweagent\s+run(?:-batch)?\b', '\bsweagent\.agent\b']
+        weight: 0.85
+      - type: image
+        patterns: ['sweagent/swe-agent']
+        weight: 0.9
+
+  - id: framework.gpt-engineer
+    name: GPT Engineer
+    category: framework
+    vendor: gpt-engineer
+    homepage: https://github.com/AntonOsika/gpt-engineer
+    description: Generates and runs whole code bases from a prompt (predecessor of Lovable).
+    capabilities: [code-exec, autonomous]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [gpt-engineer]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+gpt_engineer\b']
+        weight: 0.95
+      - type: file
+        globs: [".gpteng/**", "**/.gpteng/**"]
+        weight: 0.8
+      - type: code
+        patterns: ['\bgpte\s+(?:-i\s+)?[\w./-]+', '\bgpt-engineer\s+[\w./-]+']
+        weight: 0.6
+
+  - id: framework.open-interpreter
+    name: Open Interpreter
+    category: framework
+    vendor: Open Interpreter
+    homepage: https://openinterpreter.com
+    description: Runs model-generated code locally through a chat interface; auto_run disables confirmation.
+    capabilities: [code-exec, autonomous]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [open-interpreter]
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*from\s+interpreter\s+import\s+(?:interpreter|OpenInterpreter)\b']
+        weight: 0.9
+      - type: code
+        patterns: ['\binterpreter\.auto_run\s*=\s*True', '\bOpenInterpreter\s*\(', '\binterpreter\s+(?:-y|--auto_run|--os)\b']
+        weight: 0.85
+
+  - id: framework.chainlit
+    name: Chainlit
+    category: framework
+    vendor: Chainlit
+    homepage: https://chainlit.io
+    description: Python framework for conversational LLM front-ends; the app behind it may or may not be an agent.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [chainlit]
+        weight: 0.8
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+chainlit\b']
+        weight: 0.8
+      - type: code
+        patterns: ['@cl\.on_(?:message|chat_start|chat_resume|audio_chunk|stop)\b', '\bcl\.Message\s*\(', '\bchainlit\s+run\b']
+        weight: 0.7
+      - type: file
+        globs: [".chainlit/config.toml", "**/.chainlit/config.toml", "chainlit.md", "**/chainlit.md"]
+        weight: 0.8
+      - type: env
+        names: [CHAINLIT_AUTH_SECRET, CHAINLIT_API_KEY, CHAINLIT_URL]
+        weight: 0.6
+
+  - id: framework.promptflow
+    name: Microsoft Prompt flow
+    category: framework
+    vendor: Microsoft
+    homepage: https://microsoft.github.io/promptflow/
+    description: DAG / flex flows of LLM calls and Python tools, run locally or on Azure AI Foundry.
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [promptflow, promptflow-core, promptflow-devkit, promptflow-azure, promptflow-tools, promptflow-tracing, promptflow-evals]
+        prefixes: [promptflow-]
+        weight: 0.85
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+promptflow\b']
+        weight: 0.85
+      - type: code
+        patterns: ['azuremlschemas\.azureedge\.net/promptflow/', '\bpf\s+(?:flow|run|connection)\s+(?:test|serve|create|build|init)\b']
+        weight: 0.8
+      - type: file
+        globs: ["flow.dag.yaml", "**/flow.dag.yaml", "flow.flex.yaml", "**/flow.flex.yaml"]
+        weight: 0.9
+
+  # ----------------------------------------------------------- guardrails
+  - id: framework.guardrails-ai
+    name: Guardrails AI
+    category: framework
+    vendor: Guardrails AI
+    homepage: https://www.guardrailsai.com
+    description: Input / output validation layer for LLM applications (validators from Guardrails Hub); corroborates an LLM application, never an agent on its own.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [guardrails-ai, guardrails-hub-types]
+        weight: 0.7
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*from\s+guardrails\s+import\s+[^\n]*\b(?:Guard|AsyncGuard|OnFailAction|install)\b', '^[^\S\r\n]*from\s+guardrails\.hub\s+import\b']
+        weight: 0.7
+      - type: code
+        patterns: ['\bGuard\s*\(\s*\)\s*\.use\s*\(', '\bGuard\.from_(?:pydantic|rail|string)\s*\(', '\bguardrails\s+hub\s+install\b']
+        weight: 0.7
+      - type: env
+        names: [GUARDRAILS_API_KEY, GUARDRAILS_TOKEN]
+        weight: 0.6
+      - type: domain
+        values: [api.guardrailsai.com, hub.guardrailsai.com]
+        weight: 0.8
+
+  - id: framework.nemo-guardrails
+    name: NVIDIA NeMo Guardrails
+    category: framework
+    vendor: NVIDIA
+    homepage: https://github.com/NVIDIA/NeMo-Guardrails
+    description: Programmable (Colang) guardrails wrapped around LLM calls; corroborates an LLM application.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [nemoguardrails]
+        weight: 0.7
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+nemoguardrails\b']
+        weight: 0.7
+      - type: code
+        patterns: ['\bRailsConfig\.from_(?:path|content)\s*\(', '\bLLMRails\s*\(', '\bRunnableRails\s*\(']
+        weight: 0.7
+
+  - id: framework.llm-guard
+    name: LLM Guard
+    category: framework
+    vendor: Protect AI
+    homepage: https://llm-guard.com
+    description: Prompt / output scanners (injection, PII, secrets) for LLM applications; corroborates an LLM application.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [llm-guard]
+        weight: 0.7
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+llm_guard\b']
+        weight: 0.7
+      - type: code
+        patterns: ['\bscan_prompt\s*\(\s*input_scanners\b', '\bscan_output\s*\(\s*output_scanners\b']
+        weight: 0.7
+      - type: image
+        patterns: ['laiyer/llm-guard-api', 'protectai/llm-guard-api']
+        weight: 0.85

@@ -30,6 +30,8 @@ class AgentManifestResult:
     valid: bool = False
 
 
+_TEMPLATE_MARKER_RX = re.compile(r"\{\{-?\s*[.$a-zA-Z_\"']|\{%-?\s*[a-z]")
+
 def agent_manifest_kind(rel: str) -> str | None:
     path = PurePosixPath(rel)
     name = path.name.lower()
@@ -306,6 +308,11 @@ def structured_code_matches(
     """
     issues = errors if errors is not None else []
     extension = PurePosixPath(rel).suffix.lower()
+    if extension in {".yaml", ".yml"} and _TEMPLATE_MARKER_RX.search(text):
+        # Helm, Jinja and Go-template manifests are not YAML until rendered;
+        # their syntax failure is expected and must not mark the scan
+        # incomplete. Lexical signatures still run over the text elsewhere.
+        return []
     try:
         if extension in {".yaml", ".yml"}:
             documents = bounded_safe_load_all(text)
@@ -340,7 +347,12 @@ def structured_code_matches(
 
 
 def _matches(index: SignatureIndex, signature: str, projection: str) -> list[Match]:
-    matches = [match for match in index.match_code(projection, None) if match.signature_id == signature]
+    matches = [
+        match for match in index.match_code(projection, None)
+        # n8n model nodes (lmChatOpenAi, lmChatAnthropic...) also name the
+        # provider that receives the workflow's data.
+        if match.signature_id == signature or (signature == "platform.n8n" and match.signature.category == "provider")
+    ]
     for match in matches:
         # Projection offsets are not source line numbers. Do not claim an
         # unrelated source line is the evidence location.
@@ -348,7 +360,7 @@ def _matches(index: SignatureIndex, signature: str, projection: str) -> list[Mat
         match.extra["structured_config"] = True
         if signature == "platform.n8n":
             node_type = json.loads(projection).get("type", "")
-            match.extra["verified_agent"] = node_type in {
+            match.extra["verified_agent"] = match.signature_id == signature and node_type in {
                 "@n8n/n8n-nodes-langchain.agent", "@n8n/n8n-nodes-langchain.agentTool",
                 "@n8n/n8n-nodes-langchain.openAiAssistant",
             }

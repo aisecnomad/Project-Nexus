@@ -13,6 +13,7 @@ Offline export: any mix of the above objects (``_kind`` optional; inferred from 
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
@@ -36,15 +37,19 @@ class SlackConnector(BaseConnector):
     description: ClassVar[str] = "Slack apps, bot users, approved/restricted apps and install logs."
     config_keys: ClassVar[dict[str, str]] = {
         "token": "xoxb/xoxp token (env SLACK_TOKEN); admin.apps.* need an org admin user token",
-        "team_id": "workspace id for admin.apps calls on Enterprise Grid",
+        "team_id": "expected workspace id for live collection; required for offline exports without a team record",
         "input": "offline: JSON export of users / apps / integration logs",
     }
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.team_id = ctx.get("team_id", env="SLACK_TEAM_ID")
-        if self.team_id is not None and (not isinstance(self.team_id, str) or not self.team_id.strip()):
-            raise ConnectorError("saas.slack: team_id must be a nonempty string")
+        if self.team_id is not None and not self._workspace_id_valid(self.team_id):
+            raise ConnectorError("saas.slack: team_id must be a Slack workspace ID")
+
+    @staticmethod
+    def _workspace_id_valid(value: Any) -> bool:
+        return isinstance(value, str) and re.fullmatch(r"T[A-Z0-9]+", value) is not None
 
     def collect(self) -> Iterable[dict[str, Any]]:
         token = self.ctx.get("token", env="SLACK_TOKEN")
@@ -52,26 +57,16 @@ class SlackConnector(BaseConnector):
             raise ConnectorError("saas.slack: token required")
         http = HttpClient("https://slack.com/api", headers={"Authorization": f"Bearer {token}"})
         info = self._api(http, "/team.info")
-        team_verified = False
-        if info is not None:
-            team = info.get("team")
-            if not isinstance(team, dict) or not self._record_fields_valid(
-                team, required=("id",), strings=("id", "name", "domain")
-            ):
-                self.ctx.warn("saas.slack: invalid team.info response; workspace identity and coverage unknown")
-                if self.team_id is not None:
-                    return
-            elif self.team_id is not None and team["id"] != self.team_id:
-                self.ctx.warn("saas.slack: authenticated workspace does not match configured team_id; inventory not collected")
-                return
-            else:
-                yield {"_kind": "team", **team}
-                team_verified = True
-        elif self.team_id is not None:
-            # Do not collect against an explicitly scoped workspace until its ID is verified.
+        if info is None:
             return
-        if self.team_id is not None and not team_verified:
+        team = info.get("team")
+        if not isinstance(team, dict) or not self._record_fields_valid(team, required=("id",), strings=("name", "domain")) or not self._workspace_id_valid(team["id"]):
+            self.ctx.warn("saas.slack: invalid team.info response; workspace identity and coverage unknown")
             return
+        if self.team_id is not None and team["id"] != self.team_id:
+            self.ctx.warn("saas.slack: authenticated workspace does not match configured team_id; inventory not collected")
+            return
+        yield {"_kind": "team", **team}
         for u in self._cursor(http, "/users.list", {"limit": 200}, "members"):
             if u.get("is_bot") or u.get("is_app_user"):
                 u["_kind"] = "bot_user"
@@ -160,7 +155,9 @@ class SlackConnector(BaseConnector):
         self.ctx.warn(f"saas.slack: page limit for {path}", incomplete=True)
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
-        team_name: str | None = None
+        teams: dict[str, str | None] = {}
+        record_teams: set[str] = set()
+        invalid_scope = False
         bots: dict[str, dict[str, Any]] = {}
         apps: dict[str, dict[str, Any]] = {}
         logs: dict[str, list[dict[str, Any]]] = {}
@@ -169,9 +166,17 @@ class SlackConnector(BaseConnector):
             kind = self._record_kind(rec)
             if kind is None:
                 self.ctx.warn("saas.slack: unsupported or malformed provider record; coverage incomplete")
+                if rec.get("_kind") == "team" or _infer(rec) == "team":
+                    invalid_scope = True
                 continue
+            for field in ("team_id", "team") if kind == "bot_user" else ("team_id",):
+                if field in rec:
+                    if not self._workspace_id_valid(rec[field]):
+                        invalid_scope = True
+                    else:
+                        record_teams.add(rec[field])
             if kind == "team":
-                team_name = rec.get("name") or rec.get("domain")
+                teams[rec["id"]] = rec.get("name") or rec.get("domain")
             elif kind == "bot_user":
                 app_id = get_path(rec, "profile.api_app_id") or rec.get("id")
                 bots[str(app_id)] = rec
@@ -187,27 +192,48 @@ class SlackConnector(BaseConnector):
             elif kind == "integration_log":
                 key = rec.get("app_id") or rec.get("service_id") or rec.get("app_type") or rec.get("service_type")
                 logs.setdefault(str(key), []).append(rec)
+        # App IDs are shared across workspaces. Resolve the entire export before
+        # emitting findings so a later conflicting team cannot relabel earlier
+        # records. Names are presentation metadata, never identity.
+        if invalid_scope or len(teams) > 1 or (teams and self.team_id is not None and self.team_id not in teams):
+            self.ctx.warn("saas.slack: conflicting or malformed workspace identity; findings not attributed")
+            return
+        team_id = next(iter(teams), None)
+        scope_source = "team-record"
+        if team_id is None and self.offline and self.team_id is not None:
+            team_id = self.team_id
+            scope_source = "operator-configured"
+        if team_id is None:
+            self.ctx.warn("saas.slack: workspace identity missing; supply team_id for an offline export")
+            return
+        if record_teams - {team_id}:
+            self.ctx.warn("saas.slack: record workspace does not match declared workspace; findings not attributed")
+            return
+        team_name = teams.get(team_id)
         seen: set[str] = set()
         for app_id, entry in apps.items():
             self.ctx.examined()
             seen.add(app_id)
-            f = self._app_finding(app_id, entry["app"], entry["scopes"], entry["status"], bots.get(app_id), logs.get(app_id, []), team_name)
+            f = self._app_finding(app_id, entry["app"], entry["scopes"], entry["status"], bots.get(app_id), logs.get(app_id, []), team_id)
             if f:
+                f.metadata.update(workspace_name=team_name, workspace_scope_source=scope_source)
                 yield f
         for app_id, bot in bots.items():
             if app_id in seen:
                 continue
             self.ctx.examined()
             app = {"id": app_id, "name": get_path(bot, "profile.real_name", "real_name", "name"), "description": get_path(bot, "profile.title")}
-            f = self._app_finding(app_id, app, [], "installed", bot, logs.get(app_id, []), team_name)
+            f = self._app_finding(app_id, app, [], "installed", bot, logs.get(app_id, []), team_id)
             if f:
+                f.metadata.update(workspace_name=team_name, workspace_scope_source=scope_source)
                 yield f
         for req in requests:
             self.ctx.examined()
             app = req.get("app") or {}
-            f = self._app_finding(str(app.get("id") or app.get("app_id")), app, req.get("scopes") or [], "requested", None, [], team_name, requester=get_path(req, "user.email", "user.name", "user.id"), message=req.get("message"))
+            f = self._app_finding(str(app.get("id") or app.get("app_id")), app, req.get("scopes") or [], "requested", None, [], team_id, requester=get_path(req, "user.email", "user.name", "user.id"), message=req.get("message"))
             if f:
                 f.add_tag("pending-request")
+                f.metadata.update(workspace_name=team_name, workspace_scope_source=scope_source)
                 yield f
 
     def _record_kind(self, rec: dict[str, Any]) -> str | None:
@@ -221,6 +247,8 @@ class SlackConnector(BaseConnector):
         kind = rec.get("_kind") or _infer(rec)
         if kind in {"team", "user", "bot_user"}:
             if not self._record_fields_valid(rec, required=("id",)):
+                return None
+            if kind == "team" and not self._workspace_id_valid(rec["id"]):
                 return None
             profile = rec.get("profile") or {}
             if not self._record_fields_valid(profile, strings=("api_app_id", "real_name", "title")):

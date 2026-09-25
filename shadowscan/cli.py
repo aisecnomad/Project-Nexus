@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+import traceback
 from typing import Any, NoReturn
 
 import click
@@ -22,8 +23,10 @@ from shadowscan.comparison import MAX_REPORT_BYTES, compare_reports, load_report
 from shadowscan.config import (
     ConfigValidationError,
     ConnectorSpec,
+    MinConfidenceError,
     ScanConfig,
     parse_set_options,
+    validate_connector_config,
     validate_connector_timeout,
     validate_min_confidence,
 )
@@ -32,19 +35,23 @@ from shadowscan.connectors import (
     builtin_connector_names,
     connectors_for_surface,
     get_connector_class,
+    plugin_registry_errors,
 )
 from shadowscan.engine import Engine
+from shadowscan.errors import SetupError
 from shadowscan.models import Finding, ScanResult, Surface
-from shadowscan.registry import Inventory, InventoryValidationError, card_stub_for
+from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
-from shadowscan.signatures import get_index
+from shadowscan.signatures import Match, SignatureIndex, get_index
 from shadowscan.utils.output import prepare_private_directory, write_private_text
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 
 console = Console(width=None if sys.stdout.isatty() else 200)
 err_console = Console(stderr=True)
+log = logging.getLogger("shadowscan.cli")
 LEVELS = ["critical", "high", "medium", "low", "info"]
+SETUP_FAILED = "scan setup failed; check connector configuration, signature packs and inventory"
 
 
 def _load_report(path: str) -> dict[str, Any]:
@@ -113,17 +120,36 @@ def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
         os._exit(code)
 
 
+def _plugin_registry_problems() -> tuple[str, ...]:
+    """Rescan plugin metadata and return its collision and validity diagnostics as printable lines."""
+    available_connectors()
+    return tuple(str(problem) for problem in plugin_registry_errors())
+
+
+def _log_masked_failure(stage: str, exc: BaseException) -> None:
+    """Debug-log a masked failure as its type and frame locations; never its text or source lines."""
+    frames = " <- ".join(
+        f"{os.path.basename(frame.filename)}:{frame.lineno} {frame.name}"
+        for frame in reversed(traceback.extract_tb(exc.__traceback__))
+    )
+    log.debug("%s (%s) at %s", stage, type(exc).__name__, frames or "unknown location")
+
+
 def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, max_rows: int | None, only: list[str] | None = None) -> None:
     def progress(cid: str, msg: str) -> None:
         err_console.print(f"[dim]{escape(cid)}: {escape(msg)}[/dim]")
 
+    for problem in _plugin_registry_problems():
+        log.warning("plugin registry: %s", problem)
     try:
         engine = Engine(cfg, progress=progress if verbose else None)
         result = engine.run(only=only)
-    except InventoryValidationError as exc:
+    except SetupError as exc:
+        # SetupError messages are credential-free by contract (shadowscan.errors).
         raise click.ClickException(str(exc)) from None
-    except (ValueError, TypeError, OSError, yaml.YAMLError):
-        raise click.ClickException("scan setup failed; check connector configuration, signature packs and inventory") from None
+    except Exception as exc:  # noqa: BLE001 - third-party exception text may echo credentials
+        _log_masked_failure("scan setup failed", exc)
+        raise click.ClickException(f"{SETUP_FAILED} ({type(exc).__name__})") from None
     try:
         _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows)
     except Exception:  # noqa: BLE001 - any emission failure must still release an abandoned CLI worker
@@ -219,13 +245,12 @@ def scan(config_path: str, only: tuple[str, ...], fmt: str, output: str | None, 
     """Run every connector defined in a config file."""
     try:
         cfg = ScanConfig.from_yaml(config_path)
+    except MinConfidenceError as exc:
+        # The same threshold is a command line option: report it as a usage error.
+        raise click.BadParameter(str(exc), param_hint="--config") from None
     except ConfigValidationError as exc:
         raise click.ClickException(f"invalid scan configuration: {exc}") from None
-    except ValueError as exc:
-        if str(exc) == "min_confidence must be a finite number between 0 and 1":
-            raise click.BadParameter(str(exc), param_hint="--config") from None
-        raise click.ClickException("invalid scan configuration; check YAML structure and option types") from None
-    except (TypeError, AttributeError, OSError, yaml.YAMLError):
+    except (ValueError, TypeError, AttributeError, OSError, yaml.YAMLError):
         raise click.ClickException("invalid scan configuration; check YAML structure and option types") from None
     cfg.inventory.extend(inventory)
     cfg.signature_dirs.extend(signature_dirs)
@@ -256,6 +281,10 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], fmt: 
         raise click.BadParameter("--set expects key=value pairs") from None
     if input_path:
         conf["input"] = input_path
+    try:
+        validate_connector_config(connector, conf)
+    except ConfigValidationError as exc:
+        raise click.BadParameter(str(exc), param_hint="--set") from None
     cfg = ScanConfig(connectors=[ConnectorSpec(name=connector, config=conf)], inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir)
     _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin, allow_instance_credentials, allow_credential_mixing, connector_timeout_seconds)
     _run_and_emit(cfg, fmt, output, main.verbose, max_rows)  # type: ignore[attr-defined]
@@ -270,11 +299,17 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], fmt: 
 @click.option("--mode", type=click.Choice(["clone", "api"]), default=None, help="remote fetch mode")
 @click.option("--exclude", multiple=True, help="extra directory names / globs to skip")
 @click.option("--no-secrets", is_flag=True, help="skip credential detection")
+@click.option("--strict-coverage", is_flag=True, help="treat oversize files and symlinks leaving the scan root as incomplete coverage")
+@click.option("--include-tests", is_flag=True, help="let test and fixture code establish agents at full weight")
 @add_options(output_options)
-def code(paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str, ...], gitlab_group: str | None, mode: str | None, exclude: tuple[str, ...], no_secrets: bool, fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
+def code(paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str, ...], gitlab_group: str | None, mode: str | None, exclude: tuple[str, ...], no_secrets: bool, strict_coverage: bool, include_tests: bool, fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
     """Scan local directories and/or remote repositories for agent code, MCP, coding agents, IaC and secrets."""
     specs: list[ConnectorSpec] = []
     common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
+    if strict_coverage:
+        common["strict_coverage"] = True
+    if include_tests:
+        common["include_tests"] = True
     if paths:
         specs.append(ConnectorSpec(name="code.filesystem", config={"paths": list(paths), **common}))
     if github_org or github_repo:
@@ -372,7 +407,12 @@ def list_connectors(surface: str | None, as_json: bool) -> None:
         except Exception as exc:  # noqa: BLE001
             rows.append({"name": n, "error": str(exc)})
             continue
-        rows.append({"name": n, "surface": cls.surface.value, "description": cls.description, "config": cls.config_keys, "requires": cls.requires, "offline": cls.offline_formats})
+        config = dict(cls.config_keys)
+        for key, text in cls.shared_config_keys.items():
+            config.setdefault(key, text)
+        rows.append({"name": n, "surface": cls.surface.value, "description": cls.description, "config": config, "requires": cls.requires, "offline": cls.offline_formats})
+    for problem in plugin_registry_errors():
+        err_console.print(Text(f"warning: plugin registry: {problem}", style="yellow"))
     if as_json:
         click.echo(json.dumps(rows, indent=2))
         return
@@ -385,9 +425,19 @@ def list_connectors(surface: str | None, as_json: bool) -> None:
         if "error" in r:
             table.add_row(Text(r["name"]), "?", Text(r["error"], style="red"), "")
             continue
-        keys = "\n".join(f"[bold]{k}[/bold]: {v}" for k, v in r["config"].items())
-        extra = f"\n[dim]requires: {', '.join(r['requires'])}[/dim]" if r["requires"] else ""
-        table.add_row(Text(r["name"]), Text(str(r["surface"])), Text(r["description"] + extra), Text(keys))
+        # Build styled Text directly: key descriptions are rendered literally,
+        # never parsed as Rich markup.
+        keys = Text()
+        for number, (key, description) in enumerate(r["config"].items()):
+            if number:
+                keys.append("\n")
+            keys.append(str(key), style="bold")
+            keys.append(f": {description}")
+        description = Text(r["description"])
+        if r["requires"]:
+            description.append("\n")
+            description.append(f"requires: {', '.join(r['requires'])}", style="dim")
+        table.add_row(Text(r["name"]), Text(str(r["surface"])), description, keys)
     console.print(table)
 
 
@@ -397,6 +447,17 @@ def signatures() -> None:
     """Inspect and test the detection signature packs."""
 
 
+def _load_index(signature_dirs: tuple[str, ...], allow_override: bool) -> SignatureIndex:
+    """Load packs for a signatures command; pack diagnostics print verbatim, other failures are masked."""
+    try:
+        return get_index(extra_dirs=list(signature_dirs) or None, allow_override=allow_override)
+    except SetupError as exc:
+        raise click.ClickException(str(exc)) from None
+    except Exception as exc:  # noqa: BLE001 - third-party exception text may echo pack content
+        _log_masked_failure("signature pack loading failed", exc)
+        raise click.ClickException(f"could not load signature packs ({type(exc).__name__}); check the pack directories") from None
+
+
 @signatures.command("list")
 @click.option("--category", help="framework | provider | protocol | coding-agent | platform | cloud-service | observability | memory | sandbox | identity-app | heuristic | policy")
 @click.option("--signatures", "-s", "signature_dirs", multiple=True, help="extra signature pack directory")
@@ -404,7 +465,7 @@ def signatures() -> None:
 @click.option("--allow-signature-override", is_flag=True, help="allow a reviewed pack to replace built-in signatures")
 def signatures_list(category: str | None, signature_dirs: tuple[str, ...], as_json: bool, allow_signature_override: bool) -> None:
     """List loaded signatures."""
-    idx = get_index(extra_dirs=list(signature_dirs) or None, allow_override=allow_signature_override)
+    idx = _load_index(signature_dirs, allow_signature_override)
     sigs = sorted(idx.signatures.values(), key=lambda s: (s.category, s.id))
     if category:
         sigs = [s for s in sigs if s.category == category]
@@ -429,7 +490,7 @@ def signatures_list(category: str | None, signature_dirs: tuple[str, ...], as_js
 @click.option("--allow-signature-override", is_flag=True, help="allow a reviewed pack to replace built-in signatures")
 def signatures_show(signature_id: str, signature_dirs: tuple[str, ...], allow_signature_override: bool) -> None:
     """Print one signature as YAML."""
-    idx = get_index(extra_dirs=list(signature_dirs) or None, allow_override=allow_signature_override)
+    idx = _load_index(signature_dirs, allow_signature_override)
     sig = idx.get(signature_id)
     if not sig:
         raise click.BadParameter(f"unknown signature {signature_id!r}")
@@ -440,15 +501,37 @@ def signatures_show(signature_id: str, signature_dirs: tuple[str, ...], allow_si
 @signatures.command("test")
 @click.argument("value")
 @click.option("--kind", type=click.Choice(["auto", "dependency", "domain", "user-agent", "model", "name", "env", "scope", "image", "iac", "file", "text", "secret"]), default="auto", show_default=True)
-@click.option("--ecosystem", default="any", show_default=True, help="for dependency: pypi | npm | go | cargo | maven | nuget | rubygems | composer")
+@click.option("--ecosystem", default="any", show_default=True, help="for dependency: pypi | npm | go | cargo | maven | nuget | rubygems | composer; 'any' tries every ecosystem in the loaded packs")
 @click.option("--signatures", "-s", "signature_dirs", multiple=True)
 @click.option("--allow-signature-override", is_flag=True, help="allow a reviewed pack to replace built-in signatures")
 def signatures_test(value: str, kind: str, ecosystem: str, signature_dirs: tuple[str, ...], allow_signature_override: bool) -> None:
-    """Test what a value matches, e.g. `shadowscan signatures test langchain-openai --kind dependency`."""
-    idx = get_index(extra_dirs=list(signature_dirs) or None, allow_override=allow_signature_override)
+    """Test what a value matches, e.g. `shadowscan signatures test langchain-openai --kind dependency`.
+
+    Dependency signals are ecosystem specific. With --ecosystem any (the
+    default, also used by --kind auto) the value is tried as a package name
+    in every ecosystem the loaded packs declare, and each ecosystem hit is
+    reported once.
+    """
+    idx = _load_index(signature_dirs, allow_signature_override)
     kinds = [kind] if kind != "auto" else ["dependency", "domain", "user-agent", "model", "name", "env", "scope", "image", "iac", "file", "text", "secret"]
+    if ecosystem.lower() == "any":
+        ecosystems = sorted({(s.ecosystem or "any").lower() for sig in idx.signatures.values() for s in sig.signals if s.type == "dependency"})
+    else:
+        ecosystems = [ecosystem]
+
+    def match_dependency(v: str) -> list[Match]:
+        out: list[Match] = []
+        seen: set[tuple[str, int]] = set()
+        for eco in ecosystems:
+            for m in idx.match_dependency(eco, v):
+                # Ecosystem-agnostic signals match under every ecosystem; report each signal once.
+                if (m.signature_id, id(m.signal)) not in seen:
+                    seen.add((m.signature_id, id(m.signal)))
+                    out.append(m)
+        return out
+
     matchers = {
-        "dependency": lambda v: idx.match_dependency(ecosystem, v),
+        "dependency": match_dependency,
         "domain": idx.match_domain,
         "user-agent": idx.match_user_agent,
         "model": idx.match_model,
@@ -469,6 +552,8 @@ def signatures_test(value: str, kind: str, ecosystem: str, signature_dirs: tuple
             # fingerprint them before producing sanitized findings. Never
             # reflect those values in terminal output or captured CI logs.
             shown = REDACTED if k == "secret" else sanitize_text(m.value)[:80]
+            if k == "dependency":
+                shown += f" ({m.signal.ecosystem or 'any'})"
             console.print(f"[bold]{k:11}[/bold] {m.signature_id:40} weight={m.weight:.2f} agent={'yes' if m.agent_indicator else 'no '} caps={','.join(m.capabilities()) or '-'}  ← {escape(shown)}")
     if not found:
         console.print("[dim]no match[/dim]")
@@ -486,7 +571,7 @@ def inventory_check(paths: tuple[str, ...]) -> None:
     """Validate inventory files and list the registered agents."""
     try:
         inv = Inventory.load(list(paths))
-    except InventoryValidationError as exc:
+    except SetupError as exc:
         raise click.ClickException(str(exc)) from None
     except (ValueError, TypeError, OSError, yaml.YAMLError):
         raise click.ClickException("could not load inventory; check file access and document structure") from None

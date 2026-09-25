@@ -88,6 +88,22 @@ def test_scope_mismatch_fails_even_when_controls_found(tmp_path):
     assert not report["scope_verified"]
 
 
+def test_slack_canary_rejects_findings_attributed_to_another_workspace(index):
+    from shadowscan.connectors.base import ConnectorContext
+    from shadowscan.connectors.saas.slack import SlackConnector
+
+    config = load_config(EXAMPLES / "slack-replay.yaml")
+    records = [json.loads(line) for line in Path(config["connector"]["input"]).read_text().splitlines()]
+    context = ConnectorContext(index=index, config=config["connector"])
+    findings = list(SlackConnector(context).analyze(records))
+    result = ScanResult(findings=findings, stats=[ScanStats("saas.slack", "now")])
+    assert evaluate(config, result, records)["passed"]
+    for finding in findings:
+        finding.account = "TOTHER"
+    verification = evaluate(config, result, records)
+    assert not verification["passed"] and not verification["scope_verified"]
+
+
 @pytest.mark.parametrize("extra", [{"profile": "unreviewed"}, {"role_arn": "arn:aws:iam::123456789012:role/x"},
                                    {"allow_instance_credentials": True}, {"endpoint_url": "http://localhost"}])
 def test_connector_escape_hatches_rejected(extra):

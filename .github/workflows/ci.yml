@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12"]
+        python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -23,19 +23,44 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
+      - name: Check requirements-build.lock matches the pyproject build-system pins
+        run: |
+          python - <<'PY'
+          import re
+          import tomllib
+          from pathlib import Path
+          declared = sorted(tomllib.loads(Path('pyproject.toml').read_text())['build-system']['requires'])
+          locked = sorted(line.split()[0] for line in Path('requirements-build.lock').read_text().splitlines()
+                          if re.match(r'^[A-Za-z0-9_.-]+==[^\s]+', line))
+          # The lock may also pin the backends' own dependencies (wheel needs
+          # packaging); every declared backend must appear at exactly its pin.
+          missing = sorted(set(declared) - set(locked))
+          assert not missing, f'requirements-build.lock is missing pyproject.toml build-system pins {missing} (locked: {locked})'
+          PY
       - name: Install pinned build tools, runtime and development checks
         run: |
-          python -m pip install --upgrade --only-binary=:all: pip==26.2.1 setuptools==84.0.0 wheel==0.48.0
+          # pip stays version-pinned rather than hash-locked: it is the tool that
+          # enforces --require-hashes, so a hash it checks cannot vouch for it, and
+          # keeping it out of requirements-build.lock lets the Dockerfile share that
+          # lock without upgrading the image's pip. requirements-ci-constraints.txt
+          # carries the same pip pin for the [dev] install below.
+          python -m pip install --upgrade --only-binary=:all: pip==26.2.1
+          # The build backend from pyproject.toml [build-system] comes from its hash
+          # lock; every build in this job then runs with --no-build-isolation.
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
           python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
           # pip treats hashes in a constraint file as a global hash requirement;
-          # extract exact runtime pins so the local editable install is permitted.
+          # extract exact runtime and build-backend pins so the local editable
+          # install is permitted and cannot move the locked backend.
           python - <<'PY'
           import os
           import re
           from pathlib import Path
-          pins = [line.split()[0] for line in Path('requirements.lock').read_text().splitlines()
+          pins = [line.split()[0]
+                  for lock in ('requirements.lock', 'requirements-build.lock')
+                  for line in Path(lock).read_text().splitlines()
                   if re.match(r'^[A-Za-z0-9_.-]+==[^\s]+', line)]
-          assert pins, 'runtime lock has no version pins'
+          assert pins, 'locks have no version pins'
           (Path(os.environ['RUNNER_TEMP']) / 'runtime-constraints.txt').write_text('\n'.join(pins) + '\n')
           PY
           python -m pip install --no-build-isolation --only-binary=:all: \
@@ -44,7 +69,7 @@ jobs:
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
-      - run: mypy shadowscan tools/evaluation tools/canaries
+      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
       - run: pip-audit --progress-spinner off
       - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
@@ -56,11 +81,20 @@ jobs:
           python -m tools.evaluation.evaluate --output "$RUNNER_TEMP/shadowscan-synthetic-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/public_corpus.json \
             --output "$RUNNER_TEMP/shadowscan-public-evaluation.json"
+          # Multi-file cases; documented misses carry known_gap and do not fail the run.
+          python -m tools.evaluation.evaluate --corpus tools/evaluation/realistic_corpus.json \
+            --output "$RUNNER_TEMP/shadowscan-realistic-evaluation.json"
+          python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json \
+            --output "$RUNNER_TEMP/shadowscan-review-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
             --annotations tools/evaluation/independent_annotations.json \
             --output "$RUNNER_TEMP/shadowscan-independent-evaluation.json"
       - name: Build distributable wheel
-        run: python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+        run: |
+          # Re-assert the hash-locked backend so the wheel generator matches
+          # pyproject.toml [build-system] whatever the [dev] install resolved.
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
+          python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
       - name: Validate installed wheel outside the checkout
         run: |
           python -m venv "$RUNNER_TEMP/shadowscan-wheel"
@@ -71,7 +105,7 @@ jobs:
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m shadowscan.signatures.validate
           "$RUNNER_TEMP/shadowscan-wheel/bin/shadowscan" --help
       - name: Build and validate disposable worker
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.13'
         run: |
           docker build --tag shadowscan:ci .
           docker run --rm --network none --read-only --cap-drop ALL \

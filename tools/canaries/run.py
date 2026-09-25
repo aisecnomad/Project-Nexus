@@ -213,9 +213,9 @@ def evaluate(config: dict[str, Any], result: ScanResult, records: list[dict[str,
     expected_id = scope["account_id"] if aws else scope["team_id"]
     observed_ids = [r.get("account" if aws else "id") for r in identity]
     scope_ok = bool(identity) and all(identifier == expected_id for identifier in observed_ids)
+    scope_ok = scope_ok and all(f.account == expected_id for f in result.findings)
     if aws:
         scope_ok = scope_ok and all(_strings(r.get("regions")) and set(r["regions"]) == set(scope["regions"]) for r in identity)
-        scope_ok = scope_ok and all(f.account == expected_id for f in result.findings)
         scope_ok = scope_ok and all(not f.region or f.region in scope["regions"] for f in result.findings)
     control_reports = []
     for control in config["controls"]:

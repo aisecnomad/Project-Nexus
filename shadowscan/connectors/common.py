@@ -1,7 +1,33 @@
-"""Helpers shared by connectors to turn signature matches into findings."""
+"""Helpers shared by connectors to turn signature matches into findings.
+
+Placeholder credentials
+-----------------------
+A credential-looking value is treated as a documentation placeholder, not a
+live secret, when :func:`placeholder_reason` finds one of:
+
+* a template marker anywhere in the value (``<...>``, ``${...}``, ``{{...}}``);
+* a placeholder word such as REPLACE, REPLACE_ME, YOUR, EXAMPLE, SAMPLE,
+  DUMMY, FAKE, TEST, PLACEHOLDER, CHANGEME, INSERT, PASTE, HERE or TODO,
+  case-insensitive, delimited by ``_ - .`` or by a case boundary; a fill run
+  such as ``xxxx`` counts as a word;
+* a low-entropy body: after the provider prefix the value is one or two
+  repeated characters, or at least half of its characters continue a run of
+  the same or adjacent characters (``0000``, ``1234567890``, ``abcdef``).
+
+When a context-bound pattern captured an assignment (``NAME=value``,
+``NAME: value``), only the value is judged, so a variable name such as
+``TEST_API_KEY`` never marks a real key as a placeholder; an empty value is a
+template.
+
+Randomly generated keys practically never satisfy these rules (fewer than one
+in ten thousand in simulation), and connectors report a placeholder as
+low-weight ``example-credential`` evidence rather than dropping it silently,
+so a rare misclassification remains visible to analysts.
+"""
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable
 from typing import Any
@@ -243,10 +269,112 @@ def classify_permissions(index: SignatureIndex, finding: Finding, scopes: Iterab
 
 
 _PLACEHOLDER = re.compile(r"^(?:x{3,}|\*{3,}|<[^>]+>|\$\{[^}]+\}|your[_-]?[a-z_]*|changeme|redacted|placeholder|todo|null|none)$", re.IGNORECASE)
+_TEMPLATE_MARKER = re.compile(r"<[^<>\s]+>|\$\{[^{}]*\}|\{\{[^{}]*\}\}")
+# Lowercase words that documentation uses where a real key would go.
+_PLACEHOLDER_WORDS: tuple[str, ...] = (
+    "replaceme", "replace", "placeholder", "changeme", "example", "sample", "dummy", "fake",
+    "test", "insert", "paste", "here", "todo", "your", "redacted", "mock", "demo",
+)
+_FILL_RUN = re.compile(r"(?<![A-Za-z])(?:x{4,}|X{4,})(?![A-Za-z])|[*#?]{4,}")
+_ALPHA_RUN = re.compile(r"[A-Za-z]+")
+# Vendor prefixes such as sk-ant-api03- or lsv2_pt_ are not part of the body.
+_SECRET_PREFIX = re.compile(r"^(?:[A-Za-z0-9]{1,8}[-_]){1,3}")
+_NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
+_MIN_ENTROPY_BODY = 8
+# Context-bound secret patterns capture ``NAME=value`` / ``NAME: value``; only the value is judged.
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*\s*[=:]\s*[\"']?(.*?)[\"']?$")
+
+
+def _case_delimited(value: str, start: int, end: int) -> bool:
+    """True when value[start:end] is its own token by separators or case changes."""
+    left = start == 0 or not value[start - 1].isalpha() or (value[start - 1].islower() and value[start].isupper())
+    if not left:
+        return False
+    if end == len(value) or not value[end].isalpha():
+        return True
+    return (value[end - 1].islower() and value[end].isupper()) or (value[start:end].isupper() and value[end].islower())
+
+
+def _placeholder_word(value: str) -> bool:
+    for run in _ALPHA_RUN.finditer(value):
+        word = run.group(0).lower()
+        if word in _PLACEHOLDER_WORDS:
+            return True
+        if len(word) >= 6 and any(word.startswith(w) or word.endswith(w) for w in _PLACEHOLDER_WORDS):
+            return True
+    lower = value.lower()
+    for word in _PLACEHOLDER_WORDS:
+        start = lower.find(word)
+        while start >= 0:
+            if _case_delimited(value, start, start + len(word)):
+                return True
+            start = lower.find(word, start + 1)
+    return False
+
+
+def _low_entropy_body(value: str) -> bool:
+    body = _NON_ALNUM.sub("", _SECRET_PREFIX.sub("", value, count=1))
+    if len(body) < _MIN_ENTROPY_BODY:
+        return False
+    if len(set(body)) <= 2:
+        return True
+    continued = sum(1 for previous, current in zip(body, body[1:], strict=False) if abs(ord(current) - ord(previous)) <= 1)
+    return continued / (len(body) - 1) >= 0.5
+
+
+def placeholder_reason(value: str) -> str | None:
+    """Explain why a credential-looking value is a documentation placeholder, or None.
+
+    The rules are described in the module docstring. The returned reason is a
+    short machine-readable label ("template", "placeholder-word",
+    "low-entropy") suitable for evidence attributes.
+    """
+    value = value.strip()
+    if not value:
+        return None
+    assignment = _ASSIGNMENT.match(value)
+    if assignment:
+        value = assignment.group(1).strip()
+        if not value:
+            return "template"
+    if _PLACEHOLDER.match(value) or _TEMPLATE_MARKER.search(value):
+        return "template"
+    if _FILL_RUN.search(value) or _placeholder_word(value):
+        return "placeholder-word"
+    if _low_entropy_body(value):
+        return "low-entropy"
+    return None
 
 
 def looks_like_placeholder(value: str) -> bool:
-    return bool(_PLACEHOLDER.match(value.strip()))
+    """True when a credential-looking value is a documentation placeholder, not a live secret."""
+    return placeholder_reason(value) is not None
+
+
+def cap_confidence(finding: Finding, maximum: float) -> None:
+    """Scale evidence weights so the noisy-OR confidence does not exceed ``maximum``.
+
+    The cap is written into the evidence weights themselves. Any later
+    recomputation (engine merging, report import) therefore reproduces the
+    capped value instead of restoring a saturated one.
+    """
+    finding.recompute_confidence()
+    if not finding.evidence or finding.confidence <= maximum:
+        return
+    low, high = 0.0, 1.0
+    for _ in range(40):
+        mid = (low + high) / 2
+        p_none = 1.0
+        for ev in finding.evidence:
+            p_none *= 1.0 - max(0.0, min(1.0, ev.weight * mid))
+        if 1.0 - p_none > maximum:
+            high = mid
+        else:
+            low = mid
+    for ev in finding.evidence:
+        # Floor rather than round so the stored weights never exceed the bound.
+        ev.weight = math.floor(max(0.0, min(1.0, ev.weight * low)) * 10_000) / 10_000
+    finding.recompute_confidence()
 
 
 def merge_metadata(finding: Finding, **kwargs: Any) -> None:
@@ -265,7 +393,8 @@ def blob_matches(index: SignatureIndex, text: str, *, secrets: bool = False) -> 
     seen: set[tuple[str, str, str]] = set()
     if not text:
         return out
-    for m in [*index.match_code(text, None), *index.match_domains_in_text(text), *index.match_envs_in_text(text)] + (index.match_secrets(text) if secrets else []):
+    secret_matches = [m for m in index.match_secrets(text) if not looks_like_placeholder(m.value)] if secrets else []
+    for m in [*index.match_code(text, None), *index.match_domains_in_text(text), *index.match_envs_in_text(text), *secret_matches]:
         if m.signature.category == "identity-app" and m.signal.type == "domain":
             continue
         key = (m.signature_id, m.signal.type, m.value[:60])

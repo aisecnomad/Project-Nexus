@@ -8,11 +8,13 @@ signature settings; disabling secret discovery must never disable redaction.
 from __future__ import annotations
 
 import hashlib
+import heapq
 import io
 import re
 import token
 import tokenize
-from collections.abc import Mapping
+import types
+from collections.abc import Iterator, Mapping
 from typing import Any
 from urllib.parse import unquote
 
@@ -77,6 +79,11 @@ _QUERY_SEPARATOR = re.compile(r"[&#]")
 _PYTHON_ASSIGNMENT_KEY = re.compile(
     r"(?<![\w.-])(?P<key>[A-Za-z_][A-Za-z0-9_.]*)[ \t]*(?P<separator>:|=(?!=))"
 )
+_INDEXED_ASSIGNMENT_KEY = re.compile(
+    r"\[[ \t\r\n]*(?P<quote>[\"'`])(?P<key>[A-Za-z_][A-Za-z0-9_.-]{0,100})"
+    r"(?P=quote)"
+)
+_TARGET_ATTRIBUTE = re.compile(r"\.[A-Za-z_$][A-Za-z0-9_$]*")
 _MAPPING_VALUE = re.compile(
     r"(?<![\w.-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
     r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*:[ \t]*"
@@ -219,10 +226,96 @@ def _redact_mapping_values(text: str) -> str:
     return "".join(pieces)
 
 
+def _indexed_assignment_candidates(text: str) -> Iterator[tuple[int, str, str, int]]:
+    """Find sensitive literal subscripts without evaluating an assignment target.
+
+    A sensitive parent also protects assignments to its descendants, such as
+    config["credentials"]["primary"][0]. Nested target scanning has shared work
+    and depth limits so overlapping malformed candidates cannot amplify work.
+    """
+    work = 0
+    for match in _INDEXED_ASSIGNMENT_KEY.finditer(text):
+        key = match.group("key")
+        if not _sensitive_key(key):
+            continue
+        position = match.end()
+        brackets: list[str] = ["["]
+        quote = ""
+        while position < len(text):
+            work += 1
+            if work > _MAX_REDACTION_WORK:
+                raise SanitizationLimitError("indexed assignment work limit exceeded")
+            char = text[position]
+            if quote:
+                if char == "\\":
+                    position += 2
+                    continue
+                if text.startswith(quote, position):
+                    position += len(quote)
+                    quote = ""
+                    continue
+            elif text.startswith(("//", "/*"), position) or (char == "#" and brackets):
+                block = text.startswith("/*", position)
+                end = text.find("*/" if block else "\n", position + (2 if char == "/" else 1))
+                if end < 0:
+                    break
+                following = end + (2 if block else 1)
+                work += following - position
+                position = following
+                continue
+            elif text.startswith(("\\\n", "\\\r\n"), position):
+                position += 3 if text.startswith("\\\r\n", position) else 2
+                continue
+            elif brackets:
+                if char in "\"'`":
+                    quote = char * 3 if char != "`" and text.startswith(char * 3, position) else char
+                    position += len(quote)
+                    continue
+                if char in "([{":
+                    if len(brackets) >= 64:
+                        raise SanitizationLimitError("indexed assignment nesting limit exceeded")
+                    brackets.append(char)
+                elif char in ")]}":
+                    if brackets.pop() != {")": "(", "]": "[", "}": "{"}[char]:
+                        break
+            elif char in " \t\r\n":
+                pass
+            elif char == "[":
+                brackets.append(char)
+            elif char == ".":
+                attribute = _TARGET_ATTRIBUTE.match(text, position)
+                if attribute is None:
+                    break
+                work += attribute.end() - position
+                position = attribute.end()
+                continue
+            else:
+                # Comparisons and arrows are not assignments. Compound writes
+                # can contain additional credential fragments and need redaction.
+                if char == ":":
+                    # Python allows annotated assignment to a subscript or its
+                    # descendants. The shared RHS parser locates '=' after the
+                    # annotation without mistaking an annotation-only read for
+                    # a stored credential.
+                    yield match.start(), key, ":", position + 1
+                    break
+                operator = next((op for op in ("&&=", "||=", "??=", "+=", "=",) if text.startswith(op, position)), None)
+                if operator and not text.startswith(("==", "=>"), position):
+                    yield match.start(), key, "=", position + len(operator)
+                break
+            position += 1
+
+
+def _assignment_candidates(text: str) -> Iterator[tuple[int, str, str, int]]:
+    plain = ((match.start(), match.group("key"), match.group("separator"), match.end())
+             for match in _PYTHON_ASSIGNMENT_KEY.finditer(text))
+    return heapq.merge(plain, _indexed_assignment_candidates(text), key=lambda candidate: candidate[0])
+
+
 def _redact_python_assignments(text: str) -> str:
     """Redact complete sensitive Python assignment expressions without evaluation.
 
-    Tokenize only sensitive candidates, including ordinary assignments and call
+    Tokenize only sensitive candidates, including indexed assignments and call
     arguments. String delimiters, escapes, concatenation and continued lines are
     handled lexically. Malformed or unfinished RHS syntax is withheld through
     EOF; the explicit work budget prevents hostile candidates from repeatedly
@@ -234,32 +327,33 @@ def _redact_python_assignments(text: str) -> str:
     work = 0
     urls = _URL.finditer(text)
     url = next(urls, None)
-    for match in _PYTHON_ASSIGNMENT_KEY.finditer(text):
-        if match.start() < cursor or not _sensitive_key(match.group("key")):
+    for start, key, separator, candidate_end in _assignment_candidates(text):
+        if start < cursor or not _sensitive_key(key):
             continue
-        annotated = match.group("separator") == ":"
-        assigned_at: int | None = None if annotated else match.end()
+        annotated = separator == ":"
+        assigned_at: int | None = None if annotated else candidate_end
         # URL fields use URL boundaries, not Python statement boundaries,
         # and have already been sanitized by the URL pass. Check actual spans:
         # a '#' before a source assignment can also introduce a comment.
-        while url is not None and url.end() <= match.start():
+        while url is not None and url.end() <= start:
             url = next(urls, None)
-        if url is not None and url.start() <= match.start():
+        if url is not None and url.start() <= start:
             continue
-        value_start = match.end()
+        value_start = candidate_end
         if not annotated:
             while value_start < len(text) and text[value_start] in " \t":
                 value_start += 1
         if stream is None:
             stream = io.StringIO(text)
-        stream.seek(match.end())
-        offsets = [match.end()]
+        stream.seek(candidate_end)
+        offsets = [candidate_end]
         end = len(text)
         brackets: list[str] = []
-        previous = match.start() - 1
+        previous = start - 1
         while previous >= 0 and text[previous] in " \t\r\n":
             previous -= 1
         argument = not annotated and previous >= 0 and text[previous] in "(,"
+        previous_operator = ""
 
         def readline() -> str:
             nonlocal work
@@ -279,6 +373,12 @@ def _redact_python_assignments(text: str) -> str:
                     # not TokenError. A semicolon inside one is not a boundary.
                     break
                 if item.type == token.OP:
+                    if item.string == "`" or (item.string in {"/", "//"} and text.startswith(("/*", "//"), position)):
+                        # Python's tokenizer is not a JavaScript template/comment
+                        # lexer (some Python versions classify backticks as OP).
+                        # Withhold the remaining expression conservatively instead
+                        # of exposing fragments after its first physical newline.
+                        break
                     if item.string == "=" and assigned_at is None and not brackets:
                         assigned_at = offsets[item.end[0] - 1] + item.end[1]
                     elif item.string in "([{":
@@ -295,9 +395,28 @@ def _redact_python_assignments(text: str) -> str:
                     ):
                         end = position
                         break
-                elif item.type in {token.NEWLINE, token.ENDMARKER}:
+                    previous_operator = item.string
+                elif item.type == token.NEWLINE:
+                    following = position + len(item.string)
+                    while following < len(text) and text[following] in " \t\r\n":
+                        work += 1
+                        if work > _MAX_REDACTION_WORK:
+                            raise SanitizationLimitError("Python assignment work limit exceeded")
+                        following += 1
+                    # JavaScript permits binary/member/ternary expressions to
+                    # continue across an unescaped newline in either direction.
+                    if assigned_at is not None and (
+                        previous_operator in {"+", "-", "*", "/", "**", "&", "|", "?", ":", "=", "."}
+                        or (following < len(text) and text[following] in "+-*/.?&|")
+                    ):
+                        continue
                     end = position
                     break
+                elif item.type == token.ENDMARKER:
+                    end = position
+                    break
+                elif item.type not in {token.INDENT, token.DEDENT, tokenize.NL, token.COMMENT}:
+                    previous_operator = ""
         except (tokenize.TokenError, IndentationError, SyntaxError):
             # Once '=' is seen, incomplete source must not expose any RHS,
             # including credential fragments on subsequent physical lines.
@@ -657,3 +776,39 @@ def _check_sanitization_structure(value: Any) -> None:
     nodes, chars, _ = cost(value)
     if nodes > _MAX_SANITIZATION_NODES or chars > _MAX_SANITIZATION_CHARS:
         raise SanitizationLimitError("sanitization expanded output limit exceeded")
+
+
+def policy_token() -> tuple[Any, ...]:
+    """Identify the redaction rules and limits currently in force.
+
+    State verified clean by one policy is not clean under another. Callers
+    that cache a verified-clean digest key it by this value, so a rule set
+    replaced at runtime (for example a patched sensitive-name list or a
+    lowered limit) is applied on their next pass instead of being skipped.
+    The tuple holds the live policy objects, which makes an unchanged policy
+    compare by identity; mutable collections are snapshotted by value.
+    """
+    module = globals()
+    return tuple(_policy_value(module[name]) for name in _POLICY_NAMES)
+
+
+def _policy_value(value: Any) -> Any:
+    if isinstance(value, (set, frozenset)):
+        return frozenset(value)
+    if isinstance(value, list):
+        return tuple(value)
+    if isinstance(value, dict):
+        return tuple(value.items())
+    return value
+
+
+def _is_policy(value: Any) -> bool:
+    """Rules, patterns and limits defined here, plus this module's own helpers."""
+    if isinstance(value, (str, int, float, tuple, list, dict, set, frozenset, re.Pattern)):
+        return True
+    return isinstance(value, types.FunctionType) and value.__module__ == __name__
+
+
+# Every module-level rule, pattern, limit and helper defined above. Computed
+# last so a newly added policy constant is covered without registration.
+_POLICY_NAMES = tuple(sorted(name for name, value in globals().items() if not name.startswith("__") and _is_policy(value)))

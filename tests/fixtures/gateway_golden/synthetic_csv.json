@@ -1,0 +1,436 @@
+{
+ "description": "Inline CSV export of LiteLLM spend rows: every value arrives as a string, one key has no alias, one row is a failure.",
+ "suffix": ".csv",
+ "config": {
+  "min_events": 1
+ },
+ "lines": [
+  "api_key,api_key_alias,model,custom_llm_provider,spend,prompt_tokens,completion_tokens,startTime,user,call_type,status",
+  "hashed-key-csv-1,csv-agent,gpt-4o,openai,0.02,1200,300,2025-09-01T22:00:00+00:00,,acompletion,success",
+  "hashed-key-csv-1,csv-agent,gpt-4o,openai,0.03,1500,400,2025-09-01T22:05:00+00:00,,acompletion,failure",
+  "hashed-key-csv-2,,gpt-4o-mini,openai,0.001,100,20,2025-09-01T22:10:00+00:00,kim@acme.com,acompletion,success"
+ ],
+ "volatile_fields": [
+  "id",
+  "metadata.runtime_source.id",
+  "metadata.runtime_source.input"
+ ],
+ "events": [
+  {
+   "schema": "litellm",
+   "event": {
+    "caller": "litellm-key:hashed-key-csv-1",
+    "caller_kind": "api-key",
+    "caller_label": "csv-agent",
+    "timestamp": "2025-09-01T22:00:00+00:00",
+    "interval_end": null,
+    "request_count": 1,
+    "aggregated": false,
+    "model": "gpt-4o",
+    "provider": "openai",
+    "host": null,
+    "user_agent": null,
+    "ip": null,
+    "user": null,
+    "team": null,
+    "tools": null,
+    "tool_calls": null,
+    "streaming": null,
+    "tokens_in": 1200,
+    "tokens_out": 300,
+    "cost": 0.02,
+    "status": "success",
+    "path": "acompletion",
+    "metadata": {
+     "request_tags": null,
+     "cache_hit": null
+    },
+    "schema": "litellm",
+    "scope": {},
+    "scope_redacted": false,
+    "caller_redacted": false,
+    "binding_caller": null,
+    "environment": null,
+    "runtime_frameworks": [],
+    "code_resources": [],
+    "identity_assurance": "unverified"
+   }
+  },
+  {
+   "schema": "litellm",
+   "event": {
+    "caller": "litellm-key:hashed-key-csv-1",
+    "caller_kind": "api-key",
+    "caller_label": "csv-agent",
+    "timestamp": "2025-09-01T22:05:00+00:00",
+    "interval_end": null,
+    "request_count": 1,
+    "aggregated": false,
+    "model": "gpt-4o",
+    "provider": "openai",
+    "host": null,
+    "user_agent": null,
+    "ip": null,
+    "user": null,
+    "team": null,
+    "tools": null,
+    "tool_calls": null,
+    "streaming": null,
+    "tokens_in": 1500,
+    "tokens_out": 400,
+    "cost": 0.03,
+    "status": "failure",
+    "path": "acompletion",
+    "metadata": {
+     "request_tags": null,
+     "cache_hit": null
+    },
+    "schema": "litellm",
+    "scope": {},
+    "scope_redacted": false,
+    "caller_redacted": false,
+    "binding_caller": null,
+    "environment": null,
+    "runtime_frameworks": [],
+    "code_resources": [],
+    "identity_assurance": "unverified"
+   }
+  },
+  {
+   "schema": "litellm",
+   "event": {
+    "caller": "litellm-key:hashed-key-csv-2",
+    "caller_kind": "api-key",
+    "caller_label": "hashed-key-csv-2",
+    "timestamp": "2025-09-01T22:10:00+00:00",
+    "interval_end": null,
+    "request_count": 1,
+    "aggregated": false,
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "host": null,
+    "user_agent": null,
+    "ip": null,
+    "user": "kim@acme.com",
+    "team": null,
+    "tools": null,
+    "tool_calls": null,
+    "streaming": null,
+    "tokens_in": 100,
+    "tokens_out": 20,
+    "cost": 0.001,
+    "status": "success",
+    "path": "acompletion",
+    "metadata": {
+     "request_tags": null,
+     "cache_hit": null
+    },
+    "schema": "litellm",
+    "scope": {},
+    "scope_redacted": false,
+    "caller_redacted": false,
+    "binding_caller": null,
+    "environment": null,
+    "runtime_frameworks": [],
+    "code_resources": [],
+    "identity_assurance": "unverified"
+   }
+  }
+ ],
+ "findings": [
+  {
+   "identity": "ss-7eda8967cc00d78b",
+   "surface": "gateway",
+   "connector": "gateway.logs",
+   "kind": "gateway-caller",
+   "title": "LLM caller 'csv-agent' (api-key): 2 requests to gpt-4o",
+   "resource": "litellm-key:credential:hmac-sha256:456edc9045947b8fda6d9a5caf5421186a8a08b43d7c2e16ec5573a85412b81e",
+   "resource_type": "caller/api-key",
+   "provider": "litellm",
+   "account": null,
+   "region": null,
+   "owner": null,
+   "frameworks": [],
+   "model_providers": [
+    "provider.openai"
+   ],
+   "models": [
+    "gpt-4o"
+   ],
+   "capabilities": [],
+   "permissions": [],
+   "evidence": [
+    {
+     "signal": "model:provider.openai",
+     "description": "model id matched OpenAI: gpt-",
+     "location": null,
+     "snippet": null,
+     "weight": 0.4,
+     "signature": "provider.openai",
+     "attributes": {
+      "category": "provider",
+      "value": "gpt-"
+     }
+    },
+    {
+     "signal": "name:identity-app.generic-ai-name",
+     "description": "display name matched Generic AI / bot naming: agent",
+     "location": null,
+     "snippet": null,
+     "weight": 0.21,
+     "signature": "identity-app.generic-ai-name",
+     "attributes": {
+      "category": "identity-app",
+      "value": "agent"
+     }
+    },
+    {
+     "signal": "gateway:api-key",
+     "description": "2 LLM request(s) by api-key 'csv-agent' to models gpt-4o",
+     "location": null,
+     "snippet": null,
+     "weight": 0.35,
+     "signature": null,
+     "attributes": {}
+    }
+   ],
+   "confidence": 0.692,
+   "likelihood": "likely",
+   "risk": {
+    "score": 0,
+    "level": "info",
+    "factors": [],
+    "danger_score": 0
+   },
+   "shadow": null,
+   "registry_match": null,
+   "tags": [
+    "ai-name-hint",
+    "no-end-user-attribution",
+    "high-error-rate"
+   ],
+   "first_seen": "2025-09-01T22:00:00+00:00",
+   "last_seen": "2025-09-01T22:05:00+00:00",
+   "metadata": {
+    "agent_indicators": 0,
+    "caller_kind": "api-key",
+    "caller": "csv-agent",
+    "events": 2,
+    "records": 2,
+    "aggregate_records": 0,
+    "usage_intervals": [],
+    "usage_intervals_dropped": 0,
+    "usage_interval_requests_dropped": 0,
+    "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
+    "models": {
+     "gpt-4o": 2
+    },
+    "providers": {
+     "openai": 2
+    },
+    "hosts": {},
+    "user_agents": {},
+    "source_ips": {},
+    "end_users": {},
+    "teams": {},
+    "operations": {
+     "acompletion": 2
+    },
+    "distribution_events_dropped": {},
+    "distribution_limit": 2000,
+    "classification_incomplete": false,
+    "tool_requests": 0,
+    "tool_call_responses": 0,
+    "tokens_in": 2700,
+    "tokens_out": 700,
+    "cost": 0.05,
+    "errors": 1,
+    "schemas": {
+     "litellm": 2
+    },
+    "samples": {},
+    "correlation_scope": {},
+    "correlation_scope_redacted": false,
+    "runtime_observations": [
+     {
+      "code_resources": [],
+      "frameworks": [],
+      "environment": null,
+      "scope": {},
+      "events": 2,
+      "timestamped_events": 2,
+      "first_seen": "2025-09-01T22:00:00+00:00",
+      "last_seen": "2025-09-01T22:05:00+00:00",
+      "identity_basis": "configured-exact-caller-and-scope",
+      "identity_assurance": "provider-authenticated-field",
+      "environment_assurance": "absent"
+     }
+    ],
+    "runtime_observations_dropped": 0,
+    "runtime_source": {
+     "label": null,
+     "schemas": [
+      "litellm"
+     ]
+    },
+    "evidence_counts": {
+     "provider.openai|model": 1,
+     "identity-app.generic-ai-name|name": 1
+    },
+    "technologies": [
+     {
+      "id": "provider.openai",
+      "name": "OpenAI",
+      "category": "provider",
+      "vendor": "OpenAI"
+     }
+    ]
+   },
+   "identity_discriminator": "caller",
+   "identity_schema": "shadowscan.finding-identity/v2"
+  },
+  {
+   "identity": "ss-58954ccd21f4d75c",
+   "surface": "gateway",
+   "connector": "gateway.logs",
+   "kind": "gateway-caller",
+   "title": "LLM caller 'credential:hmac-sha256:450fbe769a9aa739b08928eb692f6fffb5b1559d58df725b5cfa27283908e4cf' (api-key): 1 requests to gpt-4o-mini",
+   "resource": "litellm-key:credential:hmac-sha256:450fbe769a9aa739b08928eb692f6fffb5b1559d58df725b5cfa27283908e4cf",
+   "resource_type": "caller/api-key",
+   "provider": "litellm",
+   "account": null,
+   "region": null,
+   "owner": "kim@acme.com",
+   "frameworks": [],
+   "model_providers": [
+    "provider.openai"
+   ],
+   "models": [
+    "gpt-4o-mini"
+   ],
+   "capabilities": [],
+   "permissions": [],
+   "evidence": [
+    {
+     "signal": "model:provider.openai",
+     "description": "model id matched OpenAI: gpt-",
+     "location": null,
+     "snippet": null,
+     "weight": 0.4,
+     "signature": "provider.openai",
+     "attributes": {
+      "category": "provider",
+      "value": "gpt-"
+     }
+    },
+    {
+     "signal": "gateway:api-key",
+     "description": "1 LLM request(s) by api-key 'credential:hmac-sha256:450fbe769a9aa739b08928eb692f6fffb5b1559d58df725b5cfa27283908e4cf' to models gpt-4o-mini",
+     "location": null,
+     "snippet": null,
+     "weight": 0.35,
+     "signature": null,
+     "attributes": {}
+    }
+   ],
+   "confidence": 0.61,
+   "likelihood": "likely",
+   "risk": {
+    "score": 0,
+    "level": "info",
+    "factors": [],
+    "danger_score": 0
+   },
+   "shadow": null,
+   "registry_match": null,
+   "tags": [],
+   "first_seen": "2025-09-01T22:10:00+00:00",
+   "last_seen": "2025-09-01T22:10:00+00:00",
+   "metadata": {
+    "agent_indicators": 0,
+    "caller_kind": "api-key",
+    "caller": "credential:hmac-sha256:450fbe769a9aa739b08928eb692f6fffb5b1559d58df725b5cfa27283908e4cf",
+    "events": 1,
+    "records": 1,
+    "aggregate_records": 0,
+    "usage_intervals": [],
+    "usage_intervals_dropped": 0,
+    "usage_interval_requests_dropped": 0,
+    "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
+    "models": {
+     "gpt-4o-mini": 1
+    },
+    "providers": {
+     "openai": 1
+    },
+    "hosts": {},
+    "user_agents": {},
+    "source_ips": {},
+    "end_users": {
+     "kim@acme.com": 1
+    },
+    "teams": {},
+    "operations": {
+     "acompletion": 1
+    },
+    "distribution_events_dropped": {},
+    "distribution_limit": 2000,
+    "classification_incomplete": false,
+    "tool_requests": 0,
+    "tool_call_responses": 0,
+    "tokens_in": 100,
+    "tokens_out": 20,
+    "cost": 0.001,
+    "errors": 0,
+    "schemas": {
+     "litellm": 1
+    },
+    "samples": {},
+    "correlation_scope": {},
+    "correlation_scope_redacted": false,
+    "runtime_observations": [
+     {
+      "code_resources": [],
+      "frameworks": [],
+      "environment": null,
+      "scope": {},
+      "events": 1,
+      "timestamped_events": 1,
+      "first_seen": "2025-09-01T22:10:00+00:00",
+      "last_seen": "2025-09-01T22:10:00+00:00",
+      "identity_basis": "configured-exact-caller-and-scope",
+      "identity_assurance": "provider-authenticated-field",
+      "environment_assurance": "absent"
+     }
+    ],
+    "runtime_observations_dropped": 0,
+    "runtime_source": {
+     "label": null,
+     "schemas": [
+      "litellm"
+     ]
+    },
+    "evidence_counts": {
+     "provider.openai|model": 1
+    },
+    "technologies": [
+     {
+      "id": "provider.openai",
+      "name": "OpenAI",
+      "category": "provider",
+      "vendor": "OpenAI"
+     }
+    ]
+   },
+   "identity_discriminator": "caller",
+   "identity_schema": "shadowscan.finding-identity/v2"
+  }
+ ],
+ "diagnostics": {
+  "warnings": [],
+  "errors": [],
+  "objects_examined": 3,
+  "incomplete": false,
+  "skipped": false
+ }
+}

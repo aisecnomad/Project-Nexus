@@ -58,6 +58,7 @@ class GcpConnector(BaseConnector):
         "allow_instance_credentials": "allow metadata-based Application Default Credentials (default false; inherited from options)",
         "audit_days": "look back N days in Cloud Audit Logs for Vertex callers (default 0 = off)",
         "max_projects": "default 200",
+        "max_pages": "cap on pages per paginated call, at least 1 (default 1000; resource lists stop at 500 pages and audit-log queries at 50 pages regardless)",
         "input": "offline: JSONL dump of records",
     }
     offline_formats: ClassVar[str] = "JSONL dump of records"

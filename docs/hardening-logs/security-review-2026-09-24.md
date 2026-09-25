@@ -1,4 +1,20 @@
-# Project Nexus: software and security review
+# Software and security hardening log, 24 September 2026
+
+> **Internal, AI-assisted hardening log. Not an independent review.**
+> This document was produced by the project's single maintainer with AI
+> assistance on 2026-09-24 while hardening the code it describes. The author of
+> the changes also wrote this assessment; no second person or third party has
+> verified its findings, its regression claims or its disposition, and it must
+> not be cited as an external security or production review. An independent
+> review would need to cover, at minimum: the trust boundary and HTTP transport
+> policy in `shadowscan/utils/http.py`; credential redaction in findings,
+> reports and record dumps; the fail-closed and incomplete-coverage semantics in
+> the engine and every connector; the cloud, identity and low-code collectors
+> against real tenant permissions rather than mocked responses; the dependency
+> lock, wheel build and container process; and the repository and CI settings
+> that this log takes as given. See [CONTRIBUTING.md](../../CONTRIBUTING.md)
+> for the review policy and [deployment and migration](../production.md) for
+> the current rollout guide.
 
 Review date: 24 September 2026. Initial baseline:
 `f2c667fba4f09a070acb5d76a4e7eca63961a6f7`. Follow-up baseline:
@@ -70,14 +86,14 @@ Additional hardening:
 - Replaced the abbreviated license notice with the full canonical Apache-2.0
   license text from https://www.apache.org/licenses/LICENSE-2.0.txt.
 
-The main changed modules are [HTTP](../shadowscan/utils/http.py),
-[configuration](../shadowscan/config.py), [engine](../shadowscan/engine.py),
-[incremental cache](../shadowscan/incremental.py),
-[AWS](../shadowscan/connectors/cloud/aws.py),
-[Azure](../shadowscan/connectors/cloud/azure.py),
-[GCP](../shadowscan/connectors/cloud/gcp.py),
-[OCI](../shadowscan/connectors/cloud/oci.py), and
-[Google Workspace](../shadowscan/connectors/identity/google_workspace.py).
+The main changed modules are [HTTP](../../shadowscan/utils/http.py),
+[configuration](../../shadowscan/config.py), [engine](../../shadowscan/engine.py),
+[incremental cache](../../shadowscan/incremental.py),
+[AWS](../../shadowscan/connectors/cloud/aws.py),
+[Azure](../../shadowscan/connectors/cloud/azure.py),
+[GCP](../../shadowscan/connectors/cloud/gcp.py),
+[OCI](../../shadowscan/connectors/cloud/oci.py), and
+[Google Workspace](../../shadowscan/connectors/identity/google_workspace.py).
 
 ## Optimization and design decisions
 
@@ -194,7 +210,7 @@ requirements.
 
 ## Deployment limits and migration
 
-Read [deployment and migration](production.md) before upgrading configurations.
+Read [deployment and migration](../production.md) before upgrading configurations.
 Strict validation is deliberately incompatible with silently ignored malformed
 configuration. Existing valid explicit configuration remains supported.
 

@@ -17,10 +17,12 @@ from __future__ import annotations
 import ast
 import re
 from bisect import bisect_right
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import regex
 
+from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
@@ -43,6 +45,7 @@ class _Call:
     arguments: str
     line: int
     structural_arguments: str = ""
+    node: ast.Call | None = None
 
 
 # These APIs construct agents even when their arguments have a different order
@@ -77,6 +80,32 @@ _FACTORIES = {
 }
 
 
+# A provider SDK request that offers the model tools lets the model choose
+# actions. That is tool-use capability and provider attribution; only the
+# dispatch/feedback loop recognized by ``provider_loops`` shows that the program
+# executes what the model selected.
+_TOOL_REQUEST_METHODS = re.compile(
+    r"(?:^|\.)(?:create|stream|parse|converse|converse_stream|generate_content|generateContent|send_message|chat)$"
+)
+_TOOL_ARGUMENTS = re.compile(r"(?<![\w$])(?:tools|toolConfig|functions|function_declarations)\s*[=:]")
+# Import-bound request calls whose response shape the loop recognizer understands.
+_LOOP_REQUESTS: dict[str, tuple[str, frozenset[str]]] = {
+    "openai": ("provider.openai", frozenset({
+        f"{client}.chat.completions.create" for client in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI")
+    })),
+    "anthropic": ("provider.anthropic", frozenset({
+        f"{client}.{api}messages.create"
+        for client in ("Anthropic", "AsyncAnthropic", "AnthropicBedrock", "AsyncAnthropicBedrock", "AnthropicVertex", "AsyncAnthropicVertex")
+        for api in ("", "beta.")
+    })),
+}
+# Keyword arguments that evidence a specific capability of a bound construction.
+_KEYWORD_CAPABILITIES: dict[str, tuple[tuple[str, str], ...]] = {
+    "framework.openai-agents-sdk": (("handoffs", "multi-agent"),),
+    "framework.langgraph": (("checkpointer", "memory"), ("store", "memory")),
+}
+
+
 def _symbol_tail(symbol: str) -> str:
     # Module paths may precede the exported class/function. Keep class methods.
     parts = symbol.split(".")
@@ -84,8 +113,12 @@ def _symbol_tail(symbol: str) -> str:
 
 
 class _PythonBindings(ast.NodeVisitor):
-    def __init__(self, text: str):
+    def __init__(self, text: str, relevant: Callable[[_Binding], bool] | None = None):
         self.text = text
+        # Only calls into modules that some signature describes can produce
+        # evidence. Counting every bound call (``pytest.raises``, ``requests.get``)
+        # against MAX_BOUND_CALLS made ordinary large files fail as incomplete.
+        self.relevant = relevant
         self.lines = text.splitlines(keepends=True)
         self.offsets = [0]
         for line in self.lines:
@@ -157,12 +190,13 @@ class _PythonBindings(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         binding = self._resolve(node.func)
-        if binding:
+        if binding and (self.relevant is None or self.relevant(binding)):
             if len(self.calls) >= MAX_BOUND_CALLS:
                 raise MatchTimeoutError("source binding call limit exceeded")
             start = self._offset(node.func.end_lineno or node.lineno, node.func.end_col_offset or 0)
             end = self._offset(node.end_lineno or node.lineno, node.end_col_offset or 0)
-            self.calls.append(_Call(binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno))
+            keywords = " ".join(f"{keyword.arg}=" for keyword in node.keywords if keyword.arg)
+            self.calls.append(_Call(binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno, keywords, node=node))
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
@@ -335,17 +369,21 @@ class _PythonBindings(ast.NodeVisitor):
                            for name in set(outcomes[0]) | set(outcomes[1])}
 
 
-def _python_bindings(text: str) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
+def _python_bindings(
+    text: str, relevant: Callable[[_Binding], bool] | None = None,
+) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
     for count, _ in enumerate(ast.walk(tree)):
         if count >= MAX_AST_NODES:
             raise MatchTimeoutError("source binding AST limit exceeded")
-    visitor = _PythonBindings(text)
+    visitor = _PythonBindings(text, relevant)
     visitor.visit(tree)
-    return visitor.calls, visitor.imports
+    return visitor.calls, visitor.imports, tree
 
 
-def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
+def _javascript_bindings(
+    text: str, ignored: list[tuple[int, int]], relevant: Callable[[_Binding], bool] | None = None,
+) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
     starts = [start for start, _ in ignored]
 
     def excluded(offset: int) -> bool:
@@ -430,6 +468,8 @@ def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[lis
         binding = bindings.get(parts[0])
         if binding is None:
             continue
+        if relevant is not None and not relevant(binding):
+            continue
         if len(calls) >= MAX_BOUND_CALLS:
             raise MatchTimeoutError("source binding call limit exceeded")
         opening = match.end() - 1
@@ -445,18 +485,15 @@ def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[lis
     return calls, imports
 
 
-def bound_source_matches(index: SignatureIndex, text: str, language: str, ignored: list[tuple[int, int]]) -> list[Match]:
+def bound_source_matches(
+    index: SignatureIndex, text: str, language: str, ignored: list[tuple[int, int]],
+    *, is_local_module: Callable[[str], bool] | None = None,
+) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
     Invalid Python cannot establish bound constructions. The caller already
     retains lexical import/supporting evidence and reports lexical ambiguity.
     """
-    try:
-        calls, imports = _python_bindings(text) if language == "python" else _javascript_bindings(text, ignored)
-    except RecursionError as exc:
-        raise MatchTimeoutError("source binding recursion limit exceeded") from exc
-    except (SyntaxError, ValueError):
-        return []
     found: list[Match] = []
     module_cache: dict[_Binding, list[Match]] = {}
 
@@ -465,6 +502,8 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
             if language == "python":
                 statement = f"from {binding.module} import {binding.symbol.split('.')[0]}" if binding.symbol else f"import {binding.module}"
                 matches = index.match_imports(statement, language)
+                if matches and is_local_module is not None and is_local_module(binding.module):
+                    matches = []
             else:
                 matches = index.match_imports(f"import {{ example }} from '{binding.module}'", language)
                 matches += index.match_dependency("npm", binding.module)
@@ -472,6 +511,20 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
                     matches = [m for m in matches if m.signature_id != "framework.langchain"]
             module_cache[binding] = matches
         return module_cache[binding]
+
+    def relevant(binding: _Binding) -> bool:
+        return bool(module_matches(binding))
+
+    tree = None
+    try:
+        if language == "python":
+            calls, imports, tree = _python_bindings(text, relevant)
+        else:
+            calls, imports = _javascript_bindings(text, ignored, relevant)
+    except RecursionError as exc:
+        raise MatchTimeoutError("source binding recursion limit exceeded") from exc
+    except (SyntaxError, ValueError):
+        return []
 
     for binding, line in imports:
         for match in module_matches(binding):
@@ -487,8 +540,13 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
                     match.line = line
                     match.extra["verified_agent"] = False
                     found.append(match)
+    provider_requests: set[int] = set()
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
+        loop_request = _LOOP_REQUESTS.get(call.binding.module)
+        if (tree is not None and call.node is not None and loop_request is not None
+                and loop_request[0] in signatures and call.binding.symbol in loop_request[1]):
+            provider_requests.add(id(call.node))
         symbol = _symbol_tail(call.binding.symbol)
         canonical = symbol + call.arguments
         for signature in signatures.values():
@@ -497,6 +555,22 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
             if signature.id == "framework.vercel-ai-sdk" and symbol in {"generateText", "streamText"}:
                 # Options belong to a resolved SDK call, not unrelated config.
                 verified = bool(re.search(r"\btools\s*:\s*\{", call.structural_arguments))
+            if (
+                signature.category == "provider" and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
+                and _TOOL_ARGUMENTS.search(call.structural_arguments)
+            ):
+                # Schema-only requests stay tool-enabled LLM usage: the loop
+                # evidence below decides whether selected tools are executed.
+                found.append(Match(signature, Signal(type="code", weight=0.7, capabilities=["tool-use"],
+                                                     description="import-bound request offering tools"),
+                                   sanitize_text(f"{call.binding.module}:{symbol}(tools="), 0.7, line=call.line,
+                                   extra={"verified_agent": False}))
+            for keyword, capability in _KEYWORD_CAPABILITIES.get(signature.id, ()):
+                if re.search(rf"(?<![\w$]){keyword}\s*[=:]", call.structural_arguments):
+                    found.append(Match(signature, Signal(type="code", weight=0.6, capabilities=[capability],
+                                                         description=f"{keyword} argument"),
+                                       sanitize_text(f"{symbol}({keyword}="), 0.6, line=call.line,
+                                       extra={"verified_agent": False}))
             for signal in signature.signals:
                 if signal.type != "code" or signal.languages and language not in signal.languages:
                     continue
@@ -515,4 +589,13 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
                                                      description="import-bound agent construction"),
                                    sanitize_text(f"{call.binding.module}:{symbol}("), 0.9, line=call.line,
                                    extra={"verified_agent": True}))
+    if tree is not None and (protocol := index.get("protocol.openai-function-calling")):
+        for line in provider_tool_loop_lines(tree, provider_requests):
+            found.append(Match(
+                protocol,
+                Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
+                       description="import-bound model-selected tool dispatch with conversation feedback"),
+                "provider tool-selection/dispatch/feedback loop", 0.9, line=line,
+                extra={"verified_agent": True},
+            ))
     return found

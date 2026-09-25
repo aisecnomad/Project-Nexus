@@ -29,7 +29,7 @@ signatures:
     capabilities: [autonomous]
     signals:
       - type: code
-        patterns: ['\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\breact_agent\b', '\bstop_reason\s*==\s*["'']tool_use["'']', '\bfinish_reason\s*==\s*["'']tool_calls["'']']
+        patterns: ['\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\breact_agent\b', '\bstop_reason\s*[!=]=\s*["'']tool_use["'']', '\bfinish_reason\s*[!=]=\s*["'']tool_calls["'']']
         weight: 0.35
         agent_indicator: true
       - type: code
@@ -130,6 +130,18 @@ signatures:
         patterns: ['^[^\S\r\n]*(?:cron|schedule):\s*["'']?[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+', '\bschedule\.every\(', '\b@(?:app\.)?(?:cron|scheduled|periodic_task|repeat_every)\b', '\bCronTrigger\b', '\bAPScheduler\b', '\bBackgroundScheduler\b', '\bcelery\.(?:beat|task)\b', '\b@celery\.task\b', '\baws_events\.Rule\b', '\bschedule_expression\s*=', '\bScheduleExpression\b', '\bcron\(\s*[0-9*]', '\brate\(\s*\d+\s+(?:minute|hour|day)s?\s*\)', 'triggers:\s*\n\s*-?\s*schedule', '\bon:\s*\n\s*schedule:', '\bsqs_trigger\b', '\bEventBridge\b', '\bPubSub\b[^\n]*\bagent\b', '\b@functions_framework\b', '\btemporalio\b', '\bworkflow\.run\b']
         weight: 0.2
 
+  - id: heuristic.llm-command-execution
+    name: Command / code execution in a file that calls a model
+    category: heuristic
+    vendor: null
+    description: Shell, process and dynamic-code sinks. The code scanner records them only when the same file invokes an LLM provider, agent framework or tool-calling protocol.
+    capabilities: [code-exec]
+    risk_notes: ["Model output that reaches a shell or interpreter enables full compromise through prompt injection."]
+    signals:
+      - type: code
+        patterns: ['\bsubprocess\.(?:run|Popen|call|check_output|check_call)\s*\([^\n]*\bshell\s*=\s*True', '\bos\.(?:system|popen)\s*\(\s*(?!["''])', '(?<![\w.])(?:exec|eval)\s*\(\s*(?!["''\)])', '\bchild_process\b[^\n]*\b(?:exec|execSync|spawn|spawnSync)\b', '\b(?:execSync|spawnSync)\s*\(\s*(?!["''`])', '\bexec\.Command(?:Context)?\s*\(', '\bRuntime\.getRuntime\(\)\s*\.exec\s*\(', '\bnew\s+ProcessBuilder\s*\(']
+        weight: 0.5
+
   - id: heuristic.llm-env-names
     name: Generic LLM / agent environment variables
     category: heuristic
@@ -149,3 +161,28 @@ signatures:
       - type: code
         patterns: ['(?i)\b(?:openai|anthropic|gemini|google|groq|mistral|cohere|together|fireworks|openrouter|deepseek|xai|perplexity|huggingface|hf|replicate|azure_openai|litellm|langsmith|langchain|pinecone|tavily|e2b|serpapi|elevenlabs|voyage|jina)_?(?:api_?)?(?:key|token|secret)\s*[=:]\s*["''][A-Za-z0-9_\-]{16,}["'']', '(?i)\bapi_key\s*=\s*["''](?:sk-|AIza|gsk_|hf_|r8_|xai-|pplx-|tvly-|e2b_)[A-Za-z0-9_\-]{10,}["'']']
         weight: 0.6
+
+  - id: heuristic.unattributed-api-key
+    name: sk- style API key of an unknown vendor
+    category: heuristic
+    vendor: null
+    description: A credential in the common `sk-` shape that no provider signature claims (DeepSeek, DashScope, Moonshot and other OpenAI-compatible hosts issue such keys); the vendor cannot be attributed from the value alone.
+    risk_notes: ["Hard-coded credentials; rotate and move to a secret store."]
+    signals:
+      - type: secret
+        # Excludes every sk- prefix owned by a vendor signature (Anthropic, OpenRouter,
+        # Langfuse, LiteLLM, OpenAI project / service-account / admin keys) and the
+        # OpenAI key marker, so a key never counts twice.
+        patterns: ['\bsk-(?!ant-|or-|lf-|litellm-|proj-|svcacct-|admin-)(?![A-Za-z0-9]{20}T3BlbkFJ)[A-Za-z0-9_-]{32,}\b']
+        weight: 0.4
+        description: sk- style API key (vendor unknown)
+
+  - id: heuristic.agent-construction
+    name: Agent object construction
+    category: heuristic
+    vendor: null
+    description: A generic Agent(...) / new Agent({...}) constructor shared by many SDKs (Agno, Pydantic AI, Strands, OpenAI Agents, Mastra...); supporting evidence only, the framework is attributed by its import or dependency.
+    signals:
+      - type: code
+        patterns: ['\bAgent\s*\(\s*(?:model|tools|system_prompt|instructions|llm)\s*=', '\bnew\s+Agent\s*\(\s*\{\s*(?:name|model|instructions|tools)\s*:']
+        weight: 0.35

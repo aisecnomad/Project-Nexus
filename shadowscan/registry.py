@@ -38,6 +38,7 @@ from typing import Any
 
 import yaml
 
+from shadowscan.errors import SetupError, SetupPathError
 from shadowscan.models import Finding, Surface
 from shadowscan.utils.files import policy_files, policy_glob, read_policy_text, require_no_symlinks
 from shadowscan.utils.identity import has_aws_account_scope
@@ -138,7 +139,9 @@ class Inventory:
             elif any(ch in str(path) for ch in "*?["):
                 files = sorted(policy_glob(path))
             else:
-                raise FileNotFoundError(f"inventory path not found: {p}")
+                # A missing path is reported by name only: the message must stay
+                # safe for the CLI to print verbatim (see shadowscan.errors).
+                raise SetupPathError(sanitize_text(f"inventory path not found: {p}"))
             for f in files:
                 inv.entries.extend(cls._load_file(f))
                 inv.sources.append(str(f))
@@ -354,8 +357,12 @@ class Inventory:
         return out
 
 
-class InventoryValidationError(ValueError):
-    """Malformed inventory cannot participate in approval or risk scoring."""
+class InventoryValidationError(SetupError, ValueError):
+    """Malformed inventory cannot participate in approval or risk scoring.
+
+    Messages name the file, the location inside it and a fixed reason; they
+    are sanitized and safe to print verbatim.
+    """
 
 
 def _invalid(path: Path, location: str, message: str) -> InventoryValidationError:

@@ -35,7 +35,7 @@ signatures:
         prefixes: [crewai]
         weight: 0.97
       - type: import
-        languages: [python]           # python | javascript | go | rust | java | dotnet | ruby | php
+        languages: [python]           # python | javascript | go | rust | java | dotnet | ruby | php | swift | dart
         patterns: ['^[^\S\r\n]*(?:from|import)\s+crewai\b']
         weight: 0.97
       - type: code
@@ -88,6 +88,15 @@ signatures:
 | `policy` | permission classes (privileged / data-access / llm-access) | `finding.tags` → risk factors |
 | `heuristic` | vendor-neutral idioms (tool registration, agent loops, autonomy flags, code execution) | capabilities + confidence only |
 
+Signature ids are `namespace.slug` and the namespace fixes the category:
+`framework`, `provider`, `protocol`, `coding-agent`, `platform`,
+`observability`, `memory`, `sandbox`, `identity-app`, `heuristic` and `policy`
+map to the category of the same name, `cloud.*` is the `cloud-service`
+category and `tool.*` (tool providers such as web-search APIs) shares the
+`sandbox` category as corroborating infrastructure. Any other namespace
+(`custom.*`, `acme.*`) is free for custom packs and carries no category
+requirement; the built-in packs may only use the namespaces above.
+
 ### Weights and confidence
 
 Each match contributes its weight as evidence; a finding's confidence is the
@@ -122,8 +131,37 @@ Each signal has a supported `type` and that type's matcher fields. Unknown
 fields, incorrect types, duplicate YAML keys or IDs within a pack directory,
 empty packs, invalid categories, and malformed regexes (including `re:` domain
 values) fail loading. Lists must contain strings; booleans cannot be strings.
-Weights must be finite numbers in `[0, 1]`. Overrides are allowed only between
-separate pack directories, in the order configured.
+Overrides are allowed only between separate pack directories, in the order
+configured.
+
+The schema also pins the closed vocabularies the matcher and the risk engine
+key on, so a typo fails loading instead of silently never matching:
+
+* `ecosystem` must be one of `pypi`, `npm`, `nuget`, `maven`, `go`, `cargo`,
+  `rubygems`, `composer`, `conda` or `any` (omitted means `any`);
+* `languages` entries must be canonical language names (`python`, `javascript`,
+  `go`, `rust`, `java`, `dotnet`, `ruby`, `php`, `swift`, `dart`);
+* `capabilities` (signature or signal level) must be capabilities the risk
+  engine scores: `code-exec`, `autonomous`, `saas-actions`, `browsing`,
+  `memory`, `multi-agent`, `delegated-identity`, `tool-use`, `rag`;
+* the id namespace must match the category (table above);
+* `weight` must be a finite number greater than 0 and at most 1; a zero-weight
+  signal contributes nothing and is rejected;
+* list fields (`names`, `patterns`, `globs`, `values`, `capabilities`, `tags`...)
+  may not repeat a value inside one signal (distinct signals of a signature may
+  restate a value to layer a different weight or capability on it);
+* a regex that matches the empty string (`a*`, `^`, `foo|`) is rejected, for
+  `patterns` and for `re:` domain values;
+* `file` globs must have balanced `[...]` classes and no `{a,b}` braces, which
+  `fnmatch` would match literally.
+
+`python -m shadowscan.signatures.validate` additionally checks the whole set:
+an identical regex (same signal type, or a `re:` domain value) claimed by two
+or more signatures is an error unless every claimant but one is a `heuristic`,
+because a shared regex cannot attribute a match to either product. Shared
+plain values (a dependency name that is both a framework integration and a
+provider SDK, a scope that a `policy.*` signature classifies and a provider
+claims) are allowed. Built-in signatures must use a known namespace.
 
 Signature packs do **not** support a `severity` field: severity is calculated
 centrally by the risk engine from the finding. Every `severity` field is rejected,
@@ -146,7 +184,23 @@ risk scoring. `weight` controls confidence in the evidence, not finding severity
 * `file` globs use `fnmatch` on the repository-relative POSIX path; `**/` prefixes match at any depth.
 * Dependency names are normalised PEP 503-style (`Foo_Bar` == `foo-bar`) for every ecosystem.
 * `secret` patterns must be specific enough not to match placeholders; matches are redacted before they reach any report.
+  A prefix shared by several vendors (`sk-`) is only attributed when the rest of the key is vendor-specific
+  (`sk-ant-`, `sk-or-v1-`, `sk-lf-`, `sk-litellm-`, OpenAI's `sk-proj-` / `T3BlbkFJ` marker); anything else is
+  reported by `heuristic.unattributed-api-key` at low weight.
+* `name` patterns for products whose name is also a dictionary word or a first name (Otter, Devin, Jasper,
+  Drift...) are context-guarded: the vendor form (`otter\.ai`) matches on its own; the bare word only when it is
+  the whole display name (`^[^\S\r\n]*otter[^\S\r\n]*$`, an app called just "Otter") or with product context on
+  the same line (`(?i)^(?=.*\b(?:ai|meeting|notes)\b).*\botter\b`), so "Otter Insurance Portal" and "Devin Smith"
+  never match. Umbrella `identity-app.*` signatures own the display names of the SaaS products they list;
+  dedicated `coding-agent.*` / `platform.*` signatures do not repeat them.
+* Code idioms shared by several SDKs (`CodeInterpreterTool(`, `WebSearchTool(`, `Agent(model=...)`,
+  `new Agent({ name: ... })`) live in `heuristic.*` signatures at low weight without `agent_indicator`; a product
+  signature only claims idioms that are unique to it, so a generic constructor can never pin the wrong framework.
 
 Pack traversal does not follow symlinks. Explicit unsafe paths fail validation;
 directory walks skip symlinked entries. YAML parsing has construction budgets
 before schema validation, including bounds on aliases and merge expansion.
+
+### Dependency exclusions
+
+A `dependency` signal may combine `prefixes` with `exclude_names` (exact package names) and `exclude_prefixes` (name prefixes) so a broad family such as `langchain-` can carve out packages that belong to another signature (`langchain-text-splitters`, `@langchain/langgraph`). Exclusions apply only to the prefix match; `names` on the same signal still match.

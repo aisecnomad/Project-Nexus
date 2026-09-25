@@ -30,22 +30,36 @@ explicit fallback when the variable is missing or empty.
 ``options.connector_timeout`` is a deprecated alias for
 ``options.connector_timeout_seconds``. Legacy null selects the bounded
 120-second default; it never disables the completion deadline. Specify one key.
+Using the alias logs a deprecation warning once per process.
+
+Connector entries of built-in connectors accept only the keys the connector
+reads (see ``shadowscan connectors``) plus the shared offline input limits.
+Unknown keys are rejected so that a typo cannot silently disable an option.
+Third-party plugins are not imported while parsing, so their keys are not
+checked here. Keys starting with an underscore are reserved for the engine.
 """
 
 from __future__ import annotations
 
+import difflib
+import logging
 import math
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from shadowscan.errors import SetupError, yaml_error_position
+from shadowscan.risk import RiskPolicy
 from shadowscan.utils.files import read_policy_text
-from shadowscan.utils.redaction import sanitize_text
+from shadowscan.utils.redaction import REDACTED, sanitize_text
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
+
+log = logging.getLogger("shadowscan.config")
 
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 PATH_KEYS = ("input", "path", "paths", "service_account_file", "credentials_file", "config_file", "token_file")
@@ -54,12 +68,102 @@ _OPTION_FIELDS = {
     "min_confidence", "fail_on", "dump_records", "workdir", "parallel", "incremental",
     "state_dir", "plugins", "allow_signature_override", "allow_private_origin",
     "allow_instance_credentials", "allow_credential_mixing", "connector_timeout_seconds", "connector_timeout",
+    "risk_basis", "risk_weights",
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
+# Keys every connector accepts: BaseConnector / ConnectorContext read the input
+# and offline limits, and the engine hands every connector its ``label``.
+SHARED_CONNECTOR_KEYS = frozenset({"input", "label", "max_input_bytes", "max_input_file_bytes", "max_input_files"})
+# Keys a built-in connector reads without listing them in ``config_keys``
+# (aliases, alternatives named only in another key's description, and values
+# that code.github / code.gitlab hand to their child filesystem scans). The
+# drift test in tests/unit/test_config_validation.py compares this table with
+# the keys each connector actually reads.
+_UNDOCUMENTED_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
+    "cloud.gcp": frozenset({"max_pages"}),
+    "cloud.oci": frozenset({"max_pages", "region", "tenancy"}),
+    "code.filesystem": frozenset({"paths", "account", "owner", "provider", "metadata"}),
+    # code.github and code.gitlab forward these to the nested filesystem scan.
+    "code.github": frozenset({"github_token", "repos", "user", "exclude", "max_file_size", "max_files", "scan_secrets"}),
+    "code.gitlab": frozenset({"projects", "exclude", "max_file_size", "max_files", "scan_secrets"}),
+    "gateway.logs": frozenset({"gateway_name"}),
+    "identity.okta": frozenset({"bearer"}),
+    "lowcode.make": frozenset({"max_pages", "organization_id"}),
+    "lowcode.n8n": frozenset({"max_pages"}),
+    "lowcode.workato": frozenset({"max_pages"}),
+    "lowcode.zapier": frozenset({"max_pages"}),
+}
+_IDENTIFIER_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+_deprecations_warned: set[str] = set()
 
 
-class ConfigValidationError(ValueError):
+class ConfigValidationError(SetupError, ValueError):
     """Configuration error whose message never includes user-supplied values."""
+
+
+class MinConfidenceError(ConfigValidationError):
+    """``min_confidence`` is outside the finite unit interval.
+
+    The CLI reports it as a usage error because the same threshold is also a
+    command line option.
+    """
+
+
+def _warn_deprecated_once(key: str, message: str) -> None:
+    """Log a deprecation once per process so repeated parses do not flood logs."""
+    if key in _deprecations_warned:
+        return
+    _deprecations_warned.add(key)
+    log.warning("%s", message)
+
+
+def _display_identifier(value: Any, fallback: str) -> str:
+    """Quote a key or connector name for a diagnostic only when it is plainly an identifier."""
+    if isinstance(value, str) and _IDENTIFIER_RX.fullmatch(value):
+        shown = sanitize_text(value)
+        if shown == value and REDACTED not in shown:
+            return f"'{value}'"
+    return fallback
+
+
+def accepted_connector_keys(name: str) -> frozenset[str] | None:
+    """Return the configuration keys a built-in connector accepts, or None for plugins.
+
+    Built-in connector modules are first-party code, so importing one to read
+    its ``config_keys`` is safe at parse time. Third-party plugins are not
+    imported before they are approved, so their keys cannot be checked and
+    ``None`` is returned.
+    """
+    from shadowscan.connectors import builtin_connector_names, get_connector_class
+
+    if name not in builtin_connector_names():
+        return None
+    cls = get_connector_class(name)
+    return frozenset(cls.config_keys) | SHARED_CONNECTOR_KEYS | _UNDOCUMENTED_CONNECTOR_KEYS.get(name, frozenset())
+
+
+def validate_connector_config(name: str, config: Mapping[Any, Any]) -> None:
+    """Reject connector keys that would otherwise be ignored silently.
+
+    Raises :class:`ConfigValidationError` naming the connector and the key
+    (never its value) when a built-in connector does not read the key, or
+    when any connector receives a reserved underscore-prefixed key.
+    """
+    shown_name = _display_identifier(name, "connector")
+    accepted = accepted_connector_keys(name)
+    for key in config:
+        if not isinstance(key, str) or not key:
+            raise ConfigValidationError(f"connector {shown_name}: configuration keys must be nonempty strings")
+        if key.startswith("_"):
+            raise ConfigValidationError(f"connector {shown_name}: keys starting with an underscore are reserved for internal use")
+        if accepted is None or key in accepted:
+            continue
+        shown_key = _display_identifier(key, "an unsupported key")
+        message = f"connector {shown_name} does not accept {shown_key}"
+        close = difflib.get_close_matches(key, sorted(accepted), n=1, cutoff=0.75)
+        if close:
+            message += f" (did you mean '{close[0]}'?)"
+        raise ConfigValidationError(message + "; run `shadowscan connectors` to list its options")
 
 
 def expand_env(value: Any) -> Any:
@@ -114,6 +218,8 @@ class ScanConfig:
     allow_instance_credentials: bool = False
     allow_credential_mixing: bool = False
     connector_timeout_seconds: float = 120.0
+    risk_basis: str = "combined"
+    risk_weights: dict[str, Any] = field(default_factory=dict)
     source: str | None = None
     # Constructor-only compatibility: never retain stale alias state that could
     # overwrite a later CLI or library update to the canonical setting.
@@ -123,6 +229,7 @@ class ScanConfig:
         if connector_timeout is not None:
             if self.connector_timeout_seconds != 120.0:
                 raise ConfigValidationError("specify connector_timeout_seconds or connector_timeout, not both")
+            _warn_deprecated_once("connector_timeout", "ScanConfig(connector_timeout=...) is deprecated; use connector_timeout_seconds")
             self.connector_timeout_seconds = connector_timeout
         self.validate_security_options()
 
@@ -137,6 +244,12 @@ class ScanConfig:
         if self.fail_on is not None and (not isinstance(self.fail_on, str) or self.fail_on not in _RISK_LEVELS):
             raise ConfigValidationError("options.fail_on must be critical, high, medium, low, info, or null")
         self.parallel = _positive_integer(self.parallel, "options.parallel")
+        if self.risk_weights is None:
+            self.risk_weights = {}
+        try:
+            RiskPolicy.from_options(self.risk_weights, self.risk_basis)
+        except ValueError as exc:
+            raise ConfigValidationError(f"options.{exc}") from None
 
     def validate_connector_isolation(self, specs: list[ConnectorSpec]) -> None:
         """Do not expose live connector credentials to an unrelated source parser."""
@@ -171,6 +284,7 @@ class ScanConfig:
         if "connector_timeout" in opts:
             # Older configurations used null for no deadline. Keep them usable
             # while enforcing the safe default instead of permitting infinity.
+            _warn_deprecated_once("connector_timeout", "options.connector_timeout is deprecated; use options.connector_timeout_seconds")
             timeout = 120.0 if opts["connector_timeout"] is None else opts["connector_timeout"]
         connectors = data.get("connectors", [])
         if not isinstance(connectors, list):
@@ -193,6 +307,7 @@ class ScanConfig:
             cfg = item.pop("config", None)
             if isinstance(cfg, dict):
                 item.update(cfg)
+            validate_connector_config(name, item)
             specs.append(ConnectorSpec(name=name, config=item, enabled=enabled, label=label))
         base = Path(source).parent if source else Path()
         for spec in specs:
@@ -219,6 +334,8 @@ class ScanConfig:
             allow_instance_credentials=_boolean_option(opts.get("allow_instance_credentials", False), "allow_instance_credentials"),
             allow_credential_mixing=_boolean_option(opts.get("allow_credential_mixing", False), "allow_credential_mixing"),
             connector_timeout_seconds=validate_connector_timeout(timeout),
+            risk_basis=opts.get("risk_basis", "combined"),
+            risk_weights=opts.get("risk_weights", {}),
             source=source,
         )
 
@@ -227,9 +344,10 @@ class ScanConfig:
         p = Path(path)
         try:
             data = yaml.load(read_policy_text(p), Loader=_ConfigLoader)
-        except yaml.YAMLError:
+        except yaml.YAMLError as exc:
             # PyYAML diagnostics may echo source snippets containing credentials.
-            raise ConfigValidationError("invalid YAML syntax or structural limits exceeded") from None
+            # Only the position (numbers) is kept so the mistake can be located.
+            raise ConfigValidationError("invalid YAML syntax or structural limits exceeded" + yaml_error_position(exc)) from None
         if data is None:
             data = {}
         return cls.from_dict(data, source=str(p))
@@ -298,16 +416,25 @@ class _ConfigLoader(BoundedSafeLoader):
             return
         seen: set[str] = set()
         for key_node, _ in node.value:
+            position = _node_position(key_node)
             if key_node.tag == "tag:yaml.org,2002:merge":
                 key = "<<"
             elif key_node.tag == "tag:yaml.org,2002:str":
                 key = key_node.value
             else:
-                raise ConfigValidationError("configuration mapping keys must be strings")
+                raise ConfigValidationError("configuration mapping keys must be strings" + position)
             if key in seen:
-                raise ConfigValidationError("duplicate configuration mapping key")
+                raise ConfigValidationError("duplicate configuration mapping key" + position)
             seen.add(key)
         super().flatten_mapping(node)
+
+
+def _node_position(node: yaml.Node) -> str:
+    """Line and column of a YAML node for diagnostics; never its text."""
+    mark = getattr(node, "start_mark", None)
+    if mark is None or not isinstance(getattr(mark, "line", None), int) or not isinstance(getattr(mark, "column", None), int):
+        return ""
+    return f" (line {mark.line + 1}, column {mark.column + 1})"
 
 
 def _connector_enabled(value: Any) -> bool:
@@ -342,16 +469,20 @@ def validate_connector_timeout(value: Any) -> float:
 
 
 def validate_min_confidence(value: Any) -> float:
-    """Keep invalid thresholds from silently filtering out all gated findings."""
+    """Keep invalid thresholds from silently filtering out all gated findings.
+
+    Raises :class:`MinConfidenceError` (a ``ValueError``) whose message never
+    echoes the rejected value.
+    """
     message = "min_confidence must be a finite number between 0 and 1"
     if isinstance(value, bool):
-        raise ValueError(message)
+        raise MinConfidenceError(message)
     try:
         confidence = float(value)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(message) from exc
+    except (TypeError, ValueError, OverflowError):
+        raise MinConfidenceError(message) from None
     if not math.isfinite(confidence) or not 0 <= confidence <= 1:
-        raise ValueError(message)
+        raise MinConfidenceError(message)
     return confidence
 
 

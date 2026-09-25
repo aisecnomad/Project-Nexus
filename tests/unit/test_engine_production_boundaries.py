@@ -23,6 +23,26 @@ from shadowscan.incremental import IncrementalCache
 from shadowscan.models import Finding, Kind, ScanStats, Surface, now_iso
 from shadowscan.signatures import SignatureIndex
 
+# Connector deadline for the timeout tests, in seconds. It must comfortably
+# exceed the engine's per-connector prelude on a loaded host: the deadline
+# starts before the connector runs, so a tiny value can expire beforehand.
+CONNECTOR_DEADLINE = 0.5
+# Upper bound on a held worker, so a broken test cannot hang the process.
+HOLD_TIMEOUT = 30
+
+
+def _warm_engine_prelude() -> None:
+    """Pay the engine's one-off per-connector import costs outside a timed run.
+
+    The connector deadline starts before the connector itself is entered. On a
+    cold process the prelude imports the built-in connector module, which can
+    take longer than a short deadline and expire it before the fake connector
+    ever runs. The caller must already have patched the connector lookup.
+    """
+    result = Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem", label="warm-up")]),
+                    SignatureIndex([])).run()
+    assert result.complete, result.stats
+
 
 @pytest.mark.parametrize("name", ["allow_instance_credentials", "allow_credential_mixing"])
 @pytest.mark.parametrize("value", ["false", 0, 1, None, [], {}])
@@ -64,12 +84,16 @@ def test_credential_isolation_is_applied_to_selected_connectors(monkeypatch):
 
 
 def test_offline_exports_do_not_require_credential_mixing_approval():
-    cfg = ScanConfig(connectors=[
+    offline = ScanConfig(connectors=[
         ConnectorSpec("code.filesystem"), ConnectorSpec("cloud.aws", {"input": "aws.json"}),
     ])
-    cfg.validate_connector_isolation(cfg.connectors)
-    cfg = ScanConfig(connectors=[ConnectorSpec("code.github")])
-    cfg.validate_connector_isolation(cfg.connectors)
+    assert offline.validate_connector_isolation(offline.connectors) is None
+    provider = ScanConfig(connectors=[ConnectorSpec("code.github")])
+    assert provider.validate_connector_isolation(provider.connectors) is None
+    # The same check still rejects the live counterpart of the offline export.
+    live = ScanConfig(connectors=[ConnectorSpec("code.filesystem"), ConnectorSpec("cloud.aws")])
+    with pytest.raises(ValueError, match="allow_credential_mixing"):
+        live.validate_connector_isolation(live.connectors)
 
 
 @pytest.mark.parametrize("approved", [False, True])
@@ -94,6 +118,7 @@ def test_instance_credentials_approval_comes_from_scan_options(monkeypatch, appr
 
 @pytest.mark.parametrize("workers", [1, 2])
 def test_connector_deadline_returns_incomplete_and_discards_late_results(monkeypatch, workers):
+    started = threading.Event()
     release = threading.Event()
     finished = threading.Event()
 
@@ -103,8 +128,9 @@ def test_connector_deadline_returns_incomplete_and_discards_late_results(monkeyp
 
         def run(self):
             if self.ctx.config["label"] == "blocked":
+                started.set()
                 try:
-                    assert release.wait(3)
+                    release.wait(HOLD_TIMEOUT)
                 finally:
                     finished.set()
             self.ctx.stats = ScanStats(connector="test", started_at=now_iso(), finished_at=now_iso())
@@ -112,25 +138,35 @@ def test_connector_deadline_returns_incomplete_and_discards_late_results(monkeyp
                             self.ctx.config["label"], self.ctx.config["label"], "agent")]
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
+    _warm_engine_prelude()
     cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem", label="blocked"),
                                  ConnectorSpec("code.filesystem", label="healthy")],
-                     parallel=workers, connector_timeout_seconds=0.03)
-    before = time.monotonic()
+                     parallel=workers, connector_timeout_seconds=CONNECTOR_DEADLINE)
     try:
         result = Engine(cfg, SignatureIndex([])).run()
-        assert time.monotonic() - before < 1
-        assert not result.complete
-        blocked = next(stats for stats in result.stats if stats.connector == "blocked")
-        assert "deadline" in blocked.errors[0]
-        assert "cooperative" in blocked.warnings[0]
-        assert {finding.resource for finding in result.findings} == ({"healthy"} if workers == 2 else set())
+        # Sampled before the release: the engine must return while the worker is still held.
+        worker_still_held = not finished.is_set()
     finally:
         release.set()
-        assert finished.wait(2)
+    assert started.is_set(), "the deadline expired before the blocked connector started"
+    assert finished.wait(5)
+    assert worker_still_held
+    assert not result.complete
+    blocked = next(stats for stats in result.stats if stats.connector == "blocked")
+    assert "deadline" in blocked.errors[0]
+    assert "cooperative" in blocked.warnings[0]
+    assert {finding.resource for finding in result.findings} == ({"healthy"} if workers == 2 else set())
     assert all(finding.resource != "blocked" for finding in result.findings)
 
 
 def test_timed_out_connector_preserves_queued_siblings_when_a_worker_remains(monkeypatch):
+    # The second worker starts "in-flight" halfway through the blocked deadline,
+    # which leaves half a deadline of margin on either side: "stagger" completes
+    # well before its own deadline, and the "in-flight" deadline is still live
+    # after the engine observes the blocked expiry and releases it.
+    deadline = 2 * CONNECTOR_DEADLINE
+    blocked_started = threading.Event()
+    blocked_cancelled: dict[str, threading.Event] = {}
     release = threading.Event()
     finished = threading.Event()
 
@@ -141,41 +177,46 @@ def test_timed_out_connector_preserves_queued_siblings_when_a_worker_remains(mon
         def run(self):
             label = self.ctx.config["label"]
             if label == "blocked":
+                blocked_cancelled["event"] = self.ctx.cancelled
+                blocked_started.set()
                 try:
-                    assert release.wait(3)
+                    release.wait(HOLD_TIMEOUT)
                 finally:
                     finished.set()
             elif label == "stagger":
                 # Start the next worker later, so its own deadline is still
                 # live when the blocked worker expires.
-                time.sleep(0.25)
+                time.sleep(deadline / 2)
             elif label == "in-flight":
-                # Keep this worker occupied through the blocked deadline;
-                # the last connector remains queued until this one finishes.
-                time.sleep(0.27)
+                # Stay occupied until the engine has expired the blocked worker,
+                # so the last connector is still queued at that moment.
+                assert blocked_started.wait(HOLD_TIMEOUT)
+                assert blocked_cancelled["event"].wait(HOLD_TIMEOUT)
             self.ctx.stats = ScanStats(connector=label, started_at=now_iso(), finished_at=now_iso())
             return [Finding(Surface.CODE, "code.filesystem", Kind.AGENT, label, label, "agent")]
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
+    _warm_engine_prelude()
     cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem", label=label) for label in
                                  ("blocked", "stagger", "in-flight", "queued")],
-                     parallel=2, connector_timeout_seconds=0.4)
+                     parallel=2, connector_timeout_seconds=deadline)
     try:
         result = Engine(cfg, SignatureIndex([])).run()
-        assert {finding.resource for finding in result.findings} == {"stagger", "in-flight", "queued"}
-        by_connector = {stat.connector: stat for stat in result.stats}
-        assert set(by_connector) == {"blocked", "stagger", "in-flight", "queued"}
-        assert "deadline" in by_connector["blocked"].errors[0]
-        assert all(not by_connector[name].skipped and not by_connector[name].incomplete for name in
-                   ("stagger", "in-flight", "queued"))
     finally:
         release.set()
-        assert finished.wait(2)
+    assert blocked_started.is_set(), "the deadline expired before the blocked connector started"
+    assert finished.wait(5)
+    assert {finding.resource for finding in result.findings} == {"stagger", "in-flight", "queued"}
+    by_connector = {stat.connector: stat for stat in result.stats}
+    assert set(by_connector) == {"blocked", "stagger", "in-flight", "queued"}
+    assert "deadline" in by_connector["blocked"].errors[0]
+    assert all(not by_connector[name].skipped and not by_connector[name].incomplete for name in
+               ("stagger", "in-flight", "queued"))
 
 
 def test_queued_siblings_are_incomplete_if_all_workers_remain_stuck(monkeypatch):
     release = threading.Event()
-    finished = threading.Event()
+    finished = {label: threading.Event() for label in ("blocked-1", "blocked-2")}
     started = []
 
     class Connector:
@@ -184,30 +225,34 @@ def test_queued_siblings_are_incomplete_if_all_workers_remain_stuck(monkeypatch)
 
         def run(self):
             label = self.ctx.config["label"]
-            started.append(label)
+            if label != "warm-up":
+                started.append(label)
             if label.startswith("blocked"):
                 try:
-                    assert release.wait(3)
+                    release.wait(HOLD_TIMEOUT)
                 finally:
-                    finished.set()
+                    finished[label].set()
             self.ctx.stats = ScanStats(connector=label, started_at=now_iso(), finished_at=now_iso())
             return []
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
+    _warm_engine_prelude()
     cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem", label=label) for label in
                                  ("blocked-1", "blocked-2", "queued")],
-                     parallel=2, connector_timeout_seconds=0.03)
+                     parallel=2, connector_timeout_seconds=CONNECTOR_DEADLINE)
     try:
-        before = time.monotonic()
         result = Engine(cfg, SignatureIndex([])).run()
-        assert time.monotonic() - before < 1
-        assert started == ["blocked-1", "blocked-2"]
-        assert all("deadline" in stat.errors[0] for stat in result.stats[:2])
-        assert result.stats[2].incomplete and result.stats[2].skipped
-        assert "all worker slots" in result.stats[2].errors[0]
+        # Sampled before the release: the engine must not wait for either held worker.
+        workers_still_held = not any(event.is_set() for event in finished.values())
     finally:
         release.set()
-        assert finished.wait(2)
+    assert all(event.wait(5) for event in finished.values())
+    assert workers_still_held
+    # Both workers were occupied by held connectors; the queued one never started.
+    assert sorted(started) == ["blocked-1", "blocked-2"]
+    assert all("deadline" in stat.errors[0] for stat in result.stats[:2])
+    assert result.stats[2].incomplete and result.stats[2].skipped
+    assert "all worker slots" in result.stats[2].errors[0]
 
 
 def test_record_checkpoint_stops_after_cancellation():

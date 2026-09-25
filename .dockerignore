@@ -1,16 +1,19 @@
 # Keep credentials, exports, tests and unrelated files out of the build context.
-# Only packaging inputs and supported package source/assets are included.
+# Everything is excluded first; only packaging inputs, the dependency locks and
+# the package source and data that pyproject.toml ships are re-included.
+#
+# Never re-include a directory here ("!shadowscan/" or "!shadowscan/**/"): the
+# docker and BuildKit matcher treats a matching parent directory as a match for
+# every file below it, which would readmit __pycache__/*.pyc and any other
+# untracked file under the package. The builder sends the Dockerfile and this
+# file regardless of these rules.
 **
-!Dockerfile
 !pyproject.toml
-!requirements.lock
+!requirements*.lock
 !README.md
 !LICENSE
 !NOTICE
 !agent-card.yaml
-!shadowscan/
-!shadowscan/**/
 !shadowscan/**/*.py
 !shadowscan/py.typed
 !shadowscan/signatures/data/**/*.yaml
-!shadowscan/reporters/templates/*.html
