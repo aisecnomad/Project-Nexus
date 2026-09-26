@@ -294,6 +294,15 @@ class Engine:
                 # replacing them would exceed the configured parallelism.
                 if pending and scan.timed_out and _capacity_exhausted(scan, futures):
                     self._cancel_queued(scan, futures, pending, completed)
+        except BaseException:
+            # A worker failed outside its own isolation (or the supervisor was
+            # interrupted). Cancel every sibling so none publishes a cache entry
+            # or export after run() has failed, and record running ones as
+            # abandoned for the next run's refusal check.
+            for future in tuple(pending):
+                number, spec = futures[future]
+                self._expire_job(scan, number, spec, future)
+            raise
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
         return completed

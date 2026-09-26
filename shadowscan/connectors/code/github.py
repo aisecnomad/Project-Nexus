@@ -18,7 +18,7 @@ import base64
 import os
 import shutil
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import quote, urlsplit
@@ -39,6 +39,10 @@ from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.git import read_git_snapshot
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
+
+
+def _named_repository(record: Any) -> bool:
+    return isinstance(record, dict) and isinstance(record.get("full_name"), str) and bool(record["full_name"])
 
 
 class GitHubConnector(HostedRepositoryConnector):
@@ -99,26 +103,38 @@ class GitHubConnector(HostedRepositoryConnector):
                 if self._limit_reached(len(seen)):
                     return
                 data = self.http.try_get_json(f"/repos/{full}")
-                if data:
+                if data and not _named_repository(data):
+                    self.ctx.warn(f"code.github: malformed repository record for {full}; skipped", incomplete=True)
+                elif data:
                     if data["full_name"] not in seen:
                         seen.add(data["full_name"])
                         yield _remote_record(data)
                 else:
                     self.ctx.warn(f"code.github: cannot access {full}", incomplete=True)
         if org:
-            for r in self.http.paginate_link(f"/orgs/{org}/repos", params={"per_page": 100, "type": "all", "sort": "pushed"}):
+            for r in self._named_listing(self.http.paginate_link(f"/orgs/{org}/repos", params={"per_page": 100, "type": "all", "sort": "pushed"})):
                 if r["full_name"] not in seen and self._wanted(r):
                     if self._limit_reached(len(seen)):
                         return
                     seen.add(r["full_name"])
                     yield _remote_record(r)
         if user:
-            for r in self.http.paginate_link(f"/users/{user}/repos", params={"per_page": 100, "sort": "pushed"}):
+            for r in self._named_listing(self.http.paginate_link(f"/users/{user}/repos", params={"per_page": 100, "sort": "pushed"})):
                 if r["full_name"] not in seen and self._wanted(r):
                     if self._limit_reached(len(seen)):
                         return
                     seen.add(r["full_name"])
                     yield _remote_record(r)
+
+    def _named_listing(self, records: Iterable[Any]) -> Iterator[dict[str, Any]]:
+        """Skip malformed listing entries (reported once) instead of stopping the connector."""
+        reported = False
+        for r in records:
+            if _named_repository(r):
+                yield r
+            elif not reported:
+                self.ctx.warn("code.github: malformed repository record in listing; skipped", incomplete=True)
+                reported = True
 
     def _wanted(self, r: dict[str, Any]) -> bool:
         if r.get("archived") and not self.include_archived:

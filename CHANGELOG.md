@@ -109,6 +109,17 @@ Robustness
   fields with a `ValueError`: a string where a list of frameworks, tags or
   capabilities belongs, a non-object `metadata`, or risk factors and evidence
   without their required text fields.
+- A malformed provider record costs only itself: GitHub repositories without
+  `full_name`, GitLab projects without an integer `id`, non-object GitLab
+  metadata, CloudTrail event details that are not objects, malformed ECS
+  container definitions and invalid GCP audit-log pages are skipped with a
+  warning instead of stopping the whole connector. GitLab group CI variables
+  already collected are still reported when a later listing fails, and a
+  broken repository tree warns once rather than exhausting the diagnostic
+  budget.
+- An explicit empty signature index is honored by connectors instead of
+  silently falling back to the built-in packs, and a worker failing outside
+  its connector's isolation cancels its sibling jobs before the scan fails.
 - OAuth token responses without an access token fail closed; the device
   authorization grant is not a machine-only grant; scalar `products` and
   `environments` settings are one item, not characters; Slack `first_seen` is

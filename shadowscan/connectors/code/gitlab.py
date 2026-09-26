@@ -38,6 +38,10 @@ class _GitLabMetadata(dict[str, Any]):
         self.kind = kind
 
 
+def _identified_project(record: Any) -> bool:
+    return isinstance(record, dict) and type(record.get("id")) is int
+
+
 class GitLabConnector(HostedRepositoryConnector):
     name: ClassVar[str] = "code.gitlab"
     surface: ClassVar[Surface] = Surface.CODE
@@ -87,7 +91,9 @@ class GitLabConnector(HostedRepositoryConnector):
             if self._limit_reached(len(seen)):
                 return
             data = self.http.try_get_json(f"/projects/{quote(str(p), safe='')}")
-            if data and data["id"] not in seen:
+            if data and not _identified_project(data):
+                self.ctx.warn("code.gitlab: malformed project record skipped; coverage partial", incomplete=True)
+            elif data and data["id"] not in seen:
                 seen.add(data["id"])
                 yield _remote_record(data)
         if group:
@@ -95,7 +101,13 @@ class GitLabConnector(HostedRepositoryConnector):
             yield from self._group_identities(str(group), gid)
             params = {"per_page": 100, "include_subgroups": "true", "archived": "false" if not self.include_archived else None, "order_by": "last_activity_at", "simple": "false"}
             params = {k: v for k, v in params.items() if v is not None}
+            reported = False
             for p in self.http.paginate_link(f"/groups/{gid}/projects", params=params):
+                if not _identified_project(p):
+                    if not reported:
+                        self.ctx.warn("code.gitlab: malformed project record skipped; coverage partial", incomplete=True)
+                        reported = True
+                    continue
                 if p["id"] in seen:
                     continue
                 if self._limit_reached(len(seen)):
@@ -119,8 +131,14 @@ class GitLabConnector(HostedRepositoryConnector):
             yield _GitLabMetadata("duo", {"group": group.get("full_path"), "duo_features_enabled": group.get("duo_features_enabled"), "lock_duo_features_enabled": group.get("lock_duo_features_enabled")})
 
     def _optional_list(self, path: str) -> Iterator[dict[str, Any]]:
+        reported = False
         try:
-            yield from self.http.paginate_link(path, params={"per_page": 100})
+            for item in self.http.paginate_link(path, params={"per_page": 100}):
+                if isinstance(item, dict):
+                    yield item
+                elif not reported:
+                    self.ctx.warn(f"code.gitlab: malformed metadata record for {path}; coverage partial", incomplete=True)
+                    reported = True
         except HttpError as exc:
             self.ctx.warn(f"code.gitlab: metadata HTTP {exc.status} for {path}; coverage unknown", incomplete=True)
 
@@ -129,7 +147,25 @@ class GitLabConnector(HostedRepositoryConnector):
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        # Group CI variables are reported after the stream ends. If collection
+        # fails partway, still report the variables already seen (an unmasked
+        # provider key must not vanish with a later listing error).
         group_variables: dict[str, list[dict[str, Any]]] = {}
+        try:
+            yield from self._analyze_records(records, group_variables)
+        except Exception:
+            yield from self._group_variable_findings(group_variables)
+            raise
+        yield from self._group_variable_findings(group_variables)
+
+    def _group_variable_findings(self, group_variables: dict[str, list[dict[str, Any]]]) -> Iterator[Finding]:
+        for group, variables in group_variables.items():
+            f = self._variables_finding(group, variables, scope="group")
+            if f:
+                yield f
+        group_variables.clear()
+
+    def _analyze_records(self, records: Iterable[dict[str, Any]], group_variables: dict[str, list[dict[str, Any]]]) -> Iterator[Finding]:
         for rec in records:
             kind = rec.kind if isinstance(rec, _GitLabMetadata) else None
             if kind == "service_account" or kind == "group_access_token":
@@ -146,10 +182,6 @@ class GitLabConnector(HostedRepositoryConnector):
                     yield self._duo_finding(rec)
                 continue
             yield from self._scan_repository(rec, self._fetch, self._project_level)
-        for group, variables in group_variables.items():
-            f = self._variables_finding(group, variables, scope="group")
-            if f:
-                yield f
 
     def _scan_local(self, proj: dict[str, Any], local: str) -> Iterable[Finding]:
         full = proj.get("path_with_namespace") or Path(local).name
@@ -214,10 +246,14 @@ class GitLabConnector(HostedRepositoryConnector):
             "commit_sha": snapshot,
         }
         blobs: dict[str, dict[str, Any]] = {}
-        skipped_links = False
+        skipped_links = malformed = False
         for item in self.http.paginate_link(f"/projects/{pid}/repository/tree", params={"recursive": "true", "per_page": 100, "ref": snapshot}):
             if not isinstance(item, dict) or not isinstance(item.get("path"), str):
-                self.ctx.warn("code.gitlab: malformed tree entry; source coverage partial", incomplete=True)
+                # Once per repository: a broken tree must not exhaust the
+                # connector's diagnostic budget for every other project.
+                if not malformed:
+                    self.ctx.warn("code.gitlab: malformed tree entry; source coverage partial", incomplete=True)
+                    malformed = True
                 continue
             if item.get("type") == "commit" or item.get("mode") in {"120000", "160000"}:
                 if not skipped_links:

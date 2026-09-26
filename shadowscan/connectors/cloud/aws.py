@@ -97,6 +97,11 @@ def _resource_id(value: Any) -> str:
     return value
 
 
+def _listed(value: Any) -> list[Any]:
+    """A list-valued API field, or an empty list when absent or not a list."""
+    return value if isinstance(value, list) else []
+
+
 class AwsConnector(BaseConnector):
     name: ClassVar[str] = "cloud.aws"
     surface: ClassVar[Surface] = Surface.CLOUD
@@ -611,9 +616,13 @@ class AwsConnector(BaseConnector):
             for ev in events or []:
                 try:
                     detail = json.loads(ev.get("CloudTrailEvent") or "{}")
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, TypeError, RecursionError):
                     detail = {}
-                ident = detail.get("userIdentity") or {}
+                if not isinstance(detail, dict):
+                    self.ctx.warn("cloud.aws: invalid CloudTrail event detail")
+                    detail = {}
+                ident = detail.get("userIdentity")
+                ident = ident if isinstance(ident, dict) else {}
                 yield {
                     "_kind": "cloudtrail-event",
                     "_region": region,
@@ -1404,7 +1413,7 @@ class _EcsInventory:
             if not isinstance(returned, list) or any(not isinstance(item, dict) for item in returned):
                 self.ctx.warn(f"cloud.aws: invalid ECS {key} in {self.region}", incomplete=True)
                 continue
-            if set(batch) != {item.get(f"{noun}Arn") for item in returned}:
+            if set(batch) != {arn for item in returned if isinstance(arn := item.get(f"{noun}Arn"), str)}:
                 self.ctx.warn(f"cloud.aws: incomplete ECS {noun} descriptions in {self.region}", incomplete=True)
             yield from returned
 
@@ -1425,7 +1434,10 @@ class _EcsInventory:
         for service in self.described("describe_services", "service", cluster, services, 10):
             if service.get("status") == "INACTIVE":
                 continue
-            for deployment in [service, *(service.get("deployments") or []), *(service.get("taskSets") or [])]:
+            rollouts = [*_listed(service.get("deployments")), *_listed(service.get("taskSets"))]
+            if any(not isinstance(rollout, dict) for rollout in rollouts):
+                self.ctx.warn(f"cloud.aws: invalid ECS service deployment in {self.region}", incomplete=True)
+            for deployment in [service, *(rollout for rollout in rollouts if isinstance(rollout, dict))]:
                 if deployment.get("taskDefinition"):
                     self.add_definition(deployment["taskDefinition"], "service", {
                         "cluster": cluster, "service": service.get("serviceArn"),
@@ -1474,6 +1486,27 @@ class _EcsInventory:
 
     def definition_record(self, definition: dict[str, Any]) -> dict[str, Any]:
         """Inventory record of a described definition that no workload references yet."""
+        containers, malformed = [], False
+        for c in _listed(definition.get("containerDefinitions")):
+            if not isinstance(c, dict):
+                malformed = True
+                continue
+            environment = _listed(c.get("environment"))
+            secrets = _listed(c.get("secrets"))
+            named_environment = [e for e in environment if isinstance(e, dict) and isinstance(e.get("name"), str)]
+            named_secrets = [x for x in secrets if isinstance(x, dict)]
+            malformed = (
+                malformed or len(named_environment) < len(environment) or len(named_secrets) < len(secrets)
+                or any(c.get(key) is not None and not isinstance(c.get(key), list) for key in ("environment", "secrets"))
+            )
+            containers.append({
+                "name": c.get("name"), "image": c.get("image"),
+                "environment": {e["name"]: e.get("value") for e in named_environment},
+                "secrets": [x.get("name") for x in named_secrets],
+            })
+        listed = definition.get("containerDefinitions")
+        if malformed or (listed is not None and not isinstance(listed, list)):
+            self.ctx.warn(f"cloud.aws: invalid ECS container definition in {self.region}", incomplete=True)
         return {
             "_kind": "ecs-task-definition",
             "_region": self.region,
@@ -1482,14 +1515,7 @@ class _EcsInventory:
             "taskRoleArn": definition.get("taskRoleArn"),
             "status": definition.get("status"),
             "revision": definition.get("revision"),
-            "containers": [
-                {
-                    "name": c.get("name"), "image": c.get("image"),
-                    "environment": {e["name"]: e.get("value") for e in c.get("environment") or []},
-                    "secrets": [s.get("name") for s in c.get("secrets") or []],
-                }
-                for c in definition.get("containerDefinitions") or []
-            ],
+            "containers": containers,
             "discovery_sources": [],
             "workload_references": [],
             "workload_reference_count": 0,

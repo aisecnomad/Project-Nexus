@@ -315,7 +315,7 @@ class GcpConnector(BaseConnector):
                 body["pageToken"] = token
             try:
                 data = self.http.post_json("https://logging.googleapis.com/v2/entries:list", json=body)
-            except (HttpError, RequestException) as exc:
+            except (HttpError, RequestException, ValueError) as exc:  # ValueError: invalid or oversized JSON page
                 status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
                 self.ctx.warn(f"cloud.gcp: audit logs not readable for {project} ({status})")
                 return
