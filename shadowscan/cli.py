@@ -9,7 +9,8 @@ import logging
 import os
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
+from dataclasses import fields as dataclass_fields
 from typing import Any, NoReturn
 
 import click
@@ -246,7 +247,7 @@ class SharedOptions:
             cfg.connector_timeout_seconds = self.connector_timeout_seconds
 
 
-_SHARED_OPTION_NAMES = tuple(f.name for f in fields(SharedOptions))
+_SHARED_OPTION_NAMES = tuple(f.name for f in dataclass_fields(SharedOptions))
 
 
 def shared_options(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -257,18 +258,32 @@ def shared_options(fn: Callable[..., Any]) -> Callable[..., Any]:
         opts = SharedOptions(**{name: kwargs.pop(name) for name in _SHARED_OPTION_NAMES})
         return fn(*args, opts=opts, **kwargs)
 
+    # Introspection must show what click passes (the flat options), not fn's
+    # short signature that functools.wraps would otherwise advertise.
+    del collect.__wrapped__
     decorated: Callable[..., Any] = add_options(output_options)(collect)
     return decorated
 
 
 @dataclass(slots=True)
 class CliState:
-    """Group settings the subcommands read from ``ctx.obj``."""
+    """Group settings the subcommands read from the shared ``ctx.meta``."""
 
     verbose: int = 0
 
 
-pass_state = click.make_pass_decorator(CliState, ensure=True)
+# ctx.meta, not ctx.obj: an application embedding ``main`` keeps its own obj.
+_STATE_KEY = "shadowscan.cli_state"
+
+
+def pass_state(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Pass the group's CliState as the first argument of a subcommand."""
+
+    @click.pass_context
+    def wrapper(ctx: click.Context, *args: Any, **kwargs: Any) -> Any:
+        return ctx.invoke(fn, ctx.meta.setdefault(_STATE_KEY, CliState()), *args, **kwargs)
+
+    return functools.update_wrapper(wrapper, fn)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -279,7 +294,7 @@ pass_state = click.make_pass_decorator(CliState, ensure=True)
 def main(ctx: click.Context, verbose: int, quiet: bool) -> None:
     """ShadowScan — discover shadow AI agents across code, identity, gateways, low-code, SaaS and cloud."""
     _setup_logging(verbose, quiet)
-    ctx.ensure_object(CliState).verbose = verbose
+    ctx.meta[_STATE_KEY] = CliState(verbose=verbose)
 
 
 # ---------------------------------------------------------------------- scan
