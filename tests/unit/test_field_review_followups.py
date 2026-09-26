@@ -33,7 +33,9 @@ def _scan(index, root, files: dict[str, str], **config):
 
 
 # ------------------------------------------------------------ parser limits
-DEEP_JSON = '{"nodes": [], "pinData": ' + "[" * 3000 + "]" * 3000 + "}"
+# Python 3.12+ parses a few thousand JSON levels; this depth exceeds the C
+# recursion limit on every supported version.
+DEEP_JSON = '{"nodes": [], "pinData": ' + "[" * 200_000 + "]" * 200_000 + "}"
 XML_BOMB = (
     '<?xml version="1.0"?><!DOCTYPE l [<!ENTITY a "aaaaaaaaaa">'
     + "".join(f'<!ENTITY {chr(98 + i)} "' + f"&{chr(97 + i)};" * 10 + '">' for i in range(8))
