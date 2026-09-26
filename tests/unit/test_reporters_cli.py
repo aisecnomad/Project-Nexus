@@ -17,7 +17,7 @@ from shadowscan.reporters.html import _JS
 
 
 def _result(fixtures, index):
-    cfg = ScanConfig(connectors=[ConnectorSpec(name="code.filesystem", config={"path": str(fixtures / "sample_repo"), "label": "repo"})], inventory=[str(Path(__file__).parents[2] / "agent-card.yaml")])
+    cfg = ScanConfig(connectors=[ConnectorSpec(name="code.filesystem", config={"path": str(fixtures / "sample_repo"), "label": "repo"})], inventory=[str(Path(__file__).parents[1] / "fixtures" / "inventory" / "ops-provisioning-04.yaml")])
     return Engine(cfg, index).run()
 
 
@@ -64,7 +64,7 @@ def test_cli_code_scan_and_outputs(tmp_path: Path, fixtures):
     assert res.exit_code == 2, res.output  # high-risk findings present -> exit 2
     data = json.loads(out.read_text())
     assert data["summary"]["total"] >= 10
-    res = runner.invoke(main, ["code", str(fixtures / "sample_repo"), "--max-rows", "3", "--inventory", str(Path(__file__).parents[2] / "agent-card.yaml")])
+    res = runner.invoke(main, ["code", str(fixtures / "sample_repo"), "--max-rows", "3", "--inventory", str(Path(__file__).parents[1] / "fixtures" / "inventory" / "ops-provisioning-04.yaml")])
     assert res.exit_code == 0 and "ShadowScan" in res.output and "SHADOW" in res.output
 
 
@@ -85,7 +85,7 @@ def test_cli_run_gateway_jwt_and_utilities(tmp_path: Path, fixtures):
     assert "framework.langchain" in res.output
     res = runner.invoke(main, ["signatures", "show", "protocol.mcp"])
     assert res.exit_code == 0 and "mcpServers" in res.output
-    res = runner.invoke(main, ["inventory", "check", str(Path(__file__).parents[2] / "agent-card.yaml")])
+    res = runner.invoke(main, ["inventory", "check", str(Path(__file__).parents[1] / "fixtures" / "inventory" / "ops-provisioning-04.yaml")])
     assert res.exit_code == 0 and "ops-provisioning-04" in res.output
 
 

@@ -199,7 +199,7 @@ def test_schema_rejects_an_invalid_document():
 
 def test_sample_scan_sarif_is_schema_valid(fixtures):
     cfg = ScanConfig(connectors=[ConnectorSpec(name="code.filesystem", config={"path": str(fixtures / "sample_repo"), "label": "repo"})],
-                     inventory=[str(ROOT / "agent-card.yaml")])
+                     inventory=[str(fixtures / "inventory" / "ops-provisioning-04.yaml")])
     result = Engine(cfg).run()
     assert result.complete and result.findings
     document = json.loads(render_sarif(result))

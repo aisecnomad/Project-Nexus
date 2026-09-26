@@ -1,0 +1,47 @@
+# Agent Capability Card v1.0
+# Test copy of the repository's agent-card.yaml. Tests rely on this agent's ID,
+# owner and discovery resources, so the published example can change freely.
+metadata:
+  agent_id: "ops-provisioning-04"
+  version: "2.4.1"
+  owner_team: "Platform-Engineering"
+  classification: "Internal-Restricted"
+
+autonomy_profile:
+  level: 3
+  decision_logic: "chain-of-thought"
+  memory_persistence: true
+  max_loop_iterations: 10
+  velocity_limit: "50-req-per-minute"
+
+identity_and_delegation:
+  spiffe_id: "spiffe://prod.acme.com/agent/ops-04"
+  auth_mechanism: "OBO-Token-Exchange"
+  privileged_account: false
+
+capability_surface:
+  authorized_tools:
+    - name: "read_cloud_config"
+      provider: "internal-registry"
+      sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    - name: "notify_slack_channel"
+      egress_domain: "hooks.slack.com"
+
+data_trust_zones:
+  read_access:
+    - zone: 1
+    - zone: 2
+  write_access:
+    - zone: 2
+
+security_controls:
+  egress_proxy_required: true
+  sandbox_type: "gVisor"
+  kill_switch_enabled: true
+  red_team_clearance: "2026-Q1-Certified"
+
+discovery:
+  resources:
+    - "arn:aws:bedrock:us-east-1:123456789012:agent/AGENT1"
+    - "arn:aws:iam::123456789012:role/AmazonBedrockExecutionRoleForAgents_ops"
+  surfaces: [cloud, identity]
