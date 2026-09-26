@@ -105,6 +105,10 @@ Robustness
 - HTTP requests and retry back-off honour the connector deadline: a timed-out
   worker issues no further requests, and the stop signal is not a
   `RuntimeError`, so per-endpoint error handlers cannot absorb it.
+- Imported findings (inventory stubs, incremental cache) reject mistyped
+  fields with a `ValueError`: a string where a list of frameworks, tags or
+  capabilities belongs, a non-object `metadata`, or risk factors and evidence
+  without their required text fields.
 - OAuth token responses without an access token fail closed; the device
   authorization grant is not a machine-only grant; scalar `products` and
   `environments` settings are one item, not characters; Slack `first_seen` is

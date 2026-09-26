@@ -141,6 +141,10 @@ class Risk:
     factors: list[RiskFactor] = field(default_factory=list)
 
 
+_FINDING_STRING_LISTS = ("frameworks", "model_providers", "models", "capabilities", "permissions", "tags")
+_FINDING_OPTIONAL_STRINGS = ("provider", "account", "region", "owner", "registry_match", "first_seen", "last_seen")
+
+
 @dataclass(slots=True)
 class Finding:
     surface: Surface
@@ -292,6 +296,21 @@ class Finding:
             if not isinstance(d.get(name), str) or not d[name].strip():
                 raise ValueError(f"finding {name} is required")
         d = {name: d[name] for name in (attr.name for attr in fields(cls)) if name in d}
+        # A string where a list belongs would later be iterated as characters.
+        for name in _FINDING_STRING_LISTS:
+            value = d.get(name, [])
+            if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+                raise ValueError(f"finding {name} must be a list of strings")
+        for name in _FINDING_OPTIONAL_STRINGS:
+            if d.get(name) is not None and not isinstance(d[name], str):
+                raise ValueError(f"finding {name} must be a string or null")
+        for name in ("id", "identity_discriminator", "identity_schema"):
+            if name in d and not isinstance(d[name], str):
+                raise ValueError(f"finding {name} must be a string")
+        if not isinstance(d.get("metadata", {}), dict):
+            raise ValueError("finding metadata must be an object")
+        if d.get("shadow") is not None and not isinstance(d["shadow"], bool):
+            raise ValueError("finding shadow must be true, false or null")
         # Reading an old report preserves its identity rather than silently
         # relabeling old ids as v2. Upgrades require a freshly collected baseline.
         d.setdefault("identity_schema", LEGACY_FINDING_IDENTITY_SCHEMA)
@@ -310,6 +329,8 @@ class Finding:
             raise ValueError("finding risk factors must be objects")
         for factor in factors:
             _validate_number(factor.get("weight"), "risk factor weight")
+            if not isinstance(factor.get("id"), str) or not isinstance(factor.get("description"), str):
+                raise ValueError("finding risk factors need string id and description")
         d["risk"] = Risk(
             score=risk.get("score", 0),
             level=RiskLevel(risk.get("level", "info")),
@@ -321,6 +342,10 @@ class Finding:
             raise ValueError("finding evidence must be objects")
         for item in evidence:
             _validate_number(item.get("weight", 0.5), "evidence weight", minimum=0, maximum=1)
+            if not isinstance(item.get("signal"), str) or not isinstance(item.get("description"), str):
+                raise ValueError("finding evidence needs string signal and description")
+            if not isinstance(item.get("attributes", {}), dict):
+                raise ValueError("finding evidence attributes must be an object")
         evidence_fields = {attr.name for attr in fields(Evidence)}
         d["evidence"] = [Evidence(**{name: value for name, value in item.items() if name in evidence_fields})
                          for item in evidence]

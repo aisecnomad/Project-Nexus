@@ -151,3 +151,35 @@ def test_inventory_pattern_cache_is_bounded_and_does_not_confer_approval(monkeyp
     assert len(inventory._name_patterns) == 2
     assert inventory.suggest(finding)
     assert not inventory.match(finding)
+
+
+@pytest.mark.parametrize(("field", "value", "message"), [
+    ("frameworks", "framework.langchain", "list of strings"),
+    ("capabilities", ["code-exec", 3], "list of strings"),
+    ("tags", {"a": 1}, "list of strings"),
+    ("owner", ["alice"], "string or null"),
+    ("metadata", [], "metadata must be an object"),
+    ("shadow", "yes", "shadow must be"),
+    ("id", 7, "id must be a string"),
+])
+def test_finding_import_rejects_mistyped_fields(field, value, message):
+    payload = _finding().to_dict()
+    payload[field] = value
+    with pytest.raises(ValueError, match=message):
+        Finding.from_dict(payload)
+
+
+@pytest.mark.parametrize(("part", "item"), [
+    ("factor", {"weight": 1}),
+    ("factor", {"id": 1, "description": "d", "weight": 1}),
+    ("evidence", {"description": "d"}),
+    ("evidence", {"signal": "s", "description": "d", "attributes": []}),
+])
+def test_finding_import_rejects_malformed_nested_records_as_value_errors(part, item):
+    payload = _finding().to_dict()
+    if part == "factor":
+        payload["risk"]["factors"] = [item]
+    else:
+        payload["evidence"] = [item]
+    with pytest.raises(ValueError):
+        Finding.from_dict(payload)
