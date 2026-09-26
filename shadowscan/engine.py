@@ -20,7 +20,7 @@ from shadowscan import __version__
 from shadowscan.comparison import build_collection_scope
 from shadowscan.config import ConnectorSpec, ScanConfig, validate_min_confidence
 from shadowscan.connectors import ConnectorContext, get_connector_class
-from shadowscan.connectors.base import ConnectorError
+from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.code.filesystem import validate_distinct_paths, validate_root_ids
 from shadowscan.correlation import correlate_runtime
 from shadowscan.incremental import IncrementalCache
@@ -41,6 +41,8 @@ from shadowscan.utils.redaction import SanitizationLimitError, sanitize
 log = logging.getLogger("shadowscan.engine")
 
 ProgressFn = Callable[[str, str], None]  # (connector id, message)
+_JobResult = tuple[ConnectorSpec, list[Finding], ScanStats]
+_JobFutures = dict[Future[_JobResult], tuple[int, ConnectorSpec]]  # future -> (config ordinal, spec)
 
 @dataclass
 class _JobState:
@@ -49,6 +51,27 @@ class _JobState:
     completed_at: float | None = None
     cancelled: Event = field(default_factory=Event)
     publication_lock: Lock = field(default_factory=Lock)
+
+
+@dataclass
+class _ScanRun:
+    """State one ``Engine.run`` shares between its supervisor and connector workers."""
+
+    jobs: list[tuple[int, ConnectorSpec]]  # (config ordinal, spec), in configured order
+    started_at: str
+    cache: IncrementalCache
+    dump_directory: Path | None
+    states: dict[int, _JobState]
+    gateway_identity_key: bytes
+    workers: int
+    exports: list[dict[str, Any]] = field(default_factory=list)
+    export_lock: Lock = field(default_factory=Lock)
+    timed_out: set[int] = field(default_factory=set)
+
+    def record_export(self, state: _JobState, entry: dict[str, Any]) -> None:
+        with self.export_lock:
+            if not state.cancelled.is_set():
+                self.exports.append(entry)
 
 
 def _cooperative_stop_for(ctx: ConnectorContext) -> Callable[[], None]:
@@ -74,6 +97,54 @@ def _pending_expired(state: _JobState, now: float) -> bool:
     return state.completed_at is None or state.completed_at >= state.deadline
 
 
+def _capacity_exhausted(scan: _ScanRun, futures: _JobFutures) -> bool:
+    """Whether every worker slot is occupied by a call that already timed out."""
+    running = [future for future in futures if future.running()]
+    return (
+        len(running) >= scan.workers
+        and all(futures[future][0] in scan.timed_out for future in running)
+    )
+
+
+def _retain_sanitizable(candidates: list[Finding]) -> tuple[list[Finding], int]:
+    """Sanitize findings in place; drop and count those over the safety limit."""
+    retained = []
+    omitted = 0
+    for finding in candidates:
+        try:
+            finding.sanitize()
+        except SanitizationLimitError:
+            omitted += 1
+            continue
+        retained.append(finding)
+    return retained, omitted
+
+
+def _seal_diagnostics(st: ScanStats, findings: int) -> None:
+    """Record the finding count and sanitize connector diagnostics within the safety limit."""
+    st.findings = findings
+    try:
+        st.errors = sanitize(st.errors)
+        st.warnings = sanitize(st.warnings)
+    except SanitizationLimitError:
+        st.incomplete = True
+        st.errors = ["connector diagnostics omitted: sanitization safety limit exceeded"]
+        st.warnings = []
+
+
+def _export_entry(spec: ConnectorSpec, dump_key: str, cfg: dict[str, Any], ctx: ConnectorContext,
+                  st: ScanStats) -> dict[str, Any]:
+    """The record-export manifest entry for one connector (or repository root) run."""
+    exported = ctx.dump_path == cfg.get("_dump_path") and ctx.dump_path is not None and not st.skipped
+    return {
+        "config_ordinal": int(dump_key.split("-")[0]), "part": dump_key,
+        "connector": spec.name, "label": spec.label,
+        "filename": Path(ctx.dump_path).name if exported and ctx.dump_path else None,
+        "complete": not (st.incomplete or st.skipped or st.errors),
+        "exported": exported,
+    }
+
+
 class Engine:
     def __init__(self, config: ScanConfig, index: SignatureIndex | None = None, progress: ProgressFn | None = None):
         self.config = config
@@ -89,6 +160,8 @@ class Engine:
         # a process that must exit promptly has to use ``os._exit``.
         self.abandoned_workers: list[str] = []
         self._abandoned_futures: list[Future[Any]] = []
+        # Fail construction on an invalid inventory. Each run reloads it, since
+        # approvals may be edited between runs of one Engine.
         if config.inventory:
             self.inventory = Inventory.load(config.inventory)
 
@@ -101,6 +174,35 @@ class Engine:
 
     # ------------------------------------------------------------------ run
     def run(self, only: list[str] | None = None) -> ScanResult:
+        self._prepare_run()
+        result = ScanResult(version=__version__, inventory_size=len(self.inventory) if self.inventory else 0)
+        if only and self._reject_invalid_selection(only, result):
+            return result
+        jobs = [(number, spec) for number, spec in enumerate(self.config.connectors, 1)
+                if spec.enabled and (not only or spec.id in only or spec.name in only)]
+        specs = [spec for _, spec in jobs]
+        self.config.validate_connector_isolation(specs)
+        result.collection_scope = build_collection_scope(self.config, self.index, specs)
+        stats: list[ScanStats] = []
+        if not specs:
+            log.warning("no connectors selected")
+            stats.append(ScanStats(
+                connector="engine", started_at=now_iso(), finished_at=now_iso(),
+                skipped=True, skip_reason="no connectors selected", incomplete=True,
+                errors=["no connectors selected"],
+            ))
+        scan = self._new_scan(jobs, result.started_at)
+        completed = self._supervise(scan)
+        findings = self._collect_results(scan, completed, stats)
+        findings = self._postprocess(findings, stats, result.started_at)
+        self._write_export_manifest(scan, stats)
+        result.findings = findings
+        result.stats = sorted(stats, key=lambda s: s.connector)
+        result.finished_at = now_iso()
+        return result
+
+    def _prepare_run(self) -> None:
+        """Refuse unsafe reuse, then revalidate options and reload per-run inputs."""
         if any(not future.done() for future in self._abandoned_futures):
             raise RuntimeError("a previous timed-out connector is still running; use a fresh process for the next scan")
         self._abandoned_futures.clear()
@@ -114,233 +216,53 @@ class Engine:
         # Registry approval can change independently of source inputs or an Engine
         # instance's lifetime. It is never persisted in connector cache entries.
         self.inventory = Inventory.load(self.config.inventory) if self.config.inventory else None
-        result = ScanResult(version=__version__, inventory_size=len(self.inventory) if self.inventory else 0)
-        if only:
-            selectable = {value for spec in self.config.connectors if spec.enabled for value in (spec.id, spec.name)}
-            invalid = [selector for selector in only if selector not in selectable]
-            if invalid:
-                result.collection_scope = {
-                    "schema": "shadowscan.collection-scope/v1", "comparable": False,
-                    "reason": "requested connectors are unknown or disabled",
-                }
-                result.stats = [ScanStats(
-                    connector="engine.selection", started_at=result.started_at, finished_at=now_iso(),
-                    skipped=True, incomplete=True, skip_reason="invalid connector selection",
-                    errors=[sanitize(f"unknown or disabled connector selector: {selector}") for selector in invalid],
-                )]
-                result.finished_at = now_iso()
-                return result
-        jobs = [(number, spec) for number, spec in enumerate(self.config.connectors, 1)
-                if spec.enabled and (not only or spec.id in only or spec.name in only)]
-        specs = [spec for _, spec in jobs]
-        self.config.validate_connector_isolation(specs)
-        result.collection_scope = build_collection_scope(self.config, self.index, specs)
-        if not specs:
-            log.warning("no connectors selected")
-        findings: list[Finding] = []
-        stats: list[ScanStats] = []
-        if not specs:
-            stats.append(ScanStats(
-                connector="engine", started_at=now_iso(), finished_at=now_iso(),
-                skipped=True, skip_reason="no connectors selected", incomplete=True,
-                errors=["no connectors selected"],
-            ))
-        cache = IncrementalCache(self.config, self.index)
-        dump_directory = prepare_private_directory(self.config.dump_records) if self.config.dump_records else None
-        exports: list[dict[str, Any]] = []
-        states = {number: _JobState() for number, _ in jobs}
-        # Identical gateway sources in one report share an opaque identity,
-        # while separate Engine.run calls cannot link redacted caller/scope IDs.
-        gateway_identity_key = secrets.token_bytes(32)
-        timed_out: set[int] = set()
-        export_lock = Lock()
 
-        def _record_export(state: _JobState, entry: dict[str, Any]) -> None:
-            with export_lock:
-                if not state.cancelled.is_set():
-                    exports.append(entry)
+    def _reject_invalid_selection(self, only: list[str], result: ScanResult) -> bool:
+        """Mark ``result`` incomplete and not comparable if a selector names no enabled connector."""
+        selectable = {value for spec in self.config.connectors if spec.enabled for value in (spec.id, spec.name)}
+        invalid = [selector for selector in only if selector not in selectable]
+        if not invalid:
+            return False
+        result.collection_scope = {
+            "schema": "shadowscan.collection-scope/v1", "comparable": False,
+            "reason": "requested connectors are unknown or disabled",
+        }
+        result.stats = [ScanStats(
+            connector="engine.selection", started_at=result.started_at, finished_at=now_iso(),
+            skipped=True, incomplete=True, skip_reason="invalid connector selection",
+            errors=[sanitize(f"unknown or disabled connector selector: {selector}") for selector in invalid],
+        )]
+        result.finished_at = now_iso()
+        return True
 
-        def _lookup(name: str):
-            if self.config.plugins:
-                return get_connector_class(name, allowed_plugins=self.config.plugins)
-            return get_connector_class(name)
+    def _new_scan(self, jobs: list[tuple[int, ConnectorSpec]], started_at: str) -> _ScanRun:
+        return _ScanRun(
+            jobs=jobs, started_at=started_at,
+            cache=IncrementalCache(self.config, self.index),
+            dump_directory=prepare_private_directory(self.config.dump_records) if self.config.dump_records else None,
+            states={number: _JobState() for number, _ in jobs},
+            # Identical gateway sources in one report share an opaque identity,
+            # while separate Engine.run calls cannot link redacted caller/scope IDs.
+            gateway_identity_key=secrets.token_bytes(32),
+            workers=max(1, min(self.config.parallel, len(jobs) or 1)),
+        )
 
-        def _run_one(spec: ConnectorSpec, dump_key: str, state: _JobState) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
-            self._report_progress(spec.id, "starting")
-            cfg = dict(spec.config)
-            if spec.name.startswith("cloud."):
-                # Scan-wide approval cannot be bypassed by a connector-level key.
-                cfg["allow_instance_credentials"] = self.config.allow_instance_credentials
-            if spec.label:
-                cfg.setdefault("label", spec.label)
-            if dump_directory:
-                label = re.sub(r"[^A-Za-z0-9_-]", "_", spec.id)[:80] or "connector"
-                cfg["_dump_path"] = os.path.join(dump_directory, f"{dump_key}-{label}.jsonl")
-            ctx = ConnectorContext(config=cfg, index=self.index, workdir=self.config.workdir,
-                                   deadline=state.deadline, cancelled=state.cancelled,
-                                   publication_lock=state.publication_lock,
-                                   gateway_identity_key=gateway_identity_key if spec.name == "gateway.logs" else None)
-            fs: list[Finding] = []
-            started_at = now_iso()
-            origin_token = set_allow_private_origin(self.config.allow_private_origin)
-            stop_token = set_cooperative_stop(_cooperative_stop_for(ctx))
-            try:
-                ctx.check_deadline()
-                cls = _lookup(spec.name)
-                # Constructor validation still runs before a cached result is used.
-                connector = cls(ctx)
-                snapshot = cache.snapshot(spec) if cache.supports_connector(spec, cls) else None
-                cached = cache.load(spec, snapshot) if snapshot else None
-                if cached is not None:
-                    fs, st = cached
-                    if cache.snapshot(spec) == snapshot:
-                        ctx.check_deadline()
-                        self._report_progress(spec.id, f"{len(fs)} findings (unchanged input; cached)")
-                        return spec, fs, st
-                fs = []
-                collected = connector.run()
-                ctx.check_deadline()
-                st = ctx.stats or ScanStats(
-                    connector=spec.id, started_at=started_at, finished_at=now_iso(),
-                    incomplete=True, errors=["connector did not report completion status"],
-                )
-                st.connector = spec.id
-                st.incomplete = st.incomplete or bool(st.errors) or st.skipped
-                for finding in collected:
-                    try:
-                        finding.sanitize()
-                    except SanitizationLimitError:
-                        st.incomplete = True
-                        st.errors.append("finding omitted: sanitization safety limit exceeded")
-                        continue
-                    fs.append(finding)
-                if snapshot and not st.incomplete:
-                    # Do not attach a result to a digest computed before an input
-                    # changed during collection. Preserve the findings, mark the
-                    # scan incomplete and require a fresh scan for security gates.
-                    if cache.snapshot(spec) == snapshot:
-                        ctx.check_deadline()
-                        cache.save(snapshot, fs, st, check_deadline=ctx.check_deadline,
-                                   publish_replace=ctx.publish_replace)
-                    else:
-                        st.incomplete = True
-                        st.errors.append("static input changed during the scan; rerun required")
-            except Exception as exc:  # noqa: BLE001 - isolate construction as well as collection failures
-                message = ctx.sanitize_message(f"{spec.name}: {type(exc).__name__}: {exc}")
-                st = ctx.stats or ScanStats(connector=spec.id, started_at=started_at)
-                st.connector = spec.id
-                st.finished_at = now_iso()
-                st.incomplete = True
-                st.skipped = not fs
-                st.skip_reason = message if st.skipped else None
-                st.errors.append(message)
-                log.warning("connector failed; diagnostic recorded in incomplete scan stats")
-            finally:
-                reset_cooperative_stop(stop_token)
-                reset_allow_private_origin(origin_token)
-            st.findings = len(fs)
-            try:
-                st.errors = sanitize(st.errors)
-                st.warnings = sanitize(st.warnings)
-            except SanitizationLimitError:
-                st.incomplete = True
-                st.errors = ["connector diagnostics omitted: sanitization safety limit exceeded"]
-                st.warnings = []
-            if dump_directory and not state.cancelled.is_set():
-                exported = ctx.dump_path == cfg.get("_dump_path") and ctx.dump_path is not None and not st.skipped
-                _record_export(state, {
-                    "config_ordinal": int(dump_key.split("-")[0]), "part": dump_key,
-                    "connector": spec.name, "label": spec.label,
-                    "filename": Path(ctx.dump_path).name if exported and ctx.dump_path else None,
-                    "complete": not (st.incomplete or st.skipped or st.errors),
-                    "exported": exported,
-                })
-            if not state.cancelled.is_set():
-                self._report_progress(spec.id, f"{len(fs)} findings")
-            return spec, fs, st
-
-        def _run_impl(number: int, spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
-            state = states[number]
-            roots = spec.config.get("paths")
-            root_ids = spec.config.get("root_ids")
-            split_roots = (
-                self.config.incremental and spec.name == "code.filesystem"
-                and not spec.config.get("input") and isinstance(roots, list) and len(roots) > 1
-            )
-            if split_roots:
-                try:
-                    if spec.label or spec.config.get("label"):
-                        validate_distinct_paths(roots)
-                    if root_ids is not None:
-                        validate_root_ids(roots, root_ids)
-                except ConnectorError:
-                    # Run once so constructor validation reports an incomplete
-                    # scan, rather than partially scanning the valid children.
-                    split_roots = False
-            if split_roots:
-                try:
-                    split_roots = cache.supports_connector(spec, _lookup(spec.name))
-                except Exception:  # noqa: BLE001 - _run_one reports lookup/import failures as incomplete
-                    split_roots = False
-            if not split_roots or not isinstance(roots, list):
-                return _run_one(spec, f"{number:04d}", state)
-            # Repositories are independent cache units: modifying repo B must not
-            # force expensive analysis of unchanged repo A in the same connector.
-            combined: list[Finding] = []
-            parts: list[ScanStats] = []
-            for root_number, root in enumerate(roots, 1):
-                child_config = {k: v for k, v in spec.config.items() if k not in {"paths", "root_ids"}}
-                child_config["path"] = root
-                # A cache split retains both the `paths` identity and its
-                # optional stable root ID from the original configuration.
-                child_config["_shared_label_roots"] = True
-                if root_ids is not None:
-                    child_config["_root_id"] = root_ids[root_number - 1]
-                _, child_findings, child_stats = _run_one(ConnectorSpec(
-                    name=spec.name, config=child_config, label=spec.label,
-                ), f"{number:04d}-{root_number:04d}", state)
-                combined.extend(child_findings)
-                parts.append(child_stats)
-            cached_count = sum(s.cached for s in parts)
-            stats = ScanStats(
-                connector=spec.id, started_at=min(s.started_at for s in parts),
-                finished_at=now_iso(), findings=len(combined),
-                objects_examined=sum(s.objects_examined for s in parts),
-                errors=[e for s in parts for e in s.errors],
-                warnings=[w for s in parts for w in s.warnings],
-                incomplete=any(s.incomplete or s.skipped or s.errors for s in parts),
-                skipped=all(s.skipped for s in parts), cached=cached_count == len(parts),
-            )
-            if cached_count:
-                stats.warnings.append(f"incremental: reused {cached_count}/{len(parts)} unchanged repository roots")
-            return spec, combined, stats
-
-        def _run(number: int, spec: ConnectorSpec) -> tuple[ConnectorSpec, list[Finding], ScanStats]:
-            state = states[number]
-            state.started_at = now_iso()
-            timeout = self.config.connector_timeout_seconds
-            state.deadline = time.monotonic() + timeout
-            try:
-                return _run_impl(number, spec)
-            finally:
-                # Include sanitization, cache writes and callbacks in the
-                # measured runtime, even if completion precedes the next poll.
-                state.completed_at = time.monotonic()
-
-        workers = max(1, min(self.config.parallel, len(specs) or 1))
+    # ------------------------------------------------------------ supervision
+    def _supervise(self, scan: _ScanRun) -> dict[int, _JobResult]:
+        """Run every job under its completion deadline; return results by config ordinal."""
         # Supervise the single-worker path too. A ThreadPoolExecutor context
         # manager would wait forever for a stuck connector on exit.
-        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="shadowscan")
-        futures = {pool.submit(_run, number, spec): (number, spec) for number, spec in jobs}
+        pool = ThreadPoolExecutor(max_workers=scan.workers, thread_name_prefix="shadowscan")
+        futures = {pool.submit(self._run_job, scan, number, spec): (number, spec) for number, spec in scan.jobs}
         pending = set(futures)
-        completed: dict[int, tuple[ConnectorSpec, list[Finding], ScanStats]] = {}
+        completed: dict[int, _JobResult] = {}
         try:
             while pending:
                 done, _ = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
                 expired = []
                 for future in done:
                     number, _ = futures[future]
-                    state = states[number]
+                    state = scan.states[number]
                     if state.completed_at is not None and state.deadline is not None and state.completed_at >= state.deadline:
                         expired.append(future)
                     else:
@@ -348,109 +270,290 @@ class Engine:
                         pending.remove(future)
                 now = time.monotonic()
                 for future in pending - done:
-                    if _pending_expired(states[futures[future][0]], now):
+                    if _pending_expired(scan.states[futures[future][0]], now):
                         expired.append(future)
                 for future in expired:
                     number, spec = futures[future]
-                    state = states[number]
-                    # A worker may already be blocked inside an OS replacement
-                    # while holding this lock. Waiting here would turn the
-                    # cooperative connector deadline into an unbounded wait.
-                    # If acquired, cancel before another publication can begin;
-                    # otherwise mark cancellation immediately. The in-flight
-                    # replacement may finish after we return, so its artifact
-                    # must never be treated as an accepted scan export.
-                    if state.publication_lock.acquire(blocking=False):
-                        try:
-                            state.cancelled.set()
-                        finally:
-                            state.publication_lock.release()
-                    else:
-                        state.cancelled.set()
-                    timed_out.add(number)
-                    if future.running():
-                        self.abandoned_workers.append(spec.id)
-                        self._abandoned_futures.append(future)
-                    message = "connector_timeout completion deadline exceeded; results discarded"
-                    completed[number] = (spec, [], ScanStats(
-                        connector=spec.id, started_at=state.started_at or result.started_at,
-                        finished_at=now_iso(), incomplete=True, skipped=True,
-                        skip_reason=message, errors=[message],
-                        warnings=["Cancellation is cooperative: an in-flight SDK, plugin call, or filesystem "
-                                  "replacement may continue. A cache or record artifact whose replacement "
-                                  "started before cancellation may appear after this incomplete report; do not "
-                                  "use timed-out artifacts as accepted results. Use an external process timeout "
-                                  "when a hard execution limit is required."],
-                    ))
+                    completed[number] = self._expire_job(scan, number, spec, future)
                     pending.remove(future)
-                if pending and timed_out:
-                    # A timed-out worker can still be running inside an SDK or
-                    # plugin call. Preserve queued siblings while *any* worker
-                    # can eventually run them. Only abandon the queue when all
-                    # worker slots are still occupied by timed-out calls; waiting
-                    # for those calls would defeat the completion deadline, and
-                    # replacing them would exceed the configured parallelism.
-                    running = [future for future in futures if future.running()]
-                    capacity_exhausted = (
-                        len(running) >= workers
-                        and all(futures[future][0] in timed_out for future in running)
-                    )
-                    if not capacity_exhausted:
-                        continue
-                    for future in tuple(pending):
-                        if future.cancel():
-                            number, spec = futures[future]
-                            with states[number].publication_lock:
-                                states[number].cancelled.set()
-                            timed_out.add(number)
-                            completed[number] = (spec, [], ScanStats(
-                                connector=spec.id, started_at=result.started_at, finished_at=now_iso(),
-                                incomplete=True, skipped=True,
-                                skip_reason="no worker capacity remains after connector timeouts",
-                                errors=["connector not started: all worker slots remain occupied by timed-out calls"],
-                            ))
-                            pending.remove(future)
+                # A timed-out worker can still be running inside an SDK or
+                # plugin call. Preserve queued siblings while *any* worker
+                # can eventually run them. Only abandon the queue when all
+                # worker slots are still occupied by timed-out calls; waiting
+                # for those calls would defeat the completion deadline, and
+                # replacing them would exceed the configured parallelism.
+                if pending and scan.timed_out and _capacity_exhausted(scan, futures):
+                    self._cancel_queued(scan, futures, pending, completed)
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
-        # Merge uses first-observed owner and metadata as precedence.
-        # Preserve configured order regardless of request completion.
-        for number, _ in jobs:
-            _, fs, st = completed[number]
-            findings.extend(fs)
-            stats.append(st)
-        if dump_directory:
-            with export_lock:
-                exports = [entry for entry in exports if entry["config_ordinal"] not in timed_out]
-                for number, spec in jobs:
-                    if number in timed_out:
-                        exports.append({
-                            "config_ordinal": number, "part": f"{number:04d}", "connector": spec.name,
-                            "label": spec.label, "filename": None, "complete": False, "exported": False,
-                        })
+        return completed
 
-        omitted = 0
+    def _expire_job(self, scan: _ScanRun, number: int, spec: ConnectorSpec, future: Future[_JobResult]) -> _JobResult:
+        """Cancel a job past its completion deadline and replace its results with an incomplete stat."""
+        state = scan.states[number]
+        # A worker may already be blocked inside an OS replacement
+        # while holding this lock. Waiting here would turn the
+        # cooperative connector deadline into an unbounded wait.
+        # If acquired, cancel before another publication can begin;
+        # otherwise mark cancellation immediately. The in-flight
+        # replacement may finish after we return, so its artifact
+        # must never be treated as an accepted scan export.
+        if state.publication_lock.acquire(blocking=False):
+            try:
+                state.cancelled.set()
+            finally:
+                state.publication_lock.release()
+        else:
+            state.cancelled.set()
+        scan.timed_out.add(number)
+        if future.running():
+            self.abandoned_workers.append(spec.id)
+            self._abandoned_futures.append(future)
+        message = "connector_timeout completion deadline exceeded; results discarded"
+        return (spec, [], ScanStats(
+            connector=spec.id, started_at=state.started_at or scan.started_at,
+            finished_at=now_iso(), incomplete=True, skipped=True,
+            skip_reason=message, errors=[message],
+            warnings=["Cancellation is cooperative: an in-flight SDK, plugin call, or filesystem "
+                      "replacement may continue. A cache or record artifact whose replacement "
+                      "started before cancellation may appear after this incomplete report; do not "
+                      "use timed-out artifacts as accepted results. Use an external process timeout "
+                      "when a hard execution limit is required."],
+        ))
 
-        def safe_findings(candidates: list[Finding]) -> list[Finding]:
-            nonlocal omitted
-            retained = []
-            for finding in candidates:
+    def _cancel_queued(self, scan: _ScanRun, futures: _JobFutures, pending: set[Future[_JobResult]],
+                       completed: dict[int, _JobResult]) -> None:
+        """Report queued jobs as not started once no worker slot can run them."""
+        for future in tuple(pending):
+            if future.cancel():
+                number, spec = futures[future]
+                # A cancelled future never runs, so no worker shares this job's
+                # state or publication lock; mark it cancelled like a timeout.
+                scan.states[number].cancelled.set()
+                scan.timed_out.add(number)
+                completed[number] = (spec, [], ScanStats(
+                    connector=spec.id, started_at=scan.started_at, finished_at=now_iso(),
+                    incomplete=True, skipped=True,
+                    skip_reason="no worker capacity remains after connector timeouts",
+                    errors=["connector not started: all worker slots remain occupied by timed-out calls"],
+                ))
+                pending.remove(future)
+
+    # ---------------------------------------------------------------- workers
+    def _connector_class(self, name: str) -> type[BaseConnector]:
+        if self.config.plugins:
+            return get_connector_class(name, allowed_plugins=self.config.plugins)
+        return get_connector_class(name)
+
+    def _run_job(self, scan: _ScanRun, number: int, spec: ConnectorSpec) -> _JobResult:
+        state = scan.states[number]
+        state.started_at = now_iso()
+        timeout = self.config.connector_timeout_seconds
+        state.deadline = time.monotonic() + timeout
+        try:
+            return self._run_job_parts(scan, number, spec)
+        finally:
+            # Include sanitization, cache writes and callbacks in the
+            # measured runtime, even if completion precedes the next poll.
+            state.completed_at = time.monotonic()
+
+    def _splits_roots(self, scan: _ScanRun, spec: ConnectorSpec) -> bool:
+        """Whether a multi-root filesystem connector runs as independent per-root cache units."""
+        roots = spec.config.get("paths")
+        root_ids = spec.config.get("root_ids")
+        split_roots = (
+            self.config.incremental and spec.name == "code.filesystem"
+            and not spec.config.get("input") and isinstance(roots, list) and len(roots) > 1
+        )
+        if split_roots:
+            try:
+                if spec.label or spec.config.get("label"):
+                    validate_distinct_paths(roots)
+                if root_ids is not None:
+                    validate_root_ids(roots, root_ids)
+            except ConnectorError:
+                # Run once so constructor validation reports an incomplete
+                # scan, rather than partially scanning the valid children.
+                split_roots = False
+        if split_roots:
+            try:
+                split_roots = scan.cache.supports_connector(spec, self._connector_class(spec.name))
+            except Exception:  # noqa: BLE001 - _run_connector reports lookup/import failures as incomplete
+                split_roots = False
+        return split_roots
+
+    def _run_job_parts(self, scan: _ScanRun, number: int, spec: ConnectorSpec) -> _JobResult:
+        state = scan.states[number]
+        roots = spec.config.get("paths")
+        if not self._splits_roots(scan, spec) or not isinstance(roots, list):
+            return self._run_connector(scan, spec, f"{number:04d}", state)
+        root_ids = spec.config.get("root_ids")
+        # Repositories are independent cache units: modifying repo B must not
+        # force expensive analysis of unchanged repo A in the same connector.
+        combined: list[Finding] = []
+        parts: list[ScanStats] = []
+        for root_number, root in enumerate(roots, 1):
+            child_config = {k: v for k, v in spec.config.items() if k not in {"paths", "root_ids"}}
+            child_config["path"] = root
+            # A cache split retains both the `paths` identity and its
+            # optional stable root ID from the original configuration.
+            child_config["_shared_label_roots"] = True
+            if root_ids is not None:
+                child_config["_root_id"] = root_ids[root_number - 1]
+            _, child_findings, child_stats = self._run_connector(scan, ConnectorSpec(
+                name=spec.name, config=child_config, label=spec.label,
+            ), f"{number:04d}-{root_number:04d}", state)
+            combined.extend(child_findings)
+            parts.append(child_stats)
+        cached_count = sum(s.cached for s in parts)
+        stats = ScanStats(
+            connector=spec.id, started_at=min(s.started_at for s in parts),
+            finished_at=now_iso(), findings=len(combined),
+            objects_examined=sum(s.objects_examined for s in parts),
+            errors=[e for s in parts for e in s.errors],
+            warnings=[w for s in parts for w in s.warnings],
+            incomplete=any(s.incomplete or s.skipped or s.errors for s in parts),
+            skipped=all(s.skipped for s in parts), cached=cached_count == len(parts),
+        )
+        if cached_count:
+            stats.warnings.append(f"incremental: reused {cached_count}/{len(parts)} unchanged repository roots")
+        return spec, combined, stats
+
+    def _connector_config(self, scan: _ScanRun, spec: ConnectorSpec, dump_key: str) -> dict[str, Any]:
+        cfg = dict(spec.config)
+        if spec.name.startswith("cloud."):
+            # Scan-wide approval cannot be bypassed by a connector-level key.
+            cfg["allow_instance_credentials"] = self.config.allow_instance_credentials
+        if spec.label:
+            cfg.setdefault("label", spec.label)
+        if scan.dump_directory:
+            label = re.sub(r"[^A-Za-z0-9_-]", "_", spec.id)[:80] or "connector"
+            cfg["_dump_path"] = os.path.join(scan.dump_directory, f"{dump_key}-{label}.jsonl")
+        return cfg
+
+    def _run_connector(self, scan: _ScanRun, spec: ConnectorSpec, dump_key: str, state: _JobState) -> _JobResult:
+        self._report_progress(spec.id, "starting")
+        cfg = self._connector_config(scan, spec, dump_key)
+        ctx = ConnectorContext(config=cfg, index=self.index, workdir=self.config.workdir,
+                               deadline=state.deadline, cancelled=state.cancelled,
+                               publication_lock=state.publication_lock,
+                               gateway_identity_key=scan.gateway_identity_key if spec.name == "gateway.logs" else None)
+        cache = scan.cache
+        fs: list[Finding] = []
+        started_at = now_iso()
+        origin_token = set_allow_private_origin(self.config.allow_private_origin)
+        stop_token = set_cooperative_stop(_cooperative_stop_for(ctx))
+        try:
+            ctx.check_deadline()
+            cls = self._connector_class(spec.name)
+            # Constructor validation still runs before a cached result is used.
+            connector = cls(ctx)
+            snapshot = cache.snapshot(spec) if cache.supports_connector(spec, cls) else None
+            cached = cache.load(spec, snapshot) if snapshot else None
+            if cached is not None:
+                fs, st = cached
+                if cache.snapshot(spec) == snapshot:
+                    ctx.check_deadline()
+                    self._report_progress(spec.id, f"{len(fs)} findings (unchanged input; cached)")
+                    return spec, fs, st
+            fs = []
+            collected = connector.run()
+            ctx.check_deadline()
+            st = ctx.stats or ScanStats(
+                connector=spec.id, started_at=started_at, finished_at=now_iso(),
+                incomplete=True, errors=["connector did not report completion status"],
+            )
+            st.connector = spec.id
+            st.incomplete = st.incomplete or bool(st.errors) or st.skipped
+            for finding in collected:
                 try:
                     finding.sanitize()
                 except SanitizationLimitError:
-                    omitted += 1
+                    st.incomplete = True
+                    st.errors.append("finding omitted: sanitization safety limit exceeded")
                     continue
-                retained.append(finding)
-            return retained
+                fs.append(finding)
+            if snapshot and not st.incomplete:
+                # Do not attach a result to a digest computed before an input
+                # changed during collection. Preserve the findings, mark the
+                # scan incomplete and require a fresh scan for security gates.
+                if cache.snapshot(spec) == snapshot:
+                    ctx.check_deadline()
+                    cache.save(snapshot, fs, st, check_deadline=ctx.check_deadline,
+                               publish_replace=ctx.publish_replace)
+                else:
+                    st.incomplete = True
+                    st.errors.append("static input changed during the scan; rerun required")
+        except Exception as exc:  # noqa: BLE001 - isolate construction as well as collection failures
+            message = ctx.sanitize_message(f"{spec.name}: {type(exc).__name__}: {exc}")
+            st = ctx.stats or ScanStats(connector=spec.id, started_at=started_at)
+            st.connector = spec.id
+            st.finished_at = now_iso()
+            st.incomplete = True
+            st.skipped = not fs
+            st.skip_reason = message if st.skipped else None
+            st.errors.append(message)
+            log.warning("connector failed; diagnostic recorded in incomplete scan stats")
+        finally:
+            reset_cooperative_stop(stop_token)
+            reset_allow_private_origin(origin_token)
+        _seal_diagnostics(st, len(fs))
+        if scan.dump_directory and not state.cancelled.is_set():
+            scan.record_export(state, _export_entry(spec, dump_key, cfg, ctx, st))
+        if not state.cancelled.is_set():
+            self._report_progress(spec.id, f"{len(fs)} findings")
+        return spec, fs, st
 
+    # --------------------------------------------------------- aggregation
+    def _collect_results(self, scan: _ScanRun, completed: dict[int, _JobResult],
+                         stats: list[ScanStats]) -> list[Finding]:
+        """Gather per-connector results in configured order and settle record exports."""
+        findings: list[Finding] = []
+        # Merge uses first-observed owner and metadata as precedence.
+        # Preserve configured order regardless of request completion.
+        for number, _ in scan.jobs:
+            _, fs, st = completed[number]
+            findings.extend(fs)
+            stats.append(st)
+        if scan.dump_directory:
+            # Timed-out workers may still be inside ``record_export``.
+            with scan.export_lock:
+                scan.exports = [entry for entry in scan.exports if entry["config_ordinal"] not in scan.timed_out]
+                for number, spec in scan.jobs:
+                    if number in scan.timed_out:
+                        scan.exports.append({
+                            "config_ordinal": number, "part": f"{number:04d}", "connector": spec.name,
+                            "label": spec.label, "filename": None, "complete": False, "exported": False,
+                        })
+        return findings
+
+    def _postprocess(self, findings: list[Finding], stats: list[ScanStats], started_at: str) -> list[Finding]:
+        """Merge, correlate, reconcile with the inventory, score, then filter and rank findings."""
         # Individually bounded findings can exceed the output budget when
         # merged. Reject only that aggregate before correlation touches it.
-        findings = safe_findings(merge(findings))
+        findings, omitted = _retain_sanitizable(merge(findings))
         correlate(findings)
-        postprocess_errors = []
+        postprocess_errors: list[str] = []
         try:
             correlate_runtime(findings)
         except SanitizationLimitError:
             postprocess_errors.append("runtime correlation incomplete: sanitization safety limit exceeded")
+        self._reconcile_and_score(findings)
+        findings, late_omitted = _retain_sanitizable(findings)
+        omitted += late_omitted
+        if omitted:
+            postprocess_errors.append(f"{omitted} finding(s) omitted after aggregation: sanitization safety limit exceeded")
+        if postprocess_errors:
+            stats.append(ScanStats(
+                connector="engine.postprocess", started_at=started_at, finished_at=now_iso(),
+                incomplete=True, errors=postprocess_errors,
+            ))
+        if self.config.min_confidence > 0:
+            findings = [f for f in findings if f.confidence >= self.config.min_confidence]
+        findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
+        return findings
+
+    def _reconcile_and_score(self, findings: list[Finding]) -> None:
         for f in findings:
             if self.inventory is not None:
                 entry = self.inventory.match(f)
@@ -459,34 +562,22 @@ class Engine:
                 if entry and not f.owner:
                     f.owner = entry.owner
             f.risk = assess(f, self.index, inventory_present=self.inventory is not None)
-        findings = safe_findings(findings)
-        if omitted:
-            postprocess_errors.append(f"{omitted} finding(s) omitted after aggregation: sanitization safety limit exceeded")
-        if postprocess_errors:
+
+    def _write_export_manifest(self, scan: _ScanRun, stats: list[ScanStats]) -> None:
+        if not scan.dump_directory:
+            return
+        manifest = {
+            "schema": "shadowscan.record-exports/v1", "started_at": scan.started_at,
+            "complete": bool(stats) and not any(st.incomplete or st.skipped or st.errors for st in stats),
+            "exports": sorted(scan.exports, key=lambda entry: entry["part"]),
+        }
+        try:
+            write_private_text(Path(scan.dump_directory) / "manifest.json", json.dumps(sanitize(manifest), indent=2) + "\n")
+        except (OSError, ValueError) as exc:
             stats.append(ScanStats(
-                connector="engine.postprocess", started_at=result.started_at, finished_at=now_iso(),
-                incomplete=True, errors=postprocess_errors,
+                connector="engine.exports", started_at=scan.started_at, finished_at=now_iso(), incomplete=True,
+                errors=[f"record export manifest could not be saved: {sanitize(str(exc))}"],
             ))
-        if self.config.min_confidence > 0:
-            findings = [f for f in findings if f.confidence >= self.config.min_confidence]
-        findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
-        if dump_directory:
-            manifest = {
-                "schema": "shadowscan.record-exports/v1", "started_at": result.started_at,
-                "complete": bool(stats) and not any(st.incomplete or st.skipped or st.errors for st in stats),
-                "exports": sorted(exports, key=lambda entry: entry["part"]),
-            }
-            try:
-                write_private_text(Path(dump_directory) / "manifest.json", json.dumps(sanitize(manifest), indent=2) + "\n")
-            except (OSError, ValueError) as exc:
-                stats.append(ScanStats(
-                    connector="engine.exports", started_at=result.started_at, finished_at=now_iso(), incomplete=True,
-                    errors=[f"record export manifest could not be saved: {sanitize(str(exc))}"],
-                ))
-        result.findings = findings
-        result.stats = sorted(stats, key=lambda s: s.connector)
-        result.finished_at = now_iso()
-        return result
 
 # ------------------------------------------------------------------ merging
 
