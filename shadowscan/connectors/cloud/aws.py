@@ -33,11 +33,14 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.cloud.common import (
     cloud_finding,
     done,
+    isolate_record,
+    kind_handlers,
     name_hint,
     scan_blob,
     scan_env,
     scan_iam_actions,
     string_list,
+    supported_kind,
 )
 from shadowscan.connectors.cloud.credentials import (
     allow_instance_credentials,
@@ -46,14 +49,16 @@ from shadowscan.connectors.cloud.credentials import (
 )
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.identity import has_aws_account_scope
 from shadowscan.utils.text import truncate
 
 DEFAULT_REGIONS = ["us-east-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"]
 KNOWN_SERVICES = frozenset({"bedrock", "agentcore", "lambda", "ecs", "sagemaker", "stepfunctions", "qbusiness", "lex", "iam", "secrets", "cloudtrail"})
 LLM_ACTION_PREFIXES = ("bedrock:", "bedrock-agentcore:", "sagemaker:invoke", "qbusiness:", "lex:", "q:", "kendra:")
-CLOUDTRAIL_EVENTS = ["InvokeModel", "InvokeModelWithResponseStream", "Converse", "ConverseStream", "InvokeAgent", "InvokeFlow", "InvokeInlineAgent", "InvokeAgentRuntime", "RetrieveAndGenerate", "InvokeEndpoint", "ChatSync"]
+CLOUDTRAIL_EVENTS = [
+    "InvokeModel", "InvokeModelWithResponseStream", "Converse", "ConverseStream", "InvokeAgent", "InvokeFlow",
+    "InvokeInlineAgent", "InvokeAgentRuntime", "RetrieveAndGenerate", "InvokeEndpoint", "ChatSync",
+]
 MAX_LIST_PAGES = 1000
 # Representative AI operations, not a complete IAM action catalogue. These
 # establish potential access from NotAction; they never establish effective
@@ -79,7 +84,10 @@ def _action_has_ai_scope(action: str, resource_services: set[str] | None = None)
     service = lowered.split(":", 1)[0]
     if lowered.startswith(LLM_ACTION_PREFIXES) and any(fnmatchcase(service, scope) for scope in scopes):
         return True
-    return any(fnmatchcase(candidate.lower(), lowered) and any(fnmatchcase(candidate.split(":", 1)[0], scope) for scope in scopes) for candidate in _AI_ACTION_CANDIDATES)
+    return any(
+        fnmatchcase(candidate.lower(), lowered) and any(fnmatchcase(candidate.split(":", 1)[0], scope) for scope in scopes)
+        for candidate in _AI_ACTION_CANDIDATES
+    )
 
 
 def _resource_id(value: Any) -> str:
@@ -94,7 +102,10 @@ class AwsConnector(BaseConnector):
     surface: ClassVar[Surface] = Surface.CLOUD
     provider: ClassVar[str | None] = "aws"
     requires: ClassVar[list[str]] = ["boto3"]
-    description: ClassVar[str] = "Bedrock Agents / AgentCore, Lambda, ECS, SageMaker, Step Functions, Q Business, Lex, IAM grants, secret names and CloudTrail LLM callers."
+    description: ClassVar[str] = (
+        "Bedrock Agents / AgentCore, Lambda, ECS, SageMaker, Step Functions, Q Business, Lex, IAM grants, "
+        "secret names and CloudTrail LLM callers."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "profile": "AWS profile (env AWS_PROFILE)",
         "role_arn": "role to assume before scanning",
@@ -179,7 +190,10 @@ class AwsConnector(BaseConnector):
             if role:
                 sts = session.client("sts", config=self._sdk_config())
                 creds = sts.assume_role(RoleArn=role, RoleSessionName="shadowscan")["Credentials"]
-                session = boto3.Session(aws_access_key_id=creds["AccessKeyId"], aws_secret_access_key=creds["SecretAccessKey"], aws_session_token=creds["SessionToken"], botocore_session=sdk_session)
+                session = boto3.Session(
+                    aws_access_key_id=creds["AccessKeyId"], aws_secret_access_key=creds["SecretAccessKey"],
+                    aws_session_token=creds["SessionToken"], botocore_session=sdk_session,
+                )
             account = session.client("sts", config=self._sdk_config()).get_caller_identity()["Account"]
             if not isinstance(account, str) or len(account) != 12 or not account.isascii() or not account.isdigit():
                 raise ValueError("invalid STS account identifier")
@@ -329,13 +343,19 @@ class AwsConnector(BaseConnector):
                         version_details[version] = version_result["agentVersion"]
                     elif version_result is not None:
                         self.ctx.warn(f"cloud.aws: invalid agent version response for {agent_id} version {version}", incomplete=True)
-                summaries = self._safe(lambda: list(self._paginate(ba, "list_agent_action_groups", "actionGroupSummaries", agentId=agent_id, agentVersion=version))) or []
+                summaries = self._safe(lambda: list(self._paginate(
+                    ba, "list_agent_action_groups", "actionGroupSummaries", agentId=agent_id, agentVersion=version,
+                ))) or []
                 for action in summaries:
                     detail = self._safe(ba.get_agent_action_group, agentId=agent_id, agentVersion=version, actionGroupId=action["actionGroupId"])
                     groups.append({**action, **((detail or {}).get("agentActionGroup") or {}), "agentVersion": version})
-                kbs = self._safe(lambda: list(self._paginate(ba, "list_agent_knowledge_bases", "agentKnowledgeBaseSummaries", agentId=agent_id, agentVersion=version))) or []
+                kbs = self._safe(lambda: list(self._paginate(
+                    ba, "list_agent_knowledge_bases", "agentKnowledgeBaseSummaries", agentId=agent_id, agentVersion=version,
+                ))) or []
                 knowledge_bases.extend({**kb, "_agentVersion": version} for kb in kbs)
-                collabs = self._safe(lambda: list(self._paginate(ba, "list_agent_collaborators", "agentCollaboratorSummaries", agentId=agent_id, agentVersion=version))) or []
+                collabs = self._safe(lambda: list(self._paginate(
+                    ba, "list_agent_collaborators", "agentCollaboratorSummaries", agentId=agent_id, agentVersion=version,
+                ))) or []
                 collaborators.extend({**collab, "_agentVersion": version} for collab in collabs)
             agent["_versions_scanned"] = sorted(versions)
             agent["_version_details"] = version_details
@@ -390,7 +410,11 @@ class AwsConnector(BaseConnector):
             mem["_kind"] = "agentcore-memory"
             mem["_region"] = region
             yield mem
-        for kind, op, key in (("agentcore-browser", "list_browsers", "browserSummaries"), ("agentcore-code-interpreter", "list_code_interpreters", "codeInterpreterSummaries"), ("agentcore-workload-identity", "list_workload_identities", "workloadIdentities")):
+        for kind, op, key in (
+            ("agentcore-browser", "list_browsers", "browserSummaries"),
+            ("agentcore-code-interpreter", "list_code_interpreters", "codeInterpreterSummaries"),
+            ("agentcore-workload-identity", "list_workload_identities", "workloadIdentities"),
+        ):
             for item in self._safe(lambda: list(self._paginate(ac, op, key))) or []:
                 item["_kind"] = kind
                 item["_region"] = region
@@ -438,154 +462,15 @@ class AwsConnector(BaseConnector):
             yield rec
 
     def _collect_ecs(self, region: str) -> Iterator[dict[str, Any]]:
-        ecs = self._client("ecs", region)
-        remaining = self.max_ecs_api_calls
-        limit_reported = False
-        definitions: dict[str, dict[str, Any]] = {}
-        attempted: set[str] = set()
-        reference_keys: dict[str, set[str]] = {}
-
-        def call(op: str, **kwargs: Any) -> dict[str, Any] | None:
-            nonlocal remaining, limit_reported
-            if remaining == 0:
-                if not limit_reported:
-                    self.ctx.warn(f"cloud.aws: max_ecs_api_calls reached in {region}", incomplete=True)
-                    limit_reported = True
-                return None
-            remaining -= 1
-            response = self._safe(lambda: getattr(ecs, op)(**kwargs))
-            if response is None:
-                return None
-            if not isinstance(response, dict):
-                self.ctx.warn(f"cloud.aws: invalid ECS {op} response in {region}", incomplete=True)
-                return None
-            if response.get("failures"):
-                self.ctx.warn(f"cloud.aws: partial ECS {op} failure in {region}", incomplete=True)
-            return response
-
-        def identifiers(op: str, key: str, **kwargs: Any) -> Iterator[str]:
-            token = None
-            seen: set[str] = set()
-            while True:
-                response = call(op, maxResults=100, **kwargs, **({"nextToken": token} if token else {}))
-                if response is None:
-                    return
-                values = response.get(key)
-                if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
-                    self.ctx.warn(f"cloud.aws: invalid ECS {key} page in {region}", incomplete=True)
-                    return
-                yield from values
-                token = response.get("nextToken")
-                if token is None or token == "":
-                    return
-                if not isinstance(token, str) or token in seen:
-                    self.ctx.warn(f"cloud.aws: invalid or repeated ECS pagination token in {region}", incomplete=True)
-                    return
-                seen.add(token)
-
-        def batches(values: Iterator[str], size: int) -> Iterator[list[str]]:
-            while batch := list(islice(values, size)):
-                yield batch
-
-        def add_definition(identifier: Any, source: str, reference: dict[str, Any] | None = None) -> None:
-            if not isinstance(identifier, str) or not identifier:
-                self.ctx.warn(f"cloud.aws: missing ECS task definition identifier in {region}", incomplete=True)
-                return
-            record = definitions.get(identifier)
-            if record is None:
-                if identifier in attempted:
-                    return
-                attempted.add(identifier)
-                response = call("describe_task_definition", taskDefinition=identifier)
-                if response is None:
-                    return
-                definition = response.get("taskDefinition")
-                if not isinstance(definition, dict) or not isinstance(definition.get("taskDefinitionArn"), str) or not definition["taskDefinitionArn"]:
-                    self.ctx.warn(f"cloud.aws: invalid ECS task definition in {region}", incomplete=True)
-                    return
-                arn = definition["taskDefinitionArn"]
-                if identifier.startswith("arn:") and arn != identifier:
-                    self.ctx.warn(f"cloud.aws: mismatched ECS task definition in {region}", incomplete=True)
-                    return
-                record = definitions.setdefault(arn, {
-                    "_kind": "ecs-task-definition",
-                    "_region": region,
-                    "family": definition.get("family"),
-                    "taskDefinitionArn": arn,
-                    "taskRoleArn": definition.get("taskRoleArn"),
-                    "status": definition.get("status"),
-                    "revision": definition.get("revision"),
-                    "containers": [{"name": c.get("name"), "image": c.get("image"), "environment": {e["name"]: e.get("value") for e in c.get("environment") or []}, "secrets": [s.get("name") for s in c.get("secrets") or []]} for c in definition.get("containerDefinitions") or []],
-                    "discovery_sources": [],
-                    "workload_references": [],
-                    "workload_reference_count": 0,
-                    "workload_references_truncated": False,
-                    "deployment_state": "registered-only",
-                })
-            if source not in record["discovery_sources"]:
-                record["discovery_sources"].append(source)
-            if reference:
-                keys = reference_keys.setdefault(record["taskDefinitionArn"], set())
-                key = json.dumps(reference, sort_keys=True)
-                if key not in keys:
-                    keys.add(key)
-                    record["workload_reference_count"] += 1
-                    # Inventory every referenced definition, but do not embed
-                    # an unbounded fleet of task IDs in a single finding.
-                    if len(record["workload_references"]) < 100:
-                        record["workload_references"].append(reference)
-                    else:
-                        record["workload_references_truncated"] = True
-                if reference.get("task") and reference.get("last_status") == "RUNNING":
-                    record["deployment_state"] = "running-task-observed"
-                elif record["deployment_state"] == "registered-only":
-                    record["deployment_state"] = "workload-referenced"
-
+        ecs = _EcsInventory(self, region)
         # Families resolve to the latest ACTIVE revision, which is not
         # necessarily deployed. Discover exact references first, including
         # INACTIVE definitions still used by tasks/services.
-        for cluster in identifiers("list_clusters", "clusterArns"):
-            # Desired RUNNING also covers tasks whose lastStatus is PENDING.
-            tasks = identifiers("list_tasks", "taskArns", cluster=cluster, desiredStatus="RUNNING")
-            for batch in batches(tasks, 100):
-                response = call("describe_tasks", cluster=cluster, tasks=batch)
-                if response is None:
-                    continue
-                returned = response.get("tasks", [])
-                if not isinstance(returned, list) or any(not isinstance(task, dict) for task in returned):
-                    self.ctx.warn(f"cloud.aws: invalid ECS tasks in {region}", incomplete=True)
-                    continue
-                if set(batch) != {task.get("taskArn") for task in returned}:
-                    self.ctx.warn(f"cloud.aws: incomplete ECS task descriptions in {region}", incomplete=True)
-                for task in returned:
-                    add_definition(task.get("taskDefinitionArn"), "task", {
-                        "cluster": cluster, "task": task.get("taskArn"),
-                        "last_status": task.get("lastStatus"), "desired_status": task.get("desiredStatus"),
-                    })
-            services = identifiers("list_services", "serviceArns", cluster=cluster)
-            for batch in batches(services, 10):
-                response = call("describe_services", cluster=cluster, services=batch)
-                if response is None:
-                    continue
-                returned = response.get("services", [])
-                if not isinstance(returned, list) or any(not isinstance(service, dict) for service in returned):
-                    self.ctx.warn(f"cloud.aws: invalid ECS services in {region}", incomplete=True)
-                    continue
-                if set(batch) != {service.get("serviceArn") for service in returned}:
-                    self.ctx.warn(f"cloud.aws: incomplete ECS service descriptions in {region}", incomplete=True)
-                for service in returned:
-                    if service.get("status") == "INACTIVE":
-                        continue
-                    for deployment in [service, *(service.get("deployments") or []), *(service.get("taskSets") or [])]:
-                        if deployment.get("taskDefinition"):
-                            add_definition(deployment["taskDefinition"], "service", {
-                                "cluster": cluster, "service": service.get("serviceArn"),
-                                "deployment": deployment.get("id"), "status": deployment.get("status"),
-                                "running_count": deployment.get("runningCount"), "desired_count": deployment.get("desiredCount"),
-                            })
-        for family in identifiers("list_task_definition_families", "families", status="ACTIVE"):
-            add_definition(family, "registered-family")
-        yield from definitions.values()
+        for cluster in ecs.identifiers("list_clusters", "clusterArns"):
+            ecs.reference_tasks(cluster)
+            ecs.reference_services(cluster)
+        ecs.add_registered_families()
+        yield from ecs.definitions.values()
 
     def _collect_sagemaker(self, region: str) -> Iterator[dict[str, Any]]:
         sm = self._client("sagemaker", region)
@@ -596,8 +481,18 @@ class AwsConnector(BaseConnector):
             for v in cfg.get("ProductionVariants") or []:
                 m = self._safe(sm.describe_model, ModelName=v.get("ModelName", "")) or {}
                 containers = m.get("Containers") or ([m["PrimaryContainer"]] if m.get("PrimaryContainer") else [])
-                models.append({"name": v.get("ModelName"), "instance": v.get("InstanceType"), "images": [c.get("Image") for c in containers], "env": {k: v2 for c in containers for k, v2 in (c.get("Environment") or {}).items()}, "model_data": [c.get("ModelDataUrl") for c in containers]})
-            yield {"_kind": "sagemaker-endpoint", "_region": region, "EndpointName": ep["EndpointName"], "EndpointArn": ep.get("EndpointArn"), "EndpointStatus": ep.get("EndpointStatus"), "CreationTime": str(ep.get("CreationTime")), "LastModifiedTime": str(ep.get("LastModifiedTime")), "models": models}
+                models.append({
+                    "name": v.get("ModelName"), "instance": v.get("InstanceType"),
+                    "images": [c.get("Image") for c in containers],
+                    "env": {k: v2 for c in containers for k, v2 in (c.get("Environment") or {}).items()},
+                    "model_data": [c.get("ModelDataUrl") for c in containers],
+                })
+            yield {
+                "_kind": "sagemaker-endpoint", "_region": region, "EndpointName": ep["EndpointName"],
+                "EndpointArn": ep.get("EndpointArn"), "EndpointStatus": ep.get("EndpointStatus"),
+                "CreationTime": str(ep.get("CreationTime")),
+                "LastModifiedTime": str(ep.get("LastModifiedTime")), "models": models,
+            }
 
     def _collect_stepfunctions(self, region: str) -> Iterator[dict[str, Any]]:
         sfn = self._client("stepfunctions", region)
@@ -605,7 +500,11 @@ class AwsConnector(BaseConnector):
             d = self._safe(sfn.describe_state_machine, stateMachineArn=sm["stateMachineArn"]) or {}
             definition = d.get("definition") or ""
             if "bedrock" in definition.lower() or "sagemaker" in definition.lower() or "lambda" in definition.lower():
-                yield {"_kind": "state-machine", "_region": region, "name": sm.get("name"), "stateMachineArn": sm["stateMachineArn"], "roleArn": d.get("roleArn"), "definition": definition[:200_000], "creationDate": str(sm.get("creationDate"))}
+                yield {
+                    "_kind": "state-machine", "_region": region, "name": sm.get("name"),
+                    "stateMachineArn": sm["stateMachineArn"], "roleArn": d.get("roleArn"),
+                    "definition": definition[:200_000], "creationDate": str(sm.get("creationDate")),
+                }
 
     def _collect_q(self, region: str) -> Iterator[dict[str, Any]]:
         q = self._client("qbusiness", region)
@@ -624,10 +523,17 @@ class AwsConnector(BaseConnector):
     def _collect_secret_names(self, region: str) -> Iterator[dict[str, Any]]:
         sm = self._client("secretsmanager", region)
         for s in self._safe(lambda: list(self._paginate(sm, "list_secrets", "SecretList"))) or []:
-            yield {"_kind": "secret-name", "_region": region, "Name": s.get("Name"), "ARN": s.get("ARN"), "LastAccessedDate": str(s.get("LastAccessedDate")), "Description": s.get("Description"), "Tags": {t["Key"]: t.get("Value") for t in s.get("Tags") or []}}
+            yield {
+                "_kind": "secret-name", "_region": region, "Name": s.get("Name"), "ARN": s.get("ARN"),
+                "LastAccessedDate": str(s.get("LastAccessedDate")), "Description": s.get("Description"),
+                "Tags": {t["Key"]: t.get("Value") for t in s.get("Tags") or []},
+            }
         ssm = self._client("ssm", region)
         for p in self._safe(lambda: list(self._paginate(ssm, "describe_parameters", "Parameters"))) or []:
-            yield {"_kind": "ssm-parameter", "_region": region, "Name": p.get("Name"), "Type": p.get("Type"), "LastModifiedDate": str(p.get("LastModifiedDate"))}
+            yield {
+                "_kind": "ssm-parameter", "_region": region, "Name": p.get("Name"), "Type": p.get("Type"),
+                "LastModifiedDate": str(p.get("LastModifiedDate")),
+            }
 
     def _collect_iam(self) -> Iterator[dict[str, Any]]:
         iam = self._client("iam")
@@ -651,7 +557,10 @@ class AwsConnector(BaseConnector):
                 if item.get("PermissionsBoundary"):
                     limitations.add("permissions-boundary-not-evaluated")
                 if limitations:
-                    self.ctx.warn("cloud.aws: IAM policy analysis is partial (" + ", ".join(sorted(limitations)) + "); effective authorization is not evaluated")
+                    self.ctx.warn(
+                        "cloud.aws: IAM policy analysis is partial (" + ", ".join(sorted(limitations))
+                        + "); effective authorization is not evaluated"
+                    )
                 if potential_actions or ai_patterns:
                     yield {
                         "_kind": "iam-principal",
@@ -695,7 +604,10 @@ class AwsConnector(BaseConnector):
         ct = self._client("cloudtrail", region)
         start = datetime.now(UTC) - timedelta(days=min(self.cloudtrail_days, 90))
         for event_name in CLOUDTRAIL_EVENTS:
-            events = self._safe(lambda: list(self._paginate(ct, "lookup_events", "Events", LookupAttributes=[{"AttributeKey": "EventName", "AttributeValue": event_name}], StartTime=start)))
+            events = self._safe(lambda: list(self._paginate(
+                ct, "lookup_events", "Events",
+                LookupAttributes=[{"AttributeKey": "EventName", "AttributeValue": event_name}], StartTime=start,
+            )))
             for ev in events or []:
                 try:
                     detail = json.loads(ev.get("CloudTrailEvent") or "{}")
@@ -719,14 +631,13 @@ class AwsConnector(BaseConnector):
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         callers: dict[str, dict[str, Any]] = {}
-        handlers = {name[3:].replace("_", "-"): getattr(self, name) for name in dir(type(self)) if name.startswith("_h_")}
+        handlers = kind_handlers(self)
+        supported = handlers.keys() | {"account", "cloudtrail-event"}
         for rec in records:
-            self.ctx.examined()
-            kind = rec.get("_kind") if isinstance(rec, dict) else None
-            if not isinstance(kind, str) or kind not in handlers.keys() | {"account", "cloudtrail-event"}:
-                self.ctx.warn("cloud.aws: record has missing, invalid, or unsupported _kind")
+            kind = supported_kind(self.ctx, "cloud.aws", rec, supported)
+            if kind is None:
                 continue
-            try:
+            with isolate_record(self.ctx, "cloud.aws: record has invalid fields for its _kind"):
                 if kind == "account":
                     if not isinstance(rec.get("account"), str) or not rec["account"]:
                         raise ValueError("account")
@@ -745,13 +656,9 @@ class AwsConnector(BaseConnector):
                                 incomplete=True,
                             )
                         yield f
-            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
-                self.ctx.warn("cloud.aws: record has invalid fields for its _kind")
         for key, agg in callers.items():
-            try:
+            with isolate_record(self.ctx, "cloud.aws: invalid aggregated caller fields"):
                 yield self._caller_finding(key, agg)
-            except (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError):
-                self.ctx.warn("cloud.aws: invalid aggregated caller fields")
 
     def _arn_account(self, arn: str | None) -> str | None:
         try:
@@ -761,7 +668,12 @@ class AwsConnector(BaseConnector):
 
     def _h_bedrock_agent(self, rec: dict[str, Any]) -> Finding:
         arn = rec.get("agentArn") or rec.get("agentId")
-        f = cloud_finding(self.name, "aws", kind=Kind.AGENT, title=f"Bedrock Agent: {rec.get('agentName')}", resource=_resource_id(arn), resource_type="bedrock-agent", account=self._arn_account(arn), region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None, last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None)
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.AGENT, title=f"Bedrock Agent: {rec.get('agentName')}",
+            resource=_resource_id(arn), resource_type="bedrock-agent", account=self._arn_account(arn),
+            region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None,
+            last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None,
+        )
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_model_provider("provider.aws-bedrock")
         f.add_capability("tool-use")
@@ -782,14 +694,26 @@ class AwsConnector(BaseConnector):
         apply_matches(f, model_matches(self.index, *f.models), weight_scale=0.5)
         ags = rec.get("_action_groups") or []
         kbs = rec.get("_knowledge_bases") or []
-        f.add_evidence(Evidence(signal="aws:bedrock-agent", description=f"Agent '{rec.get('agentName')}' ({rec.get('agentStatus')}) on {rec.get('foundationModel')} with {len(ags)} action group version(s), {len(kbs)} knowledge base association(s), {len(rec.get('_aliases') or [])} alias(es); role {rec.get('agentResourceRoleArn')}", location=arn, weight=0.97, signature="cloud.aws-bedrock-agents"))
+        f.add_evidence(Evidence(
+            signal="aws:bedrock-agent",
+            description=(
+                f"Agent '{rec.get('agentName')}' ({rec.get('agentStatus')}) on {rec.get('foundationModel')} "
+                f"with {len(ags)} action group version(s), {len(kbs)} knowledge base association(s), "
+                f"{len(rec.get('_aliases') or [])} alias(es); role {rec.get('agentResourceRoleArn')}"
+            ),
+            location=arn, weight=0.97, signature="cloud.aws-bedrock-agents",
+        ))
         for ag in ags:
             if ag.get("actionGroupState") == "DISABLED":
                 continue
             ex = ag.get("actionGroupExecutor") or {}
             if ex.get("lambda"):
                 f.add_capability("code-exec")
-                f.add_evidence(Evidence(signal="aws:action-group", description=f"Action group '{ag.get('actionGroupName')}' executes Lambda {ex.get('lambda')}", weight=0.4))
+                f.add_evidence(Evidence(
+                    signal="aws:action-group",
+                    description=f"Action group '{ag.get('actionGroupName')}' executes Lambda {ex.get('lambda')}",
+                    weight=0.4,
+                ))
             if ag.get("parentActionSignature") == "AMAZON.CodeInterpreter":
                 f.add_capability("code-exec")
                 f.add_evidence(Evidence(signal="aws:code-interpreter", description="Built-in code interpreter enabled", weight=0.4))
@@ -807,28 +731,84 @@ class AwsConnector(BaseConnector):
             f.add_capability("memory")
         f.owner = (rec.get("tags") or {}).get("owner") or (rec.get("tags") or {}).get("Owner")
         name_hint(self.index, f, rec.get("agentName"), rec.get("description"))
-        f.metadata.update({"agent_id": rec.get("agentId"), "status": rec.get("agentStatus"), "foundation_model": rec.get("foundationModel"), "role": rec.get("agentResourceRoleArn"), "instruction": truncate(rec.get("instruction"), 300), "versions_scanned": rec.get("_versions_scanned") or [], "version_models": {v: d.get("foundationModel") for v, d in details.items()}, "version_guardrails": {v: d.get("guardrailConfiguration") for v, d in details.items()}, "action_groups": [{"name": a.get("actionGroupName"), "lambda": (a.get("actionGroupExecutor") or {}).get("lambda"), "state": a.get("actionGroupState"), "version": a.get("agentVersion")} for a in ags], "knowledge_bases": sorted({k.get("knowledgeBaseId") for k in kbs if k.get("knowledgeBaseId")}), "knowledge_base_versions": [{"id": k.get("knowledgeBaseId"), "version": k.get("_agentVersion"), "state": k.get("knowledgeBaseState")} for k in kbs], "collaborator_versions": [{"name": c.get("collaboratorName"), "id": c.get("collaboratorId"), "version": c.get("_agentVersion")} for c in rec.get("_collaborators") or []], "aliases": [a.get("agentAliasName") for a in rec.get("_aliases") or []], "guardrail": rec.get("guardrailConfiguration"), "collaboration": rec.get("agentCollaboration")})
+        f.metadata.update({
+            "agent_id": rec.get("agentId"), "status": rec.get("agentStatus"),
+            "foundation_model": rec.get("foundationModel"), "role": rec.get("agentResourceRoleArn"),
+            "instruction": truncate(rec.get("instruction"), 300),
+            "versions_scanned": rec.get("_versions_scanned") or [],
+            "version_models": {v: d.get("foundationModel") for v, d in details.items()},
+            "version_guardrails": {v: d.get("guardrailConfiguration") for v, d in details.items()},
+            "action_groups": [
+                {
+                    "name": a.get("actionGroupName"),
+                    "lambda": (a.get("actionGroupExecutor") or {}).get("lambda"),
+                    "state": a.get("actionGroupState"), "version": a.get("agentVersion"),
+                }
+                for a in ags
+            ],
+            "knowledge_bases": sorted({k.get("knowledgeBaseId") for k in kbs if k.get("knowledgeBaseId")}),
+            "knowledge_base_versions": [
+                {"id": k.get("knowledgeBaseId"), "version": k.get("_agentVersion"), "state": k.get("knowledgeBaseState")}
+                for k in kbs
+            ],
+            "collaborator_versions": [
+                {"name": c.get("collaboratorName"), "id": c.get("collaboratorId"), "version": c.get("_agentVersion")}
+                for c in rec.get("_collaborators") or []
+            ],
+            "aliases": [a.get("agentAliasName") for a in rec.get("_aliases") or []],
+            "guardrail": rec.get("guardrailConfiguration"), "collaboration": rec.get("agentCollaboration"),
+        })
         return done(f, self.index, Kind.AGENT)
 
     def _h_bedrock_knowledge_base(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Bedrock Knowledge Base: {rec.get('name')}", resource=_resource_id(rec.get("knowledgeBaseId") or rec.get("name")), resource_type="bedrock-knowledge-base", account=self.account, region=rec.get("_region"), last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None)
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Bedrock Knowledge Base: {rec.get('name')}",
+            resource=_resource_id(rec.get("knowledgeBaseId") or rec.get("name")),
+            resource_type="bedrock-knowledge-base", account=self.account, region=rec.get("_region"),
+            last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None,
+        )
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("rag")
-        f.add_evidence(Evidence(signal="aws:knowledge-base", description=f"Knowledge base '{rec.get('name')}' ({rec.get('status')}): {truncate(rec.get('description'), 120)}", weight=0.6, signature="cloud.aws-bedrock-agents"))
+        f.add_evidence(Evidence(
+            signal="aws:knowledge-base",
+            description=f"Knowledge base '{rec.get('name')}' ({rec.get('status')}): {truncate(rec.get('description'), 120)}",
+            weight=0.6, signature="cloud.aws-bedrock-agents",
+        ))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_bedrock_flow(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.WORKFLOW, title=f"Bedrock Flow: {rec.get('name')}", resource=_resource_id(rec.get("arn") or rec.get("id")), resource_type="bedrock-flow", account=self.account, region=rec.get("_region"), last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None)
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.WORKFLOW, title=f"Bedrock Flow: {rec.get('name')}",
+            resource=_resource_id(rec.get("arn") or rec.get("id")), resource_type="bedrock-flow",
+            account=self.account, region=rec.get("_region"),
+            last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None,
+        )
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_model_provider("provider.aws-bedrock")
-        f.add_evidence(Evidence(signal="aws:bedrock-flow", description=f"Flow '{rec.get('name')}' ({rec.get('status')}) v{rec.get('version')}", weight=0.9, signature="cloud.aws-bedrock-agents"))
+        f.add_evidence(Evidence(
+            signal="aws:bedrock-flow",
+            description=f"Flow '{rec.get('name')}' ({rec.get('status')}) v{rec.get('version')}", weight=0.9,
+            signature="cloud.aws-bedrock-agents",
+        ))
         return done(f, self.index, Kind.WORKFLOW)
 
     def _h_bedrock_logging(self, rec: dict[str, Any]) -> Finding | None:
         cfg = rec.get("loggingConfig")
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Bedrock model invocation logging {'enabled' if cfg else 'DISABLED'} in {rec.get('_region')}", resource=f"arn:aws:bedrock:{rec.get('_region')}:{self.account}:logging", resource_type="bedrock-logging", account=self.account, region=rec.get("_region"))
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.CLOUD_RESOURCE,
+            title=f"Bedrock model invocation logging {'enabled' if cfg else 'DISABLED'} in {rec.get('_region')}",
+            resource=f"arn:aws:bedrock:{rec.get('_region')}:{self.account}:logging",
+            resource_type="bedrock-logging", account=self.account, region=rec.get("_region"),
+        )
         f.add_model_provider("provider.aws-bedrock")
-        f.add_evidence(Evidence(signal="aws:bedrock-logging", description="Model invocation logging configuration: " + (json.dumps({k: bool(v) for k, v in (cfg or {}).items() if k.endswith("Config")}) if cfg else "not configured — LLM usage in this region is not auditable"), weight=0.2))
+        f.add_evidence(Evidence(
+            signal="aws:bedrock-logging",
+            description="Model invocation logging configuration: " + (
+                json.dumps({k: bool(v) for k, v in (cfg or {}).items() if k.endswith("Config")}) if cfg
+                else "not configured — LLM usage in this region is not auditable"
+            ),
+            weight=0.2,
+        ))
         if not cfg:
             f.add_tag("no-invocation-logging")
         return done(f, self.index, Kind.CLOUD_RESOURCE)
@@ -837,73 +817,162 @@ class AwsConnector(BaseConnector):
         return None  # informational; agents reference guardrails directly
 
     def _h_bedrock_custom_model(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Bedrock custom model: {rec.get('modelName')}", resource=_resource_id(rec.get("modelArn") or rec.get("modelName")), resource_type="bedrock-custom-model", account=self.account, region=rec.get("_region"), first_seen=str(rec.get("creationTime")) if rec.get("creationTime") else None)
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Bedrock custom model: {rec.get('modelName')}",
+            resource=_resource_id(rec.get("modelArn") or rec.get("modelName")),
+            resource_type="bedrock-custom-model", account=self.account, region=rec.get("_region"),
+            first_seen=str(rec.get("creationTime")) if rec.get("creationTime") else None,
+        )
         f.add_model_provider("provider.aws-bedrock")
-        f.add_evidence(Evidence(signal="aws:custom-model", description=f"Custom model '{rec.get('modelName')}' based on {rec.get('baseModelName')}", weight=0.5))
+        f.add_evidence(Evidence(
+            signal="aws:custom-model",
+            description=f"Custom model '{rec.get('modelName')}' based on {rec.get('baseModelName')}",
+            weight=0.5,
+        ))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_agentcore_runtime(self, rec: dict[str, Any]) -> Finding:
         arn = rec.get("agentRuntimeArn") or rec.get("agentRuntimeId")
-        f = cloud_finding(self.name, "aws", kind=Kind.AGENT, title=f"Bedrock AgentCore runtime: {rec.get('agentRuntimeName')}", resource=_resource_id(arn), resource_type="agentcore-runtime", account=self._arn_account(arn), region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None, last_seen=str(rec.get("lastUpdatedAt")) if rec.get("lastUpdatedAt") else None)
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.AGENT,
+            title=f"Bedrock AgentCore runtime: {rec.get('agentRuntimeName')}", resource=_resource_id(arn),
+            resource_type="agentcore-runtime", account=self._arn_account(arn), region=rec.get("_region"),
+            first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None,
+            last_seen=str(rec.get("lastUpdatedAt")) if rec.get("lastUpdatedAt") else None,
+        )
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("tool-use")
         artifact = rec.get("agentRuntimeArtifact") or {}
         image = ((artifact.get("containerConfiguration") or {}).get("containerUri"))
-        f.add_evidence(Evidence(signal="aws:agentcore-runtime", description=f"AgentCore runtime '{rec.get('agentRuntimeName')}' ({rec.get('status')}) role {rec.get('roleArn')} image {image or 'n/a'}; network {((rec.get('networkConfiguration') or {}).get('networkMode'))}; protocol {((rec.get('protocolConfiguration') or {}).get('serverProtocol'))}", location=arn, weight=0.97, signature="cloud.aws-bedrock-agents"))
+        f.add_evidence(Evidence(
+            signal="aws:agentcore-runtime",
+            description=(
+                f"AgentCore runtime '{rec.get('agentRuntimeName')}' ({rec.get('status')}) role "
+                f"{rec.get('roleArn')} image {image or 'n/a'}; network "
+                f"{((rec.get('networkConfiguration') or {}).get('networkMode'))}; protocol "
+                f"{((rec.get('protocolConfiguration') or {}).get('serverProtocol'))}"
+            ),
+            location=arn, weight=0.97, signature="cloud.aws-bedrock-agents",
+        ))
         if image:
             apply_matches(f, self.index.match_image(image), weight_scale=0.8)
         scan_env(self.index, f, rec.get("environmentVariables"), location=arn)
         auth = rec.get("authorizerConfiguration")
         if not auth:
             f.add_tag("iam-auth-only")
-        f.metadata.update({"status": rec.get("status"), "role": rec.get("roleArn"), "image": image, "protocol": (rec.get("protocolConfiguration") or {}).get("serverProtocol"), "network": (rec.get("networkConfiguration") or {}).get("networkMode"), "authorizer": bool(auth), "description": truncate(rec.get("description"))})
+        f.metadata.update({
+            "status": rec.get("status"), "role": rec.get("roleArn"), "image": image,
+            "protocol": (rec.get("protocolConfiguration") or {}).get("serverProtocol"),
+            "network": (rec.get("networkConfiguration") or {}).get("networkMode"), "authorizer": bool(auth),
+            "description": truncate(rec.get("description")),
+        })
         return done(f, self.index, Kind.AGENT)
 
     def _h_agentcore_gateway(self, rec: dict[str, Any]) -> Finding:
         arn = rec.get("gatewayArn") or rec.get("gatewayId")
         targets = rec.get("_targets") or []
-        f = cloud_finding(self.name, "aws", kind=Kind.MCP_SERVER, title=f"AgentCore Gateway (MCP): {rec.get('name')}", resource=_resource_id(arn), resource_type="agentcore-gateway", account=self._arn_account(arn), region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None)
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.MCP_SERVER, title=f"AgentCore Gateway (MCP): {rec.get('name')}",
+            resource=_resource_id(arn), resource_type="agentcore-gateway", account=self._arn_account(arn),
+            region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None,
+        )
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_framework("protocol.mcp")
         f.add_capability("tool-use")
         f.add_capability("saas-actions")
-        f.add_evidence(Evidence(signal="aws:agentcore-gateway", description=f"Gateway '{rec.get('name')}' ({rec.get('status')}) protocol {rec.get('protocolType')} authorizer {rec.get('authorizerType')} with {len(targets)} target(s): {', '.join(str(t.get('name')) for t in targets[:8])}", location=arn, weight=0.95, signature="cloud.aws-bedrock-agents"))
+        f.add_evidence(Evidence(
+            signal="aws:agentcore-gateway",
+            description=(
+                f"Gateway '{rec.get('name')}' ({rec.get('status')}) protocol {rec.get('protocolType')} "
+                f"authorizer {rec.get('authorizerType')} with {len(targets)} target(s): "
+                f"{', '.join(str(t.get('name')) for t in targets[:8])}"
+            ),
+            location=arn, weight=0.95, signature="cloud.aws-bedrock-agents",
+        ))
         if any(t.get("targetType") == "LAMBDA" or (t.get("targetConfiguration") or {}).get("mcp", {}).get("lambda") for t in targets):
             f.add_capability("code-exec")
-        f.metadata.update({"protocol": rec.get("protocolType"), "authorizer": rec.get("authorizerType"), "targets": [{"name": t.get("name"), "status": t.get("status")} for t in targets][:30], "url": rec.get("gatewayUrl")})
+        f.metadata.update({
+            "protocol": rec.get("protocolType"), "authorizer": rec.get("authorizerType"),
+            "targets": [{"name": t.get("name"), "status": t.get("status")} for t in targets][:30],
+            "url": rec.get("gatewayUrl"),
+        })
         return done(f, self.index, Kind.MCP_SERVER)
 
     def _h_agentcore_memory(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"AgentCore Memory: {rec.get('name') or rec.get('id')}", resource=_resource_id(rec.get("arn") or rec.get("id")), resource_type="agentcore-memory", account=self.account, region=rec.get("_region"))
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.CLOUD_RESOURCE,
+            title=f"AgentCore Memory: {rec.get('name') or rec.get('id')}",
+            resource=_resource_id(rec.get("arn") or rec.get("id")), resource_type="agentcore-memory",
+            account=self.account, region=rec.get("_region"),
+        )
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("memory")
-        f.add_evidence(Evidence(signal="aws:agentcore-memory", description=f"Memory store '{rec.get('name') or rec.get('id')}' ({rec.get('status')})", weight=0.7, signature="cloud.aws-bedrock-agents"))
+        f.add_evidence(Evidence(
+            signal="aws:agentcore-memory",
+            description=f"Memory store '{rec.get('name') or rec.get('id')}' ({rec.get('status')})",
+            weight=0.7, signature="cloud.aws-bedrock-agents",
+        ))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_agentcore_browser(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"AgentCore Browser: {rec.get('name') or rec.get('browserId')}", resource=_resource_id(rec.get("browserArn") or rec.get("browserId")), resource_type="agentcore-browser", account=self.account, region=rec.get("_region"))
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.CLOUD_RESOURCE,
+            title=f"AgentCore Browser: {rec.get('name') or rec.get('browserId')}",
+            resource=_resource_id(rec.get("browserArn") or rec.get("browserId")),
+            resource_type="agentcore-browser", account=self.account, region=rec.get("_region"),
+        )
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("browsing")
-        f.add_evidence(Evidence(signal="aws:agentcore-browser", description=f"Managed browser '{rec.get('name')}' ({rec.get('status')})", weight=0.7, signature="cloud.aws-bedrock-agents"))
+        f.add_evidence(Evidence(
+            signal="aws:agentcore-browser",
+            description=f"Managed browser '{rec.get('name')}' ({rec.get('status')})", weight=0.7,
+            signature="cloud.aws-bedrock-agents",
+        ))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_agentcore_code_interpreter(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"AgentCore Code Interpreter: {rec.get('name') or rec.get('codeInterpreterId')}", resource=_resource_id(rec.get("codeInterpreterArn") or rec.get("codeInterpreterId")), resource_type="agentcore-code-interpreter", account=self.account, region=rec.get("_region"))
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.CLOUD_RESOURCE,
+            title=f"AgentCore Code Interpreter: {rec.get('name') or rec.get('codeInterpreterId')}",
+            resource=_resource_id(rec.get("codeInterpreterArn") or rec.get("codeInterpreterId")),
+            resource_type="agentcore-code-interpreter", account=self.account, region=rec.get("_region"),
+        )
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("code-exec")
-        f.add_evidence(Evidence(signal="aws:agentcore-code-interpreter", description=f"Code interpreter '{rec.get('name')}' ({rec.get('status')})", weight=0.7, signature="cloud.aws-bedrock-agents"))
+        f.add_evidence(Evidence(
+            signal="aws:agentcore-code-interpreter",
+            description=f"Code interpreter '{rec.get('name')}' ({rec.get('status')})", weight=0.7,
+            signature="cloud.aws-bedrock-agents",
+        ))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_agentcore_workload_identity(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.SERVICE_IDENTITY, title=f"AgentCore workload identity: {rec.get('name')}", resource=_resource_id(rec.get("workloadIdentityArn") or rec.get("name")), resource_type="agentcore-workload-identity", account=self.account, region=rec.get("_region"), surface=Surface.IDENTITY)
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.SERVICE_IDENTITY,
+            title=f"AgentCore workload identity: {rec.get('name')}",
+            resource=_resource_id(rec.get("workloadIdentityArn") or rec.get("name")),
+            resource_type="agentcore-workload-identity", account=self.account, region=rec.get("_region"),
+            surface=Surface.IDENTITY,
+        )
         f.add_framework("cloud.aws-bedrock-agents")
         f.add_capability("delegated-identity")
-        f.add_evidence(Evidence(signal="aws:agentcore-identity", description=f"Agent workload identity '{rec.get('name')}' (OAuth return URLs: {', '.join(rec.get('allowedResourceOauth2ReturnUrls') or [])[:200] or 'none'})", weight=0.8, signature="cloud.aws-bedrock-agents"))
+        f.add_evidence(Evidence(
+            signal="aws:agentcore-identity",
+            description=(
+                f"Agent workload identity '{rec.get('name')}' (OAuth return URLs: "
+                f"{', '.join(rec.get('allowedResourceOauth2ReturnUrls') or [])[:200] or 'none'})"
+            ),
+            weight=0.8, signature="cloud.aws-bedrock-agents",
+        ))
         return done(f, self.index, Kind.SERVICE_IDENTITY)
 
     def _h_lambda(self, rec: dict[str, Any]) -> Finding | None:
         arn = rec.get("FunctionArn")
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Lambda function: {rec.get('FunctionName')}", resource=_resource_id(arn or rec.get("FunctionName")), resource_type="lambda-function", account=self._arn_account(arn), region=rec.get("_region"), last_seen=rec.get("LastModified"))
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"Lambda function: {rec.get('FunctionName')}",
+            resource=_resource_id(arn or rec.get("FunctionName")), resource_type="lambda-function",
+            account=self._arn_account(arn), region=rec.get("_region"), last_seen=rec.get("LastModified"),
+        )
         if rec.get("environment_coverage") == "unknown":
             # Preserve coverage when sanitized collection records are rescanned.
             self.ctx.warn("cloud.aws: Lambda environment coverage is unknown")
@@ -914,26 +983,48 @@ class AwsConnector(BaseConnector):
             for m in self.index.match_domains_in_text(layer) + self.index.match_code(layer_name.replace("-", " ")):
                 apply_matches(f, [m], location=arn, weight_scale=0.5)
             low = layer.lower()
-            for key, sig in (("langchain", "framework.langchain"), ("llamaindex", "framework.llamaindex"), ("llama-index", "framework.llamaindex"), ("openai", "provider.openai"), ("anthropic", "provider.anthropic"), ("bedrock", "provider.aws-bedrock"), ("crewai", "framework.crewai"), ("strands", "framework.aws-strands"), ("agentcore", "cloud.aws-bedrock-agents"), ("litellm", "platform.litellm"), ("mcp", "protocol.mcp")):
+            for key, sig in (
+                ("langchain", "framework.langchain"), ("llamaindex", "framework.llamaindex"),
+                ("llama-index", "framework.llamaindex"), ("openai", "provider.openai"),
+                ("anthropic", "provider.anthropic"), ("bedrock", "provider.aws-bedrock"), ("crewai", "framework.crewai"),
+                ("strands", "framework.aws-strands"), ("agentcore", "cloud.aws-bedrock-agents"),
+                ("litellm", "platform.litellm"), ("mcp", "protocol.mcp"),
+            ):
                 if key in low:
                     sig_obj = self.index.get(sig)
                     if sig_obj:
                         (f.add_model_provider if sig_obj.category == "provider" else f.add_framework)(sig)
-                        f.add_evidence(Evidence(signal="aws:lambda-layer", description=f"Layer {layer} suggests {sig_obj.name}", location=arn, weight=0.5, signature=sig))
+                        f.add_evidence(Evidence(
+                            signal="aws:lambda-layer", description=f"Layer {layer} suggests {sig_obj.name}",
+                            location=arn, weight=0.5, signature=sig,
+                        ))
         if rec.get("ImageUri"):
             apply_matches(f, self.index.match_image(rec["ImageUri"]), location=arn)
         name_hint(self.index, f, rec.get("FunctionName"), rec.get("Description"))
         scan_blob(self.index, f, rec.get("Tags") or {}, location=arn, weight_scale=0.4)
         if not f.frameworks and not f.model_providers:
             return None
-        f.add_evidence(Evidence(signal="aws:lambda", description=f"Function '{rec.get('FunctionName')}' ({rec.get('Runtime') or rec.get('PackageType')}), role {rec.get('Role')}", location=arn, weight=0.2))
+        f.add_evidence(Evidence(
+            signal="aws:lambda",
+            description=f"Function '{rec.get('FunctionName')}' ({rec.get('Runtime') or rec.get('PackageType')}), role {rec.get('Role')}",
+            location=arn, weight=0.2,
+        ))
         f.owner = (rec.get("Tags") or {}).get("owner") or (rec.get("Tags") or {}).get("Owner") or (rec.get("Tags") or {}).get("team")
-        f.metadata.update({"runtime": rec.get("Runtime"), "role": rec.get("Role"), "handler": rec.get("Handler"), "layers": rec.get("Layers"), "image": rec.get("ImageUri"), "env_names": sorted((rec.get("Environment") or {}).keys())[:40], "environment_coverage": rec.get("environment_coverage", "unspecified"), "tags": rec.get("Tags")})
+        f.metadata.update({
+            "runtime": rec.get("Runtime"), "role": rec.get("Role"), "handler": rec.get("Handler"),
+            "layers": rec.get("Layers"), "image": rec.get("ImageUri"),
+            "env_names": sorted((rec.get("Environment") or {}).keys())[:40],
+            "environment_coverage": rec.get("environment_coverage", "unspecified"), "tags": rec.get("Tags"),
+        })
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_ecs_task_definition(self, rec: dict[str, Any]) -> Finding | None:
         arn = rec.get("taskDefinitionArn")
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"ECS task definition: {rec.get('family')}", resource=_resource_id(arn or rec.get("family")), resource_type="ecs-task-definition", account=self._arn_account(arn), region=rec.get("_region"))
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"ECS task definition: {rec.get('family')}",
+            resource=_resource_id(arn or rec.get("family")), resource_type="ecs-task-definition",
+            account=self._arn_account(arn), region=rec.get("_region"),
+        )
         for c in rec.get("containers") or []:
             if c.get("image"):
                 apply_matches(f, self.index.match_image(c["image"]), location=arn)
@@ -942,15 +1033,45 @@ class AwsConnector(BaseConnector):
                 apply_matches(f, self.index.match_env(str(s)), location=arn, weight_scale=0.6)
         if not f.frameworks and not f.model_providers:
             return None
-        f.add_evidence(Evidence(signal="aws:ecs", description=f"Task definition '{rec.get('family')}' containers: {', '.join(str(c.get('image')) for c in rec.get('containers') or [])[:300]}; task role {rec.get('taskRoleArn')}", location=arn, weight=0.2))
-        f.metadata.update({"task_role": rec.get("taskRoleArn"), "containers": [{"name": c.get("name"), "image": c.get("image")} for c in rec.get("containers") or []], "task_definition_status": rec.get("status"), "revision": rec.get("revision"), "deployment_state": rec.get("deployment_state", "unknown"), "discovery_sources": rec.get("discovery_sources", []), "workload_references": rec.get("workload_references", []), "workload_reference_count": rec.get("workload_reference_count", len(rec.get("workload_references", []))), "workload_references_truncated": rec.get("workload_references_truncated", False)})
+        f.add_evidence(Evidence(
+            signal="aws:ecs",
+            description=(
+                f"Task definition '{rec.get('family')}' containers: "
+                f"{', '.join(str(c.get('image')) for c in rec.get('containers') or [])[:300]}; task role "
+                f"{rec.get('taskRoleArn')}"
+            ),
+            location=arn, weight=0.2,
+        ))
+        f.metadata.update({
+            "task_role": rec.get("taskRoleArn"),
+            "containers": [{"name": c.get("name"), "image": c.get("image")} for c in rec.get("containers") or []],
+            "task_definition_status": rec.get("status"), "revision": rec.get("revision"),
+            "deployment_state": rec.get("deployment_state", "unknown"),
+            "discovery_sources": rec.get("discovery_sources", []),
+            "workload_references": rec.get("workload_references", []),
+            "workload_reference_count": rec.get("workload_reference_count", len(rec.get("workload_references", []))),
+            "workload_references_truncated": rec.get("workload_references_truncated", False),
+        })
         if rec.get("workload_references"):
-            f.add_evidence(Evidence(signal="aws:ecs-workload-reference", description="Exact task definition referenced by ECS tasks or services; this shows workload configuration, not observed model invocation.", location=arn, weight=0.2))
+            f.add_evidence(Evidence(
+                signal="aws:ecs-workload-reference",
+                description=(
+                    "Exact task definition referenced by ECS tasks or services; this shows workload "
+                    "configuration, not observed model invocation."
+                ),
+                location=arn, weight=0.2,
+            ))
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_sagemaker_endpoint(self, rec: dict[str, Any]) -> Finding | None:
         arn = rec.get("EndpointArn")
-        f = cloud_finding(self.name, "aws", kind=Kind.CLOUD_RESOURCE, title=f"SageMaker endpoint: {rec.get('EndpointName')}", resource=_resource_id(arn or rec.get("EndpointName")), resource_type="sagemaker-endpoint", account=self._arn_account(arn), region=rec.get("_region"), first_seen=rec.get("CreationTime"), last_seen=rec.get("LastModifiedTime"))
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.CLOUD_RESOURCE,
+            title=f"SageMaker endpoint: {rec.get('EndpointName')}",
+            resource=_resource_id(arn or rec.get("EndpointName")), resource_type="sagemaker-endpoint",
+            account=self._arn_account(arn), region=rec.get("_region"), first_seen=rec.get("CreationTime"),
+            last_seen=rec.get("LastModifiedTime"),
+        )
         llm = False
         for m in rec.get("models") or []:
             for img in m.get("images") or []:
@@ -965,53 +1086,103 @@ class AwsConnector(BaseConnector):
         if not llm and not f.frameworks and not f.model_providers:
             return None
         f.add_model_provider("provider.huggingface") if llm and not f.model_providers else None
-        f.add_evidence(Evidence(signal="aws:sagemaker", description=f"Endpoint '{rec.get('EndpointName')}' ({rec.get('EndpointStatus')}) serving {', '.join(str(m.get('name')) for m in rec.get('models') or [])} on {', '.join(str(m.get('instance')) for m in rec.get('models') or [])}", location=arn, weight=0.6))
+        f.add_evidence(Evidence(
+            signal="aws:sagemaker",
+            description=(
+                f"Endpoint '{rec.get('EndpointName')}' ({rec.get('EndpointStatus')}) serving "
+                f"{', '.join(str(m.get('name')) for m in rec.get('models') or [])} on "
+                f"{', '.join(str(m.get('instance')) for m in rec.get('models') or [])}"
+            ),
+            location=arn, weight=0.6,
+        ))
         f.metadata.update({"status": rec.get("EndpointStatus"), "models": rec.get("models")})
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_state_machine(self, rec: dict[str, Any]) -> Finding | None:
         arn = rec.get("stateMachineArn")
-        f = cloud_finding(self.name, "aws", kind=Kind.WORKFLOW, title=f"Step Functions workflow with LLM steps: {rec.get('name')}", resource=_resource_id(arn), resource_type="state-machine", account=self._arn_account(arn), region=rec.get("_region"), first_seen=rec.get("creationDate"))
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.WORKFLOW,
+            title=f"Step Functions workflow with LLM steps: {rec.get('name')}", resource=_resource_id(arn),
+            resource_type="state-machine", account=self._arn_account(arn), region=rec.get("_region"),
+            first_seen=rec.get("creationDate"),
+        )
         definition = rec.get("definition") or ""
         if "bedrock" not in definition.lower() and "sagemaker" not in definition.lower():
             return None
         scan_blob(self.index, f, definition, location=arn)
         if "arn:aws:states:::bedrock" in definition or "bedrock:invokeModel" in definition:
             f.add_model_provider("provider.aws-bedrock")
-            f.add_evidence(Evidence(signal="aws:sfn-bedrock", description="State machine invokes Bedrock (optimized integration)", location=arn, weight=0.8, signature="provider.aws-bedrock"))
+            f.add_evidence(Evidence(
+                signal="aws:sfn-bedrock", description="State machine invokes Bedrock (optimized integration)",
+                location=arn, weight=0.8, signature="provider.aws-bedrock",
+            ))
         f.add_capability("autonomous")
         f.metadata.update({"role": rec.get("roleArn")})
         return done(f, self.index, Kind.WORKFLOW)
 
     def _h_qbusiness_application(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.AGENT, title=f"Amazon Q Business application: {rec.get('displayName')}", resource=f"arn:aws:qbusiness:{rec.get('_region')}:{self.account}:application/{rec.get('applicationId')}", resource_type="qbusiness-application", account=self.account, region=rec.get("_region"), first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None, last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None)
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.AGENT,
+            title=f"Amazon Q Business application: {rec.get('displayName')}",
+            resource=f"arn:aws:qbusiness:{rec.get('_region')}:{self.account}:application/{rec.get('applicationId')}",
+            resource_type="qbusiness-application", account=self.account, region=rec.get("_region"),
+            first_seen=str(rec.get("createdAt")) if rec.get("createdAt") else None,
+            last_seen=str(rec.get("updatedAt")) if rec.get("updatedAt") else None,
+        )
         f.add_framework("cloud.aws-other-ai")
         f.add_capability("rag")
-        f.add_evidence(Evidence(signal="aws:qbusiness", description=f"Q Business app '{rec.get('displayName')}' ({rec.get('status')}), identity type {rec.get('identityType')}", weight=0.9, signature="cloud.aws-other-ai"))
+        f.add_evidence(Evidence(
+            signal="aws:qbusiness",
+            description=f"Q Business app '{rec.get('displayName')}' ({rec.get('status')}), identity type {rec.get('identityType')}",
+            weight=0.9, signature="cloud.aws-other-ai",
+        ))
         return done(f, self.index, Kind.AGENT)
 
     def _h_lex_bot(self, rec: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.AGENT, title=f"Lex bot: {rec.get('botName')}", resource=f"arn:aws:lex:{rec.get('_region')}:{self.account}:bot/{rec.get('botId')}", resource_type="lex-bot", account=self.account, region=rec.get("_region"), last_seen=str(rec.get("lastUpdatedDateTime")) if rec.get("lastUpdatedDateTime") else None)
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.AGENT, title=f"Lex bot: {rec.get('botName')}",
+            resource=f"arn:aws:lex:{rec.get('_region')}:{self.account}:bot/{rec.get('botId')}",
+            resource_type="lex-bot", account=self.account, region=rec.get("_region"),
+            last_seen=str(rec.get("lastUpdatedDateTime")) if rec.get("lastUpdatedDateTime") else None,
+        )
         f.add_framework("cloud.aws-other-ai")
-        f.add_evidence(Evidence(signal="aws:lex", description=f"Lex V2 bot '{rec.get('botName')}' ({rec.get('botStatus')}, type {rec.get('botType')})", weight=0.8, signature="cloud.aws-other-ai"))
+        f.add_evidence(Evidence(
+            signal="aws:lex",
+            description=f"Lex V2 bot '{rec.get('botName')}' ({rec.get('botStatus')}, type {rec.get('botType')})",
+            weight=0.8, signature="cloud.aws-other-ai",
+        ))
         return done(f, self.index, Kind.AGENT)
 
     def _h_secret_name(self, rec: dict[str, Any]) -> Finding | None:
         return self._name_only_secret(rec, "secretsmanager-secret", rec.get("ARN"))
 
     def _h_ssm_parameter(self, rec: dict[str, Any]) -> Finding | None:
-        return self._name_only_secret(rec, "ssm-parameter", f"arn:aws:ssm:{rec.get('_region')}:{self.account}:parameter/{str(rec.get('Name') or '').lstrip('/')}")
+        return self._name_only_secret(
+            rec, "ssm-parameter",
+            f"arn:aws:ssm:{rec.get('_region')}:{self.account}:parameter/{str(rec.get('Name') or '').lstrip('/')}",
+        )
 
     def _name_only_secret(self, rec: dict[str, Any], rtype: str, arn: str | None) -> Finding | None:
         name = str(rec.get("Name") or "")
         norm = "".join(ch if ch.isalnum() else "_" for ch in name).upper().strip("_")
         matches = self.index.match_env(norm)
         text_hits = [m for m in self.index.match_name(name.replace("/", " ").replace("-", " ")) if m.signature.category != "identity-app"]
-        if not matches and not any(k in name.lower() for k in ("openai", "anthropic", "claude", "gemini", "llm", "bedrock", "huggingface", "mistral", "cohere", "groq", "langsmith", "langfuse", "pinecone", "tavily")):
+        if not matches and not any(k in name.lower() for k in (
+            "openai", "anthropic", "claude", "gemini", "llm", "bedrock", "huggingface", "mistral", "cohere", "groq",
+            "langsmith", "langfuse", "pinecone", "tavily",
+        )):
             return None
-        f = cloud_finding(self.name, "aws", kind=Kind.SECRET, title=f"Stored LLM credential ({rtype}): {name}", resource=arn or name, resource_type=rtype, account=self.account, region=rec.get("_region"), last_seen=rec.get("LastAccessedDate") or rec.get("LastModifiedDate"))
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.SECRET, title=f"Stored LLM credential ({rtype}): {name}",
+            resource=arn or name, resource_type=rtype, account=self.account, region=rec.get("_region"),
+            last_seen=rec.get("LastAccessedDate") or rec.get("LastModifiedDate"),
+        )
         apply_matches(f, matches + text_hits, location=arn, weight_scale=0.7)
-        f.add_evidence(Evidence(signal=f"aws:{rtype}", description=f"{rtype} named '{name}' looks like an LLM provider credential (name only; value not read)", location=arn, weight=0.4))
+        f.add_evidence(Evidence(
+            signal=f"aws:{rtype}",
+            description=f"{rtype} named '{name}' looks like an LLM provider credential (name only; value not read)",
+            location=arn, weight=0.4,
+        ))
         f.add_tag("managed-secret")
         f.metadata.update({"name": name, "description": rec.get("Description"), "tags": rec.get("Tags")})
         return done(f, self.index, Kind.SECRET)
@@ -1021,7 +1192,10 @@ class AwsConnector(BaseConnector):
         if not isinstance(actions, list) or any(not isinstance(action, str) for action in actions):
             raise ValueError("invalid IAM actions")
         ai_patterns = rec.get("ai_action_patterns", [action for action in actions if _action_has_ai_scope(action)])
-        if not isinstance(ai_patterns, list) or any(not isinstance(action, str) or action not in actions or not _action_has_ai_scope(action) for action in ai_patterns):
+        if not isinstance(ai_patterns, list) or any(
+            not isinstance(action, str) or action not in actions or not _action_has_ai_scope(action)
+            for action in ai_patterns
+        ):
             raise ValueError("invalid AI action patterns")
         potential = rec.get("potential_actions") or []
         limitations = rec.get("policy_limitations") or []
@@ -1033,7 +1207,14 @@ class AwsConnector(BaseConnector):
             self.ctx.warn("cloud.aws: IAM policy evidence has unevaluated semantics; effective authorization is unknown")
         if not ai_patterns and not potential:
             return None
-        f = cloud_finding(self.name, "aws", kind=Kind.IAM_GRANT, title=f"IAM {rec.get('type')} with potential LLM/agent access: {rec.get('name')}", resource=_resource_id(rec.get("arn") or rec.get("name")), resource_type=f"iam-{str(rec.get('type', 'principal')).lower()}", account=self._arn_account(rec.get("arn")), first_seen=rec.get("created"), last_seen=rec.get("last_used"), surface=Surface.IDENTITY)
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.IAM_GRANT,
+            title=f"IAM {rec.get('type')} with potential LLM/agent access: {rec.get('name')}",
+            resource=_resource_id(rec.get("arn") or rec.get("name")),
+            resource_type=f"iam-{str(rec.get('type', 'principal')).lower()}",
+            account=self._arn_account(rec.get("arn")), first_seen=rec.get("created"),
+            last_seen=rec.get("last_used"), surface=Surface.IDENTITY,
+        )
         llm = [action for action in scan_iam_actions(self.index, f, actions, location=rec.get("arn")) if action in ai_patterns]
         for action in potential:
             apply_matches(f, self.index.match_scope(action), location=rec.get("arn"), weight_scale=0.3)
@@ -1041,12 +1222,26 @@ class AwsConnector(BaseConnector):
         wildcard = [a for a in actions if "*" in a or "?" in a]
         trust = json.dumps(rec.get("assume_role_policy") or {})
         principals = []
-        for svc in ("lambda.amazonaws.com", "bedrock.amazonaws.com", "bedrock-agentcore.amazonaws.com", "ecs-tasks.amazonaws.com", "sagemaker.amazonaws.com", "states.amazonaws.com", "ec2.amazonaws.com", "eks.amazonaws.com", "apprunner.amazonaws.com"):
+        for svc in (
+            "lambda.amazonaws.com", "bedrock.amazonaws.com", "bedrock-agentcore.amazonaws.com", "ecs-tasks.amazonaws.com",
+            "sagemaker.amazonaws.com", "states.amazonaws.com", "ec2.amazonaws.com", "eks.amazonaws.com",
+            "apprunner.amazonaws.com",
+        ):
             if svc in trust:
                 principals.append(svc)
         if "oidc-provider" in trust or "token.actions.githubusercontent.com" in trust:
             principals.append("oidc-federated")
-        f.add_evidence(Evidence(signal="aws:iam", description=f"Policy evidence for {rec.get('type')} '{rec.get('name')}': explicit actions {', '.join(llm[:8]) or 'none'}{' + wildcards ' + ', '.join(wildcard[:3]) if wildcard else ''}{'; potential NotAction grants ' + ', '.join(potential[:8]) if potential else ''}; trusted by {', '.join(principals) or 'users/accounts'}. Effective authorization is not evaluated.", location=rec.get("arn"), weight=0.45 if llm else 0.25))
+        f.add_evidence(Evidence(
+            signal="aws:iam",
+            description=(
+                f"Policy evidence for {rec.get('type')} '{rec.get('name')}': explicit actions "
+                f"{', '.join(llm[:8]) or 'none'}"
+                f"{' + wildcards ' + ', '.join(wildcard[:3]) if wildcard else ''}"
+                f"{'; potential NotAction grants ' + ', '.join(potential[:8]) if potential else ''}; trusted "
+                f"by {', '.join(principals) or 'users/accounts'}. Effective authorization is not evaluated."
+            ),
+            location=rec.get("arn"), weight=0.45 if llm else 0.25,
+        ))
         if "bedrock.amazonaws.com" in principals or "bedrock-agentcore.amazonaws.com" in principals:
             f.add_framework("cloud.aws-bedrock-agents")
             f.add_tag("agent-execution-role")
@@ -1054,14 +1249,23 @@ class AwsConnector(BaseConnector):
             f.add_tag("wildcard-permissions")
         name_hint(self.index, f, rec.get("name"))
         f.owner = (rec.get("tags") or {}).get("owner") or (rec.get("tags") or {}).get("Owner")
-        f.metadata.update({"principal_type": rec.get("type"), "llm_actions": llm[:40], "ai_action_patterns": ai_patterns, "potential_actions": potential, "policy_limitations": limitations, "effective_permissions": "not-evaluated", "wildcards": wildcard[:10], "attached_policies": rec.get("attached_policies"), "trusted_services": principals, "action_count": len(actions)})
+        f.metadata.update({
+            "principal_type": rec.get("type"), "llm_actions": llm[:40], "ai_action_patterns": ai_patterns,
+            "potential_actions": potential, "policy_limitations": limitations,
+            "effective_permissions": "not-evaluated", "wildcards": wildcard[:10],
+            "attached_policies": rec.get("attached_policies"), "trusted_services": principals,
+            "action_count": len(actions),
+        })
         return done(f, self.index, Kind.IAM_GRANT)
 
     # ------------------------------------------------------------ cloudtrail
     @staticmethod
     def _acc_caller(callers: dict[str, dict[str, Any]], rec: dict[str, Any]) -> None:
         key = rec.get("principal") or "unknown"
-        agg = callers.setdefault(key, {"events": 0, "models": {}, "ops": {}, "agents": {}, "first": None, "last": None, "regions": set(), "identity_type": rec.get("identityType"), "ips": {}, "errors": 0})
+        agg = callers.setdefault(key, {
+            "events": 0, "models": {}, "ops": {}, "agents": {}, "first": None, "last": None, "regions": set(),
+            "identity_type": rec.get("identityType"), "ips": {}, "errors": 0,
+        })
         agg["events"] += 1
         ua = rec.get("userAgent")
         if ua:
@@ -1084,7 +1288,14 @@ class AwsConnector(BaseConnector):
             agg["errors"] += 1
 
     def _caller_finding(self, principal: str, agg: dict[str, Any]) -> Finding:
-        f = cloud_finding(self.name, "aws", kind=Kind.GATEWAY_CALLER, title=f"LLM caller (CloudTrail): {principal.rsplit('/', 1)[-1]} — {agg['events']} invocation(s)", resource=f"cloudtrail:{principal}", resource_type=f"caller/{agg.get('identity_type') or 'principal'}", account=self._arn_account(principal if principal.startswith("arn:") else None), first_seen=agg["first"], last_seen=agg["last"], surface=Surface.GATEWAY)
+        f = cloud_finding(
+            self.name, "aws", kind=Kind.GATEWAY_CALLER,
+            title=f"LLM caller (CloudTrail): {principal.rsplit('/', 1)[-1]} — {agg['events']} invocation(s)",
+            resource=f"cloudtrail:{principal}",
+            resource_type=f"caller/{agg.get('identity_type') or 'principal'}",
+            account=self._arn_account(principal if principal.startswith("arn:") else None),
+            first_seen=agg["first"], last_seen=agg["last"], surface=Surface.GATEWAY,
+        )
         f.add_model_provider("provider.aws-bedrock")
         for model in list(agg["models"])[:10]:
             apply_matches(f, model_matches(self.index, model), weight_scale=0.4)
@@ -1092,15 +1303,217 @@ class AwsConnector(BaseConnector):
             apply_matches(f, self.index.match_user_agent(ua))
         f.models = sorted(agg["models"], key=lambda m: -agg["models"][m])[:10]
         weight = 0.5 if agg.get("identity_type") in {"AssumedRole", "AWSService", "WebIdentityUser"} else 0.3
-        f.add_evidence(Evidence(signal="aws:cloudtrail", description=f"{agg['events']} LLM API call(s) ({', '.join(f'{k}×{v}' for k, v in list(agg['ops'].items())[:5])}) by {agg.get('identity_type')} {principal}", weight=weight))
+        f.add_evidence(Evidence(
+            signal="aws:cloudtrail",
+            description=(
+                f"{agg['events']} LLM API call(s) "
+                f"({', '.join(f'{k}×{v}' for k, v in list(agg['ops'].items())[:5])}) by "
+                f"{agg.get('identity_type')} {principal}"
+            ),
+            weight=weight,
+        ))
         if any(op.startswith("InvokeAgent") or op == "InvokeFlow" for op in agg["ops"]):
             f.add_framework("cloud.aws-bedrock-agents")
             f.add_capability("tool-use")
         if agg.get("identity_type") == "IAMUser":
             f.add_tag("long-lived-credentials")
         name_hint(self.index, f, principal)
-        f.metadata.update({"principal": principal, "identity_type": agg.get("identity_type"), "events": agg["events"], "models": agg["models"], "operations": agg["ops"], "user_agents": dict(sorted(agg["agents"].items(), key=lambda kv: -kv[1])[:5]), "source_ips": dict(sorted(agg["ips"].items(), key=lambda kv: -kv[1])[:5]), "regions": sorted(r for r in agg["regions"] if r), "errors": agg["errors"]})
+        f.metadata.update({
+            "principal": principal, "identity_type": agg.get("identity_type"), "events": agg["events"],
+            "models": agg["models"], "operations": agg["ops"],
+            "user_agents": dict(sorted(agg["agents"].items(), key=lambda kv: -kv[1])[:5]),
+            "source_ips": dict(sorted(agg["ips"].items(), key=lambda kv: -kv[1])[:5]),
+            "regions": sorted(r for r in agg["regions"] if r), "errors": agg["errors"],
+        })
         return done(f, self.index, Kind.GATEWAY_CALLER)
+
+
+class _EcsInventory:
+    """One region's ECS task definitions, discovered for ``AwsConnector._collect_ecs``.
+
+    Requests are issued lazily in discovery order and each one is charged to
+    ``max_ecs_api_calls``. Once the budget is spent coverage is incomplete, and
+    the definitions already described are kept.
+    """
+
+    def __init__(self, connector: AwsConnector, region: str):
+        self.connector = connector
+        self.ctx = connector.ctx
+        self.region = region
+        self.client = connector._client("ecs", region)
+        self.remaining = connector.max_ecs_api_calls
+        self.limit_reported = False
+        self.definitions: dict[str, dict[str, Any]] = {}
+        self.attempted: set[str] = set()
+        self.reference_keys: dict[str, set[str]] = {}
+
+    # ------------------------------------------------------------ requests
+    def call(self, op: str, **kwargs: Any) -> dict[str, Any] | None:
+        """Issue one budgeted request; a failed or invalid response returns None."""
+        if self.remaining == 0:
+            if not self.limit_reported:
+                self.ctx.warn(f"cloud.aws: max_ecs_api_calls reached in {self.region}", incomplete=True)
+                self.limit_reported = True
+            return None
+        self.remaining -= 1
+        response = self.connector._safe(lambda: getattr(self.client, op)(**kwargs))
+        if response is None:
+            return None
+        if not isinstance(response, dict):
+            self.ctx.warn(f"cloud.aws: invalid ECS {op} response in {self.region}", incomplete=True)
+            return None
+        if response.get("failures"):
+            self.ctx.warn(f"cloud.aws: partial ECS {op} failure in {self.region}", incomplete=True)
+        return response
+
+    def identifiers(self, op: str, key: str, **kwargs: Any) -> Iterator[str]:
+        """Page through a list operation; an invalid page or token ends the listing."""
+        token = None
+        seen: set[str] = set()
+        while True:
+            response = self.call(op, maxResults=100, **kwargs, **({"nextToken": token} if token else {}))
+            if response is None:
+                return
+            values = response.get(key)
+            if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+                self.ctx.warn(f"cloud.aws: invalid ECS {key} page in {self.region}", incomplete=True)
+                return
+            yield from values
+            token = response.get("nextToken")
+            if token is None or token == "":
+                return
+            if not isinstance(token, str) or token in seen:
+                self.ctx.warn(f"cloud.aws: invalid or repeated ECS pagination token in {self.region}", incomplete=True)
+                return
+            seen.add(token)
+
+    def described(
+        self, op: str, noun: str, cluster: str, identifiers: Iterator[str], size: int
+    ) -> Iterator[dict[str, Any]]:
+        """Describe listed tasks or services in batches of ``size``, warning about gaps.
+
+        ECS names the request parameter and response list ``<noun>s`` and the
+        identifier of each described item ``<noun>Arn``.
+        """
+        key = f"{noun}s"
+        while batch := list(islice(identifiers, size)):
+            response = self.call(op, cluster=cluster, **{key: batch})
+            if response is None:
+                continue
+            returned = response.get(key, [])
+            if not isinstance(returned, list) or any(not isinstance(item, dict) for item in returned):
+                self.ctx.warn(f"cloud.aws: invalid ECS {key} in {self.region}", incomplete=True)
+                continue
+            if set(batch) != {item.get(f"{noun}Arn") for item in returned}:
+                self.ctx.warn(f"cloud.aws: incomplete ECS {noun} descriptions in {self.region}", incomplete=True)
+            yield from returned
+
+    # ----------------------------------------------------------- discovery
+    def reference_tasks(self, cluster: str) -> None:
+        """Add the exact definitions that a cluster's tasks run."""
+        # Desired RUNNING also covers tasks whose lastStatus is PENDING.
+        tasks = self.identifiers("list_tasks", "taskArns", cluster=cluster, desiredStatus="RUNNING")
+        for task in self.described("describe_tasks", "task", cluster, tasks, 100):
+            self.add_definition(task.get("taskDefinitionArn"), "task", {
+                "cluster": cluster, "task": task.get("taskArn"),
+                "last_status": task.get("lastStatus"), "desired_status": task.get("desiredStatus"),
+            })
+
+    def reference_services(self, cluster: str) -> None:
+        """Add the definitions of a cluster's services, their rollouts and task sets."""
+        services = self.identifiers("list_services", "serviceArns", cluster=cluster)
+        for service in self.described("describe_services", "service", cluster, services, 10):
+            if service.get("status") == "INACTIVE":
+                continue
+            for deployment in [service, *(service.get("deployments") or []), *(service.get("taskSets") or [])]:
+                if deployment.get("taskDefinition"):
+                    self.add_definition(deployment["taskDefinition"], "service", {
+                        "cluster": cluster, "service": service.get("serviceArn"),
+                        "deployment": deployment.get("id"), "status": deployment.get("status"),
+                        "running_count": deployment.get("runningCount"), "desired_count": deployment.get("desiredCount"),
+                    })
+
+    def add_registered_families(self) -> None:
+        """Add the latest ACTIVE revision of every registered family."""
+        for family in self.identifiers("list_task_definition_families", "families", status="ACTIVE"):
+            self.add_definition(family, "registered-family")
+
+    # --------------------------------------------------------- definitions
+    def add_definition(self, identifier: Any, source: str, reference: dict[str, Any] | None = None) -> None:
+        """Describe a definition once, then record how it was discovered."""
+        if not isinstance(identifier, str) or not identifier:
+            self.ctx.warn(f"cloud.aws: missing ECS task definition identifier in {self.region}", incomplete=True)
+            return
+        record = self.definitions.get(identifier)
+        if record is None:
+            record = self.describe_definition(identifier)
+            if record is None:
+                return
+        if source not in record["discovery_sources"]:
+            record["discovery_sources"].append(source)
+        if reference:
+            self.add_reference(record, reference)
+
+    def describe_definition(self, identifier: str) -> dict[str, Any] | None:
+        """Describe an ARN or a family (its latest ACTIVE revision) at most once."""
+        if identifier in self.attempted:
+            return None
+        self.attempted.add(identifier)
+        response = self.call("describe_task_definition", taskDefinition=identifier)
+        if response is None:
+            return None
+        definition = response.get("taskDefinition")
+        if not isinstance(definition, dict) or not isinstance(definition.get("taskDefinitionArn"), str) or not definition["taskDefinitionArn"]:
+            self.ctx.warn(f"cloud.aws: invalid ECS task definition in {self.region}", incomplete=True)
+            return None
+        arn = definition["taskDefinitionArn"]
+        if identifier.startswith("arn:") and arn != identifier:
+            self.ctx.warn(f"cloud.aws: mismatched ECS task definition in {self.region}", incomplete=True)
+            return None
+        return self.definitions.setdefault(arn, self.definition_record(definition))
+
+    def definition_record(self, definition: dict[str, Any]) -> dict[str, Any]:
+        """Inventory record of a described definition that no workload references yet."""
+        return {
+            "_kind": "ecs-task-definition",
+            "_region": self.region,
+            "family": definition.get("family"),
+            "taskDefinitionArn": definition["taskDefinitionArn"],
+            "taskRoleArn": definition.get("taskRoleArn"),
+            "status": definition.get("status"),
+            "revision": definition.get("revision"),
+            "containers": [
+                {
+                    "name": c.get("name"), "image": c.get("image"),
+                    "environment": {e["name"]: e.get("value") for e in c.get("environment") or []},
+                    "secrets": [s.get("name") for s in c.get("secrets") or []],
+                }
+                for c in definition.get("containerDefinitions") or []
+            ],
+            "discovery_sources": [],
+            "workload_references": [],
+            "workload_reference_count": 0,
+            "workload_references_truncated": False,
+            "deployment_state": "registered-only",
+        }
+
+    def add_reference(self, record: dict[str, Any], reference: dict[str, Any]) -> None:
+        """Count a distinct workload reference and advance the deployment state."""
+        keys = self.reference_keys.setdefault(record["taskDefinitionArn"], set())
+        key = json.dumps(reference, sort_keys=True)
+        if key not in keys:
+            keys.add(key)
+            record["workload_reference_count"] += 1
+            # Inventory every referenced definition, but do not embed
+            # an unbounded fleet of task IDs in a single finding.
+            if len(record["workload_references"]) < 100:
+                record["workload_references"].append(reference)
+            else:
+                record["workload_references_truncated"] = True
+        if reference.get("task") and reference.get("last_status") == "RUNNING":
+            record["deployment_state"] = "running-task-observed"
+        elif record["deployment_state"] == "registered-only":
+            record["deployment_state"] = "workload-referenced"
 
 
 def _iam_policy_signals(docs: list[Any]) -> tuple[set[str], set[str], set[str], set[str]]:
@@ -1115,13 +1528,47 @@ def _iam_policy_signals(docs: list[Any]) -> tuple[set[str], set[str], set[str], 
     ai_patterns: set[str] = set()
     potential: set[str] = set()
     limitations: set[str] = set()
+    for st in _allow_statements(docs, limitations):
+        if "Condition" in st:
+            limitations.add("conditions-not-evaluated")
+        if "NotResource" in st:
+            limitations.add("notresource-not-evaluated")
+        if "Principal" in st or "NotPrincipal" in st:
+            limitations.add("resource-policy-principals-not-evaluated")
+        if ("Action" in st) == ("NotAction" in st):
+            limitations.add("malformed-action-expression")
+            continue
+        resources = _policy_strings(st.get("Resource"))
+        if resources is None and "NotResource" not in st:
+            limitations.add("missing-or-malformed-resource")
+        services = _resource_services(resources or [], limitations)
+        if "Action" in st:
+            explicit = _policy_strings(st["Action"])
+            if explicit is None:
+                limitations.add("malformed-action-expression")
+            else:
+                actions.update(explicit)
+                # Keep explicit policy evidence when resource scope is
+                # unknown, with the limitation above. Known non-AI resource
+                # scopes must not turn '*' into an AI grant.
+                scope = None if resources is None else services
+                ai_patterns.update(action for action in explicit if _action_has_ai_scope(action, scope))
+        else:
+            limitations.add("notaction-partially-evaluated")
+            excluded = _policy_strings(st["NotAction"])
+            if excluded is None or any("[" in action or "]" in action for action in excluded):
+                limitations.add("malformed-action-expression")
+            elif resources is not None and "NotResource" not in st:
+                potential.update(_not_excluded_ai_actions(excluded, services))
+    return actions, ai_patterns, potential, limitations
 
-    def strings(value: Any) -> list[str] | None:
-        values = [value] if isinstance(value, str) else value
-        if not isinstance(values, list) or not values or any(not isinstance(v, str) or not v.strip() for v in values):
-            return None
-        return values
 
+def _allow_statements(docs: list[Any], limitations: set[str]) -> Iterator[dict[str, Any]]:
+    """Yield the Allow statements of policy documents given as JSON text or objects.
+
+    ``Statement`` may be a single object or a list. Unreadable documents and
+    statements, and Deny statements, are recorded as limitations instead.
+    """
     for doc in docs:
         if isinstance(doc, str):
             try:
@@ -1139,57 +1586,44 @@ def _iam_policy_signals(docs: list[Any]) -> tuple[set[str], set[str], set[str], 
             limitations.add("missing-policy-statements")
             continue
         for st in stmts:
-            if not isinstance(st, dict) or not isinstance(st.get("Effect"), str) or st["Effect"] not in {"Allow", "Deny"}:
+            effect = st.get("Effect") if isinstance(st, dict) else None
+            if not isinstance(effect, str) or effect not in {"Allow", "Deny"}:
                 limitations.add("malformed-policy-statement")
-                continue
-            if st["Effect"] == "Deny":
+            elif effect == "Deny":
                 limitations.add("explicit-deny-not-evaluated")
-                continue
-            if "Condition" in st:
-                limitations.add("conditions-not-evaluated")
-            if "NotResource" in st:
-                limitations.add("notresource-not-evaluated")
-            if "Principal" in st or "NotPrincipal" in st:
-                limitations.add("resource-policy-principals-not-evaluated")
-            if ("Action" in st) == ("NotAction" in st):
-                limitations.add("malformed-action-expression")
-                continue
-            resources = strings(st.get("Resource"))
-            if resources is None and "NotResource" not in st:
-                limitations.add("missing-or-malformed-resource")
-            services: set[str] = set()
-            for resource in resources or []:
-                parts = resource.split(":", 5)
-                if resource == "*":
-                    services.add("*")
-                elif len(parts) == 6 and parts[0] == "arn" and parts[2] and "[" not in parts[2] and "]" not in parts[2]:
-                    services.add(parts[2].lower())
-                else:
-                    limitations.add("resource-scope-not-evaluated")
-            if "Action" in st:
-                explicit = strings(st["Action"])
-                if explicit is None:
-                    limitations.add("malformed-action-expression")
-                else:
-                    actions.update(explicit)
-                    # Keep explicit policy evidence when resource scope is
-                    # unknown, with the limitation above. Known non-AI resource
-                    # scopes must not turn '*' into an AI grant.
-                    scope = None if resources is None else services
-                    ai_patterns.update(action for action in explicit if _action_has_ai_scope(action, scope))
-                continue
-            limitations.add("notaction-partially-evaluated")
-            excluded = strings(st["NotAction"])
-            if excluded is None or any("[" in action or "]" in action for action in excluded):
-                limitations.add("malformed-action-expression")
-                continue
-            if resources is None or "NotResource" in st:
-                continue
-            for action in _AI_ACTION_CANDIDATES:
-                service = action.split(":", 1)[0]
-                if any(fnmatchcase(service, scope) for scope in services) and not any(fnmatchcase(action.lower(), pattern.lower()) for pattern in excluded):
-                    potential.add(action)
-    return actions, ai_patterns, potential, limitations
+            else:
+                yield st
+
+
+def _policy_strings(value: Any) -> list[str] | None:
+    """A policy element (one string or a list) as nonblank strings; None when malformed or empty."""
+    values = [value] if isinstance(value, str) else value
+    if not isinstance(values, list) or not values or any(not isinstance(v, str) or not v.strip() for v in values):
+        return None
+    return values
+
+
+def _resource_services(resources: list[str], limitations: set[str]) -> set[str]:
+    """Services that Resource elements scope to ('*' for any); other forms are not evaluated."""
+    services: set[str] = set()
+    for resource in resources:
+        parts = resource.split(":", 5)
+        if resource == "*":
+            services.add("*")
+        elif len(parts) == 6 and parts[0] == "arn" and parts[2] and "[" not in parts[2] and "]" not in parts[2]:
+            services.add(parts[2].lower())
+        else:
+            limitations.add("resource-scope-not-evaluated")
+    return services
+
+
+def _not_excluded_ai_actions(excluded: list[str], services: set[str]) -> set[str]:
+    """Representative AI actions on these services that a NotAction list does not exclude."""
+    return {
+        action for action in _AI_ACTION_CANDIDATES
+        if any(fnmatchcase(action.split(":", 1)[0], scope) for scope in services)
+        and not any(fnmatchcase(action.lower(), pattern.lower()) for pattern in excluded)
+    }
 
 
 def _actions_from_docs(docs: list[Any]) -> set[str]:

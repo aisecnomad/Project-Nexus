@@ -4,14 +4,51 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Container, Iterator
+from contextlib import contextmanager
 from typing import Any
 
+from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.common import apply_matches, blob_matches, finalize, looks_like_placeholder
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import SignatureIndex
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.text import redact
 
 _SECRETISH = re.compile(r"(?i)(?:key|token|secret|password|passwd|credential|apikey|api_key)")
+
+# A malformed or oversized record (including an exhausted matcher budget)
+# invalidates only its own analysis, never the rest of the connector's records.
+RECORD_ERRORS = (ValueError, TypeError, KeyError, AttributeError, RecursionError, MatchTimeoutError)
+
+
+def kind_handlers(connector: object) -> dict[str, Callable[..., Any]]:
+    """Map each ``_h_<kind>`` method to its record kind (``_h_bedrock_agent`` -> ``bedrock-agent``)."""
+    return {name[3:].replace("_", "-"): getattr(connector, name) for name in dir(type(connector)) if name.startswith("_h_")}
+
+
+def supported_kind(ctx: ConnectorContext, connector: str, rec: Any, supported: Container[str]) -> str | None:
+    """Count one exported record and return its ``_kind``; warn and return None if unsupported."""
+    ctx.examined()
+    kind = rec.get("_kind") if isinstance(rec, dict) else None
+    if not isinstance(kind, str) or kind not in supported:
+        ctx.warn(f"{connector}: record has missing, invalid, or unsupported _kind")
+        return None
+    return kind
+
+
+@contextmanager
+def isolate_record(ctx: ConnectorContext, warning: str) -> Iterator[None]:
+    """Contain one record's analysis failure: record ``warning`` (coverage incomplete) and continue.
+
+    Unlike ``ConnectorContext.isolate`` the caller supplies the complete
+    diagnostic, and the block may yield findings: those yielded before a
+    failure are kept.
+    """
+    try:
+        yield
+    except RECORD_ERRORS:
+        ctx.warn(warning)
 
 
 def string_list(value: Any, name: str, *, pattern: str | None = None) -> list[str] | None:
@@ -76,13 +113,21 @@ def scan_env(index: SignatureIndex, finding: Finding, env: dict[str, Any] | None
         if isinstance(value, str) and value and not looks_like_placeholder(value) and not value.startswith(("${", "{{", "arn:", "projects/")):
             for m in index.match_secrets(value):
                 finding.add_tag("plaintext-credential")
-                finding.add_evidence(Evidence(signal=f"secret:{m.signature_id}", description=f"Plaintext {m.signal.description or m.signature.name} in environment variable {name}: {redact(m.value)}", location=location, weight=0.6, signature=m.signature_id))
+                finding.add_evidence(Evidence(
+                    signal=f"secret:{m.signature_id}",
+                    description=f"Plaintext {m.signal.description or m.signature.name} in environment variable {name}: {redact(m.value)}",
+                    location=location, weight=0.6, signature=m.signature_id,
+                ))
                 finding.add_model_provider(m.signature_id) if m.signature.category == "provider" else None
             is_secretish = _SECRETISH.search(str(name)) and len(value) >= 16 and not value.startswith(("http", "/", "@Microsoft.KeyVault", "{", "$"))
             provider_key = next((m for m in matches if m.signature.category == "provider"), None) if matches else None
             if is_secretish and provider_key:
                 finding.add_tag("plaintext-credential")
-                finding.add_evidence(Evidence(signal=f"secret:{provider_key.signature_id}", description=f"Plaintext value in provider credential variable {name}: {redact(value)}", location=location, weight=0.5, signature=provider_key.signature_id))
+                finding.add_evidence(Evidence(
+                    signal=f"secret:{provider_key.signature_id}",
+                    description=f"Plaintext value in provider credential variable {name}: {redact(value)}",
+                    location=location, weight=0.5, signature=provider_key.signature_id,
+                ))
             elif is_secretish:
                 finding.add_tag("secret-in-env")
     if matched_names:
@@ -101,7 +146,11 @@ def scan_iam_actions(index: SignatureIndex, finding: Finding, actions: list[str]
     for a in actions:
         for m in index.match_scope(a):
             apply_matches(finding, [m], location=location, weight_scale=0.6)
-            if m.signature_id in {"policy.llm-access-scopes", "provider.aws-bedrock", "cloud.aws-bedrock-agents", "cloud.aws-other-ai", "provider.google-vertex-ai", "cloud.gcp-vertex-agent-engine", "provider.azure-openai", "cloud.azure-ai-foundry-agents", "provider.oci-generative-ai", "cloud.oci-generative-ai-agents"}:
+            if m.signature_id in {
+                "policy.llm-access-scopes", "provider.aws-bedrock", "cloud.aws-bedrock-agents", "cloud.aws-other-ai",
+                "provider.google-vertex-ai", "cloud.gcp-vertex-agent-engine", "provider.azure-openai",
+                "cloud.azure-ai-foundry-agents", "provider.oci-generative-ai", "cloud.oci-generative-ai-agents",
+            }:
                 llm.append(a)
     for a in actions:
         if a not in finding.permissions:
