@@ -569,3 +569,15 @@ def test_record_dumps_disable_incremental_reuse_with_a_stated_reason(tmp_path, i
     assert not cache.enabled
     assert cache.disabled_reason and "record dumps" in cache.disabled_reason
     assert any("record dumps" in record.getMessage() for record in caplog.records)
+
+
+def test_scan_report_says_why_a_requested_incremental_scan_ran_in_full(tmp_path, index):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("import openai\n")
+    cfg = ScanConfig(connectors=[ConnectorSpec(name="code.filesystem", config={"path": str(repo), "use_git": False})],
+                     incremental=True, dump_records=str(tmp_path / "dumps"), state_dir=str(tmp_path / "state"))
+    result = Engine(cfg).run()
+    [stats] = result.stats
+    assert any(w.startswith("incremental: record dumps") for w in stats.warnings)
+    assert not stats.incomplete

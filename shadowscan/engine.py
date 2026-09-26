@@ -441,6 +441,7 @@ class Engine:
         cache = scan.cache
         fs: list[Finding] = []
         started_at = now_iso()
+        cache_note: str | None = None
         origin_token = set_allow_private_origin(self.config.allow_private_origin)
         stop_token = set_cooperative_stop(_cooperative_stop_for(ctx))
         try:
@@ -448,7 +449,10 @@ class Engine:
             cls = self._connector_class(spec.name)
             # Constructor validation still runs before a cached result is used.
             connector = cls(ctx)
-            snapshot = cache.snapshot(spec) if cache.supports_connector(spec, cls) else None
+            eligible = cache.supports_connector(spec, cls)
+            if eligible and cache.disabled_reason:
+                cache_note = f"incremental: {cache.disabled_reason}; ran a full scan"
+            snapshot = cache.snapshot(spec) if eligible else None
             cached = cache.load(spec, snapshot) if snapshot else None
             if cached is not None:
                 fs, st = cached
@@ -497,6 +501,8 @@ class Engine:
         finally:
             reset_cooperative_stop(stop_token)
             reset_allow_private_origin(origin_token)
+        if cache_note:
+            st.warnings.append(cache_note)
         _seal_diagnostics(st, len(fs))
         if scan.dump_directory and not state.cancelled.is_set():
             scan.record_export(state, _export_entry(spec, dump_key, cfg, ctx, st))
