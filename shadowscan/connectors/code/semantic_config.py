@@ -16,12 +16,13 @@ from itertools import chain
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
+from xml.parsers.expat import errors as expat_errors
 
 import yaml
 
 from shadowscan.signatures.matcher import Match, SignatureIndex
 from shadowscan.utils.jsonc import load_json_lenient
-from shadowscan.utils.safe_yaml import bounded_safe_load, bounded_safe_load_all
+from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load, bounded_safe_load_all
 
 
 @dataclass(slots=True)
@@ -315,16 +316,28 @@ def is_agent_config_path(rel: str) -> bool:
     return any(directory in path.parts and path.name in names for directory, names in _AGENT_CONFIG_FILES.items())
 
 
+# Expat refuses documents whose entity expansion exceeds its amplification
+# limit; like a nesting limit, that says nothing about the syntax.
+_XML_AMPLIFICATION_LIMIT = expat_errors.codes.get(getattr(expat_errors, "XML_ERROR_AMPLIFICATION_LIMIT_BREACH", ""))
+
+
 def structured_code_matches(
     index: SignatureIndex, rel: str, text: str, errors: list[str] | None = None,
+    limit_errors: list[str] | None = None,
 ) -> list[Match]:
     """Match recognized operational config shapes, preserving signature policy.
 
     Dependency/container/IaC declarations are handled by manifests.py. Agent
     cards and MCP configs have their own validators. Unknown configuration
     formats deliberately do not fall back to scanning arbitrary prose as code.
+
+    Syntax errors go to ``errors``. A document the parsers refuse because of a
+    nesting or expansion limit goes to ``limit_errors`` (``errors`` when that
+    is not given): its content is unknown rather than malformed, so callers
+    must keep the scan incomplete.
     """
     issues = errors if errors is not None else []
+    limits = limit_errors if limit_errors is not None else issues
     extension = PurePosixPath(rel).suffix.lower()
     if extension in {".yaml", ".yml"} and _TEMPLATE_MARKER_RX.search(text):
         # Helm, Jinja and Go-template manifests are not YAML until rendered;
@@ -349,7 +362,16 @@ def structured_code_matches(
             return []
         else:
             return []
-    except (ValueError, RecursionError, yaml.YAMLError, ET.ParseError):
+    except (RecursionError, YAMLResourceLimitError):
+        limits.append("structured configuration exceeds parser limits")
+        return []
+    except ET.ParseError as exc:
+        if _XML_AMPLIFICATION_LIMIT is not None and exc.code == _XML_AMPLIFICATION_LIMIT:
+            limits.append("structured configuration exceeds parser limits")
+        else:
+            issues.append("invalid structured configuration syntax")
+        return []
+    except (ValueError, yaml.YAMLError):
         issues.append("invalid structured configuration syntax")
         return []
     matches: list[Match] = []

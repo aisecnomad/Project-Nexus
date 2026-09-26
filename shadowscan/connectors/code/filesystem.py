@@ -1139,11 +1139,21 @@ class FilesystemConnector(BaseConnector):
                             record_content_match(m, excerpt(m.line))
                         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
                             for tool in mcp_tool_names(text):
-                                if len(proj.mcp_tools) < _MAX_MCP_TOOLS:
-                                    proj.mcp_tools.setdefault(tool, rel)
+                                known = proj.mcp_tools.get(tool)
+                                if known is None:
+                                    if len(proj.mcp_tools) < _MAX_MCP_TOOLS:
+                                        proj.mcp_tools[tool] = rel
+                                elif _is_test_path(known) and not _is_test_path(rel):
+                                    proj.mcp_tools[tool] = rel  # prefer where deployed code registers it
                     elif not is_nonexecutable:
                         config_errors: list[str] = []
-                        structured = [] if is_mcp else structured_code_matches(self.index, rel, content_text, errors=config_errors)
+                        config_limits: list[str] = []
+                        structured = [] if is_mcp else structured_code_matches(
+                            self.index, rel, content_text, errors=config_errors, limit_errors=config_limits,
+                        )
+                        for issue in config_limits:
+                            # Unknown content, not a syntax error: fail closed.
+                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
                         for issue in config_errors:
                             if is_agent_config_path(rel):
                                 self.ctx.error(f"code.filesystem: {rel}: {issue}")
@@ -1598,7 +1608,13 @@ class FilesystemConnector(BaseConnector):
             # idioms in an MCP tool server (whose tools are read below) is
             # kept as evidence but implies no capability.
             test_only = discount_tests and all(_is_test_path(rel) for _, rel, _ in tech_matches)
-            mcp_server = {m.signature_id for m, _, _ in tech_matches if m.signature.category != "heuristic"} == {"protocol.mcp"}
+            # Tools registered only in tests imply nothing, like other test evidence.
+            server_tools = {tool: rel for tool, rel in proj.mcp_tools.items() if test_only or not in_tests(rel)}
+            # A tool server's capabilities come from its tools. When none were
+            # recognised, its other evidence still implies what the code can do.
+            mcp_server = bool(server_tools) and {
+                m.signature_id for m, _, _ in tech_matches if m.signature.category != "heuristic"
+            } == {"protocol.mcp"}
 
             def implies_capabilities(match: Match, rel: str) -> bool:
                 if in_tests(rel) and not test_only:
@@ -1611,8 +1627,8 @@ class FilesystemConnector(BaseConnector):
                     m.weight = min(m.weight, 0.6)
                 apply_matches(f, [m], location=rel, snippet=snip, weight_scale=(ENV_ONLY_WEIGHT_SCALE if env_only else 1.0) * (0.5 if in_tests(rel) else 1.0),
                               capabilities=implies_capabilities(m, rel))
-            if "protocol.mcp" in f.frameworks and proj.mcp_tools:
-                self._apply_mcp_tools(f, proj)
+            if "protocol.mcp" in f.frameworks and server_tools:
+                self._apply_mcp_tools(f, server_tools)
             # Repeated observations of one technology are correlated evidence.
             # Generic idioms share a single supporting group; loops in several
             # worker files must never accumulate into a confirmed AI agent.
@@ -1683,9 +1699,9 @@ class FilesystemConnector(BaseConnector):
             yield f
 
     @staticmethod
-    def _apply_mcp_tools(f: Finding, proj: _Project) -> None:
+    def _apply_mcp_tools(f: Finding, server_tools: dict[str, str]) -> None:
         """Derive MCP server capabilities from the tool names it registers."""
-        tools = sorted(proj.mcp_tools)
+        tools = sorted(server_tools)
         f.metadata["mcp_tools"] = tools[:50]
         implied: dict[str, list[str]] = {}
         for tool in tools:
@@ -1696,7 +1712,7 @@ class FilesystemConnector(BaseConnector):
             f.add_evidence(Evidence(
                 signal=f"mcp-tool:{capability}",
                 description=f"registers MCP tools implying {capability}: {', '.join(names[:5])}{' …' if len(names) > 5 else ''}",
-                location=proj.mcp_tools[names[0]],
+                location=server_tools[names[0]],
                 weight=0.5,
                 signature="protocol.mcp",
                 attributes={"category": "protocol", "value": names[0]},

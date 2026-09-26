@@ -33,6 +33,7 @@ _REGISTRATIONS = (
 # Python decorators naming the tool after the function: @mcp.tool() / @server.tool
 _DECORATED = re.compile(r"@\w+\.tool(?:\(\s*\))?[ \t]*\r?\n(?:[ \t]*@[^\n]{0,200}\n){0,3}[ \t]*(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w{0,63})\s*\(")
 _ENUM_CLASS = re.compile(r"^class[ \t]+(\w+)\((?:str,[ \t]*)?(?:Str)?Enum\):[ \t]*\r?\n((?:[ \t]+[^\n]*\n|[ \t]*\r?\n){1,200})", re.MULTILINE)
+_ENUM_TOOL_NAME = re.compile(r"\bTool\(\s*name\s*=\s*(\w+)\.")
 _ENUM_MEMBER = re.compile(r"^[ \t]+[A-Z][A-Z0-9_]*[ \t]*=[ \t]*[\"']([a-z][a-z0-9_.-]{0,63})[\"']", re.MULTILINE)
 
 _WORDS = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+")
@@ -65,8 +66,11 @@ def mcp_tool_names(text: str) -> list[str]:
         for match in pattern.finditer(text):
             if add(match.group(1)):
                 return list(names)
+    # One pass collects the enums used as tool names; searching the whole
+    # text once per enum class was quadratic in files with many enums.
+    referenced = set(_ENUM_TOOL_NAME.findall(text))
     for enum in _ENUM_CLASS.finditer(text):
-        if re.search(r"\bTool\(\s*name\s*=\s*" + re.escape(enum.group(1)) + r"\.", text):
+        if enum.group(1) in referenced:
             for member in _ENUM_MEMBER.finditer(enum.group(2)):
                 if add(member.group(1)):
                     return list(names)

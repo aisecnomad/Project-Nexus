@@ -108,3 +108,14 @@ def test_legacy_accept_rejects_two_sources_renamed_into_two_hundred_cases_before
     error = capsys.readouterr().err
     assert "duplicate_holdout_source" in error
     assert "renamed-" not in error and "source independence regression" not in error
+
+
+def test_every_bundled_corpus_is_in_the_acceptance_source_index() -> None:
+    from tools.evaluation.evaluate import DEFAULT_CORPUS, load_corpus
+    from tools.evaluation.sources import bundled_source_index
+
+    corpora = sorted(DEFAULT_CORPUS.parent.glob("*corpus.json"))
+    assert DEFAULT_CORPUS in corpora
+    digests = bundled_source_index().corpus_digests
+    for path in corpora:
+        assert load_corpus(path)[2] in digests, f"{path.name} is missing from the acceptance source index"

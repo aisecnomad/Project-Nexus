@@ -442,11 +442,16 @@ pinned baseline with a candidate before enforcing policy on the new output:
   unchanged.
 - **GitHub Apps.** Installations without an AI signature or AI-like name are no
   longer reported. Set `include_unrecognized_apps: true` to keep reviewing them,
-  at possible confidence with the `unrecognized-app` tag.
+  at possible confidence with the `unrecognized-app` tag. Read-only apps with an
+  AI-like name are now reported. `contents` or `pull_requests` write access no
+  longer implies `code-exec`, so such apps can drop a risk level (the Claude app
+  from critical to high); check `--fail-on` thresholds against a baseline.
 - **Completeness.** Syntax errors in ordinary configuration files and Python
   test modules over `max_ast_nodes` produce warnings instead of incomplete
   scans; the file is still read lexically. Enable `strict_coverage` to keep
-  treating them as incomplete. Notebooks whose outputs exceed `max_file_size`
+  treating them as incomplete. A file the parsers refuse for nesting depth or
+  XML entity expansion stays incomplete, since its content is unknown rather
+  than malformed. Notebooks whose outputs exceed `max_file_size`
   now contribute their code-cell evidence; their outputs are not scanned for
   credentials at that size, so the scan stays incomplete unless `scan_secrets`
   is off. Raise `max_file_size` to scan the outputs too.

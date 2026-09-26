@@ -19,10 +19,14 @@ from typing import Any
 
 # A string literal, a line comment, a block comment, or an unterminated block
 # comment. Strings come first so comment markers inside them are preserved.
-_COMMENT_TOKENS = re.compile(r'"(?:[^"\\\n]|\\.)*"|//[^\n]*|/\*.*?\*/|/\*', re.DOTALL)
+# The closing quote is optional: a string left open at the end of a line
+# (never valid JSON) is consumed as one token instead of failing and being
+# retried from every quote inside it, which made hostile files quadratic.
+_STRING = r'"(?:[^"\\\n]|\\.)*"?'
+_COMMENT_TOKENS = re.compile(_STRING + r'|//[^\n]*|/\*.*?\*/|/\*', re.DOTALL)
 # A string literal, or a comma followed only by whitespace before a closing
 # bracket. A comma at the end of the document stays and remains an error.
-_TRAILING_COMMA_TOKENS = re.compile(r'"(?:[^"\\\n]|\\.)*"|,(?=\s*[}\]])')
+_TRAILING_COMMA_TOKENS = re.compile(_STRING + r'|,(?=\s*[}\]])')
 
 
 def _strip_comment(match: re.Match[str]) -> str:

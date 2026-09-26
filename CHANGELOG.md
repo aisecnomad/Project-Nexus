@@ -2,6 +2,33 @@
 
 ## 0.1.1 — Unreleased
 
+### Field-review follow-up
+
+Fixes from the review of the field-review series; each has a regression test.
+
+- A structured configuration the parsers refuse for nesting depth or XML
+  entity expansion keeps the scan incomplete (exit 3) again. The series had
+  reported it as a syntax warning outside coding-agent settings, so such a file
+  hid its workflow evidence behind a complete scan.
+- JSONC stripping is linear again: an unterminated string full of escaped
+  quotes made it quadratic, so one small file could exhaust the scan deadline.
+- The import-statement cache keeps only statements up to 256 characters,
+  within 4 MiB of statement text, instead of any statement up to 65,536
+  entries. Module names come from scanned code and the index lives for the
+  process.
+- GitHub Apps match their slug's words as well as the slug, so
+  `amazon-q-developer`, `ellipsis-dev`, `mentatbot` and `factory-droid` are
+  recognised again instead of dropping out of complete scans.
+- `boto3.client(service_name="bedrock-agent-runtime")` and the AgentCore
+  clients corroborate `invoke_agent` like the positional form.
+- An MCP server keeps the capabilities its code implies when no tools were
+  recognised, so a FastMCP shell tool registered with `@mcp.tool(description=...)`
+  is `code-exec` again. Tools registered only in tests imply no capabilities.
+- MCP enum tool names are found in one pass instead of one text search per enum.
+- Documentation: the GitHub Apps rollout note lists the risk changes, the code
+  and GitHub Apps connector options are documented, and the evaluation guide
+  runs the field-review corpus.
+
 ### Report output safety
 
 - A report path that already exists as a character device, such as
@@ -45,10 +72,15 @@ Behavior changes to review before upgrading (see
   `metadata.manifests`) instead of a second agent finding. `diff` reports the
   former manifest findings as resolved. A2A cards and M365 declarative agents
   stay separate findings.
-- **GitHub Apps:** an installation needs an AI signature or an AI-like name.
-  Dependency, deploy and CI bots are no longer reported unless
-  `include_unrecognized_apps: true`, which caps them at possible confidence.
-  Only `workflows` or `actions` write access implies `code-exec`.
+- **GitHub Apps:** an installation needs an AI signature or an AI-like name,
+  whatever its permissions, so read-only apps with an AI-like name are now
+  reported as well. Apps with neither, such as Renovate or Dependabot, are no
+  longer reported unless `include_unrecognized_apps: true`, which caps them at
+  possible confidence. A separate word "bot" in the slug (`changeset-bot`)
+  still counts as an AI-like name. Only `workflows` or `actions` write access
+  implies `code-exec`, so an app with only `contents` or `pull_requests` write
+  access loses it and can drop a risk level (critical to high for the Claude
+  app).
 - **Scan completeness:** a syntax error in a configuration file that is not
   coding-agent settings (`.claude`, `.codex`, `.gemini`) is a warning; lexical
   checks still read the file. `strict_coverage` keeps it incomplete.
