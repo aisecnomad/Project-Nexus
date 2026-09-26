@@ -182,8 +182,8 @@ output_options = [
 ]
 
 
-def add_options(options):
-    def _wrap(fn):
+def add_options(options: list[Any]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def _wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
         for opt in reversed(options):
             fn = opt(fn)
         return fn
@@ -257,7 +257,8 @@ def shared_options(fn: Callable[..., Any]) -> Callable[..., Any]:
         opts = SharedOptions(**{name: kwargs.pop(name) for name in _SHARED_OPTION_NAMES})
         return fn(*args, opts=opts, **kwargs)
 
-    return add_options(output_options)(collect)
+    decorated: Callable[..., Any] = add_options(output_options)(collect)
+    return decorated
 
 
 @dataclass(slots=True)

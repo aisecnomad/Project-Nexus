@@ -430,10 +430,10 @@ def _generic_text_value_sensitive(key: str, rest: str) -> bool:
 
 def credential_id(value: Any) -> str:
     """Stable opaque identity for raw credentials; never retain prefix/suffix."""
-    value = str(value)
-    if _FINGERPRINT.fullmatch(value):
-        return value
-    return "credential:sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+    text = str(value)
+    if _FINGERPRINT.fullmatch(text):
+        return text
+    return "credential:sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _redact_value(value: Any) -> Any:
@@ -550,7 +550,7 @@ def sanitize_text(text: str) -> str:
                 clean = assignments(bare, depth + 1) if depth < 8 else REDACTED
             else:
                 return m.group(0)
-            return m.group("key") + m.group("sep") + quote + clean + quote
+            return f"{m.group('key')}{m.group('sep')}{quote}{clean}{quote}"
 
         return _ASSIGNMENT.sub(assignment, value)
 

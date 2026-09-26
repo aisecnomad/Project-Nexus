@@ -174,7 +174,8 @@ class OciConnector(BaseConnector):
         import oci
 
         try:
-            return oci.util.to_dict(obj)
+            converted: dict[str, Any] = oci.util.to_dict(obj)
+            return converted
         except Exception:  # noqa: BLE001
             return dict(getattr(obj, "__dict__", {}) or {})
 

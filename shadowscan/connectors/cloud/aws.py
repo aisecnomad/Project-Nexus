@@ -214,7 +214,7 @@ class AwsConnector(BaseConnector):
         return self._session_().client(service, region_name=region, config=self._sdk_config())
 
     def _regions(self) -> list[str]:
-        if self.regions == "all" or self.regions == ["all"]:
+        if self.regions == ["all"]:
             ec2 = self._client("ec2", "us-east-1")
             return [r["RegionName"] for r in ec2.describe_regions(AllRegions=False)["Regions"]]
         return list(self.regions)

@@ -25,6 +25,7 @@ from requests import RequestException
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import string_list
 from shadowscan.connectors.common import apply_matches, blob_matches, finalize, name_matches
+from shadowscan.connectors.identity.common import access_token
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path
@@ -87,7 +88,7 @@ class PowerPlatformConnector(BaseConnector):
             f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token",
             data={"grant_type": "client_credentials", "client_id": self.client_id, "client_secret": self.client_secret, "scope": scope},
         )
-        tok = client.read_json_response(resp)["access_token"]
+        tok = access_token(client.read_json_response(resp), "lowcode.power-platform")
         self._tokens[scope] = tok
         return tok
 

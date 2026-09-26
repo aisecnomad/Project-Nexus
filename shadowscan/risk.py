@@ -130,7 +130,8 @@ def _count(value: object) -> int:
     if isinstance(value, bool):
         return 0
     try:
-        return int(value)  # type: ignore[call-overload]
+        number: int = int(value)  # type: ignore[call-overload]
+        return number
     except (TypeError, ValueError, OverflowError):
         return 0
 

@@ -17,7 +17,7 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -353,7 +353,7 @@ class IncrementalCache:
             return None
 
     @contextmanager
-    def _slot_lock(self, snapshot: Snapshot, *, exclusive: bool):
+    def _slot_lock(self, snapshot: Snapshot, *, exclusive: bool) -> Iterator[None]:
         """Use a stable per-slot inode; contention degrades to a full scan."""
         if fcntl is None or len(snapshot.slot) != 64 or any(c not in "0123456789abcdef" for c in snapshot.slot):
             raise ValueError("invalid or unsupported incremental lock")

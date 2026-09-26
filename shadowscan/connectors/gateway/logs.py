@@ -49,7 +49,7 @@ from shadowscan.connectors.base import (
 )
 from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.signatures.matcher import Match, MatchTimeoutError
+from shadowscan.signatures.matcher import Match, MatchTimeoutError, SignatureIndex
 from shadowscan.utils.redaction import REDACTED, credential_id, sanitize
 from shadowscan.utils.text import get_path, host_of, parse_timestamp, to_iso
 
@@ -881,7 +881,7 @@ PROVIDER_ALIASES = {
 }
 
 
-def _provider_signature(index: Any, name: str | None) -> str | None:
+def _provider_signature(index: SignatureIndex, name: str | None) -> str | None:
     if not name:
         return None
     key = str(name).strip().lower()
