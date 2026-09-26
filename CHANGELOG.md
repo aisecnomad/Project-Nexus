@@ -4,14 +4,17 @@
 
 ### Report output safety
 
-- A report path that already exists as a character device or named pipe, such
-  as `-o /dev/null` or a FIFO, is now written in place. Previously the report
-  writer renamed a private temporary file over it, which, when run as root,
-  replaced the system's `/dev/null` with a regular file. Sockets, directories,
-  block devices and other non-regular paths are refused. Regular files are
-  still replaced atomically with mode 0600, and symlinks are still refused.
-  This covers `--output` for scans, the canary runner and the acceptance
-  verifier, and the inventory stub and record-export manifest writers.
+- A report path that already exists as a character device, such as
+  `-o /dev/null`, is now written in place. Previously the report writer renamed
+  a private temporary file over it, which, when run as root, replaced the
+  system's `/dev/null` with a regular file. An existing named pipe is written
+  in place only when the current user owns it with mode 0600 and a reader
+  already has it open; otherwise the write fails at once instead of waiting.
+  Sockets, directories, block devices and other non-regular paths are refused.
+  Regular files are still replaced atomically with mode 0600, and symlinks are
+  still refused. This covers `--output` for scans, the canary runner and the
+  acceptance verifier, and the inventory stub and record-export manifest
+  writers.
 
 ### Scanner boundaries and acceptance consistency
 

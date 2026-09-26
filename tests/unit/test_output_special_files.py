@@ -15,6 +15,7 @@ import select
 import socket
 import stat
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -40,9 +41,18 @@ def _drain(fd: int) -> bytes:
     return b"".join(chunks)
 
 
+def _private_pipe(path: Path) -> Path:
+    os.mkfifo(path, 0o600)
+    os.chmod(path, 0o600)
+    return path
+
+
+def _fake_private_pipe_stat() -> os.stat_result:
+    return os.stat_result((stat.S_IFIFO | 0o600, 0, 0, 1, os.geteuid(), os.getegid(), 0, 0, 0, 0))
+
+
 def test_report_to_named_pipe_is_written_in_place(tmp_path):
-    pipe = tmp_path / "report.pipe"
-    os.mkfifo(pipe)
+    pipe = _private_pipe(tmp_path / "report.pipe")
     # A non-blocking reader lets the writer open the pipe, and lets a
     # regression that renames over the pipe fail instead of hanging.
     reader = os.open(pipe, os.O_RDONLY | os.O_NONBLOCK)
@@ -105,18 +115,89 @@ def test_in_place_write_rechecks_the_opened_file_type(tmp_path, monkeypatch):
     # path must not write it without the atomic private-mode replacement.
     target = tmp_path / "report"
     target.write_text("previous")
-    monkeypatch.setattr(output, "_existing_mode", lambda path: stat.S_IFIFO | 0o600)
+    monkeypatch.setattr(output, "_existing_stat", lambda path: _fake_private_pipe_stat())
     with pytest.raises(ValueError, match="changed type"):
         write_private_text(target, "report body")
     assert target.read_text() == "previous"
+
+
+def test_report_refuses_a_named_pipe_owned_by_another_user(tmp_path, monkeypatch):
+    # A pipe planted at the report path in a shared directory must not
+    # receive the report. Pretend to be another user rather than chown.
+    pipe = _private_pipe(tmp_path / "report.pipe")
+    reader = os.open(pipe, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        monkeypatch.setattr(output.os, "geteuid", lambda: os.stat(pipe).st_uid + 1)
+        with pytest.raises(ValueError, match="named pipe"):
+            write_private_text(pipe, "report body")
+        monkeypatch.undo()
+        assert _drain(reader) == b""
+    finally:
+        os.close(reader)
+    assert stat.S_ISFIFO(os.lstat(pipe).st_mode)
+    assert [entry.name for entry in tmp_path.iterdir()] == ["report.pipe"]
+
+
+def test_report_refuses_a_named_pipe_open_to_other_users(tmp_path):
+    pipe = tmp_path / "report.pipe"
+    os.mkfifo(pipe)
+    os.chmod(pipe, 0o644)
+    reader = os.open(pipe, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        with pytest.raises(ValueError, match="private mode"):
+            write_private_text(pipe, "report body")
+        assert _drain(reader) == b""
+    finally:
+        os.close(reader)
+    assert stat.S_ISFIFO(os.lstat(pipe).st_mode)
+
+
+def test_in_place_write_rechecks_the_opened_pipe_owner_and_mode(tmp_path, monkeypatch):
+    # The pipe passed the first check but is open to other users by the time
+    # it is opened; the descriptor check must refuse it before writing.
+    pipe = tmp_path / "report.pipe"
+    os.mkfifo(pipe)
+    os.chmod(pipe, 0o644)
+    reader = os.open(pipe, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        monkeypatch.setattr(output, "_existing_stat", lambda path: _fake_private_pipe_stat())
+        with pytest.raises(ValueError, match="private mode"):
+            write_private_text(pipe, "report body")
+        assert _drain(reader) == b""
+    finally:
+        os.close(reader)
+
+
+def test_report_to_named_pipe_without_reader_fails_instead_of_hanging(tmp_path):
+    pipe = _private_pipe(tmp_path / "report.pipe")
+    outcome: list[BaseException | None] = []
+
+    def attempt() -> None:
+        try:
+            write_private_text(pipe, "report body")
+            outcome.append(None)
+        except BaseException as exc:  # noqa: BLE001 - recorded for the assertion below
+            outcome.append(exc)
+
+    worker = threading.Thread(target=attempt, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+    if worker.is_alive():
+        # Release a blocked writer so the regression is reported, not hung.
+        release = os.open(pipe, os.O_RDONLY | os.O_NONBLOCK)
+        worker.join(timeout=5)
+        os.close(release)
+        pytest.fail("writing to a named pipe without a reader blocked")
+    assert len(outcome) == 1 and isinstance(outcome[0], OSError)
+    assert outcome[0].errno == errno.ENXIO
+    assert stat.S_ISFIFO(os.lstat(pipe).st_mode)
 
 
 def test_cli_report_to_named_pipe_keeps_the_pipe(tmp_path):
     source = tmp_path / "repo"
     source.mkdir()
     (source / "app.py").write_text("print('hello')\n")
-    pipe = tmp_path / "report.pipe"
-    os.mkfifo(pipe)
+    pipe = _private_pipe(tmp_path / "report.pipe")
     reader = os.open(pipe, os.O_RDONLY | os.O_NONBLOCK)
     try:
         result = CliRunner().invoke(main, ["code", str(source), "--format", "json", "-o", str(pipe)])

@@ -317,7 +317,7 @@ def run(config: dict[str, Any]) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
-    parser.add_argument("--output", type=Path, required=True, help="atomic private JSON report (parent must exist)")
+    parser.add_argument("--output", type=Path, required=True, help="private JSON report, replaced atomically with mode 0600 (parent must exist)")
     args = parser.parse_args(argv)
     try:
         config = load_config(args.config)

@@ -88,6 +88,9 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   Remote repository data cannot select an internal offline filesystem path.
   Keep Git patched and use disposable workers for untrusted inputs.
 * Reports and generated inventory stubs are written atomically with mode 0600.
+  An existing character device given as the output path (such as `/dev/null`)
+  is written in place, and an existing named pipe only when the current user
+  owns it with mode 0600; other non-regular paths are refused.
   Dump directories must be private (0700); record files use 0600 and unique
   per-instance filenames. An export manifest records provenance/completion without
   raw connector configuration. JWT records are never exported. No `--dump-raw`
