@@ -149,11 +149,11 @@ LOCK_FILES = {
     "bun.lock",
 }
 
-# A file over max_file_size that the scanner would read is an error: unread
-# content could hide agent configuration. Names matching these globs hold
-# generated, locked or binary content that never carries such evidence, so
-# skipping them is a warning and the scan stays complete. The connector's
-# `oversize_skip_globs` replaces the list; see docs/scanning.md.
+# A file over max_file_size that the scanner would read leaves coverage
+# incomplete: unread content could hide agent configuration. Names matching
+# these globs hold generated, locked or binary content that is explicitly
+# outside the scan scope, so skipping them is a warning and the scan stays
+# complete. The connector's `oversize_skip_globs` replaces the list.
 DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
     "package-lock.json",
     "yarn.lock",
@@ -201,6 +201,15 @@ SCAN_TIMEOUT_CAP_SECONDS = 10.0
 # discards a result that arrives after the deadline.
 DEADLINE_MARGIN_FRACTION = 0.05
 DEADLINE_MARGIN_MIN_SECONDS = 0.25
+
+# Generated or locked files the walker never reads at any size.
+_NEVER_READ_SUFFIXES = (".min.js", ".min.css", ".map", ".pyc", ".lock")
+
+
+def _never_read_by_name(name: str) -> bool:
+    """Whether the walker skips ``name`` silently because it never carries evidence."""
+    return name in LOCK_FILES or name.endswith(_NEVER_READ_SUFFIXES)
+
 
 PROJECT_ROOT_MARKERS = {
     "package.json",
@@ -357,13 +366,13 @@ def _is_test_path(rel: str) -> bool:
     return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
 
 
-def _link_target_inside(link: Path, resolved_root: Path) -> bool:
-    """True when a (never followed) link resolves inside the scan root."""
+def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
+    """Resolve only to classify a link; never open it through the link path."""
     try:
-        target = Path(os.path.realpath(link))
+        target = link.resolve(strict=True)
     except (OSError, ValueError, RuntimeError):
-        return False
-    return target == resolved_root or resolved_root in target.parents
+        return None
+    return target if target == resolved_root or resolved_root in target.parents else None
 MAX_ROOT_OWNERSHIP_STEPS = 20_000_000
 
 
@@ -447,13 +456,13 @@ class FilesystemConnector(BaseConnector):
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "extra directory names / glob patterns to skip",
-        "max_file_size": "bytes; a larger file is not analyzed: skipped with a warning, or an error under strict_coverage unless oversize_skip_globs matches it (default 1,000,000 bytes)",
+        "max_file_size": "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs matches it (default 1,000,000 bytes)",
         "oversize_skip_globs": "case-insensitive file name globs; a file over max_file_size matching one is skipped with a warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts)",
         "max_files": "stop after this many files (default 100000)",
         "scan_timeout": "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan_timeout when higher",
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
-        "strict_coverage": "treat oversize files and symbolic links leaving the scan root as incomplete coverage (default false: skipped with a warning)",
+        "strict_coverage": "report coverage gaps (unread analyzable oversize files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false)",
         "include_tests": "let test and fixture code establish agents at full weight (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
@@ -582,6 +591,53 @@ class FilesystemConnector(BaseConnector):
             incomplete=False,
         )
 
+    def _link_target_is_scanned(self, rel: str, target: Path, root: Path) -> bool:
+        """Whether skipping the (never followed) link at ``rel`` loses no coverage.
+
+        Coverage is kept when nothing would ever be read at the alias path, or
+        when the real target is walked and analyzed with the same semantics the
+        alias path would have had: same project, same test classification, same
+        source type and no file-name signal that only the alias name carries.
+        Directory links, links into excluded or unread content and config or
+        document aliases (whose parsing can depend on their path) are gaps.
+        """
+        relative = target.relative_to(root)
+        target_rel = relative.as_posix()
+        if target.is_dir():
+            # A directory alias changes every descendant's path. Even an
+            # included target cannot prove that path-based signals at the
+            # alias were assessed without walking the link (which we forbid).
+            return False
+        link_name = PurePosixPath(rel).name
+        link_ext = Path(link_name).suffix.lower()
+        alias_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(rel)}
+        link_read = bool(alias_signals) or (
+            link_ext in SOURCE_EXTENSIONS or link_ext in TEXT_CONFIG_EXTENSIONS
+            or link_name.lower().startswith(".env") or is_manifest_name(link_name) or "." not in link_name
+        )
+        if _never_read_by_name(link_name) or not link_read:
+            # The walker would skip this name silently even as a regular
+            # file, whatever it points at: the alias hides nothing.
+            return True
+        parts = relative.parts
+        for depth, name in enumerate(parts[:-1], start=1):
+            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
+                return False
+        if not target.is_file() or self._excluded_file(target_rel) or _never_read_by_name(target.name):
+            return False
+        # Only source aliases are equivalent without opening the link: config
+        # and document parsing can depend on the file name and directory.
+        if link_ext not in SOURCE_EXTENSIONS or Path(target.name).suffix.lower() != link_ext:
+            return False
+        # The real path must keep the alias's project ownership and evidence
+        # weight; another project or a test directory would change both.
+        if (_project_root(root, rel) != _project_root(root, target_rel)
+                or _is_test_path(rel) != _is_test_path(target_rel)):
+            return False
+        # File-name signatures can apply to the alias but not the real file.
+        target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
+        return alias_signals <= target_signals
+
     def _iter_files(self, root: Path) -> Iterator[tuple[str, Path, str]]:
         """Yield (relpath, path, project_root_rel) top-down with project root tracking."""
         for rel, path, proj, _ in self._iter_entries(root):
@@ -593,8 +649,8 @@ class FilesystemConnector(BaseConnector):
         A file over ``max_file_size`` whose name matches ``oversize_skip_globs``
         is reported as a warning and never yielded; the scan stays complete
         because such content is never analyzed. Every other oversize file is
-        yielded so the reader records the existing error, or skips it silently
-        when its type is never read.
+        yielded so the reader records incomplete coverage for analyzable files;
+        types that the scanner never reads are still ignored.
         """
         # os.walk visits descendants before siblings. Keep only active project
         # ancestors, so assigning a project is amortized constant time even in
@@ -606,18 +662,19 @@ class FilesystemConnector(BaseConnector):
 
         def skipped_link(rel: str, link: Path) -> None:
             # Links are never followed. A link that resolves inside the scan
-            # root loses no coverage: its target is scanned at its real path.
-            if _link_target_inside(link, resolved_root):
+            # root loses no coverage only if the target is scanned at its real path.
+            target = _resolved_link_target(link, resolved_root)
+            if target is not None and self._link_target_is_scanned(rel, target, resolved_root):
                 return
             # A single representative diagnostic per root keeps hostile trees
             # from filling the report with thousands of link names.
             if root not in self._symlink_warnings:
                 self._symlink_warnings.add(root)
-                message = f"code.filesystem: skipped symbolic link {rel} whose target is outside the scan root"
+                message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
                 if self.strict_coverage:
                     self.ctx.error(f"{message}; coverage incomplete")
                 else:
-                    self.ctx.warn(f"{message}; enable strict_coverage to treat this as incomplete", incomplete=False)
+                    self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
 
         if root.is_file():
             try:
@@ -675,7 +732,7 @@ class FilesystemConnector(BaseConnector):
                 if info.st_size > self.max_file_size and self._oversize_skippable(rel, fn):
                     self._skip_oversize(rel, info.st_size)
                     continue
-                if fn in LOCK_FILES or fn.endswith((".min.js", ".min.css", ".map", ".pyc", ".lock")):
+                if _never_read_by_name(fn):
                     continue
                 count += 1
                 if count > self.max_files:
@@ -795,7 +852,7 @@ class FilesystemConnector(BaseConnector):
                     text = read_text(path, self.max_file_size, read_errors)
                     for issue in read_errors:
                         if issue == "file exceeds max_file_size" and not self.strict_coverage:
-                            self.ctx.warn(f"code.filesystem: {rel}: skipped, {issue}; enable strict_coverage to treat this as incomplete", incomplete=False)
+                            self.ctx.warn(f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete", incomplete=True)
                         else:
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                     if text is None:
@@ -1789,6 +1846,25 @@ def _load_json_lenient(text: str) -> Any:
         return json.loads(text)
     except ValueError:
         return json.loads(_strip_json_comments(text))
+
+
+def _project_root(root: Path, rel: str) -> str:
+    """The project a file at ``rel`` belongs to, as ``_iter_entries`` assigns it.
+
+    That is the deepest ancestor directory below the scan root holding a
+    project marker, or ``"."``. Used for the rare symlink checks only.
+    """
+    for parent in PurePosixPath(rel).parents:
+        directory = parent.as_posix()
+        if directory == ".":
+            break
+        try:
+            names = os.listdir(root / directory)
+        except OSError:
+            continue
+        if PROJECT_ROOT_MARKERS.intersection(names):
+            return directory
+    return "."
 
 
 def _nearest_root(rel_dir: str, roots: list[str]) -> str:

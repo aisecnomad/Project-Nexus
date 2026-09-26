@@ -13,6 +13,10 @@ on:
         description: Successful push CI run ID for that exact main commit
         required: true
         type: string
+      codeql_run_id:
+        description: Successful push CodeQL run ID for that exact main commit
+        required: true
+        type: string
 
 permissions: {}
 concurrency:
@@ -36,11 +40,12 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - name: Verify exact commit and successful main CI
+      - name: Verify exact commit and successful main CI and CodeQL
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_COMMIT: ${{ inputs.expected_commit }}
           CI_RUN_ID: ${{ inputs.ci_run_id }}
+          CODEQL_RUN_ID: ${{ inputs.codeql_run_id }}
         run: |
           python - <<'PY'
           import os
@@ -49,8 +54,9 @@ jobs:
               raise SystemExit('expected_commit must be a full lowercase SHA')
           if os.environ['EXPECTED_COMMIT'] != os.environ['GITHUB_SHA']:
               raise SystemExit('main moved; select and review the current main commit')
-          if not re.fullmatch(r'[1-9][0-9]*', os.environ['CI_RUN_ID']):
-              raise SystemExit('ci_run_id must be a positive integer')
+          for name in ('CI_RUN_ID', 'CODEQL_RUN_ID'):
+              if not re.fullmatch(r'[1-9][0-9]*', os.environ[name]):
+                  raise SystemExit(f'{name.lower()} must be a positive integer')
           PY
           mkdir candidate
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" > "$RUNNER_TEMP/ci-run.json"
@@ -58,6 +64,11 @@ jobs:
             --input "$RUNNER_TEMP/ci-run.json" --output candidate/ci-verification.json \
             --repository "$GITHUB_REPOSITORY" --expected-sha "$EXPECTED_COMMIT" \
             --current-sha "$GITHUB_SHA" --run-id "$CI_RUN_ID"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CODEQL_RUN_ID" > "$RUNNER_TEMP/codeql-run.json"
+          python -m tools.release.evidence verify-codeql \
+            --input "$RUNNER_TEMP/codeql-run.json" --output candidate/codeql-verification.json \
+            --repository "$GITHUB_REPOSITORY" --expected-sha "$EXPECTED_COMMIT" \
+            --current-sha "$GITHUB_SHA" --run-id "$CODEQL_RUN_ID"
       - name: Install pinned build tools and locked runtime
         run: |
           python -m pip install --upgrade --only-binary=:all: pip==26.2.1
