@@ -140,15 +140,19 @@ Redaction
 - Well-known credential names (`JWT_SECRET`, `SESSION_SECRET`, `VAULT_TOKEN`,
   `NPM_TOKEN`, `CI_JOB_TOKEN`, `SECRET_KEY_BASE`, `X-Amz-Security-Token`,
   `passphrase`) are always redacted. Generic names (`*_SECRET`, `*_TOKEN`,
-  `*_PASS`, `*_PWD`, `auth`) are redacted when the value looks like a
-  credential, so `auth: none`, `eos_token: "</s>"`, OCI's `auth: config`,
-  `pwd = os.getcwd()` and integer counts stay readable and cannot erase a
-  file's evidence context. `max_tokens`, `token_count` and similar
-  descriptive names are unaffected.
+  `*_PASS`, `*_PWD`, `auth`) fail closed: their values are redacted unless
+  they are a known mode (`none`, `config`, `instance_principal`, `bearer`...),
+  a special token (`</s>`), an argument-less call (`os.getcwd()`), a boolean or
+  empty, so these cannot erase a file's evidence context while short passwords,
+  lower-case passphrases, numbers and multi-line values are withheld.
+  `max_tokens`, `token_count` and similar descriptive names are unaffected, and
+  a short value under a generic option name keeps the collection scope
+  non-comparable rather than entering its public fingerprint.
 - Command-line flags quoted in evidence text (`mysql --password ...`,
-  `--mysql-pwd '...'`, `--db-pass ...`, `--api-key ...`) have their values
-  redacted under the same rules as assignments; `--auth none`,
-  `--password-stdin` and `--max-tokens 4096` stay readable.
+  `--password=...`, `--mysql-pwd '...'`, JSON-escaped `--password \"...\"`,
+  `--api-key ...`) have their values redacted under the same rules as
+  assignments, however long the value; `--auth none`, `--password-stdin` and
+  `--max-tokens 4096` stay readable.
 
 Operations
 

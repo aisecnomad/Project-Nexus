@@ -205,8 +205,10 @@ head -c 48 /dev/urandom | base64 > ~/.config/shadowscan/pseudonym.key
 chmod 600 ~/.config/shadowscan/pseudonym.key
 ```
 
-The file must be a regular file (not a symlink), readable only by its owner,
-and hold 32 to 4,096 bytes of secret material. With it, caller and scope
+The file must be a regular file (not a symlink), owned by the user running the
+scan and accessible only by that user, and hold 32 to 4,096 bytes of secret
+material. The checks apply to the opened file, but only its final path component
+is refused as a symlink, so keep it in a directory only its owner can modify. With it, caller and scope
 pseudonyms, gateway source IDs and therefore gateway finding IDs are the same
 in every scan that uses the same key, and offline gateway exports attest a
 comparable `collection_scope`. The key never appears in configuration dumps or

@@ -93,8 +93,9 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   per-instance filenames. An export manifest records provenance/completion without
   raw connector configuration. JWT records are never exported. No `--dump-raw`
   option exists. Redaction handles recognized secrets, credential field names,
-  generic names (`*_SECRET`, `*_TOKEN`, `*_PASS`, `*_PWD`, `auth`) whose values
-  look like credentials, and sensitive Python assignments, including annotated
+  generic names (`*_SECRET`, `*_TOKEN`, `*_PASS`, `*_PWD`, `auth`) unless the
+  value is a known mode or marker, command-line flag values, and sensitive
+  Python assignments, including annotated
   and multiline expressions, but arbitrary
   credentials and sensitive business data may remain.
 * Generated inventory resource bindings escape literal glob characters. Manual

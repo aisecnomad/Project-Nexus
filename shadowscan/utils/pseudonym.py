@@ -41,26 +41,37 @@ def configured_key_file(configured: str | None) -> str | None:
 
 
 def load_pseudonymization_key(path: str | os.PathLike[str]) -> PseudonymKey:
-    """Read a private key file: a regular file, not a symlink, owner-only on POSIX."""
+    """Read a private key file: a regular, non-symlink file the scanning user owns.
+
+    The checks apply to the opened descriptor, so replacing the path between the
+    check and the read cannot substitute another file. Only the final path
+    component is refused as a symlink; keep the key in a directory only its
+    owner can modify.
+    """
     p = Path(path)
     try:
-        info = os.lstat(p)
+        if stat.S_ISLNK(os.lstat(p).st_mode):
+            raise PseudonymKeyError("pseudonymization key file must not be a symbolic link")
+        fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except PseudonymKeyError:
+        raise
     except OSError as exc:
         raise PseudonymKeyError(f"pseudonymization key file is unreadable ({type(exc).__name__})") from None
-    if stat.S_ISLNK(info.st_mode):
-        raise PseudonymKeyError("pseudonymization key file must not be a symbolic link")
-    if not stat.S_ISREG(info.st_mode):
-        raise PseudonymKeyError("pseudonymization key file must be a regular file")
-    if os.name == "posix" and info.st_mode & 0o077:
-        raise PseudonymKeyError("pseudonymization key file must be accessible only by its owner (chmod 600)")
-    if info.st_size > MAX_KEY_FILE_BYTES:
-        raise PseudonymKeyError(f"pseudonymization key file exceeds {MAX_KEY_FILE_BYTES} bytes")
-    try:
-        fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        with os.fdopen(fd, "rb") as stream:
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise PseudonymKeyError("pseudonymization key file must be a regular file")
+        if os.name == "posix":
+            if info.st_mode & 0o077:
+                raise PseudonymKeyError("pseudonymization key file must be accessible only by its owner (chmod 600)")
+            if info.st_uid != os.geteuid():
+                raise PseudonymKeyError("pseudonymization key file must be owned by the user running the scan")
+        if info.st_size > MAX_KEY_FILE_BYTES:
+            raise PseudonymKeyError(f"pseudonymization key file exceeds {MAX_KEY_FILE_BYTES} bytes")
+        try:
             raw = stream.read(MAX_KEY_FILE_BYTES + 1)
-    except OSError as exc:
-        raise PseudonymKeyError(f"pseudonymization key file is unreadable ({type(exc).__name__})") from None
+        except OSError as exc:
+            raise PseudonymKeyError(f"pseudonymization key file is unreadable ({type(exc).__name__})") from None
     secret = raw.strip()
     if len(raw) > MAX_KEY_FILE_BYTES or len(secret) < MIN_SECRET_BYTES:
         raise PseudonymKeyError(f"pseudonymization key file must hold {MIN_SECRET_BYTES} to {MAX_KEY_FILE_BYTES} bytes of secret material")

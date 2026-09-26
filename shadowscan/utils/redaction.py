@@ -35,19 +35,29 @@ _SENSITIVE_SUFFIXES = (
 _SENSITIVE_NAMES = {"token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie"}
 # Generic names hold credentials (DB_PASS, MYSQL_PWD, CUSTOM_TOKEN, APP_SECRET)
 # as often as modes and markers (auth: none, eos_token: "</s>", OCI auth:
-# config). Their values are withheld only when they look like credentials, so
-# an enum or special token never becomes a "known secret" that erases context.
+# config). Their values are withheld unless they are one of these known
+# non-secret forms, so a mode or special token never becomes a "known secret"
+# that erases context. A short or lower-case value is not safe by itself: a
+# password or a diceware passphrase looks exactly like a mode.
 _GENERIC_SUFFIXES = ("secret", "token")
 _GENERIC_WORD = re.compile(r"(?:^|[_.\-])(?:auth|pass|pwd)$", re.IGNORECASE)
 _GENERIC_CAMEL = re.compile(r"[a-z0-9](?:Auth|Pass|Pwd)$")
-_ENUM_LIKE = re.compile(r"[a-z]+(?:[_.\-][a-z]+)*")
-_CALL_EXPRESSION = re.compile(r"[A-Za-z_][\w.]*\s*\(")
-# A command-line flag and its space-separated value in free text, such as a
-# shell line quoted as evidence: `mysql --password opaque` or `--db-pass "x"`.
-# Values starting with "-" are the next flag, not a value.
+_NONSECRET_GENERIC_VALUES = frozenset({
+    "", "none", "null", "nil", "true", "false", "yes", "no", "on", "off", "enabled", "disabled", "required",
+    "optional", "default", "auto", "manual", "config", "instance_principal", "resource_principal",
+    "workload_identity", "managed_identity", "service_principal", "api_key", "apikey", "basic", "bearer",
+    "digest", "oauth", "oauth2", "oidc", "jwt", "iam", "sigv4", "anonymous",
+})
+# A complete call without arguments (pwd = os.getcwd(), auth = get_auth()).
+_CALL_EXPRESSION = re.compile(r"[A-Za-z_][\w.]*\s*\(\s*\)")
+# A command-line flag and its value in free text, such as a shell line quoted
+# as evidence: `mysql --password opaque`, `--db-pass "x y"`, `--api-key=opaque`
+# or a JSON-escaped `--password \\"x y\\"`. Values starting with "-" are the
+# next flag, not a value. Possessive quantifiers keep matching linear, and a
+# value is replaced whole however long it is.
 _FLAG_VALUE = re.compile(
-    r"""(?<![\w-])(?P<flag>--?[A-Za-z][\w-]{0,63})(?P<sep>[ \t]{1,8})"""
-    r"""(?P<value>"[^"\n]{1,1024}"|'[^'\n]{1,1024}'|[^\s"'\-][^\s]{0,1023})"""
+    r"""(?<![\w-])(?P<flag>--?[A-Za-z][\w-]{0,63})(?P<sep>[ \t]{1,8}|=)"""
+    r"""(?P<value>\\"(?:[^"\\\n]|\\(?!"))*+\\"|"[^"\n]*+"|'[^'\n]*+'|[^\s"'\\\-][^\s"'\\]*+)"""
 )
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
@@ -385,7 +395,9 @@ def _sensitive_key(key: str) -> bool:
 
 
 def _generic_key(key: str) -> bool:
-    """A name that holds a credential only when its value looks like one."""
+    """A name that holds a credential unless its value is a known non-secret form."""
+    if "|" in key:
+        return False  # composite report keys such as "provider.openai|secret" name no variable
     normalized = _KEY_NORMALISE.sub("", key.lower())
     return (
         normalized.endswith(_GENERIC_SUFFIXES)
@@ -395,21 +407,22 @@ def _generic_key(key: str) -> bool:
 
 
 def _credential_like(value: Any) -> bool:
-    """Whether a value under a generic name could be a credential.
+    """Whether a value under a generic name must be withheld (fail closed).
 
-    Short values, lower-case identifiers (``instance_principal``) and special
-    tokens (``</s>``) are modes or markers; anything else is withheld.
+    Only known modes (``none``, ``config``, ``instance_principal``), special
+    tokens (``</s>``), argument-less calls, booleans and empty values are kept.
+    Numbers, containers and every other string are treated as credentials.
     """
+    if value is None or isinstance(value, bool):
+        return False
     if not isinstance(value, str):
+        return True
+    text = value.strip().strip("\"'`")
+    if text == REDACTED or _FINGERPRINT.fullmatch(text) or text.lower() in _NONSECRET_GENERIC_VALUES:
         return False
-    text = value.strip().strip("\"'")
-    if len(text) < 8 or text == REDACTED or _FINGERPRINT.fullmatch(text):
+    if text.startswith("<") and text.endswith(">") and len(text) <= 64:
         return False
-    if text.startswith("<") and text.endswith(">"):
-        return False
-    if _CALL_EXPRESSION.match(text):
-        return False  # pwd = os.getcwd(), auth = get_auth()
-    return not _ENUM_LIKE.fullmatch(text)
+    return not _CALL_EXPRESSION.fullmatch(text)
 
 
 def sensitive_field(key: str, value: Any) -> bool:
@@ -423,7 +436,7 @@ def _generic_text_value_sensitive(key: str, rest: str) -> bool:
         return False
     literals = re.findall(r'"([^"\\\n]*)"|\'([^\'\\\n]*)\'', rest[:2048])
     if literals:
-        return _credential_like("".join(a or b for a, b in literals))
+        return any(_credential_like(a or b) for a, b in literals)
     token = re.match(r"\s*([^\s;#,]+)", rest[:2048])  # an unquoted .env-style value
     return token is not None and _credential_like(token.group(1))
 
@@ -512,8 +525,8 @@ def _sanitize_url(match: re.Match[str]) -> str:
 
 def _redact_flag_value(m: re.Match[str]) -> str:
     raw = m.group("value")
-    quote = raw[0] if raw[0] in "\"'" else ""
-    bare = raw[1:-1] if quote else raw
+    quote = '\\"' if raw.startswith('\\"') else raw[0] if raw[0] in "\"'" else ""
+    bare = raw[len(quote):len(raw) - len(quote)] if quote else raw
     if _FINGERPRINT.fullmatch(bare) or not sensitive_field(m.group("flag").lstrip("-"), bare):
         return m.group(0)
     return m.group("flag") + m.group("sep") + quote + REDACTED + quote
@@ -542,7 +555,9 @@ def sanitize_text(text: str) -> str:
             raw = m.group("value")
             quote = raw[0] if raw.startswith(('"', "'")) else ""
             bare = raw[1:-1] if quote else raw
-            if sensitive_field(m.group("key"), bare):
+            # The unquoted value stops before ")"; judge `os.getcwd()` whole.
+            judged = bare + ")" if not quote and bare.endswith("(") and m.string.startswith(")", m.end()) else bare
+            if sensitive_field(m.group("key"), judged):
                 clean = _redact_value(bare)
             elif "=" in bare or ":" in bare:
                 # Do not let an ordinary assignment swallow a nested credential,

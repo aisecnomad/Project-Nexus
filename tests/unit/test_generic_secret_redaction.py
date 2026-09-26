@@ -117,3 +117,44 @@ def test_oci_auth_mode_stays_comparable_and_readable_in_diagnostics(index):
     ctx.stats = ScanStats(connector="cloud.oci", started_at="now")
     ctx.warn("cloud.oci: could not find config file at ~/.oci/config")
     assert "[REDACTED]" not in ctx.stats.warnings[0]
+
+
+@pytest.mark.parametrize(("line", "secret"), [
+    ('BOTPRESS_TOKEN = "letmeinbotpress"', "letmeinbotpress"),
+    ("APIFY_TOKEN: supersecretapifytoken", "supersecretapifytoken"),
+    ("pwd=hunter2", "hunter2"),
+    ("APP_SECRET=correct-horse-battery-staple", "correct-horse-battery-staple"),
+    ('APP_SECRET = (\n    "Zx81kLmNop12AbCd"\n)', "Zx81kLmNop12AbCd"),
+    ('SLACK_BOT_TOKEN = os.environ.get(\n    "SLACK_BOT_TOKEN", "Zx81kLmNop12AbCd")', "Zx81kLmNop12AbCd"),
+])
+def test_generic_names_fail_closed_for_short_lowercase_and_multiline_values(line, secret):
+    assert secret not in sanitize_text(line)
+
+
+def test_generic_names_withhold_numbers_and_containers_but_keep_report_counts():
+    clean = sanitize({"app_secret": ["Zx81kLmNop12"], "x_secret": 123456789012345, "feature_token": True,
+                      "evidence_counts": {"provider.openai|secret": 2}})
+    assert clean == {"app_secret": REDACTED, "x_secret": REDACTED, "feature_token": True,
+                     "evidence_counts": {"provider.openai|secret": 2}}
+    assert sanitize(["--app-secret", "correct-horse-battery-staple"]) == ["--app-secret", REDACTED]
+
+
+@pytest.mark.parametrize(("line", "secret"), [
+    ("mysql --password=Sup3rS3cretValue9", "Sup3rS3cretValue9"),
+    (r'"cmd": "mysql --password \"Sup3r S3cret Value\" -h db"', "S3cret Value"),
+    ("--api-key " + "A" * 1030 + "TAILSECRETxyz123", "TAILSECRETxyz123"),
+])
+def test_flag_values_with_equals_escaped_quotes_or_long_values_are_withheld(line, secret):
+    cleaned = sanitize_text(line)
+    assert secret not in cleaned and REDACTED in cleaned
+    assert sanitize(["--api-key=Zx81kLmNop12AbCd"]) == ["--api-key=" + REDACTED]
+
+
+def test_short_generic_option_values_never_reach_the_public_scope_fingerprint(index):
+    from shadowscan.comparison import build_collection_scope
+    from shadowscan.config import ConnectorSpec, ScanConfig
+
+    config = ScanConfig(connectors=[ConnectorSpec(name="identity.okta", config={"input": "/tmp/x.json", "app_secret": "hunter2"})])
+    assert build_collection_scope(config, index, config.connectors)["comparable"] is False
+    config = ScanConfig(connectors=[ConnectorSpec(name="cloud.oci", config={"input": "/tmp/x.jsonl", "auth": "config"})])
+    assert build_collection_scope(config, index, config.connectors)["comparable"] is True

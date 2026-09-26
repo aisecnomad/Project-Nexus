@@ -97,3 +97,26 @@ def test_cli_reports_an_unusable_key_file_clearly(tmp_path):
                                 env={ENV_VAR: str(bad)})
     assert result.exit_code == 1
     assert "pseudonymization key file must hold" in result.output
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permissions")
+def test_checks_apply_to_the_file_actually_read(tmp_path, monkeypatch):
+    good = key_file(tmp_path, "good.key")
+    evil = key_file(tmp_path, "evil.key", b"attacker-chosen-" + b"z" * 40, mode=0o644)
+    real_open = os.open
+
+    def swapping_open(path, *args, **kwargs):
+        os.replace(evil, good)  # replace the checked path just before it is opened
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("shadowscan.utils.pseudonym.os.open", swapping_open)
+    with pytest.raises(PseudonymKeyError, match="only by its owner"):
+        load_pseudonymization_key(good)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX ownership")
+def test_a_key_file_owned_by_another_user_is_refused(tmp_path, monkeypatch):
+    path = key_file(tmp_path)
+    monkeypatch.setattr("shadowscan.utils.pseudonym.os.geteuid", lambda: os.stat(path).st_uid + 1)
+    with pytest.raises(PseudonymKeyError, match="owned by the user running the scan"):
+        load_pseudonymization_key(path)
