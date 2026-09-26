@@ -186,6 +186,41 @@ TEXT_CONFIG_EXTENSIONS = {
     ".csv",
 }
 
+# Capabilities an MCP server's own name or arguments reveal. Words match whole
+# ("exec" is not "executor", "aws" is not "laws"). The launcher that starts a
+# server (npx, uvx, docker run...) says nothing about what the server can do,
+# and path arguments (allowed directories, database files) are data.
+_MCP_CODE_EXEC_WORDS = ("shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh")
+_MCP_ACTION_WORDS = (
+    "filesystem", "sqlite", "postgres", "mysql", "mongodb", "github", "gitlab", "slack", "gmail", "google-drive",
+    "aws", "gcloud", "azure", "puppeteer", "playwright", "browser",
+)
+_MCP_CODE_EXEC_RX = re.compile(r"(?<![a-z0-9])(?:" + "|".join(_MCP_CODE_EXEC_WORDS) + r")(?![a-z0-9])")
+_MCP_ACTION_RX = re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(w) for w in _MCP_ACTION_WORDS) + r")(?![a-z0-9])")
+_MCP_LAUNCHERS = frozenset({
+    "npx", "uvx", "uv", "bunx", "bun", "pnpx", "pnpm", "npm", "yarn", "node", "deno", "python", "python3", "pipx",
+    "java", "cmd", "docker", "podman",
+})
+
+
+def _mcp_capability_text(command: Any, args: Any) -> str:
+    """The words of an MCP launch line that name the server, lower-cased."""
+    words = []
+    launcher = PurePosixPath(str(command or "").replace("\\", "/")).name.lower()
+    if launcher.endswith(".exe"):
+        launcher = launcher[:-4]
+    if launcher and launcher not in _MCP_LAUNCHERS:
+        words.append(str(command).lower())
+    for arg in args if isinstance(args, list) else []:
+        text = str(arg).lower()
+        if text.startswith(("/", "./", "../", "~", "$home", "%")) or re.match(r"[a-z]:[\\/]", text):
+            continue
+        if launcher in {"docker", "podman"} and text in {"run", "exec", "start"} and not words:
+            continue  # the container subcommand, not the server
+        words.append(text)
+    return " ".join(words)
+
+
 # File names dedicated to MCP client configuration. A bare top-level
 # "servers" mapping (VS Code, Visual Studio) is accepted only in these.
 _EXPLICIT_MCP_CONFIG_NAMES = {
@@ -1117,9 +1152,11 @@ class FilesystemConnector(BaseConnector):
             if s.get("secrets_inline"):
                 f.add_tag("inline-secrets")
                 f.add_evidence(Evidence(signal="secret:inline", description=f"MCP server '{s['name']}' has credential-looking values in its env block", location=rel, weight=0.3))
-            cmd = " ".join([str(s.get("command") or "")] + [str(a) for a in s.get("args", [])]).lower()
-            if any(k in cmd for k in ("filesystem", "shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh", "sqlite", "postgres", "mysql", "mongodb", "github", "gitlab", "slack", "gmail", "google-drive", "aws", "gcloud", "azure", "puppeteer", "playwright", "browser")):
-                f.add_capability("code-exec" if any(k in cmd for k in ("shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh")) else "saas-actions")
+            cmd = _mcp_capability_text(s.get("command"), s.get("args", []))
+            if _MCP_CODE_EXEC_RX.search(cmd):
+                f.add_capability("code-exec")
+            elif _MCP_ACTION_RX.search(cmd):
+                f.add_capability("saas-actions")
         f.metadata["servers"] = enabled
         f.metadata["server_count"] = len(enabled)
         f.metadata["disabled_server_count"] = len(servers) - len(enabled)

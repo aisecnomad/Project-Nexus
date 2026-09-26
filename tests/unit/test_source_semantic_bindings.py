@@ -41,7 +41,11 @@ def test_repeated_worker_idioms_cannot_become_confirmed_agents(tmp_path, run_con
 
 def test_supporting_heuristics_require_ai_evidence_and_repetition_is_grouped(tmp_path, run_connector):
     (tmp_path / "requirements.txt").write_text("langchain\n")
-    source = "while True:\n    item = queue.get()\n    print(item)\n"
+    # A bare worker loop is ordinary code: with AI evidence it adds weak
+    # context but claims no autonomy. An agent-specific idiom does.
+    loop_only = _scan(tmp_path, run_connector, "while True:\n    item = queue.get()\n    print(item)\n")
+    assert "autonomous" not in next(f for f in loop_only if f.resource_type == "project").capabilities
+    source = "max_turns = 10\nwhile True:\n    item = queue.get()\n    print(item)\n"
     baseline = _scan(tmp_path, run_connector, source)
     project = next(f for f in baseline if f.resource_type == "project")
     assert project.kind == Kind.FRAMEWORK_USAGE

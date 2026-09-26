@@ -52,6 +52,11 @@ Detection
   "tool_use"`) still do.
 - A GitHub App with pull-request write access is write access, not code
   execution; `contents` or `workflows` write still is.
+- MCP server capabilities come from the server's own name and arguments,
+  matched as whole words: the launcher (`docker run`, `npx`, `uvx`) and path
+  arguments no longer count, so a Postgres server started with Docker is
+  database access rather than code execution, and `executor` or `laws` in a
+  package name no longer reads as `exec` or `aws`.
 - Risk: capability and provider weights are capped, and findings that only
   establish framework or SDK use stay below the critical band reserved for
   agents and credentials. Every adjustment, including the 0-100 bound, is a
