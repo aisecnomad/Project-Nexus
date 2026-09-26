@@ -21,6 +21,10 @@ def matched(index, text: str) -> set[str]:
     ("Clay", SALES), ("Olivia by Paradox", SALES), ("Qualified Piper", SALES), ("Outreach Kaia", SALES),
     ("Codex", "coding-agent.openai-codex"), ("OpenAI Codex connector", "coding-agent.openai-codex"),
     ("Sweep AI", "coding-agent.pr-review-bots"), ("Cursor", "coding-agent.cursor"),
+    # GitHub App slugs, usernames and resource names use hyphens.
+    ("lovable-dev", CODING), ("warp-dev", CODING), ("zed-industries", CODING), ("cognition-ai", CODING),
+    ("augment-code", CODING), ("otter-ai", MEETINGS), ("fathom-video", MEETINGS), ("gong-io", MEETINGS),
+    ("jamie-ai", MEETINGS), ("apollo-io", SALES), ("cursor-agent", "coding-agent.cursor"),
 ])
 def test_product_names_still_match(index, text, signature):
     assert signature in matched(index, text)

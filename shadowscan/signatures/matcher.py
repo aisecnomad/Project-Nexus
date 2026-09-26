@@ -130,6 +130,7 @@ def _search(rx: Any, text: str, context: str) -> Any:
 # no inline flags, named or numbered back-references, or other (?...) syntax
 # except non-capturing groups.
 _UNGATEABLE = re.compile(r"\(\?(?!:)|\\[1-9gk]")
+_GREEDY_ANY_PREFIX = re.compile(r"\.\*(?![?+*{])")
 
 
 def _domain_regex_gate(entries: list[tuple[Any, Signature, Signal]]) -> tuple[Any | None, list[tuple[Any, Signature, Signal]]]:
@@ -146,10 +147,14 @@ def _domain_regex_gate(entries: list[tuple[Any, Signature, Signal]]) -> tuple[An
     flags = {rx.flags for rx in gated}
     if len(flags) != 1:
         return None, list(entries)
-    # A leading unanchored ".*" cannot change whether a search finds a match,
-    # and dropping it keeps the gate linear on long tokens.
-    alternatives = [rx.pattern[2:] if rx.pattern.startswith(".*") else rx.pattern for rx in gated]
-    return regex.compile("|".join(f"(?:{pattern})" for pattern in alternatives), flags.pop()), ungated
+    # A leading greedy ".*" cannot change whether a search finds a match, and
+    # dropping it keeps the gate linear on long tokens. Lazy or possessive
+    # forms (".*?", ".*+") are left intact.
+    alternatives = [rx.pattern[2:] if _GREEDY_ANY_PREFIX.match(rx.pattern) else rx.pattern for rx in gated]
+    try:
+        return regex.compile("|".join(f"(?:{pattern})" for pattern in alternatives), flags.pop()), ungated
+    except regex.error:
+        return None, list(entries)  # match each expression individually, as without the gate
 
 _LANG_ALIASES = {
     "py": "python",

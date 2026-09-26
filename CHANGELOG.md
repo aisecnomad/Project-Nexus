@@ -17,9 +17,10 @@ Detection
   Code settings, TOML `[mcp.servers.*]`) or a dedicated MCP file name. OpenAPI,
   Docker and proxy documents with a `servers` member are not tool servers.
 - Emit coding-agent configuration findings only from configuration files,
-  dependencies, imports, workflow actions, source code, editor or agent
-  settings directories (`.vscode/`, `.cursor/`, `.github/` and similar) or
-  variables declared in a Dockerfile, compose, workflow or `.env` file; vendor
+  dependencies, imports, workflow actions, code signals, editor or agent
+  settings directories (`.vscode/`, `.cursor/`, `.github/` and similar),
+  variables read by source code or declared in a Dockerfile, compose, workflow
+  or `.env` file; a hostname in source code (a comment link, a blocklist) or
   hostnames and variable names quoted inside data files (an egress allowlist, a vendor inventory, the
   scanner's own signature packs) no longer configure Cursor, Windsurf, Goose,
   Copilot, Claude Code or Cody.
@@ -44,7 +45,9 @@ Detection
   Gong, Clay, Apollo, Fathom, Codex, Sweep and similar words match an app
   named exactly that or a qualified form (`cursor.com`, `Fathom AI`). A person
   named Devin, a cursor-pagination Lambda, `Apollo GraphQL`, "qualified leads"
-  or an "All Hands meeting" no longer names an AI product.
+  or an "All Hands meeting" no longer names an AI product. Qualifiers accept
+  hyphenated slugs (`lovable-dev`, `otter-ai`, `gong-io`) as GitHub App and
+  resource names use them.
 - Generic loop words (`while True:`, `for step in range(`, `scratchpad`,
   `supervisor`, `handoff`, `max_steps=`) add weak context only; they no
   longer mark a finding `autonomous` or count as agent indicators.
@@ -54,9 +57,12 @@ Detection
   execution; `contents` or `workflows` write still is.
 - MCP server capabilities come from the server's own name and arguments,
   matched as whole words: the launcher (`docker run`, `npx`, `uvx`) and path
-  arguments no longer count, so a Postgres server started with Docker is
-  database access rather than code execution, and `executor` or `laws` in a
-  package name no longer reads as `exec` or `aws`.
+  arguments after the server no longer count, so a Postgres server started
+  with Docker is database access rather than code execution and `laws` no
+  longer reads as `aws`. An interpreter's script path (`node
+  /opt/shell-server/index.js`, `uv --directory /srv/ssh-mcp run`) names the
+  server, and vendor compounds (`awslabs.*`, `@browsermcp/*`, `browserbase`,
+  `code-executor`) keep their capability.
 - Risk: capability and provider weights are capped, and findings that only
   establish framework or SDK use stay below the critical band reserved for
   agents and credentials. Every adjustment, including the 0-100 bound, is a

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from shadowscan.connectors.code.filesystem import FilesystemConnector, _parse_mcp_servers
 from shadowscan.models import Kind
 
@@ -106,10 +108,28 @@ def test_crlf_nested_mcp_yaml_is_recognized(tmp_path, run_connector):
     assert len(mcp) == 1 and [s["name"] for s in mcp[0].metadata["servers"]] == ["fetch"]
 
 
-def test_editor_settings_and_source_code_domains_still_configure_coding_agents(tmp_path, run_connector):
+def test_editor_settings_domains_still_configure_coding_agents(tmp_path, run_connector):
     (tmp_path / ".vscode").mkdir()
     (tmp_path / ".vscode" / "settings.json").write_text(
         '{"editor.formatOnSave": true, "amp.url": "https://ampcode.com/", "cody.serverEndpoint": "https://acme.sourcegraphcloud.com"}'
     )
     findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert any(f.kind == Kind.AGENT_CONFIG and "Sourcegraph" in f.title for f in findings)
+
+
+@pytest.mark.parametrize(("path", "text"), [
+    ("util/parse.py", "# Adapted from https://sourcegraph.com/github.com/golang/go/-/blob/src/strconv/atoi.go\n"),
+    ("src/help.js", 'const SEARCH_URL = "https://sourcegraph.com/search?q=";\n'),
+    ("egress/rules.py", 'BLOCKED = ["cursor.com", "windsurf.com"]\n'),
+])
+def test_hostnames_in_source_code_do_not_configure_coding_agents(tmp_path, run_connector, path, text):
+    (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / path).write_text(text)
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert [f.title for f in findings if f.kind == Kind.AGENT_CONFIG] == []
+
+
+def test_source_code_reading_a_coding_agent_variable_still_configures_it(tmp_path, run_connector):
+    (tmp_path / "ci.py").write_text('import os\nbedrock = os.environ["CLAUDE_CODE_USE_BEDROCK"]\n')
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert any(f.kind == Kind.AGENT_CONFIG and "Claude Code" in f.title for f in findings)

@@ -190,10 +190,12 @@ TEXT_CONFIG_EXTENSIONS = {
 # ("exec" is not "executor", "aws" is not "laws"). The launcher that starts a
 # server (npx, uvx, docker run...) says nothing about what the server can do,
 # and path arguments (allowed directories, database files) are data.
-_MCP_CODE_EXEC_WORDS = ("shell", "bash", "terminal", "exec", "docker", "kubectl", "ssh")
+# Vendor compounds that name the same capability count as the word itself.
+_MCP_CODE_EXEC_WORDS = ("shell", "bash", "terminal", "exec", "executor", "docker", "kubectl", "ssh")
 _MCP_ACTION_WORDS = (
     "filesystem", "sqlite", "postgres", "mysql", "mongodb", "github", "gitlab", "slack", "gmail", "google-drive",
-    "aws", "gcloud", "azure", "puppeteer", "playwright", "browser",
+    "aws", "awslabs", "gcloud", "azure", "puppeteer", "playwright", "browser", "browsermcp", "browserbase",
+    "browserbasehq", "hyperbrowser",
 )
 _MCP_CODE_EXEC_RX = re.compile(r"(?<![a-z0-9])(?:" + "|".join(_MCP_CODE_EXEC_WORDS) + r")(?![a-z0-9])")
 _MCP_ACTION_RX = re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(w) for w in _MCP_ACTION_WORDS) + r")(?![a-z0-9])")
@@ -201,6 +203,9 @@ _MCP_LAUNCHERS = frozenset({
     "npx", "uvx", "uv", "bunx", "bun", "pnpx", "pnpm", "npm", "yarn", "node", "deno", "python", "python3", "pipx",
     "java", "cmd", "docker", "podman",
 })
+# Interpreters whose first path argument is the server itself (a locally built
+# `node /opt/shell-server/dist/index.js` or `uv --directory /srv/ssh-mcp run`).
+_MCP_INTERPRETERS = frozenset({"node", "deno", "bun", "python", "python3", "java", "uv"})
 
 
 def _mcp_capability_text(command: Any, args: Any) -> str:
@@ -211,10 +216,14 @@ def _mcp_capability_text(command: Any, args: Any) -> str:
         launcher = launcher[:-4]
     if launcher and launcher not in _MCP_LAUNCHERS:
         words.append(str(command).lower())
+    entry_seen = launcher not in _MCP_INTERPRETERS
     for arg in args if isinstance(args, list) else []:
         text = str(arg).lower()
         if text.startswith(("/", "./", "../", "~", "$home", "%")) or re.match(r"[a-z]:[\\/]", text):
-            continue
+            if not entry_seen:
+                words.append(text)  # the server's own script or directory
+                entry_seen = True
+            continue  # later paths are data: allowed directories, database files
         if launcher in {"docker", "podman"} and text in {"run", "exec", "start"} and not words:
             continue  # the container subcommand, not the server
         words.append(text)
@@ -1089,9 +1098,10 @@ class FilesystemConnector(BaseConnector):
             # A hostname or variable name quoted inside a data file (an egress
             # allowlist, a vendor inventory, this scanner's own signatures)
             # does not configure a coding agent. Require a configuration file,
-            # dependency, import, workflow action, code signal or an environment
-            # variable declared in a Dockerfile, compose, workflow or .env file.
-            if not any(m.signal.type not in {"domain", "env"} or m.extra.get("declared") or _configuration_provenance(rel)
+            # dependency, import, workflow action, code signal, an environment
+            # variable declared in a Dockerfile, compose, workflow or .env file,
+            # or configuration provenance for that kind of mention.
+            if not any(m.signal.type not in {"domain", "env"} or m.extra.get("declared") or _configuration_provenance(rel, m.signal.type)
                        for m, rel, _ in coding_matches):
                 continue
             sig = self.index.get(sig_id)
@@ -1406,14 +1416,18 @@ _CONFIG_DIRS = frozenset({
 })
 
 
-def _configuration_provenance(rel: str) -> bool:
-    """Whether a domain or variable mention comes from code or tool configuration.
+def _configuration_provenance(rel: str, signal_type: str) -> bool:
+    """Whether a domain or variable mention configures a product.
 
-    Executable source and editor/agent settings configure a product; the same
-    host in an allowlist, a vendor inventory or a signature pack does not.
+    Editor and agent settings configure a product through a host or a
+    variable. Source code configures it by reading its variable; a hostname in
+    source is as often a comment link, a blocklist or help text. The same host
+    in an allowlist, a vendor inventory or a signature pack configures nothing.
     """
     path = PurePosixPath(rel)
-    return path.suffix.lower() in SOURCE_EXTENSIONS or any(part in _CONFIG_DIRS for part in path.parts[:-1])
+    if any(part in _CONFIG_DIRS for part in path.parts[:-1]):
+        return True
+    return signal_type == "env" and path.suffix.lower() in SOURCE_EXTENSIONS
 
 
 def _has_nested_mcp_servers(rel: str, text: str, head: str) -> bool:

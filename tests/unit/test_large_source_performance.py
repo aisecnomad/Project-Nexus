@@ -88,3 +88,16 @@ def test_browsing_cooccurrence_is_linear_on_minified_lines_and_still_matches_cod
     code = f"const browser = await playwright.chromium.launch(); const {keyword} = 1;\n"
     assert any(m.signature_id == "heuristic.browsing" for m in index.match_code(code, "javascript"))
     assert re.search(r"\bplaywright\b[^\n]{0,500}\b(?:agent|llm|tool)\b", line)
+
+
+@pytest.mark.parametrize("pattern", [r".*?\.llm\.corp\.example$", r".*+\.llm\.corp\.example$"])
+def test_lazy_or_possessive_domain_prefixes_are_kept_in_the_gate(pattern):
+    from shadowscan.signatures.loader import signature_from_dict
+    from shadowscan.signatures.matcher import SignatureIndex
+
+    index = SignatureIndex([signature_from_dict({
+        "id": "custom.internal-llm", "name": "Internal LLM gateway", "category": "provider",
+        "signals": [{"type": "domain", "values": [f"re:{pattern}"], "weight": 0.9}],
+    })])
+    assert [m.signature_id for m in index.match_domain("gw.llm.corp.example")] == (
+        [] if pattern.startswith(".*+") else ["custom.internal-llm"])
