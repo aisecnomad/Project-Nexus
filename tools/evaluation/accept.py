@@ -115,7 +115,7 @@ def _annotation_method(annotations: Path) -> str:
 def _exclude_bundled_sources(cases: list[Case], digest: str) -> None:
     """Reject repeated holdout samples and reuse of bundled development sources.
 
-    Prior-evaluation exclusion covers the five bundled corpora. Undisclosed
+    Prior-evaluation exclusion covers the six bundled corpora. Undisclosed
     private evaluations and near duplicates still require external review.
     """
     messages = {

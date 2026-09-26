@@ -12,6 +12,7 @@ Offline export: installations JSON (``installations`` array or list).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
@@ -26,6 +27,7 @@ from shadowscan.utils.http import HttpClient, HttpError
 # An installation reported only because it can write (include_unrecognized_apps)
 # is a candidate for review, never a confirmed or likely AI agent.
 UNRECOGNISED_APP_MAX_CONFIDENCE = 0.3
+_SLUG_SEPARATORS = re.compile(r"[-_]+")
 
 
 class GitHubAppsConnector(BaseConnector):
@@ -156,7 +158,10 @@ class GitHubAppsConnector(BaseConnector):
             first_seen=inst.get("created_at"),
             last_seen=inst.get("updated_at"),
         )
-        assess_app(self.index, f, name=slug, description=str(inst.get("target_type")), urls=[inst.get("html_url")], scopes=scopes, client_id=str(inst.get("client_id") or ""))
+        # Slugs join words with hyphens ("amazon-q-developer"); name signatures
+        # are written for display names, so the words are matched as well.
+        assess_app(self.index, f, name=slug, aliases=[_SLUG_SEPARATORS.sub(" ", slug)], description=str(inst.get("target_type")),
+                   urls=[inst.get("html_url")], scopes=scopes, client_id=str(inst.get("client_id") or ""))
         write_perms = [k for k, v in perms.items() if v in {"write", "admin"}]
         # Permissions describe what an app may do, not whether it is an AI
         # agent. Dependency, deploy and CI bots hold the same scopes, so an

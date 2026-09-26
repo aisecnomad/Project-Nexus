@@ -222,7 +222,7 @@ signatures:
         patterns: ['(?i)AmazonQ-For-CLI', '(?i)\bkiro\b', '(?i)aws-toolkit']
         weight: 0.8
       - type: name
-        patterns: ['(?i)amazon q\b', '(?i)\bkiro\b', '(?i)q developer']
+        patterns: ['(?i)amazon[- ]q\b', '(?i)\bkiro\b', '(?i)\bq[- ]developer']
         weight: 0.7
 
   - id: coding-agent.goose
@@ -339,7 +339,7 @@ signatures:
         # bare word only counts as the whole display name (the GitHub App name)
         # or with review-bot context on the same line. Devin is owned by
         # identity-app.coding-assistants-saas.
-        patterns: ['(?i)\bcoderabbit(?:ai)?\b', '(?i)\bsweepai\b', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|stack(?:ed|s)?|app)\b).*\bsweep\b|^[^\S\r\n]*sweep[^\S\r\n]*$', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|app)\b).*\bellipsis\b|^[^\S\r\n]*ellipsis[^\S\r\n]*$', '(?i)\bgreptile\b', '(?i)\bsourcery(?:-ai)?\b', '(?i)\bpr-agent\b', '(?i)\bqodo\b', '(?i)\bkorbit\b', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|app)\b).*\bbito\b|^[^\S\r\n]*bito[^\S\r\n]*$', '(?i)\bcodium(?:ai)?\b', '(?i)\bcursor bugbot\b', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|stack(?:ed|s)?|app)\b).*\bgraphite\b|^[^\S\r\n]*graphite[^\S\r\n]*$', '(?i)\bmentat\b', '(?i)\bcopilot-pull-request-reviewer\b']
+        patterns: ['(?i)\bcoderabbit(?:ai)?\b', '(?i)\bsweepai\b', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|stack(?:ed|s)?|app)\b).*\bsweep\b|^[^\S\r\n]*sweep[^\S\r\n]*$', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|app)\b).*\bellipsis\b|^[^\S\r\n]*ellipsis[^\S\r\n]*$', '(?i)\bgreptile\b', '(?i)\bsourcery(?:-ai)?\b', '(?i)\bpr-agent\b', '(?i)\bqodo\b', '(?i)\bkorbit\b', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|app)\b).*\bbito\b|^[^\S\r\n]*bito[^\S\r\n]*$', '(?i)\bcodium(?:ai)?\b', '(?i)\bcursor bugbot\b', '(?i)^(?=.*\b(?:review|prs?|pull requests?|code|bot|ai|github|merge|stack(?:ed|s)?|app)\b).*\bgraphite\b|^[^\S\r\n]*graphite[^\S\r\n]*$', '(?i)\bmentat(?:bot)?\b', '(?i)\bellipsis-dev\b', '(?i)\bcopilot-pull-request-reviewer\b']
         weight: 0.8
       - type: user_agent
         patterns: ['(?i)coderabbit', '(?i)\bsweep\b', '(?i)greptile']

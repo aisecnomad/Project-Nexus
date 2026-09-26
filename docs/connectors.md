@@ -95,8 +95,14 @@ reviewed local metadata. The metadata command must support `--no-lazy-fetch`;
 unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 
+A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
+into that project's finding (`metadata.manifests`). MCP server capabilities come
+from the tool names the server registers outside tests (`metadata.mcp_tools`);
+a server without recognised tools keeps the capabilities its code implies.
+
 Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
-`scan_timeout`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
+`max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
+`strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
 supply unique `root_ids` aligned with those paths for IDs that survive moving
 checkouts. `account`, `owner` and `provider` set the corresponding finding
 fields. A configured `owner` is recorded on every finding and takes precedence
@@ -313,7 +319,9 @@ not a fallback catalog app ID. Valid neighboring records remain available.
 ### `saas.github-apps`
 Org installations with permissions and repository selection (AI reviewers,
 coding agents), Copilot billing/seat settings, fine-grained PATs approved for
-the org.
+the org. An installation is reported when its slug or its words match an AI
+signature or an AI-like name; `include_unrecognized_apps: true` also reports
+other write-capable apps, tagged `unrecognized-app` at possible confidence.
 
 ### `saas.atlassian` · `saas.notion` · `saas.zoom`
 UPM user-installed apps (Jira/Confluence) and Notion bot users. Zoom's

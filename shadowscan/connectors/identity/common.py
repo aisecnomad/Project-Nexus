@@ -23,9 +23,14 @@ def assess_app(
     client_id: str | None = None,
     grant_types: Iterable[str] = (),
     auth_method: str | None = None,
+    aliases: Iterable[str] = (),
 ) -> None:
-    """Apply name / domain / scope / client-id signatures to an OAuth app finding."""
-    apply_matches(finding, name_matches(index, name, publisher, description))
+    """Apply name / domain / scope / client-id signatures to an OAuth app finding.
+
+    ``aliases`` are other spellings of the name, such as an app slug with its
+    hyphens read as spaces; each signature still counts once.
+    """
+    apply_matches(finding, name_matches(index, name, *aliases, publisher, description))
     apply_matches(finding, domain_matches(index, *urls), weight_scale=0.8)
     if client_id:
         apply_matches(finding, index.match_client_id(client_id))

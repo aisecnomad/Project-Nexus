@@ -738,6 +738,8 @@ class SignatureIndex:
         # ("from django.db import models"); their matches are a pure function
         # of the statement, so they are computed once per index.
         self._statement_imports: dict[tuple[str, str | None], tuple[Match, ...]] = {}
+        self._statement_chars = 0
+        self._statement_lock = threading.Lock()
         self._regex_plans: dict[tuple[str, str | None], _RegexPlan] = {}
         for sig in signatures:
             for s in sig.signals:
@@ -943,11 +945,20 @@ class SignatureIndex:
         """
         key = (statement, language)
         cached = self._statement_imports.get(key)
-        if cached is None:
-            cached = tuple(self.match_imports(statement, language))
-            if len(self._statement_imports) >= _STATEMENT_CACHE_LIMIT:
-                self._statement_imports.clear()
-            self._statement_imports[key] = cached
+        if cached is not None:
+            return cached
+        cached = tuple(self.match_imports(statement, language))
+        # Module names come from scanned code and the index lives for the
+        # process: keep only short statements, within a total text budget.
+        if len(statement) <= _STATEMENT_CACHE_MAX_LENGTH:
+            with self._statement_lock:
+                if (len(self._statement_imports) >= _STATEMENT_CACHE_LIMIT
+                        or self._statement_chars + len(statement) > _STATEMENT_CACHE_MAX_CHARS):
+                    self._statement_imports.clear()
+                    self._statement_chars = 0
+                if key not in self._statement_imports:
+                    self._statement_imports[key] = cached
+                    self._statement_chars += len(statement)
         return cached
 
     def match_imports(
@@ -1148,6 +1159,8 @@ class SignatureIndex:
 
 _HOST_TOKEN_RX = re.compile(r"[a-z0-9.-]+", re.IGNORECASE)
 _STATEMENT_CACHE_LIMIT = 65_536
+_STATEMENT_CACHE_MAX_LENGTH = 256
+_STATEMENT_CACHE_MAX_CHARS = 4 * 1024 * 1024
 # MCP endpoints on a shared API host are path-scoped: GitHub serves its remote
 # MCP server at api.githubcopilot.com/mcp/ beside the Copilot API itself.
 _MCP_PATH_RX = re.compile(r"(?::\d{1,5})?/(?:mcp|sse)(?=[/?#\"'\s)\]]|$)", re.IGNORECASE)

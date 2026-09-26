@@ -40,7 +40,7 @@ signatures:
         patterns: ['^[^\S\r\n]*(?:from|import)\s+bedrock_agentcore\b']
         weight: 0.95
       - type: code
-        patterns: ['\.client\(\s*["'']bedrock-agent(?:-runtime)?["'']', '\.client\(\s*["'']bedrock-agentcore(?:-control)?["'']', '\bInvokeAgentCommand\b', '\bInvokeAgentRuntimeCommand\b', '\binvoke_agent_runtime\s*\(', '\binvoke_inline_agent\s*\(', '\bBedrockAgentCoreApp\s*\(', '\bcreate_agent\s*\(\s*agentName\s*=', '\bcreate_agent_runtime\s*\(', '\bcreate_agent_action_group\s*\(', '\bBedrockAgentRuntimeClient\s*\(', '\bAgentCoreMemory', '\bagentcore\s+(?:configure|launch|deploy)\b']
+        patterns: ['\.client\(\s*(?:[^()]*?\bservice_name\s*=\s*)?["'']bedrock-agent(?:-runtime)?["'']', '\.client\(\s*(?:[^()]*?\bservice_name\s*=\s*)?["'']bedrock-agentcore(?:-control)?["'']', '\bInvokeAgentCommand\b', '\bInvokeAgentRuntimeCommand\b', '\binvoke_agent_runtime\s*\(', '\binvoke_inline_agent\s*\(', '\bBedrockAgentCoreApp\s*\(', '\bcreate_agent\s*\(\s*agentName\s*=', '\bcreate_agent_runtime\s*\(', '\bcreate_agent_action_group\s*\(', '\bBedrockAgentRuntimeClient\s*\(', '\bAgentCoreMemory', '\bagentcore\s+(?:configure|launch|deploy)\b']
         weight: 0.9
       - type: code
         # invoke_agent / invoke_flow are generic function names outside boto3.
