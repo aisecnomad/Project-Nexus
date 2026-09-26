@@ -42,16 +42,75 @@ def prepare_private_directory(path: str | Path) -> Path:
     return target
 
 
+def _existing_stat(target: Path) -> os.stat_result | None:
+    """Return ``lstat`` for an existing output path, or None if it is absent."""
+    try:
+        return os.lstat(target)
+    except FileNotFoundError:
+        return None
+
+
+def _require_private_pipe(info: os.stat_result) -> None:
+    # Another local user can plant a pipe at a report path in a shared
+    # directory such as /tmp; writing into it would hand them the report.
+    if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
+        raise ValueError("refusing a named pipe not owned by the current user with private mode 0600")
+
+
+def _write_in_place(target: Path, data: bytes) -> None:
+    """Write into an existing character device or named pipe without replacing it.
+
+    ``O_NOFOLLOW`` refuses a symlink swapped in after the type check, and the
+    descriptor's own type, owner and mode are checked again, so a regular file
+    or foreign pipe swapped in is never written. Nothing is truncated. The open
+    is non-blocking, so a named pipe without a reader fails at once (ENXIO)
+    instead of hanging; the descriptor is made blocking again for the write.
+    """
+    flags = (
+        os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOCTTY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    )
+    fd = os.open(target, flags)
+    try:
+        info = os.fstat(fd)
+        if stat.S_ISFIFO(info.st_mode):
+            _require_private_pipe(info)
+        elif not stat.S_ISCHR(info.st_mode):
+            raise ValueError("output file changed type before writing")
+        os.set_blocking(fd, True)
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view):]
+    finally:
+        os.close(fd)
+
+
 def write_private_text(path: str | Path, text: str) -> None:
     """Replace an output atomically without following an existing file symlink.
 
     The parent directory is chosen by the trusted operator. A temporary file in
     that directory is created with mode 0600, including when replacing a more
     permissive report. Failed writes leave the previous report intact.
+
+    An existing character device (``-o /dev/null``) is written in place:
+    renaming a temporary file over it would replace the device node itself,
+    which succeeds when running as root. An existing named pipe is written in
+    place only when the current user owns it with private mode 0600 and a
+    reader already has it open. Any other existing path that is not a regular
+    file (a socket, directory or block device) is refused.
     """
     target = Path(path)
-    if target.is_symlink():
-        raise ValueError("refusing a symlink output file")
+    info = _existing_stat(target)
+    if info is not None:
+        mode = info.st_mode
+        if stat.S_ISLNK(mode):
+            raise ValueError("refusing a symlink output file")
+        if stat.S_ISFIFO(mode):
+            _require_private_pipe(info)
+        if stat.S_ISFIFO(mode) or stat.S_ISCHR(mode):
+            _write_in_place(target, text.encode("utf-8"))
+            return
+        if not stat.S_ISREG(mode):
+            raise ValueError("refusing a non-regular output file")
     fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:

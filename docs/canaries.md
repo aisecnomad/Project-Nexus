@@ -130,7 +130,8 @@ Reports include scanner version, git revision/dirty status when safely available
 a hash of the actual Python source, the signature fingerprint, approved scope,
 observed scope identifiers, start/end timestamps, labeling provenance and
 expected/observed control outcomes. They exclude credentials and raw provider
-errors. Files are atomically replaced with mode `0600`; intermediate sanitized
+errors. Files are atomically replaced with mode `0600` (an existing character
+device, or a named pipe you own with mode `0600`, is written in place); intermediate sanitized
 record dumps use a private temporary directory and are deleted after the run.
 A hard connector deadline records failed acceptance; the standalone CLI terminates
 rather than waiting indefinitely for a stuck SDK worker.

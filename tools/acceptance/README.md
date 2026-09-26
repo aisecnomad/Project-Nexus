@@ -185,6 +185,7 @@ keys, NaN/infinity, symlinks and unknown manifest fields are rejected. At most 3
 intended scopes are accepted. The decision contains aggregate counts, metrics,
 source fingerprints and limitations, without raw evidence, account/workspace IDs,
 reviewer names, principal references or source text. Decisions use atomic private
-`0600` output. Keep the manifest, evidence, policy, actual process logs and decision
+`0600` output (an existing character device, or a named pipe you own with mode
+`0600`, is written in place). Keep the manifest, evidence, policy, actual process logs and decision
 in your existing controlled audit store; none is cryptographically authenticated
 by this tool.
