@@ -206,3 +206,39 @@ def test_benchmark_rejects_unbounded_work():
         benchmark(files=10_001)
     with pytest.raises(ValueError, match="runs"):
         benchmark(runs=11)
+
+
+def test_breakdowns_score_each_language_and_target_signature():
+    from tools.evaluation.evaluate import breakdowns
+
+    rows = [
+        {"family": "agent", "present": True, "predicted": True, "files": ["agent.py"], "target": {"signature": "framework.crewai"}},
+        {"family": "agent", "present": False, "predicted": True, "files": ["a.ts", "notes.md"], "target": {"signature": "framework.crewai"}},
+        {"family": "mcp-server", "present": True, "predicted": False, "files": [".mcp.json"], "target": {"signature": None}},
+    ]
+    result = breakdowns(rows)
+    assert result["language"]["python"]["tp"] == 1
+    assert result["language"]["typescript"]["fp"] == 1 and result["language"]["docs"]["fp"] == 1
+    assert result["language"]["config"]["fn"] == 1
+    assert result["signature"]["framework.crewai"]["precision"] == 0.5
+    assert result["signature"]["any"]["recall"] == 0.0
+
+
+def test_coverage_gate_includes_nested_connector_packages(tmp_path, monkeypatch, capsys):
+    import sys as _sys
+
+    from tools import coverage_gate
+
+    def entry(percent):
+        return {"summary": {"num_statements": 10, "percent_statements_covered": percent}}
+
+    report = {"files": {
+        "shadowscan/connectors/code/filesystem.py": entry(90.0),
+        "shadowscan/connectors/cloud/aws/bedrock.py": entry(40.0),
+        "shadowscan/connectors/cloud/__init__.py": entry(0.0),
+    }}
+    path = tmp_path / "coverage.json"
+    path.write_text(json.dumps(report))
+    monkeypatch.setattr(_sys, "argv", ["coverage_gate", str(path)])
+    assert coverage_gate.main() == 1
+    assert "cloud/aws/bedrock.py" in capsys.readouterr().err

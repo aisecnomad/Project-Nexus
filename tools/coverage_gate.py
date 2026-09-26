@@ -20,12 +20,14 @@ def main() -> int:
     examined = 0
     for path, details in sorted(files.items()):
         parts = Path(path).parts
+        # Include modules in any subpackage of a connector family, so a new
+        # nested package cannot silently escape the floor.
         if (
-            len(parts) != 4
+            len(parts) < 4
             or parts[:2] != ("shadowscan", "connectors")
             or parts[2] not in CONNECTOR_FAMILIES
-            or not parts[3].endswith(".py")
-            or parts[3] == "__init__.py"
+            or not parts[-1].endswith(".py")
+            or parts[-1] == "__init__.py"
         ):
             continue
         summary = details["summary"]

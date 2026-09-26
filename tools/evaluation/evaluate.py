@@ -261,6 +261,39 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     groups: dict[str, list[dict[str, Any]]] = {"all": rows}
     for row in rows:
         groups.setdefault(row["family"], []).append(row)
+    return _scores(groups)
+
+
+_EXTENSION_LANGUAGES = {
+    ".py": "python", ".ipynb": "python", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    ".jsx": "javascript", ".ts": "typescript", ".tsx": "typescript", ".go": "go", ".rs": "rust",
+    ".java": "java", ".kt": "java", ".cs": "dotnet", ".rb": "ruby", ".php": "php",
+    ".json": "config", ".jsonc": "config", ".yaml": "config", ".yml": "config", ".toml": "config",
+    ".md": "docs", ".mdc": "docs", ".txt": "docs",
+}
+
+
+def _languages(row: dict[str, Any]) -> list[str]:
+    found = {_EXTENSION_LANGUAGES.get(Path(name).suffix.lower(), "other") for name in row.get("files", [])}
+    return sorted(found) or ["other"]
+
+
+def breakdowns(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Scores per source language and per target signature.
+
+    A case counts once in every language it contains. Small groups say little;
+    report sample sizes with any rate taken from here.
+    """
+    by_language: dict[str, list[dict[str, Any]]] = {}
+    by_signature: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        for language in _languages(row):
+            by_language.setdefault(language, []).append(row)
+        by_signature.setdefault(row["target"].get("signature") or "any", []).append(row)
+    return {"language": _scores(by_language), "signature": _scores(by_signature)}
+
+
+def _scores(groups: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     summary: dict[str, Any] = {}
     for family, group in sorted(groups.items()):
         tp = sum(row["present"] and row["predicted"] for row in group)
@@ -314,9 +347,9 @@ def calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _source_fingerprint() -> str:
+def _source_fingerprint(root: Path | None = None) -> str:
     """Identify the actual scanner sources, including an uncommitted candidate."""
-    root = Path(__file__).resolve().parents[2] / "shadowscan"
+    root = root or Path(__file__).resolve().parents[2] / "shadowscan"
     digest = hashlib.sha256()
     for path in sorted(root.rglob("*.py")):
         name = path.relative_to(root).as_posix().encode()
@@ -371,6 +404,7 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
                     "description": case.description,
                     "source": case.source,
                     "target": {"kind": case.kind.value, "signature": case.signature},
+                    "files": sorted(case.files),
                     "present": case.present,
                     "predicted": bool(matching),
                     "score": score,
@@ -387,12 +421,15 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
         "implementation": {
             "scanner_version": __version__,
             "scanner_source_sha256": _source_fingerprint(),
+            # The metric computation is part of what a report asserts.
+            "evaluator_source_sha256": _source_fingerprint(Path(__file__).resolve().parent),
             "signature_sha256": index.fingerprint(),
             "python": platform.python_version(),
             "platform": platform.platform(),
         },
         "cases": rows,
         "metrics": summarize(rows),
+        "breakdowns": breakdowns(rows),
         "calibration": calibration(rows),
         "performance": {
             "repeats": repeats,

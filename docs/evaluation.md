@@ -93,7 +93,11 @@ alongside them. [Assurance results](assurance-results.md) preserve the first
 observations and subsequent regression results.
 
 Metrics use **one binary target per case**, selected by finding kind and optional
-signature ID. `TP` means the target is present in the case and detected; `FP`
+signature ID. Reports also carry `breakdowns` by source language (a case counts once
+in each language it contains; `config` and `docs` group structured and prose
+files) and by target signature, and `implementation.evaluator_source_sha256`
+identifies the metric code itself. Small groups carry little information:
+quote their sample sizes with any rate. `TP` means the target is present in the case and detected; `FP`
 means absent but detected; `FN` means present and missed; `TN` means absent and
 not detected. Precision is `TP/(TP+FP)`, recall is `TP/(TP+FN)`, specificity
 is `TN/(TN+FP)`. Undefined denominators are JSON `null`. Additional assertions
