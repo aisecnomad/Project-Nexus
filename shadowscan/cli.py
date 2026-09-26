@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
 import os
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass, fields
 from typing import Any, NoReturn
 
 import click
@@ -22,6 +25,7 @@ from shadowscan.comparison import MAX_REPORT_BYTES, compare_reports, load_report
 from shadowscan.config import (
     ConfigValidationError,
     ConnectorSpec,
+    MinConfidenceError,
     ScanConfig,
     parse_set_options,
     validate_connector_timeout,
@@ -144,22 +148,8 @@ def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, m
 def _min_confidence_option(ctx: click.Context, param: click.Parameter, value: float) -> float:
     try:
         return validate_min_confidence(value)
-    except ValueError as exc:
+    except MinConfidenceError as exc:
         raise click.BadParameter(str(exc)) from exc
-
-
-def _apply_security_options(cfg: ScanConfig, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
-    cfg.plugins = list(dict.fromkeys([*cfg.plugins, *allow_plugin]))
-    if allow_signature_override is not None:
-        cfg.allow_signature_override = allow_signature_override
-    if allow_private_origin is not None:
-        cfg.allow_private_origin = allow_private_origin
-    if allow_instance_credentials is not None:
-        cfg.allow_instance_credentials = allow_instance_credentials
-    if allow_credential_mixing is not None:
-        cfg.allow_credential_mixing = allow_credential_mixing
-    if connector_timeout_seconds is not None:
-        cfg.connector_timeout_seconds = connector_timeout_seconds
 
 
 def _connector_timeout_option(ctx: click.Context, param: click.Parameter, value: float | None) -> float | None:
@@ -200,44 +190,114 @@ def add_options(options):
     return _wrap
 
 
+@dataclass(frozen=True, slots=True)
+class SharedOptions:
+    """Values of ``output_options``, which every scanning command accepts."""
+
+    fmt: str
+    output: str | None
+    inventory: tuple[str, ...]
+    signature_dirs: tuple[str, ...]
+    min_confidence: float
+    fail_on: str | None
+    max_rows: int | None
+    dump_records: str | None
+    incremental: bool | None
+    state_dir: str | None
+    allow_plugin: tuple[str, ...]
+    allow_signature_override: bool | None
+    allow_private_origin: bool | None
+    allow_instance_credentials: bool | None
+    allow_credential_mixing: bool | None
+    connector_timeout_seconds: float | None
+
+    def scan_config(self, connectors: list[ConnectorSpec]) -> ScanConfig:
+        """Configure a scan of connectors given on the command line."""
+        cfg = ScanConfig(connectors=connectors, inventory=list(self.inventory), signature_dirs=list(self.signature_dirs), min_confidence=self.min_confidence, fail_on=self.fail_on, dump_records=self.dump_records, incremental=bool(self.incremental), state_dir=self.state_dir)
+        self.apply_security(cfg)
+        return cfg
+
+    def merge_into(self, cfg: ScanConfig) -> None:
+        """Layer the command line over the settings of a config file."""
+        cfg.inventory.extend(self.inventory)
+        cfg.signature_dirs.extend(self.signature_dirs)
+        cfg.min_confidence = max(cfg.min_confidence, self.min_confidence)
+        cfg.fail_on = self.fail_on or cfg.fail_on
+        cfg.dump_records = self.dump_records or cfg.dump_records
+        if self.incremental is not None:
+            cfg.incremental = self.incremental
+        if self.state_dir is not None:
+            cfg.state_dir = self.state_dir
+        self.apply_security(cfg)
+
+    def apply_security(self, cfg: ScanConfig) -> None:
+        """Explicit allow/deny flags override the config; unset flags keep it."""
+        cfg.plugins = list(dict.fromkeys([*cfg.plugins, *self.allow_plugin]))
+        if self.allow_signature_override is not None:
+            cfg.allow_signature_override = self.allow_signature_override
+        if self.allow_private_origin is not None:
+            cfg.allow_private_origin = self.allow_private_origin
+        if self.allow_instance_credentials is not None:
+            cfg.allow_instance_credentials = self.allow_instance_credentials
+        if self.allow_credential_mixing is not None:
+            cfg.allow_credential_mixing = self.allow_credential_mixing
+        if self.connector_timeout_seconds is not None:
+            cfg.connector_timeout_seconds = self.connector_timeout_seconds
+
+
+_SHARED_OPTION_NAMES = tuple(f.name for f in fields(SharedOptions))
+
+
+def shared_options(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Add ``output_options`` to a command and pass their values to it as ``opts``."""
+
+    @functools.wraps(fn)
+    def collect(*args: Any, **kwargs: Any) -> Any:
+        opts = SharedOptions(**{name: kwargs.pop(name) for name in _SHARED_OPTION_NAMES})
+        return fn(*args, opts=opts, **kwargs)
+
+    return add_options(output_options)(collect)
+
+
+@dataclass(slots=True)
+class CliState:
+    """Group settings the subcommands read from ``ctx.obj``."""
+
+    verbose: int = 0
+
+
+pass_state = click.make_pass_decorator(CliState, ensure=True)
+
+
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(__version__, prog_name="shadowscan")
 @click.option("-v", "--verbose", count=True, help="-v info, -vv debug")
 @click.option("-q", "--quiet", is_flag=True, help="errors only")
-def main(verbose: int, quiet: bool) -> None:
+@click.pass_context
+def main(ctx: click.Context, verbose: int, quiet: bool) -> None:
     """ShadowScan — discover shadow AI agents across code, identity, gateways, low-code, SaaS and cloud."""
     _setup_logging(verbose, quiet)
-    main.verbose = verbose  # type: ignore[attr-defined]
+    ctx.ensure_object(CliState).verbose = verbose
 
 
 # ---------------------------------------------------------------------- scan
 @main.command()
 @click.option("--config", "-c", "config_path", type=click.Path(exists=True, dir_okay=False), required=True, help="shadowscan.yaml")
 @click.option("--only", multiple=True, help="run only these connector names / labels (repeatable)")
-@add_options(output_options)
-def scan(config_path: str, only: tuple[str, ...], fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
+@shared_options
+@pass_state
+def scan(state: CliState, config_path: str, only: tuple[str, ...], opts: SharedOptions) -> None:
     """Run every connector defined in a config file."""
     try:
         cfg = ScanConfig.from_yaml(config_path)
     except ConfigValidationError as exc:
         raise click.ClickException(f"invalid scan configuration: {exc}") from None
-    except ValueError as exc:
-        if str(exc) == "min_confidence must be a finite number between 0 and 1":
-            raise click.BadParameter(str(exc), param_hint="--config") from None
+    except MinConfidenceError as exc:
+        raise click.BadParameter(str(exc), param_hint="--config") from None
+    except (ValueError, TypeError, AttributeError, OSError, yaml.YAMLError):
         raise click.ClickException("invalid scan configuration; check YAML structure and option types") from None
-    except (TypeError, AttributeError, OSError, yaml.YAMLError):
-        raise click.ClickException("invalid scan configuration; check YAML structure and option types") from None
-    cfg.inventory.extend(inventory)
-    cfg.signature_dirs.extend(signature_dirs)
-    cfg.min_confidence = max(cfg.min_confidence, min_confidence)
-    cfg.fail_on = fail_on or cfg.fail_on
-    cfg.dump_records = dump_records or cfg.dump_records
-    if incremental is not None:
-        cfg.incremental = incremental
-    if state_dir is not None:
-        cfg.state_dir = state_dir
-    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin, allow_instance_credentials, allow_credential_mixing, connector_timeout_seconds)
-    _run_and_emit(cfg, fmt, output, main.verbose, max_rows, only=list(only) or None)  # type: ignore[attr-defined]
+    opts.merge_into(cfg)
+    _run_and_emit(cfg, opts.fmt, opts.output, state.verbose, opts.max_rows, only=list(only) or None)
 
 
 # ----------------------------------------------------------------------- run
@@ -245,8 +305,9 @@ def scan(config_path: str, only: tuple[str, ...], fmt: str, output: str | None, 
 @click.argument("connector")
 @click.option("--input", "input_path", type=click.Path(exists=True), help="offline export (file or directory) instead of the live API")
 @click.option("--set", "-S", "settings", multiple=True, help="connector option key=value (repeatable; lists as a,b,c)")
-@add_options(output_options)
-def run(connector: str, input_path: str | None, settings: tuple[str, ...], fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
+@shared_options
+@pass_state
+def run(state: CliState, connector: str, input_path: str | None, settings: tuple[str, ...], opts: SharedOptions) -> None:
     """Run a single connector, e.g. `shadowscan run identity.okta --set org_url=https://acme.okta.com`."""
     if connector not in available_connectors():
         raise click.BadParameter(f"unknown connector {connector!r}; see `shadowscan connectors`")
@@ -256,9 +317,8 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], fmt: 
         raise click.BadParameter("--set expects key=value pairs") from None
     if input_path:
         conf["input"] = input_path
-    cfg = ScanConfig(connectors=[ConnectorSpec(name=connector, config=conf)], inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir)
-    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin, allow_instance_credentials, allow_credential_mixing, connector_timeout_seconds)
-    _run_and_emit(cfg, fmt, output, main.verbose, max_rows)  # type: ignore[attr-defined]
+    cfg = opts.scan_config([ConnectorSpec(name=connector, config=conf)])
+    _run_and_emit(cfg, opts.fmt, opts.output, state.verbose, opts.max_rows)
 
 
 # ---------------------------------------------------------------------- code
@@ -270,8 +330,9 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], fmt: 
 @click.option("--mode", type=click.Choice(["clone", "api"]), default=None, help="remote fetch mode")
 @click.option("--exclude", multiple=True, help="extra directory names / globs to skip")
 @click.option("--no-secrets", is_flag=True, help="skip credential detection")
-@add_options(output_options)
-def code(paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str, ...], gitlab_group: str | None, mode: str | None, exclude: tuple[str, ...], no_secrets: bool, fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
+@shared_options
+@pass_state
+def code(state: CliState, paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str, ...], gitlab_group: str | None, mode: str | None, exclude: tuple[str, ...], no_secrets: bool, opts: SharedOptions) -> None:
     """Scan local directories and/or remote repositories for agent code, MCP, coding agents, IaC and secrets."""
     specs: list[ConnectorSpec] = []
     common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
@@ -293,9 +354,8 @@ def code(paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str,
         specs.append(ConnectorSpec(name="code.gitlab", config=gl))
     if not specs:
         raise click.UsageError("give at least one PATH, --github-org/--github-repo or --gitlab-group")
-    cfg = ScanConfig(connectors=specs, inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir)
-    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin, allow_instance_credentials, allow_credential_mixing, connector_timeout_seconds)
-    _run_and_emit(cfg, fmt, output, main.verbose, max_rows)  # type: ignore[attr-defined]
+    cfg = opts.scan_config(specs)
+    _run_and_emit(cfg, opts.fmt, opts.output, state.verbose, opts.max_rows)
 
 
 # ------------------------------------------------------------------- gateway
@@ -305,8 +365,9 @@ def code(paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str,
 @click.option("--min-events", type=int, default=1, show_default=True, help="ignore callers with fewer requests")
 @click.option("--all-hosts", is_flag=True, help="for access logs, keep traffic to every host (default: LLM/agent hosts only)")
 @click.option("--label", help="gateway name used as the findings' account/provider")
-@add_options(output_options)
-def gateway(logs: tuple[str, ...], log_format: str, min_events: int, all_hosts: bool, label: str | None, fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
+@shared_options
+@pass_state
+def gateway(state: CliState, logs: tuple[str, ...], log_format: str, min_events: int, all_hosts: bool, label: str | None, opts: SharedOptions) -> None:
     """Analyse LLM gateway / provider / proxy logs and reconstruct the callers."""
     specs = []
     for i, path in enumerate(logs):
@@ -316,9 +377,8 @@ def gateway(logs: tuple[str, ...], log_format: str, min_events: int, all_hosts: 
         if label:
             conf["label"] = label
         specs.append(ConnectorSpec(name="gateway.logs", config=conf, label=f"gateway.logs#{i + 1}" if len(logs) > 1 else None))
-    cfg = ScanConfig(connectors=specs, inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir)
-    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin, allow_instance_credentials, allow_credential_mixing, connector_timeout_seconds)
-    _run_and_emit(cfg, fmt, output, main.verbose, max_rows)  # type: ignore[attr-defined]
+    cfg = opts.scan_config(specs)
+    _run_and_emit(cfg, opts.fmt, opts.output, state.verbose, opts.max_rows)
 
 
 # ----------------------------------------------------------------------- jwt
@@ -328,8 +388,9 @@ def gateway(logs: tuple[str, ...], log_format: str, min_events: int, all_hosts: 
 @click.option("--jwks-url", help="verify signatures against this trusted JWKS endpoint")
 @click.option("--expected-issuer", help="require this exact issuer when checking a JWT signature")
 @click.option("--jwt-algorithm", multiple=True, type=click.Choice(["RS256", "ES256", "EdDSA", "PS256"]), help="narrow allowed signature algorithms (repeatable)")
-@add_options(output_options)
-def jwt(tokens: tuple[str, ...], token_file: str | None, jwks_url: str | None, expected_issuer: str | None, jwt_algorithm: tuple[str, ...], fmt: str, output: str | None, inventory: tuple[str, ...], signature_dirs: tuple[str, ...], min_confidence: float, fail_on: str | None, max_rows: int | None, dump_records: str | None, incremental: bool | None, state_dir: str | None, allow_plugin: tuple[str, ...], allow_signature_override: bool | None, allow_private_origin: bool | None, allow_instance_credentials: bool | None, allow_credential_mixing: bool | None, connector_timeout_seconds: float | None) -> None:
+@shared_options
+@pass_state
+def jwt(state: CliState, tokens: tuple[str, ...], token_file: str | None, jwks_url: str | None, expected_issuer: str | None, jwt_algorithm: tuple[str, ...], opts: SharedOptions) -> None:
     """Classify JWTs as human / service / delegated-agent identities and assess their privileges."""
     conf: dict[str, Any] = {}
     if tokens:
@@ -350,9 +411,8 @@ def jwt(tokens: tuple[str, ...], token_file: str | None, jwks_url: str | None, e
             conf["tokens"] = [line.strip() for line in sys.stdin if line.strip()]
         else:
             raise click.UsageError("give tokens as arguments, --file, or on stdin")
-    cfg = ScanConfig(connectors=[ConnectorSpec(name="identity.jwt", config=conf)], inventory=list(inventory), signature_dirs=list(signature_dirs), min_confidence=min_confidence, fail_on=fail_on, dump_records=dump_records, incremental=bool(incremental), state_dir=state_dir)
-    _apply_security_options(cfg, allow_plugin, allow_signature_override, allow_private_origin, allow_instance_credentials, allow_credential_mixing, connector_timeout_seconds)
-    _run_and_emit(cfg, fmt, output, main.verbose, max_rows)  # type: ignore[attr-defined]
+    cfg = opts.scan_config([ConnectorSpec(name="identity.jwt", config=conf)])
+    _run_and_emit(cfg, opts.fmt, opts.output, state.verbose, opts.max_rows)
 
 
 # ---------------------------------------------------------------- connectors

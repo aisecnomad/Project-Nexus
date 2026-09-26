@@ -50,16 +50,30 @@ from shadowscan.utils.safe_yaml import BoundedSafeLoader
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 PATH_KEYS = ("input", "path", "paths", "service_account_file", "credentials_file", "config_file", "token_file")
 _CONFIG_FIELDS = {"connectors", "inventory", "signatures", "options"}
+_DEFAULT_CONNECTOR_TIMEOUT = 120.0
+# Deprecated option spellings -> (canonical option, value a legacy null selects).
+# Older configurations used null for no deadline; it now selects the bounded default.
+_OPTION_ALIASES: dict[str, tuple[str, Any]] = {
+    "connector_timeout": ("connector_timeout_seconds", _DEFAULT_CONNECTOR_TIMEOUT),
+}
 _OPTION_FIELDS = {
     "min_confidence", "fail_on", "dump_records", "workdir", "parallel", "incremental",
     "state_dir", "plugins", "allow_signature_override", "allow_private_origin",
-    "allow_instance_credentials", "allow_credential_mixing", "connector_timeout_seconds", "connector_timeout",
+    "allow_instance_credentials", "allow_credential_mixing", "connector_timeout_seconds", *_OPTION_ALIASES,
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
+# Boolean words accepted in ``--set`` values and in connector ``enabled`` flags;
+# ``enabled`` also takes 1 and 0, which ``--set`` reads as integers.
+_BOOLEAN_WORDS = {"true": True, "yes": True, "on": True, "false": False, "no": False, "off": False}
+_ENABLED_WORDS = {**_BOOLEAN_WORDS, "1": True, "0": False}
 
 
 class ConfigValidationError(ValueError):
     """Configuration error whose message never includes user-supplied values."""
+
+
+class MinConfidenceError(ValueError):
+    """``min_confidence`` is not a finite number between 0 and 1 (the message never echoes it)."""
 
 
 def expand_env(value: Any) -> Any:
@@ -113,7 +127,7 @@ class ScanConfig:
     allow_private_origin: bool = False
     allow_instance_credentials: bool = False
     allow_credential_mixing: bool = False
-    connector_timeout_seconds: float = 120.0
+    connector_timeout_seconds: float = _DEFAULT_CONNECTOR_TIMEOUT
     source: str | None = None
     # Constructor-only compatibility: never retain stale alias state that could
     # overwrite a later CLI or library update to the canonical setting.
@@ -121,8 +135,8 @@ class ScanConfig:
 
     def __post_init__(self, connector_timeout: float | None) -> None:
         if connector_timeout is not None:
-            if self.connector_timeout_seconds != 120.0:
-                raise ConfigValidationError("specify connector_timeout_seconds or connector_timeout, not both")
+            if self.connector_timeout_seconds != _DEFAULT_CONNECTOR_TIMEOUT:
+                raise _alias_conflict("connector_timeout")
             self.connector_timeout_seconds = connector_timeout
         self.validate_security_options()
 
@@ -165,13 +179,7 @@ class ScanConfig:
         if not isinstance(opts, dict):
             raise ConfigValidationError("options must be a mapping")
         _check_fields(opts, _OPTION_FIELDS, "options")
-        if "connector_timeout_seconds" in opts and "connector_timeout" in opts:
-            raise ConfigValidationError("specify options.connector_timeout_seconds or options.connector_timeout, not both")
-        timeout = opts.get("connector_timeout_seconds", 120.0)
-        if "connector_timeout" in opts:
-            # Older configurations used null for no deadline. Keep them usable
-            # while enforcing the safe default instead of permitting infinity.
-            timeout = 120.0 if opts["connector_timeout"] is None else opts["connector_timeout"]
+        opts = _canonical_options(opts)
         connectors = data.get("connectors", [])
         if not isinstance(connectors, list):
             raise ConfigValidationError("connectors must be a list")
@@ -218,7 +226,7 @@ class ScanConfig:
             allow_private_origin=_boolean_option(opts.get("allow_private_origin", False), "allow_private_origin"),
             allow_instance_credentials=_boolean_option(opts.get("allow_instance_credentials", False), "allow_instance_credentials"),
             allow_credential_mixing=_boolean_option(opts.get("allow_credential_mixing", False), "allow_credential_mixing"),
-            connector_timeout_seconds=validate_connector_timeout(timeout),
+            connector_timeout_seconds=validate_connector_timeout_seconds(opts.get("connector_timeout_seconds", _DEFAULT_CONNECTOR_TIMEOUT)),
             source=source,
         )
 
@@ -261,6 +269,24 @@ def validate_plugins(value: Any) -> list[str]:
 def _check_fields(value: dict[Any, Any], allowed: set[str], location: str) -> None:
     if any(not isinstance(key, str) or key not in allowed for key in value):
         raise ConfigValidationError(f"{location} contains an unsupported field; allowed fields: " + ", ".join(sorted(allowed)))
+
+
+def _alias_conflict(alias: str, prefix: str = "") -> ConfigValidationError:
+    canonical = _OPTION_ALIASES[alias][0]
+    return ConfigValidationError(f"specify {prefix}{canonical} or {prefix}{alias}, not both")
+
+
+def _canonical_options(opts: dict[str, Any]) -> dict[str, Any]:
+    """Rewrite deprecated option spellings to their canonical keys; a config sets only one of each pair."""
+    canonical = dict(opts)
+    for alias, (name, legacy_null) in _OPTION_ALIASES.items():
+        if alias not in canonical:
+            continue
+        if name in canonical:
+            raise _alias_conflict(alias, "options.")
+        value = canonical.pop(alias)
+        canonical[name] = legacy_null if value is None else value
+    return canonical
 
 
 def _nonempty_string(value: Any, location: str) -> str:
@@ -313,10 +339,8 @@ def _connector_enabled(value: Any) -> bool:
         return value
     if isinstance(value, str):
         normalized = value.strip().lower()
-        if normalized in {"true", "yes", "on", "1"}:
-            return True
-        if normalized in {"false", "no", "off", "0"}:
-            return False
+        if normalized in _ENABLED_WORDS:
+            return _ENABLED_WORDS[normalized]
     raise ConfigValidationError("connector enabled must be a boolean (true or false)")
 
 
@@ -342,13 +366,13 @@ def validate_min_confidence(value: Any) -> float:
     """Keep invalid thresholds from silently filtering out all gated findings."""
     message = "min_confidence must be a finite number between 0 and 1"
     if isinstance(value, bool):
-        raise ValueError(message)
+        raise MinConfidenceError(message)
     try:
         confidence = float(value)
     except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(message) from exc
+        raise MinConfidenceError(message) from exc
     if not math.isfinite(confidence) or not 0 <= confidence <= 1:
-        raise ValueError(message)
+        raise MinConfidenceError(message)
     return confidence
 
 
@@ -368,10 +392,8 @@ def parse_set_options(items: list[str]) -> dict[str, Any]:
 
 def _coerce(value: str) -> Any:
     low = value.lower()
-    if low in {"true", "yes", "on"}:
-        return True
-    if low in {"false", "no", "off"}:
-        return False
+    if low in _BOOLEAN_WORDS:
+        return _BOOLEAN_WORDS[low]
     if low in {"null", "none", ""}:
         return None
     # A leading zero marks an identifier (tenant, account, project IDs), not a
