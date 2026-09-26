@@ -79,10 +79,14 @@ Robustness
 
 Redaction
 
-- Generic secret names (`JWT_SECRET`, `SESSION_SECRET`, `VAULT_TOKEN`,
+- Well-known credential names (`JWT_SECRET`, `SESSION_SECRET`, `VAULT_TOKEN`,
   `NPM_TOKEN`, `CI_JOB_TOKEN`, `SECRET_KEY_BASE`, `X-Amz-Security-Token`,
-  `passphrase`, `auth`, `pwd`) are redacted; `max_tokens`, `token_count` and
-  similar descriptive names stay readable.
+  `passphrase`) are always redacted. Generic names (`*_SECRET`, `*_TOKEN`,
+  `*_PASS`, `*_PWD`, `auth`) are redacted when the value looks like a
+  credential, so `auth: none`, `eos_token: "</s>"`, OCI's `auth: config`,
+  `pwd = os.getcwd()` and integer counts stay readable and cannot erase a
+  file's evidence context. `max_tokens`, `token_count` and similar
+  descriptive names are unaffected.
 
 Operations
 

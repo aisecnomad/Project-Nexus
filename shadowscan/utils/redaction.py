@@ -28,16 +28,20 @@ _SENSITIVE_SUFFIXES = (
     "accountkey", "sharedaccesskey", "sastoken",
     # Capability URLs: whoever holds a webhook URL can post through it.
     "webhookurl", "webhookuri", "webhookid", "hookurl",
-    # Generic suffixes: JWT_SECRET, SESSION_SECRET, SIGNING_SECRET, VAULT_TOKEN,
-    # NPM_TOKEN, CI_JOB_TOKEN, X-Amz-Security-Token, SECRET_KEY_BASE. A plural
-    # or descriptive continuation (max_tokens, token_count, secrets_manager)
-    # does not end with these and stays readable.
-    "secret", "token", "secretkeybase", "passphrase", "securitytoken", "signingsecret",
+    # Well-known credential names whose value is sensitive whatever it looks like.
+    "secretkeybase", "passphrase", "securitytoken", "signingsecret", "jwtsecret", "sessionsecret",
+    "webhooksecret", "vaulttoken", "npmtoken", "pypitoken", "cijobtoken",
 )
-_SENSITIVE_NAMES = {
-    "token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie",
-    "pass", "pwd", "auth", "passphrase", "apikey",
-}
+_SENSITIVE_NAMES = {"token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie"}
+# Generic names hold credentials (DB_PASS, MYSQL_PWD, CUSTOM_TOKEN, APP_SECRET)
+# as often as modes and markers (auth: none, eos_token: "</s>", OCI auth:
+# config). Their values are withheld only when they look like credentials, so
+# an enum or special token never becomes a "known secret" that erases context.
+_GENERIC_SUFFIXES = ("secret", "token")
+_GENERIC_WORD = re.compile(r"(?:^|[_.\-])(?:auth|pass|pwd)$", re.IGNORECASE)
+_GENERIC_CAMEL = re.compile(r"[a-z0-9](?:Auth|Pass|Pwd)$")
+_ENUM_LIKE = re.compile(r"[a-z]+(?:[_.\-][a-z]+)*")
+_CALL_EXPRESSION = re.compile(r"[A-Za-z_][\w.]*\s*\(")
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
 _SECRET_TOKEN = re.compile(
@@ -118,9 +122,12 @@ def _redact_yaml_multiline_values(text: str) -> str:
     pieces: list[str] = []
     cursor = 0
     for match in _YAML_MAPPING_LINE.finditer(text):
-        if match.start() < cursor or not _sensitive_key(match.group("quoted") or match.group("plain")):
+        key = match.group("quoted") or match.group("plain")
+        if match.start() < cursor or not (_sensitive_key(key) or _generic_key(key)):
             continue
         value = match.group("value").strip()
+        if not _sensitive_key(key) and not (value[:1] in {"|", ">"} or _credential_like(value)):
+            continue
         # Quoted and flow-style values are consumed by the mapping lexer.
         if value.startswith(('"', "'", "`", "[", "{", "(")):
             continue
@@ -209,12 +216,17 @@ def _redact_mapping_values(text: str) -> str:
     pieces: list[str] = []
     cursor = 0
     for match in _MAPPING_VALUE.finditer(text):
-        if match.start() < cursor or not _sensitive_key(match.group("quoted") or match.group("plain")):
+        key = match.group("quoted") or match.group("plain")
+        if match.start() < cursor or not (_sensitive_key(key) or _generic_key(key)):
             continue
         start = match.start("value")
         end = _mapping_expression_end(text, start)
         raw = text[start:end]
         bare = raw.strip()
+        if not _sensitive_key(key) and not (
+            len(bare) > 1 and bare[0] in "\"'`" and bare[-1] == bare[0] and _credential_like(bare[1:-1])
+        ):
+            continue  # a generic name with a container or a non-credential literal
         if len(bare) > 1 and bare[0] in "\"'" and bare[-1] == bare[0] and _FINGERPRINT.fullmatch(bare[1:-1]):
             continue
         pieces.append(text[cursor:start])
@@ -244,8 +256,14 @@ def _redact_python_assignments(text: str) -> str:
     url = next(urls, None)
     line_start = line_end = -1
     for match in _PYTHON_ASSIGNMENT_KEY.finditer(text):
-        if match.start() < cursor or not _sensitive_key(match.group("key")):
+        if match.start() < cursor:
             continue
+        key = match.group("key")
+        if not _sensitive_key(key):
+            line_stop = text.find("\n", match.end())
+            rest = text[match.end():len(text) if line_stop < 0 else line_stop]
+            if not _generic_text_value_sensitive(key, rest):
+                continue  # pwd = os.getcwd(), eos_token = "</s>"
         if not line_start <= match.start() < line_end:
             line_start = text.rfind("\n", 0, match.start()) + 1
             line_end = text.find("\n", match.start())
@@ -354,8 +372,53 @@ def _redact_python_assignments(text: str) -> str:
 
 
 def _sensitive_key(key: str) -> bool:
+    """A name whose value is a credential whatever it looks like."""
     normalized = _KEY_NORMALISE.sub("", key.lower())
     return normalized in _SENSITIVE_NAMES or normalized.endswith(_SENSITIVE_SUFFIXES)
+
+
+def _generic_key(key: str) -> bool:
+    """A name that holds a credential only when its value looks like one."""
+    normalized = _KEY_NORMALISE.sub("", key.lower())
+    return (
+        normalized.endswith(_GENERIC_SUFFIXES)
+        or normalized in {"auth", "pass", "pwd"}
+        or bool(_GENERIC_WORD.search(key) or _GENERIC_CAMEL.search(key))
+    )
+
+
+def _credential_like(value: Any) -> bool:
+    """Whether a value under a generic name could be a credential.
+
+    Short values, lower-case identifiers (``instance_principal``) and special
+    tokens (``</s>``) are modes or markers; anything else is withheld.
+    """
+    if not isinstance(value, str):
+        return False
+    text = value.strip().strip("\"'")
+    if len(text) < 8 or text == REDACTED or _FINGERPRINT.fullmatch(text):
+        return False
+    if text.startswith("<") and text.endswith(">"):
+        return False
+    if _CALL_EXPRESSION.match(text):
+        return False  # pwd = os.getcwd(), auth = get_auth()
+    return not _ENUM_LIKE.fullmatch(text)
+
+
+def sensitive_field(key: str, value: Any) -> bool:
+    """Whether ``value`` stored under ``key`` must be withheld."""
+    return _sensitive_key(key) or (_generic_key(key) and _credential_like(value))
+
+
+def _generic_text_value_sensitive(key: str, rest: str) -> bool:
+    """For a generic name in source text, inspect the literal(s) that follow."""
+    if not _generic_key(key):
+        return False
+    literals = re.findall(r'"([^"\\\n]*)"|\'([^\'\\\n]*)\'', rest[:2048])
+    if literals:
+        return _credential_like("".join(a or b for a, b in literals))
+    token = re.match(r"\s*([^\s;#,]+)", rest[:2048])  # an unquoted .env-style value
+    return bool(token) and _credential_like(token.group(1))
 
 
 def credential_id(value: Any) -> str:
@@ -417,7 +480,10 @@ def _sanitize_url(match: re.Match[str]) -> str:
         if not equals:
             return field
         decoded = unquote(key).lower()
-        sensitive = _sensitive_key(decoded) or decoded in {"key", "sig", "signature", "code", "x-amz-signature", "x-goog-signature"}
+        sensitive = (
+            sensitive_field(decoded, unquote(value))
+            or decoded in {"key", "sig", "signature", "code", "x-amz-signature", "x-goog-signature"}
+        )
         return key + equals + (REDACTED if sensitive else value)
 
     # Consume each field once. A regex that retries an unbounded key after every
@@ -459,7 +525,7 @@ def sanitize_text(text: str) -> str:
             raw = m.group("value")
             quote = raw[0] if raw.startswith(('"', "'")) else ""
             bare = raw[1:-1] if quote else raw
-            if _sensitive_key(m.group("key")):
+            if sensitive_field(m.group("key"), bare):
                 clean = _redact_value(bare)
             elif "=" in bare or ":" in bare:
                 # Do not let an ordinary assignment swallow a nested credential,
@@ -491,7 +557,7 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
 
     def record_has_secret_value(item: Mapping) -> bool:
         name = item.get("name") or item.get("Name") or item.get("key") or item.get("Key")
-        return isinstance(name, str) and _sensitive_key(name)
+        return isinstance(name, str) and sensitive_field(name, item.get("value") or item.get("Value"))
 
     def remember(child: Any) -> None:
         if isinstance(child, str) and child:
@@ -514,7 +580,7 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
             if record_has_secret_value(item):
                 remember(item.get("value") or item.get("Value"))
             for key, child in item.items():
-                if _sensitive_key(str(key)):
+                if sensitive_field(str(key), child):
                     remember(child)
                 if str(key).lower() in {"env", "environment", "environment_variables", "environmentvariables"}:
                     if isinstance(child, Mapping):
@@ -528,7 +594,7 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
         elif isinstance(item, (list, tuple)):
             previous = None
             for child in item:
-                if isinstance(previous, str) and previous.startswith("-") and _sensitive_key(previous.lstrip("-")):
+                if isinstance(previous, str) and previous.startswith("-") and sensitive_field(previous.lstrip("-"), child):
                     remember(child)
                 discover(child, depth + 1)
                 previous = child
@@ -609,7 +675,7 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
             mapping_out = {}
             for key, child in item.items():
                 name = str(key)
-                if _sensitive_key(name) or (record_has_secret_value(item) and name.lower() == "value"):
+                if sensitive_field(name, child) or (record_has_secret_value(item) and name.lower() == "value"):
                     result = _redact_value(child)
                 elif name.lower() in {"env", "environment", "environment_variables", "environmentvariables"} and isinstance(child, Mapping):
                     result = {text(str(k)): _redact_value(v) for k, v in child.items()}
@@ -625,15 +691,16 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False) -> Any:
             return mapping_out
         if isinstance(item, (list, tuple)):
             sequence_out = []
-            redact_next = False
+            flag: str | None = None
             for child in item:
-                if redact_next:
+                if flag is not None and sensitive_field(flag, child):
                     sequence_out.append(_redact_value(child))
-                    redact_next = False
+                    flag = None
                 else:
+                    flag = None
                     sequence_out.append(clean(child, depth + 1))
                     if isinstance(child, str) and child.startswith("-") and "=" not in child:
-                        redact_next = _sensitive_key(child.lstrip("-"))
+                        flag = child.lstrip("-")
             return tuple(sequence_out) if isinstance(item, tuple) else sequence_out
         if isinstance(item, str):
             return text(item)

@@ -20,7 +20,7 @@ from shadowscan.connectors import _BUILTIN
 from shadowscan.models import FINDING_IDENTITY_SCHEMA
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.files import read_policy_text
-from shadowscan.utils.redaction import _sensitive_key, sanitize
+from shadowscan.utils.redaction import sanitize, sensitive_field
 
 _SCHEMA = "shadowscan.collection-scope/v1"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -77,7 +77,7 @@ def _has_private_scope_values(value: Any) -> bool:
             seen.add(id(item))
         if isinstance(item, Mapping):
             for key, child in item.items():
-                if _sensitive_key(str(key)):
+                if sensitive_field(str(key), child):
                     return True
                 remaining.append(child)
         elif isinstance(item, (list, tuple)):

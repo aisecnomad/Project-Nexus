@@ -286,8 +286,10 @@ def test_manifest_regex_execution_has_timeout(monkeypatch):
     # POM dependencies now use an XML parser rather than a regex.
     monkeypatch.setattr(manifests, "_GRADLE_DEP", regex.compile(r"(a+)+$"))
     started = time.monotonic()
-    with pytest.raises(TimeoutError):
-        manifests.parse_manifest("build.gradle", "a" * 100_000 + "!")
+    # A slow manifest pattern is reported as a manifest diagnostic, so the
+    # file's content and secret checks still run.
+    result = manifests.parse_manifest("build.gradle", "a" * 100_000 + "!")
+    assert result is not None and result.errors == ["manifest parsing failed (TimeoutError)"]
     assert time.monotonic() - started < 2
 
 
