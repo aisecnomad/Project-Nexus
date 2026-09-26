@@ -375,7 +375,7 @@ def test_engine_completes_when_report_derived_findings_carry_garbage_metadata(mo
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: ReportConnector)
     cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem")],
-                     inventory=[str(Path(__file__).parents[2] / "agent-card.yaml")])
+                     inventory=[str(Path(__file__).parents[1] / "fixtures" / "inventory" / "ops-provisioning-04.yaml")])
     result = Engine(cfg, index).run()
     assert result.complete, [stats.errors for stats in result.stats]
     assert len(result.findings) == len(records)

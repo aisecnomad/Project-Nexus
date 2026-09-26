@@ -1,6 +1,6 @@
 # Agent Capability Card v1.0
-# Example sanctioned inventory entry for the bundled offline AWS fixtures.
-# Replace resources and scopes with approved identities for your estate.
+# Test copy of the repository's agent-card.yaml. Tests rely on this agent's ID,
+# owner and discovery resources, so the published example can change freely.
 metadata:
   agent_id: "ops-provisioning-04"
   version: "2.4.1"
