@@ -1,0 +1,6 @@
+[
+  {"_kind": "roleMap", "roles": {"role-1": "Directory.ReadWrite.All"}},
+  {"_kind": "servicePrincipal", "id": "known", "appId": "known-app", "displayName": "Claude"},
+  {"_kind": "oauth2PermissionGrant", "clientId": "missing", "scope": "Mail.Read", "consentType": "AllPrincipals"},
+  {"_kind": "appRoleAssignment", "principalId": "missing", "appRoleId": "role-1"}
+]

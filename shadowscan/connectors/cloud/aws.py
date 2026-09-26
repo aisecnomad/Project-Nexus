@@ -134,9 +134,12 @@ class AwsConnector(BaseConnector):
         # identifier or accept booleans/floats as a cloud account identity.
         if isinstance(account, int) and not isinstance(account, bool):
             account = str(account)
+        if account is not None and (not isinstance(account, str) or not account.strip()):
+            raise ConnectorError("cloud.aws: account_id must be a nonempty string")
         if not self.offline and account is not None and (not isinstance(account, str) or len(account) != 12 or not account.isascii() or not account.isdigit()):
             raise ConnectorError("cloud.aws: account_id must be exactly 12 ASCII digits (quote identifiers with leading zeros)")
         self.account: str | None = account
+        self._configured_account = account
         self._session: Any = None
 
     # ------------------------------------------------------------- session
@@ -716,46 +719,97 @@ class AwsConnector(BaseConnector):
 
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        # Resolve the complete export envelope before publishing identities.
+        # Retain derived findings, not raw provider payloads: account records can
+        # follow resources or contradict a previous envelope in concatenated dumps.
+        pending: list[Finding] = []
+        if self.offline:
+            self.account = self._configured_account
+        accounts: set[str] = set()
+        invalid_account = False
+        failure: Exception | None = None
         callers: dict[str, dict[str, Any]] = {}
         handlers = {name[3:].replace("_", "-"): getattr(self, name) for name in dir(type(self)) if name.startswith("_h_")}
-        for rec in records:
-            self.ctx.examined()
-            kind = rec.get("_kind") if isinstance(rec, dict) else None
-            if not isinstance(kind, str) or kind not in handlers.keys() | {"account", "cloudtrail-event"}:
-                self.ctx.warn("cloud.aws: record has missing, invalid, or unsupported _kind")
-                continue
-            try:
-                if kind == "account":
-                    if not isinstance(rec.get("account"), str) or not rec["account"]:
-                        raise ValueError("account")
-                    self.account = self.account or rec["account"]
-                elif kind == "cloudtrail-event":
-                    for field in ("principal", "userAgent", "modelId", "eventName", "sourceIp", "eventTime", "_region"):
-                        if rec.get(field) is not None and not isinstance(rec[field], str):
-                            raise ValueError("event field")
-                    self._acc_caller(callers, rec)
-                else:
-                    f = handlers[kind](rec)
-                    if f:
-                        if not has_aws_account_scope(f.provider, f.account, f.resource):
-                            self.ctx.warn(
-                                "cloud.aws: resource lacks account scope; supply account_id or an account export record",
-                                incomplete=True,
-                            )
-                        yield f
-            except (ValueError, TypeError, KeyError, AttributeError):
-                self.ctx.warn("cloud.aws: record has invalid fields for its _kind")
+        try:
+            for rec in records:
+                self.ctx.examined()
+                kind = rec.get("_kind") if isinstance(rec, dict) else None
+                if not isinstance(kind, str) or kind not in handlers.keys() | {"account", "cloudtrail-event"}:
+                    self.ctx.warn("cloud.aws: record has missing, invalid, or unsupported _kind")
+                    continue
+                try:
+                    if kind == "account":
+                        account = rec.get("account")
+                        if self._is_error_record(rec) or not isinstance(account, str) or not has_aws_account_scope("aws", account, None):
+                            invalid_account = True
+                            raise ValueError("account")
+                        accounts.add(account)
+                    elif kind == "cloudtrail-event":
+                        for field in ("principal", "userAgent", "modelId", "eventName", "sourceIp", "eventTime", "_region"):
+                            if rec.get(field) is not None and not isinstance(rec[field], str):
+                                raise ValueError("event field")
+                        self._acc_caller(callers, rec)
+                    else:
+                        f = handlers[kind](rec)
+                        if f:
+                            pending.append(f)
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    self.ctx.warn("cloud.aws: record has invalid fields for its _kind")
+        except Exception as exc:  # noqa: BLE001 - preserve observations before a collection failure
+            failure = exc
+        expected_account = self.account  # configured offline, or verified by live STS
+        if expected_account is not None:
+            accounts.add(expected_account)
+        ambiguous = invalid_account or len(accounts) > 1
+        self.account = None if ambiguous else next(iter(accounts), None)
+        if ambiguous:
+            self.ctx.warn("cloud.aws: conflicting or invalid account envelopes; short resource identities unresolved")
         for key, agg in callers.items():
+            self.ctx.check_deadline()
             try:
-                yield self._caller_finding(key, agg)
+                pending.append(self._caller_finding(key, agg))
             except (ValueError, TypeError, KeyError, AttributeError):
                 self.ctx.warn("cloud.aws: invalid aggregated caller fields")
+        for f in pending:
+            self.ctx.check_deadline()
+            self._resolve_finding_account(f, expected_account)
+            yield f
+        if failure is not None:
+            raise failure
+
+    def _resolve_finding_account(self, finding: Finding, expected_account: str | None) -> None:
+        # These resources have connector-generated ARNs, so their account is an
+        # envelope claim, not independent evidence from a provider resource ARN.
+        if finding.resource_type in {"bedrock-logging", "qbusiness-application", "lex-bot", "ssm-parameter"}:
+            before = finding.resource
+            parts = before.split(":", 5)
+            parts[4] = self.account or ""
+            finding.resource = ":".join(parts)
+            for evidence in finding.evidence:
+                if evidence.location == before:
+                    evidence.location = finding.resource
+            finding.account = self.account
+        else:
+            arn = finding.resource.removeprefix("cloudtrail:")
+            explicit_account = arn.split(":", 5)[4] if has_aws_account_scope("aws", None, arn) else None
+            finding.account = explicit_account or self.account
+            scope = expected_account or self.account
+            # A CloudTrail caller can legitimately belong to another account;
+            # inventory resources returned by account-scoped list APIs cannot.
+            if (explicit_account and not finding.resource_type.startswith("caller/")
+                    and has_aws_account_scope("aws", scope, None) and scope != explicit_account):
+                self.ctx.warn("cloud.aws: resource account differs from configured, authenticated or exported account; identity unresolved")
+                finding.metadata["identity_unresolved"] = True
+        if not has_aws_account_scope(finding.provider, finding.account, finding.resource):
+            self.ctx.warn("cloud.aws: resource lacks account scope; supply a consistent account_id or account export record")
+            finding.metadata["identity_unresolved"] = True
+        finding.id = finding.compute_id()
 
     def _arn_account(self, arn: str | None) -> str | None:
-        try:
-            return arn.split(":")[4] if arn else self.account
-        except (IndexError, AttributeError):
-            return self.account
+        if has_aws_account_scope("aws", None, arn):
+            assert arn is not None
+            return arn.removeprefix("cloudtrail:").split(":", 5)[4]
+        return self.account
 
     def _h_bedrock_agent(self, rec: dict[str, Any]) -> Finding:
         arn = rec.get("agentArn") or rec.get("agentId")

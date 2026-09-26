@@ -7,15 +7,19 @@ Calendar access for 214 users".
 
 Auth: a service-account key with domain-wide delegation (impersonating an
 admin, ``admin_email``) or a pre-issued ``access_token`` with
-``admin.directory.user.readonly`` + ``admin.directory.user.security`` scopes.
+``admin.directory.user.readonly`` + ``admin.directory.user.security`` +
+``admin.directory.customer.readonly`` scopes.
 
 Offline export: list of token objects (each with ``userKey`` / ``userEmail``)
-or per-user dicts ``{"user": ..., "tokens": [...]}``.
+or per-user dicts ``{"user": ..., "tokens": [...]}``. Supply the verified
+immutable customer ID in ``customer`` for offline attribution.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import secrets
 import time
 from collections.abc import Iterable
 from pathlib import Path
@@ -29,8 +33,9 @@ from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.identity import google_customer_id
 
-SCOPES = "https://www.googleapis.com/auth/admin.directory.user.readonly https://www.googleapis.com/auth/admin.directory.user.security"
+SCOPES = "https://www.googleapis.com/auth/admin.directory.user.readonly https://www.googleapis.com/auth/admin.directory.user.security https://www.googleapis.com/auth/admin.directory.customer.readonly"
 
 
 class GoogleWorkspaceConnector(BaseConnector):
@@ -42,7 +47,7 @@ class GoogleWorkspaceConnector(BaseConnector):
         "service_account_file": "SA key JSON with domain-wide delegation (env GOOGLE_APPLICATION_CREDENTIALS)",
         "admin_email": "admin user to impersonate (env GOOGLE_ADMIN_EMAIL)",
         "access_token": "pre-issued token instead of SA (env GOOGLE_ACCESS_TOKEN)",
-        "customer": "customer id (default my_customer)",
+        "customer": "immutable customer ID (live default my_customer is resolved; required for complete offline scans)",
         "max_users": "cap on users enumerated (default 10000)",
         "input": "offline: JSON export of token objects",
     }
@@ -50,8 +55,50 @@ class GoogleWorkspaceConnector(BaseConnector):
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.customer = ctx.get("customer", "my_customer")
+        if self.customer != "my_customer" and google_customer_id(self.customer) is None:
+            raise ConnectorError("identity.google-workspace: customer must be my_customer or an immutable customer ID (C...)")
+        self._customer_id = google_customer_id(self.customer) if self.offline else None
+        # An unknown tenant must not merge with an independently collected
+        # source containing the same public OAuth client. Scope unresolved
+        # findings to this instance's input or impersonated admin so repeated
+        # scans keep their IDs; an instance with neither stays ephemeral.
+        source = self.ctx.input_path or ctx.get("admin_email", env="GOOGLE_ADMIN_EMAIL")
+        if source and self.ctx.input_path:
+            source = str(Path(str(source)).expanduser().absolute())
+        self._unresolved_scope = (
+            hashlib.sha256(f"{self.name}\0{source}".encode()).hexdigest()[:32] if source else secrets.token_hex(16)
+        )
         self.max_users = int(ctx.get("max_users", 10_000))
         self.http: HttpClient | None = None
+
+    def _resolve_customer(self) -> None:
+        assert self.http
+        self._customer_id = None
+        try:
+            data = self.http.get_json(f"/admin/directory/v1/customers/{quote(self.customer, safe='')}")
+        except ConnectorError:
+            raise  # deadline or cancellation, never a lookup result
+        except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            self.ctx.warn(f"identity.google-workspace: customer identity could not be verified ({status}); coverage incomplete")
+            return
+        customer_id = google_customer_id(data.get("id")) if (
+            isinstance(data, dict) and not self._is_error_record(data)
+            and data.get("kind", "admin#directory#customer") == "admin#directory#customer"
+        ) else None
+        if customer_id is None or (self.customer != "my_customer" and self.customer != customer_id):
+            self.ctx.warn("identity.google-workspace: missing or conflicting customer identity; coverage incomplete")
+            return
+        self._customer_id = customer_id
+
+    def _check_record_customer(self, record: dict[str, Any]) -> None:
+        # Exported/user-level attribution may corroborate configured scope,
+        # but it must never supply trust by itself or silently contradict it.
+        if "customerId" in record:
+            customer_id = google_customer_id(record["customerId"])
+            if customer_id is None or (self._customer_id is not None and customer_id != self._customer_id):
+                self._customer_id = None
+                self.ctx.warn("identity.google-workspace: malformed or conflicting record customerId; coverage incomplete")
 
     def _auth(self) -> None:
         token = self.ctx.get("access_token", env="GOOGLE_ACCESS_TOKEN")
@@ -66,12 +113,13 @@ class GoogleWorkspaceConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
+        self._resolve_customer()
         count = 0
         token_errors: dict[str, int] = {}
         try:
             for user in self.http.paginate_token(
                 "/admin/directory/v1/users",
-                params={"customer": self.customer, "maxResults": 500, "projection": "basic"},
+                params={"customer": self._customer_id or self.customer, "maxResults": 500, "projection": "basic"},
                 items_key="users", expected_empty_kind="admin#directory#users",
             ):
                 count += 1
@@ -81,6 +129,7 @@ class GoogleWorkspaceConnector(BaseConnector):
                 if not isinstance(user, dict):
                     self.ctx.warn("identity.google-workspace: invalid user record")
                     continue
+                self._check_record_customer(user)
                 email = user.get("primaryEmail")
                 if user.get("suspended"):
                     continue
@@ -125,11 +174,14 @@ class GoogleWorkspaceConnector(BaseConnector):
         return ("tokens" in data and any(key in data for key in ("user", "userEmail", "userKey"))) or BaseConnector._is_native_offline_record(data)
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        if self.offline:
+            self._customer_id = google_customer_id(self.customer)
         apps: dict[str, dict[str, Any]] = {}
         for rec in records:
             if not self._record_fields_valid(rec, strings=("user", "userEmail", "userKey")):
                 self.ctx.warn("identity.google-workspace: malformed token record or provider error; coverage incomplete")
                 continue
+            self._check_record_customer(rec)
             if "tokens" in rec and not isinstance(rec["tokens"], list):
                 self.ctx.warn("identity.google-workspace: user tokens must be an array; coverage incomplete")
                 continue
@@ -141,6 +193,7 @@ class GoogleWorkspaceConnector(BaseConnector):
                 if not self._record_fields_valid(tok, required=("clientId",), strings=("displayText", "userEmail", "userKey"), arrays=("scopes",)):
                     self.ctx.warn("identity.google-workspace: invalid token record or missing clientId; coverage incomplete")
                     continue
+                self._check_record_customer(tok)
                 scopes = tok.get("scopes") or []
                 if any(not isinstance(scope, str) or not scope.strip() for scope in scopes):
                     self.ctx.warn("identity.google-workspace: invalid token scope; coverage incomplete")
@@ -154,6 +207,8 @@ class GoogleWorkspaceConnector(BaseConnector):
                     agg["users"].add(u)
                 if tok.get("displayText") and not agg["displayText"]:
                     agg["displayText"] = tok["displayText"]
+        if self._customer_id is None:
+            self.ctx.warn("identity.google-workspace: immutable customer identity is unresolved; set verified customer for offline input; coverage incomplete")
         for agg in apps.values():
             f = self._app_finding(agg)
             if f:
@@ -170,7 +225,9 @@ class GoogleWorkspaceConnector(BaseConnector):
             resource=f"google-workspace:oauth-client:{agg['clientId']}",
             resource_type="oauth-client",
             provider="google-workspace",
-            account=self.customer if self.customer != "my_customer" else None,
+            account=self._customer_id,
+            identity_discriminator="oauth-client" if self._customer_id else f"oauth-client:unresolved:{self._unresolved_scope}",
+            metadata={"identity_unresolved": True} if self._customer_id is None else {},
         )
         assess_app(self.index, f, name=name, scopes=scopes, client_id=agg["clientId"])
         interesting = bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags)

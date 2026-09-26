@@ -32,6 +32,12 @@ before collection emits account metadata. Live `account_id` is an expected
 12-digit account, verified through STS even when explicitly configured;
 mismatches stop collection. AWS SDK clients use finite connection/read timeouts
 and retry attempts. `max_lambda` limits streamed enumeration.
+Offline exports resolve their account from `account` records wherever they
+appear. Several different or invalid `account` records, or a resource ARN from
+another account (CloudTrail callers excepted), leave short resource identities
+unresolved and the scan incomplete; generated ARNs for Bedrock logging, Q
+Business, Lex and SSM parameters take the resolved account or none. Such
+findings cannot be approved by an inventory card.
 IAM analysis includes both local and AWS-managed attached policies. Unresolved
 attachments make collection incomplete. CloudTrail LookupEvents only supplies
 management events: `InvokeAgent` / `InvokeInlineAgent` data events require a

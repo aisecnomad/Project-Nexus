@@ -94,6 +94,7 @@ def test_google_workspace_denied_tokens_are_incomplete_with_valid_apps_preserved
     connector.http = Mock()
     connector.http.paginate_token.return_value = iter([{"primaryEmail": "allowed@example.com"}, {"primaryEmail": "denied@example.com"}])
     connector.http.get_json.side_effect = [
+        {"id": "C01234567"},
         {"items": [{"clientId": "agent", "displayText": "Fireflies.ai Notetaker", "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]}]},
         HttpError(status, "https://admin.googleapis.com/tokens"),
     ]
@@ -113,7 +114,10 @@ def test_google_workspace_later_user_page_failure_preserves_apps(index):
         raise ConnectionError("disconnected")
 
     connector.http.paginate_token.side_effect = users
-    connector.http.get_json.return_value = {"items": [{"clientId": "agent", "displayText": "Fireflies.ai Notetaker"}]}
+    connector.http.get_json.side_effect = [
+        {"id": "C01234567"},
+        {"items": [{"clientId": "agent", "displayText": "Fireflies.ai Notetaker"}]},
+    ]
     findings = connector.run()
     assert len(findings) == 1
     _assert_incomplete(connector, findings)

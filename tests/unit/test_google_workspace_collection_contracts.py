@@ -15,6 +15,7 @@ BASE = "https://admin.googleapis.com"
 def directory(monkeypatch):
     def auth(connector):
         connector.http = HttpClient(BASE)
+        responses.get(f"{BASE}/admin/directory/v1/customers/my_customer", json={"id": "C01234567"})
 
     monkeypatch.setattr(GoogleWorkspaceConnector, "_auth", auth)
 

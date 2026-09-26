@@ -147,7 +147,7 @@ def test_google_per_user_exports_are_equivalent(tmp_path, run_connector, suffix)
     for number, body in enumerate(variants):
         source = tmp_path / f"tokens-{number}.{suffix}"
         source.write_text(yaml.safe_dump(body) if suffix == "yaml" else json.dumps(body), encoding="utf-8")
-        result, ctx = run_connector("identity.google-workspace", input=str(source))
+        result, ctx = run_connector("identity.google-workspace", input=str(source), customer="C01234567")
         assert not ctx.stats.incomplete
         assert len(result) == 1 and ctx.stats.objects_examined == 1
         assert result[0].metadata["user_count"] == 1
@@ -163,7 +163,7 @@ def test_google_multiple_users_are_aggregated_after_normalization(tmp_path, run_
         {"user": "bob@example.test", "tokens": [TOKEN]},
         {"user": "alice@example.test", "tokens": [TOKEN]},
     ]), encoding="utf-8")
-    findings, ctx = run_connector("identity.google-workspace", input=str(source))
+    findings, ctx = run_connector("identity.google-workspace", input=str(source), customer="C01234567")
     assert not ctx.stats.incomplete and len(findings) == 1
     assert findings[0].metadata["user_count"] == 2
 
@@ -177,7 +177,7 @@ def test_google_multiple_users_are_aggregated_after_normalization(tmp_path, run_
 def test_google_malformed_user_exports_keep_other_users(tmp_path, run_connector, invalid):
     source = tmp_path / "tokens.json"
     source.write_text(json.dumps([invalid, {"user": "bob@example.test", "tokens": [TOKEN]}]), encoding="utf-8")
-    findings, ctx = run_connector("identity.google-workspace", input=str(source))
+    findings, ctx = run_connector("identity.google-workspace", input=str(source), customer="C01234567")
     assert ctx.stats.incomplete and len(findings) == 1
     assert findings[0].metadata["user_count"] == 1
     assert findings[0].metadata["users_sample"] == ["bob@example.test"]
