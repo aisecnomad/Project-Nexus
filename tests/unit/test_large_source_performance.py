@@ -64,17 +64,29 @@ def test_dotted_source_tokens_skip_per_signature_domain_searches(index, monkeypa
     assert calls == ["domain signatures", "domain signatures"]
 
 
-def test_javascript_binder_ignores_unrecognized_imports_in_large_modules(index):
+def test_javascript_binder_ignores_unrecognized_imports_in_large_modules(index, monkeypatch):
+    from shadowscan.connectors.code import source_semantics
+
     imports = "".join(f"import {{ f{i} }} from 'lib{i}';\n" for i in range(400))
     body = "".join(f"export function g{i}(f{i % 400}, x) {{ return f{i % 400}(x) + (x < 3 ? x : 2) / 7; }}\n" for i in range(6000))
     text = imports + "import OpenAI from 'openai';\nconst client = new OpenAI();\n" + body
     ignored, ambiguous = noncode_ranges(text, "javascript")
     assert not ambiguous
-    started = time.monotonic()
+    searches = []
+    real_search = source_semantics.regex.search
+
+    def counting_search(pattern, *args, **kwargs):
+        searches.append(pattern)
+        return real_search(pattern, *args, **kwargs)
+
+    monkeypatch.setattr(source_semantics.regex, "search", counting_search)
     with index.scan_budget(matcher_module.default_budget_for(len(text)), size=len(text)):  # as the connector does
         matches = bound_source_matches(index, text, "javascript", ignored)
-    assert time.monotonic() - started < 5
     assert any(m.signature_id == "provider.openai" for m in matches)
+    # Whole-file shadow checks run for the one recognized binding (OpenAI),
+    # never for the 400 bindings to modules no signature knows.
+    shadow_checks = [p for p in searches if isinstance(p, str) and ("f1" in p or "OpenAI" in p)]
+    assert shadow_checks and all("OpenAI" in p for p in shadow_checks)
 
 
 @pytest.mark.parametrize("keyword", ["agent", "llm", "tool"])

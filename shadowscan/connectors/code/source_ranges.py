@@ -129,7 +129,11 @@ def _python_ranges(text: str) -> tuple[list[tuple[int, int]], bool]:
                 if prefix is not None and "f" in prefix.group(1).lower():
                     inner, incomplete = _legacy_fstring_ranges(token.string, offset(token.start))
                     if incomplete:
-                        spans.append((offset(token.start), offset(token.end)))
+                        # The interpreter's tokenizer cannot follow this
+                        # f-string, so it cannot tell code from string text
+                        # after it either: mask through EOF.
+                        spans = [span for span in spans if span[1] <= offset(token.start)]
+                        spans.append((offset(token.start), len(text)))
                         return sorted(spans), True
                     spans.extend(inner)
                 else:

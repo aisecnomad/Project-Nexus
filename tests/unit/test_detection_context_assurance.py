@@ -316,3 +316,20 @@ def test_pom_xml_entities_fail_closed():
     )
     assert not result.deps
     assert result.errors
+
+
+def test_text_after_an_unlexable_python_fstring_cannot_establish_an_agent(tmp_path, run_connector):
+    import sys
+
+    if sys.version_info >= (3, 12):
+        import pytest
+        pytest.skip("Python 3.12+ tokenizes PEP 701 f-strings natively")
+    (tmp_path / "app.py").write_text(
+        "import openai\n"
+        "quote = f\"{'\"'}\"\n"
+        'EXAMPLE = """\nfrom crewai import Agent\nagent = Agent(role="r", goal="g", backstory="b")\n"""\n'
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert not any(f.kind == Kind.AGENT for f in findings)
+    assert not any("framework.crewai" in f.frameworks for f in findings)

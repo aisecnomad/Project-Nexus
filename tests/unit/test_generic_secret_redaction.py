@@ -117,6 +117,12 @@ def test_oci_auth_mode_stays_comparable_and_readable_in_diagnostics(index):
     ctx.stats = ScanStats(connector="cloud.oci", started_at="now")
     ctx.warn("cloud.oci: could not find config file at ~/.oci/config")
     assert "[REDACTED]" not in ctx.stats.warnings[0]
+    from shadowscan.comparison import build_collection_scope
+    from shadowscan.config import ConnectorSpec, ScanConfig
+
+    for mode in ("config", "instance_principal", "resource_principal"):
+        spec = ConnectorSpec(name="cloud.oci", config={"auth": mode, "input": "/tmp/oci.jsonl"})
+        assert build_collection_scope(ScanConfig(connectors=[spec]), index, [spec])["comparable"] is True
 
 
 @pytest.mark.parametrize(("line", "secret"), [

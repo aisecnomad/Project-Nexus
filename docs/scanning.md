@@ -175,7 +175,8 @@ exact `api-key:credential:sha256:...` binding computed privately from the raw
 key, which the connector checks in memory without writing that public digest to
 findings. Keep binding configuration private: publishing a public digest of a
 guessable key would itself disclose the key. The exported HMAC is scan-local
-and cannot be pasted into a future binding. Other caller names changed by
+(unless a pseudonymization key file is configured; see below) and cannot be
+pasted into a future binding. Other caller names changed by
 credential redaction remain `unverified` for runtime attribution. Do not put
 raw API keys into bindings.
 
@@ -183,14 +184,15 @@ If a gateway scope label overlaps a credential or uses an opaque scope prefix,
 the report contains a `scope:hmac-sha256:…` value instead. The connector uses
 an ephemeral private key so these values preserve distinct tenant groups within
 one connector instance without exposing short labels to offline guessing. They
-change across independent scans and cannot serve as cross-run identifiers or
-correlation binding values. Gateway source IDs always use a private scan-local
-key because configuration can include short labels or bindings even if no
-accepted event uses that scope. The configured gateway label itself is written
+change across independent scans (unless a pseudonymization key file is
+configured) and cannot serve as correlation binding values. Gateway source IDs
+use the same private key because configuration can include short labels or
+bindings even if no accepted event uses that scope. The configured gateway label itself is written
 to findings; do not put secrets in labels. The engine shares that key across gateway
 jobs in one report, so duplicate sources retain one identity, and creates a new
-key for each scan. Direct connector instances use independent keys. Redacted scope scans are
-marked incomplete; gateway exports are noncomparable across independent runs.
+key for each scan unless a key file is configured. Direct connector instances use
+independent keys. Redacted scope scans are marked incomplete; without a key file,
+gateway exports are noncomparable across independent runs.
 Resolve the scope/credential overlap before interpreting a report comparison
 as evidence that a finding was resolved.
 
@@ -246,9 +248,9 @@ Gateway finding IDs include the canonical input path and relevant connector
 configuration (label, format, filters and bindings). This changes IDs from older
 reports. Repeating an identical configured source within one connector instance
 is idempotent for nonredacted principal/service callers; API-key callers and
-redacted scopes use connector-local HMAC IDs. Gateway exports are noncomparable
-across independent scans to avoid claiming that a missing scan-local ID is a
-resolved finding. Distinct exports retain
+redacted scopes use connector-local HMAC IDs. Without a pseudonymization key
+file, gateway exports are noncomparable across independent scans to avoid
+claiming that a missing scan-local ID is a resolved finding. Distinct exports retain
 separate provenance. Overlapping exports count observations from each source,
 so aggregate counts are not guaranteed to represent unique requests.
 
@@ -270,9 +272,9 @@ selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public
 digest does not hide guessable paths or labels; keep these settings nonsecret.
-Credential-bearing configurations omit the digest, and gateway exports cannot
-attest comparable scope because private caller/scope identities may change
-between scans.
+Credential-bearing configurations omit the digest, and gateway exports attest
+comparable scope only with a pseudonymization key file, because otherwise private
+caller/scope identities change between scans.
 
 Incomplete scans, changed scope, older reports without provenance, live provider
 collections and third-party connectors cannot establish equivalent coverage.
@@ -314,8 +316,9 @@ their lexical evidence and record a warning without marking the scan incomplete.
 A file whose comments, strings and regular-expression literals cannot be told
 apart from code (some minified bundles, or Python 3.12 f-string syntax when the
 scanner itself runs on Python 3.11) is reported as `incomplete source lexical
-analysis`: text after the ambiguous point cannot establish agent code, so the
-scan is incomplete. Run the scanner on Python 3.12 or later (the worker image
+analysis` and the scan is incomplete. The text the lexer cannot classify cannot
+establish agent code: in Python everything from the ambiguous point to the end
+of the file, in JavaScript the ambiguous literal or the rest of its line. Run the scanner on Python 3.12 or later (the worker image
 does) and exclude vendored build output with `exclude`.
 
 Denied or failed API requests and exhausted pagination mark collection incomplete.
