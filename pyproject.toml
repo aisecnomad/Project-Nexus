@@ -74,4 +74,13 @@ addopts = "-q"
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
-warn_unused_ignores = false
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_reexport = true
+strict_equality = true
+# warn_unreachable stays off: connectors deliberately re-check the shape of
+# untrusted provider data even where annotations already describe it.

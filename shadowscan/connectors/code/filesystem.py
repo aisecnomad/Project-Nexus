@@ -28,7 +28,7 @@ from typing import Any, ClassVar
 
 import yaml
 
-from shadowscan.connectors.base import BaseConnector, ConnectorError
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
@@ -335,7 +335,7 @@ class FilesystemConnector(BaseConnector):
     }
     offline_formats: ClassVar[str] = "n/a (path is the input)"
 
-    def __init__(self, ctx):
+    def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.max_file_size = int(ctx.get("max_file_size", 1_000_000))
         self.max_files = int(ctx.get("max_files", 100_000))
@@ -1388,7 +1388,7 @@ def _safe_source_text(rel: str, text: str) -> str:
             data = bounded_safe_load(text)
         else:
             return sanitize_text(text)
-        return sanitize((data, text))[1]
+        return str(sanitize((data, text))[1])
     except (YAMLResourceLimitError, SanitizationLimitError):
         # Resource-limit failures must reach the per-file isolation boundary;
         # lexical fallback would otherwise disguise an incomplete analysis.

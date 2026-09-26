@@ -163,8 +163,13 @@ def validate(config: dict[str, Any]) -> None:
         _require(not controls, "permission-denied runs use scope and classified denial rather than missing objects as evidence")
 
 
+def _sanitized(report: dict[str, Any]) -> dict[str, Any]:
+    clean: dict[str, Any] = sanitize(report)
+    return clean
+
+
 def load_config(path: Path) -> dict[str, Any]:
-    data = yaml.load(read_policy_text(path, max_bytes=1024 * 1024), Loader=_CanaryLoader)
+    data: dict[str, Any] = yaml.load(read_policy_text(path, max_bytes=1024 * 1024), Loader=_CanaryLoader)
     validate(data)
     if data["mode"] == "replay":
         source = Path(data["connector"]["input"])
@@ -283,7 +288,7 @@ def run(config: dict[str, Any]) -> dict[str, Any]:
     missing = _preflight(config)
     if missing:
         report.update(reason=missing, finished_at=now_iso())
-        return sanitize(report)
+        return _sanitized(report)
     settings = expand_env(dict(config["connector"]))
     name = settings.pop("name")
     # Engine and built-in connector safety options cannot be overridden by input.
@@ -299,7 +304,7 @@ def run(config: dict[str, Any]) -> dict[str, Any]:
             if path.stat().st_size > 64 * 1024 * 1024:
                 report.update(status="LIVE_FAIL" if config["mode"] == "live" else "REPLAY_FAIL",
                               reason="record_verification_budget_exceeded", finished_at=now_iso())
-                return sanitize(report)
+                return _sanitized(report)
             for line in path.read_text(encoding="utf-8").splitlines():
                 record = json.loads(line)
                 if isinstance(record, dict):
@@ -311,7 +316,7 @@ def run(config: dict[str, Any]) -> dict[str, Any]:
         report["finished_at"] = now_iso()
         report["collection_started_at"] = result.started_at
         report["collection_finished_at"] = result.finished_at
-    return sanitize(report)
+    return _sanitized(report)
 
 
 def main(argv: list[str] | None = None) -> int:

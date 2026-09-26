@@ -143,6 +143,11 @@ Redaction
 
 Operations
 
+- mypy runs with `disallow_untyped_defs`, `check_untyped_defs`,
+  `warn_return_any`, `strict_equality`, `no_implicit_reexport` and
+  `warn_unused_ignores`; the engine, CLI, GitHub/GitLab and cloud connectors
+  were restructured without output changes (verified against byte-for-byte
+  golden captures of every report format, CLI help and error scenario).
 - Optional `options.pseudonymization_key_file` (or
   `SHADOWSCAN_PSEUDONYMIZATION_KEY_FILE`): an owner-only key file that keeps
   gateway caller and scope pseudonyms, and gateway finding IDs, stable across
