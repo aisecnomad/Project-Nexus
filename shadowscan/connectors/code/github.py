@@ -179,12 +179,25 @@ class GitHubConnector(BaseConnector):
                     self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
                     return
                 data = self.http.try_get_json(f"/repos/{full}")
-                if data:
-                    if data["full_name"] not in seen:
-                        seen.add(data["full_name"])
-                        yield _remote_record(data)
-                else:
+                if not data:
                     self.ctx.warn(f"code.github: cannot access {full}", incomplete=True)
+                    continue
+                name = data.get("full_name") if isinstance(data, dict) else None
+                if (
+                    not isinstance(name, str)
+                    or name.count("/") != 1
+                    or not all(name.split("/"))
+                    or name.casefold() != str(full).casefold()
+                ):
+                    returned = name if isinstance(name, str) and len(name) <= 200 else "an invalid name"
+                    self.ctx.warn(
+                        f"code.github: explicit repository response ({returned}) does not match the requested name; "
+                        "the repository may have been renamed; coverage unknown"
+                    )
+                    continue
+                if name not in seen:
+                    seen.add(name)
+                    yield _remote_record(data)
         if org:
             for r in self.http.paginate_link(f"/orgs/{org}/repos", params={"per_page": 100, "type": "all", "sort": "pushed"}):
                 if r["full_name"] not in seen and self._wanted(r):
@@ -236,6 +249,9 @@ class GitHubConnector(BaseConnector):
                 yield _OfflineRepository({"full_name": child.name, "owner": {"login": child.name.split("__")[0] if "__" in child.name else child.name}}, str(child))
         except OSError:
             self.ctx.warn("code.github: could not enumerate offline clones")
+            return
+        if count == 0:
+            self.ctx.warn("code.github: offline input contains no clone directories")
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
