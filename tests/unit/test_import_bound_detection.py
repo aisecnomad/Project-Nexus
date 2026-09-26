@@ -212,3 +212,31 @@ def test_large_typescript_module_with_imports_completes(tmp_path, run_connector)
     (tmp_path / "big.ts").write_text(header + "import { Agent } from '@openai/agents';\n" + body)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.errors == [] and ctx.stats.incomplete is False
+
+
+def test_binder_limit_keeps_lexical_evidence_and_marks_the_file_incomplete(tmp_path, run_connector, monkeypatch):
+    from shadowscan.connectors.code import filesystem
+    from shadowscan.signatures.matcher import MatchTimeoutError
+
+    def exhausted(*_args, **_kwargs):
+        raise MatchTimeoutError("source binding call limit exceeded")
+
+    monkeypatch.setattr(filesystem, "bound_source_matches", exhausted)
+    (tmp_path / "bundle.js").write_text(
+        'import OpenAI from "openai";\nconst client = new OpenAI();\n'
+        'const r = await client.chat.completions.create({model: "gpt-4o", tools: [{type: "function", function: {name: "f"}}], tool_choice: "auto"});\n'
+    )
+    findings, ctx = scan(run_connector, tmp_path)
+    signals = {e.signal for f in findings for e in f.evidence}
+    assert any(s.startswith("code:") for s in signals), signals
+    assert any("import binding incomplete" in e for e in ctx.stats.errors)
+    assert ctx.stats.incomplete is True
+
+
+def test_unparseable_python_without_an_ai_library_is_never_an_agent(tmp_path, run_connector):
+    (tmp_path / "search.py").write_text(
+        'import urllib2\n\ndef google_search(query):\n    url = "https://www.example.com/search?q=" + query\n'
+        '    return urllib2.urlopen(url).read()\n\nif __name__ == "__main__":\n    print "results:", google_search("weather")\n'
+    )
+    findings, _ = scan(run_connector, tmp_path)
+    assert all(f.kind != Kind.AGENT for f in findings)

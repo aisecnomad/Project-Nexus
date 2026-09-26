@@ -34,7 +34,7 @@ from shadowscan.connectors.cloud.common import (
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
-from shadowscan.utils.http import HttpClient, HttpError, validate_url
+from shadowscan.utils.http import HttpClient, HttpError, diagnostic_url, validate_url
 from shadowscan.utils.text import get_path, truncate
 
 ARM = "https://management.azure.com"
@@ -77,6 +77,11 @@ class _ResourceBase(TypedDict):
     region: str | None
     owner: str | None
 
+
+
+def _diagnostic_path(path: str) -> str:
+    """Name a failed ARM page without its query (continuation tokens, versions)."""
+    return diagnostic_url(path) if "://" in path else path.split("?", 1)[0]
 
 class AzureConnector(BaseConnector):
     name: ClassVar[str] = "cloud.azure"
@@ -169,7 +174,7 @@ class AzureConnector(BaseConnector):
                 data = self._get(path, api, raise_on_failure=True)
             except (HttpError, RequestException, ValueError) as exc:
                 status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
-                self.ctx.warn(f"cloud.azure: list collection failed ({status}); coverage unknown", incomplete=True)
+                self.ctx.warn(f"cloud.azure: list collection failed for {_diagnostic_path(path)} ({status}); coverage unknown", incomplete=True)
                 break
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("value"), list):
                 self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)

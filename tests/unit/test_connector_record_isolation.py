@@ -94,3 +94,19 @@ def test_salesforce_flow_budget_failure_keeps_later_flows(index, monkeypatch):
     findings = list(connector.analyze(flows))
     assert [f.title for f in findings] == ["Salesforce flow with AI hints: Einstein GPT summary"]
     assert ctx.stats.incomplete is True
+
+
+def test_azure_list_failure_names_the_failing_collection(index):
+    from unittest.mock import Mock
+
+    from shadowscan.connectors.cloud.azure import AzureConnector
+    from shadowscan.utils.http import HttpError
+
+    ctx = context(index, "cloud.azure", input="x")
+    connector = AzureConnector(ctx)
+    connector.http = Mock()
+    path = "/subscriptions/11111111-2222-3333-4444-555555555555/providers/Microsoft.CognitiveServices/accounts"
+    connector.http.get_json.side_effect = HttpError(403, "https://management.azure.com" + path + "?api-version=1&$skiptoken=secret")
+    assert not connector._list(path + "?$skiptoken=abc", "2024-10-01")
+    assert len(ctx.stats.warnings) == 1
+    assert path in ctx.stats.warnings[0] and "skiptoken" not in ctx.stats.warnings[0]

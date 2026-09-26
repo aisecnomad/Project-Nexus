@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from threading import Event
 
 from shadowscan.connectors import ConnectorContext
@@ -21,19 +20,28 @@ def test_bare_exclude_names_apply_without_a_glob(tmp_path, run_connector):
     assert "secret" in {f.kind.value for f in findings}
 
 
-def test_expired_deadline_stops_the_file_walk_early(tmp_path, index):
+def test_cancellation_during_the_walk_stops_it_instead_of_recording_per_file_errors(tmp_path, index):
+    import pytest
+
+    from shadowscan.connectors.base import ConnectorError
+
     for i in range(40):
-        (tmp_path / f"m{i}.py").write_text("import os\n")
+        (tmp_path / f"m{i:02d}.py").write_text("import os\n")
     cancelled = Event()
-    cancelled.set()
-    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index,
-                           deadline=time.monotonic() - 1, cancelled=cancelled)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index, cancelled=cancelled)
     ctx.stats = ScanStats(connector="code.filesystem", started_at="2026-09-25T00:00:00Z")
-    findings = FilesystemConnector(ctx).run()
-    assert findings == []
-    assert ctx.stats.incomplete is True
-    assert not any("file analysis incomplete (ConnectorError)" in error for error in ctx.stats.errors)
-    assert ctx.stats.objects_examined <= 1
+    real_examined = ctx.examined
+
+    def examined(n: int = 1) -> None:
+        real_examined(n)
+        cancelled.set()  # cancel once the walk has started
+
+    ctx.examined = examined  # type: ignore[method-assign]
+    connector = FilesystemConnector(ctx)
+    with pytest.raises(ConnectorError):
+        list(connector.scan_tree(tmp_path))
+    assert not any("(ConnectorError)" in error for error in ctx.stats.errors)
+    assert ctx.stats.objects_examined <= 2
 
 
 def test_default_directory_excludes_do_not_skip_files_with_the_same_name(tmp_path, run_connector):

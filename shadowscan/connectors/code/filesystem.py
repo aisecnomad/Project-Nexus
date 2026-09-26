@@ -50,7 +50,7 @@ from shadowscan.connectors.code.source_semantics import SourceBindingUnavailable
 from shadowscan.connectors.common import apply_matches, finalize, looks_like_placeholder
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
-from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, language_for_path
+from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
@@ -621,27 +621,38 @@ class FilesystemConnector(BaseConnector):
                             self.index.match_code(content_text, lang, ignore_spans=ignored)
                             if ignored else self.index.match_code(content_text, lang)
                         )
+                        has_binder = lang in {"python", "javascript"}
                         bound: list[Match] | None = None
+                        binder_limited = False
                         if lang in {"python", "javascript"}:
                             try:
                                 bound = bound_source_matches(self.index, content_text, lang, ignored)
                             except SourceBindingUnavailable:
                                 # Grammar this interpreter cannot parse (for
                                 # example newer Python syntax) must not erase
-                                # agent evidence. Fall back to the lexical rules
-                                # used for languages without an import binder.
+                                # agent evidence; lexical evidence is kept.
                                 self.ctx.warn(
                                     f"code.filesystem: {rel}: source could not be parsed for import binding; "
                                     "lexical evidence retained", incomplete=False,
                                 )
+                            except MatchTimeoutError as exc:
+                                # A binder limit leaves this file incomplete,
+                                # but its lexical evidence is still recorded.
+                                self.ctx.error(f"code.filesystem: {rel}: import binding incomplete ({type(exc).__name__}: {exc})")
+                                binder_limited = True
                         for m in code_matches:
-                            if bound is not None:
-                                if m.signature.category == "framework":
-                                    continue  # bound calls below establish the library
+                            if (bound is not None or binder_limited) and m.signature.category == "framework":
+                                # Bound calls establish the library. A binder that
+                                # hit a limit proves nothing, so unverified
+                                # constructors are not agent evidence either.
+                                continue
+                            if has_binder and m.signature.category != "framework":
+                                # Only an import-bound constructor proves an
+                                # agent in Python/JavaScript, bound or not.
                                 m.extra["verified_agent"] = False
                             else:
-                                # Other languages have lexical filtering but
-                                # no import binder. Their code signatures need
+                                # Framework matches without binding, and every
+                                # match in languages without a binder, need
                                 # corroborating library evidence at emit time.
                                 m.extra["lexical_source"] = lang
                             record_content_match(m, excerpt(m.line))
