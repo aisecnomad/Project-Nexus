@@ -220,7 +220,7 @@ class ScanConfig:
     connector_timeout_seconds: float = 120.0
     job_deadline_seconds: float | None = None  # CLI process deadline; embedding callers own supervision
     risk_basis: str = "combined"
-    risk_weights: dict[str, Any] = field(default_factory=dict)
+    risk_weights: dict[str, Any] | None = field(default_factory=dict)
     source: str | None = None
     # Constructor-only compatibility: never retain stale alias state that could
     # overwrite a later CLI or library update to the canonical setting.

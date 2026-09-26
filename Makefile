@@ -53,6 +53,7 @@ evaluate: ## Run the bundled detection regression corpora
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/public_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/realistic_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/field_review_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
 		--annotations tools/evaluation/independent_annotations.json
 

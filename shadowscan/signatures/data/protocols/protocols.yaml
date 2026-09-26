@@ -66,7 +66,13 @@ signatures:
         patterns: ['^[^\S\r\n]*using\s+ModelContextProtocol\b']
         weight: 0.9
       - type: code
-        patterns: ['\bFastMCP\s*\(', '@mcp\.tool\b', '@server\.(?:tool|list_tools|call_tool)\b', '\bnew\s+McpServer\s*\(', '\bserver\.(?:tool|registerTool)\s*\(', '\bStdioServerTransport\s*\(', '\bStreamableHTTPServerTransport\s*\(', '\bSSEServerTransport\s*\(', '\bstdio_server\s*\(', '\bSseServerTransport\s*\(', '\bStreamableHTTPSessionManager\s*\(', '\bMcpServer\.Create\s*\(', '\bserver\.NewMCPServer\s*\(', '\[McpServerTool', '\bMultiServerMCPClient\s*\(', '\bClientSession\s*\(', '\bstdio_client\s*\(', '\bstreamablehttp_client\s*\(', '\bsse_client\s*\(', '\bMCPServerStdio\s*\(', '\bMCPServerStreamableHttp\s*\(', '\bMcpToolset\s*\(', '\bMCPClient\s*\(', '\bmcp\.run\s*\(']
+        patterns: ['\bFastMCP\s*\(', '@mcp\.tool\b', '@server\.(?:tool|list_tools|call_tool)\b', '\bnew\s+McpServer\s*\(', '\bserver\.(?:tool|registerTool)\s*\(', '\bStdioServerTransport\s*\(', '\bStreamableHTTPServerTransport\s*\(', '\bSSEServerTransport\s*\(', '\bstdio_server\s*\(', '\bSseServerTransport\s*\(', '\bStreamableHTTPSessionManager\s*\(', '\bMcpServer\.Create\s*\(', '\bserver\.NewMCPServer\s*\(', '\[McpServerTool', '\bMultiServerMCPClient\s*\(', '\bstdio_client\s*\(', '\bstreamablehttp_client\s*\(', '\bsse_client\s*\(', '\bMCPServerStdio\s*\(', '\bMCPServerStreamableHttp\s*\(', '\bMcpToolset\s*\(', '\bMCPClient\s*\(', '\bmcp\.run\s*\(']
+        weight: 0.9
+      - type: code
+        # aiohttp.ClientSession is one of the most common classes in async Python.
+        # Counted only with other library evidence of this signature in the project.
+        ambiguous: true
+        patterns: ['\bClientSession\s*\(']
         weight: 0.9
       - type: code
         patterns: ['"mcpServers"\s*:', '"mcp"\s*:\s*\{\s*"servers"', '^[^\S\r\n]*mcpServers\s*:', '\[mcp_servers\.[A-Za-z0-9_-]+\]', '\[mcp\.servers\.[A-Za-z0-9_-]+\]']
@@ -130,7 +136,13 @@ signatures:
         patterns: ['from\s+["'']@a2a-js/sdk']
         weight: 0.95
       - type: code
-        patterns: ['\bAgentCard\s*\(', '\bAgentSkill\s*\(', '\bA2AStarletteApplication\s*\(', '\bA2AFastAPIApplication\s*\(', '\bDefaultRequestHandler\s*\(', '\bA2AClient\s*\(', '\bA2ACardResolver\s*\(', '\bRemoteA2aAgent\s*\(', '"protocolVersion"\s*:\s*"0\.\d', '/\.well-known/agent(?:-card)?\.json']
+        patterns: ['\bA2AStarletteApplication\s*\(', '\bA2AFastAPIApplication\s*\(', '\bA2AClient\s*\(', '\bA2ACardResolver\s*\(', '\bRemoteA2aAgent\s*\(', '"protocolVersion"\s*:\s*"0\.\d', '/\.well-known/agent(?:-card)?\.json']
+        weight: 0.9
+      - type: code
+        # Agent cards and skills are UI and contact-center vocabulary; DefaultRequestHandler is a generic server name.
+        # Counted only with other library evidence of this signature in the project.
+        ambiguous: true
+        patterns: ['\bAgentCard\s*\(', '\bAgentSkill\s*\(', '\bDefaultRequestHandler\s*\(']
         weight: 0.9
       - type: file
         globs: [".well-known/agent.json", ".well-known/agent-card.json", "**/.well-known/agent.json", "**/.well-known/agent-card.json", "agent-card.json", "agent_card.json", "**/agent-card.json", "**/agent_card.json"]

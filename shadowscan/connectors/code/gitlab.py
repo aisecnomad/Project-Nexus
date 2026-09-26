@@ -168,9 +168,9 @@ class GitLabConnector(BaseConnector):
         variables = [{k: v for k, v in var.items() if k != "value"} for var in self._optional_list(f"/groups/{gid}/variables")]
         if variables:
             yield _GitLabMetadata("group_variables", {"group": group, "variables": variables})
-        group = self.http.try_get_json(f"/groups/{gid}")
-        if isinstance(group, dict) and (group.get("duo_features_enabled") is not None):
-            yield _GitLabMetadata("duo", {"group": group.get("full_path"), "duo_features_enabled": group.get("duo_features_enabled"), "lock_duo_features_enabled": group.get("lock_duo_features_enabled")})
+        group_details = self.http.try_get_json(f"/groups/{gid}")
+        if isinstance(group_details, dict) and (group_details.get("duo_features_enabled") is not None):
+            yield _GitLabMetadata("duo", {"group": group_details.get("full_path"), "duo_features_enabled": group_details.get("duo_features_enabled"), "lock_duo_features_enabled": group_details.get("lock_duo_features_enabled")})
 
     def _optional_list(self, path: str) -> Iterator[dict[str, Any]]:
         try:

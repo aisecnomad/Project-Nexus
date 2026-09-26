@@ -203,6 +203,33 @@ def test_issue_template_index_lists_every_form() -> None:
     assert ADVISORY_URL in index, "the issue index must route security reports to the private advisory"
 
 
+class _MkDocsLoader(yaml.SafeLoader):
+    """Reads mkdocs.yml, ignoring Material's ``!!python/name`` tags."""
+
+
+_MkDocsLoader.add_multi_constructor("tag:yaml.org,2002:python/name:", lambda loader, suffix, node: None)
+
+
+def _nav_pages(entries: Any) -> Iterator[str]:
+    if isinstance(entries, str):
+        yield entries
+    elif isinstance(entries, list):
+        for entry in entries:
+            yield from _nav_pages(entry)
+    elif isinstance(entries, dict):
+        for value in entries.values():
+            yield from _nav_pages(value)
+
+
+def test_every_documentation_page_is_reachable_from_the_site_navigation() -> None:
+    """A page missing from the nav is built but unreachable on the published site."""
+    config = yaml.load(_read(ROOT / "mkdocs.yml"), Loader=_MkDocsLoader)  # a SafeLoader subclass
+    listed = set(_nav_pages(config["nav"]))
+    pages = {path.relative_to(ROOT / "docs").as_posix() for path in (ROOT / "docs").rglob("*.md")}
+    assert not pages - listed, f"docs pages missing from the mkdocs nav: {sorted(pages - listed)}"
+    assert not listed - pages, f"mkdocs nav entries without a page: {sorted(listed - pages)}"
+
+
 # --- Community profile ---------------------------------------------------------
 
 
@@ -382,9 +409,11 @@ def test_pre_commit_hooks_select_files_with_types_or() -> None:
 
 def test_dev_extra_is_fully_pinned_for_ci() -> None:
     """CI installs [dev] under constraints; an unpinned name floats from the live index."""
+    # CI constrains the [dev] install with both runtime and build-backend locks.
     pinned = {
         name.lower().replace("_", "-")
-        for text in (_read(ROOT / "requirements-ci-constraints.txt"), _read(ROOT / "requirements.lock"))
+        for text in (_read(ROOT / "requirements-ci-constraints.txt"), _read(ROOT / "requirements.lock"),
+                     _read(ROOT / "requirements-build.lock"))
         for name in re.findall(r"^([A-Za-z0-9_.-]+)==", text, re.MULTILINE)
     }
     for requirement in _pyproject()["project"]["optional-dependencies"]["dev"]:

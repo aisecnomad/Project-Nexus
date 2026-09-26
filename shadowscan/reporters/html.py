@@ -75,7 +75,7 @@ def render_html(result: ScanResult) -> str:
     parts.append("</div>")
     surfaces = sorted(s["by_surface"])
     parts.append("<div class='controls'><input id='q' aria-label='Filter findings' placeholder='filter…' size='40'>")
-    parts.append("<select id='lvl' aria-label='Risk level'><option value=''>all risk levels</option>" + "".join(f"<option value='{l}'>{l}</option>" for l in ("critical", "high", "medium", "low", "info")) + "</select>")
+    parts.append("<select id='lvl' aria-label='Risk level'><option value=''>all risk levels</option>" + "".join(f"<option value='{level}'>{level}</option>" for level in ("critical", "high", "medium", "low", "info")) + "</select>")
     parts.append("<select id='sf' aria-label='Surface'><option value=''>all surfaces</option>" + "".join(f"<option value='{_e(x)}'>{_e(x)}</option>" for x in surfaces) + "</select>")
     parts.append("<select id='sh' aria-label='Shadow status'><option value=''>shadow: any</option><option value='yes'>shadow only</option><option value='no'>registered only</option></select>")
     parts.append("<span class='muted' role='status' style='align-self:center'>showing <span id='shown'></span> findings</span></div>")

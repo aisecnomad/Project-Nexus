@@ -63,8 +63,9 @@ and requires current scanner source/signature fingerprints. Evaluation output ha
 no execution timestamp, so `evaluated_at` is explicitly an operator declaration.
 
 The verifier rejects a holdout that repeats an exact file's bytes or recorded
-repository/commit/path from the five bundled evaluated corpora: synthetic,
-public, realistic multi-file, AI-labeled independent, and September 25 review.
+repository/commit/path from the six bundled evaluated corpora: synthetic,
+public, realistic multi-file, AI-labeled independent, September 25 review and
+field review.
 Both this verifier and `tools.evaluation.accept` use the same source-overlap
 validator. They reject repeated nonblank file contents and source locations
 across holdout cases, including renamed copies and partial overlap between

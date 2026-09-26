@@ -97,12 +97,18 @@ nav:
   - Operations:
       - Production deployment: production.md
       - Evaluation: evaluation.md
+      - Assurance results (2026-09-24): assurance-results.md
+      - Tenant canaries: canaries.md
       - CI integration: operations/ci.md
   - Community: community.md
   - Development:
       - Contributing: contributing.md
       - Governance: governance.md
-      - ADRs: adrs/index.md
+      - ADRs:
+          - adrs/index.md
+          - "ADR-001: Connector architecture": adrs/001-connector-architecture.md
+          - "ADR-002: Offline-first connectors": adrs/002-offline-first-connectors.md
+          - "ADR-003: Evidence-based confidence": adrs/003-evidence-based-confidence.md
   - Security: security.md
   - Changelog: changelog.md
 

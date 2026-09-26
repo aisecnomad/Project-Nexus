@@ -194,7 +194,7 @@ def parse_pyproject(text: str) -> ManifestResult:
         for spec in _sequence(specs, res, "project.optional-dependencies group"):
             if isinstance(spec, str) and (n := _pep508_name(spec)):
                 res.deps.append(Dep("pypi", n, spec, dev=group in {"dev", "test", "tests", "lint"}))
-    for group, specs in _mapping(data.get("dependency-groups"), res, "dependency-groups").items():
+    for specs in _mapping(data.get("dependency-groups"), res, "dependency-groups").values():
         for spec in _sequence(specs, res, "dependency-groups group"):
             if isinstance(spec, str) and (n := _pep508_name(spec)):
                 res.deps.append(Dep("pypi", n, spec, dev=True))
@@ -203,7 +203,7 @@ def parse_pyproject(text: str) -> ManifestResult:
     for name, spec in _mapping(poetry.get("dependencies"), res, "tool.poetry.dependencies").items():
         if name.lower() != "python":
             res.deps.append(Dep("pypi", name, json.dumps(spec) if not isinstance(spec, str) else spec))
-    for gname, group in _mapping(poetry.get("group"), res, "tool.poetry.group").items():
+    for group in _mapping(poetry.get("group"), res, "tool.poetry.group").values():
         for name, spec in _mapping(_mapping(group, res, "tool.poetry.group entry").get("dependencies"), res, "group.dependencies").items():
             res.deps.append(Dep("pypi", name, str(spec), dev=True))
     for name, spec in _mapping(poetry.get("dev-dependencies"), res, "tool.poetry.dev-dependencies").items():

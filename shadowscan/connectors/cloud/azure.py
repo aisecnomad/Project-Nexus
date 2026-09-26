@@ -144,7 +144,7 @@ class AzureConnector(BaseConnector):
             self.ctx.warn(f"cloud.azure: {status} for {path}; coverage unknown", incomplete=True)
             return None
 
-    def _list(self, path: str, api: str, *, allow_partial: bool = False) -> list[dict[str, Any]] | None:
+    def _list(self, path: str, api: str, *, allow_partial: bool = False) -> list[Any] | None:
         """Keep observed ARM resources; strict callers require complete coverage.
 
         Failed collection always marks the scan incomplete. Diagnostic posture
@@ -196,7 +196,7 @@ class AzureConnector(BaseConnector):
         ]
         if not subs:
             raise ConnectorError("cloud.azure: no subscriptions visible")
-        rows: list[dict[str, Any]] = []
+        rows: list[Any] = []  # ARM responses are untrusted; every row is checked below
         skip_token = None
         seen_tokens: set[str] = set()
         for _ in range(1000):
@@ -406,7 +406,7 @@ class AzureConnector(BaseConnector):
                 f.add_tag("api-key-auth-enabled")
             if props.get("publicNetworkAccess", "Enabled") == "Enabled":
                 f.add_tag("public-network")
-            if diag is not None and not any(any(l.get("enabled") for l in (d.get("properties") or {}).get("logs") or []) for d in diag):
+            if diag is not None and not any(any(entry.get("enabled") for entry in (d.get("properties") or {}).get("logs") or []) for d in diag):
                 f.add_tag("no-diagnostic-logging")
                 f.add_evidence(Evidence(signal="azure:no-diagnostics", description="No diagnostic setting sends request logs anywhere — usage is not auditable", weight=0.1))
             f.metadata["diagnostic_logging_status"] = "unknown" if diag is None else "observed"

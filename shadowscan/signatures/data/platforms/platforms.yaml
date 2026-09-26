@@ -314,7 +314,13 @@ signatures:
         names: ["Microsoft.Agents.CopilotStudio.Client", "Microsoft.Agents.AI.CopilotStudio"]
         weight: 0.95
       - type: code
-        patterns: ['\bCopilotStudioClient\s*\(', '\bCopilotStudioAgent\s*\(', '\bCopilotClient\s*\(', 'copilotstudio\.microsoft\.com', '\bPowerVirtualAgents\b', '\bpva\.(?:bot|topic)\b', 'kind:\s*(?:AdaptiveDialog|GptComponentMetadata|OnRecognizedIntent|CustomTopic)', '^[^\S\r\n]*kind:\s*(?:BotVariableDefinition|TaskDialog|ConversationalTopic)']
+        patterns: ['\bCopilotStudioClient\s*\(', '\bCopilotStudioAgent\s*\(', 'copilotstudio\.microsoft\.com', '\bPowerVirtualAgents\b', '\bpva\.(?:bot|topic)\b', 'kind:\s*(?:AdaptiveDialog|GptComponentMetadata|OnRecognizedIntent|CustomTopic)', '^[^\S\r\n]*kind:\s*(?:BotVariableDefinition|TaskDialog|ConversationalTopic)']
+        weight: 0.85
+      - type: code
+        # The GitHub Copilot SDK also defines CopilotClient.
+        # Counted only with other library evidence of this signature in the project.
+        ambiguous: true
+        patterns: ['\bCopilotClient\s*\(']
         weight: 0.85
       - type: env
         names: [COPILOTSTUDIOAGENT__SCHEMANAME, COPILOTSTUDIOAGENT__ENVIRONMENTID, COPILOTSTUDIOAGENT__TENANTID, COPILOTSTUDIOAGENT__APPCLIENTID, COPILOT_STUDIO_ENVIRONMENT_ID, COPILOT_STUDIO_SCHEMA_NAME]

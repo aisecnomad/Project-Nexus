@@ -35,6 +35,14 @@ MAX_BOUND_CALLS = 512
 MAX_CALL_TEXT = 8192
 
 
+class SourceBudgetExceeded(MatchTimeoutError):
+    """A file exceeded a structural analysis budget (AST nodes or nesting depth).
+
+    Unlike a matching deadline, this is a property of the file itself: callers
+    keep its lexical evidence and report the import-bound analysis as partial.
+    """
+
+
 @dataclass(frozen=True)
 class _Binding:
     module: str
@@ -92,13 +100,19 @@ _TOOL_REQUEST_METHODS = re.compile(
 _TOOL_ARGUMENTS = re.compile(r"(?<![\w$])(?:tools|toolConfig|functions|function_declarations)\s*[=:]")
 # Import-bound request calls whose response shape the loop recognizer understands.
 _LOOP_REQUESTS: dict[str, tuple[str, frozenset[str]]] = {
+    # Plain, raw-response (``.parse()`` returns the message) and streaming
+    # (``get_final_message()`` / ``get_final_completion()``) request forms.
     "openai": ("provider.openai", frozenset({
-        f"{client}.chat.completions.create" for client in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI")
+        f"{client}.{api}chat.completions.{method}"
+        for client in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI")
+        for api in ("", "beta.")
+        for method in ("create", "with_raw_response.create", "stream")
     })),
     "anthropic": ("provider.anthropic", frozenset({
-        f"{client}.{api}messages.create"
+        f"{client}.{api}messages.{method}"
         for client in ("Anthropic", "AsyncAnthropic", "AnthropicBedrock", "AsyncAnthropicBedrock", "AnthropicVertex", "AsyncAnthropicVertex")
         for api in ("", "beta.")
+        for method in ("create", "with_raw_response.create", "stream")
     })),
 }
 # Keyword arguments that evidence a specific capability of a bound construction.
@@ -194,7 +208,7 @@ class _PythonBindings(ast.NodeVisitor):
         binding = self._resolve(node.func)
         if binding and (self.relevant is None or self.relevant(binding)):
             if len(self.calls) >= MAX_BOUND_CALLS:
-                raise MatchTimeoutError("source binding call limit exceeded")
+                raise SourceBudgetExceeded("source binding call limit exceeded")
             start = self._offset(node.func.end_lineno or node.lineno, node.func.end_col_offset or 0)
             end = self._offset(node.end_lineno or node.lineno, node.end_col_offset or 0)
             keywords = " ".join(f"{keyword.arg}=" for keyword in node.keywords if keyword.arg)
@@ -372,12 +386,13 @@ class _PythonBindings(ast.NodeVisitor):
 
 
 def _python_bindings(
-    text: str, relevant: Callable[[_Binding], bool] | None = None,
+    text: str, relevant: Callable[[_Binding], bool] | None = None, max_nodes: int | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
+    limit = MAX_AST_NODES if max_nodes is None else max_nodes
     for count, _ in enumerate(ast.walk(tree)):
-        if count >= MAX_AST_NODES:
-            raise MatchTimeoutError("source binding AST limit exceeded")
+        if count >= limit:
+            raise SourceBudgetExceeded("source binding AST limit exceeded")
     visitor = _PythonBindings(text, relevant)
     visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
@@ -473,7 +488,7 @@ def _javascript_bindings(
         if relevant is not None and not relevant(binding):
             continue
         if len(calls) >= MAX_BOUND_CALLS:
-            raise MatchTimeoutError("source binding call limit exceeded")
+            raise SourceBudgetExceeded("source binding call limit exceeded")
         opening = match.end() - 1
         depth, end = 1, opening + 1
         while end < min(len(masked), opening + MAX_CALL_TEXT) and depth:
@@ -489,7 +504,7 @@ def _javascript_bindings(
 
 def bound_source_matches(
     index: SignatureIndex, text: str, language: str, ignored: list[tuple[int, int]],
-    *, is_local_module: Callable[[str], bool] | None = None,
+    *, is_local_module: Callable[[str], bool] | None = None, max_ast_nodes: int | None = None,
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
@@ -503,11 +518,11 @@ def bound_source_matches(
         if binding not in module_cache:
             if language == "python":
                 statement = f"from {binding.module} import {binding.symbol.split('.')[0]}" if binding.symbol else f"import {binding.module}"
-                matches = index.match_imports(statement, language)
+                matches = list(index.match_import_statement(statement, language))
                 if matches and is_local_module is not None and is_local_module(binding.module):
                     matches = []
             else:
-                matches = index.match_imports(f"import {{ example }} from '{binding.module}'", language)
+                matches = list(index.match_import_statement(f"import {{ example }} from '{binding.module}'", language))
                 matches += index.match_dependency("npm", binding.module)
                 if binding.module.startswith("@langchain/langgraph"):
                     matches = [m for m in matches if m.signature_id != "framework.langchain"]
@@ -520,11 +535,11 @@ def bound_source_matches(
     tree = None
     try:
         if language == "python":
-            calls, imports, tree = _python_bindings(text, relevant)
+            calls, imports, tree = _python_bindings(text, relevant, max_ast_nodes)
         else:
             calls, imports = _javascript_bindings(text, ignored, relevant)
     except RecursionError as exc:
-        raise MatchTimeoutError("source binding recursion limit exceeded") from exc
+        raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
     except (SyntaxError, ValueError):
         return []
 
@@ -535,10 +550,13 @@ def bound_source_matches(
                                extra={"verified_agent": False}))
         # Some signatures describe capabilities conveyed by a particular
         # imported tool. Retain those as supporting evidence, never an agent.
-        if language == "python":
+        resolved = {m.signature_id for m in module_matches(binding)}
+        if language == "python" and resolved:
+            # Only matches of signatures this import resolves to are kept, so
+            # an unresolved import (most of them) needs no code pass at all.
             statement = f"from {binding.module} import {binding.symbol}" if binding.symbol else f"import {binding.module}"
             for match in index.match_code(statement, language):
-                if match.signature_id in {m.signature_id for m in module_matches(binding)}:
+                if match.signature_id in resolved:
                     match.line = line
                     match.extra["verified_agent"] = False
                     found.append(match)

@@ -40,7 +40,13 @@ signatures:
         patterns: ['^[^\S\r\n]*(?:from|import)\s+bedrock_agentcore\b']
         weight: 0.95
       - type: code
-        patterns: ['\.client\(\s*["'']bedrock-agent(?:-runtime)?["'']', '\.client\(\s*["'']bedrock-agentcore(?:-control)?["'']', '\binvoke_agent\s*\(', '\bInvokeAgentCommand\b', '\bInvokeAgentRuntimeCommand\b', '\binvoke_agent_runtime\s*\(', '\binvoke_inline_agent\s*\(', '\binvoke_flow\s*\(', '\bBedrockAgentCoreApp\s*\(', '\bcreate_agent\s*\(\s*agentName\s*=', '\bcreate_agent_runtime\s*\(', '\bcreate_agent_action_group\s*\(', '\bBedrockAgentRuntimeClient\s*\(', '\bAgentCoreMemory', '\bagentcore\s+(?:configure|launch|deploy)\b']
+        patterns: ['\.client\(\s*["'']bedrock-agent(?:-runtime)?["'']', '\.client\(\s*["'']bedrock-agentcore(?:-control)?["'']', '\bInvokeAgentCommand\b', '\bInvokeAgentRuntimeCommand\b', '\binvoke_agent_runtime\s*\(', '\binvoke_inline_agent\s*\(', '\bBedrockAgentCoreApp\s*\(', '\bcreate_agent\s*\(\s*agentName\s*=', '\bcreate_agent_runtime\s*\(', '\bcreate_agent_action_group\s*\(', '\bBedrockAgentRuntimeClient\s*\(', '\bAgentCoreMemory', '\bagentcore\s+(?:configure|launch|deploy)\b']
+        weight: 0.9
+      - type: code
+        # invoke_agent / invoke_flow are generic function names outside boto3.
+        # Counted only with other library evidence of this signature in the project.
+        ambiguous: true
+        patterns: ['\binvoke_agent\s*\(', '\binvoke_flow\s*\(']
         weight: 0.9
       - type: iac
         values: [aws_bedrockagent_agent, aws_bedrockagent_agent_alias, aws_bedrockagent_agent_action_group, aws_bedrockagent_agent_knowledge_base_association, aws_bedrockagent_agent_collaborator, aws_bedrockagent_knowledge_base, aws_bedrockagent_data_source, aws_bedrockagent_flow, aws_bedrockagent_prompt, aws_bedrockagentcore_agent_runtime, aws_bedrockagentcore_agent_runtime_endpoint, aws_bedrockagentcore_gateway, aws_bedrockagentcore_gateway_target, aws_bedrockagentcore_workload_identity, "AWS::Bedrock::Agent", "AWS::Bedrock::AgentAlias", "AWS::Bedrock::KnowledgeBase", "AWS::Bedrock::DataSource", "AWS::Bedrock::Flow", "AWS::Bedrock::FlowAlias", "AWS::Bedrock::Prompt", "AWS::BedrockAgentCore::Runtime", "AWS::BedrockAgentCore::RuntimeEndpoint", "AWS::BedrockAgentCore::Gateway", "AWS::BedrockAgentCore::GatewayTarget", "AWS::BedrockAgentCore::WorkloadIdentity"]
@@ -137,7 +143,13 @@ signatures:
         patterns: ['^[^\S\r\n]*(?:from|import)\s+azure\.ai\.(?:projects|agents)\b']
         weight: 0.95
       - type: code
-        patterns: ['\bAIProjectClient\s*\(', '\bAgentsClient\s*\(', '\bPersistentAgentsClient\s*\(', '\.agents\.create_agent\s*\(', '\bcreate_agent\s*\(\s*model\s*=', '\bAzureAIAgent\s*\(', '\bAzureAIAgentClient\s*\(', '\bAgentsClient\.Administration\.CreateAgent', '/agents\?api-version=', '\bAzureFunctionTool\s*\(', '\bOpenApiTool\s*\(']
+        patterns: ['\bAIProjectClient\s*\(', '\bPersistentAgentsClient\s*\(', '\.agents\.create_agent\s*\(', '\bAzureAIAgent\s*\(', '\bAzureAIAgentClient\s*\(', '\bAgentsClient\.Administration\.CreateAgent', '/agents\?api-version=', '\bAzureFunctionTool\s*\(']
+        weight: 0.9
+      - type: code
+        # LangChain also exposes create_agent(model=...); AgentsClient and OpenApiTool are shared names.
+        # Counted only with other library evidence of this signature in the project.
+        ambiguous: true
+        patterns: ['\bAgentsClient\s*\(', '\bcreate_agent\s*\(\s*model\s*=', '\bOpenApiTool\s*\(']
         weight: 0.9
       - type: code
         patterns: ['\bBingGroundingTool\s*\(', '\bBingCustomSearchTool\s*\(']

@@ -24,7 +24,12 @@ installed apps per team (capped by `max_teams`).
 ### `saas.github-apps`
 Org installations with permissions and repository selection (AI reviewers,
 coding agents), Copilot billing/seat settings, fine-grained PATs approved for
-the org.
+the org. An installation is reported when it matches an AI signature or has an
+AI-like name; write access alone does not make an app an agent. Set
+`include_unrecognized_apps: true` to also report other write-capable apps,
+tagged `unrecognized-app` and capped at possible confidence. `workflows` or
+`actions` write access implies `code-exec`; contents and pull-request writes
+are SaaS write actions.
 
 ### `saas.atlassian` · `saas.notion` · `saas.zoom`
 UPM user-installed apps (Jira/Confluence) and Notion bot users. Zoom's

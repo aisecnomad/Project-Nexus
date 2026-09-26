@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "metadata": {
+    "name": "September 2026 field review regressions",
+    "type": "synthetic",
+    "provenance": "Authored after a field review of public repositories (discord.py, anthropic-quickstarts, modelcontextprotocol/servers, crewAI-examples). Each case re-creates a pattern observed there in original code; none is copied from those projects. A regression suite, not independent annotation, a held-out set, or field accuracy."
+  },
+  "cases": [
+    {
+      "id": "aiohttp-client-is-not-mcp",
+      "family": "protocol",
+      "description": "An aiohttp.ClientSession HTTP client (as in discord.py) is not an MCP ClientSession.",
+      "files": {
+        "http.py": "import aiohttp\n\n\nclass HTTPClient:\n    async def start(self):\n        self.session = aiohttp.ClientSession(headers={\"User-Agent\": \"bot\"})\n",
+        "requirements.txt": "aiohttp>=3.9\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "protocol.mcp"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "react-agent-card-is-not-a2a",
+      "family": "protocol",
+      "description": "A real-estate UI component named AgentCard is not an A2A agent card.",
+      "files": {
+        "src/AgentCard.jsx": "export function AgentCard({ agent }) {\n  return <div className=\"card\">{agent.name}</div>;\n}\n",
+        "package.json": "{\"dependencies\": {\"react\": \"^18.3.1\"}}"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "protocol.a2a"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "call-center-invoke-agent-is-not-bedrock",
+      "family": "cloud",
+      "description": "A contact-center function named invoke_agent routes calls to human agents.",
+      "files": {
+        "routing.py": "QUEUE = {}\n\n\ndef invoke_agent(agent_id, call):\n    QUEUE.setdefault(agent_id, []).append(call)\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "cloud.aws-bedrock-agents"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "mcp-client-session-is-bound",
+      "family": "protocol",
+      "description": "ClientSession imported from the MCP SDK remains MCP evidence.",
+      "files": {
+        "client.py": "from mcp import ClientSession\nfrom mcp.client.stdio import stdio_client\n\n\nasync def main(params):\n    async with stdio_client(params) as (read, write):\n        async with ClientSession(read, write) as session:\n            await session.initialize()\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "protocol.mcp"
+      },
+      "present": true
+    },
+    {
+      "id": "anthropic-raw-response-tool-loop",
+      "family": "agent",
+      "description": "A tool loop using with_raw_response.create(...).parse(), as in the computer-use demo.",
+      "files": {
+        "agent.py": "import subprocess\n\nimport anthropic\n\nclient = anthropic.Anthropic()\ntools = [{\"name\": \"bash\", \"description\": \"Run a command\", \"input_schema\": {\"type\": \"object\", \"properties\": {}}}]\nmessages = [{\"role\": \"user\", \"content\": \"Tidy the build directory\"}]\nwhile True:\n    raw = client.beta.messages.with_raw_response.create(model=\"m\", max_tokens=512, tools=tools, messages=messages)\n    resp = raw.parse()\n    messages.append({\"role\": \"assistant\", \"content\": resp.content})\n    if resp.stop_reason != \"tool_use\":\n        break\n    results = []\n    for block in resp.content:\n        if block.type == \"tool_use\":\n            out = subprocess.run(block.input[\"cmd\"], shell=True, capture_output=True, text=True).stdout\n            results.append({\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": out})\n    messages.append({\"role\": \"user\", \"content\": results})\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.anthropic"
+      },
+      "present": true
+    },
+    {
+      "id": "anthropic-streaming-tool-loop",
+      "family": "agent",
+      "description": "A tool loop using messages.stream(...) and get_final_message().",
+      "files": {
+        "agent.py": "import subprocess\n\nimport anthropic\n\nclient = anthropic.Anthropic()\ntools = [{\"name\": \"bash\", \"description\": \"Run a command\", \"input_schema\": {\"type\": \"object\", \"properties\": {}}}]\nmessages = [{\"role\": \"user\", \"content\": \"Tidy the build directory\"}]\nwhile True:\n    with client.messages.stream(model=\"m\", max_tokens=512, tools=tools, messages=messages) as stream:\n        resp = stream.get_final_message()\n    messages.append({\"role\": \"assistant\", \"content\": resp.content})\n    if resp.stop_reason != \"tool_use\":\n        break\n    results = []\n    for block in resp.content:\n        if block.type == \"tool_use\":\n            out = subprocess.run(block.input[\"cmd\"], shell=True, capture_output=True, text=True).stdout\n            results.append({\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": out})\n    messages.append({\"role\": \"user\", \"content\": results})\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.anthropic"
+      },
+      "present": true
+    },
+    {
+      "id": "anthropic-helper-request-tool-loop",
+      "family": "agent",
+      "description": "A tool loop whose request is made by a helper function receiving the history.",
+      "files": {
+        "agent.py": "import subprocess\n\nimport anthropic\n\nclient = anthropic.Anthropic()\ntools = [{\"name\": \"bash\", \"description\": \"Run a command\", \"input_schema\": {\"type\": \"object\", \"properties\": {}}}]\nmessages = [{\"role\": \"user\", \"content\": \"Tidy the build directory\"}]\n\n\ndef call_model(history):\n    return client.messages.create(model=\"m\", max_tokens=512, tools=tools, messages=history)\n\n\nwhile True:\n    resp = call_model(messages)\n    messages.append({\"role\": \"assistant\", \"content\": resp.content})\n    if resp.stop_reason != \"tool_use\":\n        break\n    results = []\n    for block in resp.content:\n        if block.type == \"tool_use\":\n            out = subprocess.run(block.input[\"cmd\"], shell=True, capture_output=True, text=True).stdout\n            results.append({\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": out})\n    messages.append({\"role\": \"user\", \"content\": results})\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.anthropic"
+      },
+      "present": true
+    },
+    {
+      "id": "crew-manifest-counts-once",
+      "family": "agent",
+      "description": "A crew's agents.yaml is folded into its project finding instead of a second agent.",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"research\"\ndependencies = [\"crewai>=0.100\"]\n",
+        "src/research/crew.py": "from crewai import Agent, Crew\n\nanalyst = Agent(role=\"a\", goal=\"g\", backstory=\"b\")\ncrew = Crew(agents=[analyst], tasks=[])\n",
+        "src/research/config/agents.yaml": "analyst:\n  role: Analyst\n  goal: Analyse\n  backstory: Careful\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.crewai"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 1
+      }
+    }
+  ]
+}
