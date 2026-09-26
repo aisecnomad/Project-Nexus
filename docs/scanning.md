@@ -194,6 +194,29 @@ marked incomplete; gateway exports are noncomparable across independent runs.
 Resolve the scope/credential overlap before interpreting a report comparison
 as evidence that a finding was resolved.
 
+### Stable gateway pseudonyms across scans
+
+To track the same gateway caller or scope over time, give the engine a private
+key file with `options.pseudonymization_key_file` (or the
+`SHADOWSCAN_PSEUDONYMIZATION_KEY_FILE` environment variable):
+
+```bash
+head -c 48 /dev/urandom | base64 > ~/.config/shadowscan/pseudonym.key
+chmod 600 ~/.config/shadowscan/pseudonym.key
+```
+
+The file must be a regular file (not a symlink), readable only by its owner,
+and hold 32 to 4,096 bytes of secret material. With it, caller and scope
+pseudonyms, gateway source IDs and therefore gateway finding IDs are the same
+in every scan that uses the same key, and offline gateway exports attest a
+comparable `collection_scope`. The key never appears in configuration dumps or
+reports; the scope fingerprint includes only a 16-hex-character key identifier
+derived from it, so reports made with different keys are never compared.
+Anyone holding the key can confirm a guessed short label or API key against a
+report, so store it like a credential and rotate it when access changes
+(rotation makes earlier gateway reports noncomparable). Credential
+fingerprints (`credential:sha256:…`) are unkeyed and unaffected.
+
 Code findings with frameworks gain `metadata.runtime_activity`:
 
 | Field | Meaning |

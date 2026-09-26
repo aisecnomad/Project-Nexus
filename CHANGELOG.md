@@ -128,6 +128,12 @@ Redaction
 
 Operations
 
+- Optional `options.pseudonymization_key_file` (or
+  `SHADOWSCAN_PSEUDONYMIZATION_KEY_FILE`): an owner-only key file that keeps
+  gateway caller and scope pseudonyms, and gateway finding IDs, stable across
+  scans, so offline gateway exports become comparable with `shadowscan diff`.
+  Only a derived key identifier enters the scope fingerprint; without a key,
+  each scan still uses a fresh random key.
 - `--set` keeps identifiers with leading zeros (`tenant_id=0123`) as strings.
 - Generated inventory stubs list readable names instead of Python reprs.
 - The worker image is based on Debian trixie (Git 2.47) and fails the build on a

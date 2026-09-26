@@ -95,6 +95,7 @@ def _scanner_digest() -> str:
 
 def build_collection_scope(
     config: ScanConfig, index: SignatureIndex, specs: list[ConnectorSpec],
+    *, pseudonymization_key_id: str | None = None,
 ) -> dict[str, Any]:
     """Describe selected static inputs without exposing any configuration values.
 
@@ -122,9 +123,10 @@ def build_collection_scope(
                 options[key] = str(Path(val).expanduser().resolve())
             elif isinstance(val, list):
                 options[key] = [str(Path(v).expanduser().resolve()) if isinstance(v, str) else v for v in val]
-        # Scope and caller pseudonyms can be keyed to each gateway scan. Even
-        # a presently unscoped export can change this property as rows change.
-        if spec.name == "gateway.logs":
+        # Scope and caller pseudonyms are keyed to each gateway scan unless an
+        # operator key keeps them stable. Even a presently unscoped export can
+        # change this property as rows change.
+        if spec.name == "gateway.logs" and pseudonymization_key_id is None:
             return {**unavailable, "reason": "configuration contains private comparison values"}
         try:
             if sanitize((options, spec.label)) != (options, spec.label) or _has_private_scope_values((options, spec.label)):
@@ -136,6 +138,10 @@ def build_collection_scope(
         fingerprint = hashlib.sha256(_canonical({
             "inputs": sorted(inputs, key=_canonical),
             "min_confidence": config.min_confidence,
+            # Pseudonyms from different keys never match, so the key identity
+            # is part of the scope whenever gateway pseudonyms are compared.
+            **({"pseudonymization_key_id": pseudonymization_key_id}
+               if pseudonymization_key_id and any(spec.name == "gateway.logs" for spec in specs) else {}),
             "signatures": index.fingerprint(),
             "scanner": _scanner_digest(),
             "version": __version__,

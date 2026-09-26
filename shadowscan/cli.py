@@ -44,6 +44,7 @@ from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures import get_index
 from shadowscan.utils.output import prepare_private_directory, write_private_text
+from shadowscan.utils.pseudonym import PseudonymKeyError
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 
 console = Console(width=None if sys.stdout.isatty() else 200)
@@ -124,7 +125,7 @@ def _run_and_emit(cfg: ScanConfig, fmt: str, output: str | None, verbose: int, m
     try:
         engine = Engine(cfg, progress=progress if verbose else None)
         result = engine.run(only=only)
-    except InventoryValidationError as exc:
+    except (InventoryValidationError, PseudonymKeyError) as exc:
         raise click.ClickException(str(exc)) from None
     except (ValueError, TypeError, OSError, yaml.YAMLError):
         raise click.ClickException("scan setup failed; check connector configuration, signature packs and inventory") from None

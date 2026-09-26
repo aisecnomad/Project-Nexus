@@ -36,6 +36,7 @@ from shadowscan.utils.http import (
     set_cooperative_stop,
 )
 from shadowscan.utils.output import prepare_private_directory, write_private_text
+from shadowscan.utils.pseudonym import PseudonymKey, configured_key_file, load_pseudonymization_key
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize
 
 log = logging.getLogger("shadowscan.engine")
@@ -164,6 +165,10 @@ class Engine:
         # approvals may be edited between runs of one Engine.
         if config.inventory:
             self.inventory = Inventory.load(config.inventory)
+        # An operator key makes gateway pseudonyms stable across scans; without
+        # one every run draws a fresh random key. Never store the key in config.
+        key_file = configured_key_file(config.pseudonymization_key_file)
+        self._pseudonym_key: PseudonymKey | None = load_pseudonymization_key(key_file) if key_file else None
 
     def _report_progress(self, connector: str, message: str) -> None:
         """A failed output observer must not change collection or scan completeness."""
@@ -182,7 +187,10 @@ class Engine:
                 if spec.enabled and (not only or spec.id in only or spec.name in only)]
         specs = [spec for _, spec in jobs]
         self.config.validate_connector_isolation(specs)
-        result.collection_scope = build_collection_scope(self.config, self.index, specs)
+        result.collection_scope = build_collection_scope(
+            self.config, self.index, specs,
+            pseudonymization_key_id=self._pseudonym_key.key_id if self._pseudonym_key else None,
+        )
         stats: list[ScanStats] = []
         if not specs:
             log.warning("no connectors selected")
@@ -243,7 +251,9 @@ class Engine:
             states={number: _JobState() for number, _ in jobs},
             # Identical gateway sources in one report share an opaque identity,
             # while separate Engine.run calls cannot link redacted caller/scope IDs.
-            gateway_identity_key=secrets.token_bytes(32),
+            gateway_identity_key=(
+                self._pseudonym_key.subkey("gateway") if self._pseudonym_key else secrets.token_bytes(32)
+            ),
             workers=max(1, min(self.config.parallel, len(jobs) or 1)),
         )
 

@@ -59,7 +59,8 @@ _OPTION_ALIASES: dict[str, tuple[str, Any]] = {
 _OPTION_FIELDS = {
     "min_confidence", "fail_on", "dump_records", "workdir", "parallel", "incremental",
     "state_dir", "plugins", "allow_signature_override", "allow_private_origin",
-    "allow_instance_credentials", "allow_credential_mixing", "connector_timeout_seconds", *_OPTION_ALIASES,
+    "allow_instance_credentials", "allow_credential_mixing", "connector_timeout_seconds",
+    "pseudonymization_key_file", *_OPTION_ALIASES,
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 # Boolean words accepted in ``--set`` values and in connector ``enabled`` flags;
@@ -128,6 +129,9 @@ class ScanConfig:
     allow_instance_credentials: bool = False
     allow_credential_mixing: bool = False
     connector_timeout_seconds: float = _DEFAULT_CONNECTOR_TIMEOUT
+    # Private key file for gateway pseudonyms that stay stable across scans;
+    # SHADOWSCAN_PSEUDONYMIZATION_KEY_FILE supplies it when this is unset.
+    pseudonymization_key_file: str | None = None
     source: str | None = None
     # Constructor-only compatibility: never retain stale alias state that could
     # overwrite a later CLI or library update to the canonical setting.
@@ -227,6 +231,7 @@ class ScanConfig:
             allow_instance_credentials=_boolean_option(opts.get("allow_instance_credentials", False), "allow_instance_credentials"),
             allow_credential_mixing=_boolean_option(opts.get("allow_credential_mixing", False), "allow_credential_mixing"),
             connector_timeout_seconds=validate_connector_timeout_seconds(opts.get("connector_timeout_seconds", _DEFAULT_CONNECTOR_TIMEOUT)),
+            pseudonymization_key_file=_optional_path(base, opts.get("pseudonymization_key_file"), "options.pseudonymization_key_file"),
             source=source,
         )
 
