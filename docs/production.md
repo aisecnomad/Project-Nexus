@@ -376,7 +376,10 @@ a hard kill for every child process. A local checkout example, such as
 
 ## Output and inventory migration
 
-Reports and inventory stub files now use atomic 0600 writes. Inventory stub and
+Reports and inventory stub files now use atomic 0600 writes. An existing
+character device or named pipe given as the report path, such as `/dev/null` or a
+FIFO, is written in place instead of being replaced; sockets, directories and
+other non-regular paths are refused. Inventory stub and
 record-export directories are created as 0700; existing non-private directories
 are rejected without changing their permissions. Use dedicated directories for
 these outputs.

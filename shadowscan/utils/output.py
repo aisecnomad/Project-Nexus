@@ -42,16 +42,58 @@ def prepare_private_directory(path: str | Path) -> Path:
     return target
 
 
+def _existing_mode(target: Path) -> int | None:
+    """Return the ``lstat`` mode of an existing output path, or None if absent."""
+    try:
+        return os.lstat(target).st_mode
+    except FileNotFoundError:
+        return None
+
+
+def _write_in_place(target: Path, data: bytes) -> None:
+    """Write into an existing character device or named pipe without replacing it.
+
+    ``O_NOFOLLOW`` refuses a symlink swapped in after the type check, and the
+    descriptor's own type is checked again, so a regular file swapped in is
+    never written outside the atomic private-mode path. Nothing is truncated.
+    Opening a named pipe waits for a reader, as shell redirection does.
+    """
+    flags = os.O_WRONLY | getattr(os, "O_NOCTTY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(target, flags)
+    try:
+        mode = os.fstat(fd).st_mode
+        if not (stat.S_ISCHR(mode) or stat.S_ISFIFO(mode)):
+            raise ValueError("output file changed type before writing")
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view):]
+    finally:
+        os.close(fd)
+
+
 def write_private_text(path: str | Path, text: str) -> None:
     """Replace an output atomically without following an existing file symlink.
 
     The parent directory is chosen by the trusted operator. A temporary file in
     that directory is created with mode 0600, including when replacing a more
     permissive report. Failed writes leave the previous report intact.
+
+    An existing character device or named pipe (``-o /dev/null``, a FIFO) is
+    written in place: renaming a temporary file over it would replace the
+    device node itself, which succeeds when running as root. Any other
+    existing path that is not a regular file (a socket, directory or block
+    device) is refused.
     """
     target = Path(path)
-    if target.is_symlink():
-        raise ValueError("refusing a symlink output file")
+    mode = _existing_mode(target)
+    if mode is not None:
+        if stat.S_ISLNK(mode):
+            raise ValueError("refusing a symlink output file")
+        if stat.S_ISCHR(mode) or stat.S_ISFIFO(mode):
+            _write_in_place(target, text.encode("utf-8"))
+            return
+        if not stat.S_ISREG(mode):
+            raise ValueError("refusing a non-regular output file")
     fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
