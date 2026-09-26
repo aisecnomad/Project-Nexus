@@ -104,6 +104,7 @@ Development:
   the cache.
 - Accept GitHub's actual workflow-run path in the release evidence gate and
   require successful exact-commit CI and CodeQL before building a candidate.
+
 ### Scanner boundaries and acceptance consistency
 
 - Redact the value of any call whose first argument, or `key=`/`name=`
