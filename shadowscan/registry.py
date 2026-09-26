@@ -194,8 +194,8 @@ class Inventory:
                 items = [doc]
             else:
                 raise _invalid(path, location, "expected an entry, a list of entries, or an agents mapping")
-            for number, item in enumerate(items, 1):
-                entry_location = f"{location}.entry {number}"
+            for entry_number, item in enumerate(items, 1):
+                entry_location = f"{location}.entry {entry_number}"
                 if not isinstance(item, dict):
                     raise _invalid(path, entry_location, "expected an inventory mapping")
                 parser = cls._entry_from_card if "metadata" in item else cls._entry_from_simple

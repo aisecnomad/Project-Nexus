@@ -172,7 +172,8 @@ def _scope_digest(report: dict[str, Any]) -> str | None:
     return digest if isinstance(digest, str) and _DIGEST.fullmatch(digest) else None
 
 
-def _findings(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def _findings(report: dict[str, Any]) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
+    """Validate every finding once; map its id to the record and its substantive state."""
     records = report.get("findings")
     if not isinstance(records, list):
         raise ValueError("report findings must be an array")
@@ -192,8 +193,7 @@ def _findings(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
             raise ValueError("report has duplicate finding ids")
         # Validate new and missing observations as well as shared identities.
         # Malformed records must never be represented as successfully resolved.
-        _substantive_state(record)
-        result[record["id"]] = record
+        result[record["id"]] = (record, _substantive_state(record))
     return result
 
 
@@ -237,17 +237,17 @@ def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[s
         reasons.append("collection scope is unavailable; regenerate legacy reports or use attested static inputs")
     elif bs != cs:
         reasons.append("collection or detection scope differs")
-    missing = [b[i] for i in sorted(b.keys() - c.keys())]
+    missing = [b[i][0] for i in sorted(b.keys() - c.keys())]
     changes = []
     for identifier in sorted(b.keys() & c.keys()):
-        before, after = _substantive_state(b[identifier]), _substantive_state(c[identifier])
+        (before_record, before), (after_record, after) = b[identifier], c[identifier]
         fields = sorted(key for key in before if before[key] != after[key])
         if fields:
-            changes.append({"before": b[identifier], "after": c[identifier], "changed_fields": fields})
+            changes.append({"before": before_record, "after": after_record, "changed_fields": fields})
     return {
         "comparable": not reasons,
         "reasons": reasons,
-        "new": [c[i] for i in sorted(c.keys() - b.keys())],
+        "new": [c[i][0] for i in sorted(c.keys() - b.keys())],
         "resolved": [] if reasons else missing,
         "unknown": missing if reasons else [],
         "changed": changes,

@@ -470,7 +470,6 @@ class FilesystemConnector(BaseConnector):
 
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=walk_error):
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
-            rel_dir = "." if rel_dir == "." else rel_dir
             kept = []
             for name in sorted(dirnames):
                 rel = name if rel_dir == "." else f"{rel_dir}/{name}"
@@ -801,9 +800,8 @@ class FilesystemConnector(BaseConnector):
         text: str,
         infra_files: dict[str, list[tuple[Match, str, str]]],
         secret_hits: dict[str, list[tuple[Match, str]]],
-        infra_names: dict[str, list[str]] | None = None,
+        infra_names: dict[str, list[str]],
     ) -> None:
-        infra_names = infra_names if infra_names is not None else {}
         if art.kind == "image":
             for m in self.index.match_image(art.value):
                 m.line = art.line
@@ -878,7 +876,7 @@ class FilesystemConnector(BaseConnector):
                     for r in remotes
                 )
             )
-        if lower in {".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json", "claude_desktop_config.json", "cline_mcp_settings.json", "mcp_settings.json", "smithery.yaml"}:
+        if lower in _EXPLICIT_MCP_CONFIG_NAMES:
             return True
         if lower in MCP_CONFIG_NAMES or rel.endswith((".json", ".toml", ".yaml", ".yml")):
             head = text[:200_000]
@@ -903,10 +901,9 @@ class FilesystemConnector(BaseConnector):
             return {}
         if not marker.exists():
             return {}
-        target = "." if rel_root == "." else rel_root
         try:
             out = subprocess.run(
-                [*metadata_git_argv_prefix(), "-C", str(root), "log", "--no-show-signature", "--no-ext-diff", "--no-textconv", "-1", "--format=%an|%ae|%cI", "--", target],
+                [*metadata_git_argv_prefix(), "-C", str(root), "log", "--no-show-signature", "--no-ext-diff", "--no-textconv", "-1", "--format=%an|%ae|%cI", "--", rel_root],
                 capture_output=True,
                 # Author bytes follow the repository's i18n.logOutputEncoding;
                 # a strict decode would abort the whole project's findings.
@@ -1110,7 +1107,6 @@ class FilesystemConnector(BaseConnector):
             if defs:
                 f.metadata["agent_definitions"] = defs
                 f.add_capability("multi-agent")
-            f.kind = Kind.AGENT_CONFIG
             f.owner, by_file = self._owners_for_files(root, files)
             f.owner = f.owner or self.owner
             if by_file:

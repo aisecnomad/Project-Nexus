@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
-from shadowscan.connectors.base import BaseConnector, ConnectorError, _NoDump
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _NoDump
 from shadowscan.connectors.common import (
     apply_matches,
     classify_permissions,
@@ -67,6 +67,11 @@ class JwtConnector(BaseConnector, _NoDump):
         "input": "file with one token per line or JSON list / objects with `token`",
     }
     offline_formats: ClassVar[str] = "text (one JWT per line) / JSON"
+
+    def __init__(self, ctx: ConnectorContext):
+        super().__init__(ctx)
+        # JWKS documents (or fetch failures) by URL; each analysis starts empty.
+        self._jwks_cache: dict[str, Any] = {}
 
     def collect(self) -> Iterable[dict[str, Any]]:
         tokens = self.ctx.get("tokens") or []
@@ -133,7 +138,7 @@ class JwtConnector(BaseConnector, _NoDump):
                 raise ValueError("expected_issuer must be a nonempty string")
         except ValueError as exc:
             raise ConnectorError(f"identity.jwt: {exc}") from exc
-        self._jwks_cache: dict[str, Any] = {}
+        self._jwks_cache = {}
         for rec in records:
             token = rec.get("token") or rec.get("jwt") or rec.get("access_token") or rec.get("id_token")
             if not isinstance(token, str) or not _JWT_RX.fullmatch(token.strip()):
@@ -153,8 +158,6 @@ class JwtConnector(BaseConnector, _NoDump):
 
     def _jwks_document(self, jwks_url: str) -> dict[str, Any]:
         """Fetch each configured key set once per run, including its failure."""
-        if not hasattr(self, "_jwks_cache"):
-            self._jwks_cache = {}
         cached = self._jwks_cache.get(jwks_url)
         if cached is None:
             try:
