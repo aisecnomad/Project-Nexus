@@ -1,0 +1,54 @@
+name: Welcome first-time contributors
+
+# Posts a short orientation comment on a person's first issue or pull
+# request. The action only comments; it never checks out or executes code
+# from the pull request.
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  welcome:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/first-interaction@1c4688942c71f71d4f5502a26ea67c331730fa4d # v3.1.0
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          issue_message: |
+            Thanks for opening your first issue in ShadowScan! 👋
+
+            A maintainer will triage it as soon as possible. Please make sure it contains
+            **no credentials, JWTs, tenant identifiers, private exports, or unredacted reports**.
+            If it describes a vulnerability or a credential leak, please close it and follow the
+            [private reporting instructions](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md#reporting)
+            instead.
+
+            Usage questions and sanitized results are best shared in
+            [Discussions](https://github.com/aisecnomad/Project-Nexus/discussions); see
+            [SUPPORT.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SUPPORT.md)
+            for where else to go.
+          pr_message: |
+            Thanks for your first pull request to ShadowScan! 🎉
+
+            A few things that make review faster:
+
+            - Read the [contributor guide](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md),
+              especially [Run one test](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#run-one-test)
+              and the quality gates.
+            - Keep findings **fail closed** and never log or persist raw credentials.
+            - Sign off your commits with `git commit -s` (Developer Certificate of Origin); the
+              `DCO` check verifies this automatically.
+            - Routine changes get maintainer review and automated checks; see the
+              [review and merge policy](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy)
+              for what that does and does not guarantee today.
+
+            Welcome aboard!
