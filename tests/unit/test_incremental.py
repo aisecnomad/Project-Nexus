@@ -559,3 +559,13 @@ def test_git_replacement_cannot_reuse_stale_owner(tmp_path, index):
     changed = Engine(cfg, index).run()
     assert changed.complete and not changed.stats[0].cached
     assert changed.findings[0].owner == "bob@example.com"
+
+
+def test_record_dumps_disable_incremental_reuse_with_a_stated_reason(tmp_path, index, caplog):
+    cfg = ScanConfig(connectors=[ConnectorSpec(name="code.filesystem", config={"path": str(tmp_path)})],
+                     incremental=True, dump_records=str(tmp_path / "dumps"), state_dir=str(tmp_path.parent / "state-dump"))
+    with caplog.at_level("WARNING", logger="shadowscan.incremental"):
+        cache = IncrementalCache(cfg, index)
+    assert not cache.enabled
+    assert cache.disabled_reason and "record dumps" in cache.disabled_reason
+    assert any("record dumps" in record.getMessage() for record in caplog.records)

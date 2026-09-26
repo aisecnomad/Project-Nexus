@@ -154,7 +154,9 @@ class GitHubAppsConnector(BaseConnector):
         if write_perms:
             f.add_tag("write-access")
             f.add_capability("saas-actions")
-        if "contents" in write_perms or "pull_requests" in write_perms:
+        # Pushing commits runs the repository's CI, and workflow write edits it.
+        # Pull-request write (comments, reviews, opening PRs) runs nothing.
+        if "contents" in write_perms or "workflows" in write_perms:
             f.add_capability("code-exec")
         if inst.get("suspended_at"):
             f.add_tag("suspended")

@@ -314,8 +314,14 @@ def structured_code_matches(
         elif extension == ".toml":
             documents = [tomllib.loads(text)]
         elif extension in {".xml", ".props", ".targets", ".csproj", ".fsproj", ".vbproj"}:
-            # ElementTree never resolves external entities. XML examples in
-            # descriptions/CDATA do not become active Salesforce metadata.
+            # ElementTree never resolves external entities, but internal entity
+            # expansion still costs memory with older Expat versions. Metadata
+            # needs no DTD, so reject declarations as the POM parser does.
+            # XML examples in descriptions/CDATA do not become active metadata.
+            upper = text.upper()
+            if "<!DOCTYPE" in upper or "<!ENTITY" in upper:
+                issues.append("XML DTD/entity declarations are unsupported")
+                return []
             root = ET.fromstring(text)
             tag = root.tag.rsplit("}", 1)[-1]
             if tag in {"GenAiPlanner", "GenAiPlugin", "GenAiFunction", "GenAiPromptTemplate", "BotDefinition", "BotVersion"} and len(root):

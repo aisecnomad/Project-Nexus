@@ -269,7 +269,12 @@ class IncrementalCache:
         self.directory = Path(config.state_dir).expanduser() if config.state_dir else default
         self.directory = self.directory.absolute()
         self.enabled = config.incremental and not config.dump_records
+        # Why a requested incremental scan runs in full, for the scan report.
+        self.disabled_reason: str | None = None
         self.scanner_digest = ""
+        if config.incremental and config.dump_records:
+            self.disabled_reason = "record dumps re-collect every source, so cached results are not reused"
+            log.warning("incremental: %s; running a full scan", self.disabled_reason)
         if not self.enabled:
             return
         try:
@@ -286,8 +291,9 @@ class IncrementalCache:
                 [p.relative_to(package).as_posix(), _file_digest(p)]
                 for p in sorted(package.rglob("*.py"))
             ])).hexdigest()
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
             self.enabled = False
+            self.disabled_reason = f"incremental state is unavailable or unsafe ({type(exc).__name__})"
             log.warning("incremental state is unavailable or unsafe; running full scans")
 
     def _secure_directory(self) -> None:

@@ -26,12 +26,18 @@ signatures:
     name: Agentic loop / planning idioms
     category: heuristic
     vendor: null
-    capabilities: [autonomous]
     signals:
       - type: code
-        patterns: ['\bmax_iterations\s*=', '\bmax_steps\s*=', '\bmaxSteps\s*:', '\bmax_turns\s*=', '\bmaxTurns\s*:', '\bmax_tool_calls\b', '\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\bReAct\b', '\breact_agent\b', '\bscratchpad\b', '\bwhile\s+(?:True|not\s+done|not\s+finished|iterations?\s*<)', '\bfor\s+_?\s*(?:step|iteration|turn)\s+in\s+range\(', '\bstop_reason\s*==\s*["'']tool_use["'']', '\bfinish_reason\s*==\s*["'']tool_calls["'']', '\bthought\s*[:=]\s*', '(?i)\bchain[- ]of[- ]thought\b', '\bhandoff\b', '\bsubagent\b', '\bsub_agents?\b', '\bsupervisor\b']
+        patterns: ['\bmax_iterations\s*=', '\bmaxSteps\s*:', '\bmax_turns\s*=', '\bmaxTurns\s*:', '\bmax_tool_calls\b', '\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\bReAct\b', '\breact_agent\b', '\bstop_reason\s*==\s*["'']tool_use["'']', '\bfinish_reason\s*==\s*["'']tool_calls["'']', '(?i)\bchain[- ]of[- ]thought\b', '\bsubagent\b', '\bsub_agents?\b']
         weight: 0.35
         agent_indicator: true
+        capabilities: [autonomous]
+      # Loop and planning words that ordinary programs use too (a worker's
+      # `while True:`, a process supervisor, a training loop's max_steps).
+      # They add weak context only: no agent indicator, no autonomy claim.
+      - type: code
+        patterns: ['\bmax_steps\s*=', '\bscratchpad\b', '\bwhile\s+(?:True|not\s+done|not\s+finished|iterations?\s*<)', '\bfor\s+_?\s*(?:step|iteration|turn)\s+in\s+range\(', '\bthought\s*[:=]\s*', '\bhandoff\b', '\bsupervisor\b']
+        weight: 0.1
 
   - id: heuristic.code-execution
     name: Model-driven code / shell execution

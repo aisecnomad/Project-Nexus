@@ -84,7 +84,7 @@ signatures:
         patterns: ['(?i)\bcursor/\d', '(?i)\bcursor-agent\b']
         weight: 0.85
       - type: name
-        patterns: ['(?i)\bcursor\b(?!\s*(?:position|pointer))']
+        patterns: ['(?i)^\s*cursor\s*$', '(?i)\bcursor(?:\.com|\.sh| ai| editor| ide| agent| bugbot)\b']
         weight: 0.5
 
   - id: coding-agent.windsurf
@@ -158,7 +158,7 @@ signatures:
         patterns: ['(?i)codex_cli', '(?i)\bcodex-cli\b', '(?i)openai-codex']
         weight: 0.9
       - type: name
-        patterns: ['(?i)\bcodex\b']
+        patterns: ['(?i)^\s*codex\s*$', '(?i)\bopenai[ -]codex\b', '(?i)\bcodex[ -](?:cli|agent|cloud|connector)\b', '(?i)\bchatgpt codex\b']
         weight: 0.6
 
   - id: coding-agent.agents-md
@@ -327,7 +327,7 @@ signatures:
         patterns: ['uses:\s*coderabbitai/[a-z-]+', 'uses:\s*qodo-ai/pr-agent', 'uses:\s*Codium-ai/pr-agent', 'uses:\s*sweepai/[a-z-]+', 'uses:\s*ellipsis-dev/[a-z-]+', 'uses:\s*greptileai/[a-z-]+']
         weight: 0.9
       - type: name
-        patterns: ['(?i)\bcoderabbit(?:ai)?\b', '(?i)\bsweep(?:ai)?\b', '(?i)\bellipsis\b', '(?i)\bgreptile\b', '(?i)\bsourcery(?:-ai)?\b', '(?i)\bpr-agent\b', '(?i)\bqodo\b', '(?i)\bkorbit\b', '(?i)\bbito\b', '(?i)\bcodium(?:ai)?\b', '(?i)\bdevin(?:-ai)?\b', '(?i)\bcursor bugbot\b', '(?i)\bgraphite\b', '(?i)\bmentat\b', '(?i)\bcopilot-pull-request-reviewer\b']
+        patterns: ['(?i)\bcoderabbit(?:ai)?\b', '(?i)^\s*sweep\s*$', '(?i)\bsweep(?:ai|[ -]ai)\b', '(?i)^\s*ellipsis(?:[ -]dev)?\s*$', '(?i)\bellipsis(?:\.dev|-dev)\b', '(?i)\bgreptile\b', '(?i)\bsourcery(?:-ai)?\b', '(?i)\bpr-agent\b', '(?i)\bqodo\b', '(?i)\bkorbit\b', '(?i)\bbito\b', '(?i)\bcodium(?:ai)?\b', '(?i)\bdevin(?:-ai| ai|\.ai)\b', '(?i)\bcursor bugbot\b', '(?i)^\s*graphite(?:[ -]app)?\s*$', '(?i)\bgraphite(?:\.dev| reviewer| diamond)\b', '(?i)\bmentat\b', '(?i)\bcopilot-pull-request-reviewer\b']
         weight: 0.8
       - type: user_agent
         patterns: ['(?i)coderabbit', '(?i)\bsweep\b', '(?i)greptile']

@@ -38,6 +38,20 @@ Detection
   a Zapier Agents step, or when an AI-agent title comes with a real AI step; a
   title alone never invents an AI step. n8n manual, chat and form triggers are
   not autonomous.
+- Product names that are also first names or common words need context:
+  Olivia, Jamie, Piper, Devin, Kaia and Ema match only with their product
+  qualifier (`Olivia by Paradox`, `Devin AI`), and Cursor, Warp, Zed, Drift,
+  Gong, Clay, Apollo, Fathom, Codex, Sweep and similar words match an app
+  named exactly that or a qualified form (`cursor.com`, `Fathom AI`). A person
+  named Devin, a cursor-pagination Lambda, `Apollo GraphQL`, "qualified leads"
+  or an "All Hands meeting" no longer names an AI product.
+- Generic loop words (`while True:`, `for step in range(`, `scratchpad`,
+  `supervisor`, `handoff`, `max_steps=`) add weak context only; they no
+  longer mark a finding `autonomous` or count as agent indicators.
+  Agent-specific idioms (`max_turns=`, `agent_loop`, `stop_reason ==
+  "tool_use"`) still do.
+- A GitHub App with pull-request write access is write access, not code
+  execution; `contents` or `workflows` write still is.
 - Risk: capability and provider weights are capped, and findings that only
   establish framework or SDK use stay below the critical band reserved for
   agents and credentials. Every adjustment, including the 0-100 bound, is a
@@ -75,6 +89,9 @@ Robustness
   request line (`GET /x?key=abc`) can no longer become a silently discarded
   record. A line starting with `[` that is neither envoy, JSON nor logfmt is
   reported.
+- Salesforce metadata XML with DTD or entity declarations is rejected before
+  parsing, as Maven POMs already were. `--incremental` together with record
+  dumps logs why cached results are not reused.
 - Built-in directory excludes (`build`, `dist`, `vendor`...) no longer skip
   regular files with those names, such as an extensionless `script/build`.
 - Salesforce flows, bots, planners, templates and connected apps, and

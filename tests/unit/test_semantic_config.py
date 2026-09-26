@@ -124,6 +124,15 @@ def test_xml_requires_active_product_root(index):
     assert {match.signature_id for match in matches} == {"platform.salesforce-agentforce"}
 
 
+def test_xml_dtd_and_entity_declarations_are_rejected_before_parsing(index):
+    laughs = '<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol">' + "".join(
+        f'<!ENTITY lol{i} "{"&lol{};".format(i - 1 if i > 1 else "") * 10}">' for i in range(1, 10)
+    ) + ']><GenAiPlanner><name>&lol9;</name></GenAiPlanner>'
+    errors = []
+    assert structured_code_matches(index, "agent.genAiPlanner-meta.xml", laughs, errors) == []
+    assert errors == ["XML DTD/entity declarations are unsupported"]
+
+
 @pytest.mark.parametrize("path,text", [("workflow.json", "{"), ("workflow.yaml", "x: ["), ("workflow.toml", "["), ("workflow.xml", "<")])
 def test_malformed_structured_config_is_diagnosed(index, path, text):
     errors = []
