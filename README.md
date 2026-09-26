@@ -301,8 +301,8 @@ turns shadow findings into card skeletons for review. See
 ```bash
 pip install -e ".[dev]"
 python -m shadowscan.signatures.validate
-ruff check shadowscan tests
-mypy shadowscan
+ruff check shadowscan tests tools
+mypy shadowscan tools/evaluation tools/canaries
 pip-audit --progress-spinner off
 pytest -q --cov=shadowscan --cov-fail-under=80
 shadowscan scan -c examples/shadowscan.offline.yaml

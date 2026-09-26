@@ -12,8 +12,8 @@ approved plugin runs with scanner privileges.
 ```bash
 python -m pip install -e ".[dev]"
 python -m shadowscan.signatures.validate
-ruff check shadowscan tests
-mypy shadowscan
+ruff check shadowscan tests tools
+mypy shadowscan tools/evaluation tools/canaries
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 ```
 
