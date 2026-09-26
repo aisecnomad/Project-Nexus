@@ -104,7 +104,8 @@ def _finditer(
             matches = (match for match in matches if not excluded(match.start()))
         return list(islice(matches, limit))
 
-    return _run_regex(collect, context)
+    result: list[Any] = _run_regex(collect, context)
+    return result
 
 
 def _search(rx: Any, text: str, context: str):
@@ -531,6 +532,40 @@ def _hints_present(groups: tuple[tuple[str, ...], ...], haystack: str, memo: dic
     return True
 
 
+class _RegexPlan:
+    """Regex signals of one type and language, indexed by their first required literal group.
+
+    ``entries`` keeps pack order (signal, then pattern) so candidate patterns
+    run in exactly the order, and with exactly the per-signal quotas, of an
+    exhaustive pass. Patterns without literal hints always run.
+    """
+
+    __slots__ = ("entries", "folded_first", "folded_literals", "plain_first", "plain_literals", "unhinted")
+
+    def __init__(self, index: SignatureIndex, signal_type: str, language: str | None) -> None:
+        self.entries: list[tuple[Signature, Signal, Any, tuple[tuple[str, ...], ...], bool]] = []
+        self.unhinted: list[int] = []
+        self.plain_first: dict[str, list[int]] = {}
+        self.folded_first: dict[str, list[int]] = {}
+        for sig, s in index._by_type.get(signal_type, []):
+            if language and s.languages and language not in s.languages:
+                continue
+            literals = index._literals.get(id(s), ())
+            for number, rx in enumerate(s.bounded_compiled):
+                hints = literals[number] if number < len(literals) else None
+                entry = len(self.entries)
+                if hints is None or not hints.groups:
+                    self.entries.append((sig, s, rx, (), False))
+                    self.unhinted.append(entry)
+                    continue
+                self.entries.append((sig, s, rx, hints.groups[1:], hints.fold))
+                first = self.folded_first if hints.fold else self.plain_first
+                for alternative in hints.groups[0]:
+                    first.setdefault(alternative, []).append(entry)
+        self.plain_literals = tuple(self.plain_first)
+        self.folded_literals = tuple(self.folded_first)
+
+
 class _PlainHostCandidates:
     """Domain suffixes and regexes bucketed by what a matching plain host must contain.
 
@@ -699,6 +734,11 @@ class SignatureIndex:
         # for most inputs. Single long literals are tested first so a miss
         # costs one search. Signals live as long as the index.
         self._literals: dict[int, list[_LiteralHints]] = {}
+        # Synthesized one-line import statements recur in almost every file
+        # ("from django.db import models"); their matches are a pure function
+        # of the statement, so they are computed once per index.
+        self._statement_imports: dict[tuple[str, str | None], tuple[Match, ...]] = {}
+        self._regex_plans: dict[tuple[str, str | None], _RegexPlan] = {}
         for sig in signatures:
             for s in sig.signals:
                 self._by_type.setdefault(s.type, []).append((sig, s))
@@ -849,42 +889,66 @@ class SignatureIndex:
             previous = bisect_right(starts, offset) - 1
             return previous >= 0 and offset < ends[previous]
 
-        # literal -> occurs in the text; patterns share literals, and the
-        # casefolded text for case-insensitive patterns is built on demand.
-        present: dict[str, bool] = {}
-        folded_present: dict[str, bool] = {}
+        # A pattern runs only when every group of its required literals occurs
+        # in the text. One scan over the distinct first-group literals selects
+        # the candidates; their remaining groups are checked with a memo. The
+        # casefolded text is built only when a case-insensitive pattern needs it.
+        plan = self._regex_plans.get((signal_type, language))
+        if plan is None:
+            plan = self._regex_plans[(signal_type, language)] = _RegexPlan(self, signal_type, language)
+        present = {literal: True for literal in plan.plain_literals if literal in text}
+        candidates = set(plan.unhinted)
+        for literal in present:
+            candidates.update(plan.plain_first[literal])
         folded_text: str | None = None
-        for sig, s in self._by_type.get(signal_type, []):
-            if language and s.languages and language not in s.languages:
+        folded_present: dict[str, bool] = {}
+        if plan.folded_literals:
+            folded_text = _fold(text)
+            folded_present = {literal: True for literal in plan.folded_literals if literal in folded_text}
+            for literal in folded_present:
+                candidates.update(plan.folded_first[literal])
+        current: int | None = None
+        hits = 0
+        for number in sorted(candidates):
+            sig, s, rx, rest, fold = plan.entries[number]
+            if id(s) != current:
+                current, hits = id(s), 0
+            elif hits >= max_per_signal:
                 continue
-            hits = 0
-            literals = self._literals.get(id(s), ())
-            for number, rx in enumerate(s.bounded_compiled):
-                hints = literals[number] if number < len(literals) else None
-                if hints is not None and hints.groups:
-                    if hints.fold:
-                        if folded_text is None:
-                            folded_text = _fold(text)
-                        if not _hints_present(hints.groups, folded_text, folded_present):
-                            continue
-                    elif not _hints_present(hints.groups, text, present):
+            if rest:
+                if fold:
+                    if not _hints_present(rest, folded_text or "", folded_present):
                         continue
-                for m in _finditer(rx, text, sig.id, max_per_signal - hits, excluded if starts else None):
-                    if newlines is None:
-                        newlines = [newline.start() for newline in re.finditer("\n", text)]
-                    line = bisect_left(newlines, m.start()) + 1
-                    excerpt = m.group(0)
-                    # Never cut away a credential's recognizable context before
-                    # redaction. Dedicated secret detectors need the raw match
-                    # to create their redacted evidence/fingerprint downstream.
-                    value = excerpt if signal_type == "secret" else sanitize_text(excerpt)[:200]
-                    out.append(Match(sig, s, value, s.weight, line=line, extra={"start": m.start(), "end": m.end()}))
-                    hits += 1
-                    if hits >= max_per_signal:
-                        break
+                elif not _hints_present(rest, text, present):
+                    continue
+            for m in _finditer(rx, text, sig.id, max_per_signal - hits, excluded if starts else None):
+                if newlines is None:
+                    newlines = [newline.start() for newline in re.finditer("\n", text)]
+                line = bisect_left(newlines, m.start()) + 1
+                excerpt = m.group(0)
+                # Never cut away a credential's recognizable context before
+                # redaction. Dedicated secret detectors need the raw match
+                # to create their redacted evidence/fingerprint downstream.
+                value = excerpt if signal_type == "secret" else sanitize_text(excerpt)[:200]
+                out.append(Match(sig, s, value, s.weight, line=line, extra={"start": m.start(), "end": m.end()}))
+                hits += 1
                 if hits >= max_per_signal:
                     break
         return out
+
+    def match_import_statement(self, statement: str, language: str | None) -> tuple[Match, ...]:
+        """Import matches for one synthesized statement, cached for the life of the index.
+
+        The returned matches are shared between callers and must not be mutated.
+        """
+        key = (statement, language)
+        cached = self._statement_imports.get(key)
+        if cached is None:
+            cached = tuple(self.match_imports(statement, language))
+            if len(self._statement_imports) >= _STATEMENT_CACHE_LIMIT:
+                self._statement_imports.clear()
+            self._statement_imports[key] = cached
+        return cached
 
     def match_imports(
         self, text: str, language: str | None, ignore_spans: Sequence[tuple[int, int]] = (),
@@ -1011,11 +1075,14 @@ class SignatureIndex:
             if "." not in raw:
                 continue
             host = raw.lower().strip(".")
+            mcp_path = bool(_MCP_PATH_RX.match(text, m.end()))
             # DNS names are bounded by the protocol. Consume each entire token
-            # once instead of retrying a suffix from every dot on malformed input.
-            if host in seen or len(host) > 253 or "." not in host:
+            # once (per MCP/non-MCP path) instead of retrying a suffix from
+            # every dot on malformed input.
+            key = host + "/mcp" if mcp_path else host
+            if key in seen or len(host) > 253 or "." not in host:
                 continue
-            seen.add(host)
+            seen.add(key)
             labels = host.split(".")
             if len(labels[-1]) < 2 or not labels[-1].isalpha() or any(
                 not label or len(label) > 63 or not label[0].isalnum() or not label[-1].isalnum()
@@ -1027,6 +1094,13 @@ class SignatureIndex:
             matches = self._match_plain_host(host, _plain_search) if host.isascii() else self.match_domain(host)
             if not matches:
                 continue
+            if (len({match.signature_id for match in matches}) > 1 and not any("mcp" in label for label in labels)
+                    and any(match.signature_id == _MCP_SIGNATURE for match in matches)):
+                # A host shared with another product (and not named for MCP,
+                # like mcp.zapier.com) is MCP only on an MCP path.
+                matches = [match for match in matches if (match.signature_id == _MCP_SIGNATURE) == mcp_path]
+                if not matches:
+                    continue
             if newlines is None:
                 newlines = [newline.start() for newline in re.finditer("\n", text)]
             line = bisect_right(newlines, m.start()) + 1
@@ -1073,6 +1147,11 @@ class SignatureIndex:
 
 
 _HOST_TOKEN_RX = re.compile(r"[a-z0-9.-]+", re.IGNORECASE)
+_STATEMENT_CACHE_LIMIT = 65_536
+# MCP endpoints on a shared API host are path-scoped: GitHub serves its remote
+# MCP server at api.githubcopilot.com/mcp/ beside the Copilot API itself.
+_MCP_PATH_RX = re.compile(r"(?::\d{1,5})?/(?:mcp|sse)(?=[/?#\"'\s)\]]|$)", re.IGNORECASE)
+_MCP_SIGNATURE = "protocol.mcp"
 # Underscores delimit disjoint alphanumeric groups; neither tokenizer has nested
 # ambiguous repetition. Both operate under the shared input deadline.
 _ENV_RX = re.compile(r"\b[A-Z][A-Z0-9]{2,}(?:_[A-Z0-9]+){1,6}\b")

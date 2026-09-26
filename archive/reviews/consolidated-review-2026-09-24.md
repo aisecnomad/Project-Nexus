@@ -13,7 +13,7 @@
 > against real tenant permissions rather than mocked responses; the dependency
 > lock, wheel build and container process; and the repository and CI settings
 > that this log takes as given. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md)
-> for the review policy and [deployment and migration](../production.md) for
+> for the review policy and [deployment and migration](../../docs/production.md) for
 > the current rollout guide.
 
 ## Scope and disposition
@@ -40,7 +40,7 @@ review.
 The candidate materially improves security and production reliability. It remains
 a release candidate: passing automated checks cannot establish actual tenant
 coverage, operational acceptance, or field detection precision. Refer to
-[production rollout](../production.md) and [detection evaluation](../evaluation.md).
+[production rollout](../../docs/production.md) and [detection evaluation](../../docs/evaluation.md).
 
 ## Confirmed findings and changes
 

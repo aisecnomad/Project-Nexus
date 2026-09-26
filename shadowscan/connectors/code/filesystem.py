@@ -37,7 +37,6 @@ from __future__ import annotations
 import errno
 import fnmatch
 import hashlib
-import json
 import os
 import re
 import stat
@@ -54,6 +53,7 @@ import yaml
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
+from shadowscan.connectors.code.mcp_tools import mcp_tool_capabilities, mcp_tool_names
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
     MAX_PATTERN_LENGTH,
@@ -66,11 +66,12 @@ from shadowscan.connectors.code.ownership import (
 )
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
+    is_agent_config_path,
     parse_agent_manifest,
     structured_code_matches,
 )
 from shadowscan.connectors.code.source_ranges import noncode_ranges
-from shadowscan.connectors.code.source_semantics import bound_source_matches
+from shadowscan.connectors.code.source_semantics import SourceBudgetExceeded, bound_source_matches
 from shadowscan.connectors.common import (
     apply_matches,
     cap_confidence,
@@ -82,9 +83,26 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
+from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
+from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
 from shadowscan.utils.text import notebook_to_source, parse_timestamp, read_text, redact, truncate
+
+# Manifests that configure the code of the project containing them. A2A cards
+# and M365 declarative agents declare a separately addressable agent (its own
+# name, endpoint and authentication) and stay findings of their own.
+_PROJECT_MANIFESTS = frozenset({"crewai", "langgraph"})
+
+# Registered MCP tool names retained per project.
+_MAX_MCP_TOOLS = 200
+
+# Signal types that establish a library in a project (see _emit_project).
+_LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
+
+# Saved outputs (plots, tables, logs) routinely push small notebooks past
+# max_file_size. Their code cells are still analyzed up to this size.
+DEFAULT_MAX_NOTEBOOK_SIZE = 20 * 1024 * 1024
 
 DEFAULT_EXCLUDES = {
     ".git",
@@ -332,6 +350,7 @@ class _Project:
     coding_agent_matches: dict[str, list[tuple[Match, str, str | None]]] = field(default_factory=dict)
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
     seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
+    mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
 
 
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
@@ -459,6 +478,8 @@ class FilesystemConnector(BaseConnector):
         "max_file_size": "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs matches it (default 1,000,000 bytes)",
         "oversize_skip_globs": "case-insensitive file name globs; a file over max_file_size matching one is skipped with a warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts)",
         "max_files": "stop after this many files (default 100000)",
+        "max_notebook_size": "bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even when saved outputs make the file larger than max_file_size (default 20 MiB); outputs of such a notebook are not scanned for credentials",
+        "max_ast_nodes": "Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger file keeps its lexical evidence and is reported as partially analyzed: a warning under test paths, an error elsewhere",
         "scan_timeout": "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan_timeout when higher",
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
@@ -479,8 +500,14 @@ class FilesystemConnector(BaseConnector):
         self.max_file_size = int(ctx.get("max_file_size", 1_000_000))
         self.max_files = int(ctx.get("max_files", 100_000))
         self.scan_timeout = float(ctx.get("scan_timeout", 2.0))
+        self.max_ast_nodes: int | None = ctx.get("max_ast_nodes")  # validated below
+        self.max_notebook_size: int = ctx.get("max_notebook_size", DEFAULT_MAX_NOTEBOOK_SIZE)  # validated below
+        if type(self.max_notebook_size) is not int or self.max_notebook_size < 1:
+            raise ConnectorError("code.filesystem: max_notebook_size must be a positive integer")
         if self.max_file_size < 1 or self.max_files < 1 or not 0 < self.scan_timeout <= 60:
             raise ConnectorError("code.filesystem: limits must be positive; scan_timeout must be at most 60 seconds")
+        if self.max_ast_nodes is not None and (type(self.max_ast_nodes) is not int or not 1_000 <= self.max_ast_nodes <= 2_000_000):
+            raise ConnectorError("code.filesystem: max_ast_nodes must be an integer between 1000 and 2000000")
         self.oversize_skip_globs = _validated_globs(ctx.get("oversize_skip_globs", list(DEFAULT_OVERSIZE_SKIP_GLOBS)))
         self.scan_secrets = bool(ctx.get("scan_secrets", True))
         self.use_git = ctx.get("use_git", False)
@@ -572,6 +599,12 @@ class FilesystemConnector(BaseConnector):
             if PurePosixPath(rel).match(g) or PurePosixPath(rel).match(g.rstrip("/") + "/*"):
                 return True
         return False
+
+    def _size_limit(self, name: str) -> int:
+        """Bytes the reader accepts for ``name``: notebooks may carry large saved outputs."""
+        if name.lower().endswith(".ipynb"):
+            return max(self.max_file_size, self.max_notebook_size)
+        return self.max_file_size
 
     def _oversize_skippable(self, rel: str, name: str) -> bool:
         """Whether an oversize file is generated, locked or binary content per ``oversize_skip_globs``."""
@@ -682,7 +715,7 @@ class FilesystemConnector(BaseConnector):
             except OSError:
                 self.ctx.error(f"code.filesystem: could not inspect {root.name}")
                 return
-            if size > self.max_file_size and self._oversize_skippable(root.name, root.name):
+            if size > self._size_limit(root.name) and self._oversize_skippable(root.name, root.name):
                 self._skip_oversize(root.name, size)
                 return
             yield root.name, root, ".", size
@@ -729,7 +762,7 @@ class FilesystemConnector(BaseConnector):
                     continue
                 if not stat.S_ISREG(info.st_mode):
                     continue
-                if info.st_size > self.max_file_size and self._oversize_skippable(rel, fn):
+                if info.st_size > self._size_limit(fn) and self._oversize_skippable(rel, fn):
                     self._skip_oversize(rel, info.st_size)
                     continue
                 if _never_read_by_name(fn):
@@ -748,7 +781,7 @@ class FilesystemConnector(BaseConnector):
         signal) reserve nothing, so they cannot end the walk under a short
         deadline.
         """
-        if size > self.max_file_size:
+        if size > self._size_limit(path.name):
             return 0.0
         name = path.name
         ext = path.suffix.lower()
@@ -795,7 +828,7 @@ class FilesystemConnector(BaseConnector):
         projects: dict[str, _Project] = {".": _Project(".")}
         secret_hits: dict[str, list[tuple[Match, str]]] = {}  # relpath -> matches
         mcp_files: list[tuple[str, list[dict[str, Any]]]] = []  # relpath, parsed servers
-        card_files: list[tuple[str, str, str]] = []  # relpath, text, kind
+        card_files: list[tuple[str, str, str, str]] = []  # relpath, text, kind, project root
         workflow_files: dict[str, list[tuple[Match, str]]] = {}
         infra_files: dict[str, list[tuple[Match, str, str]]] = {}  # relpath -> (match, value, snippet)
         infra_names: dict[str, list[str]] = {}  # relpath -> display / resource names
@@ -849,7 +882,7 @@ class FilesystemConnector(BaseConnector):
                     if not (is_source or is_text_cfg or file_matches):
                         continue
                     read_errors: list[str] = []
-                    text = read_text(path, self.max_file_size, read_errors)
+                    text = read_text(path, self._size_limit(name), read_errors)
                     for issue in read_errors:
                         if issue == "file exceeds max_file_size" and not self.strict_coverage:
                             self.ctx.warn(f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete", incomplete=True)
@@ -860,11 +893,30 @@ class FilesystemConnector(BaseConnector):
                     raw_notebook: str | None = None
                     if ext == ".ipynb":
                         notebook_errors: list[str] = []
-                        raw_notebook = text
+                        oversized_notebook = len(text) > self.max_file_size
+                        raw_notebook = None if oversized_notebook else text
                         text = notebook_to_source(text, notebook_errors)
                         for issue in dict.fromkeys(notebook_errors):
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
                         lang = "python"
+                        # Unread analyzable content leaves coverage incomplete, as
+                        # for any oversize file; strict_coverage only raises the
+                        # diagnostic from a warning to an error.
+                        gap: str | None = None
+                        if len(text) > self.max_file_size:
+                            gap = f"code.filesystem: {rel}: skipped, notebook code cells exceed max_file_size"
+                        elif oversized_notebook and self.scan_secrets:
+                            # Code cells are analyzed as usual. Saved outputs are
+                            # read only for credentials, and not at this size.
+                            gap = (f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
+                                   "saved outputs not scanned for credentials")
+                        if gap is not None:
+                            if self.strict_coverage:
+                                self.ctx.error(gap)
+                            else:
+                                self.ctx.warn(f"{gap}; coverage incomplete", incomplete=True)
+                        if len(text) > self.max_file_size:
+                            continue
                     # Structured files are parsed now so a resource-limit
                     # failure reaches the per-file boundary. Redacting the
                     # text for excerpts waits until a match needs one, which
@@ -1047,13 +1099,23 @@ class FilesystemConnector(BaseConnector):
                             self.index.match_code(content_text, lang, ignore_spans=ignored)
                             if ignored else self.index.match_code(content_text, lang)
                         )
-                        bound = (
-                            bound_source_matches(
-                                self.index, content_text, lang, ignored,
-                                is_local_module=is_local_module if lang == "python" else None,
-                            )
-                            if lang in {"python", "javascript"} else []
-                        )
+                        bound: list[Match] = []
+                        if lang in {"python", "javascript"}:
+                            try:
+                                bound = bound_source_matches(
+                                    self.index, content_text, lang, ignored,
+                                    is_local_module=is_local_module if lang == "python" else None,
+                                    max_ast_nodes=self.max_ast_nodes,
+                                )
+                            except SourceBudgetExceeded as exc:
+                                # The budget is a property of the file, not of
+                                # the scan: keep its lexical evidence. Test code
+                                # is discounted evidence, so it only warns.
+                                message = f"code.filesystem: {rel}: import-bound analysis skipped ({exc}); lexical evidence retained"
+                                if not self.include_tests and _is_test_path(rel):
+                                    self.ctx.warn(message, incomplete=self.strict_coverage)
+                                else:
+                                    self.ctx.error(message)
                         # Execution sinks describe a model-driven capability only
                         # when this same file invokes a model, framework or
                         # tool-calling protocol; elsewhere they are build tooling.
@@ -1075,11 +1137,20 @@ class FilesystemConnector(BaseConnector):
                             record_content_match(m, excerpt(m.line))
                         for m in bound:
                             record_content_match(m, excerpt(m.line))
+                        if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
+                            for tool in mcp_tool_names(text):
+                                if len(proj.mcp_tools) < _MAX_MCP_TOOLS:
+                                    proj.mcp_tools.setdefault(tool, rel)
                     elif not is_nonexecutable:
                         config_errors: list[str] = []
                         structured = [] if is_mcp else structured_code_matches(self.index, rel, content_text, errors=config_errors)
                         for issue in config_errors:
-                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                            if is_agent_config_path(rel):
+                                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                            else:
+                                # Only the structured projection is lost; the
+                                # lexical passes below still read this text.
+                                self.ctx.warn(f"code.filesystem: {rel}: {issue}; structured checks skipped", incomplete=self.strict_coverage)
                         for m in structured:
                             # MCP configs are structured data. A disabled server
                             # may contain sample commands that look like agent
@@ -1103,7 +1174,7 @@ class FilesystemConnector(BaseConnector):
                         if len(card_files) >= _MAX_CARD_FILES:
                             self.ctx.error(f"code.filesystem: {rel}: agent manifest limit ({_MAX_CARD_FILES}) reached; manifest skipped")
                         else:
-                            card_files.append((rel, text, card_kind))
+                            card_files.append((rel, text, card_kind, proj_root))
                     if ext in {".md", ".mdc"} and (".claude/agents/" in rel or ".github/agents/" in rel or ".cursor/rules/" in rel or ".windsurf/rules/" in rel):
                         if len(proj.agent_defs) >= _MAX_AGENT_DEFINITIONS:
                             self.ctx.error(f"code.filesystem: {rel}: agent definition limit ({_MAX_AGENT_DEFINITIONS}) reached; definition skipped")
@@ -1123,11 +1194,19 @@ class FilesystemConnector(BaseConnector):
         # MCP configs, agent manifests, exported workflows and IaC produce their
         # own findings; a project finding built only from them is a duplicate.
         covered_files = frozenset(
-            {rel for rel, _ in mcp_files} | {rel for rel, _, _ in card_files} | set(workflow_files) | set(infra_files)
+            {rel for rel, _ in mcp_files} | {rel for rel, _, _, _ in card_files} | set(workflow_files) | set(infra_files)
         )
+        # Project findings are held back until the manifests are read: a
+        # manifest inside a reported project describes that project's agent
+        # and is folded into its finding instead of counting it twice.
+        project_findings: dict[str, Finding] = {}
         for proj in projects.values():
             try:
-                yield from self._emit_project(label, root, proj, covered_files)
+                for finding in self._emit_project(label, root, proj, covered_files):
+                    if finding.resource_type == "project":
+                        project_findings[proj.root] = finding
+                    else:
+                        yield finding
             except ConnectorError:
                 raise
             except Exception as exc:  # noqa: BLE001 - retain findings from other projects
@@ -1140,16 +1219,22 @@ class FilesystemConnector(BaseConnector):
                 raise
             except Exception as exc:  # noqa: BLE001 - retain findings from other configurations
                 self.ctx.error(f"code.filesystem: {rel}: MCP analysis incomplete ({type(exc).__name__})")
-        for rel, text, kind in card_files:
+        for rel, text, kind, proj_root in card_files:
             try:
                 with self.index.scan_budget(seconds=self.scan_timeout):
                     f = self._card_finding(label, root, rel, text, kind)
-                    if f:
+                    if f is None:
+                        continue
+                    owner = project_findings.get(proj_root) if kind in _PROJECT_MANIFESTS else None
+                    if owner is None:
                         yield f
+                    else:
+                        self._fold_manifest(owner, f, projects[proj_root])
             except ConnectorError:
                 raise
             except Exception as exc:  # noqa: BLE001 - retain findings from other manifests
                 self.ctx.error(f"code.filesystem: {rel}: agent manifest analysis incomplete ({type(exc).__name__})")
+        yield from project_findings.values()
         for rel, hits in workflow_files.items():
             try:
                 yield self._workflow_finding(label, root, rel, [*hits, *workflow_providers.get(rel, [])])
@@ -1453,6 +1538,15 @@ class FilesystemConnector(BaseConnector):
         self, label: str, root: Path, proj: _Project, covered_files: frozenset[str] = frozenset(),
     ) -> Iterator[Finding]:
         observations = [(m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}]
+        # An ambiguous pattern is a common identifier outside the product
+        # (aiohttp's ClientSession, a UI component named AgentCard). It counts
+        # only when the same signature has library evidence in this project:
+        # an import, a dependency or one of its specific code patterns.
+        independent = {
+            m.signature_id for m, _, _ in observations
+            if m.signal.type in _LIBRARY_SIGNALS and not m.signal.ambiguous
+        }
+        observations = [t for t in observations if not t[0].signal.ambiguous or t[0].signature_id in independent]
         discount_tests = not self.include_tests
 
         def in_tests(rel: str) -> bool:
@@ -1491,19 +1585,34 @@ class FilesystemConnector(BaseConnector):
                     return False
                 if "verified_agent" in match.extra:
                     return bool(match.extra["verified_agent"])
-                if match.extra.get("lexical_source") and match.signature.category == "framework":
+                if match.extra.get("lexical_source"):
                     return match.agent_indicator and match.signature_id in library_evidence
                 return match.agent_indicator
 
             f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
             uncorroborated = {m.signature_id for m, _, _ in tech_matches
-                              if m.extra.get("lexical_source") and m.signature.category == "framework"
+                              if m.extra.get("lexical_source") and m.signature.category != "heuristic"
                               and m.signature_id not in library_evidence}
+            # Capabilities describe what the deployed code can do. Evidence
+            # from tests (unless the project is only tests) and vendor-neutral
+            # idioms in an MCP tool server (whose tools are read below) is
+            # kept as evidence but implies no capability.
+            test_only = discount_tests and all(_is_test_path(rel) for _, rel, _ in tech_matches)
+            mcp_server = {m.signature_id for m, _, _ in tech_matches if m.signature.category != "heuristic"} == {"protocol.mcp"}
+
+            def implies_capabilities(match: Match, rel: str) -> bool:
+                if in_tests(rel) and not test_only:
+                    return False
+                return not (mcp_server and match.signature.category == "heuristic")
+
             # Decisive evidence must survive the per-signature report quota.
             for m, rel, snip in sorted(tech_matches, key=lambda item: not verified_indicator(item[0])):
-                if m.extra.get("lexical_source") and m.signature.category == "framework" and m.signature_id not in library_evidence:
+                if m.signature_id in uncorroborated and m.extra.get("lexical_source"):
                     m.weight = min(m.weight, 0.6)
-                apply_matches(f, [m], location=rel, snippet=snip, weight_scale=(ENV_ONLY_WEIGHT_SCALE if env_only else 1.0) * (0.5 if in_tests(rel) else 1.0))
+                apply_matches(f, [m], location=rel, snippet=snip, weight_scale=(ENV_ONLY_WEIGHT_SCALE if env_only else 1.0) * (0.5 if in_tests(rel) else 1.0),
+                              capabilities=implies_capabilities(m, rel))
+            if "protocol.mcp" in f.frameworks and proj.mcp_tools:
+                self._apply_mcp_tools(f, proj)
             # Repeated observations of one technology are correlated evidence.
             # Generic idioms share a single supporting group; loops in several
             # worker files must never accumulate into a confirmed AI agent.
@@ -1574,6 +1683,57 @@ class FilesystemConnector(BaseConnector):
             yield f
 
     @staticmethod
+    def _apply_mcp_tools(f: Finding, proj: _Project) -> None:
+        """Derive MCP server capabilities from the tool names it registers."""
+        tools = sorted(proj.mcp_tools)
+        f.metadata["mcp_tools"] = tools[:50]
+        implied: dict[str, list[str]] = {}
+        for tool in tools:
+            for capability in mcp_tool_capabilities(tool):
+                implied.setdefault(capability, []).append(tool)
+        for capability, names in sorted(implied.items()):
+            f.add_capability(capability)
+            f.add_evidence(Evidence(
+                signal=f"mcp-tool:{capability}",
+                description=f"registers MCP tools implying {capability}: {', '.join(names[:5])}{' …' if len(names) > 5 else ''}",
+                location=proj.mcp_tools[names[0]],
+                weight=0.5,
+                signature="protocol.mcp",
+                attributes={"category": "protocol", "value": names[0]},
+            ))
+
+    def _fold_manifest(self, project: Finding, manifest: Finding, proj: _Project) -> None:
+        """Merge a project manifest into the finding of the project that contains it.
+
+        A CrewAI ``agents.yaml`` or a ``langgraph.json`` configures the agent
+        implemented by that project's code, so the project is an agent and the
+        manifest's evidence, technologies and details move onto it instead of
+        counting the same agent twice. The manifest stays visible under
+        ``metadata.manifests``.
+        """
+        for evidence in manifest.evidence:
+            project.add_evidence(evidence)
+        for sid in manifest.frameworks:
+            project.add_framework(sid)
+        for pid in manifest.model_providers:
+            project.add_model_provider(pid)
+        for capability in manifest.capabilities:
+            project.add_capability(capability)
+        for tag in manifest.tags:
+            project.add_tag(tag)
+        for model in manifest.models:
+            if model not in project.models:
+                project.models.append(model)
+        details = {k: v for k, v in manifest.metadata.items() if k not in {"path", "scan_root", "technologies", "evidence_counts"}}
+        project.metadata.setdefault("manifests", []).append({
+            "path": manifest.metadata.get("path"), "title": manifest.title, "resource": manifest.resource, **details,
+        })
+        project.metadata["agent_indicators"] = max(1, int(project.metadata.get("agent_indicators") or 0))
+        project.kind = Kind.AGENT
+        finalize(project, self.index)
+        project.title = self._project_title(project, proj)
+
+    @staticmethod
     def _attach_example_credentials(f: Finding, proj: _Project) -> None:
         """Attach placeholder credentials as informational evidence (see module docstring)."""
         if not proj.example_credentials:
@@ -1610,7 +1770,14 @@ class FilesystemConnector(BaseConnector):
         provs = [self.index.get(sid).name for sid in f.model_providers[:3] if self.index.get(sid)]  # type: ignore[union-attr]
         where = "repository root" if proj.root == "." else proj.root
         what = "Agent" if f.kind == Kind.AGENT else "LLM usage"
-        detail = ", ".join(names) or ", ".join(provs) or "LLM SDK"
+        detail = ", ".join(names) or ", ".join(provs)
+        if not detail:
+            # Only supporting technology (a search tool, a vector store,
+            # tracing): name it rather than claim an LLM SDK.
+            support = [s.name.split(" (", 1)[0] for sid in f.frameworks if (s := self.index.get(sid))]
+            detail = ", ".join(support[:3]) or "LLM SDK"
+            if support and f.kind != Kind.AGENT:
+                what = "AI tooling"
         return f"{what} in {where}: {detail}"
 
     def _mcp_finding(self, label: str, root: Path, rel: str, servers: list[dict[str, Any]]) -> Finding:
@@ -1738,7 +1905,7 @@ class FilesystemConnector(BaseConnector):
         *, wildcards: list[tuple[str, int, str]] | None = None, models: list[Match] | None = None,
     ) -> Finding:
         f = self._base(label, root, rel, Kind.INFRA, "", "iac")
-        for m, value, snip in hits:
+        for m, _value, snip in hits:
             apply_matches(f, [m], location=rel, snippet=snip)
         for m in models or []:
             apply_matches(f, [m], location=rel)
@@ -1834,18 +2001,6 @@ def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int 
     if secret:
         text = text.replace(secret, redact(secret))
     return text if len(text) <= width else text[: width - 1] + "…"
-
-
-def _load_json_lenient(text: str) -> Any:
-    """Parse JSON, tolerating JSONC comments and trailing commas only when needed.
-
-    Stripping comments is a pure-Python character loop; ordinary JSON must not
-    pay for it on every file.
-    """
-    try:
-        return json.loads(text)
-    except ValueError:
-        return json.loads(_strip_json_comments(text))
 
 
 def _project_root(root: Path, rel: str) -> str:
@@ -1948,7 +2103,8 @@ def _redacted_source(text: str, structure: Any) -> str:
     if structure is _NO_STRUCTURE:
         return sanitize_text(text)
     try:
-        return sanitize((structure, text))[1]
+        result: str = sanitize((structure, text))[1]
+        return result
     except (YAMLResourceLimitError, SanitizationLimitError):
         raise
     except (ValueError, RecursionError, yaml.YAMLError):
@@ -1962,6 +2118,7 @@ def _safe_source_text(rel: str, text: str) -> str:
 
 def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:
     errors = errors if errors is not None else []
+    data: Any  # untrusted repository content; every shape is checked below
     try:
         if rel.endswith(".toml"):
             data = tomllib.loads(text)
@@ -2082,63 +2239,3 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
     names = [tuple(server) for server in out]
     cleaned = sanitize((data, [[server[key] for key in keys] for server, keys in zip(out, names, strict=True)]))[1]
     return [dict(zip(keys, values, strict=True)) for keys, values in zip(names, cleaned, strict=True)]
-
-
-def _strip_json_comments(text: str) -> str:
-    """Tolerate JSONC comments and trailing commas without rewriting strings."""
-    out: list[str] = []
-    i = 0
-    in_string = False
-    while i < len(text):
-        char = text[i]
-        if in_string:
-            out.append(char)
-            if char == "\\" and i + 1 < len(text):
-                i += 1
-                out.append(text[i])
-            elif char == '"':
-                in_string = False
-        elif char == '"':
-            in_string = True
-            out.append(char)
-        elif text.startswith("//", i):
-            end = text.find("\n", i + 2)
-            i = len(text) if end == -1 else end
-            out.append("\n")
-            continue
-        elif text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            if end == -1:
-                raise ValueError("unterminated JSON comment")
-            out.append(" " + "\n" * text.count("\n", i, end + 2))
-            i = end + 2
-            continue
-        else:
-            out.append(char)
-        i += 1
-    stripped = "".join(out)
-    out = []
-    in_string = False
-    i = 0
-    while i < len(stripped):
-        char = stripped[i]
-        if in_string:
-            out.append(char)
-            if char == "\\" and i + 1 < len(stripped):
-                i += 1
-                out.append(stripped[i])
-            elif char == '"':
-                in_string = False
-        elif char == '"':
-            in_string = True
-            out.append(char)
-        elif char == ",":
-            end = i + 1
-            while end < len(stripped) and stripped[end].isspace():
-                end += 1
-            if end == len(stripped) or stripped[end] not in "}]":
-                out.append(char)
-        else:
-            out.append(char)
-        i += 1
-    return "".join(out)

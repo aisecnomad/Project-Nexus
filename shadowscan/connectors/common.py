@@ -79,6 +79,7 @@ def apply_matches(
     snippet: str | None = None,
     max_evidence_per_signature: int = 12,
     weight_scale: float = 1.0,
+    capabilities: bool = True,
 ) -> int:
     """Attach matches to a finding as evidence, tags, frameworks and capabilities.
 
@@ -97,8 +98,9 @@ def apply_matches(
             finding.add_model_provider(sig.id)
         elif sig.category == "policy":
             finding.add_tag(sig.id)
-        for cap in m.capabilities():
-            finding.add_capability(cap)
+        if capabilities:
+            for cap in m.capabilities():
+                finding.add_capability(cap)
         for t in sig.tags:
             finding.add_tag(t)
         if m.agent_indicator:

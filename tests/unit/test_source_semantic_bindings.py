@@ -190,5 +190,5 @@ def test_source_binding_budget_exhaustion_marks_scan_incomplete(tmp_path, run_co
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete
-    assert any("MatchTimeoutError" in error for error in ctx.stats.errors)
+    assert any("source binding" in error and "limit exceeded" in error for error in ctx.stats.errors)
     assert not any(f.kind == Kind.AGENT for f in findings)

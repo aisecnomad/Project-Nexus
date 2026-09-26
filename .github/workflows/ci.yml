@@ -116,6 +116,8 @@ jobs:
             --output "$RUNNER_TEMP/shadowscan-realistic-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json \
             --output "$RUNNER_TEMP/shadowscan-review-evaluation.json"
+          python -m tools.evaluation.evaluate --corpus tools/evaluation/field_review_corpus.json \
+            --output "$RUNNER_TEMP/shadowscan-field-review-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
             --annotations tools/evaluation/independent_annotations.json \
             --output "$RUNNER_TEMP/shadowscan-independent-evaluation.json"

@@ -61,7 +61,7 @@ from shadowscan.connectors.gateway.normalise import (  # noqa: F401 - re-exporte
     detect_schema,
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.signatures.matcher import MatchTimeoutError
+from shadowscan.signatures.matcher import MatchTimeoutError, SignatureIndex
 from shadowscan.utils.redaction import REDACTED, credential_id, sanitize
 from shadowscan.utils.text import get_path, parse_timestamp, to_iso
 
@@ -155,8 +155,9 @@ def _validate_scalar_fields(ev: Event) -> None:
     containers in headers/identity fields otherwise fail partway through
     accumulation and can discard all callers collected before that record.
     """
-    if isinstance(ev.status, int) and not isinstance(ev.status, bool):
-        ev.status = str(ev.status)
+    status: object = ev.status  # schemas copy raw JSON values into the field
+    if isinstance(status, int) and not isinstance(status, bool):
+        ev.status = str(status)
     for name in ("caller", "caller_kind", "caller_label", "model", "provider", "host",
                  "user_agent", "ip", "user", "team", "status", "path"):
         value = getattr(ev, name)
@@ -305,7 +306,7 @@ PROVIDER_ALIASES = {
 }
 
 
-def _provider_signature(index: Any, name: str | None) -> str | None:
+def _provider_signature(index: SignatureIndex, name: str | None) -> str | None:
     if not name:
         return None
     key = str(name).strip().lower()

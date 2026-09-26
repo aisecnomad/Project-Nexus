@@ -8,7 +8,8 @@ scanning enabled. A warning, partial scan, skipped connector, or unstable
 repeated scan stops evaluation instead of counting missing detections as true
 negatives.
 
-The five bundled corpora (synthetic, public, realistic, review and independent)
+The six bundled corpora (synthetic, public, realistic, review, field review and
+independent)
 are regression checks on known inputs. The synthetic, realistic, review and
 public sets were written or selected by the maintainers; the independent corpus
 was labeled separately, as described below. None of them is a random or
@@ -126,6 +127,12 @@ finding, and the CrewAI `agents.yaml` model names add an Azure OpenAI
 provider. Like the other corpora, this one is author-written: the authors
 chose the frameworks, the file layouts and the distractors, so its rates
 describe these 31 cases only and are not a field precision estimate.
+`field_review_corpus.json` holds eight synthetic cases written after a field
+review of public repositories: an aiohttp client, a UI component named
+`AgentCard` and a call-center `invoke_agent` function as hard negatives, and
+bound MCP, raw-response, streaming, helper-function and crew manifest cases as
+positives. Its cases re-create observed patterns in original code and are a
+regression suite, not a field precision estimate.
 `review_corpus.json` is a separate authored regression set for the September 25
 findings: local-module collisions, ordinary provider calls, tool-schema-only
 requests, and supported agent construction/loops. It was written after observing
@@ -287,7 +294,7 @@ restricted release record. Changing labels, exclusions, scanner signatures or
 sampling after seeing results requires a new blinded holdout and reviewed policy.
 
 The standalone command requires declared human labels, rejects known-gap waivers
-and exact source reuse from the five bundled evaluated corpora. It cannot find
+and exact source reuse from the six bundled evaluated corpora. It cannot find
 undisclosed private prior evaluations or near duplicates. For a production
 rollout, run [`tools.acceptance.verify`](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) with
 declared `prior_corpora` and the separately reviewed tenant canary evidence.

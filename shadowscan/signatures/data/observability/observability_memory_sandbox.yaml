@@ -341,7 +341,14 @@ signatures:
       - type: code
         # Generic WebSearchTool( / google_search identifiers are covered by
         # heuristic.browsing; BingGroundingTool( belongs to Azure AI Foundry.
-        patterns: ['\bTavily(?:Search|SearchResults|Client|Extract)\s*\(', '\bSerpAPIWrapper\s*\(', '\bDuckDuckGoSearch(?:Run|Results)\s*\(', '\bGoogleSearchAPIWrapper\s*\(', '\bBingSearchAPIWrapper\s*\(', '\bFirecrawlApp\s*\(', '\bExa\s*\(', '\bWebSearch\b', '"type"\s*:\s*"web_search(?:_preview)?(?:_20\d{6})?"', '\bGoogleSearch\s*\(', '\bgrounding\s*=\s*True']
+        patterns: ['\bTavily(?:Search|SearchResults|Client|Extract)\s*\(', '\bSerpAPIWrapper\s*\(', '\bDuckDuckGoSearch(?:Run|Results)\s*\(', '\bGoogleSearchAPIWrapper\s*\(', '\bBingSearchAPIWrapper\s*\(', '\bFirecrawlApp\s*\(', '"type"\s*:\s*"web_search(?:_preview)?(?:_20\d{6})?"', '\bgrounding\s*=\s*True']
+        weight: 0.55
+        agent_indicator: true
+      - type: code
+        # Short search-product names are common identifiers in ordinary search features.
+        # Counted only with other library evidence of this signature in the project.
+        ambiguous: true
+        patterns: ['\bExa\s*\(', '\bGoogleSearch\s*\(', '\bWebSearch\b']
         weight: 0.55
         agent_indicator: true
       - type: env

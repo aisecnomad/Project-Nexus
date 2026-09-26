@@ -651,7 +651,7 @@ def _gateway_sources(finding: Finding) -> list[dict[str, Any]]:
     return existing if isinstance(existing, list) else [_gateway_source_snapshot(finding)]
 
 
-def _unique_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _unique_records(records: list[Any]) -> list[dict[str, Any]]:
     """Deduplicate nested observations while retaining their first provenance."""
     def key_for(value: Any) -> Any:
         if isinstance(value, dict):
@@ -837,7 +837,7 @@ def correlate(findings: list[Finding]) -> None:
         for k in cand:
             keys.setdefault(k, set()).add(f.id)
     related: dict[str, set[str]] = {}
-    for k, ids in keys.items():
+    for ids in keys.values():
         if 1 < len(ids) <= 25:
             for i in ids:
                 related.setdefault(i, set()).update(ids - {i})

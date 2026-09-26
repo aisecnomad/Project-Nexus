@@ -45,11 +45,26 @@ unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
-`scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
+`max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
 by default; `strict_coverage` promotes their diagnostics to errors. Declared
 oversize skip globs remain visible omissions.
+
+Configuration files are parsed as JSONC where their format allows comments.
+A syntax error in a file that is not coding-agent settings only skips its
+structured checks, with a warning; `.claude`, `.codex` and `.gemini` settings
+and `strict_coverage` keep such an error incomplete. A notebook larger than
+`max_file_size` because of saved outputs is analyzed by its code cells up to
+`max_notebook_size` (default 20 MiB); its outputs are then not scanned for
+credentials, which leaves coverage incomplete unless `scan_secrets` is off. A Python module over `max_ast_nodes` (default 50000) keeps its
+lexical evidence without import-bound analysis: a warning in test code, an error
+elsewhere.
+
+A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
+into that project's finding and listed under `metadata.manifests`. MCP server
+capabilities are derived from the tool names the server registers
+(`metadata.mcp_tools`, for example `write_file` implies `data-access`).
 
 ### `code.github`
 Enumerates an organisation, a user or an explicit `repos:` list, fetches

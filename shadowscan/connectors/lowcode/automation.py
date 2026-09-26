@@ -318,7 +318,7 @@ class MakeConnector(_AutomationBase):
         flow = bp.get("flow") if isinstance(bp, dict) else None
         modules = [str(m.get("module", "")) for m in (flow or []) if isinstance(m, dict)]
         ai_steps = [m for m in modules if re.search(r"openai|anthropic|claude|gemini|mistral|ai-agents|perplexity|hugging|eden-ai|cohere|groq|deepseek|assistants", m, re.I)]
-        triggers = [m for m in modules[:1]] + [m for m in modules if re.search(r"webhook|watch|schedule|trigger", m, re.I)]
+        triggers = modules[:1] + [m for m in modules if re.search(r"webhook|watch|schedule|trigger", m, re.I)]
         return self._workflow_finding(
             wid=str(rec.get("id") or rec.get("name")),
             name=str(rec.get("name") or bp.get("name") if isinstance(bp, dict) else rec.get("name")),

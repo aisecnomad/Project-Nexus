@@ -189,7 +189,7 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
             except (ValueError, TypeError, IndexError):
                 continue
             if _blocked_ip(addr) and not allow:
-                raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination")
+                raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination") from None
     return url
 
 

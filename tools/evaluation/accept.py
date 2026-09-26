@@ -108,7 +108,8 @@ def _annotation_method(annotations: Path) -> str:
         raise CorpusError("annotations are not valid, unambiguous UTF-8 JSON") from exc
     if not isinstance(ledger, dict) or not isinstance(ledger.get("method"), str):
         raise CorpusError("annotations must declare a labeling method")
-    return ledger["method"]
+    method: str = ledger["method"]
+    return method
 
 
 def _exclude_bundled_sources(cases: list[Case], digest: str) -> None:

@@ -163,7 +163,8 @@ class OciConnector(BaseConnector):
         import oci
 
         try:
-            return oci.util.to_dict(obj)
+            result: dict[str, Any] = oci.util.to_dict(obj)
+            return result
         except Exception:  # noqa: BLE001
             return dict(getattr(obj, "__dict__", {}) or {})
 
@@ -178,8 +179,7 @@ class OciConnector(BaseConnector):
             compartments = [c for c in [self.tenancy] if c] + [c.id for c in self._all(identity.list_compartments, self.tenancy, compartment_id_in_subtree=True, lifecycle_state="ACTIVE")]
         regions = self.regions or [r.region_name for r in self._all(identity.list_region_subscriptions, self.tenancy)]
         yield {"_kind": "tenancy", "tenancy": self.tenancy, "compartments": len(compartments), "regions": regions}
-        for pol in self._iter_policies(identity, compartments):
-            yield pol
+        yield from self._iter_policies(identity, compartments)
         for dg in self._all(identity.list_dynamic_groups, self.tenancy):
             yield {"_kind": "dynamic-group", **self._d(dg)}
         for region in regions:

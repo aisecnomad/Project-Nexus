@@ -87,6 +87,10 @@ class Signal:
     values: list[str] = field(default_factory=list)  # domain / scope / iac
     capabilities: list[str] = field(default_factory=list)  # capabilities implied when matched
     agent_indicator: bool = False  # this signal by itself indicates an *agent* (not just LLM use)
+    # code: the patterns are common identifiers outside this product (an HTTP
+    # client class, a UI component). A match counts only when the same
+    # signature has independent evidence in the same project.
+    ambiguous: bool = False
     description: str | None = None
     bounded_compiled: list[Any] = field(default_factory=list, repr=False)
 
@@ -175,6 +179,7 @@ def _signal_from_dict(d: dict[str, Any]) -> Signal:
         values=[str(x) for x in d.get("values", []) or []],
         capabilities=list(d.get("capabilities", []) or []),
         agent_indicator=bool(d.get("agent_indicator", False)),
+        ambiguous=bool(d.get("ambiguous", False)),
         description=d.get("description"),
     )
 

@@ -48,8 +48,7 @@ class NotionConnector(BaseConnector):
             if not isinstance(data, dict) or not isinstance(data.get("results"), list):
                 self.ctx.warn("saas.notion: invalid users page; collection incomplete")
                 return
-            for u in data["results"]:
-                yield u
+            yield from data["results"]
             if not isinstance(data.get("has_more"), bool):
                 self.ctx.warn("saas.notion: invalid has_more in users page; collection incomplete")
                 return
