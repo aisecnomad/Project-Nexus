@@ -219,7 +219,7 @@ class GitLabConnector(BaseConnector):
                 self.ctx.warn(f"code.gitlab: {full}: {exc}", incomplete=True)
             except Exception as exc:  # noqa: BLE001
                 self.ctx.error(f"code.gitlab: {full}: {type(exc).__name__}: {exc}")
-                self.log.debug("project failure", exc_info=True)
+                self.log.debug("project failure (%s)", type(exc).__name__)
             finally:
                 if tmp:
                     shutil.rmtree(tmp, ignore_errors=True)

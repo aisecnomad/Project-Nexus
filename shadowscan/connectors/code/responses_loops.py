@@ -1,8 +1,10 @@
-"""Conservative source recognition of iterative OpenAI Responses tool dispatch.
+"""Conservative source recognition of OpenAI Responses selected actions.
 
-Only an import-bound SDK call can be supplied by the caller. The recognizer
+Only import-bound SDK calls can be supplied by the caller. Loop recognition
 requires a repeating request, selection of a returned function call, dispatch
-using its name/arguments, and ordered feedback to the same request input.
+using its name/arguments, and ordered feedback to the same request input. The
+separate single-action recognizer requires linked selection and dispatch in a
+direct scope, and does not imply repetition or ordered model feedback.
 This is static evidence and deliberately does not resolve helper functions or
 dynamic control flow outside the supported direct loop structure.
 """
@@ -119,8 +121,14 @@ def _condition(test: ast.AST, item: str) -> tuple[str, bool] | bool | None:
 def _paths(
     statements: list[ast.stmt], item: str, budget: _Budget, depth: int = 0,
     initial_facts: dict[str, bool] | None = None,
+    finished: list[tuple[list[ast.stmt], dict[str, bool]]] | None = None,
 ):
-    """Generate source-ordered reachable paths and correlate simple predicates."""
+    """Generate source-ordered reachable paths and correlate simple predicates.
+
+    Paths ending in ``break``/``continue``/``return``/``raise`` are dropped.
+    When ``finished`` is given, a path ending in ``return <value>`` is added
+    to it, with the return statement last: its value runs before the path ends.
+    """
     if depth > 64:
         raise MatchTimeoutError("Responses tool-loop branch-depth limit exceeded")
     paths: list[tuple[list[ast.stmt], dict[str, bool]]] = [([], dict(initial_facts or {}))]
@@ -140,11 +148,18 @@ def _paths(
                         if name in facts and facts[name] != required:
                             continue
                         branch_facts[name] = required
+                    branch_finished: list[tuple[list[ast.stmt], dict[str, bool]]] | None = (
+                        [] if finished is not None else None
+                    )
                     for branch_nodes, branch_conditions in _paths(
-                        branch, item, budget, depth + 1, initial_facts=branch_facts,
+                        branch, item, budget, depth + 1, initial_facts=branch_facts, finished=branch_finished,
                     ):
                         candidates.append((nodes + branch_nodes, branch_conditions))
+                    if finished is not None and branch_finished:
+                        finished.extend((nodes + ended, ended_facts) for ended, ended_facts in branch_finished)
             elif isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
+                if finished is not None and isinstance(statement, ast.Return) and statement.value is not None:
+                    finished.append(([*nodes, statement], facts))
                 continue
             elif isinstance(statement, (ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With,
                                         ast.AsyncWith, ast.Match, ast.FunctionDef, ast.AsyncFunctionDef,
@@ -326,7 +341,8 @@ def _filter_list(value: ast.expr, response: str, budget: _Budget) -> bool:
     budget.tick()
     return (isinstance(generator.target, ast.Name) and _member(generator.iter, response, "output")
             and isinstance(value.elt, ast.Name) and value.elt.id == generator.target.id
-            and any(_type_guard(condition, generator.target.id) is True for condition in generator.ifs))
+            and any(_type_guard(condition, generator.target.id) is True for condition in generator.ifs)
+            and all(_condition(condition, generator.target.id) is not False for condition in generator.ifs))
 
 
 def _continuations(
@@ -445,4 +461,128 @@ def responses_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[in
                        for path, facts in _paths(selection.body, item, budget, initial_facts=prefix_facts)):
                     found.add(request.lineno)
                     break
+    return sorted(found)
+
+
+def _single_dispatch(path: list[ast.stmt], item: str, budget: _Budget) -> bool:
+    """Prove selected-name dispatch, or argument dispatch with linked output.
+
+    A single selected action is weaker than an iterative feedback loop. In
+    particular, this does not confer autonomous/repeated-execution capability.
+    """
+    results: set[str] = set()
+    for statement in path:
+        for node in _walk(statement, budget):
+            if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                target: ast.AST = node
+                while isinstance(target, (ast.Attribute, ast.Subscript)):
+                    target = target.value
+                if isinstance(target, ast.Name) and target.id == item:
+                    return False
+        assignment = _assigned(statement)
+        name: str | None = None
+        expression: ast.expr | None = None
+        if assignment:
+            name, expression = assignment
+            results.discard(name)
+        elif isinstance(statement, (ast.Expr, ast.Return)) and statement.value is not None:
+            # A registry dispatch need not keep its result: a bare call or a
+            # returned call selects and runs the model's tool all the same.
+            expression = statement.value
+        call = _call(expression) if expression is not None else None
+        if call is not None and any(
+            _depends(arg, item, "arguments", budget)
+            for arg in [*call.args, *(keyword.value for keyword in call.keywords)]
+        ):
+            if isinstance(call.func, ast.Subscript) and _member(call.func.slice, item, "name"):
+                return True
+            if (isinstance(call.func, ast.Call) and isinstance(call.func.func, ast.Attribute)
+                    and call.func.func.attr == "get" and len(call.func.args) == 1
+                    and not call.func.keywords and _member(call.func.args[0], item, "name")):
+                return True
+            if isinstance(call.func, ast.Name) and name is not None:
+                # A fixed local handler needs result/call-id linkage too;
+                # logging or printing selected arguments is insufficient.
+                results.add(name)
+                continue
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+            call = statement.value
+            if (isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name)
+                    and call.func.attr == "append" and len(call.args) == 1 and not call.keywords
+                    and _output(call.args[0], item, results, budget)):
+                return True
+    return False
+
+
+def _dispatch_paths(
+    body: list[ast.stmt], item: str, budget: _Budget, facts: dict[str, bool],
+) -> list[tuple[list[ast.stmt], dict[str, bool]]]:
+    """Reachable paths through one selection, including those returning a dispatch."""
+    finished: list[tuple[list[ast.stmt], dict[str, bool]]] = []
+    live = _paths(body, item, budget, initial_facts=facts, finished=finished)
+    return [*live, *finished]
+
+
+def responses_dispatch_lines(tree: ast.AST, request_calls: set[int]) -> list[int]:
+    """Recognize one selected action in an import-bound, direct-scope flow.
+
+    Support a request immediately followed by its response-output iteration
+    (optionally through a function-call list filter). Keep this distinct from
+    repeating requests: they must meet the stronger feedback-loop contract.
+    Adjacent statements, identity-preserving filters and path analysis avoid
+    joining unrelated functions, cached responses, dead branches or handlers.
+    """
+    if not request_calls:
+        return []
+    budget = _Budget()
+    found: set[int] = set()
+    for scope in _walk(tree, budget):
+        if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = scope.body
+        for position, statement in enumerate(body):
+            assignment = _assigned(statement)
+            if not assignment:
+                continue
+            response, expression = assignment
+            request = _call(expression)
+            if request is None or id(request) not in request_calls:
+                continue
+            options = {keyword.arg: keyword.value for keyword in request.keywords if keyword.arg}
+            tools = options.get("tools")
+            if tools is None or isinstance(tools, ast.Constant) and not tools.value:
+                continue
+            if isinstance(tools, (ast.List, ast.Tuple, ast.Dict)) and not (
+                tools.keys if isinstance(tools, ast.Dict) else tools.elts
+            ):
+                continue
+            cursor = position + 1
+            selected: str | None = None
+            if cursor < len(body) and (bound := _assigned(body[cursor])):
+                if bound[0] != response and _filter_list(bound[1], response, budget):
+                    selected = bound[0]
+                    cursor += 1
+            if cursor >= len(body):
+                continue
+            selection = body[cursor]
+            if not isinstance(selection, (ast.For, ast.AsyncFor)) or not isinstance(selection.target, ast.Name):
+                continue
+            item = selection.target.id
+            direct = _member(selection.iter, response, "output")
+            filtered = selected is not None and isinstance(selection.iter, ast.Name) and selection.iter.id == selected
+            if not (direct or filtered) or item in (response, selected):
+                continue
+            if direct and not any(_type_guard(node.test, item) is not None
+                                  for node in _walk(selection, budget) if isinstance(node, ast.If)):
+                continue
+            # Reachability of the request is the expensive step: it runs only
+            # for requests already followed by a selection over their output,
+            # so long modules with many plain requests stay within budget.
+            prefixes = _continuations(body[:position], {}, budget)
+            if not prefixes:
+                continue
+            if any(_single_dispatch(path, item, budget)
+                   for facts, continued in prefixes if not continued
+                   for path, _ in _dispatch_paths(selection.body, item, budget, facts)):
+                found.add(request.lineno)
     return sorted(found)

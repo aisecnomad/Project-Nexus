@@ -94,7 +94,7 @@ def test_google_workspace_unwraps_admin_sdk_token_list_envelope(run_connector, t
         "kind": "admin#directory#token", "clientId": "1234.apps.googleusercontent.com", "displayText": "Fireflies.ai Notetaker",
         "scopes": ["https://www.googleapis.com/auth/gmail.readonly"], "userKey": "alice@example.test",
     }]}
-    findings, ctx = _offline(run_connector, tmp_path, "identity.google-workspace", envelope)
+    findings, ctx = _offline(run_connector, tmp_path, "identity.google-workspace", envelope, customer="C01234567")
     assert [f.title for f in findings] == ["Google Workspace OAuth app: Fireflies.ai Notetaker"]
     assert findings[0].metadata["user_count"] == 1
     assert not ctx.stats.warnings and not ctx.stats.incomplete
@@ -107,6 +107,7 @@ def test_google_workspace_encodes_user_key_in_token_path(run_connector, monkeypa
         connector.http = HttpClient("https://admin.googleapis.com")
 
     monkeypatch.setattr(GoogleWorkspaceConnector, "_auth", auth)
+    responses.get("https://admin.googleapis.com/admin/directory/v1/customers/my_customer", json={"id": "C01234567"})
     responses.get("https://admin.googleapis.com/admin/directory/v1/users", json={"users": [{"primaryEmail": "a/b#c@example.test"}]})
     responses.get("https://admin.googleapis.com/admin/directory/v1/users/a%2Fb%23c@example.test/tokens", json={"kind": "admin#directory#tokenList"})
     findings, ctx = run_connector("identity.google-workspace")

@@ -1,0 +1,6 @@
+[
+  {"_kind": "account", "account": "111111111111"},
+  {"_kind": "bedrock-agent", "agentId": "short-agent", "agentName": "Unresolved", "_region": "us-east-1"},
+  {"_kind": "bedrock-agent", "agentArn": "arn:aws:bedrock:us-east-1:222222222222:agent/known", "agentName": "Known", "_region": "us-east-1"},
+  {"_kind": "account", "account": "222222222222"}
+]

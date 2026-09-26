@@ -49,11 +49,58 @@
 - The Markdown report's URL-defanging regex covered `http(s)://` and `www.`
   but not a bare, protocol-relative `//host` bare URL, which linkify-it-based
   renderers (many wikis and ticket trackers) still autolink.
+### Scanner boundaries and acceptance consistency
+
+- Redact the value of any call whose first argument, or `key=`/`name=`
+  argument, is a literal credential key (`os.getenv("API_KEY", "...")`,
+  `settings.get("password", ...)`) before publishing source evidence. The
+  bounded lexer reads `#` and `//` as text when a comment reading cannot close
+  a call, so prose such as `(#123)`, Python floor division and JavaScript private
+  fields pass through unchanged. A credential call whose value cannot be
+  bounded withholds the excerpt and marks the scan incomplete.
+- Keep repository-connector exception logging free of raw exception payloads.
+- Bind Google Workspace observations and registry approvals to an immutable
+  customer identity. Unresolved identities remain visible for investigation but
+  cannot establish approval or complete collection. **Operator action:** grant
+  the audit identity `admin.directory.customer.readonly` before live
+  collection; `customer` must be `my_customer` or a concrete `C…` ID (a domain
+  is rejected at startup); offline scans need the verified `customer` or stay
+  incomplete. Unresolved findings keep stable IDs per input or admin account.
+- Preserve unresolved Entra permission evidence. Grants or role assignments
+  whose service principal is missing, and principals exported with conflicting
+  records, become `unresolved-principal` findings that report no type,
+  publisher or first-party status.
+- Reject contradictory AWS account envelopes: several or invalid `account`
+  records, or a resource ARN from another account, leave short identities
+  unresolved and the scan incomplete. An offline `account_id` that disagrees
+  with the export's account record no longer silently wins.
+- Require usable identity for n8n workflow observations; blueprints without an
+  ID, including YAML exports, keep their evidence under an unresolved identity.
+- Remove the duplicate lexical agent-promotion path. Provider dispatch findings
+  must pass source-semantic provenance checks and the configured test-code policy.
+  Python single dispatch is recognized whether its result is kept, discarded or
+  returned. JavaScript recognition stays deliberately narrow (a small, complete
+  top-level program): JS/TS files that the lexical path promoted, such as a
+  dispatch inside a function or code without semicolons, now report
+  `framework-usage`. Review their findings before relying on agent counts.
+- Share source-overlap validation between the holdout acceptance tools so repeated
+  examples cannot inflate sample counts or statistical confidence.
+- These changes require fresh finding baselines and acceptance evidence. Offline
+  regressions do not establish independent human review or live tenant acceptance.
 
 ### Markdown report safety
 
 - Defang bare HTTP(S) and `www.` URLs in untrusted report text so copied Markdown
   does not automatically turn attacker-controlled values into clickable links.
+
+### Supported-platform preflight
+
+- Every `shadowscan` command now fails closed, with a clear error, on a host
+  that cannot enforce the documented path confinement (Windows, or a platform
+  without `O_NOFOLLOW`); `--help` and `--version` still work everywhere.
+  `shadowscan.utils.platform.require_supported_platform()` performs the same
+  check for embedding callers. `redact` and `sanitize_record` in
+  `shadowscan.utils.text` stay as documented compatibility aliases.
 
 ### Community policy consistency
 

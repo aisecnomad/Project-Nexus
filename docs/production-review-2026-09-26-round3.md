@@ -42,20 +42,68 @@ identifiers used for reproduction were synthetic.
 
 ## Verification
 
-On the fixed tree: `ruff`, the full `mypy` target (`shadowscan` plus
-`tools/evaluation`, `tools/canaries`, `tools/acceptance`, `tools/release`),
-signature validation (215 signatures, 994 signals), `pip-audit`, and all five
-bundled evaluation corpora (precision/recall 1.0 on every graded case; the
-three pre-existing, documented gaps in the realistic corpus are unchanged)
-all pass. The full test suite passes on Python 3.11, 3.12 and 3.13 (4,457
-passed, 2 skipped — the two Git-2.45 tests, on this container's older Git —
-on every interpreter; overall statement coverage 90.4%, every built-in
-connector module above the 75% floor).
+On the fixed tree (before further commits landed on `main`, see below):
+`ruff`, the full `mypy` target (`shadowscan` plus `tools/evaluation`,
+`tools/canaries`, `tools/acceptance`, `tools/release`), signature validation
+(215 signatures, 994 signals), `pip-audit`, and all five bundled evaluation
+corpora (precision/recall 1.0 on every graded case; the three pre-existing,
+documented gaps in the realistic corpus are unchanged) all pass. The full
+test suite passes on Python 3.11, 3.12 and 3.13 (4,457 passed, 2 skipped —
+the two Git-2.45 tests, on this container's older Git — on every
+interpreter; overall statement coverage 90.4%, every built-in connector
+module above the 75% floor).
 
 Each of the ten fixes above was independently confirmed to change the
 outcome: its regression test fails against the pre-fix code (reproducing the
 exact failure scenario in the finding) and passes against the fix, checked
 by reverting only that one file and re-running the new test.
+
+## Merge with `main` after this review
+
+While this review's fixes were being verified, three further pull requests
+merged into `main` (a scanner-evidence hardening pass adding a single-call
+JavaScript dispatch recognizer and n8n unresolved-identity handling, a
+follow-up hardening PR, and an added Jekyll GitHub Pages deployment
+workflow). Each file this review also touched was diffed against `main` in
+isolation (`git diff <base>..<main> -- <file>`) before trusting the
+automatic merge, to confirm the incoming changes were disjoint from this
+review's edits — in every case they were: `main` added new, separate
+functions or touched unrelated call sites in the same file, and no line this
+review changed was touched by the other side. Both sets of changes are
+present and independently correct in the merged tree.
+
+Re-running the full verification above against the merged tree (`ruff`,
+`mypy`, signature validation, `pip-audit`, all five evaluation corpora, and
+the full test suite on Python 3.11/3.12/3.13) reproduces the same result
+with one exception: `tests/test_repository_policy.py::test_workflows_use_pinned_actions_and_scoped_permissions[jekyll-gh-pages.yml]`
+now fails, identically on all three interpreters (4,724 passed, 2 skipped,
+1 failed on each). This failure is pre-existing on `main` alone — confirmed
+by checking out `main` in an isolated worktree and reproducing the identical
+failure there, with no other change involved.
+
+The new `.github/workflows/jekyll-gh-pages.yml` grants `pages: write` and
+`id-token: write` at the top level (this repository's policy requires
+top-level `permissions` to be read-only, with write scopes granted only to
+the specific job that needs them) and pins no action by commit SHA,
+violating this repository's own SHA-pinning hard rule. It also appears to
+duplicate the existing `docs.yml` workflow, which already deploys this
+repository's documentation to GitHub Pages via a more conservative,
+manually-gated `mkdocs` build with per-job scoped permissions and pinned
+actions.
+
+This defect is out of scope for this review — it was introduced by a
+different, already-merged pull request, unrelated to anything this review
+set out to examine — and is not fixed here. A correct fix (mirroring
+`docs.yml`'s pattern: read-only top-level permissions, `pages`/`id-token`
+scoped to the `deploy` job only, `persist-credentials: false` on the
+checkout, a `timeout-minutes` on every job, and pinning `actions/configure-pages`
+and `actions/jekyll-build-pages` by full commit SHA) needs those two
+actions' real release commit SHAs verified through a trustworthy channel;
+this review could not obtain that independent verification and deliberately
+left the file unchanged rather than pin an unverified SHA in a
+security-sensitive CI permissions file. This is flagged here for a
+maintainer to fix directly, with a verified SHA, or to remove the
+duplicate workflow.
 
 ## Areas examined and found sound
 
