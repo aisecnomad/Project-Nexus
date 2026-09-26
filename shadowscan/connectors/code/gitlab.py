@@ -16,26 +16,17 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import tempfile
-import time
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import quote, urlsplit
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
-from shadowscan.connectors.code.github import (
-    GitHubConnector,
-    _OfflineRepository,
-    _remote_record,
-    repository_blob_id,
-    repository_blob_matches,
-    repository_target,
-)
+from shadowscan.connectors.code.hosted import HostedRepositoryConnector, _remote_record, repository_blob_id
 from shadowscan.connectors.common import apply_matches, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.git import clone_environment, git_argv_prefix, read_git_snapshot, validate_git_ref
+from shadowscan.utils.git import read_git_snapshot
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 
 
@@ -47,7 +38,7 @@ class _GitLabMetadata(dict[str, Any]):
         self.kind = kind
 
 
-class GitLabConnector(BaseConnector):
+class GitLabConnector(HostedRepositoryConnector):
     name: ClassVar[str] = "code.gitlab"
     surface: ClassVar[Surface] = Surface.CODE
     provider: ClassVar[str | None] = "gitlab"
@@ -64,6 +55,11 @@ class GitLabConnector(BaseConnector):
         "input": "offline: directory of cloned projects",
     }
     offline_formats: ClassVar[str] = "directory of cloned projects"
+    repository_field: ClassVar[str] = "path_with_namespace"
+    limit_key: ClassVar[str] = "max_projects"
+    blob_id_field: ClassVar[str] = "id"
+    temp_prefix: ClassVar[str] = "shadowscan-gl-"
+    record_label: ClassVar[str] = "project"
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
@@ -88,8 +84,7 @@ class GitLabConnector(BaseConnector):
             if str(p) in requested:
                 continue
             requested.add(str(p))
-            if len(seen) >= self.max_projects:
-                self.ctx.warn(f"code.gitlab: max_projects ({self.max_projects}) reached", incomplete=True)
+            if self._limit_reached(len(seen)):
                 return
             data = self.http.try_get_json(f"/projects/{quote(str(p), safe='')}")
             if data and data["id"] not in seen:
@@ -103,8 +98,7 @@ class GitLabConnector(BaseConnector):
             for p in self.http.paginate_link(f"/groups/{gid}/projects", params=params):
                 if p["id"] in seen:
                     continue
-                if len(seen) >= self.max_projects:
-                    self.ctx.warn(f"code.gitlab: max_projects ({self.max_projects}) reached", incomplete=True)
+                if self._limit_reached(len(seen)):
                     return
                 seen.add(p["id"])
                 yield _remote_record(p)
@@ -130,31 +124,8 @@ class GitLabConnector(BaseConnector):
         except HttpError as exc:
             self.ctx.warn(f"code.gitlab: metadata HTTP {exc.status} for {path}; coverage unknown", incomplete=True)
 
-    def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
-        p = Path(path).expanduser().absolute()
-        if any(part.is_symlink() for part in (p, *p.parents)) or not p.is_dir():
-            raise ConnectorError(f"code.gitlab: offline input must be a directory of clones: {path}")
-        root = p.resolve()
-        count = 0
-        try:
-            for child in sorted(root.iterdir()):
-                if child.is_symlink():
-                    self.ctx.warn("code.gitlab: offline clone symlinks are skipped")
-                    continue
-                if not child.is_dir():
-                    continue
-                if count >= self.max_projects:
-                    self.ctx.warn(f"code.gitlab: max_projects ({self.max_projects}) reached", incomplete=True)
-                    return
-                try:
-                    child.resolve().relative_to(root)
-                except (OSError, ValueError):
-                    self.ctx.warn("code.gitlab: offline clone path escaped its input directory")
-                    continue
-                count += 1
-                yield _OfflineRepository({"path_with_namespace": child.name}, str(child))
-        except OSError:
-            self.ctx.warn("code.gitlab: could not enumerate offline clones")
+    def _offline_record(self, name: str) -> dict[str, Any]:
+        return {"path_with_namespace": name}
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -174,30 +145,7 @@ class GitLabConnector(BaseConnector):
                 if rec.get("duo_features_enabled"):
                     yield self._duo_finding(rec)
                 continue
-            full = rec.get("path_with_namespace") or rec.get("name")
-            self.ctx.examined()
-            offline = isinstance(rec, _OfflineRepository)
-            local = rec.local_path if isinstance(rec, _OfflineRepository) else None
-            tmp: str | None = None
-            try:
-                if not local:
-                    # The scan root check rejects symlinked ancestors; the
-                    # default temp directory has one on macOS (/var -> /private/var).
-                    tmp = os.path.realpath(tempfile.mkdtemp(prefix="shadowscan-gl-", dir=self.ctx.workdir))
-                    local = self._fetch(rec, tmp)
-                    if not local:
-                        continue
-                yield from self._scan_local(rec, local)
-                if not offline:
-                    yield from self._project_level(rec)
-            except HttpError as exc:
-                self.ctx.warn(f"code.gitlab: {full}: {exc}", incomplete=True)
-            except Exception as exc:  # noqa: BLE001
-                self.ctx.error(f"code.gitlab: {full}: {type(exc).__name__}: {exc}")
-                self.log.debug("project failure", exc_info=True)
-            finally:
-                if tmp:
-                    shutil.rmtree(tmp, ignore_errors=True)
+            yield from self._scan_repository(rec, self._fetch, self._project_level)
         for group, variables in group_variables.items():
             f = self._variables_finding(group, variables, scope="group")
             if f:
@@ -206,72 +154,23 @@ class GitLabConnector(BaseConnector):
     def _scan_local(self, proj: dict[str, Any], local: str) -> Iterable[Finding]:
         full = proj.get("path_with_namespace") or Path(local).name
         ns = (proj.get("namespace") or {}).get("full_path") or full.rsplit("/", 1)[0]
-        cfg = {
-            **{k: v for k, v in self.ctx.config.items() if k in {"exclude", "max_file_size", "max_files", "scan_timeout", "scan_secrets", "use_git"}},
-            "path": local,
-            "label": f"gitlab:{full}",
-            "account": ns,
-            "provider": "gitlab",
-            "metadata": {
-                "project": full,
-                "web_url": proj.get("web_url"),
-                "default_branch": proj.get("default_branch"),
-                "visibility": proj.get("visibility"),
-                "archived": proj.get("archived"),
-                "last_activity_at": proj.get("last_activity_at"),
-                "topics": proj.get("topics"),
-                **({"source_snapshot": proj["source_snapshot"]} if isinstance(proj.get("source_snapshot"), dict) else {}),
-            },
+        metadata = {
+            "project": full,
+            "web_url": proj.get("web_url"),
+            "default_branch": proj.get("default_branch"),
+            "visibility": proj.get("visibility"),
+            "archived": proj.get("archived"),
+            "last_activity_at": proj.get("last_activity_at"),
+            "topics": proj.get("topics"),
         }
-        fs = FilesystemConnector(ConnectorContext(
-            config=cfg, index=self.index, logger=self.log, workdir=self.ctx.workdir,
-            deadline=self.ctx.deadline, cancelled=self.ctx.cancelled,
-            publication_lock=self.ctx.publication_lock,
-        ))
-        fs.ctx.stats = self.ctx.stats
-        for f in fs.analyze([{"path": local}]):
-            f.connector = self.name
-            f.provider = "gitlab"
-            # The filesystem connector created the finding under its own name.
-            # Identity v2 includes connector and provider, so finalize it after
-            # projecting the observation onto the GitLab surface.
-            f.id = f.compute_id()
+        for f in self._scan_checkout(FilesystemConnector, proj, local, f"gitlab:{full}", ns, metadata):
             f.last_seen = f.last_seen or proj.get("last_activity_at")
             f.first_seen = proj.get("created_at")
             yield f
 
     # -------------------------------------------------------------- fetching
     def _fetch(self, proj: dict[str, Any], tmp: str) -> str | None:
-        # Provenance is derived from the scanned content and cannot be
-        # accepted from a provider API record.
-        proj.pop("source_snapshot", None)
-        if self.mode == "clone" and shutil.which("git"):
-            dest = os.path.join(tmp, "repo")
-            if self._clone(proj, dest):
-                self._set_clone_snapshot(proj, dest)
-                return dest
-            # A timed-out git is killed before its cleanup runs. API mode must
-            # not scan a partial checkout (or its .git) as if it were API bytes.
-            shutil.rmtree(dest, ignore_errors=True)
-            self.ctx.warn(f"code.gitlab: clone failed for {proj.get('path_with_namespace')}; falling back to API mode")
-        self.ctx.check_deadline()
-        return self._fetch_via_api(proj, tmp)
-
-    def _set_clone_snapshot(self, proj: dict[str, Any], local: str) -> None:
-        remaining = max(0.001, self.ctx.deadline - time.monotonic()) if self.ctx.deadline else 10.0
-        snapshot = read_git_snapshot(local, timeout=min(10.0, remaining))
-        if snapshot is None:
-            self.ctx.warn(
-                f"code.gitlab: could not record immutable clone revision for {proj.get('path_with_namespace')}; source provenance unknown",
-                incomplete=True,
-            )
-            return
-        proj["source_snapshot"] = {
-            "provider": "gitlab",
-            "capture_method": "git-clone",
-            "ref": validate_git_ref(proj.get("default_branch")),
-            **snapshot,
-        }
+        return self._fetch_checkout(proj, tmp, proj.get("path_with_namespace"))
 
     def _clone(self, proj: dict[str, Any], dest: str) -> bool:
         url = proj.get("http_url_to_repo")
@@ -280,29 +179,21 @@ class GitLabConnector(BaseConnector):
         api = urlsplit(validate_url(self.api_url))
         origin = f"{api.scheme}://{api.netloc}"
         url = validate_url(url, origin)
-        env = clone_environment(origin, self.token, "oauth2")
-        cmd = [*git_argv_prefix(), "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch"]
-        branch = validate_git_ref(proj.get("default_branch"))
-        if branch:
-            cmd += ["--branch", branch]
-        elif proj.get("default_branch"):
-            self.ctx.warn("code.gitlab: unsupported default branch; cloned remote HEAD, requested branch coverage unknown", incomplete=True)
-        cmd += ["--", url, dest]
         try:
-            self.ctx.check_deadline()
-            timeout = min(600.0, max(0.001, self.ctx.deadline - time.monotonic())) if self.ctx.deadline else 600.0
-            res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout, check=False)
-            self.ctx.check_deadline()
+            res = self._git_clone(proj, url, dest, origin=origin, username="oauth2", depth=1)
         except (OSError, subprocess.SubprocessError):
             return False
         return res.returncode == 0
 
+    def _read_git_snapshot(self, local: str, timeout: float) -> dict[str, str] | None:
+        # Looked up in this module, where callers substitute the reader.
+        return read_git_snapshot(local, timeout=timeout)
+
     def _fetch_via_api(self, proj: dict[str, Any], tmp: str) -> str | None:
         pid = proj["id"]
         proj.pop("source_snapshot", None)
-        ref = validate_git_ref(proj.get("default_branch") or "main")
+        ref = self._api_branch(proj)
         if ref is None:
-            self.ctx.warn("code.gitlab: unsupported default branch; repository content skipped", incomplete=True)
             return None
         # Tree pages must describe one snapshot. Pin the branch before the
         # first page; pinning only blobs cannot prevent drift between pages.
@@ -336,38 +227,31 @@ class GitLabConnector(BaseConnector):
             if item.get("type") == "blob":
                 blobs[item["path"]] = item
         paths = list(blobs)
-        selected = GitHubConnector._select_paths(paths)
+        selected = self._select_paths(paths)
         if len(selected) < len(paths):
             self.ctx.warn("code.gitlab: API mode samples repository; source coverage partial", incomplete=True)
         dest = os.path.join(tmp, "repo")
         os.makedirs(dest, exist_ok=True)
-        for p in selected:
-            target = repository_target(dest, p)
-            try:
-                blob_id = repository_blob_id(blobs[p].get("id"))
-            except ConnectorError:
-                self.ctx.warn("code.gitlab: invalid blob object ID; content skipped", incomplete=True)
-                continue
-            try:
-                # Fetch the exact enumerated object, even if its branch has
-                # advanced between listing the tree and downloading content.
-                resp = self.http.get(
-                    f"/projects/{pid}/repository/blobs/{blob_id}/raw",
-                    stream=True,
-                )
-                content = self.http.read_response_bytes(resp, max_bytes=512_000)
-            except HttpError as exc:
-                self.ctx.warn(f"code.gitlab: repository content HTTP {exc.status}; coverage partial", incomplete=True)
-                continue
-            except ValueError:
-                self.ctx.warn("code.gitlab: oversized or invalid API content skipped", incomplete=True)
-                continue
-            if not repository_blob_matches(blob_id, content):
-                self.ctx.warn("code.gitlab: API content does not match its immutable blob ID; content skipped", incomplete=True)
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(content)
+        self._write_api_blobs(proj, dest, blobs, selected)
         return dest
+
+    def _download_blob(self, proj: dict[str, Any], blob_id: str) -> bytes | None:
+        pid = proj["id"]
+        try:
+            # Fetch the exact enumerated object, even if its branch has
+            # advanced between listing the tree and downloading content.
+            resp = self.http.get(
+                f"/projects/{pid}/repository/blobs/{blob_id}/raw",
+                stream=True,
+            )
+            content = self.http.read_response_bytes(resp, max_bytes=512_000)
+        except HttpError as exc:
+            self.ctx.warn(f"code.gitlab: repository content HTTP {exc.status}; coverage partial", incomplete=True)
+            return None
+        except ValueError:
+            self.ctx.warn("code.gitlab: oversized or invalid API content skipped", incomplete=True)
+            return None
+        return content
 
     # --------------------------------------------------- project-level extra
     def _project_level(self, proj: dict[str, Any]) -> Iterable[Finding]:
