@@ -30,6 +30,20 @@ _CONTROL_HEADS = frozenset({"catch", "for", "if", "switch", "while", "with"})
 _MAX_REGEX_LENGTH = 8192
 
 
+# ECMAScript LineTerminatorSequence (spec 12.3): any of these ends a single-line
+# comment, a regular-expression literal, or a non-template string literal, even
+# when no literal '\n' follows at all (a lone '\r' from an old-Mac/CR-only file,
+# or a Unicode line/paragraph separator real JS engines also treat as a break).
+_JS_LINE_TERMINATORS = "\r\n  "
+_JS_LINE_TERMINATOR_RE = re.compile("[\r\n  ]")
+
+
+def _js_line_terminator(text: str, start: int) -> int:
+    """Index of the next ECMAScript line terminator at/after ``start``, or -1."""
+    match = _JS_LINE_TERMINATOR_RE.search(text, start)
+    return match.start() if match else -1
+
+
 def _javascript_regex_end(text: str, start: int) -> int | None:
     """Find the end of a regex literal, honoring escapes and character classes.
 
@@ -39,10 +53,10 @@ def _javascript_regex_end(text: str, start: int) -> int | None:
     pos = start + 1
     in_class = False
     limit = min(len(text), start + _MAX_REGEX_LENGTH)
-    while pos < limit and text[pos] not in "\r\n":
+    while pos < limit and text[pos] not in _JS_LINE_TERMINATORS:
         char = text[pos]
         if char == "\\":
-            if pos + 1 >= limit or text[pos + 1] in "\r\n":
+            if pos + 1 >= limit or text[pos + 1] in _JS_LINE_TERMINATORS:
                 return None
             pos += 2
             continue
@@ -439,7 +453,7 @@ def _javascript_ranges(text: str, *, jsx: bool = False) -> tuple[list[tuple[int,
             continue
 
         if text.startswith("//", i):
-            end = text.find("\n", i + 2)
+            end = _js_line_terminator(text, i + 2)
             spans.append((i, size if end < 0 else end))
             i = size if end < 0 else end
         elif text.startswith("/*", i):
@@ -453,7 +467,7 @@ def _javascript_ranges(text: str, *, jsx: bool = False) -> tuple[list[tuple[int,
             quote = text[i]
             start = i
             i += 1
-            while i < size and text[i] != quote and text[i] not in "\r\n":
+            while i < size and text[i] != quote and text[i] not in _JS_LINE_TERMINATORS:
                 i += 2 if text[i] == "\\" else 1
             if i < size and text[i] == quote:
                 i += 1
@@ -463,7 +477,7 @@ def _javascript_ranges(text: str, *, jsx: bool = False) -> tuple[list[tuple[int,
         elif text[i] == "/" and can_start_regex[-1]:
             regex_end = _javascript_regex_end(text, i)
             if regex_end is None:
-                end = text.find("\n", i)
+                end = _js_line_terminator(text, i)
                 end = size if end < 0 else end
                 spans.append((i, end))
                 i = end

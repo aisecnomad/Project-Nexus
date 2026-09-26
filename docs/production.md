@@ -179,8 +179,12 @@ allowed on each scan, even if a prior scan imported it.
 
 Keep scans of repository content separate from jobs holding live cloud, identity,
 SaaS or low-code credentials. By default, configuration rejects a selected code
-connector alongside a selected live credentialed collector. A single remote code
-connector can use its repository token; code plus offline exports is allowed.
+connector alongside a selected live credentialed collector. A connector is
+classified by its declared surface, so an approved plugin that processes
+untrusted repository or source content is held to the same isolation as a
+built-in `code.*` connector, whatever its own entry-point name is. A single
+remote code connector can use its repository token; code plus offline exports
+is allowed.
 `allow_credential_mixing: true` permits a reviewed exception, but does not isolate
 the repository from credentials available in the worker. Use separate disposable
 workers for untrusted repositories.

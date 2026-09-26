@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import ast
 
+from shadowscan.connectors.code.provider_loops import _Budget as _ImportBudget
+from shadowscan.connectors.code.provider_loops import _execution_sink, _imports
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 
 MAX_FLOW_STEPS = 100_000
@@ -184,9 +186,36 @@ def _schema_names(tree: ast.AST, tools: ast.expr, budget: _Budget) -> set[str]:
     return names
 
 
+def _sink_call(value: ast.expr) -> ast.Call | None:
+    """Like ``_call`` but also unwraps trailing attribute access.
+
+    ``subprocess.run(...).stdout`` and ``.decode()``-style chains are still the
+    sink's own result; the model-selected arguments already reached the sink.
+    """
+    if isinstance(value, ast.Await):
+        value = value.value
+    while isinstance(value, ast.Attribute):
+        value = value.value
+    return value if isinstance(value, ast.Call) else None
+
+
+def _is_declared_dispatch(func: ast.expr, item: str, handlers: set[str], static: set[str]) -> bool:
+    """A callable bound to the tool-call dispatch table, keyed by ``item``'s name.
+
+    Recognizes both the two-step handler lookup (``handler = FUNCTIONS[item.name]``
+    then ``handler(...)``, already resolved into ``handlers``/``static``) and the
+    equally common inline form, ``FUNCTIONS[item.name](...)``.
+    """
+    if isinstance(func, ast.Name):
+        return func.id in handlers or func.id in static
+    if isinstance(func, ast.Subscript):
+        return _member(func.slice, item, "name")
+    return False
+
+
 def _has_feedback(
     path: list[ast.stmt], item: str, history: str, static: set[str],
-    response_linked: bool, budget: _Budget,
+    response_linked: bool, budget: _Budget, imports: dict[str, str],
 ) -> bool:
     handlers: set[str] = set()
     results: set[str] = set()
@@ -214,14 +243,21 @@ def _has_feedback(
             outputs.discard(name)
             static.discard(name)
             call = _call(expression)
+            # A dispatch call's own result may still be wrapped in an
+            # attribute access (``subprocess.run(...).stdout``); recover the
+            # underlying call for the sink/dispatch-table checks below while
+            # still using ``call`` (never a wrapped one) for the ``.get()``
+            # handler-lookup form, which is never itself called immediately.
+            dispatch = call if call is not None else _sink_call(expression)
             if (isinstance(expression, ast.Subscript) and _member(expression.slice, item, "name")
                     or call is not None and isinstance(call.func, ast.Attribute) and call.func.attr == "get"
                     and any(_member(arg, item, "name") for arg in call.args)):
                 handlers.add(name)
-            elif (call is not None and isinstance(call.func, ast.Name)
-                  and (call.func.id in handlers or call.func.id in static)
+            elif (dispatch is not None
+                  and (_is_declared_dispatch(dispatch.func, item, handlers, static)
+                       or _execution_sink(dispatch.func, imports))
                   and any(_depends(arg, item, "arguments", budget) for arg in
-                          [*call.args, *(keyword.value for keyword in call.keywords)])):
+                          [*dispatch.args, *(keyword.value for keyword in dispatch.keywords)])):
                 results.add(name)
             elif _output(expression, item, results, budget):
                 outputs.add(name)
@@ -338,6 +374,10 @@ def responses_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[in
     if not request_calls:
         return []
     budget = _Budget()
+    # A separate, one-off budget: this mirrors provider_loops.py's own
+    # unconditional import resolution, bounded independently of the
+    # loop-shape walk below.
+    imports = _imports(tree, _ImportBudget())
     functions = {node.name for node in getattr(tree, "body", [])
                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     found: set[int] = set()
@@ -399,7 +439,7 @@ def responses_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[in
                 # selection. Statements after break/continue cannot prove a
                 # loop, nor can mutually exclusive branches supply its parts.
                 prefixes = _continuations(body[:selection_position], {}, budget)
-                if any(_has_feedback(path, item, history.id, static, response_linked, budget)
+                if any(_has_feedback(path, item, history.id, static, response_linked, budget, imports)
                        and _continuations(body[selection_position + 1:], facts, budget)
                        for prefix_facts, continued in prefixes if not continued
                        for path, facts in _paths(selection.body, item, budget, initial_facts=prefix_facts)):

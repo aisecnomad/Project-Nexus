@@ -209,6 +209,30 @@ def test_new_namespace_plugin_may_use_any_surface(monkeypatch):
     assert registry.plugin_registry_errors() == ()
 
 
+def test_code_surface_plugin_is_isolated_from_live_credentials_like_a_builtin(monkeypatch):
+    # A plugin's namespace need not start with "code." to declare surface
+    # CODE (test_new_namespace_plugin_may_use_any_surface); the credential
+    # isolation guard must classify it by that declared surface, not by name.
+    plugin = _connector(name="acme.reponaut", surface=Surface.CODE)
+    _publish(monkeypatch, ("acme.reponaut", plugin))
+    cfg = ScanConfig(connectors=[
+        ConnectorSpec("acme.reponaut"), ConnectorSpec("identity.okta"),
+    ], plugins=["acme.reponaut"])
+    with pytest.raises(ValueError, match="allow_credential_mixing"):
+        cfg.validate_connector_isolation(cfg.connectors)
+    cfg.allow_credential_mixing = True
+    assert cfg.validate_connector_isolation(cfg.connectors) is None
+
+
+def test_non_code_surface_plugin_is_not_isolated_as_code(monkeypatch):
+    plugin = _connector(name="acme.reponaut", surface=Surface.SAAS)
+    _publish(monkeypatch, ("acme.reponaut", plugin))
+    cfg = ScanConfig(connectors=[
+        ConnectorSpec("acme.reponaut"), ConnectorSpec("identity.okta"),
+    ], plugins=["acme.reponaut"])
+    assert cfg.validate_connector_isolation(cfg.connectors) is None
+
+
 @pytest.mark.parametrize("target,rule,detail", [
     (object(), "not-a-connector", "is not a BaseConnector subclass"),
     (type("Loose", (), {"name": ENTRY}), "not-a-connector", "is not a BaseConnector subclass"),

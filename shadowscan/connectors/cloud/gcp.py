@@ -473,7 +473,19 @@ class GcpConnector(BaseConnector):
             broad_roles = [role for role in roles if role in {"roles/owner", "roles/editor"}]
             f = cloud_finding(self.name, "gcp", kind=Kind.IAM_GRANT, title=f"IAM member with AI or broad project access in {project}: {member}", resource=f"projects/{project}/iam/{member}", resource_type="iam-binding", account=project, surface=Surface.IDENTITY)
             llm = scan_iam_actions(self.index, f, roles, location=f"projects/{project}")
-            if not llm and not broad_roles:
+            # Every role reaching this point either is roles/owner|roles/editor
+            # or already matched a policy scope signature at collection time
+            # (the sole other admission rule above); scan_iam_actions's own
+            # "llm" list only counts a narrower AI-specific subset of those
+            # matches. Emission must not silently drop a privileged- or
+            # narrow data-access-scope grant it already scored and tagged as
+            # evidence (roles/iam.serviceAccountTokenCreator,
+            # roles/secretmanager.secretAccessor, roles/bigquery.dataViewer,
+            # ...). roles/viewer is excluded here: it is the ubiquitous basic
+            # project role nearly every principal holds, and flagging it alone
+            # (with no other privileged or AI-specific grant) would be noise.
+            scoped_roles = [role for role in roles if role not in {"roles/owner", "roles/editor", "roles/viewer"}]
+            if not llm and not broad_roles and not scoped_roles:
                 continue
             f.add_evidence(Evidence(signal="gcp:iam", description=f"{member} holds {', '.join(roles)}", weight=0.45 if member.startswith("serviceAccount:") else 0.25))
             if broad_roles:

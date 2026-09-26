@@ -185,7 +185,13 @@ def truncate(s: str | None, n: int = 200) -> str | None:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-_HOST_IN_URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*://)?([^/:?#]+)(?::\d+)?", re.IGNORECASE)
+_HOST_IN_URL = re.compile(
+    # An optional userinfo component (``user[:pass]@``) precedes the host;
+    # without skipping it, a URL with embedded basic-auth credentials
+    # returns the username instead of the host it actually names.
+    r"^(?:[a-z][a-z0-9+.-]*://)?(?:[^/:?#@]*(?::[^/:?#@]*)?@)?([^/:?#@]+)(?::\d+)?",
+    re.IGNORECASE,
+)
 
 
 def host_of(url: str | None) -> str | None:

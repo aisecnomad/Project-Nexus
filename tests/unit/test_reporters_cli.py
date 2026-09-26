@@ -47,12 +47,18 @@ def test_markdown_report_defangs_untrusted_bare_urls(fixtures, index):
     finding = result.findings[0]
     finding.title = "Visit https://attacker.example/path or www.attacker.example"
     finding.evidence[0].description = "The source also referenced HTTP://login.attacker.example"
+    # A protocol-relative bare URL has no scheme or "www." for GFM to key off,
+    # but linkify-it-based renderers (many wikis, ticket trackers) still
+    # autolink a leading "//" on its own.
+    finding.add_tag("see //attacker.example/steal")
 
     report = render(result, "markdown")
 
     assert "hxxps://attacker.example/path" in report
     assert r"www\[.\]attacker.example" in report
     assert "hxxp://login.attacker.example" in report
+    assert "//attacker.example/steal" not in report
+    assert r"see /\[/\]attacker.example/steal" in report
     assert "https://attacker.example/path" not in report
     assert "HTTP://login.attacker.example" not in report
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -10,6 +12,7 @@ from requests.adapters import HTTPAdapter
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.code.github import GitHubConnector, repository_target
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.models import ScanStats, now_iso
 from shadowscan.utils.http import HttpClient, HttpError, _DestinationPolicyAdapter
 
 
@@ -178,6 +181,44 @@ def test_gitlab_api_download_rejects_traversal_before_request(tmp_path, index):
     with pytest.raises(RuntimeError):
         connector._fetch_via_api({"id": 1}, str(tmp_path))
     connector.http.get.assert_not_called()
+
+
+def _git_blob_sha(content: bytes) -> str:
+    return hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()
+
+
+def test_gitlab_api_download_skips_a_path_directory_collision_instead_of_the_repository(tmp_path, index):
+    # An untrusted tree listing is not guaranteed to be a real git tree: it
+    # can list a path and a descendant of that same path as two separate
+    # blobs. Writing the first as a file, then resolving the second's parent
+    # directory, must cost only the second file, not the whole repository.
+    parent_content = b"print('hi')\n"
+    good_content = b"import openai\nclient = openai.OpenAI()\n"
+    nested_content = b"import openai\nclient = openai.OpenAI()\n"
+    parent_sha, good_sha, nested_sha = (_git_blob_sha(c) for c in (parent_content, good_content, nested_content))
+    contents = {parent_sha: parent_content, good_sha: good_content, nested_sha: nested_content}
+
+    ctx = ConnectorContext(config={"token": "x"}, index=index, workdir=str(tmp_path))
+    ctx.stats = ScanStats(connector="code.gitlab", started_at=now_iso())
+    connector = GitLabConnector(ctx)
+    connector.http = Mock()
+    connector.http.try_get_json.return_value = {"id": "a" * 40}
+    connector.http.paginate_link.return_value = [
+        {"path": "app.py", "type": "blob", "id": parent_sha},
+        {"path": "src/good.py", "type": "blob", "id": good_sha},
+        {"path": "app.py/nested.py", "type": "blob", "id": nested_sha},
+    ]
+    connector.http.get.side_effect = lambda url, **kwargs: url
+    connector.http.read_response_bytes.side_effect = lambda resp, **kwargs: contents[resp.rsplit("/", 2)[-2]]
+
+    dest = connector._fetch_via_api({"id": 1, "path_with_namespace": "acme/demo"}, str(tmp_path))
+
+    assert dest is not None
+    assert (Path(dest) / "app.py").read_bytes() == parent_content
+    assert (Path(dest) / "src" / "good.py").read_bytes() == good_content
+    assert not (Path(dest) / "app.py" / "nested.py").exists()
+    assert any("cannot write fetched content" in w for w in ctx.stats.warnings)
+    assert ctx.stats.incomplete
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "169.254.169.254", "10.2.3.4", "[::1]", "[::ffff:127.0.0.1]", "100.64.0.1", "metadata.google.internal"])

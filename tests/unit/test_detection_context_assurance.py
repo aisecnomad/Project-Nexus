@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from shadowscan.connectors.code.manifests import parse_pom
 from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.models import Kind
@@ -164,6 +166,34 @@ def test_unterminated_javascript_regex_reports_incomplete_and_retains_next_line(
     ignored, incomplete = noncode_ranges(text, "javascript")
     assert incomplete
     assert not any(start <= text.index("StateGraph(") < end for start, end in ignored)
+
+
+@pytest.mark.parametrize("terminator", ["\r", " ", " "])
+def test_javascript_line_comment_ends_at_every_ecmascript_line_terminator(terminator):
+    # A '//' comment (and, below, a regex or string literal) is terminated by
+    # any ECMAScript LineTerminatorSequence, not only '\n'. A CR-only file (old
+    # Mac line endings) or a Unicode line/paragraph separator must not mask
+    # the statement that follows all the way to end of file.
+    text = f'// header{terminator}import {{ StateGraph }} from "@langchain/langgraph"{terminator}const graph = StateGraph({{}});{terminator}'
+    ignored, incomplete = noncode_ranges(text, "javascript")
+    assert not incomplete
+    graph_at = text.index("StateGraph({});")
+    assert not any(start <= graph_at < end for start, end in ignored)
+    header_at = text.index("header")
+    assert any(start <= header_at < end for start, end in ignored)
+
+
+@pytest.mark.parametrize("terminator", ["\r", " ", " "])
+def test_javascript_regex_and_string_literals_end_at_every_ecmascript_line_terminator(tmp_path: Path, run_connector, terminator):
+    (tmp_path / "agent.js").write_text(
+        f'const pattern = /unterminated{terminator}'
+        f'const label = "unterminated{terminator}'
+        f'import {{ StateGraph }} from "@langchain/langgraph";{terminator}'
+        "const graph = StateGraph({});\n"
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert any(f.kind == Kind.AGENT and "framework.langgraph" in f.frameworks for f in findings)
 
 
 def test_jsx_nested_text_nodes_do_not_confirm_agent(tmp_path: Path, run_connector):

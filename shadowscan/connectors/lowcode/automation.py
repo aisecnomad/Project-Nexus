@@ -217,18 +217,27 @@ class MakeConnector(_AutomationBase):
         if self.ctx.get("team_id"):
             teams = [str(self.ctx.get("team_id"))]
         elif self.ctx.get("organization_id"):
-            teams = [str(t["id"]) for t in self._offset_pages(http, "/teams", "teams", organizationId=self.ctx.get("organization_id"))]
+            for t in self._offset_pages(http, "/teams", "teams", organizationId=self.ctx.get("organization_id")):
+                team_id = t.get("id")
+                if team_id is None:
+                    self.ctx.warn("lowcode.make: invalid team record; team skipped")
+                    continue
+                teams.append(str(team_id))
         else:
             raise ConnectorError("lowcode.make: team_id or organization_id required")
         for team in teams:
             blueprint_errors: dict[str, int] = {}
             for s in self._offset_pages(http, "/scenarios", "scenarios", teamId=team):
+                scenario_id = s.get("id")
+                if scenario_id is None:
+                    self.ctx.warn(f"lowcode.make: invalid scenario record in team {team}; scenario skipped")
+                    continue
                 try:
-                    bp = http.get_json(f"/scenarios/{s['id']}/blueprint")
+                    bp = http.get_json(f"/scenarios/{scenario_id}/blueprint")
                     response = bp.get("response") if isinstance(bp, dict) else None
                     blueprint = (response.get("blueprint") if isinstance(response, dict) else None) or bp
                     if not isinstance(blueprint, dict):
-                        self.ctx.warn(f"lowcode.make: invalid blueprint for scenario {s['id']}")
+                        self.ctx.warn(f"lowcode.make: invalid blueprint for scenario {scenario_id}")
                     else:
                         s["blueprint"] = blueprint
                 except (HttpError, RequestException, RuntimeError, ValueError) as exc:

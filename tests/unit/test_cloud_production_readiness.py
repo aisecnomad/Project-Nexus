@@ -236,3 +236,30 @@ def test_gcp_combines_broad_and_ai_specific_roles_once_per_member_and_ignores_vi
     assert findings[0].permissions == ["roles/aiplatform.user", "roles/editor", "roles/viewer"]
     assert "service-account" in findings[0].tags
     assert list(connector._h_iam_policy({"_project": "project", "bindings": [{"role": "roles/viewer", "members": ["user:viewer@example.com"]}]})) == []
+
+
+@pytest.mark.parametrize("role", [
+    # policy.privileged-scopes: none of these are roles/owner or roles/editor,
+    # so the pre-fix emission gate (llm-only or broad_roles) silently dropped
+    # them despite scan_iam_actions already scoring and tagging the grant.
+    "roles/iam.serviceAccountTokenCreator", "roles/secretmanager.secretAccessor",
+    "roles/secretmanager.admin", "roles/storage.admin", "roles/run.admin",
+    "roles/cloudfunctions.admin", "roles/iam.serviceAccountAdmin",
+    "roles/iam.serviceAccountKeyAdmin", "roles/resourcemanager.projectIamAdmin",
+    "roles/iam.securityAdmin",
+    # policy.data-access-scopes, minus the ubiquitous roles/viewer tested
+    # separately above: narrow, service-scoped read access to data that can
+    # carry LLM-relevant secrets, embeddings or training data.
+    "roles/bigquery.dataViewer", "roles/storage.objectViewer",
+    "roles/datastore.user", "roles/spanner.databaseReader",
+])
+def test_gcp_privileged_and_narrow_data_access_roles_are_not_silently_dropped(index, role):
+    connector = GcpConnector(context(index))
+    findings = list(connector._h_iam_policy({"_project": "project", "bindings": [
+        {"role": role, "members": ["serviceAccount:sneaky-agent@project.iam.gserviceaccount.com"]},
+    ]}))
+    assert len(findings) == 1
+    assert findings[0].permissions == [role]
+    assert findings[0].metadata["broad_roles"] == []
+    assert not findings[0].capabilities  # access evidence, not an observed AI capability
+    assert any(e.signal == "gcp:iam" for e in findings[0].evidence)

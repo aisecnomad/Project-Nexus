@@ -201,6 +201,45 @@ def test_make_collection_failures_are_incomplete(index, monkeypatch, failed_path
     _assert_incomplete(connector, findings)
 
 
+def test_make_invalid_team_record_is_skipped_not_fatal(index, monkeypatch):
+    # A malformed team costs that one team, not the whole organization: every
+    # other team in the same /teams page must still be collected.
+    connector = MakeConnector(_context(index, api_url="https://eu1.make.com/api/v2", token="test", organization_id="org"))
+
+    def get(path, **kwargs):
+        return {
+            "/teams": {"teams": [{"name": "no id here"}, {"id": "team-1"}]},
+            "/scenarios": {"scenarios": [{"id": "s1", "name": "scenario"}]},
+            "/scenarios/s1/blueprint": {"response": {"blueprint": {"flow": [{"module": "openai:Action"}]}}},
+            "/ai-agents/v1/agents": [],
+        }[path]
+
+    monkeypatch.setattr("shadowscan.connectors.lowcode.automation.HttpClient", Mock(return_value=Mock(get_json=get)))
+    records = list(connector.collect())
+    assert any("invalid team record" in w for w in connector.ctx.stats.warnings)
+    scenarios = [r for r in records if r.get("_kind") == "scenario"]
+    assert scenarios and all(r["_team"] == "team-1" for r in scenarios)
+
+
+def test_make_invalid_scenario_record_is_skipped_not_fatal(index, monkeypatch):
+    # A malformed scenario costs that one scenario, not the rest of the team
+    # (and, previously, every subsequent team in the same organization).
+    connector = MakeConnector(_context(index, api_url="https://eu1.make.com/api/v2", token="test", team_id="team-1"))
+
+    def get(path, **kwargs):
+        return {
+            "/scenarios": {"scenarios": [{"name": "no id here"}, {"id": "s1", "name": "scenario"}]},
+            "/scenarios/s1/blueprint": {"response": {"blueprint": {"flow": [{"module": "openai:Action"}]}}},
+            "/ai-agents/v1/agents": [],
+        }[path]
+
+    monkeypatch.setattr("shadowscan.connectors.lowcode.automation.HttpClient", Mock(return_value=Mock(get_json=get)))
+    records = list(connector.collect())
+    assert any("invalid scenario record" in w for w in connector.ctx.stats.warnings)
+    scenarios = [r for r in records if r.get("_kind") == "scenario"]
+    assert [r["id"] for r in scenarios] == ["s1"]
+
+
 def test_make_all_organization_teams_are_enumerated(index):
     connector = MakeConnector(_context(index))
     http = Mock()

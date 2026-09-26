@@ -207,6 +207,44 @@ def test_api_mode_skips_an_unsafe_tree_path_instead_of_the_repository(tmp_path, 
     assert any("unusual repository tree path skipped" in w for w in ctx.stats.warnings) and ctx.stats.incomplete
 
 
+def test_api_mode_skips_a_path_directory_collision_instead_of_the_repository(tmp_path, index):
+    # An untrusted tree listing is not guaranteed to be a real git tree: it
+    # can list a path and a descendant of that same path as two separate
+    # blobs. Writing the first as a file, then resolving the second's parent
+    # directory, must cost only the second file, not the whole repository.
+    parent_sha, parent_b64 = _blob(b"print('hi')\n")
+    good_sha, good_b64 = _blob(b"import openai\nclient = openai.OpenAI()\n")
+    nested_sha, nested_b64 = _blob(b"import openai\nclient = openai.OpenAI()\n")
+    tree = {"sha": "a" * 40, "truncated": False, "tree": [
+        {"path": "app.py", "type": "blob", "mode": "100644", "size": 12, "sha": parent_sha},
+        {"path": "src/good.py", "type": "blob", "mode": "100644", "size": 40, "sha": good_sha},
+        {"path": "app.py/nested.py", "type": "blob", "mode": "100644", "size": 40, "sha": nested_sha},
+    ]}
+    blobs = {
+        parent_sha: {"encoding": "base64", "content": parent_b64},
+        good_sha: {"encoding": "base64", "content": good_b64},
+        nested_sha: {"encoding": "base64", "content": nested_b64},
+    }
+    ctx = ConnectorContext(config={"repos": ["acme/demo"], "mode": "api", "token": "x", "use_git": False}, index=index, workdir=str(tmp_path))
+    ctx.stats = ScanStats(connector="code.github", started_at=now_iso())
+    connector = GitHubConnector(ctx)
+
+    def fake_get(path, *args, **kwargs):
+        if path.startswith("/repos/acme/demo/git/trees/"):
+            return tree
+        if path.startswith("/repos/acme/demo/git/blobs/"):
+            return blobs[path.rsplit("/", 1)[-1]]
+        raise AssertionError(path)
+
+    connector.http.try_get_json = fake_get  # type: ignore[method-assign]
+    connector.http.paginate_link = lambda *a, **k: iter([])  # type: ignore[method-assign]
+    connector.mode = "api"
+    repo = {"full_name": "acme/demo", "default_branch": "main", "owner": {"login": "acme"}, "html_url": "https://github.com/acme/demo"}
+    findings = list(connector.analyze([repo]))
+    assert [f.resource for f in findings] == ["github:acme/demo"]
+    assert any("cannot write fetched content" in w for w in ctx.stats.warnings) and ctx.stats.incomplete
+
+
 def test_per_repository_contexts_share_the_diagnostic_cap(tmp_path, index):
     for name in ("acme__r1", "acme__r2", "acme__r3"):
         repo = tmp_path / name

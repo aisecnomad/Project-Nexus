@@ -53,7 +53,9 @@ from typing import Any
 
 import yaml
 
+from shadowscan.connectors import get_connector_class
 from shadowscan.errors import SetupError, yaml_error_position
+from shadowscan.models import Surface
 from shadowscan.risk import RiskPolicy
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.redaction import REDACTED, sanitize_text
@@ -253,11 +255,25 @@ class ScanConfig:
         except ValueError as exc:
             raise ConfigValidationError(f"options.{exc}") from None
 
+    def _connector_surface(self, name: str) -> Surface | None:
+        """Best-effort declared surface; an unresolvable name fails its own job later."""
+        try:
+            return get_connector_class(name, allowed_plugins=self.plugins).surface
+        except Exception:  # noqa: BLE001 - classification only; the real error surfaces when the job runs
+            return None
+
     def validate_connector_isolation(self, specs: list[ConnectorSpec]) -> None:
-        """Do not expose live connector credentials to an unrelated source parser."""
+        """Do not expose live connector credentials to an unrelated source parser.
+
+        A plugin is classified by its declared ``surface``, not by whether its
+        registered name happens to start with ``code.``: an approved plugin
+        that scans untrusted repository or source content must be isolated
+        from a live-credentialed connector in the same scan just as reliably
+        as a built-in ``code.*`` connector is.
+        """
         if self.allow_credential_mixing:
             return
-        code = [spec for spec in specs if spec.name.startswith("code.")]
+        code = [spec for spec in specs if self._connector_surface(spec.name) == Surface.CODE]
         live = [spec for spec in specs if not spec.config.get("input") and (
             spec.name in {"code.github", "code.gitlab"}
             or (spec.name.startswith(("cloud.", "identity.", "saas.", "lowcode."))

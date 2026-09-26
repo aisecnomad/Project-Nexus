@@ -2,6 +2,54 @@
 
 ## 0.1.1 — Unreleased
 
+### Production review round 3 (2026-09-26)
+
+- A code-surface plugin whose entry-point name did not start with `code.`
+  bypassed the credential-mixing isolation guard entirely, letting an
+  untrusted-content connector run alongside live cloud, identity, SaaS or
+  low-code credentials in the same scan although `allow_credential_mixing`
+  was never set. Isolation now classifies every connector, built-in or
+  plugin, by its declared `surface` instead of its name.
+- The OpenAI Responses tool-loop recognizer never modeled a process/code
+  execution sink (`subprocess.run`, `os.system`, `exec`, `eval`) fed with the
+  model's own tool arguments, nor the equally common single-line dispatch
+  form (`FUNCTIONS[item.name](...)`); the mirrored Chat Completions/Anthropic
+  recognizer already covered both. A Responses-API tool loop written either
+  way is now recognized identically to its Chat Completions counterpart.
+- The JavaScript/TypeScript lexer's line-comment, regex and string
+  termination recognized only a literal `\n`, so a CR-only file (old-Mac line
+  endings) or a Unicode line/paragraph separator masked the remainder of the
+  file as inert comment text without marking the scan ambiguous. Termination
+  now recognizes every ECMAScript line terminator (`\r`, `\n`, ` `,
+  ` `).
+- GitHub and GitLab API-mode repository fetch crashed the whole repository
+  (discarding every finding already collected) when an untrusted tree listing
+  described a path and a descendant of that same path as two separate blobs,
+  since writing the first as a file leaves nothing for the second's parent
+  directory to resolve to. The write is now isolated per file like every
+  other content failure in the same loop.
+- `GcpConnector._h_iam_policy` silently dropped IAM bindings holding a
+  privileged-access role (`roles/iam.serviceAccountTokenCreator`,
+  `roles/secretmanager.secretAccessor`, `roles/storage.admin`, ...) or a
+  narrow data-access role (`roles/bigquery.dataViewer`,
+  `roles/storage.objectViewer`, `roles/datastore.user`,
+  `roles/spanner.databaseReader`) when the member held no AI-specific or
+  `roles/owner`/`roles/editor` grant, although the binding was already scored
+  and tagged as evidence. `roles/viewer` alone, the ubiquitous basic project
+  role, still does not trigger a finding by itself.
+- `MakeConnector.collect()` subscripted an untrusted team or scenario record
+  by `["id"]` instead of `.get("id")`; one malformed team record aborted
+  collection for the entire organization, and one malformed scenario record
+  aborted collection for the rest of that team and every subsequent team.
+  Both records are now skipped with a warning, matching the rest of this
+  connector's error handling.
+- `host_of()` returned a URL's userinfo (the username before `user:pass@`)
+  instead of its actual host, which fed the wrong host into gateway log
+  normalization and could cause a known-provider domain match to be missed.
+- The Markdown report's URL-defanging regex covered `http(s)://` and `www.`
+  but not a bare, protocol-relative `//host` bare URL, which linkify-it-based
+  renderers (many wikis and ticket trackers) still autolink.
+
 ### Markdown report safety
 
 - Defang bare HTTP(S) and `www.` URLs in untrusted report text so copied Markdown

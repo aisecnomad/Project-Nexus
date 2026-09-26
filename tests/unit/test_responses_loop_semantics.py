@@ -131,6 +131,64 @@ def test_disconnected_responses_evidence_stays_supporting(tmp_path, run_connecto
     assert findings and not any(finding.kind == Kind.AGENT for finding in findings)
 
 
+@pytest.mark.parametrize("source", [
+    # Inline dispatch-table lookup, without a separate ``handler = ...`` step.
+    DIRECT.replace(
+        "            handler = FUNCTIONS[item.name]\n            result = handler(**json.loads(item.arguments))",
+        "            result = FUNCTIONS[item.name](**json.loads(item.arguments))",
+    ),
+    # A process/code-execution sink fed with the model's own arguments, with
+    # and without an attribute access on the sink's own return value.
+    DIRECT.replace("import json\n", "import json\nimport subprocess\n").replace(
+        "            handler = FUNCTIONS[item.name]\n            result = handler(**json.loads(item.arguments))",
+        '            result = subprocess.run(item.arguments, shell=True, capture_output=True, text=True).stdout',
+    ),
+    DIRECT.replace("import json\n", "import json\nimport os\n").replace(
+        "            handler = FUNCTIONS[item.name]\n            result = handler(**json.loads(item.arguments))",
+        "            result = os.system(item.arguments)",
+    ),
+    DIRECT.replace(
+        "            handler = FUNCTIONS[item.name]\n            result = handler(**json.loads(item.arguments))",
+        "            result = eval(item.arguments)",
+    ),
+])
+def test_dispatch_table_and_execution_sink_forms_are_agents(tmp_path, run_connector, source):
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    agents = [finding for finding in findings if finding.kind == Kind.AGENT]
+    assert len(agents) == 1
+    assert {"tool-use", "autonomous"} <= set(agents[0].capabilities)
+
+
+@pytest.mark.parametrize("source", [
+    # A shadowed sink (a local rebinding) must not verify dispatch, matching
+    # provider_loops.py's test_shadowed_execution_sink_cannot_verify_dispatch.
+    DIRECT.replace("import json\n", "import json\nimport subprocess\n").replace(
+        "            handler = FUNCTIONS[item.name]\n            result = handler(**json.loads(item.arguments))",
+        "            subprocess = dry_run\n"
+        '            result = subprocess.run(item.arguments, shell=True, capture_output=True, text=True).stdout',
+    ),
+    DIRECT.replace(
+        "            handler = FUNCTIONS[item.name]\n            result = handler(**json.loads(item.arguments))",
+        "            eval = dry_run\n            result = eval(item.arguments)",
+    ),
+    # Neither form dispatches on arguments that do not trace back to the
+    # selected call.
+    DIRECT.replace("import json\n", "import json\nimport subprocess\n").replace(
+        "            handler = FUNCTIONS[item.name]\n            result = handler(**json.loads(item.arguments))",
+        '            result = subprocess.run("ls", shell=True, capture_output=True, text=True).stdout',
+    ),
+    DIRECT.replace(
+        "            handler = FUNCTIONS[item.name]\n            result = handler(**json.loads(item.arguments))",
+        "            result = FUNCTIONS['fixed'](**json.loads(item.arguments))",
+    ),
+])
+def test_dispatch_table_and_execution_sink_forms_stay_supporting(tmp_path, run_connector, source):
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
 def test_local_provider_module_cannot_establish_responses_loop(tmp_path, run_connector):
     (tmp_path / "openai.py").write_text("raise RuntimeError('must not execute')\n")
     findings, ctx = scan(tmp_path, run_connector)

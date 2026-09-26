@@ -453,8 +453,17 @@ class GitHubConnector(BaseConnector):
             if not repository_blob_matches(blob_id, content):
                 self.ctx.warn(f"code.github: API content does not match its immutable blob ID in {full}; content skipped", incomplete=True)
                 continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(content)
+            try:
+                # An untrusted tree listing is not guaranteed to be a real
+                # git tree: it can list both a path and a descendant of that
+                # same path as blobs, so writing one can collide with the
+                # directory the other needs. That costs this file, not the
+                # whole repository fetch.
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+            except OSError as exc:
+                self.ctx.warn(f"code.github: cannot write fetched content for {full} ({type(exc).__name__}); content skipped", incomplete=True)
+                continue
             fetched += 1
         self.log.info("code.github: %s fetched %d/%d files via API", full, fetched, len(paths))
         return dest

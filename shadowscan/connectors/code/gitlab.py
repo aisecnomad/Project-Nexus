@@ -414,8 +414,17 @@ class GitLabConnector(BaseConnector):
             if not repository_blob_matches(blob_id, content):
                 self.ctx.warn("code.gitlab: API content does not match its immutable blob ID; content skipped", incomplete=True)
                 continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(content)
+            try:
+                # An untrusted tree listing is not guaranteed to be a real
+                # git tree: it can list both a path and a descendant of that
+                # same path as blobs, so writing one can collide with the
+                # directory the other needs. That costs this file, not the
+                # whole repository fetch.
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+            except OSError as exc:
+                self.ctx.warn(f"code.gitlab: cannot write fetched content ({type(exc).__name__}); content skipped", incomplete=True)
+                continue
         return dest
 
     # --------------------------------------------------- project-level extra
