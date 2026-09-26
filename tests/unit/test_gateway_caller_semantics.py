@@ -112,6 +112,10 @@ def test_unrecognized_bracketed_lines_fail_closed_and_query_strings_are_not_logf
     assert parse_text_line('level=info host=api.openai.com path=/v1/chat/completions') == {
         "level": "info", "host": "api.openai.com", "path": "/v1/chat/completions",
     }
+    # Timestamp and level prefixes are common in logfmt output.
+    for prefixed in ('[2026-01-01T00:00:00Z] host=api.openai.com path=/v1/chat/completions',
+                     '2026-01-01T00:00:00Z INFO host=api.openai.com path=/v1/chat/completions'):
+        assert parse_text_line(prefixed) == {"host": "api.openai.com", "path": "/v1/chat/completions"}
     path = tmp_path / "odd.log"
     path.write_text('[not json] "GET /x HTTP/1.1" 200\n')
     _, ctx = run_connector("gateway.logs", input=str(path))

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
+import pytest
+
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.cloud.azure import AzureConnector
 from shadowscan.connectors.cloud.oci import OciConnector
@@ -46,6 +48,7 @@ def test_azure_foundry_projects_inherit_subscription_and_location(index, monkeyp
 
 
 def test_oci_clients_are_cached_per_region_with_timeouts(index):
+    pytest.importorskip("oci")  # the live client is configured with the SDK's retry/timeout types
     connector = OciConnector(context(index))
     connector._config = {"region": "us-ashburn-1"}
 

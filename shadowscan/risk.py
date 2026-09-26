@@ -125,6 +125,16 @@ MAX_PROVIDER_WEIGHT = 15
 FRAMEWORK_USAGE_CEILING = 74
 
 
+def _count(value: object) -> int:
+    """A connector-reported count; anything that is not a whole number is 0."""
+    if isinstance(value, bool):
+        return 0
+    try:
+        return int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def assess(finding: Finding, index: SignatureIndex | None = None, inventory_present: bool = False) -> Risk:
     factors: list[RiskFactor] = []
     raw = KIND_BASE.get(finding.kind, 5)
@@ -173,7 +183,7 @@ def assess(finding: Finding, index: SignatureIndex | None = None, inventory_pres
         if notes:
             factors.append(RiskFactor("vendor-notes", "; ".join(dict.fromkeys(notes))[:300], 5))
 
-    if finding.kind == Kind.SECRET and finding.metadata.get("count", 1) and int(finding.metadata.get("count", 1)) > 1:
+    if finding.kind == Kind.SECRET and _count(finding.metadata.get("count", 1)) > 1:
         factors.append(RiskFactor("multiple-secrets", f"{finding.metadata['count']} credentials in one place", 5))
     if finding.kind == Kind.MCP_SERVER:
         servers = finding.metadata.get("servers") or []
@@ -187,28 +197,29 @@ def assess(finding: Finding, index: SignatureIndex | None = None, inventory_pres
         n = len(finding.metadata["agent_definitions"])
         factors.append(RiskFactor("sub-agents", f"{n} sub-agent definition(s)", min(10, 3 * n)))
     if finding.kind == Kind.GATEWAY_CALLER:
-        events = int(finding.metadata.get("events") or 0)
+        events = _count(finding.metadata.get("events"))
         if events >= 10_000:
             factors.append(RiskFactor("volume", f"very high call volume ({events})", 10))
         elif events >= 1_000:
             factors.append(RiskFactor("volume", f"high call volume ({events})", 5))
     if finding.kind in {Kind.OAUTH_GRANT, Kind.BOT_APP}:
-        users = finding.metadata.get("user_count") or finding.metadata.get("consenting_users") or finding.metadata.get("users") or finding.metadata.get("install_count") or 0
-        try:
-            users = int(users)
-        except (TypeError, ValueError):
-            users = 0
+        users = _count(finding.metadata.get("user_count") or finding.metadata.get("consenting_users") or finding.metadata.get("users") or finding.metadata.get("install_count"))
         if users >= 100:
             factors.append(RiskFactor("blast-radius", f"{users} users / installations", 10))
         elif users >= 10:
             factors.append(RiskFactor("blast-radius", f"{users} users / installations", 5))
 
+    # Every adjustment below is itself a factor, so the factors always sum to
+    # the score a report shows.
     total = sum(f.weight for f in factors)
     # scale by confidence that this is really an agent / agent enabler
     scale = 0.6 + 0.4 * max(0.0, min(1.0, finding.confidence))
-    score = int(round(max(0, min(100, total * scale))))
+    scaled = int(round(total * scale))
     if scale < 1.0:
-        factors.append(RiskFactor("confidence-scaling", f"scaled by confidence {finding.confidence:.2f}", int(round(total * scale - total))))
+        factors.append(RiskFactor("confidence-scaling", f"scaled by confidence {finding.confidence:.2f}", scaled - total))
+    score = max(0, min(100, scaled))
+    if score != scaled:
+        factors.append(RiskFactor("score-bounds", "score bounded to 0-100", score - scaled))
     if finding.kind == Kind.FRAMEWORK_USAGE and score > FRAMEWORK_USAGE_CEILING:
         factors.append(RiskFactor("kind-ceiling", "framework or SDK use without agent evidence stays below critical", FRAMEWORK_USAGE_CEILING - score))
         score = FRAMEWORK_USAGE_CEILING

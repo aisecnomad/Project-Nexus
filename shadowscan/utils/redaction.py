@@ -418,7 +418,7 @@ def _generic_text_value_sensitive(key: str, rest: str) -> bool:
     if literals:
         return _credential_like("".join(a or b for a, b in literals))
     token = re.match(r"\s*([^\s;#,]+)", rest[:2048])  # an unquoted .env-style value
-    return bool(token) and _credential_like(token.group(1))
+    return token is not None and _credential_like(token.group(1))
 
 
 def credential_id(value: Any) -> str:

@@ -774,10 +774,10 @@ def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
 _COMBINED = re.compile(
     r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>[^\s"]++)[^"]*" (?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
 )
-_LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=("[^"]*"|\S+)')
-# A logfmt record starts with its first key=value pair. Any other line with an
-# '=' (a query string inside a request line) is not logfmt.
-_LOGFMT_START = re.compile(r'\s*\w[\w.-]*=')
+# A logfmt key starts a whitespace-separated field, so a line may carry a
+# timestamp or level prefix, but a query string inside a request line
+# ("GET /x?key=abc") is never read as key=value pairs.
+_LOGFMT_PAIR = re.compile(r'(?<!\S)(\w[\w.-]*+)=("[^"]*"|\S+)')
 # Envoy's default access-log format:
 # [START_TIME] "METHOD PATH PROTOCOL" CODE FLAGS RX TX DURATION UPSTREAM_TIME
 # "X-FORWARDED-FOR" "USER-AGENT" "REQUEST-ID" "AUTHORITY" "UPSTREAM_HOST"
@@ -843,12 +843,14 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
                 "status": d["status"], "http_user_agent": None if d["ua"] in {"", "-"} else d["ua"],
                 "host": None if d["authority"] in {"", "-"} else d["authority"],
             }
-        # Anything else starting with "[" must be JSON; an unrecognized text
-        # line is reported instead of being silently parsed as something else.
-        rec = json.loads(line)
-        if not isinstance(rec, dict):
-            raise ValueError("gateway text log JSON must be an object")
-        return rec
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            rec = None  # "[timestamp] key=value ..." is logfmt, parsed below
+        if rec is not None:
+            if not isinstance(rec, dict):
+                raise ValueError("gateway text log JSON must be an object")
+            return rec
     m = _COMBINED.match(line)
     if m:
         d = m.groupdict()
@@ -856,10 +858,13 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
         rec = {"remote_addr": d["ip"], "remote_user": None if d["user"] == "-" else d["user"], "time_local": d["time"], "request_method": d["method"], "request_uri": d["path"], "status": d["status"], "http_user_agent": d.get("ua"), "host": h.group(1) if h else None}
         return rec
     # key=value logfmt
-    if "=" in line and " " in line and _LOGFMT_START.match(line):
+    if "=" in line and " " in line:
         kv = dict(_LOGFMT_PAIR.findall(line))
         if kv:
             return {k: v.strip('"') for k, v in kv.items()}
+    if line.startswith("["):
+        # Report an unrecognized bracketed line rather than drop it silently.
+        raise ValueError("gateway text log line is neither envoy, JSON nor logfmt")
     return None
 
 

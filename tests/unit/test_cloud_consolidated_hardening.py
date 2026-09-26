@@ -59,6 +59,7 @@ def test_aws_layer_name_and_ssm_parameter_arn(index):
 
 
 def test_aws_clients_carry_explicit_timeouts(index, monkeypatch):
+    pytest.importorskip("botocore")  # the live client is configured with the SDK's retry/timeout types
     connector = AwsConnector(context(index, account_id="123456789012"))
     session = Mock()
     connector._session = session
@@ -126,6 +127,7 @@ def test_azure_foundry_projects_inherit_subscription_and_location(index, monkeyp
 
 
 def test_oci_clients_are_cached_per_region_with_timeouts(index):
+    pytest.importorskip("oci")  # the live client is configured with the SDK's retry/timeout types
     connector = OciConnector(context(index))
     connector._config = {"region": "us-ashburn-1"}
 

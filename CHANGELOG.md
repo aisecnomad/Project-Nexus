@@ -40,7 +40,9 @@ Detection
   not autonomous.
 - Risk: capability and provider weights are capped, and findings that only
   establish framework or SDK use stay below the critical band reserved for
-  agents and credentials.
+  agents and credentials. Every adjustment, including the 0-100 bound, is a
+  listed factor, so a finding's factors always sum to its score; non-numeric
+  connector counts score as zero instead of failing the assessment.
 
 Robustness
 
@@ -59,10 +61,12 @@ Robustness
   failures are reported once. CloudTrail LookupEvents still marks runtime
   visibility incomplete by design; set `cloudtrail_days: 0` for an inventory
   scan that can complete.
-- Gateway text logs: envoy's default access-log format is parsed; any other
-  line starting with `[` must be JSON and is reported otherwise; logfmt parsing
-  requires a line that starts with a `key=value` pair, so a query string inside
-  a request line can no longer become a silently discarded record.
+- Gateway text logs: envoy's default access-log format is parsed. A logfmt key
+  must start a whitespace-separated field, so `[timestamp] level=info ...` and
+  other prefixed logfmt lines still parse, while a query string inside a
+  request line (`GET /x?key=abc`) can no longer become a silently discarded
+  record. A line starting with `[` that is neither envoy, JSON nor logfmt is
+  reported.
 - Built-in directory excludes (`build`, `dist`, `vendor`...) no longer skip
   regular files with those names, such as an extensionless `script/build`.
 - Salesforce flows, bots, planners, templates and connected apps, and
@@ -93,11 +97,12 @@ Operations
 - `--set` keeps identifiers with leading zeros (`tenant_id=0123`) as strings.
 - Generated inventory stubs list readable names instead of Python reprs.
 - The worker image is based on Debian trixie (Git 2.47) and fails the build on a
-  Git older than 2.45; tests of history enrichment skip on older Git, and the
-  OCI contract tests skip without the SDK, so `pip install -e ".[dev]"` followed
-  by `pytest` works on a stock Ubuntu 24.04 host.
-- Byte-identical duplicate tests were removed; regression tests are named by
-  feature.
+  Git older than 2.45; tests of history enrichment skip on older Git, and tests
+  that configure live AWS or OCI SDK clients skip without the SDKs, so
+  `pip install -e ".[dev]"` followed by `pytest` works on a stock Ubuntu 24.04
+  host. CI installs the locked cloud SDKs and runs them all.
+- 19 byte-identical duplicate tests were removed; regression tests are named
+  by feature.
 
 ### Detection and collection assurance (2026-09-24)
 

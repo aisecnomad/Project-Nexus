@@ -98,6 +98,16 @@ def test_kubernetes_claim_hints_require_the_expected_top_level_shape(claims):
     assert _issuer_family("https://id.example", claims) == "custom"
 
 
+@pytest.mark.parametrize("issuer", [
+    "https://kubernetes.default.svc.evil.example",
+    "https://evil.example/kubernetes.default.svc",
+    "https://evil.example?issuer=kubernetes.default.svc",
+    "https://kubernetes.default.svc@evil.example",
+])
+def test_kubernetes_issuer_namespace_does_not_match_embedded_hostnames(issuer):
+    assert _issuer_family(issuer, {}) == "custom"
+
+
 def test_kubernetes_claim_label_does_not_establish_signature_or_issuer_trust(index, monkeypatch):
     def unexpected_fetch(url):
         pytest.fail("an unsigned token must not fetch a trusted key set")
