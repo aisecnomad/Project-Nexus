@@ -387,7 +387,7 @@ signatures:
         globs: ["**/genAiPlanners/*.genAiPlanner-meta.xml", "**/genAiPlannerBundles/**", "**/genAiPlugins/*.genAiPlugin-meta.xml", "**/genAiFunctions/**/*.genAiFunction-meta.xml", "**/genAiPromptTemplates/*.genAiPromptTemplate-meta.xml", "**/bots/**/*.bot-meta.xml", "**/bots/**/*.botVersion-meta.xml", "**/aiAssistantTemplates/**", "**/aiApplications/*.ai-meta.xml"]
         weight: 0.95
       - type: code
-        patterns: ['<GenAiPlanner\b', '<GenAiPlugin\b', '<GenAiFunction\b', '<GenAiPromptTemplate\b', '<BotDefinition\b', '<BotVersion\b', '\bGenAiPlannerBundle\b', '/einstein/platform/v1/models/', '\bagentforce\b', 'sfdc\.agentforce', '@InvocableMethod\b[^\n]*(?:prompt|agent)']
+        patterns: ['<GenAiPlanner\b', '<GenAiPlugin\b', '<GenAiFunction\b', '<GenAiPromptTemplate\b', '<BotDefinition\b', '<BotVersion\b', '\bGenAiPlannerBundle\b', '/einstein/platform/v1/models/', '\bagentforce\b', 'sfdc\.agentforce', '@InvocableMethod\b[^\n]{0,500}(?:prompt|agent)']
         weight: 0.9
       - type: dependency
         ecosystem: pypi

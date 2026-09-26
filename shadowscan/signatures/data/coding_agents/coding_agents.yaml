@@ -211,7 +211,7 @@ signatures:
         globs: [".amazonq/rules/**", "**/.amazonq/rules/**", ".amazonq/**", ".kiro/steering/**", "**/.kiro/steering/**", ".kiro/specs/**", "**/.kiro/specs/**", ".kiro/hooks/**", "**/.kiro/hooks/**", ".kiro/**", ".q/**"]
         weight: 0.9
       - type: code
-        patterns: ['uses:\s*aws-actions/amazon-q-developer', '\bq\s+chat\s+--trust-all-tools\b', '\bkiro\b.*\bagent\b']
+        patterns: ['uses:\s*aws-actions/amazon-q-developer', '\bq\s+chat\s+--trust-all-tools\b', '\bkiro\b[^\n]{0,500}\bagent\b']
         weight: 0.8
       - type: user_agent
         patterns: ['(?i)AmazonQ-For-CLI', '(?i)\bkiro\b', '(?i)aws-toolkit']

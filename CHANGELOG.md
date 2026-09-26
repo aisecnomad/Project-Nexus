@@ -47,11 +47,19 @@ Detection
 Robustness
 
 - Large ordinary source files complete: the import binder accepts 400k AST
-  nodes, retains only calls into imports a signature recognizes (at most 4,096
-  calls and 2 MiB of call text), and computes JavaScript line numbers from a
-  newline index; per-pattern regex caps scale with input size, and per-file and default matching budgets scale with
-  input size (up to the validated 60-second maximum), and a minified bundle with
-  hundreds of credential-like keys on one line is sanitized in linear time.
+  nodes, shadow-checks and records calls only for imports a signature
+  recognizes (at most 4,096 calls and 2 MiB of call text), and computes
+  JavaScript line numbers from a newline index. Per-pattern regex caps and
+  per-file and default matching budgets scale with input size (up to the
+  validated 60-second maximum). Co-occurrence heuristics (`playwright ...
+  agent`, `child_process ... tool`) look at most 500 characters ahead, so they
+  stay linear on minified lines; one alternation of the domain expressions rules
+  out dotted source tokens (`obj.prop`) before per-signature checks. A minified
+  bundle with hundreds of credential-like keys on one line is sanitized in
+  linear time. On a 319-file sample of real 100 KB-1 MiB JavaScript, TypeScript
+  and Python files, no file now times out; files whose lexical structure cannot
+  be resolved (some minified bundles, and Python 3.12 f-string syntax when the
+  scanner runs on Python 3.11) are still reported as incomplete.
 - `exclude` names apply without an accompanying glob; cooperative cancellation
   stops the file walk instead of being recorded once per file; a killed clone's
   partial checkout is removed before the API fallback; a worker that finished
@@ -91,6 +99,10 @@ Redaction
   `pwd = os.getcwd()` and integer counts stay readable and cannot erase a
   file's evidence context. `max_tokens`, `token_count` and similar
   descriptive names are unaffected.
+- Command-line flags quoted in evidence text (`mysql --password ...`,
+  `--mysql-pwd '...'`, `--db-pass ...`, `--api-key ...`) have their values
+  redacted under the same rules as assignments; `--auth none`,
+  `--password-stdin` and `--max-tokens 4096` stay readable.
 
 Operations
 

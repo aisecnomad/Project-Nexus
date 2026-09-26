@@ -42,6 +42,13 @@ _GENERIC_WORD = re.compile(r"(?:^|[_.\-])(?:auth|pass|pwd)$", re.IGNORECASE)
 _GENERIC_CAMEL = re.compile(r"[a-z0-9](?:Auth|Pass|Pwd)$")
 _ENUM_LIKE = re.compile(r"[a-z]+(?:[_.\-][a-z]+)*")
 _CALL_EXPRESSION = re.compile(r"[A-Za-z_][\w.]*\s*\(")
+# A command-line flag and its space-separated value in free text, such as a
+# shell line quoted as evidence: `mysql --password opaque` or `--db-pass "x"`.
+# Values starting with "-" are the next flag, not a value.
+_FLAG_VALUE = re.compile(
+    r"""(?<![\w-])(?P<flag>--?[A-Za-z][\w-]{0,63})(?P<sep>[ \t]{1,8})"""
+    r"""(?P<value>"[^"\n]{1,1024}"|'[^'\n]{1,1024}'|[^\s"'\-][^\s]{0,1023})"""
+)
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
 _SECRET_TOKEN = re.compile(
@@ -503,6 +510,15 @@ def _sanitize_url(match: re.Match[str]) -> str:
     return "".join(parts)
 
 
+def _redact_flag_value(m: re.Match[str]) -> str:
+    raw = m.group("value")
+    quote = raw[0] if raw[0] in "\"'" else ""
+    bare = raw[1:-1] if quote else raw
+    if _FINGERPRINT.fullmatch(bare) or not sensitive_field(m.group("flag").lstrip("-"), bare):
+        return m.group(0)
+    return m.group("flag") + m.group("sep") + quote + REDACTED + quote
+
+
 def sanitize_text(text: str) -> str:
     """Redact recognizable credentials, assignments, auth headers and URL secrets."""
     if not isinstance(text, str):
@@ -517,6 +533,7 @@ def sanitize_text(text: str) -> str:
     text = _JWT.sub(REDACTED, text)
     text = _SECRET_TOKEN.sub(REDACTED, text)
     text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED, text)
+    text = _FLAG_VALUE.sub(_redact_flag_value, text)
 
     def assignments(value: str, depth: int = 0) -> str:
         def assignment(m: re.Match[str]) -> str:

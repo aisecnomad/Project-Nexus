@@ -286,6 +286,12 @@ files above 100 KB, up to 60 seconds, so a 450 KB generated module receives
 second within that budget. Other connectors scale their default per-record
 budget the same way. Source files the scanner's interpreter cannot parse keep
 their lexical evidence and record a warning without marking the scan incomplete.
+A file whose comments, strings and regular-expression literals cannot be told
+apart from code (some minified bundles, or Python 3.12 f-string syntax when the
+scanner itself runs on Python 3.11) is reported as `incomplete source lexical
+analysis`: text after the ambiguous point cannot establish agent code, so the
+scan is incomplete. Run the scanner on Python 3.12 or later (the worker image
+does) and exclude vendored build output with `exclude`.
 
 Denied or failed API requests and exhausted pagination mark collection incomplete.
 Offline exports require valid objects or arrays of objects; scalar records,

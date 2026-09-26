@@ -41,7 +41,7 @@ signatures:
     risk_notes: ["Executing model-generated code or commands enables full compromise if prompts are injected."]
     signals:
       - type: code
-        patterns: ['\bcode_interpreter\b', '\bCodeInterpreter(?:Tool)?\b', '"type"\s*:\s*"code_interpreter"', '\bPythonREPL\b', '\bexec\(\s*(?:code|response|completion|generated|llm_output|output)\b', '\beval\(\s*(?:code|response|completion|generated|llm_output)\b', '\bsubprocess\.(?:run|Popen|call|check_output)\(\s*(?:cmd|command|response|generated|llm|tool)', '\bos\.system\(\s*(?:cmd|command|response|generated|llm|tool)', '\bShellTool\b', '\bBashTool\b', '\bTerminalTool\b', '\bexecute_(?:shell|bash|command|code|python)\b', '\brun_(?:shell|bash|command|code|python)_?(?:tool|command)?\b', '\bchild_process\b[^\n]*(?:tool|agent|llm)', '\bexecSync\(\s*(?:cmd|command|tool)', '\bcomputer[-_ ]use\b', '\bComputerTool\b', '\bdocker\.containers\.run\(', '\bsandbox\.(?:run_code|exec|commands\.run|process\.start)\(', '\bE2BExecutor\b', '\bLocalPythonExecutor\b']
+        patterns: ['\bcode_interpreter\b', '\bCodeInterpreter(?:Tool)?\b', '"type"\s*:\s*"code_interpreter"', '\bPythonREPL\b', '\bexec\(\s*(?:code|response|completion|generated|llm_output|output)\b', '\beval\(\s*(?:code|response|completion|generated|llm_output)\b', '\bsubprocess\.(?:run|Popen|call|check_output)\(\s*(?:cmd|command|response|generated|llm|tool)', '\bos\.system\(\s*(?:cmd|command|response|generated|llm|tool)', '\bShellTool\b', '\bBashTool\b', '\bTerminalTool\b', '\bexecute_(?:shell|bash|command|code|python)\b', '\brun_(?:shell|bash|command|code|python)_?(?:tool|command)?\b', '\bchild_process\b[^\n]{0,500}(?:tool|agent|llm)', '\bexecSync\(\s*(?:cmd|command|tool)', '\bcomputer[-_ ]use\b', '\bComputerTool\b', '\bdocker\.containers\.run\(', '\bsandbox\.(?:run_code|exec|commands\.run|process\.start)\(', '\bE2BExecutor\b', '\bLocalPythonExecutor\b']
         weight: 0.45
         agent_indicator: true
 
@@ -52,7 +52,7 @@ signatures:
     capabilities: [browsing]
     signals:
       - type: code
-        patterns: ['\bBrowserTool\b', '\bbrowser_(?:navigate|click|type|screenshot|use)\b', '\bPlaywrightBrowserToolkit\b', '\bplaywright\b[^\n]*\b(?:agent|llm|tool)\b', '\bpuppeteer\b[^\n]*\b(?:agent|llm|tool)\b', '\bselenium\b[^\n]*\b(?:agent|llm|tool)\b', '\bwebdriver\b[^\n]*\bagent\b', '\bSeleniumURLLoader\b', '\bWebBaseLoader\b', '\bscrape_(?:website|page|url)\b', '\bfetch_(?:url|page|webpage)_?(?:tool)?\b', '\bvisit_webpage\b', '\bDuckDuckGoSearch', '\bWebSearchTool\b', '\bweb_search\b', '\bgoogle_search\b']
+        patterns: ['\bBrowserTool\b', '\bbrowser_(?:navigate|click|type|screenshot|use)\b', '\bPlaywrightBrowserToolkit\b', '\bplaywright\b[^\n]{0,500}\b(?:agent|llm|tool)\b', '\bpuppeteer\b[^\n]{0,500}\b(?:agent|llm|tool)\b', '\bselenium\b[^\n]{0,500}\b(?:agent|llm|tool)\b', '\bwebdriver\b[^\n]{0,500}\bagent\b', '\bSeleniumURLLoader\b', '\bWebBaseLoader\b', '\bscrape_(?:website|page|url)\b', '\bfetch_(?:url|page|webpage)_?(?:tool)?\b', '\bvisit_webpage\b', '\bDuckDuckGoSearch', '\bWebSearchTool\b', '\bweb_search\b', '\bgoogle_search\b']
         weight: 0.35
         agent_indicator: true
 
@@ -85,7 +85,7 @@ signatures:
     capabilities: [autonomous]
     signals:
       - type: code
-        patterns: ['^[^\S\r\n]*(?:cron|schedule):\s*["'']?[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+', '\bschedule\.every\(', '\b@(?:app\.)?(?:cron|scheduled|periodic_task|repeat_every)\b', '\bCronTrigger\b', '\bAPScheduler\b', '\bBackgroundScheduler\b', '\bcelery\.(?:beat|task)\b', '\b@celery\.task\b', '\baws_events\.Rule\b', '\bschedule_expression\s*=', '\bScheduleExpression\b', '\bcron\(\s*[0-9*]', '\brate\(\s*\d+\s+(?:minute|hour|day)s?\s*\)', 'triggers:\s*\n\s*-?\s*schedule', '\bon:\s*\n\s*schedule:', '\bsqs_trigger\b', '\bEventBridge\b', '\bPubSub\b[^\n]*\bagent\b', '\b@functions_framework\b', '\btemporalio\b', '\bworkflow\.run\b']
+        patterns: ['^[^\S\r\n]*(?:cron|schedule):\s*["'']?[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+', '\bschedule\.every\(', '\b@(?:app\.)?(?:cron|scheduled|periodic_task|repeat_every)\b', '\bCronTrigger\b', '\bAPScheduler\b', '\bBackgroundScheduler\b', '\bcelery\.(?:beat|task)\b', '\b@celery\.task\b', '\baws_events\.Rule\b', '\bschedule_expression\s*=', '\bScheduleExpression\b', '\bcron\(\s*[0-9*]', '\brate\(\s*\d+\s+(?:minute|hour|day)s?\s*\)', 'triggers:\s*\n\s*-?\s*schedule', '\bon:\s*\n\s*schedule:', '\bsqs_trigger\b', '\bEventBridge\b', '\bPubSub\b[^\n]{0,500}\bagent\b', '\b@functions_framework\b', '\btemporalio\b', '\bworkflow\.run\b']
         weight: 0.2
 
   - id: heuristic.llm-env-names

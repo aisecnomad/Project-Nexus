@@ -432,6 +432,12 @@ def _javascript_bindings(
         else:
             bind(spec, module, "", line)
 
+    # Only calls into a module a signature recognizes are ever recorded, so the
+    # (whole-file) shadow checks and call scan below skip every other binding.
+    bindings = {name: binding for name, binding in bindings.items() if relevant(binding)}
+    if not bindings:
+        return [], imports
+
     # Treat any local shadow/reassignment as uncertain across this source. This
     # sacrifices some recall instead of attributing unrelated calls to an SDK.
     declaration_mask = list(masked)
@@ -457,10 +463,12 @@ def _javascript_bindings(
     captured = 0
     rx = regex.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?:<[^;(){}]{1,1000}>)?\s*\(")
     for match in rx.finditer(masked, timeout=pattern_timeout(), concurrent=False):
-        parts = re.split(r"\s*\.\s*", match.group(1))
-        binding = bindings.get(parts[0])
-        if binding is None or not relevant(binding):
+        # The regex timeout also counts work between matches: reject a chain
+        # whose first identifier is unbound before splitting the whole chain.
+        binding = bindings.get(match.group(1).split(".", 1)[0].rstrip())
+        if binding is None:
             continue
+        parts = re.split(r"\s*\.\s*", match.group(1))
         if len(calls) >= MAX_BOUND_CALLS:
             raise MatchTimeoutError("source binding call limit exceeded")
         opening = match.end() - 1

@@ -23,12 +23,36 @@ from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
     "DB_PASS=Sup3rS3cretValue9",
     "dbPass = 'Sup3rS3cretValue9'",
     "APP_SECRET=Zx81kLmNop",
+    "pwd=Hunter2Secret",
+    "pass: Hunter2Secret",
+    "auth: opaqueValue123",
 ])
 def test_generic_secret_names_are_redacted(line):
-    value = line.split("=", 1)[-1].split(": ", 1)[-1].strip("'")
+    value = line.split("=", 1)[-1].split(": ", 1)[-1].strip().strip("'\"")
+    assert value and " " not in value
     cleaned = sanitize_text(line)
     assert value not in cleaned
     assert REDACTED in cleaned
+
+
+@pytest.mark.parametrize(("line", "secret"), [
+    ("mysql -u root --password Sup3rS3cretValue9 -h db", "Sup3rS3cretValue9"),
+    ("npx -y @x/mcp-server-mysql --mysql-pwd 'Sup3r S3cret' --port 3306", "Sup3r S3cret"),
+    ("agent --db-pass An0therS3cretVal", "An0therS3cretVal"),
+    ("run --api-key opaque-key-value-1234", "opaque-key-value-1234"),
+])
+def test_command_line_flags_in_text_withhold_credential_values(line, secret):
+    cleaned = sanitize_text(line)
+    assert secret not in cleaned and REDACTED in cleaned
+    assert sanitize_text(cleaned) == cleaned
+
+
+@pytest.mark.parametrize("line", [
+    "--auth none", "--max-tokens 4096", "--token-file /run/secrets/t", "docker login --password-stdin -u bob",
+    "--password -u bob", "--eos-token '</s>'", "--mode fast",
+])
+def test_command_line_flags_without_credential_values_stay_readable(line):
+    assert sanitize_text(line) == line
 
 
 @pytest.mark.parametrize("line", [

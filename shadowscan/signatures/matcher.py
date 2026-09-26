@@ -124,6 +124,32 @@ def _finditer(
 def _search(rx: Any, text: str, context: str):
     return _run_regex(lambda timeout: rx.search(text, timeout=timeout, concurrent=False), context)
 
+
+# An expression joins the gate only when alternation cannot change its meaning:
+# no inline flags, named or numbered back-references, or other (?...) syntax
+# except non-capturing groups.
+_UNGATEABLE = re.compile(r"\(\?(?!:)|\\[1-9gk]")
+
+
+def _domain_regex_gate(entries: list[tuple[Any, Signature, Signal]]) -> tuple[Any | None, list[tuple[Any, Signature, Signal]]]:
+    """Build one alternation of gateable domain expressions.
+
+    ``search(A|B|...)`` finds a match exactly when one alternative matches, so
+    a miss proves no gated expression matches. Returns the gate (None when no
+    expression qualifies) and the entries that must always run.
+    """
+    gated = [rx for rx, _, _ in entries if not _UNGATEABLE.search(rx.pattern)]
+    ungated = [entry for entry in entries if _UNGATEABLE.search(entry[0].pattern)]
+    if not gated:
+        return None, ungated
+    flags = {rx.flags for rx in gated}
+    if len(flags) != 1:
+        return None, list(entries)
+    # A leading unanchored ".*" cannot change whether a search finds a match,
+    # and dropping it keeps the gate linear on long tokens.
+    alternatives = [rx.pattern[2:] if rx.pattern.startswith(".*") else rx.pattern for rx in gated]
+    return regex.compile("|".join(f"(?:{pattern})" for pattern in alternatives), flags.pop()), ungated
+
 _LANG_ALIASES = {
     "py": "python",
     "python": "python",
@@ -267,6 +293,7 @@ class SignatureIndex:
                         self._iac.setdefault(v.lower(), []).append((sig, s))
                 elif s.type == "file":
                     self._files.append((sig, s))
+        self._domain_gate, self._domain_regex_ungated = _domain_regex_gate(self._domain_regex)
 
     # ------------------------------------------------------------------ basic
     def get(self, sig_id: str) -> Signature | None:
@@ -475,7 +502,15 @@ class SignatureIndex:
         for suffix, sig, s in self._domain_suffixes:
             if h.endswith(suffix) or h == suffix.lstrip("."):
                 add(sig, s, h)
-        for rx, sig, s in self._domain_regex:
+        # Source text yields many dotted tokens (obj.prop) that look like hosts.
+        # One alternation of the simple domain expressions matches exactly when
+        # one of them does, so it rules most tokens out in a single search.
+        gate = self._domain_gate
+        try:
+            gated_in = gate is None or bool(_search(gate, h, "domain signatures") or _search(gate, h_with_port, "domain signatures"))
+        except MatchTimeoutError:
+            gated_in = True  # decide with the individual expressions, as without the gate
+        for rx, sig, s in self._domain_regex if gated_in else self._domain_regex_ungated:
             if _search(rx, h, sig.id) or _search(rx, h_with_port, sig.id):
                 add(sig, s, h_with_port)
         return out

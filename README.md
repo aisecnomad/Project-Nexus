@@ -218,10 +218,13 @@ only for a reviewed local checkout when author/history metadata is needed;
 metadata commands cannot fetch missing objects and require Git 2.45 or later
 (Debian trixie, Ubuntu 25.04, or a backport; the worker image ships it).
 Per-file matching budgets (`scan_timeout`, default 2 seconds) scale with file
-size up to 60 seconds, so large generated modules complete rather than marking
-the scan incomplete. Throughput is roughly 0.7 MB of source per second per
-worker: raise `connector_timeout_seconds` for repositories above a few hundred
-megabytes. Every explicit `--only` selector
+size up to 60 seconds, so large ordinary source files complete. A file whose
+lexical structure the scanner cannot resolve (some minified bundles, or Python
+3.12 f-string syntax when the scanner runs on Python 3.11; the worker image uses
+3.12) is reported as `incomplete source lexical analysis` and marks the scan
+incomplete; exclude vendored build output with `exclude`. Throughput is roughly
+0.5 MB of dense source per second per worker: raise `connector_timeout_seconds`
+for repositories above a few hundred megabytes. Every explicit `--only` selector
 must match an enabled connector name or label. Unsupported records and saved API
 error responses cannot establish an empty, successful inventory.
 
