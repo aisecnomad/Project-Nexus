@@ -79,3 +79,13 @@ def test_zap_titles_mentioning_ai_agents_need_an_ai_step(index):
     findings = list(connector.analyze([triage]))
     assert [f.kind for f in findings] == [Kind.AGENT]
     assert not any("Zapier Agent" in e.description for e in findings[0].evidence)
+
+
+def test_make_scenario_owner_without_a_name_is_unknown_not_the_string_none(index):
+    from shadowscan.connectors.lowcode.automation import MakeConnector
+
+    connector = MakeConnector(context(index, "lowcode.make", input="x"))
+    scenario = {"id": 9, "name": "Summarize tickets", "createdByUser": {"id": 7},
+                "blueprint": {"name": "Summarize tickets", "flow": [{"module": "openai-gpt-3:CreateCompletion"}]}}
+    findings = list(connector.analyze([scenario]))
+    assert findings and findings[0].owner is None

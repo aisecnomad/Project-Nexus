@@ -340,6 +340,8 @@ class JwtConnector(BaseConnector, _NoDump):
         )
         finalize(f, self.index)
         f.kind = Kind.TOKEN
+        # run() sanitizes yielded findings again; this call covers direct
+        # callers of the public analyze_token().
         f.sanitize()
         return f
 

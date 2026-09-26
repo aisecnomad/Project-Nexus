@@ -272,7 +272,7 @@ class MakeConnector(_AutomationBase):
                 wid=str(rec.get("id") or rec.get("name")),
                 name=str(rec.get("name") or bp.get("name") if isinstance(bp, dict) else rec.get("name")),
                 blob=json.dumps(bp, default=str)[:300_000],
-                owner=str(rec.get("createdByUser", {}).get("name") if isinstance(rec.get("createdByUser"), dict) else rec.get("createdBy") or "") or None,
+                owner=str((rec["createdByUser"].get("name") if isinstance(rec.get("createdByUser"), dict) else rec.get("createdBy")) or "") or None,
                 account=str(rec.get("_team") or rec.get("teamId") or "") or None,
                 active=rec.get("isActive", rec.get("active")),
                 created=rec.get("createdAt") or rec.get("created"),

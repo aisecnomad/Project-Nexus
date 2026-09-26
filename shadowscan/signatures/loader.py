@@ -74,20 +74,16 @@ class Signal:
     # signature's library counts (for ambiguous names such as ClientSession).
     bound_only: bool = False
     description: str | None = None
+    # Public field kept for plugin compatibility; matching uses bounded_compiled.
+    compiled: list[re.Pattern[str]] = field(default_factory=list, repr=False)
     bounded_compiled: list[Any] = field(default_factory=list, repr=False)
 
-    @property
-    def compiled(self) -> list[re.Pattern[str]]:
-        """``re`` equivalents of ``bounded_compiled``, built on access; matching uses the latter."""
-        return [re.compile(rx.pattern, re.MULTILINE) for rx in self.bounded_compiled]
-
     def compile(self) -> None:
+        self.compiled = []
         self.bounded_compiled = []
         for p in self.patterns:
             try:
-                # Patterns must stay valid for both engines; only the bounded
-                # (preemptible) form is kept for matching.
-                re.compile(p, re.MULTILINE)
+                self.compiled.append(re.compile(p, re.MULTILINE))
                 self.bounded_compiled.append(regex.compile(p, regex.MULTILINE | regex.VERSION0))
             except (re.error, regex.error) as exc:
                 raise ValueError(f"invalid regex {p!r}: {exc}") from exc
