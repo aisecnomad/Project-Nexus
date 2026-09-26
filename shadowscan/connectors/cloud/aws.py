@@ -614,6 +614,9 @@ class AwsConnector(BaseConnector):
                 LookupAttributes=[{"AttributeKey": "EventName", "AttributeValue": event_name}], StartTime=start,
             )))
             for ev in events or []:
+                if not isinstance(ev, dict):
+                    self.ctx.warn("cloud.aws: invalid CloudTrail event")
+                    continue
                 try:
                     detail = json.loads(ev.get("CloudTrailEvent") or "{}")
                 except (json.JSONDecodeError, TypeError, RecursionError):
@@ -623,6 +626,10 @@ class AwsConnector(BaseConnector):
                     detail = {}
                 ident = detail.get("userIdentity")
                 ident = ident if isinstance(ident, dict) else {}
+                params = detail.get("requestParameters")
+                if params is not None and not isinstance(params, dict):
+                    self.ctx.warn("cloud.aws: invalid CloudTrail request parameters")
+                params = params if isinstance(params, dict) else {}
                 yield {
                     "_kind": "cloudtrail-event",
                     "_region": region,
@@ -633,7 +640,7 @@ class AwsConnector(BaseConnector):
                     "identityType": ident.get("type"),
                     "userAgent": detail.get("userAgent"),
                     "sourceIp": detail.get("sourceIPAddress"),
-                    "modelId": (detail.get("requestParameters") or {}).get("modelId") or ((detail.get("requestParameters") or {}).get("agentId")),
+                    "modelId": params.get("modelId") or params.get("agentId"),
                     "errorCode": detail.get("errorCode"),
                 }
 
@@ -1435,7 +1442,8 @@ class _EcsInventory:
             if service.get("status") == "INACTIVE":
                 continue
             rollouts = [*_listed(service.get("deployments")), *_listed(service.get("taskSets"))]
-            if any(not isinstance(rollout, dict) for rollout in rollouts):
+            shapeless = any(service.get(key) is not None and not isinstance(service.get(key), list) for key in ("deployments", "taskSets"))
+            if shapeless or any(not isinstance(rollout, dict) for rollout in rollouts):
                 self.ctx.warn(f"cloud.aws: invalid ECS service deployment in {self.region}", incomplete=True)
             for deployment in [service, *(rollout for rollout in rollouts if isinstance(rollout, dict))]:
                 if deployment.get("taskDefinition"):

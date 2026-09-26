@@ -6,6 +6,7 @@ import json
 from unittest.mock import Mock
 
 import pytest
+import responses as responses_lib
 
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.cloud.aws import _EcsInventory
@@ -172,3 +173,98 @@ def test_plugin_subclass_of_a_hosted_connector_keeps_provider_diagnostics_and_id
     findings = list(ghe.analyze(ghe.load_offline(str(tmp_path))))
     assert any(w.startswith("code.github: max_repos (1) reached") for w in ghe.ctx.stats.warnings)
     assert findings and {f.provider for f in findings} == {"github"} and {f.connector for f in findings} == {"code.ghe"}
+
+
+GITLAB_API = "https://gitlab.example.com/api/v4"
+
+
+def _gitlab_group(responses_module, **overrides):
+    endpoints = {
+        "/groups/acme/service_accounts": {"json": []},
+        "/groups/acme/access_tokens": {"json": []},
+        "/groups/acme/variables": {"json": [{"key": "OPENAI_API_KEY", "masked": False, "protected": False}]},
+        "/groups/acme": {"json": {"full_path": "acme"}},
+        "/groups/acme/projects": {"json": []},
+        **overrides,
+    }
+    for path, kwargs in endpoints.items():
+        responses_module.get(GITLAB_API + path, **kwargs)
+
+
+@responses_lib.activate
+def test_real_client_malformed_metadata_page_keeps_the_rest_of_the_group(run_connector):
+    _gitlab_group(responses_lib, **{"/groups/acme/service_accounts": {"json": [None, {"id": 5, "name": "sa-bot"}]}})
+    findings, ctx = run_connector("code.gitlab", group="acme", api_url=GITLAB_API, mode="api", token="glpat-test")
+    assert not ctx.stats.errors
+    assert any("metadata listing failed for /groups/acme/service_accounts" in w for w in ctx.stats.warnings)
+    assert any("OPENAI_API_KEY" in json.dumps(f.to_dict()) for f in findings)
+
+
+@responses_lib.activate
+def test_real_client_variables_read_before_an_invalid_page_are_still_reported(run_connector):
+    responses_lib.get(GITLAB_API + "/groups/acme/variables?per_page=100&page=2", body="not json{")
+    _gitlab_group(responses_lib, **{"/groups/acme/variables": {
+        "json": [{"key": "OPENAI_API_KEY", "masked": False, "protected": False}],
+        "headers": {"Link": f'<{GITLAB_API}/groups/acme/variables?per_page=100&page=2>; rel="next"'},
+    }})
+    findings, ctx = run_connector("code.gitlab", group="acme", api_url=GITLAB_API, mode="api", token="glpat-test")
+    assert any("OPENAI_API_KEY" in json.dumps(f.to_dict()) for f in findings)
+    assert ctx.stats.incomplete and not ctx.stats.errors
+
+
+@responses_lib.activate
+def test_real_client_invalid_repository_listing_page_keeps_earlier_repositories(run_connector, tmp_path):
+    api = "https://github.example.com/api/v3"
+    responses_lib.get(api + "/orgs/acme/repos?per_page=100&type=all&sort=pushed", json=[], headers={
+        "Link": f'<{api}/orgs/acme/repos?per_page=100&type=all&sort=pushed&page=2>; rel="next"'})
+    responses_lib.get(api + "/orgs/acme/repos?per_page=100&type=all&sort=pushed&page=2", json=[None])
+    github = GitHubConnector(ConnectorContext(config={"org": "acme", "api_url": api, "token": "ghp_test_token_value_0123"}))
+    github.ctx.stats = ScanStats(connector="code.github", started_at="2026-09-26")
+    assert list(github.collect()) == []
+    assert any("organization repository listing stopped at an invalid page" in w for w in github.ctx.stats.warnings)
+
+
+def test_cloudtrail_request_parameters_that_are_not_an_object_are_dropped(index, monkeypatch):
+    from shadowscan.connectors.cloud.aws import AwsConnector
+
+    ctx = ConnectorContext(config={"input": "unused"}, index=index)
+    ctx.stats = ScanStats(connector="cloud.aws", started_at="2026-09-26")
+    aws = AwsConnector(ctx)
+    events = ["junk", {"EventName": "InvokeModel", "CloudTrailEvent": json.dumps({"requestParameters": "modelId=x"})},
+              {"EventName": "InvokeModel", "CloudTrailEvent": json.dumps({"requestParameters": {"modelId": "anthropic.claude"}})}]
+    monkeypatch.setattr(aws, "_client", lambda *args: object())
+    monkeypatch.setattr(aws, "_paginate", lambda *args, **kwargs: iter(events))
+    monkeypatch.setattr("shadowscan.connectors.cloud.aws.CLOUDTRAIL_EVENTS", ["InvokeModel"])
+    assert [r["modelId"] for r in aws._collect_cloudtrail("us-east-1")] == [None, "anthropic.claude"]
+    assert any("invalid CloudTrail request parameters" in w for w in ctx.stats.warnings)
+    assert any(w.endswith("invalid CloudTrail event") for w in ctx.stats.warnings)
+
+
+def test_ecs_task_sets_that_are_not_a_list_are_reported(index):
+    ctx = ConnectorContext(index=index)
+    ctx.stats = ScanStats(connector="cloud.aws", started_at="2026-09-26")
+    inventory = _EcsInventory.__new__(_EcsInventory)
+    inventory.ctx, inventory.region = ctx, "us-east-1"
+    added = []
+    inventory.identifiers = lambda *args, **kwargs: iter(["arn:svc"])
+    inventory.described = lambda *args: iter([{"serviceArn": "arn:svc", "status": "ACTIVE",
+                                               "taskSets": {"taskDefinition": "arn:aws:ecs:us-east-1:1:task-definition/blue:3"}}])
+    inventory.add_definition = lambda identifier, source, reference=None: added.append(identifier)
+    inventory.reference_services("cluster")
+    assert ctx.stats.incomplete
+    assert any("invalid ECS service deployment" in w for w in ctx.stats.warnings)
+
+
+def test_multi_root_scan_states_an_unused_cache_once(tmp_path):
+    from shadowscan.config import ConnectorSpec, ScanConfig
+    from shadowscan.engine import Engine
+
+    roots = []
+    for name in ("a", "b", "c"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "app.py").write_text("x = 1\n")
+        roots.append(str(tmp_path / name))
+    cfg = ScanConfig(connectors=[ConnectorSpec(name="code.filesystem", config={"paths": roots, "use_git": False})],
+                     incremental=True, dump_records=str(tmp_path / "dumps"), state_dir=str(tmp_path / "state"))
+    [stats] = Engine(cfg).run().stats
+    assert sum(w.startswith("incremental: record dumps") for w in stats.warnings) == 1

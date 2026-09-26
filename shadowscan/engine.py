@@ -121,6 +121,19 @@ def _retain_sanitizable(candidates: list[Finding]) -> tuple[list[Finding], int]:
     return retained, omitted
 
 
+def _merge_part_warnings(parts: list[ScanStats]) -> list[str]:
+    """Concatenate per-root warnings in order, stating a cache note once per connector."""
+    merged: list[str] = []
+    notes: set[str] = set()
+    for warning in (w for part in parts for w in part.warnings):
+        if warning.startswith("incremental: "):
+            if warning in notes:
+                continue
+            notes.add(warning)
+        merged.append(warning)
+    return merged
+
+
 def _seal_diagnostics(st: ScanStats, findings: int) -> None:
     """Record the finding count and sanitize connector diagnostics within the safety limit."""
     st.findings = findings
@@ -430,7 +443,7 @@ class Engine:
             finished_at=now_iso(), findings=len(combined),
             objects_examined=sum(s.objects_examined for s in parts),
             errors=[e for s in parts for e in s.errors],
-            warnings=[w for s in parts for w in s.warnings],
+            warnings=_merge_part_warnings(parts),
             incomplete=any(s.incomplete or s.skipped or s.errors for s in parts),
             skipped=all(s.skipped for s in parts), cached=cached_count == len(parts),
         )

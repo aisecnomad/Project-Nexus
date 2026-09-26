@@ -117,6 +117,21 @@ class HostedRepositoryConnector(BaseConnector):
     mode: str
     http: HttpClient
 
+    def _listing(self, records: Iterable[Any], what: str) -> Iterator[Any]:
+        """Yield a paginated listing; a malformed page ends it with an incomplete warning.
+
+        The HTTP client rejects a page holding a non-object item (fail closed),
+        so skipping individual items cannot recover it. Repositories already
+        listed are kept, and later listings still run. Denied requests
+        (HttpError) and deadlines (ConnectorError) still stop the connector.
+        """
+        try:
+            yield from records
+        except (ConnectorError, HttpError):
+            raise
+        except (RuntimeError, ValueError) as exc:
+            self.ctx.warn(f"{self.diagnostic_prefix}: {what} listing stopped at an invalid page ({type(exc).__name__}); coverage partial", incomplete=True)
+
     def _limit_reached(self, count: int) -> bool:
         """Report partial coverage once ``count`` repositories reach the configured cap."""
         limit = getattr(self, self.limit_key)

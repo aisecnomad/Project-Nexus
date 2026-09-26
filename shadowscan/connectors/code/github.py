@@ -120,14 +120,14 @@ class GitHubConnector(HostedRepositoryConnector):
                 else:
                     self.ctx.warn(f"code.github: cannot access {full}", incomplete=True)
         if org:
-            for r in self._named_listing(self.http.paginate_link(f"/orgs/{org}/repos", params={"per_page": 100, "type": "all", "sort": "pushed"})):
+            for r in self._named_listing(self._listing(self.http.paginate_link(f"/orgs/{org}/repos", params={"per_page": 100, "type": "all", "sort": "pushed"}), "organization repository")):
                 if r["full_name"] not in seen and self._wanted(r):
                     if self._limit_reached(len(seen)):
                         return
                     seen.add(r["full_name"])
                     yield _remote_record(r)
         if user:
-            for r in self._named_listing(self.http.paginate_link(f"/users/{user}/repos", params={"per_page": 100, "sort": "pushed"})):
+            for r in self._named_listing(self._listing(self.http.paginate_link(f"/users/{user}/repos", params={"per_page": 100, "sort": "pushed"}), "user repository")):
                 if r["full_name"] not in seen and self._wanted(r):
                     if self._limit_reached(len(seen)):
                         return

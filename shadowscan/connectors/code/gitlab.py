@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import quote, urlsplit
 
+from requests import RequestException
+
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.hosted import HostedRepositoryConnector, _remote_record, repository_blob_id
@@ -109,7 +111,7 @@ class GitLabConnector(HostedRepositoryConnector):
             params = {"per_page": 100, "include_subgroups": "true", "archived": "false" if not self.include_archived else None, "order_by": "last_activity_at", "simple": "false"}
             params = {k: v for k, v in params.items() if v is not None}
             reported = False
-            for p in self.http.paginate_link(f"/groups/{gid}/projects", params=params):
+            for p in self._listing(self.http.paginate_link(f"/groups/{gid}/projects", params=params), "group project"):
                 if not _identified_project(p):
                     if not reported:
                         self.ctx.warn("code.gitlab: malformed project record skipped; coverage partial", incomplete=True)
@@ -148,6 +150,12 @@ class GitLabConnector(HostedRepositoryConnector):
                     reported = True
         except HttpError as exc:
             self.ctx.warn(f"code.gitlab: metadata HTTP {exc.status} for {path}; coverage unknown", incomplete=True)
+        except ConnectorError:
+            raise
+        except (RuntimeError, ValueError, RequestException) as exc:
+            # Keep the items already read (page 1 of group variables can hold
+            # an unmasked provider key) and report the rest as unknown.
+            self.ctx.warn(f"code.gitlab: metadata listing failed for {path} ({type(exc).__name__}); coverage partial", incomplete=True)
 
     def _offline_record(self, name: str) -> dict[str, Any]:
         return {"path_with_namespace": name}
