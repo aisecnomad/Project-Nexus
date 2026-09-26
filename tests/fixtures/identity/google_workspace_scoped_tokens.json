@@ -1,0 +1,13 @@
+[
+  {
+    "user": "reviewer@example.test",
+    "tokens": [
+      {
+        "kind": "admin#directory#token",
+        "clientId": "1234567890.apps.googleusercontent.com",
+        "displayText": "Fireflies.ai Notetaker",
+        "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]
+      }
+    ]
+  }
+]

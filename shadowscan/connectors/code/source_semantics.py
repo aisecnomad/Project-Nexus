@@ -22,8 +22,9 @@ from dataclasses import dataclass
 
 import regex
 
+from shadowscan.connectors.code.javascript_dispatch import javascript_responses_dispatch_lines
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
-from shadowscan.connectors.code.responses_loops import responses_tool_loop_lines
+from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
@@ -543,8 +544,12 @@ def bound_source_matches(
                     found.append(match)
     provider_requests: set[int] = set()
     responses_requests: set[int] = set()
+    javascript_constructors: set[int] = set()
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
+        if (language == "javascript" and "provider.openai" in signatures and call.binding.module == "openai"
+                and call.binding.symbol in {"default", "OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI"}):
+            javascript_constructors.add(call.line)
         loop_request = _LOOP_REQUESTS.get(call.binding.module)
         if (tree is not None and call.node is not None and loop_request is not None
                 and loop_request[0] in signatures and call.binding.symbol in loop_request[1]):
@@ -598,7 +603,8 @@ def bound_source_matches(
                                                      description="import-bound agent construction"),
                                    sanitize_text(f"{call.binding.module}:{symbol}("), 0.9, line=call.line,
                                    extra={"verified_agent": True}))
-    if tree is not None and (protocol := index.get("protocol.openai-function-calling")):
+    protocol = index.get("protocol.openai-function-calling")
+    if tree is not None and protocol is not None:
         for line in provider_tool_loop_lines(tree, provider_requests):
             found.append(Match(
                 protocol,
@@ -614,5 +620,18 @@ def bound_source_matches(
                        description="import-bound Responses function dispatch with ordered conversation feedback"),
                 "OpenAI Responses tool-selection/dispatch/feedback loop", 0.9, line=line,
                 extra={"verified_agent": True},
+            ))
+    if protocol is not None:
+        dispatch_lines = (
+            responses_dispatch_lines(tree, responses_requests) if tree is not None else
+            javascript_responses_dispatch_lines(text, ignored, javascript_constructors)
+        )
+        for line in dispatch_lines:
+            found.append(Match(
+                protocol,
+                Signal(type="code", weight=0.85, agent_indicator=True, capabilities=["tool-use"],
+                       description="import-bound Responses selected-action dispatch"),
+                "OpenAI Responses selected-action dispatch", 0.85, line=line,
+                extra={"verified_agent": True, "agent_classification": "openai-responses-tool-dispatch"},
             ))
     return found

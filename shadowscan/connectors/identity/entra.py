@@ -32,6 +32,8 @@ from shadowscan.utils.http import HttpClient, HttpError
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 FIRST_PARTY_OWNER = "f8cdef31-a31e-4b4a-93e4-5f571e91255a"  # Microsoft services tenant
+MAX_CONFLICTING_SNAPSHOTS = 16
+MAX_CONFLICTING_EVIDENCE = 64
 
 
 class EntraConnector(BaseConnector):
@@ -125,6 +127,9 @@ class EntraConnector(BaseConnector):
         role_assignments: dict[str, list[dict[str, Any]]] = {}
         applications: list[dict[str, Any]] = []
         role_names: dict[str, str] = {}
+        conflicting_sps: set[str] = set()
+        conflicting_snapshots: dict[str, list[dict[str, Any]]] = {}
+        truncated_snapshots: set[str] = set()
         for rec in records:
             kind = self._record_kind(rec)
             if kind is None:
@@ -133,6 +138,16 @@ class EntraConnector(BaseConnector):
             if kind == "roleMap":
                 role_names.update(rec.get("roles") or {})
             elif kind == "servicePrincipal":
+                if rec["id"] in sps and sps[rec["id"]] != rec:
+                    if rec["id"] not in conflicting_sps:
+                        conflicting_sps.add(rec["id"])
+                        self.ctx.warn("identity.entra: conflicting service principal records; identity coverage incomplete")
+                    snapshots = conflicting_snapshots.setdefault(rec["id"], [sps[rec["id"]]])
+                    if len(snapshots) < MAX_CONFLICTING_SNAPSHOTS:
+                        snapshots.append(rec)
+                    elif rec["id"] not in truncated_snapshots:
+                        truncated_snapshots.add(rec["id"])
+                        self.ctx.warn("identity.entra: conflicting principal snapshot limit reached; evidence coverage incomplete")
                 sps[rec["id"]] = rec
                 for role in (rec.get("appRoles") or []) + (rec.get("oauth2PermissionScopes") or []):
                     if role.get("id") and role.get("value"):
@@ -143,11 +158,91 @@ class EntraConnector(BaseConnector):
                 role_assignments.setdefault(rec.get("principalId", ""), []).append(rec)
             elif kind == "application":
                 applications.append(rec)
-        sp_by_app_id = {sp.get("appId"): sp for sp in sps.values()}
+        sp_by_app_id = {sp.get("appId"): sp for sp_id, sp in sps.items() if sp_id not in conflicting_sps}
         for sp_id, sp in sps.items():
+            if sp_id in conflicting_sps:
+                continue
             self.ctx.examined()
             f = self._sp_finding(sp, grants.get(sp_id, []), role_assignments.get(sp_id, []), role_names)
             if f:
+                yield f
+        # A missing principal must not silently erase observed consent or
+        # application privileges. Keep the permission evidence, but do not
+        # invent the missing application's identity or permit registry approval.
+        unresolved = ((grants.keys() | role_assignments.keys()) - sps.keys()) | conflicting_sps
+        for sp_id in sorted(unresolved):
+            self.ctx.examined()
+            self.ctx.warn("identity.entra: evidence references an unresolved service principal; coverage incomplete")
+            f = self._sp_finding(
+                {"id": sp_id, "displayName": "Unresolved principal"},
+                grants.get(sp_id, []), role_assignments.get(sp_id, []), role_names,
+            )
+            seen_evidence: set[tuple[str, str]] = set()
+            truncated_evidence = False
+            for snapshot in conflicting_snapshots.get(sp_id, []):
+                self.ctx.check_deadline()
+                observed = self._sp_finding(snapshot, [], [], role_names)
+                if observed is None:
+                    continue
+                if f is None:
+                    f = Finding(
+                        surface=Surface.IDENTITY, connector=self.name, kind=observed.kind,
+                        title="Entra unresolved service principal evidence",
+                        resource=f"entra:unresolved-principal:{sp_id}",
+                        resource_type="unresolved-principal", provider="entra", account=self.tenant,
+                    )
+                # Preserve meaningful AI signals from every conflicting snapshot
+                # without selecting one snapshot's appId, owner, or enabled state.
+                for framework in observed.frameworks:
+                    f.add_framework(framework)
+                for provider in observed.model_providers:
+                    f.add_model_provider(provider)
+                for capability in observed.capabilities:
+                    f.add_capability(capability)
+                for tag in observed.tags:
+                    if tag != "disabled":
+                        f.add_tag(tag)
+                for evidence in observed.evidence:
+                    description = "Conflicting snapshot: " + evidence.description
+                    evidence_key = (evidence.signal, description)
+                    if evidence_key in seen_evidence:
+                        continue
+                    if len(seen_evidence) >= MAX_CONFLICTING_EVIDENCE:
+                        if not truncated_evidence:
+                            self.ctx.warn("identity.entra: conflicting principal evidence limit reached; evidence coverage incomplete")
+                            truncated_evidence = True
+                        break
+                    seen_evidence.add(evidence_key)
+                    evidence.description = description
+                    evidence.attributes["confidence_group"] = f"entra-conflicting-snapshot:{evidence.signal}"
+                    f.add_evidence(evidence)
+            if f:
+                # Nothing is known about a principal missing from the export:
+                # never report a type, publisher or first-party status for it.
+                f.metadata.update(dict.fromkeys((
+                    "app_id", "service_principal_type", "publisher", "verified_publisher",
+                    "first_party", "owner_tenant", "account_enabled",
+                )))
+                for evidence in f.evidence:
+                    if evidence.signal == "entra:service-principal" and not evidence.description.startswith("Conflicting snapshot"):
+                        evidence.description = (
+                            f"Service principal {sp_id} referenced by grants or role assignments is missing "
+                            "from the export; its type, publisher and owner are unknown"
+                        )
+                f.title = "Entra evidence for unresolved service principal"
+                f.resource = f"entra:unresolved-principal:{sp_id}"
+                f.resource_type = "unresolved-principal"
+                f.identity_discriminator = "unresolved-principal"
+                f.metadata.update({"identity_unresolved": True, "principal_id": sp_id})
+                if sp_id in conflicting_sps:
+                    f.metadata["conflicting_principal_snapshots"] = len(conflicting_snapshots[sp_id])
+                    if sp_id in truncated_snapshots or truncated_evidence:
+                        f.metadata["conflicting_principal_evidence_truncated"] = True
+                f.add_tag("unresolved-identity")
+                kind = f.kind
+                finalize(f, self.index)
+                f.kind = kind
+                f.id = f.compute_id()
                 yield f
         for app in applications:
             self.ctx.examined()

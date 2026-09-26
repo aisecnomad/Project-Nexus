@@ -24,6 +24,7 @@ connectors:
     input: ../tests/fixtures/identity/entra_graph.json
     tenant_id: our-tenant
   - name: identity.google-workspace
+    customer: C01234567 # Synthetic fixture tenant; replace with the verified export customer ID.
     input: ../tests/fixtures/identity/google_tokens.json
   - name: identity.auth0
     input: ../tests/fixtures/identity/auth0_clients.json

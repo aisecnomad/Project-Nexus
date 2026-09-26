@@ -9,6 +9,17 @@ import re
 # optionally wrapped by the connector's own ``cloudtrail:`` prefix.
 _AWS_ACCOUNT = re.compile(r"[0-9]{12}\Z")
 _AWS_ACCOUNT_ARN = re.compile(r"arn:aws(?:-us-gov|-cn)?:[^:]+:[^:]*:([0-9]{12}):.+\Z")
+_GOOGLE_CUSTOMER = re.compile(r"C[a-zA-Z0-9]{1,63}\Z")
+
+
+def google_customer_id(value: object) -> str | None:
+    """Accept concrete Workspace customer IDs, never aliases or email domains."""
+    return value if isinstance(value, str) and _GOOGLE_CUSTOMER.fullmatch(value) else None
+
+
+def has_google_workspace_account_scope(provider: str | None, account: str | None) -> bool:
+    """Public OAuth client IDs alone cannot identify a customer's grant."""
+    return provider != "google-workspace" or google_customer_id(account) is not None
 
 
 def has_aws_account_scope(provider: str | None, account: str | None, resource: str | None) -> bool:

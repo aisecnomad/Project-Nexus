@@ -176,16 +176,30 @@ app-only `appRoleAssignments` (role ids resolved to names such as
 Microsoft SPs are skipped unless they match AI signatures (Copilot).
 Permissions (application): `Application.Read.All`, `DelegatedPermissionGrant.Read.All`,
 `Directory.Read.All`. Or pass `access_token`.
+Offline grants or role assignments with unresolved service-principal identity make
+coverage incomplete. Their permission evidence remains available for investigation
+and cannot establish an approved registry binding. A service principal exported
+with conflicting records is reported the same way, keeping AI evidence from up to
+16 of its snapshots (64 evidence items) without choosing one snapshot's identity.
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
 "Fireflies has Gmail + Calendar for 214 users". Auth: service account with
 domain-wide delegation impersonating an admin (`service_account_file` +
 `admin_email`; scopes `admin.directory.user.readonly`,
-`admin.directory.user.security`) or `access_token`.
+`admin.directory.user.security`, `admin.directory.customer.readonly`) or an
+`access_token` with those scopes. Live collection first resolves the authenticated
+customer through the read-only Admin SDK `customers.get` endpoint, including when
+the customer has no users. A configured concrete `customer` must match that ID;
+user email domains and the alias `my_customer` do not establish tenant identity.
 Offline exports may contain individual token records or per-user objects such
 as `{"user":"user@example.com","tokens":[...]}`. The latter retains user
-attribution whether supplied as one object or inside an array.
+attribution whether supplied as one object or inside an array. Set `customer` to
+the verified immutable customer ID for offline analysis. Missing, conflicting or
+unverifiable scope makes collection incomplete; retained observations cannot be
+approved or merged with observations from another unresolved connector instance.
+Google Workspace inventory bindings must include the matching customer in
+`discovery.accounts`. Regenerate older cards whose account list is empty.
 
 ### `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their
@@ -268,6 +282,9 @@ GenAI/agentic providers); triggers (schedule/webhook → autonomous), code
 steps (→ code-exec), models. Live pagination is bounded by `max_pages`
 (default 1000). Make scans one `team_id`, or every team of an
 `organization_id` when `team_id` is unset.
+An n8n workflow needs a nonempty provider ID for a usable resource identity.
+Exported blueprints without an ID retain detected AI evidence under an unresolved
+identity, make collection incomplete, and cannot be approved by a registry card.
 
 ## SaaS
 
@@ -345,6 +362,12 @@ before collection emits account metadata. Live `account_id` is an expected
 12-digit account, verified through STS even when explicitly configured;
 mismatches stop collection. AWS SDK clients use finite connection/read timeouts
 and retry attempts. `max_lambda` limits streamed enumeration.
+Offline exports resolve their account from `account` records wherever they
+appear. Several different or invalid `account` records, or a resource ARN from
+another account (CloudTrail callers excepted), leave short resource identities
+unresolved and the scan incomplete; generated ARNs for Bedrock logging, Q
+Business, Lex and SSM parameters take the resolved account or none. Such
+findings cannot be approved by an inventory card.
 IAM analysis includes both local and AWS-managed attached policies. Unresolved
 attachments make collection incomplete. CloudTrail LookupEvents only supplies
 management events: `InvokeAgent` / `InvokeInlineAgent` data events require a
@@ -427,7 +450,7 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | GitLab | PAT `read_api`, `read_repository` |
 | Okta | API token from a read-only admin, or OAuth `okta.apps.read` |
 | Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user |
-| Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security` |
+| Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly` |
 | AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition` |
 | GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs) |
 | Azure | `Reader` on subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |

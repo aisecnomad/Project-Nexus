@@ -19,7 +19,8 @@ from typing import Any
 
 from shadowscan.utils.files import read_policy_text
 from tools.evaluation.annotations import MAX_ANNOTATION_BYTES
-from tools.evaluation.evaluate import DEFAULT_CORPUS, Case, CorpusError, _unique_pairs, evaluate, load_corpus
+from tools.evaluation.evaluate import Case, CorpusError, _unique_pairs, evaluate, load_corpus
+from tools.evaluation.sources import SourceOverlapError, bundled_source_index
 
 MAX_POLICY_BYTES = 128_000
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -111,30 +112,20 @@ def _annotation_method(annotations: Path) -> str:
 
 
 def _exclude_bundled_sources(cases: list[Case], digest: str) -> None:
-    """Reject exact reuse of public examples previously scored during development.
+    """Reject repeated holdout samples and reuse of bundled development sources.
 
-    This only checks the five bundled corpora. Undisclosed private evaluations
-    and near-duplicate sources still require review outside this command.
+    Prior-evaluation exclusion covers the five bundled corpora. Undisclosed
+    private evaluations and near duplicates still require external review.
     """
-    prior_digests: set[str] = set()
-    prior_files: set[str] = set()
-    prior_locations: set[tuple[str, str, str]] = set()
-    for path in (DEFAULT_CORPUS, *(DEFAULT_CORPUS.with_name(name) for name in (
-        "public_corpus.json", "realistic_corpus.json", "independent_corpus.json", "review_corpus.json",
-    ))):
-        _, prior, prior_digest = load_corpus(path)
-        prior_digests.add(prior_digest)
-        for case in prior:
-            prior_files.update(hashlib.sha256(content.encode("utf-8")).hexdigest() for content in case.files.values())
-            if case.source:
-                prior_locations.add((case.source["repo"].casefold(), case.source["commit"], case.source["path"]))
-    if digest in prior_digests:
-        raise CorpusError("holdout reuses a bundled evaluation corpus")
-    for case in cases:
-        if any(hashlib.sha256(content.encode("utf-8")).hexdigest() in prior_files for content in case.files.values()):
-            raise CorpusError("holdout reuses a bundled evaluated source")
-        if case.source and (case.source["repo"].casefold(), case.source["commit"], case.source["path"]) in prior_locations:
-            raise CorpusError("holdout reuses a bundled evaluated source")
+    messages = {
+        "holdout_reuses_evaluated_corpus": "holdout reuses a bundled evaluation corpus",
+        "holdout_reuses_evaluated_source": "holdout reuses a bundled evaluated source",
+        "duplicate_holdout_source": "holdout repeats a source across cases (duplicate_holdout_source)",
+    }
+    try:
+        bundled_source_index().check_holdout(cases, digest)
+    except SourceOverlapError as exc:
+        raise CorpusError(messages[str(exc)]) from exc
 
 
 def accept(corpus: Path, policy_path: Path, annotations: Path) -> dict[str, Any]:

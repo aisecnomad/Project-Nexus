@@ -17,18 +17,25 @@ _BINARY_SNIFF = 8192
 # Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
 _EPOCH_RX = re.compile(r"\d{1,19}(?:\.\d{1,9})?")
 
+
 def redact(value: str, keep: int = 4) -> str:
     """Return a stable opaque credential identity without retaining raw fragments.
 
-    ``keep`` remains accepted for compatibility, but no prefix or suffix is kept.
+    ``keep`` remains accepted for compatibility with older call sites, but no
+    prefix or suffix is kept. New code should call ``credential_id`` directly.
     """
+    del keep
     if not value:
         return value
     return credential_id(value)
 
 
 def sanitize_record(obj: Any, *, _depth: int = 0) -> Any:
-    """Compatibility alias for the shared bounded evidence sanitizer."""
+    """Compatibility alias for the shared bounded evidence sanitizer.
+
+    ``_depth`` is ignored. New code should call ``sanitize`` directly.
+    """
+    del _depth
     return sanitize(obj)
 
 
