@@ -207,21 +207,27 @@ class SalesforceConnector(BaseConnector):
                         agg[k] = v
             elif kind == "FlowDefinitionView":
                 self.ctx.examined()
-                f = self._flow_finding(rec)
+                f = self.ctx.isolate("lowcode.salesforce: flow", self._flow_finding, rec)
                 if f:
                     yield f
         for bid, bot in bots.items():
             self.ctx.examined()
-            yield self._bot_finding(bot, versions.get(bid, []))
+            f = self.ctx.isolate("lowcode.salesforce: bot", self._bot_finding, bot, versions.get(bid, []))
+            if f:
+                yield f
         for p in planners:
             self.ctx.examined()
-            yield self._agentforce_finding("planner", p, plugins, functions)
+            f = self.ctx.isolate("lowcode.salesforce: planner", self._agentforce_finding, "planner", p, plugins, functions)
+            if f:
+                yield f
         if templates:
             self.ctx.examined(len(templates))
-            yield self._templates_finding(templates)
+            f = self.ctx.isolate("lowcode.salesforce: prompt templates", self._templates_finding, templates)
+            if f:
+                yield f
         for app in apps:
             self.ctx.examined()
-            f = self._connected_app_finding(app, tokens.get(app.get("Name", "")))
+            f = self.ctx.isolate("lowcode.salesforce: connected app", self._connected_app_finding, app, tokens.get(app.get("Name", "")))
             if f:
                 yield f
         for app_name, agg in tokens.items():

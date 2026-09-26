@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from shadowscan.connectors.gateway.logs import parse_text_line
@@ -78,3 +80,56 @@ def test_inference_paths_count_on_internal_gateway_hosts(tmp_path, run_connector
     rows = [{"method": "POST", "path": "/v1/chat/completions", "ua": "python-requests/2.32", "host": "llm-gateway.internal.corp"}] * 2
     findings, _ = run_connector("gateway.logs", input=str(log(tmp_path, rows)))
     assert len(findings) == 1 and findings[0].metadata["events"] == 2
+
+
+ENVOY = ('[2025-09-0{d}T0{h}:00:00.000Z] "POST /v1beta/models/gemini-1.5-pro:generateContent?key=AIzaSyDUMMYDUMMYDUMMYDUMMYDUMMY12 '
+         'HTTP/1.1" 200 - 512 1024 120 118 "10.0.0.5" "crewai/0.80 python-requests/2.32" "req-{d}{h}" '
+         '"generativelanguage.googleapis.com" "142.250.1.1:443"')
+
+
+def test_envoy_default_format_lines_are_parsed_as_access_logs():
+    record = parse_text_line(ENVOY.format(d=1, h=1))
+    assert record["host"] == "generativelanguage.googleapis.com"
+    assert record["request_uri"].startswith("/v1beta/models/gemini-1.5-pro:generateContent")
+    assert record["http_user_agent"] == "crewai/0.80 python-requests/2.32"
+    assert record["remote_addr"] == "10.0.0.5"
+
+
+def test_envoy_logs_produce_callers_without_leaking_query_keys(tmp_path, run_connector):
+    path = tmp_path / "envoy.log"
+    path.write_text("\n".join(ENVOY.format(d=d, h=h) for d in range(1, 4) for h in range(1, 4)) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert ctx.stats.incomplete is False
+    assert len(findings) == 1 and findings[0].metadata["events"] == 9
+    assert "framework.crewai" in findings[0].frameworks
+    assert "AIzaSyDUMMY" not in json.dumps([f.to_dict() for f in findings])
+
+
+def test_unrecognized_bracketed_lines_fail_closed_and_query_strings_are_not_logfmt(tmp_path, run_connector):
+    with pytest.raises(ValueError):
+        parse_text_line('[not json] "GET /x?key=abc HTTP/1.1" 200')
+    assert parse_text_line('GET /v1/chat?key=AIzaSyDUMMY rest') is None
+    assert parse_text_line('level=info host=api.openai.com path=/v1/chat/completions') == {
+        "level": "info", "host": "api.openai.com", "path": "/v1/chat/completions",
+    }
+    path = tmp_path / "odd.log"
+    path.write_text('[not json] "GET /x HTTP/1.1" 200\n')
+    _, ctx = run_connector("gateway.logs", input=str(path))
+    assert ctx.stats.incomplete is True
+
+
+def test_ai_saas_destinations_are_attributed_without_making_callers_agents(tmp_path, run_connector):
+    rows = [
+        {"timestamp": "2025-09-01T00:00:00Z", "remote_user": "bob", "host": "claude.ai", "remote_addr": "10.0.0.1", "http_user_agent": "Mozilla/5.0"},
+        {"timestamp": "2025-09-01T00:01:00Z", "remote_user": "bob", "host": "claude.ai", "remote_addr": "10.0.0.1", "http_user_agent": "Mozilla/5.0"},
+        {"timestamp": "2025-09-01T00:02:00Z", "remote_user": "erin", "host": "api.openai.com", "remote_addr": "10.0.0.2", "http_user_agent": "Mozilla/5.0"},
+    ]
+    path = tmp_path / "proxy.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    findings, _ = run_connector("gateway.logs", input=str(path))
+    by_user = {f.metadata["caller"]: f for f in findings}
+    assert "identity-app.anthropic-claude" in by_user["bob"].frameworks
+    assert by_user["bob"].title.startswith("LLM caller")
+    assert by_user["bob"].metadata.get("agent_indicators", 0) == 0
+    assert "identity-app.openai-chatgpt" not in by_user["erin"].frameworks
+    assert "provider.openai" in by_user["erin"].model_providers

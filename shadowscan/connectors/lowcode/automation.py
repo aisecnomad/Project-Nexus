@@ -339,12 +339,12 @@ class ZapierConnector(_AutomationBase):
             # "Zapier Agents" step, or is titled as an AI agent. A title such as
             # "Notify agent on new lead" describes a person, not an AI feature.
             agent_step = any(_ZAPIER_AGENT_STEP.search(s) for s in steps_list)
-            kind = (
-                Kind.AGENT if rec.get("type") == "agent" or "instructions" in rec or agent_step or _AI_AGENT_TITLE.search(str(title))
-                else Kind.WORKFLOW
-            )
-            if kind == Kind.AGENT and not ai_steps:
-                ai_steps = ["Zapier Agent"]  # the object itself is the AI step
+            structural_agent = rec.get("type") == "agent" or "instructions" in rec or agent_step
+            # A title alone ("Weekly AI agents newsletter") never makes an
+            # agent: it must also run an AI step.
+            kind = Kind.AGENT if structural_agent or (_AI_AGENT_TITLE.search(str(title)) and ai_steps) else Kind.WORKFLOW
+            if structural_agent and not ai_steps:
+                ai_steps = ["Zapier Agent"]  # the agent object itself is the AI step
             f = self._workflow_finding(
                 wid=str(rec.get("id") or rec.get("Id") or title),
                 name=str(title),

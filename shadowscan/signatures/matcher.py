@@ -23,6 +23,9 @@ from shadowscan.signatures.loader import Signal, Signature, load_signatures, nor
 from shadowscan.utils.redaction import sanitize_text
 
 _SCAN_DEADLINE: ContextVar[float | None] = ContextVar("signature_scan_deadline", default=None)
+# Per-pattern caps scale with the size of the input under the active budget:
+# one linear pass over a 900 KB module legitimately takes longer than 100 ms.
+_SCAN_SCALE: ContextVar[float] = ContextVar("signature_scan_scale", default=1.0)
 REGEX_TIMEOUT_SECONDS = 0.1
 DEFAULT_SCAN_BUDGET_SECONDS = 2.0
 MAX_SCAN_BUDGET_SECONDS = 60.0
@@ -31,9 +34,14 @@ MAX_SCAN_BUDGET_SECONDS = 60.0
 BUDGET_SCALE_BYTES = 100_000
 
 
+def size_scale(size: int) -> float:
+    """Multiplier for per-pattern and per-input budgets of an input of ``size`` characters."""
+    return max(1.0, size / BUDGET_SCALE_BYTES)
+
+
 def default_budget_for(size: int, base: float = DEFAULT_SCAN_BUDGET_SECONDS) -> float:
     """Scale a per-input budget with the input size, within the validated range."""
-    return min(MAX_SCAN_BUDGET_SECONDS, base * max(1.0, size / BUDGET_SCALE_BYTES))
+    return min(MAX_SCAN_BUDGET_SECONDS, base * size_scale(size))
 # A briefly busy worker can exhaust several regex wall-clock attempts before
 # this thread has used its own 100 ms CPU allowance. Keep retries finite and
 # inside the original per-pattern CPU and per-input wall deadlines.
@@ -46,7 +54,8 @@ class MatchTimeoutError(RuntimeError):
 
 def _remaining_timeout() -> float:
     deadline = _SCAN_DEADLINE.get()
-    remaining = REGEX_TIMEOUT_SECONDS if deadline is None else min(REGEX_TIMEOUT_SECONDS, deadline - time.monotonic())
+    per_pattern = REGEX_TIMEOUT_SECONDS * _SCAN_SCALE.get()
+    remaining = per_pattern if deadline is None else min(per_pattern, deadline - time.monotonic())
     if remaining <= 0:
         raise MatchTimeoutError("signature matching exceeded the input execution budget")
     return remaining
@@ -55,12 +64,13 @@ def _remaining_timeout() -> float:
 def pattern_timeout(default: float = REGEX_TIMEOUT_SECONDS) -> float:
     """Cap external pattern calls by the active per-input execution budget."""
     deadline = _SCAN_DEADLINE.get()
+    scaled = default * _SCAN_SCALE.get()
     if deadline is None:
-        return default
+        return scaled
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise MatchTimeoutError("signature matching exceeded the input execution budget")
-    return min(default, remaining)
+    return min(scaled, remaining)
 
 
 def _run_regex(operation: Callable[[float], Any], context: str) -> Any:
@@ -281,22 +291,25 @@ class SignatureIndex:
         return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
     @contextmanager
-    def scan_budget(self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS):
+    def scan_budget(self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS, *, size: int = 0):
         """Share one deadline across all signature operations for an input file.
 
         Individual regex executions are also preempted by the regex engine. An
         elapsed deadline always raises, including after non-matching work.
+        ``size`` (characters) scales the per-pattern cap for large inputs.
         """
-        if not 0 < seconds <= 60:
+        if not 0 < seconds <= MAX_SCAN_BUDGET_SECONDS:
             raise ValueError("signature scan budget must be greater than zero and at most 60 seconds")
         deadline = time.monotonic() + seconds
         outer = _SCAN_DEADLINE.get()
         token = _SCAN_DEADLINE.set(min(deadline, outer) if outer is not None else deadline)
+        scale_token = _SCAN_SCALE.set(max(_SCAN_SCALE.get(), size_scale(size)))
         try:
             _remaining_timeout()
             yield
             _remaining_timeout()
         finally:
+            _SCAN_SCALE.reset(scale_token)
             _SCAN_DEADLINE.reset(token)
 
     # ------------------------------------------------------------- matchers
@@ -325,7 +338,7 @@ class SignatureIndex:
             yield
             _remaining_timeout()
             return
-        with self.scan_budget(default_budget_for(size)):
+        with self.scan_budget(default_budget_for(size), size=size):
             yield
 
     def _match_regex_signals(

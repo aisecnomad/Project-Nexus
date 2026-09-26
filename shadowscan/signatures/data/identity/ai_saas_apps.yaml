@@ -219,5 +219,7 @@ signatures:
     description: Display names suggesting an AI agent, assistant or bot without matching a known product.
     signals:
       - type: name
-        patterns: ['(?i)\bai[- ]?(?:agent|assistant|bot|copilot|helper|companion)\b', '(?i)\b(?:llm|gpt|genai|gen-ai|generative ai)\b', '(?i)\bagents?\b', '(?i)\bassistant\b', '(?i)\bcopilot\b', '(?i)\bchat ?bot\b', '(?i)\b(?:auto|autonomous)[- ]?(?:agent|pilot)\b', '(?i)\brag\b', '(?i)\bmcp\b', '(?i)\b(?:svc|service)[-_ ]?(?:agent|ai|llm)\b', '(?i)\bbot\b']
+        # Specific phrases first: the first match is the one reported, and bare
+        # role words ("agent", "assistant") also name people.
+        patterns: ['(?i)\bai[- ]?(?:agent|assistant|bot|copilot|helper|companion)\b', '(?i)\b(?:llm|gpt|genai|gen-ai|generative ai)\b', '(?i)\bcopilot\b', '(?i)\bchat ?bot\b', '(?i)\b(?:auto|autonomous)[- ]?(?:agent|pilot)\b', '(?i)\brag\b', '(?i)\bmcp\b', '(?i)\b(?:svc|service)[-_ ]?(?:agent|ai|llm)\b', '(?i)\bbot\b', '(?i)\bagents?\b', '(?i)\bassistant\b']
         weight: 0.35

@@ -34,7 +34,7 @@ import re
 import secrets
 from collections import Counter, OrderedDict
 from collections.abc import Iterable, Iterator
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar
@@ -775,6 +775,17 @@ _COMBINED = re.compile(
     r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>[^\s"]++)[^"]*" (?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
 )
 _LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=("[^"]*"|\S+)')
+# A logfmt record starts with its first key=value pair. Any other line with an
+# '=' (a query string inside a request line) is not logfmt.
+_LOGFMT_START = re.compile(r'\s*\w[\w.-]*=')
+# Envoy's default access-log format:
+# [START_TIME] "METHOD PATH PROTOCOL" CODE FLAGS RX TX DURATION UPSTREAM_TIME
+# "X-FORWARDED-FOR" "USER-AGENT" "REQUEST-ID" "AUTHORITY" "UPSTREAM_HOST"
+_ENVOY_DEFAULT = re.compile(
+    r'^\[(?P<time>[^\]]{1,64})\] "(?P<method>[A-Z]{1,16}) (?P<path>[^\s"]{1,8192})[^"]{0,64}" '
+    r'(?P<status>\d{3}|-) \S{1,64} (?P<rx>\S{1,32}) (?P<tx>\S{1,32}) \S{1,32} \S{1,32} '
+    r'"(?P<xff>[^"]{0,1024})" "(?P<ua>[^"]{0,2048})" "[^"]{0,256}" "(?P<authority>[^"]{0,512})" "[^"]{0,512}"'
+)
 _HOST_IN_LINE = re.compile(r"\b(?:host|authority|upstream_host|server_name)[=:]\s*\"?([A-Za-z0-9.-]+\.[a-z]{2,})", re.I)
 
 
@@ -787,12 +798,28 @@ _INFERENCE_PATH = re.compile(
 )
 
 
-def _workload_matches(matches: list[Match]) -> list[Match]:
-    """Drop identity-app signatures: they describe OAuth/SaaS products, not callers.
+def _without_agent_indicator(match: Match) -> Match:
+    signature = replace(match.signature, agent_indicator=False)
+    signal = replace(match.signal, agent_indicator=False)
+    return Match(signature, signal, match.value, match.weight, match.line, dict(match.extra))
 
-    A direct request to a provider API is LLM use; only frameworks, tool use and
-    activity shape establish an agent. An end user named Olivia is not a bot.
+
+def _destination_matches(matches: list[Match]) -> list[Match]:
+    """Attribute a destination host without calling its caller an agent.
+
+    Traffic to claude.ai, chatgpt.com or otter.ai names the AI product in use,
+    which is shadow-AI evidence, but reaching it does not make the caller an
+    agent. When a model-provider signature also matches (api.openai.com), the
+    provider attribution suffices and the OAuth/SaaS app signature is dropped.
     """
+    if any(m.signature.category == "provider" for m in matches):
+        return [m for m in matches if m.signature.category != "identity-app"]
+    return [_without_agent_indicator(m) if m.signature.category == "identity-app" else m for m in matches]
+
+
+def _workload_matches(matches: list[Match]) -> list[Match]:
+    """Drop identity-app signatures on person or key names: an end user named
+    Olivia is not the Olivia recruiting bot."""
     return [m for m in matches if m.signature.category != "identity-app"]
 
 
@@ -806,16 +833,22 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
             raise ValueError("gateway text log JSON must be an object")
         return rec
     if line.startswith("["):
-        # A JSON array line is rejected below; envoy's default text format
-        # also begins with "[START_TIME]" and falls through to text parsing.
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            rec = None
-        if rec is not None:
-            if not isinstance(rec, dict):
-                raise ValueError("gateway text log JSON must be an object")
-            return rec
+        envoy = _ENVOY_DEFAULT.match(line)
+        if envoy:
+            d = envoy.groupdict()
+            forwarded = d["xff"].split(",")[0].strip()
+            return {
+                "remote_addr": None if forwarded in {"", "-"} else forwarded,
+                "start_time": d["time"], "request_method": d["method"], "request_uri": d["path"],
+                "status": d["status"], "http_user_agent": None if d["ua"] in {"", "-"} else d["ua"],
+                "host": None if d["authority"] in {"", "-"} else d["authority"],
+            }
+        # Anything else starting with "[" must be JSON; an unrecognized text
+        # line is reported instead of being silently parsed as something else.
+        rec = json.loads(line)
+        if not isinstance(rec, dict):
+            raise ValueError("gateway text log JSON must be an object")
+        return rec
     m = _COMBINED.match(line)
     if m:
         d = m.groupdict()
@@ -823,7 +856,7 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
         rec = {"remote_addr": d["ip"], "remote_user": None if d["user"] == "-" else d["user"], "time_local": d["time"], "request_method": d["method"], "request_uri": d["path"], "status": d["status"], "http_user_agent": d.get("ua"), "host": h.group(1) if h else None}
         return rec
     # key=value logfmt
-    if "=" in line and " " in line:
+    if "=" in line and " " in line and _LOGFMT_START.match(line):
         kv = dict(_LOGFMT_PAIR.findall(line))
         if kv:
             return {k: v.strip('"') for k, v in kv.items()}
@@ -1495,7 +1528,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         for m in top_models:
             apply_matches(f, self.index.match_model(m), weight_scale=0.5)
         for h, _ in c.hosts.most_common(10):
-            apply_matches(f, _workload_matches(self.index.match_domain(h)), weight_scale=0.6)
+            apply_matches(f, _destination_matches(self.index.match_domain(h)), weight_scale=0.6)
         for ua, _ in c.user_agents.most_common(10):
             apply_matches(f, self.index.match_user_agent(ua), weight_scale=1.0)
         for p, _ in c.providers.most_common(5):

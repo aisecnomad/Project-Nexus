@@ -120,13 +120,18 @@ def finalize(finding: Finding, index: SignatureIndex | None = None) -> Finding:
     return finding
 
 
-def product_matches(matches: Iterable[Match]) -> list[Match]:
-    """Keep matches that identify a product; drop the generic AI-name hint.
+# Bare role words name people as often as software ("Route Case to Agent",
+# "Assistant manager approval"). Qualified forms ("AI agent", "chatbot",
+# "GenAI", "RAG", "MCP") remain AI hints.
+_BARE_ROLE_WORDS = frozenset({"agent", "agents", "assistant", "assistants"})
 
-    The word "agent" in a flow or record name (case routing, support agents)
-    is not evidence of an AI feature on its own.
-    """
-    return [m for m in matches if m.signature_id != "identity-app.generic-ai-name"]
+
+def product_matches(matches: Iterable[Match]) -> list[Match]:
+    """Drop generic AI-name hints that consist only of a bare role word."""
+    return [
+        m for m in matches
+        if not (m.signature_id == "identity-app.generic-ai-name" and m.value.strip().lower() in _BARE_ROLE_WORDS)
+    ]
 
 
 def name_matches(index: SignatureIndex, *texts: str | None) -> list[Match]:

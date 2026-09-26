@@ -17,20 +17,27 @@ Detection
   Code settings, TOML `[mcp.servers.*]`) or a dedicated MCP file name. OpenAPI,
   Docker and proxy documents with a `servers` member are not tool servers.
 - Emit coding-agent configuration findings only from configuration files,
-  dependencies, imports, workflow actions, code or variables declared in a
-  Dockerfile, compose, workflow or `.env` file; vendor hostnames and variable
-  names quoted inside data files (an egress allowlist, a vendor inventory, the
+  dependencies, imports, workflow actions, source code, editor or agent
+  settings directories (`.vscode/`, `.cursor/`, `.github/` and similar) or
+  variables declared in a Dockerfile, compose, workflow or `.env` file; vendor
+  hostnames and variable names quoted inside data files (an egress allowlist, a vendor inventory, the
   scanner's own signature packs) no longer configure Cursor, Windsurf, Goose,
   Copilot, Claude Code or Cody.
 - Gateway callers: a direct request to a provider API is LLM use, not an
-  "agentic" caller. OAuth-app signatures no longer apply to hostnames or user
-  names, and `llm_hosts_only` keeps inference endpoints (`/v1/chat/completions`
+  "agentic" caller. Traffic to an AI SaaS product (claude.ai, chatgpt.com,
+  otter.ai) still names that product but no longer makes the caller an agent;
+  where a provider signature also matches the host, only the provider is
+  attributed. OAuth-app signatures no longer apply to user names, and
+  `llm_hosts_only` keeps inference endpoints (`/v1/chat/completions`
   and similar) on any host but generic paths such as `/sse` only on known LLM
   hosts. One observed host counts once even when a
   signal lists it both exactly and as a wildcard.
-- Low-code: the word "agent" in a flow, zap or record name is not an AI hint;
-  Zapier agent objects are agents by themselves; n8n manual, chat and form
-  triggers are not autonomous.
+- Low-code: a bare "agent" or "assistant" in a flow or record name is not an AI
+  hint, while qualified names ("AI agent", "chatbot", "RAG", "autonomous
+  agent") still are. A zap is an agent when it is a Zapier agent object or runs
+  a Zapier Agents step, or when an AI-agent title comes with a real AI step; a
+  title alone never invents an AI step. n8n manual, chat and form triggers are
+  not autonomous.
 - Risk: capability and provider weights are capped, and findings that only
   establish framework or SDK use stay below the critical band reserved for
   agents and credentials.
@@ -38,8 +45,9 @@ Detection
 Robustness
 
 - Large ordinary source files complete: the import binder accepts 400k AST
-  nodes and 4,096 bound calls (at most 2 MiB of retained call text), JavaScript
-  line numbers use a newline index, per-file and default matching budgets scale with
+  nodes, retains only calls into imports a signature recognizes (at most 4,096
+  calls and 2 MiB of call text), and computes JavaScript line numbers from a
+  newline index; per-pattern regex caps scale with input size, and per-file and default matching budgets scale with
   input size (up to the validated 60-second maximum), and a minified bundle with
   hundreds of credential-like keys on one line is sanitized in linear time.
 - `exclude` names apply without an accompanying glob; cooperative cancellation
@@ -51,6 +59,15 @@ Robustness
   failures are reported once. CloudTrail LookupEvents still marks runtime
   visibility incomplete by design; set `cloudtrail_days: 0` for an inventory
   scan that can complete.
+- Gateway text logs: envoy's default access-log format is parsed; any other
+  line starting with `[` must be JSON and is reported otherwise; logfmt parsing
+  requires a line that starts with a `key=value` pair, so a query string inside
+  a request line can no longer become a silently discarded record.
+- Built-in directory excludes (`build`, `dist`, `vendor`...) no longer skip
+  regular files with those names, such as an extensionless `script/build`.
+- Salesforce flows, bots, planners, templates and connected apps, and
+  ServiceNow agents and use cases, isolate a failing record like the other
+  low-code connectors. A manifest pattern timeout is a manifest diagnostic.
 - HTTP requests and retry back-off honour the connector deadline: a timed-out
   worker issues no further requests, and the stop signal is not a
   `RuntimeError`, so per-endpoint error handlers cannot absorb it.

@@ -193,12 +193,16 @@ class ServiceNowConnector(BaseConnector):
             self.ctx.examined()
             key_candidates = {str(_reference(a.get("sys_id"))), str(_val(a.get("name")))}
             my_tools = [t for k, ts in tools.items() for t in ts if k in key_candidates]
-            yield self._agent_finding(a, my_tools)
+            f = self.ctx.isolate("lowcode.servicenow: AI agent", self._agent_finding, a, my_tools)
+            if f:
+                yield f
         for u in usecases:
             self.ctx.examined()
             key_candidates = {str(_reference(u.get("sys_id"))), str(_val(u.get("name")))}
             my_triggers = [t for k, ts in triggers.items() for t in ts if k in key_candidates]
-            yield self._usecase_finding(u, my_triggers)
+            f = self.ctx.isolate("lowcode.servicenow: use case", self._usecase_finding, u, my_triggers)
+            if f:
+                yield f
 
     def _agent_finding(self, a: dict[str, Any], tools: list[dict[str, Any]]) -> Finding:
         name = _val(a.get("name")) or _val(a.get("sys_id"))

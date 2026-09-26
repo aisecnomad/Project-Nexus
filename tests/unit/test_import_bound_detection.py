@@ -192,3 +192,23 @@ def test_javascript_bound_calls_report_correct_line_numbers(index):
     js = "import { Agent } from '@openai/agents';\n\n\nconst a = new Agent({ name: 'x', tools: [] });\n"
     lines = {m.line for m in bound_source_matches(index, js, "javascript", []) if m.extra.get("verified_agent")}
     assert lines == {4}
+
+
+def test_per_pattern_cap_scales_with_input_size(index):
+    from shadowscan.signatures.matcher import REGEX_TIMEOUT_SECONDS, pattern_timeout
+
+    with index.scan_budget(30, size=900_000):
+        assert pattern_timeout() > 8 * REGEX_TIMEOUT_SECONDS
+    with index.scan_budget(30):
+        assert pattern_timeout() == pytest.approx(REGEX_TIMEOUT_SECONDS)
+
+
+def test_large_typescript_module_with_imports_completes(tmp_path, run_connector):
+    header = "".join(f"import {{ helper{i} }} from './mod{i}';\n" for i in range(40))
+    body = "".join(
+        f"export const fn{i} = (value: number, other: string): number => helper{i % 40}(value) + other.length;\n"
+        for i in range(9000)
+    )
+    (tmp_path / "big.ts").write_text(header + "import { Agent } from '@openai/agents';\n" + body)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.errors == [] and ctx.stats.incomplete is False

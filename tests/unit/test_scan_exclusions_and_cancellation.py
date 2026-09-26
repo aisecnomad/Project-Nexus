@@ -34,3 +34,14 @@ def test_expired_deadline_stops_the_file_walk_early(tmp_path, index):
     assert ctx.stats.incomplete is True
     assert not any("file analysis incomplete (ConnectorError)" in error for error in ctx.stats.errors)
     assert ctx.stats.objects_examined <= 1
+
+
+def test_default_directory_excludes_do_not_skip_files_with_the_same_name(tmp_path, run_connector):
+    (tmp_path / "script").mkdir()
+    (tmp_path / "script" / "build").write_text("#!/bin/sh\nexport " + SECRET)
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "leaked.py").write_text(SECRET)
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert {f.title for f in findings if f.kind.value == "secret"} == {"LLM provider credential in script/build"}
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False, exclude=["build"])
+    assert [f for f in findings if f.kind.value == "secret"] == []

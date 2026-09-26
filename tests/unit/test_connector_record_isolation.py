@@ -71,3 +71,26 @@ def test_scalar_list_settings_are_one_item_not_characters(index):
     assert AtlassianConnector(ctx).products == ["jira"]
     ctx = context(index, "lowcode.power-platform", input="x", environments="Default-1234")
     assert PowerPlatformConnector(ctx).only_envs == {"Default-1234"}
+
+
+def test_salesforce_flow_budget_failure_keeps_later_flows(index, monkeypatch):
+    from shadowscan.connectors.lowcode import salesforce
+    from shadowscan.connectors.lowcode.salesforce import SalesforceConnector
+
+    ctx = context(index, "lowcode.salesforce", instance="https://acme.my.salesforce.com", input="x")
+    connector = SalesforceConnector(ctx)
+    real = salesforce.name_matches
+
+    def flaky(idx, *texts):
+        if any(t and "Oversized" in t for t in texts):
+            raise MatchTimeoutError("budget")
+        return real(idx, *texts)
+
+    monkeypatch.setattr(salesforce, "name_matches", flaky)
+    flows = [
+        {"_kind": "FlowDefinitionView", "Id": "1", "ApiName": "Oversized", "Label": "Oversized", "ProcessType": "Flow"},
+        {"_kind": "FlowDefinitionView", "Id": "2", "ApiName": "Summary", "Label": "Einstein GPT summary", "ProcessType": "Flow"},
+    ]
+    findings = list(connector.analyze(flows))
+    assert [f.title for f in findings] == ["Salesforce flow with AI hints: Einstein GPT summary"]
+    assert ctx.stats.incomplete is True

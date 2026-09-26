@@ -95,3 +95,21 @@ def test_env_declared_in_a_dockerfile_configures_a_coding_agent(tmp_path, run_co
     (tmp_path / "Dockerfile").write_text("FROM node:22\nENV CLAUDE_CODE_USE_BEDROCK=1\nRUN npm i -g @anthropic-ai/claude-code\n")
     findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert any(f.kind == Kind.AGENT_CONFIG and "Claude Code" in f.title for f in findings)
+
+
+def test_crlf_nested_mcp_yaml_is_recognized(tmp_path, run_connector):
+    (tmp_path / "fastagent.config.yaml").write_bytes(
+        b"default_model: haiku\r\nmcp:\r\n  servers:\r\n    fetch:\r\n      command: \"uvx\"\r\n      args: [\"mcp-server-fetch\"]\r\n"
+    )
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    mcp = [f for f in findings if f.kind == Kind.MCP_SERVER]
+    assert len(mcp) == 1 and [s["name"] for s in mcp[0].metadata["servers"]] == ["fetch"]
+
+
+def test_editor_settings_and_source_code_domains_still_configure_coding_agents(tmp_path, run_connector):
+    (tmp_path / ".vscode").mkdir()
+    (tmp_path / ".vscode" / "settings.json").write_text(
+        '{"editor.formatOnSave": true, "amp.url": "https://ampcode.com/", "cody.serverEndpoint": "https://acme.sourcegraphcloud.com"}'
+    )
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert any(f.kind == Kind.AGENT_CONFIG and "Sourcegraph" in f.title for f in findings)

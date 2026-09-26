@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import re
 from bisect import bisect_right
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import regex
@@ -97,8 +98,9 @@ def _symbol_tail(symbol: str) -> str:
 
 
 class _PythonBindings(ast.NodeVisitor):
-    def __init__(self, text: str):
+    def __init__(self, text: str, relevant: Callable[[_Binding], bool] = lambda _binding: True):
         self.text = text
+        self.relevant = relevant
         self.captured = 0
         self.lines = text.splitlines(keepends=True)
         self.offsets = [0]
@@ -171,7 +173,9 @@ class _PythonBindings(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         binding = self._resolve(node.func)
-        if binding:
+        # Calls into modules no signature recognizes can never become evidence;
+        # retaining them would let ordinary helper calls exhaust the limits.
+        if binding and self.relevant(binding):
             if len(self.calls) >= MAX_BOUND_CALLS:
                 raise MatchTimeoutError("source binding call limit exceeded")
             start = self._offset(node.func.end_lineno or node.lineno, node.func.end_col_offset or 0)
@@ -353,17 +357,21 @@ class _PythonBindings(ast.NodeVisitor):
                            for name in set(outcomes[0]) | set(outcomes[1])}
 
 
-def _python_bindings(text: str) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
+def _python_bindings(
+    text: str, relevant: Callable[[_Binding], bool] = lambda _binding: True,
+) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
     tree = ast.parse(text)
     for count, _ in enumerate(ast.walk(tree)):
         if count >= MAX_AST_NODES:
             raise MatchTimeoutError("source binding AST limit exceeded")
-    visitor = _PythonBindings(text)
+    visitor = _PythonBindings(text, relevant)
     visitor.visit(tree)
     return visitor.calls, visitor.imports
 
 
-def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
+def _javascript_bindings(
+    text: str, ignored: list[tuple[int, int]], relevant: Callable[[_Binding], bool] = lambda _binding: True,
+) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
     starts = [start for start, _ in ignored]
     newlines = [match.start() for match in re.finditer("\n", text)]
 
@@ -451,7 +459,7 @@ def _javascript_bindings(text: str, ignored: list[tuple[int, int]]) -> tuple[lis
     for match in rx.finditer(masked, timeout=pattern_timeout(), concurrent=False):
         parts = re.split(r"\s*\.\s*", match.group(1))
         binding = bindings.get(parts[0])
-        if binding is None:
+        if binding is None or not relevant(binding):
             continue
         if len(calls) >= MAX_BOUND_CALLS:
             raise MatchTimeoutError("source binding call limit exceeded")
@@ -478,27 +486,54 @@ def bound_source_matches(index: SignatureIndex, text: str, language: str, ignore
     establish bound constructions: ``SourceBindingUnavailable`` tells the
     caller to fall back to lexical evidence and report the limitation.
     """
+    module_matches = _module_matcher(index, language)
+
+    def relevant(binding: _Binding) -> bool:
+        return bool(module_matches(binding))
+
     try:
-        calls, imports = _python_bindings(text) if language == "python" else _javascript_bindings(text, ignored)
+        calls, imports = (
+            _python_bindings(text, relevant) if language == "python" else _javascript_bindings(text, ignored, relevant)
+        )
     except RecursionError as exc:
         raise MatchTimeoutError("source binding recursion limit exceeded") from exc
+    except TimeoutError as exc:
+        raise MatchTimeoutError("source binding pattern exceeded its time budget") from exc
     except (SyntaxError, ValueError) as exc:
         raise SourceBindingUnavailable(type(exc).__name__) from None
-    found: list[Match] = []
-    module_cache: dict[_Binding, list[Match]] = {}
+    try:
+        return _bound_matches(index, calls, imports, language, module_matches)
+    except TimeoutError as exc:
+        raise MatchTimeoutError("source binding pattern exceeded its time budget") from exc
+
+
+def _module_matcher(index: SignatureIndex, language: str) -> Callable[[_Binding], list[Match]]:
+    """Cached signature matches for the module (and, in Python, symbol) a name binds to."""
+    cache: dict[tuple[str, str], list[Match]] = {}
 
     def module_matches(binding: _Binding) -> list[Match]:
-        if binding not in module_cache:
+        symbol = binding.symbol.split(".")[0] if language == "python" else ""
+        key = (binding.module, symbol)
+        if key not in cache:
             if language == "python":
-                statement = f"from {binding.module} import {binding.symbol.split('.')[0]}" if binding.symbol else f"import {binding.module}"
+                statement = f"from {binding.module} import {symbol}" if symbol else f"import {binding.module}"
                 matches = index.match_imports(statement, language)
             else:
                 matches = index.match_imports(f"import {{ example }} from '{binding.module}'", language)
                 matches += index.match_dependency("npm", binding.module)
                 if binding.module.startswith("@langchain/langgraph"):
                     matches = [m for m in matches if m.signature_id != "framework.langchain"]
-            module_cache[binding] = matches
-        return module_cache[binding]
+            cache[key] = matches
+        return cache[key]
+
+    return module_matches
+
+
+def _bound_matches(
+    index: SignatureIndex, calls: list[_Call], imports: list[tuple[_Binding, int]], language: str,
+    module_matches: Callable[[_Binding], list[Match]],
+) -> list[Match]:
+    found: list[Match] = []
 
     for binding, line in imports:
         for match in module_matches(binding):

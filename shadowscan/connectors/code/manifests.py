@@ -667,7 +667,7 @@ def parse_manifest(relpath: str, text: str) -> ManifestResult | None:
     """Parse untrusted input, reporting malformed input without losing the scan."""
     try:
         result = _parse_manifest(relpath, text)
-    except (ValueError, TypeError, AttributeError, RecursionError, yaml.YAMLError) as exc:
+    except (ValueError, TypeError, AttributeError, RecursionError, TimeoutError, yaml.YAMLError) as exc:
         return ManifestResult(errors=[f"manifest parsing failed ({type(exc).__name__})"])
     if result is not None:
         result.artifacts = _unique_artifacts(result.artifacts)

@@ -312,7 +312,12 @@ class FilesystemConnector(BaseConnector):
         if not isinstance(self.use_git, bool):
             raise ConnectorError("code.filesystem: use_git must be a boolean")
         extra = ctx.get("exclude", []) or []
-        self.exclude_names = set(DEFAULT_EXCLUDES) | {e for e in extra if "*" not in e and "/" not in e}
+        user_names = {e for e in extra if "*" not in e and "/" not in e}
+        # DEFAULT_EXCLUDES are directory names (build, dist, vendor...). Only
+        # names the operator supplies also exclude files: an extensionless
+        # script/build must still be scanned.
+        self.exclude_names = set(DEFAULT_EXCLUDES) | user_names
+        self.exclude_file_names = user_names
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
         self.label: str | None = ctx.get("label")
         # Every labeled `paths` root has its own identity, even if the list
@@ -383,12 +388,20 @@ class FilesystemConnector(BaseConnector):
 
     # ------------------------------------------------------------------ walk
     def _excluded(self, rel: str, name: str) -> bool:
-        if name in self.exclude_names:
-            return True
+        return name in self.exclude_names or self._excluded_by_glob(rel)
+
+    def _excluded_by_glob(self, rel: str) -> bool:
         for g in self.exclude_globs:
             if PurePosixPath(rel).match(g) or PurePosixPath(rel).match(g.rstrip("/") + "/*"):
                 return True
         return False
+
+    @staticmethod
+    def _file_size(path: Path) -> int:
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
 
     def _file_budget(self, path: Path) -> float:
         """Per-file matching budget, scaled for large inputs.
@@ -397,11 +410,7 @@ class FilesystemConnector(BaseConnector):
         (generated code, vendored bundles, a 450 KB type checker) need
         proportionally more time; the ceiling is the validated maximum.
         """
-        try:
-            size = path.stat().st_size
-        except OSError:
-            size = 0
-        return min(60.0, self.scan_timeout * max(1.0, size / _BUDGET_SCALE_BYTES))
+        return min(60.0, self.scan_timeout * max(1.0, self._file_size(path) / _BUDGET_SCALE_BYTES))
 
     def _iter_files(self, root: Path) -> Iterator[tuple[str, Path, str]]:
         """Yield (relpath, path, project_root_rel) top-down with project root tracking."""
@@ -448,7 +457,7 @@ class FilesystemConnector(BaseConnector):
                 proj = rel_dir
             for fn in sorted(filenames):
                 rel = fn if rel_dir == "." else f"{rel_dir}/{fn}"
-                if self._excluded(rel, fn):
+                if fn in self.exclude_file_names or self._excluded_by_glob(rel):
                     continue
                 p = Path(dirpath) / fn
                 try:
@@ -492,7 +501,7 @@ class FilesystemConnector(BaseConnector):
         infra_names: dict[str, list[str]] = {}  # relpath -> display / resource names
         for rel, path, proj_root in self._iter_files(root):
             try:
-                with self.index.scan_budget(seconds=self._file_budget(path)):
+                with self.index.scan_budget(seconds=self._file_budget(path), size=self._file_size(path)):
                     proj = projects.setdefault(proj_root, _Project(proj_root))
                     proj.files += 1
                     self.ctx.examined()
@@ -1039,8 +1048,8 @@ class FilesystemConnector(BaseConnector):
             # does not configure a coding agent. Require a configuration file,
             # dependency, import, workflow action, code signal or an environment
             # variable declared in a Dockerfile, compose, workflow or .env file.
-            if not any(m.signal.type not in {"domain", "env"} or m.extra.get("declared")
-                       for m, _, _ in coding_matches):
+            if not any(m.signal.type not in {"domain", "env"} or m.extra.get("declared") or _configuration_provenance(rel)
+                       for m, rel, _ in coding_matches):
                 continue
             sig = self.index.get(sig_id)
             f = self._base(
@@ -1344,6 +1353,23 @@ def _safe_source_text(rel: str, text: str) -> str:
         # Dedicated parsers report syntax/shape failures. Lexical redaction still
         # applies if this file cannot supply usable structured context.
         return sanitize_text(text)
+
+
+# Directories and files where tool configuration (not inventory data) lives.
+_CONFIG_DIRS = frozenset({
+    ".vscode", ".cursor", ".windsurf", ".continue", ".claude", ".gemini", ".codex", ".github", ".devcontainer",
+    ".idea", ".zed", ".amp", ".roo", ".cline", ".kiro", ".aider", ".goose", ".junie", ".sourcegraph",
+})
+
+
+def _configuration_provenance(rel: str) -> bool:
+    """Whether a domain or variable mention comes from code or tool configuration.
+
+    Executable source and editor/agent settings configure a product; the same
+    host in an allowlist, a vendor inventory or a signature pack does not.
+    """
+    path = PurePosixPath(rel)
+    return path.suffix.lower() in SOURCE_EXTENSIONS or any(part in _CONFIG_DIRS for part in path.parts[:-1])
 
 
 def _has_nested_mcp_servers(rel: str, text: str, head: str) -> bool:
