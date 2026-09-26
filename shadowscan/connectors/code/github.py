@@ -28,6 +28,8 @@ from shadowscan.connectors.code.filesystem import FilesystemConnector
 
 # Shared helpers now live in ``hosted``; the ``X as X`` imports keep them
 # importable from this module.
+# Re-exported for compatibility. The shared base reads the hosted.py values, so
+# patching these names here has no effect.
 from shadowscan.connectors.code.hosted import API_MODE_MAX_FILES as API_MODE_MAX_FILES
 from shadowscan.connectors.code.hosted import INTERESTING_DIRS as INTERESTING_DIRS
 from shadowscan.connectors.code.hosted import SOURCE_SAMPLE as SOURCE_SAMPLE
@@ -35,9 +37,13 @@ from shadowscan.connectors.code.hosted import HostedRepositoryConnector, _remote
 from shadowscan.connectors.code.hosted import _OfflineRepository as _OfflineRepository
 from shadowscan.connectors.code.hosted import repository_blob_matches as repository_blob_matches
 from shadowscan.connectors.code.hosted import repository_target as repository_target
+from shadowscan.connectors.code.manifests import is_manifest_name as is_manifest_name
 from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.utils.git import clone_environment as clone_environment
+from shadowscan.utils.git import git_argv_prefix as git_argv_prefix
 from shadowscan.utils.git import read_git_snapshot
+from shadowscan.utils.git import validate_git_ref as validate_git_ref
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 
 
@@ -47,6 +53,8 @@ def _named_repository(record: Any) -> bool:
 
 class GitHubConnector(HostedRepositoryConnector):
     name: ClassVar[str] = "code.github"
+    diagnostic_prefix: ClassVar[str] = "code.github"
+    source_provider: ClassVar[str] = "github"
     surface: ClassVar[Surface] = Surface.CODE
     provider: ClassVar[str | None] = "github"
     description: ClassVar[str] = "Enumerate GitHub org/user repositories and scan their contents (clone or API mode)."

@@ -158,3 +158,17 @@ def test_a_worker_failure_cancels_its_siblings(monkeypatch, tmp_path):
     while 2 not in seen_cancel and time.monotonic() < deadline:
         time.sleep(0.01)
     assert seen_cancel.get(2) is True
+
+
+def test_plugin_subclass_of_a_hosted_connector_keeps_provider_diagnostics_and_ids(index, tmp_path):
+    class GitHubEnterprise(GitHubConnector):
+        name = "code.ghe"
+        provider = "ghe"
+
+    for repo in ("one", "two"):
+        (tmp_path / repo).mkdir()
+        (tmp_path / repo / "agent.py").write_text("from crewai import Agent\nagent = Agent(role='r', goal='g', backstory='b')\n")
+    ghe = connector(index, GitHubEnterprise, max_repos=1)
+    findings = list(ghe.analyze(ghe.load_offline(str(tmp_path))))
+    assert any(w.startswith("code.github: max_repos (1) reached") for w in ghe.ctx.stats.warnings)
+    assert findings and {f.provider for f in findings} == {"github"} and {f.connector for f in findings} == {"code.ghe"}

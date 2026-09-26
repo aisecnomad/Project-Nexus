@@ -24,6 +24,11 @@ from urllib.parse import quote, urlsplit
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.hosted import HostedRepositoryConnector, _remote_record, repository_blob_id
+from shadowscan.connectors.code.hosted import (
+    _OfflineRepository as _OfflineRepository,  # re-exported for compatibility
+)
+from shadowscan.connectors.code.hosted import repository_blob_matches as repository_blob_matches
+from shadowscan.connectors.code.hosted import repository_target as repository_target
 from shadowscan.connectors.common import apply_matches, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.git import read_git_snapshot
@@ -44,6 +49,8 @@ def _identified_project(record: Any) -> bool:
 
 class GitLabConnector(HostedRepositoryConnector):
     name: ClassVar[str] = "code.gitlab"
+    diagnostic_prefix: ClassVar[str] = "code.gitlab"
+    source_provider: ClassVar[str] = "gitlab"
     surface: ClassVar[Surface] = Surface.CODE
     provider: ClassVar[str | None] = "gitlab"
     description: ClassVar[str] = "Enumerate GitLab group projects and scan their contents; report CI variables and bot identities."
