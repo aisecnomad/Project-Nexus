@@ -1,0 +1,70 @@
+name: DCO
+
+# Checks that every non-merge commit in a pull request carries a
+# Signed-off-by trailer matching that commit's author or committer email, per
+# CONTRIBUTING.md's Developer Certificate of Origin section. Read-only: it
+# only inspects commit metadata already present in the fetched history and
+# never checks out or executes the pull request's changed files.
+#
+# Trailer values are compared as literal strings (via `git interpret-trailers`
+# and shell string equality), never interpolated into a regular expression: an
+# attacker-controlled author/committer email containing regex metacharacters
+# (for example `.*`) must not make an unrelated, forged Signed-off-by line
+# match.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify every commit is signed off
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          missing=0
+          while IFS= read -r sha; do
+            [ -z "$sha" ] && continue
+            # Merge commits carry no new authorship of their own; skip them.
+            if [ "$(git rev-list --min-parents=2 --max-parents=2 -1 "$sha" 2>/dev/null || true)" = "$sha" ]; then
+              continue
+            fi
+            author_email="$(git show -s --format='%ae' "$sha" | tr '[:upper:]' '[:lower:]')"
+            committer_email="$(git show -s --format='%ce' "$sha" | tr '[:upper:]' '[:lower:]')"
+            ok=0
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              email="${line##*<}"
+              email="${email%%>*}"
+              email="$(printf '%s' "$email" | tr '[:upper:]' '[:lower:]')"
+              if [ "$email" = "$author_email" ] || [ "$email" = "$committer_email" ]; then
+                ok=1
+                break
+              fi
+            done <<TRAILERS
+          $(git show -s --format='%B' "$sha" | git interpret-trailers --parse | awk -F': ' 'tolower($1) == "signed-off-by" { $1=""; sub(/^: /,""); print }')
+          TRAILERS
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::Commit $sha is missing a Signed-off-by trailer matching $author_email"
+              missing=1
+            fi
+          done < <(git rev-list "${BASE_SHA}..${HEAD_SHA}")
+          if [ "$missing" -ne 0 ]; then
+            echo "One or more commits are not signed off. Rebase with sign-off:" >&2
+            echo "  git rebase --signoff ${BASE_SHA}" >&2
+            echo "See CONTRIBUTING.md, 'Developer Certificate of Origin'." >&2
+            exit 1
+          fi
+          echo "All commits signed off."
