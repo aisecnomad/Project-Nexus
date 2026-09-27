@@ -6,8 +6,11 @@ imports, re-exports and uncertain/shadowed JavaScript bindings remain supporting
 framework evidence. No scanned code is imported or executed.
 
 Python AST work is capped at 50,000 nodes and source calls at 512 per file;
-call expressions are bounded to 8 KiB. Regex operations share the scanner's
-per-input deadline. Other source languages do not use this resolver: filesystem
+call expressions are bounded to 8 KiB. A Python file whose imports provably
+cannot resolve to any signature skips the binder at any size, since it could
+yield no evidence (``_python_bindable``, linear in the file and bounded to 4,096
+statement matches). Regex operations share the scanner's per-input deadline.
+Other source languages do not use this resolver: filesystem
 classification requires matching import/dependency evidence for their lexical
 framework signals, and caps uncorroborated code evidence at 0.6.
 """
@@ -16,9 +19,11 @@ from __future__ import annotations
 
 import ast
 import re
+import threading
+import weakref
 from bisect import bisect_right
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import regex
 
@@ -26,13 +31,18 @@ from shadowscan.connectors.code.javascript_dispatch import javascript_responses_
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
 from shadowscan.signatures import Match, SignatureIndex
-from shadowscan.signatures.loader import Signal
-from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
+from shadowscan.signatures.loader import Signal, Signature
+from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
 from shadowscan.utils.redaction import sanitize_text
 
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
 MAX_CALL_TEXT = 8192
+# Proving a file unbindable matches at most this many distinct synthesized
+# statements (real modules need a few hundred), of which at most 512 name an
+# attribute of an imported module; a file needing more keeps the binder.
+_MAX_PROOF_MATCHES = 4096
+_MAX_PROOF_STATEMENTS = 512
 
 
 class SourceBudgetExceeded(MatchTimeoutError):
@@ -385,10 +395,213 @@ class _PythonBindings(ast.NodeVisitor):
                            for name in set(outcomes[0]) | set(outcomes[1])}
 
 
+_LiteralGroups = tuple[tuple[str, ...], ...]
+# Per index: for each Python import pattern, the required literal groups that
+# a synthesized "from M import A" can hold only through M or A, or None when
+# some pattern cannot rule such a statement out (``_python_import_hints``).
+_IMPORT_HINTS: weakref.WeakKeyDictionary[SignatureIndex, tuple[_LiteralGroups, ...] | None] = (
+    weakref.WeakKeyDictionary()
+)
+_IMPORT_HINTS_LOCK = threading.Lock()
+
+
+def _python_statement(binding: _Binding) -> str:
+    """Return the import statement whose signature matches give a Python binding its provenance."""
+    if binding.symbol:
+        return f"from {binding.module} import {binding.symbol.split('.')[0]}"
+    return f"import {binding.module}"
+
+
+def _python_import_hints(index: SignatureIndex) -> tuple[_LiteralGroups, ...] | None:
+    """Return what ``from M import A`` must hold in M or A to match each Python import pattern, cached.
+
+    Every match of a pattern contains an alternative of each of its required
+    literal groups: the ``required_literals`` contract that the matcher's own
+    prefilter relies on. M (a dotted name) and A (an identifier) hold no space,
+    so an alternative without one lies within "from", M, "import" or A. A
+    group that "from" or "import" already satisfies constrains neither name,
+    and neither does one with an alternative holding a space, which may span
+    the parts; both are dropped. None means some pattern has no case-sensitive
+    literals, or no group is left, so no attribute statement can be ruled out
+    without running it.
+    """
+    with _IMPORT_HINTS_LOCK:
+        if index in _IMPORT_HINTS:
+            return _IMPORT_HINTS[index]
+    result = _collect_import_hints(index)
+    with _IMPORT_HINTS_LOCK:
+        _IMPORT_HINTS[index] = result
+    return result
+
+
+def _collect_import_hints(index: SignatureIndex) -> tuple[_LiteralGroups, ...] | None:
+    patterns: dict[_LiteralGroups, None] = {}
+    # The (signature, signal) pairs the matcher's own regex plan runs, so a
+    # signature id that two signatures of the index share is covered too.
+    for _, signal in index._by_type.get("import", ()):
+        if signal.languages and "python" not in signal.languages:
+            continue
+        for compiled in signal.bounded_compiled:
+            pattern = getattr(compiled, "pattern", None)
+            if not isinstance(pattern, str):
+                return None
+            hints = required_literals(pattern)
+            if hints.fold or not hints.groups:
+                return None
+            groups = tuple(
+                group for group in hints.groups
+                if not any(" " in literal or literal in "from" or literal in "import" for literal in group)
+            )
+            if not groups:
+                return None
+            patterns[groups] = None
+    return tuple(patterns)
+
+
+class _Names:
+    """Distinct names joined one per line, so finding those holding a literal costs one search."""
+
+    def __init__(self, names: set[str]) -> None:
+        self.names = sorted(names)
+        self.text = "\n".join(self.names)
+        self.starts = [0]
+        for name in self.names[:-1]:
+            self.starts.append(self.starts[-1] + len(name) + 1)
+        self._holding: dict[str, tuple[str, ...]] = {}
+
+    def holding(self, literal: str) -> tuple[str, ...]:
+        """Return the names containing ``literal`` (and any that a match across a line break starts in)."""
+        found = self._holding.get(literal)
+        if found is None:
+            names: list[str] = []
+            position = self.text.find(literal) if self.names else -1
+            while position >= 0:
+                number = bisect_right(self.starts, position) - 1
+                names.append(self.names[number])
+                # Continue at the next name: each holder costs one search.
+                if number + 1 == len(self.names):
+                    break
+                position = self.text.find(literal, self.starts[number + 1])
+            found = self._holding[literal] = tuple(names)
+        return found
+
+    def masks(self, groups: _LiteralGroups) -> dict[str, int]:
+        """Return, for each name holding an alternative of some group, the bit mask of the groups it holds."""
+        masks: dict[str, int] = {}
+        for bit, group in enumerate(groups):
+            for literal in group:
+                for name in self.holding(literal):
+                    masks[name] = masks.get(name, 0) | 1 << bit
+        return masks
+
+
+def _by_mask(masks: dict[str, int]) -> dict[int, list[str]]:
+    buckets: dict[int, list[str]] = {}
+    for name, mask in masks.items():
+        buckets.setdefault(mask, []).append(name)
+    return buckets
+
+
+def _attribute_statements(
+    hints: tuple[_LiteralGroups, ...], modules: set[str], attributes: set[str],
+) -> set[tuple[str, str]] | None:
+    """Return each (M, A) whose ``from M import A`` holds an alternative of every group of some pattern.
+
+    Only these statements can match. Per pattern, a module and an attribute
+    name each reduce to the bit mask of the groups they hold, and a pair
+    qualifies when its two masks cover every group. Pairs are counted per
+    combination of masks, never per module and name, and each literal is
+    searched once among all modules and once among all names, so the work is
+    linear in the names and the qualifying pairs. None means a module alone
+    holds every group of a pattern, so any attribute qualifies, or more than
+    ``_MAX_PROOF_STATEMENTS`` pairs qualify: too many to match either way.
+    """
+    module_names, attribute_names = _Names(modules), _Names(attributes)
+    statements: set[tuple[str, str]] = set()
+    for groups in hints:
+        if not all(
+            any(module_names.holding(literal) or attribute_names.holding(literal) for literal in group)
+            for group in groups
+        ):
+            continue  # a group no module and no name holds
+        module_masks = module_names.masks(groups)
+        full = (1 << len(groups)) - 1
+        if full in module_masks.values():
+            return None
+        by_module, by_name = _by_mask(module_masks), _by_mask(attribute_names.masks(groups))
+        # Mask 0 stands for the modules that hold no group.
+        pairs = [(mask, other) for mask in (0, *by_module) for other in by_name if mask | other == full]
+        unheld = len(modules) - len(module_masks)
+        count = sum((len(by_module[mask]) if mask else unheld) * len(by_name[other]) for mask, other in pairs)
+        if count > _MAX_PROOF_STATEMENTS:
+            return None
+        for mask, other in pairs:
+            holders = by_module.get(mask) or [module for module in modules if module not in module_masks]
+            statements.update((module, name) for module in holders for name in by_name[other])
+        if len(statements) > _MAX_PROOF_STATEMENTS:
+            return None
+    return statements
+
+
+def _python_bindable(index: SignatureIndex, tree: ast.AST) -> bool:
+    """Whether a binding ``_PythonBindings`` can create for ``tree`` has signature matches.
+
+    False proves the binder yields no evidence for the file, whatever its size:
+    every import and call it reports needs such a binding, and the provider
+    loop recognizers only follow those calls. Bindings originate in absolute
+    imports and resolve through ``_python_statement``. ``from M import A`` (A
+    and its attributes) and ``import M`` (M or its first component) are
+    checked exactly. Attributes of an ``import M`` binding give ``from M
+    import <attribute>`` for any attribute name in the file; only the
+    statements ``_attribute_statements`` returns can match, and those are
+    checked exactly. The work is linear in the tree plus at most
+    ``_MAX_PROOF_MATCHES`` distinct statement matches; beyond that, or with
+    too many attribute statements, the answer is True. True may be
+    conservative (repository-local modules are not excluded either); it never
+    changes a result.
+    """
+    checked: set[str] = set()
+
+    def matched(module: str, symbol: str) -> bool:
+        """Whether the statement has matches; beyond the budget, assume it may."""
+        statement = _python_statement(_Binding(module, symbol))
+        if statement in checked:
+            return False  # an earlier check found no match
+        checked.add(statement)
+        return len(checked) > _MAX_PROOF_MATCHES or bool(index.match_import_statement(statement, "python"))
+
+    modules: set[str] = set()
+    attributes: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            attributes.add(node.attr)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                modules.update((alias.name, alias.name.split(".")[0]))
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            for alias in node.names:
+                if alias.name != "*" and matched(node.module or "", alias.name):
+                    return True
+    if not modules:
+        return False
+    hints = _python_import_hints(index)
+    if hints is None or len(checked) + len(modules) > _MAX_PROOF_MATCHES:
+        return True
+    if any(matched(module, "") for module in sorted(modules)):
+        return True
+    statements = _attribute_statements(hints, modules, attributes)
+    return statements is None or any(matched(module, name) for module, name in sorted(statements))
+
+
 def _python_bindings(
     text: str, relevant: Callable[[_Binding], bool] | None = None, max_nodes: int | None = None,
+    bindable: Callable[[ast.AST], bool] | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
+    if bindable is not None and not bindable(tree):
+        # Proven to yield nothing: skipping the binder loses no evidence, so
+        # a file of any size is complete without it.
+        return [], [], tree
     limit = MAX_AST_NODES if max_nodes is None else max_nodes
     for count, _ in enumerate(ast.walk(tree)):
         if count >= limit:
@@ -457,6 +670,14 @@ def _javascript_bindings(
         else:
             bind(spec, module, "", line)
 
+    _drop_uncertain_bindings(bindings, masked, declaration_spans)
+    return _javascript_calls(text, masked, bindings, relevant), imports
+
+
+def _drop_uncertain_bindings(
+    bindings: dict[str, _Binding], masked: str, declaration_spans: list[tuple[int, int]],
+) -> None:
+    """Forget each binding that is declared again, reassigned or shadowed outside its import declaration."""
     # Treat any local shadow/reassignment as uncertain across this source. This
     # sacrifices some recall instead of attributing unrelated calls to an SDK.
     declaration_mask = list(masked)
@@ -475,11 +696,20 @@ def _javascript_bindings(
             rf"\bcatch\s*\(\s*{escaped}\b",
             rf"(?:^|[;{{}}\n])\s*(?:async\s+)?[\w$]+\s*\([^)]*\b{escaped}\b[^)]*\)\s*(?::[^{{}};]+)?\{{",
         ]
-        if any(regex.search(pattern, rest, timeout=pattern_timeout(), concurrent=False) for pattern in patterns):
+        if any(
+            regex.search(pattern, rest, timeout=pattern_timeout(), concurrent=False) for pattern in patterns
+        ):
             del bindings[name]
 
+
+def _javascript_calls(
+    text: str, masked: str, bindings: dict[str, _Binding], relevant: Callable[[_Binding], bool] | None,
+) -> list[_Call]:
+    """Return the calls through ``bindings`` in code, each with its balanced argument text."""
     calls: list[_Call] = []
-    rx = regex.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?:<[^;(){}]{1,1000}>)?\s*\(")
+    rx = regex.compile(
+        r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?:<[^;(){}]{1,1000}>)?\s*\("
+    )
     for match in rx.finditer(masked, timeout=pattern_timeout(), concurrent=False):
         parts = re.split(r"\s*\.\s*", match.group(1))
         binding = bindings.get(parts[0])
@@ -497,9 +727,79 @@ def _javascript_bindings(
         if depth:
             continue
         symbol = ".".join(filter(None, (binding.symbol, *parts[1:])))
-        calls.append(_Call(_Binding(binding.module, symbol), text[opening:end], text.count("\n", 0, match.start()) + 1,
-                           masked[opening:end]))
-    return calls, imports
+        calls.append(_Call(
+            _Binding(binding.module, symbol), text[opening:end], text.count("\n", 0, match.start()) + 1,
+            masked[opening:end],
+        ))
+    return calls
+
+
+class _ModuleMatches:
+    """The import signature matches of each bound module, looked up once per file."""
+
+    def __init__(
+        self, index: SignatureIndex, language: str, is_local_module: Callable[[str], bool] | None,
+    ) -> None:
+        self.index = index
+        self.language = language
+        self.is_local_module = is_local_module
+        self._cache: dict[_Binding, list[Match]] = {}
+
+    def __call__(self, binding: _Binding) -> list[Match]:
+        if binding not in self._cache:
+            self._cache[binding] = self._lookup(binding)
+        return self._cache[binding]
+
+    def relevant(self, binding: _Binding) -> bool:
+        """Whether calls through ``binding`` can carry evidence: its module resolves to a signature."""
+        return bool(self(binding))
+
+    def _lookup(self, binding: _Binding) -> list[Match]:
+        index, language = self.index, self.language
+        if language == "python":
+            matches = list(index.match_import_statement(_python_statement(binding), language))
+            if matches and self.is_local_module is not None and self.is_local_module(binding.module):
+                matches = []
+            return matches
+        statement = f"import {{ example }} from '{binding.module}'"
+        matches = list(index.match_import_statement(statement, language))
+        matches += index.match_dependency("npm", binding.module)
+        if binding.module.startswith("@langchain/langgraph"):
+            matches = [m for m in matches if m.signature_id != "framework.langchain"]
+        return matches
+
+
+_JAVASCRIPT_OPENAI_CONSTRUCTORS = frozenset({
+    "default", "OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI",
+})
+_RESPONSES_CREATE = frozenset({
+    "OpenAI.responses.create", "AsyncOpenAI.responses.create",
+    "AzureOpenAI.responses.create", "AsyncAzureOpenAI.responses.create",
+})
+
+
+@dataclass
+class _LoopRequests:
+    """Import-bound request calls that the tool loop and dispatch recognizers follow."""
+
+    provider: set[int] = field(default_factory=set)
+    responses: set[int] = field(default_factory=set)
+    javascript_constructors: set[int] = field(default_factory=set)
+
+    def record(self, language: str, call: _Call, signatures: dict[str, Signature], parsed: bool) -> None:
+        """Remember ``call`` if a recognizer follows it; ``parsed`` says a Python tree exists."""
+        if (language == "javascript" and "provider.openai" in signatures and call.binding.module == "openai"
+                and call.binding.symbol in _JAVASCRIPT_OPENAI_CONSTRUCTORS):
+            self.javascript_constructors.add(call.line)
+        if not parsed or call.node is None:
+            return
+        loop_request = _LOOP_REQUESTS.get(call.binding.module)
+        if (loop_request is not None and loop_request[0] in signatures
+                and call.binding.symbol in loop_request[1]):
+            self.provider.add(id(call.node))
+        if ("provider.openai" in signatures and call.binding.module == "openai"
+                and call.binding.symbol in _RESPONSES_CREATE):
+            self.responses.add(id(call.node))
 
 
 def bound_source_matches(
@@ -511,38 +811,36 @@ def bound_source_matches(
     Invalid Python cannot establish bound constructions. The caller already
     retains lexical import/supporting evidence and reports lexical ambiguity.
     """
-    found: list[Match] = []
-    module_cache: dict[_Binding, list[Match]] = {}
-
-    def module_matches(binding: _Binding) -> list[Match]:
-        if binding not in module_cache:
-            if language == "python":
-                statement = f"from {binding.module} import {binding.symbol.split('.')[0]}" if binding.symbol else f"import {binding.module}"
-                matches = list(index.match_import_statement(statement, language))
-                if matches and is_local_module is not None and is_local_module(binding.module):
-                    matches = []
-            else:
-                matches = list(index.match_import_statement(f"import {{ example }} from '{binding.module}'", language))
-                matches += index.match_dependency("npm", binding.module)
-                if binding.module.startswith("@langchain/langgraph"):
-                    matches = [m for m in matches if m.signature_id != "framework.langchain"]
-            module_cache[binding] = matches
-        return module_cache[binding]
-
-    def relevant(binding: _Binding) -> bool:
-        return bool(module_matches(binding))
-
+    module_matches = _ModuleMatches(index, language, is_local_module)
     tree = None
     try:
         if language == "python":
-            calls, imports, tree = _python_bindings(text, relevant, max_ast_nodes)
+            calls, imports, tree = _python_bindings(
+                text, module_matches.relevant, max_ast_nodes,
+                bindable=lambda parsed: _python_bindable(index, parsed),
+            )
         else:
-            calls, imports = _javascript_bindings(text, ignored, relevant)
+            calls, imports = _javascript_bindings(text, ignored, module_matches.relevant)
     except RecursionError as exc:
         raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
     except (SyntaxError, ValueError):
         return []
 
+    found = _import_evidence(index, language, imports, module_matches)
+    requests = _LoopRequests()
+    for call in calls:
+        signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
+        requests.record(language, call, signatures, tree is not None)
+        found.extend(_call_evidence(language, call, signatures))
+    found.extend(_protocol_evidence(index, tree, text, ignored, requests))
+    return found
+
+
+def _import_evidence(
+    index: SignatureIndex, language: str, imports: list[tuple[_Binding, int]], module_matches: _ModuleMatches,
+) -> list[Match]:
+    """Return the evidence of each bound import: its module's signatures and their import-line code."""
+    found: list[Match] = []
     for binding, line in imports:
         for match in module_matches(binding):
             found.append(Match(match.signature, Signal(type="import", weight=match.weight),
@@ -554,76 +852,77 @@ def bound_source_matches(
         if language == "python" and resolved:
             # Only matches of signatures this import resolves to are kept, so
             # an unresolved import (most of them) needs no code pass at all.
-            statement = f"from {binding.module} import {binding.symbol}" if binding.symbol else f"import {binding.module}"
+            statement = (
+                f"from {binding.module} import {binding.symbol}" if binding.symbol
+                else f"import {binding.module}"
+            )
             for match in index.match_code(statement, language):
                 if match.signature_id in resolved:
                     match.line = line
                     match.extra["verified_agent"] = False
                     found.append(match)
-    provider_requests: set[int] = set()
-    responses_requests: set[int] = set()
-    javascript_constructors: set[int] = set()
-    for call in calls:
-        signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
-        if (language == "javascript" and "provider.openai" in signatures and call.binding.module == "openai"
-                and call.binding.symbol in {"default", "OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI"}):
-            javascript_constructors.add(call.line)
-        loop_request = _LOOP_REQUESTS.get(call.binding.module)
-        if (tree is not None and call.node is not None and loop_request is not None
-                and loop_request[0] in signatures and call.binding.symbol in loop_request[1]):
-            provider_requests.add(id(call.node))
-        if (tree is not None and call.node is not None and "provider.openai" in signatures
-                and call.binding.module == "openai"
-                and call.binding.symbol in {
-                    "OpenAI.responses.create", "AsyncOpenAI.responses.create",
-                    "AzureOpenAI.responses.create", "AsyncAzureOpenAI.responses.create",
-                }):
-            responses_requests.add(id(call.node))
-        symbol = _symbol_tail(call.binding.symbol)
-        canonical = symbol + call.arguments
-        for signature in signatures.values():
-            factory = _FACTORIES.get(signature.id)
-            verified = bool(factory and re.fullmatch(factory, symbol))
-            if signature.id == "framework.vercel-ai-sdk" and symbol in {"generateText", "streamText"}:
-                # Options belong to a resolved SDK call, not unrelated config.
-                verified = bool(re.search(r"\btools\s*:\s*\{", call.structural_arguments))
-            if (
-                signature.category == "provider" and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
-                and _TOOL_ARGUMENTS.search(call.structural_arguments)
-            ):
-                # Schema-only requests stay tool-enabled LLM usage: the loop
-                # evidence below decides whether selected tools are executed.
-                found.append(Match(signature, Signal(type="code", weight=0.7, capabilities=["tool-use"],
-                                                     description="import-bound request offering tools"),
-                                   sanitize_text(f"{call.binding.module}:{symbol}(tools="), 0.7, line=call.line,
+    return found
+
+
+def _call_evidence(language: str, call: _Call, signatures: dict[str, Signature]) -> list[Match]:
+    """Return the evidence of one bound call for each signature its module resolves to."""
+    found: list[Match] = []
+    symbol = _symbol_tail(call.binding.symbol)
+    canonical = symbol + call.arguments
+    for signature in signatures.values():
+        factory = _FACTORIES.get(signature.id)
+        verified = bool(factory and re.fullmatch(factory, symbol))
+        if signature.id == "framework.vercel-ai-sdk" and symbol in {"generateText", "streamText"}:
+            # Options belong to a resolved SDK call, not unrelated config.
+            verified = bool(re.search(r"\btools\s*:\s*\{", call.structural_arguments))
+        if (
+            signature.category == "provider" and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
+            and _TOOL_ARGUMENTS.search(call.structural_arguments)
+        ):
+            # Schema-only requests stay tool-enabled LLM usage: the loop
+            # evidence below decides whether selected tools are executed.
+            found.append(Match(signature, Signal(type="code", weight=0.7, capabilities=["tool-use"],
+                                                 description="import-bound request offering tools"),
+                               sanitize_text(f"{call.binding.module}:{symbol}(tools="), 0.7, line=call.line,
+                               extra={"verified_agent": False}))
+        for keyword, capability in _KEYWORD_CAPABILITIES.get(signature.id, ()):
+            if re.search(rf"(?<![\w$]){keyword}\s*[=:]", call.structural_arguments):
+                found.append(Match(signature, Signal(type="code", weight=0.6, capabilities=[capability],
+                                                     description=f"{keyword} argument"),
+                                   sanitize_text(f"{symbol}({keyword}="), 0.6, line=call.line,
                                    extra={"verified_agent": False}))
-            for keyword, capability in _KEYWORD_CAPABILITIES.get(signature.id, ()):
-                if re.search(rf"(?<![\w$]){keyword}\s*[=:]", call.structural_arguments):
-                    found.append(Match(signature, Signal(type="code", weight=0.6, capabilities=[capability],
-                                                         description=f"{keyword} argument"),
-                                       sanitize_text(f"{symbol}({keyword}="), 0.6, line=call.line,
-                                       extra={"verified_agent": False}))
-            for signal in signature.signals:
-                if signal.type != "code" or signal.languages and language not in signal.languages:
+        for signal in signature.signals:
+            if signal.type != "code" or signal.languages and language not in signal.languages:
+                continue
+            for pattern in signal.bounded_compiled:
+                match = pattern.search(canonical, timeout=pattern_timeout(), concurrent=False)
+                if match is None or match.start() > len(symbol):
                     continue
-                for pattern in signal.bounded_compiled:
-                    match = pattern.search(canonical, timeout=pattern_timeout(), concurrent=False)
-                    if match is None or match.start() > len(symbol):
-                        continue
-                    # A known factory list excludes memory/model utility calls
-                    # from inherited broad agent_indicator declarations.
-                    indicator = verified if factory else signature.agent_indicator or signal.agent_indicator
-                    found.append(Match(signature, signal, sanitize_text(canonical[:len(symbol) + 1]), signal.weight,
-                                       line=call.line, extra={"verified_agent": indicator}))
-                    break
-            if verified:
-                found.append(Match(signature, Signal(type="code", weight=0.9, agent_indicator=True,
-                                                     description="import-bound agent construction"),
-                                   sanitize_text(f"{call.binding.module}:{symbol}("), 0.9, line=call.line,
-                                   extra={"verified_agent": True}))
+                # A known factory list excludes memory/model utility calls
+                # from inherited broad agent_indicator declarations.
+                indicator = verified if factory else signature.agent_indicator or signal.agent_indicator
+                found.append(Match(signature, signal, sanitize_text(canonical[:len(symbol) + 1]),
+                                   signal.weight, line=call.line, extra={"verified_agent": indicator}))
+                break
+        if verified:
+            found.append(Match(signature, Signal(type="code", weight=0.9, agent_indicator=True,
+                                                 description="import-bound agent construction"),
+                               sanitize_text(f"{call.binding.module}:{symbol}("), 0.9, line=call.line,
+                               extra={"verified_agent": True}))
+    return found
+
+
+def _protocol_evidence(
+    index: SignatureIndex, tree: ast.AST | None, text: str, ignored: list[tuple[int, int]],
+    requests: _LoopRequests,
+) -> list[Match]:
+    """Return tool-calling protocol evidence from the loops and dispatch around bound requests."""
     protocol = index.get("protocol.openai-function-calling")
-    if tree is not None and protocol is not None:
-        for line in provider_tool_loop_lines(tree, provider_requests):
+    if protocol is None:
+        return []
+    found: list[Match] = []
+    if tree is not None:
+        for line in provider_tool_loop_lines(tree, requests.provider):
             found.append(Match(
                 protocol,
                 Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
@@ -631,7 +930,7 @@ def bound_source_matches(
                 "provider tool-selection/dispatch/feedback loop", 0.9, line=line,
                 extra={"verified_agent": True},
             ))
-        for line in responses_tool_loop_lines(tree, responses_requests):
+        for line in responses_tool_loop_lines(tree, requests.responses):
             found.append(Match(
                 protocol,
                 Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
@@ -639,17 +938,16 @@ def bound_source_matches(
                 "OpenAI Responses tool-selection/dispatch/feedback loop", 0.9, line=line,
                 extra={"verified_agent": True},
             ))
-    if protocol is not None:
-        dispatch_lines = (
-            responses_dispatch_lines(tree, responses_requests) if tree is not None else
-            javascript_responses_dispatch_lines(text, ignored, javascript_constructors)
-        )
-        for line in dispatch_lines:
-            found.append(Match(
-                protocol,
-                Signal(type="code", weight=0.85, agent_indicator=True, capabilities=["tool-use"],
-                       description="import-bound Responses selected-action dispatch"),
-                "OpenAI Responses selected-action dispatch", 0.85, line=line,
-                extra={"verified_agent": True, "agent_classification": "openai-responses-tool-dispatch"},
-            ))
+    dispatch_lines = (
+        responses_dispatch_lines(tree, requests.responses) if tree is not None else
+        javascript_responses_dispatch_lines(text, ignored, requests.javascript_constructors)
+    )
+    for line in dispatch_lines:
+        found.append(Match(
+            protocol,
+            Signal(type="code", weight=0.85, agent_indicator=True, capabilities=["tool-use"],
+                   description="import-bound Responses selected-action dispatch"),
+            "OpenAI Responses selected-action dispatch", 0.85, line=line,
+            extra={"verified_agent": True, "agent_classification": "openai-responses-tool-dispatch"},
+        ))
     return found
