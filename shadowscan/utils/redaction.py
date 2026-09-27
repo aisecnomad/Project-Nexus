@@ -70,6 +70,8 @@ from shadowscan.utils.redaction_rules import (
     _redact_value,
     _sensitive_assignment_key,
     _sensitive_key,
+    _setting_level,
+    _setting_value_withheld,
 )
 from shadowscan.utils.redaction_statements import _redact_python_assignments
 
@@ -175,12 +177,21 @@ def _opaque_literal(value: Any) -> bool:
     return isinstance(value, str) and _credential_literal(value, positional=False)
 
 
-def _record_has_secret_value(item: Mapping, *, environment: bool = False) -> bool:
-    """Whether a name/value record's name marks its value as a credential."""
+def _record_has_secret_value(item: Mapping, *, environment: bool = False, extended: bool = False) -> bool:
+    """Whether a name/value record's name marks its value as a credential.
+
+    The established rule reads the whole name as a sensitive key. The
+    ``extended`` one reads it as a setting (see ``_setting_level``), as the
+    text passes read a record: 'OpenAI:Secret' withholds any value, and
+    'OpenAIKey' or 'KEY1' a value that looks like an opaque key.
+    """
     name = item.get("name") or item.get("Name") or item.get("key") or item.get("Key")
     if not isinstance(name, str):
         return False
-    return _sensitive_assignment_key(name) if environment else _sensitive_key(name)
+    if not extended:
+        return _sensitive_assignment_key(name) if environment else _sensitive_key(name)
+    level = _setting_level(name, record=not environment)
+    return _setting_value_withheld(level, item.get("value") or item.get("Value")) if level else False
 
 
 class _Sanitizer:
@@ -229,7 +240,7 @@ class _Sanitizer:
         if isinstance(item, (Mapping, list, tuple)):
             self.discovered.add(identity)
         if isinstance(item, Mapping):
-            if _record_has_secret_value(item, environment=environment):
+            if _record_has_secret_value(item, environment=environment, extended=self.extended):
                 self.remember(item.get("value") or item.get("Value"))
             for key, child in item.items():
                 if _sensitive_key(str(key)) or environment and _sensitive_assignment_key(str(key)):
@@ -349,7 +360,9 @@ class _Sanitizer:
         for key, child in item.items():
             name = str(key)
             result: Any
-            if _sensitive_key(name) or (_record_has_secret_value(item) and name.lower() == "value"):
+            if _sensitive_key(name) or (
+                name.lower() == "value" and _record_has_secret_value(item, extended=self.extended)
+            ):
                 result = _redact_value(child)
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, Mapping):
                 result = {self.text(str(k)): _redact_value(v) for k, v in child.items()}
@@ -389,9 +402,9 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     shapes and recognizable credential formats are still removed everywhere.
 
     Two passes run, as in ``sanitize_text``: the established rules copy the
-    value, then the rules added since (opaque values of argv options named
-    for a credential) copy that copy, so they only withhold more than the
-    established pass does.
+    value, then the rules added since (settings in name/value records,
+    opaque values of argv options named for a credential) copy that copy,
+    so they only withhold more than the established pass does.
     """
     _check_sanitization_structure(value)
     for extended in (False, True):

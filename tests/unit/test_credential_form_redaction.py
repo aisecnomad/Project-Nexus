@@ -481,12 +481,38 @@ def test_documented_gaps_are_still_open(source):
     assert HEX not in sanitize_text(source)
 
 
-@pytest.mark.xfail(strict=True, reason="documented redaction gap (SECURITY.md)")
-@pytest.mark.parametrize("name", ["OpenAIKey", "OpenAI:Secret", "AzureOpenAI:Token"])
-def test_documented_structured_record_gap_is_still_open(name):
-    # Structured records (connector metadata, not report text) still decide by
-    # the whole name, as the sensitive-key rule reads it.
-    assert HEX not in repr(sanitize({"settings": [{"name": name, "value": HEX}]}))
+@pytest.mark.parametrize("name", [
+    "OpenAIKey", "OpenAI:Secret", "AzureOpenAI:Token", "AzureOpenAI__Key", "openai.token", "KEY1",
+    "Db:Password",
+])
+@pytest.mark.parametrize("value_first", [False, True])
+def test_structured_name_value_records_read_names_as_settings(name, value_first):
+    # Connector metadata reads a record's name as the text passes read it: a
+    # sensitive last segment withholds any value, a credential word (numbered
+    # or not) an opaque one; the value is also withheld from sibling fields.
+    record = {"value": HEX, "name": name} if value_first else {"name": name, "value": HEX}
+    safe = sanitize({"settings": [record], "note": f"rotated {HEX}"})
+    assert safe == {"settings": [{**record, "value": REDACTED}], "note": f"rotated {REDACTED}"}
+    assert HEX not in repr(sanitize([record], redact_short_secrets=True))
+
+
+@pytest.mark.parametrize("record", [
+    {"name": "CacheKey", "value": "users"},
+    {"name": "PAGE_TOKEN", "value": "next"},
+    {"Key": "sort_key", "Value": "createdAtDescending"},
+    {"name": "AzureOpenAI:Endpoint", "value": AZURE},
+    {"name": "AzureOpenAI:Key", "value": "${AZURE_OPENAI_KEY}"},
+    {"name": "OpenAIKey", "value": "photos/2024/img.jpg"},
+])
+def test_structured_setting_records_keep_ordinary_values(record):
+    # An environment-style or credential-word name keeps a value that does not
+    # look like an opaque key, as in text ('cacheKey = "users"').
+    assert sanitize({"settings": [record]}) == {"settings": [record]}
+
+
+def test_structured_readable_value_under_a_sensitive_setting_is_withheld():
+    safe = sanitize({"name": "OpenAI:Secret", "value": "hunter2", "note": "hunter2 was rotated"})
+    assert safe == {"name": "OpenAI:Secret", "value": REDACTED, "note": REDACTED}
 
 
 @pytest.mark.parametrize("source", [

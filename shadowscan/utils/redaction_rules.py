@@ -164,24 +164,33 @@ def _credential_name(name: str, *, numbered: bool = False) -> bool:
 _SETTING_SEGMENT = re.compile(r":|__|\.")
 
 
-def _setting_level(name: str) -> int:
+def _setting_level(name: str, *, record: bool = False) -> int:
     """How a setting named ``name`` identifies its value as a credential.
 
     2: the name alone does ('Token', 'OpenAI:Secret', 'OPENAI_API_KEY'), so
     any value is withheld. 1: its last word names a credential ('OpenAIKey',
     'AzureOpenAI:Key', 'CacheKey', 'KEY1'), so only an opaque literal is
     withheld, as for the same names in assignments. 0: an ordinary setting.
+    A ``record`` is a field of a structured record, where an
+    environment-style name ('PAGE_TOKEN', 'SORT_KEY') is too broad to
+    withhold any value (see _ASSIGNMENT_CREDENTIAL_NAME) and counts as 1.
     """
+    sensitive = _sensitive_key if record else _sensitive_assignment_key
     last = _SETTING_SEGMENT.split(name)[-1]
-    if _sensitive_assignment_key(name) or (last != name and _sensitive_assignment_key(last)):
+    if sensitive(name) or (last != name and sensitive(last)):
         return 2
     named = _credential_name(name, numbered=True) or (last != name and _credential_name(last, numbered=True))
     return 1 if named else 0
 
 
-def _setting_value_withheld(level: int, value: str) -> bool:
-    """Whether a setting of ``level`` (see ``_setting_level``) withholds ``value``."""
-    return level == 2 or (level == 1 and _credential_literal(value.strip(), positional=False))
+def _setting_value_withheld(level: int, value: Any) -> bool:
+    """Whether a setting of ``level`` (see ``_setting_level``) withholds ``value``.
+
+    Only a string can be the opaque literal a level-1 name withholds.
+    """
+    if level == 2:
+        return True
+    return level == 1 and isinstance(value, str) and _credential_literal(value.strip(), positional=False)
 
 
 def _name_before(text: str, end: int, characters: str) -> str:

@@ -150,11 +150,11 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   `name: DB_PASSWORD`), the part of a quoted record value after a `}` inside
   it under a name sensitive as a whole (`{"name": "Password", "value":
   "p}..."}`), a value split across concatenated strings, and sensitive
-  business data. Structured records that connectors pass to the sanitizer
-  (metadata, not report excerpts) still decide by the whole name with the
-  sensitive-key rule, so there `{"name": "OpenAIKey", "value": "..."}` and
-  `{"name": "OpenAI:Secret", "value": "..."}` keep a value that has no
-  recognizable format. The rules added for settings, options, numbered
+  business data. Structured name/value records that connectors pass to the
+  sanitizer read their name as a setting too, in either field order
+  (`{"name": "OpenAI:Secret", "value": "..."}`, and an opaque value under
+  `OpenAIKey`); an environment-style name there (`PAGE_TOKEN`) withholds
+  only an opaque value. The rules added for settings, options, numbered
   names and YAML values run after the earlier rules, on their output, so
   they only withhold more. Treat reports as confidential.
 * Generated inventory resource bindings escape literal glob characters. Manual
