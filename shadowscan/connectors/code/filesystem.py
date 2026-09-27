@@ -924,24 +924,6 @@ class FilesystemConnector(BaseConnector):
 
         resolved_root = Path(os.path.realpath(root))
 
-        def skipped_link(rel: str, link: Path) -> None:
-            # Links are never followed. A link that resolves inside the scan
-            # root loses no coverage only if the target is scanned at its real path.
-            target = _resolved_link_target(link, resolved_root)
-            if target is not None and self._link_target_is_scanned(rel, target, resolved_root):
-                return
-            # A single representative diagnostic per root keeps hostile trees
-            # from filling the report with thousands of link names.
-            if root not in self._symlink_warnings:
-                self._symlink_warnings.add(root)
-                message = (
-                    f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
-                )
-                if self.strict_coverage:
-                    self.ctx.error(f"{message}; coverage incomplete")
-                else:
-                    self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
-
         if root.is_file():
             try:
                 size = root.stat().st_size
@@ -959,21 +941,7 @@ class FilesystemConnector(BaseConnector):
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=walk_error):
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else rel_dir
-            kept = []
-            for name in sorted(dirnames):
-                rel = name if rel_dir == "." else f"{rel_dir}/{name}"
-                if self._excluded(rel, name):
-                    continue
-                path = Path(dirpath) / name
-                try:
-                    if path.is_symlink():
-                        skipped_link(rel, path)
-                        continue
-                except OSError:
-                    self.ctx.error(f"code.filesystem: could not inspect {rel}")
-                    continue
-                kept.append(name)
-            dirnames[:] = kept
+            dirnames[:] = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames)
             proj = _nearest_root(rel_dir, roots)
             if rel_dir != "." and any(f in PROJECT_ROOT_MARKERS for f in filenames):
                 roots.append(rel_dir)
@@ -985,7 +953,7 @@ class FilesystemConnector(BaseConnector):
                 p = Path(dirpath) / fn
                 try:
                     if p.is_symlink():
-                        skipped_link(rel, p)
+                        self._skip_link(root, resolved_root, rel, p)
                         continue
                     info = p.stat()
                 except OSError as exc:
@@ -1005,6 +973,43 @@ class FilesystemConnector(BaseConnector):
                     self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
                     return
                 yield rel, p, proj, info.st_size
+
+    def _walked_directories(
+        self, root: Path, resolved_root: Path, dirpath: str, rel_dir: str, dirnames: list[str],
+    ) -> list[str]:
+        """Return the subdirectories of ``dirpath`` the walk descends into, in name order."""
+        kept = []
+        for name in sorted(dirnames):
+            rel = name if rel_dir == "." else f"{rel_dir}/{name}"
+            if self._excluded(rel, name):
+                continue
+            path = Path(dirpath) / name
+            try:
+                if path.is_symlink():
+                    self._skip_link(root, resolved_root, rel, path)
+                    continue
+            except OSError:
+                self.ctx.error(f"code.filesystem: could not inspect {rel}")
+                continue
+            kept.append(name)
+        return kept
+
+    def _skip_link(self, root: Path, resolved_root: Path, rel: str, link: Path) -> None:
+        """Record the coverage gap of a symbolic link, which the walk never follows."""
+        # A link that resolves inside the scan root loses no coverage only if
+        # the target is scanned at its real path.
+        target = _resolved_link_target(link, resolved_root)
+        if target is not None and self._link_target_is_scanned(rel, target, resolved_root):
+            return
+        # A single representative diagnostic per root keeps hostile trees
+        # from filling the report with thousands of link names.
+        if root not in self._symlink_warnings:
+            self._symlink_warnings.add(root)
+            message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
+            if self.strict_coverage:
+                self.ctx.error(f"{message}; coverage incomplete")
+            else:
+                self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
         """Return the share of ``budget`` a file must have left before the walk may start it.
@@ -2189,104 +2194,115 @@ class FilesystemConnector(BaseConnector):
     def _card_finding(self, label: str, root: Path, rel: str, text: str, kind: str) -> Finding | None:
         validation = parse_agent_manifest(rel, text, kind)
         if not validation.valid:
-            for issue in validation.errors:
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+            self._file_errors(rel, validation.errors)
             return None
-        data = validation.data
         # Retain sibling credential context before projecting descriptive fields.
         # An opaque secret may also appear in a description, URL or dependency.
-        data = sanitize(data)
+        data = sanitize(validation.data)
         f = self._base(label, root, rel, Kind.AGENT, "", "agent-manifest")
         if kind == "a2a":
-            f.title = f"A2A agent card: {data.get('name') or rel}"
-            f.add_framework("protocol.a2a")
-            f.add_capability("multi-agent")
-            f.add_evidence(Evidence(
-                signal="file:protocol.a2a", description="A2A Agent Card", location=rel, weight=0.95,
-                signature="protocol.a2a",
-            ))
-            f.metadata["agent_card"] = {
-                "name": data.get("name"),
-                "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
-                "url": data.get("url"),
-                "version": data.get("version"),
-                "protocol_version": data.get("protocolVersion"),
-                "skills": [
-                    s.get("name") or s.get("id") for s in data.get("skills", []) or [] if isinstance(s, dict)
-                ],
-                "capabilities": _clip(data.get("capabilities")),
-                "security_schemes": _clip(
-                    list((data.get("securitySchemes") or {}).keys())
-                    if isinstance(data.get("securitySchemes"), dict) else data.get("authentication")
-                ),
-            }
-            if data.get("url"):
-                apply_matches(f, self.index.match_domains_in_text(str(data["url"])), location=rel)
-            if not data.get("securitySchemes") and not data.get("authentication"):
-                f.add_tag("no-auth-declared")
+            self._describe_a2a_card(f, rel, data)
         elif kind == "m365":
-            f.title = f"M365 Copilot declarative agent: {data.get('name') or rel}"
-            f.add_framework("platform.m365-declarative-agent")
-            f.add_evidence(Evidence(
-                signal="file:platform.m365-declarative-agent",
-                description="Microsoft 365 declarative agent manifest", location=rel, weight=0.95,
-                signature="platform.m365-declarative-agent",
-            ))
-            f.metadata["declarative_agent"] = {
-                "name": data.get("name"),
-                "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
-                "instructions": truncate(sanitize_text(str(data.get("instructions", ""))), 300),
-                "capabilities": [
-                    c.get("name") for c in data.get("capabilities", []) or [] if isinstance(c, dict)
-                ],
-                "actions": [
-                    a.get("id") or a.get("file") for a in data.get("actions", []) or [] if isinstance(a, dict)
-                ],
-                "conversation_starters": len(data.get("conversation_starters", []) or []),
-            }
-            if data.get("actions"):
-                f.add_capability("tool-use")
+            self._describe_m365_agent(f, rel, data)
         elif kind == "langgraph":
-            f.title = f"LangGraph deployment manifest: {rel}"
-            f.add_framework("framework.langgraph")
-            f.add_evidence(Evidence(
-                signal="file:framework.langgraph", description="langgraph.json deployment manifest",
-                location=rel, weight=0.95, signature="framework.langgraph",
-            ))
-            graphs = data.get("graphs", {}) or {}
-            f.metadata["graphs"] = _clip(list(graphs.keys()) if isinstance(graphs, dict) else graphs)
-            f.metadata["dependencies"] = _clip(data.get("dependencies"))
-            env = data.get("env")
-            f.metadata["env_names"] = sorted(env) if isinstance(env, dict) else []
-            if isinstance(env, str):
-                f.metadata["env_file"] = sanitize_text(env)
-            f.add_capability("tool-use")
+            self._describe_langgraph_manifest(f, rel, data)
         elif kind == "crewai":
-            f.title = f"CrewAI agent definitions: {rel}"
-            f.add_framework("framework.crewai")
-            f.add_capability("multi-agent")
-            f.add_evidence(Evidence(
-                signal="file:framework.crewai", description="CrewAI agents.yaml", location=rel, weight=0.9,
-                signature="framework.crewai",
-            ))
-            f.metadata["agents"] = [
-                {
-                    "name": k,
-                    "role": truncate(sanitize_text(str((v or {}).get("role", ""))), 120),
-                    "llm": (v or {}).get("llm"),
-                }
-                for k, v in data.items() if isinstance(v, dict)
-            ]
-            for v in data.values():
-                if isinstance(v, dict) and v.get("llm"):
-                    apply_matches(
-                        f, self.index.match_model(str(v["llm"]).split("/")[-1]),
-                        location=rel, weight_scale=0.6,
-                    )
+            self._describe_crewai_agents(f, rel, data)
         f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.AGENT
         return f
+
+    def _describe_a2a_card(self, f: Finding, rel: str, data: dict[str, Any]) -> None:
+        f.title = f"A2A agent card: {data.get('name') or rel}"
+        f.add_framework("protocol.a2a")
+        f.add_capability("multi-agent")
+        f.add_evidence(Evidence(
+            signal="file:protocol.a2a", description="A2A Agent Card", location=rel, weight=0.95,
+            signature="protocol.a2a",
+        ))
+        f.metadata["agent_card"] = {
+            "name": data.get("name"),
+            "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
+            "url": data.get("url"),
+            "version": data.get("version"),
+            "protocol_version": data.get("protocolVersion"),
+            "skills": [
+                s.get("name") or s.get("id") for s in data.get("skills", []) or [] if isinstance(s, dict)
+            ],
+            "capabilities": _clip(data.get("capabilities")),
+            "security_schemes": _clip(
+                list((data.get("securitySchemes") or {}).keys())
+                if isinstance(data.get("securitySchemes"), dict) else data.get("authentication")
+            ),
+        }
+        if data.get("url"):
+            apply_matches(f, self.index.match_domains_in_text(str(data["url"])), location=rel)
+        if not data.get("securitySchemes") and not data.get("authentication"):
+            f.add_tag("no-auth-declared")
+
+    @staticmethod
+    def _describe_m365_agent(f: Finding, rel: str, data: dict[str, Any]) -> None:
+        f.title = f"M365 Copilot declarative agent: {data.get('name') or rel}"
+        f.add_framework("platform.m365-declarative-agent")
+        f.add_evidence(Evidence(
+            signal="file:platform.m365-declarative-agent",
+            description="Microsoft 365 declarative agent manifest", location=rel, weight=0.95,
+            signature="platform.m365-declarative-agent",
+        ))
+        f.metadata["declarative_agent"] = {
+            "name": data.get("name"),
+            "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
+            "instructions": truncate(sanitize_text(str(data.get("instructions", ""))), 300),
+            "capabilities": [
+                c.get("name") for c in data.get("capabilities", []) or [] if isinstance(c, dict)
+            ],
+            "actions": [
+                a.get("id") or a.get("file") for a in data.get("actions", []) or [] if isinstance(a, dict)
+            ],
+            "conversation_starters": len(data.get("conversation_starters", []) or []),
+        }
+        if data.get("actions"):
+            f.add_capability("tool-use")
+
+    @staticmethod
+    def _describe_langgraph_manifest(f: Finding, rel: str, data: dict[str, Any]) -> None:
+        f.title = f"LangGraph deployment manifest: {rel}"
+        f.add_framework("framework.langgraph")
+        f.add_evidence(Evidence(
+            signal="file:framework.langgraph", description="langgraph.json deployment manifest",
+            location=rel, weight=0.95, signature="framework.langgraph",
+        ))
+        graphs = data.get("graphs", {}) or {}
+        f.metadata["graphs"] = _clip(list(graphs.keys()) if isinstance(graphs, dict) else graphs)
+        f.metadata["dependencies"] = _clip(data.get("dependencies"))
+        env = data.get("env")
+        f.metadata["env_names"] = sorted(env) if isinstance(env, dict) else []
+        if isinstance(env, str):
+            f.metadata["env_file"] = sanitize_text(env)
+        f.add_capability("tool-use")
+
+    def _describe_crewai_agents(self, f: Finding, rel: str, data: dict[str, Any]) -> None:
+        f.title = f"CrewAI agent definitions: {rel}"
+        f.add_framework("framework.crewai")
+        f.add_capability("multi-agent")
+        f.add_evidence(Evidence(
+            signal="file:framework.crewai", description="CrewAI agents.yaml", location=rel, weight=0.9,
+            signature="framework.crewai",
+        ))
+        f.metadata["agents"] = [
+            {
+                "name": k,
+                "role": truncate(sanitize_text(str((v or {}).get("role", ""))), 120),
+                "llm": (v or {}).get("llm"),
+            }
+            for k, v in data.items() if isinstance(v, dict)
+        ]
+        for v in data.values():
+            if isinstance(v, dict) and v.get("llm"):
+                apply_matches(
+                    f, self.index.match_model(str(v["llm"]).split("/")[-1]), location=rel, weight_scale=0.6,
+                )
 
     def _workflow_finding(self, label: str, root: Path, rel: str, hits: list[tuple[Match, str]]) -> Finding:
         f = self._base(label, root, rel, Kind.WORKFLOW, "", "workflow-export")
