@@ -193,8 +193,39 @@ _OPAQUE_VALUE = re.compile(
     r"|(?P<bare>[A-Za-z0-9+/_.~-]{8,}={0,2})(?![^\s,;)}\]]))"
 )
 # An unquoted value made of words is an identifier (key = Ed25519PrivateKey).
-# Random keys almost always have a one- or two-letter lowercase run.
-_WORDY = re.compile(r"(?:[A-Z][a-z]+|[a-z]{3,}|[A-Z]{2,}|[0-9]+|_)+")
+# Random keys almost always have a one- or two-letter lowercase run. The
+# value is read as runs of one character class, never as a pattern of
+# repeated words: '(?:[A-Z][a-z]+|[a-z]{3,}|[A-Z]{2,}|[0-9]+|_)+' split a
+# long run of one class every possible way before it failed, so
+# 'key: ' + 'a' * 56 + '.' took minutes.
+_WORD_RUN = re.compile(r"[A-Z]+|[a-z]+|[0-9_]+|[^A-Za-z0-9_]")
+
+
+def _wordy(value: str) -> bool:
+    """Whether ``value`` is made of words, digits and underscores, as identifiers are.
+
+    A word is capitalized ('Private'), lowercase of three letters or more
+    ('key') or uppercase of two or more ('API'). A lowercase run shorter than
+    three letters therefore needs the capital before it, which an uppercase
+    run can give unless that leaves it one capital ('ABcd' is not a word; 'Ab',
+    'ABCd' and 'ABcde' are), and an uppercase run needs two letters unless a
+    lowercase run follows it. Reads the value once.
+    """
+    runs = _WORD_RUN.findall(value)
+    for index, run in enumerate(runs):
+        if "a" <= run[0] <= "z":
+            before = runs[index - 1] if index else ""
+            if len(run) < 3 and not ("A" <= before[0:1] <= "Z" and len(before) != 2):
+                return False
+        elif "A" <= run[0] <= "Z":
+            after = runs[index + 1] if index + 1 < len(runs) else ""
+            if len(run) < 2 and not "a" <= after[0:1] <= "z":
+                return False
+        elif not ("0" <= run[0] <= "9" or run[0] == "_"):
+            return False
+    return bool(runs)
+
+
 # A sensitive key whose colon ends its line, then a lone word on the next,
 # unindented line ('token:\n<value>' in notes and error text). An indented
 # line is YAML nesting, which the multiline pass handles.
@@ -236,9 +267,9 @@ def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
             continue
         group = "quoted" if match.group("quoted") is not None else "bare"
         value = match.group(group)
-        if group == "bare" and (_WORDY.fullmatch(value) or (match.group("separator") == ":" and not (
+        if group == "bare" and ((match.group("separator") == ":" and not (
             extended and text.startswith((" ", "\t"), match.end("separator"))
-        ))):
+        )) or _wordy(value)):
             continue
         if match.group("quote") and _interpolated(match.group("prefix") or "", match.group("quote"), value):
             continue  # interpolated text is assembled elsewhere

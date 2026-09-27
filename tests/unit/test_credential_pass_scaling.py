@@ -7,6 +7,7 @@ exhaust the file's matching budget, leaving the scan incomplete.
 
 from __future__ import annotations
 
+import itertools
 import random
 import re
 import time
@@ -68,6 +69,54 @@ def test_context_named_credential_passes_scale_linearly(unit):
     # quadratic pass costs sixteen times). The floor absorbs timer noise on
     # tiny inputs; no absolute bound, since coverage tracing slows CI runners.
     assert large_time < max(small_time, 0.02) * 10, (small_time, large_time)
+
+
+# The pattern that decided whether an unquoted value was made of words.
+_WORDY = re.compile(r"(?:[A-Z][a-z]+|[a-z]{3,}|[A-Z]{2,}|[0-9]+|_)+")
+
+
+def test_reading_a_value_once_finds_the_words_the_pattern_found():
+    for length in range(8):
+        for characters in itertools.product("Aa1_-", repeat=length):
+            value = "".join(characters)
+            assert redaction._wordy(value) == (_WORDY.fullmatch(value) is not None), repr(value)
+    rng = random.Random(20260929)
+    pieces = ["A", "Z", "a", "z", "0", "9", "_", "-", ".", "=", "é", "Ä"]
+    for _ in range(20_000):
+        value = "".join(rng.choice(pieces) * rng.randint(1, 4) for _ in range(rng.randint(1, 6)))[:16]
+        assert redaction._wordy(value) == (_WORDY.fullmatch(value) is not None), repr(value)
+
+
+# A long run of one character class under a credential-like name, ended by a
+# character the run rejects. The pattern above split such a run every way it
+# could before it failed: at these sizes it took one to five seconds, and
+# every few more characters doubled that. It read every unquoted value after
+# '=' ('key=' hung too), and for a while every value after ':' as well, in
+# structured values as in text.
+@pytest.mark.parametrize(("prefix", "run", "suffix", "count"), [
+    ("token: ", "a", ".", 46),
+    ("key: ", "1", "-", 24),
+    ("key=", "1", "-", 24),
+    ("credential:sha256:", "a", "--auth", 44),
+    ("openaiKey: ", "A", ".", 34),
+    ("api_key: ", "abc", "+", 15),
+])
+@pytest.mark.parametrize("structured", [False, True], ids=["text", "structured"])
+def test_a_long_run_of_one_character_class_is_read_once(prefix, run, suffix, count, structured):
+    def cost(repeats: int) -> float:
+        source = prefix + run * repeats + suffix
+        best = float("inf")
+        for _ in range(3):
+            started = time.perf_counter()
+            if structured:
+                redaction.sanitize({"note": source})
+            else:
+                sanitize_text(source)
+            best = min(best, time.perf_counter() - started)
+        return best
+
+    assert cost(count) < max(cost(8), 0.02) * 10
+    assert cost(4000) < max(cost(1000), 0.02) * 10
 
 
 def test_blank_runs_inside_a_record_value_scale_linearly():
