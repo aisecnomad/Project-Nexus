@@ -49,8 +49,9 @@ score is auditable.
 ## Amendment (2026-09-27)
 
 The decision above stands as recorded. Two statements in it do not describe
-the implementation, which has used the formula below since the first release;
-this amendment records the current model instead of rewriting the decision.
+the implementation, which has used the formulas below since this ADR was
+accepted; this amendment records the current model instead of rewriting the
+decision.
 
 - **Confidence is a heuristic evidence score, not P(agent | evidence).** It is
   the noisy-OR 1 − ∏(1 − wᵢ) of evidence weights clamped to [0, 1], rounded to

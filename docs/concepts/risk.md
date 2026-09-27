@@ -41,7 +41,7 @@ include:
 
 | Factor | Description | Default weight |
 |--------|-------------|----------------|
-| `kind` | Base weight by finding kind: 30 `secret`; 15 `agent` or `mcp-server`; 10 `agent-config`, `workflow`, `bot-app`, `oauth-grant`, `service-identity`, `iam-grant`, `gateway-caller` or `infra`; 5 `framework-usage`, `cloud-resource` or `token` | 5–30 |
+| `kind` | Base weight by finding kind (listed below the table) | 5–30 |
 | `shadow` | Not in the sanctioned inventory (only when an inventory is supplied) | 25 |
 | `registered` | Matched to exactly one inventory entry | −10 |
 | `no-owner` | No identifiable owner | 10 |
@@ -52,6 +52,11 @@ include:
 | `capability:code-exec` | Can execute arbitrary code | 15 |
 | `capability:autonomous` | Operates without human approval | 10 |
 | `tag:disabled` / `tag:inactive` / `tag:suspended` | Resource is not active | −10 |
+
+The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;
+10 for `agent-config`, `workflow`, `bot-app`, `oauth-grant`,
+`service-identity`, `iam-grant`, `gateway-caller` and `infra`; and 5 for
+`framework-usage`, `cloud-resource` and `token`.
 
 The complete tables are `KIND_BASE`, `CAPABILITY_WEIGHTS`, `TAG_WEIGHTS`,
 `PROVIDER_WEIGHTS` and `GOVERNANCE_WEIGHTS` in `shadowscan/risk.py`; tags with
