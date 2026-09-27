@@ -13,6 +13,9 @@
 - CI exposes a single `CI gate` covering documentation, every supported Python
   version, the container checks, and DCO on pull requests. The repository ruleset
   must require that check; workflow code alone does not configure branch rules.
+- Size-scaled source matching gives files near a 256 KiB budget boundary the
+  next bounded time slice, avoiding scheduler-sensitive false incompleteness
+  without weakening the fail-closed timeout behavior.
 - The Python distribution is now `project-nexus-shadowscan` to distinguish it
   from the unrelated PyPI package. The `shadowscan` command, import namespace,
   entry-point group and report schemas retain their names. No package is

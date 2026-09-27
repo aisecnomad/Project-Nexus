@@ -211,8 +211,12 @@ DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
 _IGNORED_STAT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
 # Per-file matching budget: `scan_timeout` covers the first 256 KiB and one
 # more budget is added per further 256 KiB, capped so a hostile file still
-# fails fast. A 971 KB JSON index gets four default budgets (8 s).
+# fails fast. The final 64 KiB of the first band receives the next budget
+# early; this avoids a sharp, scheduler-sensitive timeout cliff for the
+# mid-sized source files most likely to sit just below the first boundary.
+# A 971 KB JSON index still gets four default budgets (8 s).
 SCAN_TIMEOUT_STEP_BYTES = 256 * 1024
+SCAN_TIMEOUT_BAND_HEADROOM_BYTES = 64 * 1024
 SCAN_TIMEOUT_CAP_SECONDS = 10.0
 # Stop the walk this far before the connector deadline so the findings
 # collected so far are emitted, sanitized and accepted by the engine, which
@@ -399,10 +403,14 @@ def scan_timeout_for_size(base: float, size: int) -> float:
     """Return the matching budget in seconds for one file of ``size`` bytes.
 
     ``base`` is the configured ``scan_timeout``. Each further 256 KiB adds
-    one more ``base`` so ordinary large text files finish on an idle core;
-    the result is capped at 10 seconds, or at ``base`` when that is higher.
+    one more ``base`` so ordinary large text files finish on an idle core; the
+    final 64 KiB of the first band receives that next slice early. The result
+    is capped at 10 seconds, or at ``base`` when that is higher.
     """
-    steps = max(size, 0) // SCAN_TIMEOUT_STEP_BYTES
+    size = max(size, 0)
+    steps = size // SCAN_TIMEOUT_STEP_BYTES
+    if steps == 0 and size >= SCAN_TIMEOUT_STEP_BYTES - SCAN_TIMEOUT_BAND_HEADROOM_BYTES:
+        steps = 1
     return min(base * (1 + steps), max(base, SCAN_TIMEOUT_CAP_SECONDS))
 
 
