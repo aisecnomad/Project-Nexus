@@ -52,7 +52,9 @@ def test_projected_server_keeps_its_field_order_and_flags_inline_secrets() -> No
 
 
 def test_entry_without_command_url_or_package_is_dropped_unless_disabled() -> None:
-    servers, errors = _parse({"mcpServers": {"empty": {}, "off": {"disabled": True}, "not-on": {"enabled": False}}})
+    servers, errors = _parse(
+        {"mcpServers": {"empty": {}, "off": {"disabled": True}, "not-on": {"enabled": False}}},
+    )
     assert servers == []
     assert errors == ["MCP server entry has no command, URL, or valid package"]
 
