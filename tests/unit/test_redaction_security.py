@@ -178,12 +178,17 @@ def test_generic_saas_does_not_copy_arbitrary_export_columns():
     assert "raw" not in result[0].metadata
 
 
-@pytest.mark.parametrize("formula", ["=1+1", "+1+1", "-1+1", "@SUM(1)", "\t=1+1", "\r=1+1", "\n=1+1", "  =1+1", "\ufeff=1+1"])
-def test_csv_formula_values_are_literal_text(formula):
+@pytest.mark.parametrize("formula,expected", [
+    ("=1+1", "'=1+1"), ("+1+1", "'+1+1"), ("-1+1", "'-1+1"), ("@SUM(1)", "'@SUM(1)"),
+    # A tab or line break also starts a cell when the report is split on it.
+    ("\t=1+1", "'\t'=1+1"), ("\r=1+1", "'\r'=1+1"), ("\n=1+1", "'\n'=1+1"),
+    ("  =1+1", "'  =1+1"), ("\ufeff=1+1", "'\ufeff=1+1"),
+])
+def test_csv_formula_values_are_literal_text(formula, expected):
     f = _finding(title=formula, owner=formula, evidence=[Evidence(signal="test", description=formula)])
     row = next(csv.DictReader(io.StringIO(render_csv(ScanResult(findings=[f])))))
     for column in ("title", "owner", "top_evidence"):
-        assert row[column] == "'" + formula
+        assert row[column] == expected
     assert row["confidence"] == "0.0"
 
 

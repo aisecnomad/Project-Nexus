@@ -8,12 +8,13 @@ import re
 from shadowscan.models import Finding, ScanResult
 
 _LEVEL_ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": "⚪"}
+_LEVEL_ORDER = ["critical", "high", "medium", "low", "info"]
 _MARKDOWN_META = re.compile(r"([\\`*_\[\]~|])")
 _BACKTICKS = re.compile(r"`+")
 _AUTOLINK = re.compile(r"(?i)\b(?:(https?)://|(www)\.)")
 _LINE_BREAKS = {
     "\r": r"\r", "\n": r"\n", "\t": r"\t", "\f": r"\f", "\v": r"\v",
-    "\x85": r"\u0085", "\u2028": r"\u2028", "\u2029": r"\u2029",
+    "\x85": r"\u0085", " ": r" ", " ": r" ",
 }
 
 
@@ -40,6 +41,11 @@ def _text(value: object) -> str:
     # strings readable without making an exported report a link-launch surface.
     # A single alternation handles both forms in one pass over the input.
     content = _AUTOLINK.sub(_defang_autolink, content)
+    # For the same reason, "@user" and "@org/team" notify people when a report
+    # is pasted into a pull request or issue, and GFM autolinks bare e-mail
+    # addresses. Defang every "@" like the "[.]" of a defanged host; the
+    # brackets are escaped below and render as "[@]". Code spans need neither.
+    content = content.replace("@", "[@]")
     return _MARKDOWN_META.sub(r"\\\1", html.escape(content, quote=False))
 
 
@@ -67,6 +73,14 @@ def _snippet_block(value: object) -> list[str]:
     return ["", f"  {fence}text", *(f"  {line}" for line in content.split("\n")), f"  {fence}"]
 
 
+def _counts(counts: dict[str, int], limit: int | None = None, *, parenthesized: bool = False) -> str:
+    """Join escaped ``name: count`` (or ``name (count)``) summary entries."""
+    items = list(counts.items())[:limit]
+    if parenthesized:
+        return ", ".join(f"{_text(k)} ({v})" for k, v in items)
+    return ", ".join(f"{_text(k)}: {v}" for k, v in items)
+
+
 def render_markdown(result: ScanResult) -> str:
     for finding in result.findings:
         finding.sanitize()
@@ -74,20 +88,31 @@ def render_markdown(result: ScanResult) -> str:
     lines: list[str] = []
     lines.append("# ShadowScan report")
     lines.append("")
-    lines.append(f"_Generated {_text(result.finished_at or result.started_at)} by ShadowScan {_text(result.version)}_")
+    generated = _text(result.finished_at or result.started_at)
+    lines.append(f"_Generated {generated} by ShadowScan {_text(result.version)}_")
     lines.append("")
     if not result.complete:
-        lines.extend(["**INCOMPLETE SCAN:** some required inputs could not be assessed. Review connector statistics.", ""])
+        lines.extend([
+            "**INCOMPLETE SCAN:** some required inputs could not be assessed. Review connector statistics.",
+            "",
+        ])
     lines.append("## Summary")
     lines.append("")
-    lines.append(f"- **Findings:** {s['total']}" + (f" (**{s['shadow']} shadow** — not in the inventory of {result.inventory_size} registered agents)" if result.inventory_size else ""))
-    lines.append("- **By risk:** " + ", ".join(f"{_LEVEL_ICON.get(k, '')} {k}: {v}" for k, v in sorted(s["by_risk_level"].items(), key=lambda kv: ["critical", "high", "medium", "low", "info"].index(kv[0]))))
-    lines.append("- **By surface:** " + ", ".join(f"{_text(k)}: {v}" for k, v in sorted(s["by_surface"].items())))
-    lines.append("- **By kind:** " + ", ".join(f"{_text(k)}: {v}" for k, v in sorted(s["by_kind"].items())))
+    shadow_note = ""
+    if result.inventory_size:
+        shadow_note = (
+            f" (**{s['shadow']} shadow** — not in the inventory of"
+            f" {result.inventory_size} registered agents)"
+        )
+    lines.append(f"- **Findings:** {s['total']}" + shadow_note)
+    by_risk = sorted(s["by_risk_level"].items(), key=lambda kv: _LEVEL_ORDER.index(kv[0]))
+    lines.append("- **By risk:** " + ", ".join(f"{_LEVEL_ICON.get(k, '')} {k}: {v}" for k, v in by_risk))
+    lines.append("- **By surface:** " + _counts(dict(sorted(s["by_surface"].items()))))
+    lines.append("- **By kind:** " + _counts(dict(sorted(s["by_kind"].items()))))
     if s["frameworks"]:
-        lines.append("- **Top technologies:** " + ", ".join(f"{_text(k)} ({v})" for k, v in list(s["frameworks"].items())[:12]))
+        lines.append("- **Top technologies:** " + _counts(s["frameworks"], 12, parenthesized=True))
     if s["model_providers"]:
-        lines.append("- **Model providers:** " + ", ".join(f"{_text(k)} ({v})" for k, v in list(s["model_providers"].items())[:10]))
+        lines.append("- **Model providers:** " + _counts(s["model_providers"], 10, parenthesized=True))
     if s["errors"]:
         lines.append(f"- **Connector errors:** {s['errors']} (see stats)")
     lines.append("")
@@ -97,8 +122,12 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("|---|---|---|---|---|---|---|---|")
     for f in result.findings:
         shadow = "" if f.shadow is None else ("**yes**" if f.shadow else "no")
+        level = f.risk.level.value
+        technologies = _text(", ".join((f.frameworks + f.model_providers)[:4]))
         lines.append(
-            f"| {_LEVEL_ICON.get(f.risk.level.value, '')} {f.risk.level.value} ({f.risk.score}) | {shadow} | {f.surface.value} | {f.kind.value} | {_text(f.title)} | {_text(f.owner or '—')} | {f.confidence:.2f} | {_text(', '.join((f.frameworks + f.model_providers)[:4]))} |"
+            f"| {_LEVEL_ICON.get(level, '')} {level} ({f.risk.score}) | {shadow} | {f.surface.value}"
+            f" | {f.kind.value} | {_text(f.title)} | {_text(f.owner or '—')} | {f.confidence:.2f}"
+            f" | {technologies} |"
         )
     lines.append("")
     lines.append("## Details")
@@ -110,8 +139,14 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("| Connector | Objects examined | Findings | Errors | Warnings | Status |")
     lines.append("|---|---|---|---|---|---|")
     for st in result.stats:
-        status = f"skipped: {st.skip_reason}" if st.skipped else "incomplete" if st.incomplete or st.errors else "cached" if st.cached else "ok"
-        lines.append(f"| {_text(st.connector)} | {st.objects_examined} | {st.findings} | {len(st.errors)} | {len(st.warnings)} | {_text(status)} |")
+        if st.skipped:
+            status = f"skipped: {st.skip_reason}"
+        else:
+            status = "incomplete" if st.incomplete or st.errors else "cached" if st.cached else "ok"
+        lines.append(
+            f"| {_text(st.connector)} | {st.objects_examined} | {st.findings} | {len(st.errors)}"
+            f" | {len(st.warnings)} | {_text(status)} |"
+        )
     lines.append("")
     for st in result.stats:
         for diagnostic in [*st.errors, *st.warnings]:
@@ -122,18 +157,29 @@ def render_markdown(result: ScanResult) -> str:
 
 def _finding_section(f: Finding) -> list[str]:
     out: list[str] = []
-    out.append(f"### {_LEVEL_ICON.get(f.risk.level.value, '')} {_text(f.title)}")
+    level = f.risk.level.value
+    out.append(f"### {_LEVEL_ICON.get(level, '')} {_text(f.title)}")
     out.append("")
     out.append(f"- **Id:** {_code(f.id)}  ")
-    out.append(f"- **Resource:** {_code(f.resource)} ({_text(f.resource_type)}) on **{f.surface.value}** via {_code(f.connector)}  ")
+    out.append(
+        f"- **Resource:** {_code(f.resource)} ({_text(f.resource_type)}) on **{f.surface.value}**"
+        f" via {_code(f.connector)}  "
+    )
     if f.provider or f.account or f.region:
-        out.append("- **Where:** " + " ".join(_text(value) for value in (f.provider, f.account, f.region) if value) + "  ")
+        where = " ".join(_text(value) for value in (f.provider, f.account, f.region) if value)
+        out.append(f"- **Where:** {where}  ")
     shadow = "n/a" if f.shadow is None else "yes" if f.shadow else f"no ({_text(f.registry_match)})"
-    out.append(f"- **Risk:** {f.risk.level.value} ({f.risk.score}) · **Confidence:** {f.confidence:.2f} ({f.likelihood.value}) · **Shadow:** {shadow}  ")
+    out.append(
+        f"- **Risk:** {level} ({f.risk.score}) · **Confidence:** {f.confidence:.2f}"
+        f" ({f.likelihood.value}) · **Shadow:** {shadow}  "
+    )
     if f.owner:
         out.append(f"- **Owner:** {_text(f.owner)}  ")
     if f.frameworks or f.model_providers:
-        out.append(f"- **Technologies:** {', '.join(map(_text, f.frameworks))}{' · ' if f.frameworks and f.model_providers else ''}{', '.join(map(_text, f.model_providers))}  ")
+        separator = " · " if f.frameworks and f.model_providers else ""
+        frameworks = ", ".join(map(_text, f.frameworks))
+        providers = ", ".join(map(_text, f.model_providers))
+        out.append(f"- **Technologies:** {frameworks}{separator}{providers}  ")
     if f.models:
         out.append(f"- **Models:** {', '.join(map(_text, f.models[:8]))}  ")
     if f.capabilities:
@@ -141,14 +187,21 @@ def _finding_section(f: Finding) -> list[str]:
     if f.tags:
         out.append(f"- **Tags:** {', '.join(map(_text, f.tags))}  ")
     if f.permissions:
-        out.append(f"- **Permissions:** {', '.join(map(_text, f.permissions[:15]))}{' …' if len(f.permissions) > 15 else ''}  ")
+        more = " …" if len(f.permissions) > 15 else ""
+        out.append(f"- **Permissions:** {', '.join(map(_text, f.permissions[:15]))}{more}  ")
     if f.first_seen or f.last_seen:
         out.append(f"- **Seen:** {_text(f.first_seen or '?')} → {_text(f.last_seen or '?')}  ")
     activity = f.metadata.get("runtime_activity")
     if isinstance(activity, dict):
-        out.append(f"- **Gateway activity:** {_text(activity.get('status'))}; matching events: {_text(activity.get('events', 0))}; production observed: {_text(activity.get('production_observed', False))}  ")
-        if isinstance(activity.get("window"), dict):
-            out.append(f"- **Observation window:** {_text(activity['window'].get('start'))} → {_text(activity['window'].get('end'))}  ")
+        out.append(
+            f"- **Gateway activity:** {_text(activity.get('status'))};"
+            f" matching events: {_text(activity.get('events', 0))};"
+            f" production observed: {_text(activity.get('production_observed', False))}  "
+        )
+        window = activity.get("window")
+        if isinstance(window, dict):
+            start, end = _text(window.get("start")), _text(window.get("end"))
+            out.append(f"- **Observation window:** {start} → {end}  ")
         out.append(f"- **Activity limits:** {_text(activity.get('limitations', ''))}  ")
     related = f.metadata.get("related")
     if related:
