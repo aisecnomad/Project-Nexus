@@ -36,6 +36,7 @@ from shadowscan.connectors.code.github import (
 from shadowscan.connectors.common import apply_matches, config_boolean, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.git import (
+    CloneSizeError,
     CloneTimeoutError,
     clone_environment,
     clone_limits,
@@ -72,7 +73,7 @@ class GitLabConnector(BaseConnector):
         "mode": "clone | api",
         "include_archived": "default false",
         "max_projects": "default 500",
-        "clone_max_bytes": "preflight repository size cap (default 268435456); requires a disk quota for hard limits",
+        "clone_max_bytes": "provider size preflight and observed checkout size cap (default 268435456); strict disk limits require an OS quota",
         "clone_timeout_seconds": "per-repository git clone deadline (default 120)",
         "scan_timeout": "matching budget in seconds per file (default 2)",
         "strict_coverage": "see code.filesystem (default false)",
@@ -426,7 +427,17 @@ class GitLabConnector(BaseConnector):
             )
         cmd += ["--", url, dest]
         try:
-            return run_bounded_clone(cmd, env, self.ctx, self.clone_timeout_seconds)
+            return run_bounded_clone(
+                cmd,
+                env,
+                self.ctx,
+                self.clone_timeout_seconds,
+                destination=dest,
+                max_bytes=self.clone_max_bytes,
+            )
+        except CloneSizeError as exc:
+            self.ctx.warn(f"code.gitlab: {exc}; using sampled API mode", incomplete=True)
+            return False
         except (OSError, CloneTimeoutError):
             return False
 

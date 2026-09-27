@@ -2,6 +2,26 @@
 
 ## 0.1.1 — Unreleased
 
+### September 27 review follow-up
+
+- Opaque values nested under a sensitive credential container are now remembered
+  before that container is redacted. Repeated values in sibling report fields
+  and optional record exports are redacted too; descriptive provider and status
+  fields remain available. Report and export regressions cover the boundary.
+- GitHub and GitLab clones now check observed local checkout size during the
+  clone and after Git exits, in addition to the provider size preflight. A
+  measurement failure or exceeded cap stops the Git process group and leaves
+  the scan incomplete with sampled API fallback. Sampling may overshoot and
+  does not limit network bytes; use a worker disk quota for a hard ceiling.
+- The evaluation runner supports explicit checks for expected and forbidden
+  finding kinds, product signatures and model providers, with counts separated
+  from the one-target binary accuracy result. Selected authored cases now
+  guard against attribution noise; they do not establish field accuracy.
+- Contributor and governance guidance now describes the configured pull-request
+  approval and required-status rules, with dated observations of their changing
+  enforcement state. The dated assurance report identifies its historical corpus
+  count separately from the current corpus.
+
 ### September 27 review corrections
 
 - Offline exports, approval inventories, imported reports, repository manifests,

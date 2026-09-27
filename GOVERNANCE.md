@@ -8,17 +8,22 @@ security advisories and repository administration. Contributors are welcome;
 there is currently no foundation, governing board or independent review team.
 
 The detailed [review and merge policy](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy)
-is authoritative. Routine changes receive maintainer review and automated
-checks; an independent human approval is preferred but is not guaranteed in the
-current single-maintainer process. Independent human review is required before
-any tagged release. These are different assurances and must not be conflated.
+is authoritative. The `main` ruleset is configured to require one approving
+review from someone with write access, an up-to-date branch and passing
+`test (3.11)`, `test (3.12)` and `analyze` checks before a pull request can
+merge, and to dismiss stale approvals after a new push. Its enforcement has been
+switched on and off during 2026-09; a disabled ruleset blocks nothing. The
+author cannot approve their own change; the single maintainer therefore needs a
+second eligible human reviewer for changes they author. AI-assisted review is
+advisory, not an approval. Independent human review is also required before any
+tagged release.
 
 Repository settings may change. Consult the
 [live repository rules](https://github.com/aisecnomad/Project-Nexus/rules) and the
 [verification commands](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#merge-gate-and-review-status)
-before relying on enforcement. A configured but disabled ruleset blocks nothing;
-this document does not claim that GitHub enforces the written review policy.
-Do not weaken rulesets or bypass failed checks to merge a change.
+before relying on enforcement. The ruleset has no configured bypass actors,
+but it only blocks anything while it is enabled. Do not weaken it, bypass
+review or checks, or count a green workflow as an independent review.
 
 ## Roles
 
@@ -71,9 +76,10 @@ entitle someone to repository administration. To offer sustained triage or
 review help, open an issue titled `Maintainer interest`; see the
 [maintainer roster](https://github.com/aisecnomad/Project-Nexus/blob/main/MAINTAINERS.md).
 
-When an independent reviewer is available, enable and verify required approvals
-for routine pull requests. Access should be reviewed when responsibilities
-change or someone steps away. A maintainer handover should record the successor,
+Recruit an independent reviewer with appropriate access for maintainer-authored
+pull requests and verify that the approval requirement remains enforced. Access
+should be reviewed when responsibilities change or someone steps away. A
+maintainer handover should record the successor,
 release and security responsibilities, and access transfer before the outgoing
 maintainer leaves. Revoke obsolete access and rotate shared credentials that a
 departing maintainer could access, where applicable. Update the maintainer roster

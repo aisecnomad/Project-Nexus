@@ -1,0 +1,341 @@
+{
+  "schema": 1,
+  "metadata": {
+    "name": "Project Nexus authored finding attribution regressions",
+    "type": "synthetic",
+    "provenance": "Handwritten short source samples for known kind, product and provider checks. No credentials, live tenants, independent human labels, or field accuracy claims.",
+    "known_gap_policy": {
+      "max_count": 1,
+      "expires_on": "2026-12-31"
+    }
+  },
+  "cases": [
+    {
+      "id": "py-langgraph",
+      "family": "agent",
+      "description": "Generic LangGraph graph construction in active Python source is framework usage, not an agent",
+      "files": {
+        "app/graph.py": "from langgraph.graph import StateGraph\nflow = StateGraph(dict)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.langgraph"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "agent"
+          },
+          {
+            "kind": "agent",
+            "product_signature": "framework.langchain"
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.langgraph"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "py-langgraph-openai",
+      "family": "agent",
+      "description": "LangGraph agent with an OpenAI model integration",
+      "files": {
+        "app/agent.py": "from langchain_openai import ChatOpenAI\nfrom langgraph.prebuilt import create_react_agent\nagent = create_react_agent(ChatOpenAI(model=\"chat-model\"), tools=[])\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.langgraph",
+            "provider_signature": "provider.openai"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "agent",
+            "provider_signature": "provider.anthropic"
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.langchain",
+              "framework.langgraph"
+            ],
+            "provider_signatures": [
+              "provider.openai"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "dependency-without-agent",
+      "family": "agent",
+      "description": "A LangGraph dependency alone establishes usage but no active agent",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"graph-dependency-example\"\nversion = \"1.0.0\"\ndependencies = [\"langgraph\"]\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.langgraph"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "agent"
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.langgraph"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "spring-ai-tool-method",
+      "family": "agent",
+      "description": "Spring AI ChatClient and tool annotation with no LangChain4j import",
+      "files": {
+        "pom.xml": "<project><dependencies><dependency><groupId>org.springframework.ai</groupId><artifactId>spring-ai-openai-spring-boot-starter</artifactId></dependency></dependencies></project>\n",
+        "src/main/java/example/TicketAssistant.java": "package example;\nimport org.springframework.ai.chat.client.ChatClient;\nimport org.springframework.ai.tool.annotation.Tool;\nclass TicketAssistant {\n    private ChatClient client;\n    @Tool(description = \"Look up a ticket\")\n    public String findTicket(String ticket) { return ticket; }\n    String answer(String question) {\n        return client.prompt().user(question).tools(this).call().content();\n    }\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.spring-ai"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.spring-ai"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.langchain4j"
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.spring-ai"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "n8n-compose-workflow",
+      "family": "workflow",
+      "description": "n8n AI Agent workflow with a Docker Compose service and no Kubernetes resources Known gap: a Docker Compose service is incorrectly credited to Kubernetes agent workloads.",
+      "files": {
+        "workflows/triage.json": "{\"name\": \"triage\", \"active\": true, \"nodes\": [{\"name\": \"AI Agent\", \"type\": \"@n8n/n8n-nodes-langchain.agent\", \"parameters\": {}}, {\"name\": \"Model\", \"type\": \"@n8n/n8n-nodes-langchain.lmChatOpenAi\", \"parameters\": {}}], \"connections\": {}}\n",
+        "docker-compose.yml": "services:\n  n8n:\n    image: docker.n8n.io/n8nio/n8n:1.70.0\n    ports:\n      - \"127.0.0.1:5678:5678\"\n"
+      },
+      "target": {
+        "kind": "workflow",
+        "signature": "platform.n8n"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "workflow",
+            "product_signature": "platform.n8n",
+            "provider_signature": "provider.openai"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "infra",
+            "product_signature": "cloud.kubernetes-agent-workloads"
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "workflow",
+            "product_signatures": [
+              "platform.n8n"
+            ],
+            "provider_signatures": [
+              "provider.openai"
+            ]
+          }
+        ]
+      },
+      "known_gap": true
+    },
+    {
+      "id": "openai-agents-sdk-ts",
+      "family": "agent",
+      "description": "OpenAI Agents SDK construction without Mastra imports",
+      "files": {
+        "package.json": "{\"name\": \"agent-example\", \"version\": \"1.0.0\", \"dependencies\": {\"@openai/agents\": \"^0.0.10\"}}\n",
+        "src/agent.ts": "import { Agent } from \"@openai/agents\";\nexport const specialist = new Agent({ name: \"Specialist\", instructions: \"Summarize tickets.\" });\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.openai-agents-sdk"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.mastra"
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.openai-agents-sdk"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "insurance-service",
+      "family": "agent",
+      "description": "Plain insurance assignment service has no AI agent",
+      "files": {
+        "app/assignment.py": "class InsuranceAgent:\n    def __init__(self, name: str):\n        self.name = name\n\ndef assign(agents: list[InsuranceAgent], claim: str) -> InsuranceAgent:\n    return agents[0]\n"
+      },
+      "target": {
+        "kind": "agent"
+      },
+      "present": false,
+      "assertions": {
+        "forbidden_findings": [
+          {
+            "kind": "agent"
+          },
+          {
+            "kind": "secret"
+          }
+        ],
+        "exact_findings": []
+      }
+    },
+    {
+      "id": "mcp-local-server",
+      "family": "mcp-server",
+      "description": "One enabled local MCP server configuration",
+      "files": {
+        ".mcp.json": "{\"mcpServers\": {\"worker\": {\"command\": \"node\", \"args\": [\"local-server.js\"]}}}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "mcp-server",
+            "product_signature": "protocol.mcp"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "agent"
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "mcp-server",
+            "product_signatures": [
+              "protocol.mcp"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "bedrock-agent-model",
+      "family": "infra",
+      "description": "Terraform Bedrock agent resources use an Anthropic model",
+      "files": {
+        "main.tf": "resource \"aws_bedrockagent_agent\" \"helper\" {\n  agent_name = \"helper\"\n  foundation_model = \"anthropic.claude-3-5-sonnet-20240620-v1:0\"\n}\n"
+      },
+      "target": {
+        "kind": "infra",
+        "signature": "cloud.aws-bedrock-agents"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "infra",
+            "product_signature": "cloud.aws-bedrock-agents",
+            "provider_signature": "provider.anthropic"
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "cloud.aws-bedrock-agents"
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "infra",
+            "product_signatures": [
+              "cloud.aws-bedrock-agents"
+            ],
+            "provider_signatures": [
+              "provider.anthropic",
+              "provider.aws-bedrock"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

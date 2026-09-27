@@ -12,6 +12,8 @@ The following in-tree files are regression suites only:
 - `tools/evaluation/public_corpus.json` (`public-pinned`)
 - `tools/evaluation/independent_corpus.json` (`adjudicated`, but labeled by two AI reviewers)
 - `tools/evaluation/realistic_corpus.json` and `review_corpus.json` (synthetic)
+- `tools/evaluation/field_review_corpus.json` (synthetic field-review regressions)
+- `tools/evaluation/attribution_corpus.json` (synthetic attribution regressions)
 
 The command rejects every corpus stored inside the source checkout, including
 future bundled suites. Private holdouts belong outside the repository.

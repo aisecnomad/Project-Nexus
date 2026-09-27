@@ -84,6 +84,7 @@ def bundled_source_index() -> SourceIndex:
                 "independent_corpus.json",
                 "review_corpus.json",
                 "field_review_corpus.json",
+                "attribution_corpus.json",
             )
         ),
     ):

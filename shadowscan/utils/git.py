@@ -6,6 +6,7 @@ import math
 import os
 import re
 import signal
+import stat
 import subprocess
 import time
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,68 @@ _REF_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$")
 
 class CloneTimeoutError(TimeoutError):
     """The per-repository clone budget expired."""
+
+
+class CloneSizeError(RuntimeError):
+    """The checkout exceeds its observed size budget or cannot be measured."""
+
+
+_MAX_CLONE_ENTRIES = 100_000
+
+
+def _clone_disk_usage(root: str, max_bytes: int) -> int:
+    """Measure the clone's files without following links or reading file data.
+
+    Count both logical file size and allocated blocks where reported. Stop as
+    soon as the budget is exceeded, so a large checkout need not be walked in
+    full on every poll. Git can rename files during this walk; disappeared
+    entries are checked by the next poll and the mandatory post-exit walk.
+    """
+    total = 0
+    entries_seen = 0
+    pending = [root]
+    while pending:
+        path = pending.pop()
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise CloneSizeError("cannot inspect clone size") from exc
+        if path == root and stat.S_ISLNK(info.st_mode):
+            raise CloneSizeError("clone destination is an unexpected symlink")
+        total += max(info.st_size, getattr(info, "st_blocks", 0) * 512)
+        if total > max_bytes:
+            raise CloneSizeError("observed clone size exceeds clone_max_bytes")
+        if not stat.S_ISDIR(info.st_mode):
+            continue
+        try:
+            # POSIX permits scandir on an open directory descriptor. Opening
+            # with O_NOFOLLOW prevents a changing checkout from redirecting
+            # a traversal through a symlink between lstat and scandir.
+            if os.name == "posix":
+                fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    with os.scandir(fd) as entries:
+                        for entry in entries:
+                            entries_seen += 1
+                            if entries_seen > _MAX_CLONE_ENTRIES:
+                                raise CloneSizeError("clone entry count exceeds measurement safety limit")
+                            pending.append(os.path.join(path, entry.name))
+                finally:
+                    os.close(fd)
+            else:
+                with os.scandir(path) as entries:
+                    for entry in entries:
+                        entries_seen += 1
+                        if entries_seen > _MAX_CLONE_ENTRIES:
+                            raise CloneSizeError("clone entry count exceeds measurement safety limit")
+                        pending.append(entry.path)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise CloneSizeError("cannot inspect clone size") from exc
+    return total
 
 
 def clone_limits(max_bytes: Any, timeout: Any) -> tuple[int, float]:
@@ -81,13 +144,31 @@ def _stop_clone(proc: subprocess.Popen[bytes]) -> None:
         proc.wait(timeout=2)
 
 
-def run_bounded_clone(cmd: list[str], env: dict[str, str], ctx: ConnectorContext, timeout: float) -> bool:
+def run_bounded_clone(
+    cmd: list[str],
+    env: dict[str, str],
+    ctx: ConnectorContext,
+    timeout: float,
+    *,
+    destination: str | None = None,
+    max_bytes: int | None = None,
+) -> bool:
     """Run a clone with a per-repository deadline and cooperative cancellation.
 
     Output is discarded: an untrusted remote may print unlimited diagnostics,
     and Git can include a credential in an error message. On POSIX the clone
     has a new process group so timeout/cancellation kills transport children.
+    The destination is sampled while the clone runs and checked once again
+    after exit. This bounds accepted checkout size but is not an atomic quota:
+    a writer may exceed the cap between samples; use an OS disk quota for a
+    strict disk ceiling.
     """
+    if (destination is None) != (max_bytes is None):
+        raise ValueError("destination and max_bytes must be set together")
+    if max_bytes is not None and (
+        isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1
+    ):
+        raise ValueError("max_bytes must be a positive integer")
     ctx.check_deadline()
     deadline = time.monotonic() + timeout
     if ctx.deadline is not None:
@@ -113,6 +194,8 @@ def run_bounded_clone(cmd: list[str], env: dict[str, str], ctx: ConnectorContext
     try:
         while True:
             ctx.check_deadline()
+            if destination is not None and max_bytes is not None:
+                _clone_disk_usage(destination, max_bytes)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise CloneTimeoutError("git clone timeout exceeded")
@@ -121,6 +204,8 @@ def run_bounded_clone(cmd: list[str], env: dict[str, str], ctx: ConnectorContext
             except subprocess.TimeoutExpired:
                 continue
             ctx.check_deadline()
+            if destination is not None and max_bytes is not None:
+                _clone_disk_usage(destination, max_bytes)
             if status != 0:
                 _stop_clone(proc)
             return status == 0

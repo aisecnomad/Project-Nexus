@@ -73,6 +73,10 @@ _SENSITIVE_NAMES = {
     "cookie",
     "setcookie",
 }
+# A credential container can include descriptive fields as well as secret
+# material. Its descriptor values are not credentials merely because they
+# occur next to one (for example {"provider": "openai", "value": "..."}).
+_CREDENTIAL_DESCRIPTORS = {"id", "objectid", "name", "type", "provider", "scope", "scopes", "status"}
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
 _SECRET_TOKEN = re.compile(
@@ -993,21 +997,61 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
 
     # The same aliased object can occur both outside and inside an environment
     # block. Revisit it under the stricter naming policy, but still bound cycles.
-    discovered: set[tuple[int, bool]] = set()
+    discovered: set[tuple[int, bool, bool, bool]] = set()
 
-    def discover(item: Any, depth: int = 0, *, environment: bool = False) -> None:
-        identity = (id(item), environment)
+    def discover(
+        item: Any,
+        depth: int = 0,
+        *,
+        environment: bool = False,
+        credential: bool = False,
+        credential_group: bool = False,
+    ) -> None:
+        identity = (id(item), environment, credential, credential_group)
         if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in discovered):
             return
         if isinstance(item, (Mapping, list, tuple)):
             discovered.add(identity)
         if isinstance(item, Mapping):
-            if record_has_secret_value(item, environment=environment):
+            named_secret = record_has_secret_value(item, environment=environment)
+            if named_secret:
                 remember(item.get("value") or item.get("Value"))
             for key, child in item.items():
-                if _sensitive_key(str(key)) or environment and _sensitive_assignment_key(str(key)):
+                key_name = str(key)
+                lower_key = key_name.lower()
+                key_sensitive = (
+                    _sensitive_key(key_name) or environment and _sensitive_assignment_key(key_name)
+                )
+                # `credentials.id` can itself be opaque secret material.
+                # `api_key.id` and Azure `identity.authorization.objectId`
+                # instead name an identity; a copied short ID must not taint
+                # otherwise independent caller labels or report identities.
+                child_group = credential_group or (
+                    key_sensitive
+                    and _KEY_NORMALISE.sub("", lower_key).endswith(("credential", "credentials"))
+                )
+                # The value of a sensitive key can itself be a mapping or a
+                # list. Discover its scalar leaves before the clean pass
+                # withholds that container, so copies in unrelated fields
+                # cannot survive just because the credential is nested.
+                # Descriptive scalar labels are not secret material, but a
+                # provider/name field can itself hold a credential record.
+                nested = isinstance(child, (Mapping, list, tuple))
+                child_credential = (
+                    key_sensitive
+                    or (named_secret and lower_key == "value")
+                    or (
+                        credential
+                        and (
+                            nested
+                            or lower_key not in _CREDENTIAL_DESCRIPTORS
+                            or (child_group and lower_key in {"id", "objectid"})
+                        )
+                    )
+                )
+                if child_credential:
                     remember(child)
-                child_environment = environment or str(key).lower() in {
+                child_environment = environment or lower_key in {
                     "env",
                     "environment",
                     "environment_variables",
@@ -1021,7 +1065,13 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
                         for entry in child:
                             if isinstance(entry, Mapping):
                                 remember(entry.get("value") or entry.get("Value"))
-                discover(child, depth + 1, environment=child_environment)
+                discover(
+                    child,
+                    depth + 1,
+                    environment=child_environment,
+                    credential=child_credential,
+                    credential_group=child_group,
+                )
         elif isinstance(item, (list, tuple)):
             previous = None
             for child in item:
@@ -1031,7 +1081,15 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
                     and _sensitive_key(previous.lstrip("-"))
                 ):
                     remember(child)
-                discover(child, depth + 1, environment=environment)
+                if credential:
+                    remember(child)
+                discover(
+                    child,
+                    depth + 1,
+                    environment=environment,
+                    credential=credential,
+                    credential_group=credential_group,
+                )
                 previous = child
 
     discover(value)
