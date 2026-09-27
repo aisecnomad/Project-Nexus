@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import traceback
+from collections.abc import Callable
 from typing import Any, NoReturn
 
 import click
@@ -263,8 +264,8 @@ output_options = [
 ]
 
 
-def add_options(options):
-    def _wrap(fn):
+def add_options(options: list[Callable[..., Any]]) -> Callable[..., Any]:
+    def _wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
         for opt in reversed(options):
             fn = opt(fn)
         return fn

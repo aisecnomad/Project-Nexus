@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from bisect import bisect_left, bisect_right
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
@@ -108,7 +108,7 @@ def _finditer(
     return result
 
 
-def _search(rx: Any, text: str, context: str):
+def _search(rx: Any, text: str, context: str) -> Any:
     return _run_regex(lambda timeout: rx.search(text, timeout=timeout, concurrent=False), context)
 
 
@@ -821,7 +821,7 @@ class SignatureIndex:
         return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
     @contextmanager
-    def scan_budget(self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS):
+    def scan_budget(self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS) -> Iterator[None]:
         """Share one deadline across all signature operations for an input file.
 
         Individual regex executions are also preempted by the regex engine. An
@@ -858,7 +858,7 @@ class SignatureIndex:
         return out
 
     @contextmanager
-    def _input_budget(self):
+    def _input_budget(self) -> Iterator[None]:
         """Preserve a caller's explicit budget or open the default input budget."""
         if _SCAN_DEADLINE.get() is not None:
             _remaining_timeout()

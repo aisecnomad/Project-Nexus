@@ -12,6 +12,7 @@ dynamic control flow outside the supported direct loop structure.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 
@@ -78,7 +79,7 @@ def _output(value: ast.AST, item: str, results: set[str], budget: _Budget) -> bo
                     for child in _walk(content, budget)))
 
 
-def _walk(node: ast.AST, budget: _Budget):
+def _walk(node: ast.AST, budget: _Budget) -> Iterator[ast.AST]:
     for child in ast.walk(node):
         budget.tick()
         yield child
@@ -120,7 +121,7 @@ def _paths(
     statements: list[ast.stmt], item: str, budget: _Budget, depth: int = 0,
     initial_facts: dict[str, bool] | None = None,
     finished: list[tuple[list[ast.stmt], dict[str, bool]]] | None = None,
-):
+) -> list[tuple[list[ast.stmt], dict[str, bool]]]:
     """Generate source-ordered reachable paths and correlate simple predicates.
 
     Paths ending in ``break``/``continue``/``return``/``raise`` are dropped.

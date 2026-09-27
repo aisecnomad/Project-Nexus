@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
@@ -205,7 +205,7 @@ def signature_from_dict(d: dict[str, Any], source: str | None = None) -> Signatu
     return sig
 
 
-def _iter_yaml_files(root: Path):
+def _iter_yaml_files(root: Path) -> Iterator[Path]:
     yield from policy_files(root, {".yaml", ".yml"})
 
 
@@ -213,7 +213,7 @@ class _UniqueKeyLoader(BoundedSafeLoader):
     """Reject duplicate YAML keys instead of silently retaining the last value."""
 
 
-def _unique_mapping(loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False):
+def _unique_mapping(loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False) -> dict[str, Any]:
     out = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)
