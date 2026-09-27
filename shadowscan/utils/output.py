@@ -75,7 +75,7 @@ def _existing_stat(target: Path) -> os.stat_result | None:
 def _require_private_pipe(info: os.stat_result) -> None:
     # Another local user can plant a pipe at a report path in a shared
     # directory such as /tmp; writing into it would hand them the report.
-    if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
+    if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:
         raise ValueError("refusing a named pipe not owned by the current user with private mode 0600")
 
 

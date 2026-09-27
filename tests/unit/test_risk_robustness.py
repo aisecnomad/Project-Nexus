@@ -16,7 +16,7 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel, ScanStats, Surface, now_iso
-from shadowscan.risk import CAPABILITY_WEIGHTS, KIND_BASE, PROVIDER_WEIGHTS, TAG_WEIGHTS, assess
+from shadowscan.risk import CAPABILITY_WEIGHTS, KIND_BASE, PROVIDER_WEIGHTS, TAG_WEIGHTS, RiskPolicy, assess
 
 GARBAGE = ["many", "", None, [3], {"n": 3}, True, float("nan"), float("inf"), "3.5", object()]
 
@@ -190,6 +190,27 @@ def test_confidence_scaling_of_a_positive_subtotal_is_unchanged():
 
 def test_full_confidence_adds_no_scaling_factor():
     assert "confidence-scaling" not in _ids(assess(_finding(confidence=1.0)))
+
+
+def test_danger_basis_omits_zero_weight_governance_factors():
+    # Under "danger", governance factors are scaled to zero and never move
+    # the score; they should not appear at all, matching how tag factors
+    # already skip a zero-weight contribution (risk.py's `if w:` guard).
+    danger = RiskPolicy(basis="danger")
+    risk_no_owner = assess(_finding(owner=None), inventory_present=True, policy=danger)
+    assert _ids(risk_no_owner).isdisjoint({"shadow", "registered", "no-owner"})
+    for finding_shadow in (True, False):
+        target = _finding(owner="alice")
+        target.shadow = finding_shadow
+        risk = assess(target, inventory_present=True, policy=danger)
+        assert _ids(risk).isdisjoint({"shadow", "registered", "no-owner"})
+
+    # Sanity check: the same findings under the default ("combined") basis do
+    # score these factors, so the assertions above are testing the "danger"
+    # scale-to-zero path and not an unrelated absence.
+    combined = RiskPolicy()
+    risk = assess(_finding(owner=None), inventory_present=True, policy=combined)
+    assert "no-owner" in _ids(risk)
 
 
 # ------------------------------------------------------------------ parity on well-formed input
