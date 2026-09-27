@@ -98,7 +98,9 @@ def test_transport_error_after_the_deadline_reports_only_the_deadline():
 
     def aborted(chunk_size):
         raw.shut_down.wait(10)
-        raise requests.exceptions.ChunkedEncodingError("reset while reading https://example.test/?token=secret")
+        raise requests.exceptions.ChunkedEncodingError(
+            "reset while reading https://example.test/?token=secret"
+        )
         yield b""  # pragma: no cover
 
     result = slow_response(delay=0)
@@ -107,6 +109,58 @@ def test_transport_error_after_the_deadline_reports_only_the_deadline():
     with pytest.raises(ValueError, match="exceeds the read deadline") as caught:
         client(timeout=0.05).read_response_bytes(result)
     assert caught.value.__context__ is None and "secret" not in str(caught.value)
+
+
+def test_watchdog_leaves_a_connection_released_before_it_fired_alone():
+    calls = []
+
+    class Raw:
+        def shutdown(self):
+            calls.append("shutdown")
+
+        def release_conn(self):
+            calls.append("release")
+
+    def ended_in_time(chunk_size):
+        yield b"{}"
+        # urllib3 releases the connection during the read that ends the body.
+        # The reader regains control only after the watchdog has fired, when
+        # the pooled socket may already carry another request on the session.
+        result.raw.release_conn()
+        time.sleep(0.3)
+
+    result = slow_response(delay=0)
+    result.raw = Raw()
+    result.iter_content = ended_in_time
+    assert client(timeout=0.05).read_response_bytes(result) == b"{}"
+    assert calls == ["release"]
+    result.close.assert_called_once()
+
+
+def test_connection_release_waits_for_a_shutdown_in_progress():
+    shutting_down = threading.Event()
+    calls = []
+
+    class Raw:
+        def shutdown(self):
+            shutting_down.set()
+            time.sleep(0.2)  # a connection pooled now would be shut down under its next request
+            calls.append("shutdown")
+
+        def release_conn(self):
+            calls.append("release")
+
+    def ends_during_the_shutdown(chunk_size):
+        shutting_down.wait(10)
+        result.raw.release_conn()
+        yield b"{}"
+
+    result = slow_response(delay=0)
+    result.raw = Raw()
+    result.iter_content = ends_during_the_shutdown
+    with pytest.raises(ValueError, match="exceeds the read deadline"):
+        client(timeout=0.05).read_response_bytes(result)
+    assert calls == ["shutdown", "release"]
 
 
 def test_transport_error_before_the_deadline_is_unchanged():
@@ -131,10 +185,8 @@ def test_live_connector_read_deadline_marks_the_scan_incomplete(monkeypatch, tmp
 
     # 0.15 second deadline for the default 30 second timeout.
     monkeypatch.setattr("shadowscan.utils.http.READ_DEADLINE_FACTOR", 0.005, raising=False)
-    monkeypatch.setattr(
-        "shadowscan.utils.http.socket.getaddrinfo",
-        lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))],
-    )
+    address = (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", lambda *args, **kwargs: [address])
     monkeypatch.setattr(requests.Session, "request", request)
     monkeypatch.setenv("NOTION_TOKEN", "synthetic-notion-token")
     output = tmp_path / "report.json"

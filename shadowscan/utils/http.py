@@ -100,16 +100,37 @@ def _read_watchdog(
     deadline abandons it. Shutting the socket down for reading wakes the blocked
     read; ``expired`` tells the reader that any end of body it then sees is not a
     complete response.
+
+    urllib3 returns the connection to the pool during the read that ends the
+    body, before the reader regains control, and its ``shutdown()`` checks for
+    that without a lock. A pooled socket may already carry another request on
+    this session, so a release waits for a shutdown in progress, and the
+    watchdog leaves alone a body whose connection was released before it fired.
     """
-    shutdown = getattr(resp.raw, "shutdown", None)
+    raw: Any = resp.raw
+    shutdown = getattr(raw, "shutdown", None)
     if not callable(shutdown):
         return None
+    lock = threading.Lock()
+    released = False
+    release = getattr(raw, "release_conn", None)
+    if callable(release):
+        def release_conn() -> None:
+            nonlocal released
+            with lock:
+                released = True
+                release()
+
+        raw.release_conn = release_conn
 
     def abort() -> None:
-        expired.set()
-        # urllib3 refuses to shut down a connection already returned to the pool.
-        with contextlib.suppress(OSError, RuntimeError, ValueError):
-            shutdown()
+        with lock:
+            if released:
+                return
+            expired.set()
+            # urllib3 refuses to shut down a connection that is already closed.
+            with contextlib.suppress(OSError, RuntimeError, ValueError):
+                shutdown()
 
     timer = threading.Timer(seconds, abort)
     timer.daemon = True

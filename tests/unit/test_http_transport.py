@@ -105,7 +105,9 @@ READ_TIMEOUT = 0.5  # the whole-body deadline is twice this
 
 
 @pytest.mark.parametrize("framing", ["content-length", "chunked", "close-delimited"])
-def test_slow_drip_body_fails_at_the_read_deadline_instead_of_holding_the_worker(tmp_path, monkeypatch, framing):
+def test_slow_drip_body_fails_at_the_read_deadline_instead_of_holding_the_worker(
+    tmp_path, monkeypatch, framing
+):
     cert_path, key_path = _certificate(tmp_path)
     stop = threading.Event()
 
@@ -159,3 +161,40 @@ def test_slow_drip_body_fails_at_the_read_deadline_instead_of_holding_the_worker
     assert elapsed < len(DRIP_BODY) * DRIP_INTERVAL * 0.75
     # No transport detail is chained onto the fail-closed diagnostic.
     assert caught.value.__cause__ is None and caught.value.__context__ is None
+
+
+def test_bodies_read_within_the_deadline_return_their_connection_to_the_pool(tmp_path, monkeypatch):
+    cert_path, key_path = _certificate(tmp_path)
+    clients = []
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"  # keep the connection open between requests
+
+        def do_GET(self):
+            clients.append(self.client_address)
+            body = b'{"items": []}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server, thread = _serve_tls(Handler, cert_path, key_path)
+    port = server.server_port
+    _resolve_to(port, monkeypatch)
+    http = HttpClient(allow_private_origin=True, timeout=2, max_retries=0)
+    try:
+        for _ in range(3):
+            items = http.get_json(f"https://service.example:{port}/items", verify=str(cert_path))
+            assert items == {"items": []}
+    finally:
+        http.session.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+    # The read-deadline watchdog guards each connection's release to the pool;
+    # every request still reuses the one kept-alive connection.
+    assert len(clients) == 3 and len(set(clients)) == 1
