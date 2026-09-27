@@ -494,8 +494,24 @@ def test_documented_signature_counts_match_the_shipped_packs(index) -> None:
 
 def test_documented_connector_counts_match_the_registry() -> None:
     actual = len(builtin_connector_names())
-    for path in _current_docs():
-        for match in _CONNECTOR_CLAIM.finditer(_read(path)):
-            assert int(match.group(1)) == actual, (
-                f"{_relative(path)} claims {match.group(1)} connectors, registry has {actual}"
-            )
+    claims = [(path, match) for path in _current_docs() for match in _CONNECTOR_CLAIM.finditer(_read(path))]
+    assert claims, "a doc should state the connector count in bold (**N connectors**)"
+    for path, match in claims:
+        assert int(match.group(1)) == actual, (
+            f"{_relative(path)} claims {match.group(1)} connectors, registry has {actual}"
+        )
+
+
+def test_gcp_pagination_caps_are_not_dropped_from_the_per_surface_page() -> None:
+    """Regression for a real fork: docs/connectors/cloud.md once dropped the
+    max_pages / 500-page / 50-page-audit-log-cap sentence that docs/connectors.md
+    still documents, understating GCP's collection limits on the page readers
+    actually navigate to from the site nav.
+    """
+    canonical = _read(ROOT / "docs" / "connectors.md")
+    per_surface = _read(ROOT / "docs" / "connectors" / "cloud.md")
+    sentence = "resource lists stop at 500 pages and audit-log\nqueries at 50 pages regardless."
+    assert sentence in canonical, "docs/connectors.md no longer documents the GCP pagination caps"
+    assert sentence in per_surface, (
+        "docs/connectors/cloud.md is missing the GCP pagination caps documented in docs/connectors.md"
+    )

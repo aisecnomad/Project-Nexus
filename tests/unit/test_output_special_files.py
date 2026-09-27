@@ -152,6 +152,23 @@ def test_report_refuses_a_named_pipe_open_to_other_users(tmp_path):
     assert stat.S_ISFIFO(os.lstat(pipe).st_mode)
 
 
+def test_report_refuses_a_named_pipe_with_owner_execute_bits(tmp_path):
+    # The mode check must require exactly 0600, matching what the error
+    # message and CHANGELOG both claim; 0700 has no group/other access either,
+    # but execute bits on a FIFO are meaningless and the spec is 0600 exactly.
+    pipe = tmp_path / "report.pipe"
+    os.mkfifo(pipe)
+    os.chmod(pipe, 0o700)
+    reader = os.open(pipe, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        with pytest.raises(ValueError, match="private mode 0600"):
+            write_private_text(pipe, "report body")
+        assert _drain(reader) == b""
+    finally:
+        os.close(reader)
+    assert stat.S_ISFIFO(os.lstat(pipe).st_mode)
+
+
 def test_in_place_write_rechecks_the_opened_pipe_owner_and_mode(tmp_path, monkeypatch):
     # The pipe passed the first check but is open to other users by the time
     # it is opened; the descriptor check must refuse it before writing.

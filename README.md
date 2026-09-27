@@ -76,6 +76,8 @@ acceptance, and the workflow does not publish a release.
 
 ## Surfaces & connectors
 
+ShadowScan ships **27 connectors** across the six surfaces below.
+
 | Surface | Connectors | What is discovered |
 |---|---|---|
 | **Code** | `code.filesystem`, `code.github`, `code.gitlab` | Agent frameworks & LLM SDKs (deps, imports, idioms), MCP client/server configs, coding-agent configs (Claude Code sub-agents, Copilot custom agents, Cursor/Codex/Gemini CLI…), A2A agent cards, M365 declarative agents, CrewAI/LangGraph manifests, exported n8n/Flowise/Langflow/Dify flows, IaC provisioning Bedrock/Vertex/Foundry/OCI agents, container images, CI secret names, hard-coded provider keys (redacted) |

@@ -41,7 +41,11 @@ import yaml
 from shadowscan.errors import SetupError, SetupPathError
 from shadowscan.models import Finding, Surface
 from shadowscan.utils.files import policy_files, policy_glob, read_policy_text, require_no_symlinks
-from shadowscan.utils.identity import has_aws_account_scope, has_google_workspace_account_scope
+from shadowscan.utils.identity import (
+    has_aws_account_scope,
+    has_google_workspace_account_scope,
+    requires_card_account_scope,
+)
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
@@ -77,6 +81,18 @@ def _has_usable_scope_identity(finding: Finding) -> bool:
         value is None or (isinstance(value, str) and REDACTED not in value)
         for value in (finding.provider, finding.account, finding.region)
     )
+
+
+def _has_valid_account_scope(finding: Finding) -> bool:
+    """Whether the finding's own account/resource pairing is internally consistent.
+
+    Shared by ``Inventory.match`` (which also reports which specific check
+    failed) and ``card_stub_for`` (which only needs the yes/no answer before
+    deciding whether a generated card may bind account/resource evidence).
+    """
+    return has_aws_account_scope(
+        finding.provider, finding.account, finding.resource
+    ) and has_google_workspace_account_scope(finding.provider, finding.account)
 
 
 def _meta_names(finding: Finding) -> set[str]:
@@ -362,9 +378,11 @@ class Inventory:
             (not entry.surfaces or finding.surface.value in entry.surfaces)
             and (not entry.providers or finding.provider in entry.providers)
             and (not entry.accounts or finding.account in entry.accounts)
-            # Older generated cards omitted the tenant. A global OAuth client
-            # resource cannot confer approval across unrelated customers.
-            and (finding.provider != "google-workspace" or bool(entry.accounts))
+            # A resource-pattern-only card can approve a finding for every
+            # tenant that shares the same identifier. Providers whose
+            # resource IDs are not intrinsically tenant-scoped (see
+            # requires_card_account_scope) must also list ``accounts``.
+            and (not requires_card_account_scope(finding.provider) or bool(entry.accounts))
             and (not entry.regions or finding.region in entry.regions)
         )
 
@@ -553,8 +571,7 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
             if not (
                 _has_usable_resource_identity(finding)
                 and _has_usable_scope_identity(finding)
-                and has_aws_account_scope(finding.provider, finding.account, finding.resource)
-                and has_google_workspace_account_scope(finding.provider, finding.account)
+                and _has_valid_account_scope(finding)
                 and finding.metadata.get("identity_unresolved") is not True
             )
             else [finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})],

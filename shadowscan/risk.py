@@ -266,25 +266,17 @@ def assess(
 
     if inventory_present:
         if finding.shadow:
-            factors.append(
-                RiskFactor(
-                    "shadow",
-                    "not present in the sanctioned agent inventory",
-                    policy.governance["shadow"] * governance_scale,
-                )
-            )
+            w = policy.governance["shadow"] * governance_scale
+            if w:
+                factors.append(RiskFactor("shadow", "not present in the sanctioned agent inventory", w))
         elif finding.shadow is False:
-            factors.append(
-                RiskFactor(
-                    "registered",
-                    f"registered as {finding.registry_match}",
-                    policy.governance["registered"] * governance_scale,
-                )
-            )
+            w = policy.governance["registered"] * governance_scale
+            if w:
+                factors.append(RiskFactor("registered", f"registered as {finding.registry_match}", w))
     if not finding.owner:
-        factors.append(
-            RiskFactor("no-owner", "no identifiable owner", policy.governance["no-owner"] * governance_scale)
-        )
+        w = policy.governance["no-owner"] * governance_scale
+        if w:
+            factors.append(RiskFactor("no-owner", "no identifiable owner", w))
 
     seen_caps = set()
     for cap in _strings(finding.capabilities):
