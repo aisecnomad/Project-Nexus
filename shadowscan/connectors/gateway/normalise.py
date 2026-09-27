@@ -173,7 +173,9 @@ _TOOL_MESSAGE_TYPES = {"function_call", "function_call_output", "tool_use", "too
 def _is_tool_message(item: Any) -> bool:
     """A chat message that carries tool calls or comes from a tool."""
     return isinstance(item, dict) and bool(
-        item.get("tool_calls") or item.get("role") in {"tool", "function"} or item.get("type") in _TOOL_MESSAGE_TYPES
+        item.get("tool_calls")
+        or item.get("role") in {"tool", "function"}
+        or item.get("type") in _TOOL_MESSAGE_TYPES
     )
 
 
@@ -217,7 +219,9 @@ def _mapping_has_tools(obj: dict[str, Any]) -> bool | None:
         return False
     for wrapper in ("body", "request", "payload", "json"):
         inner = obj.get(wrapper)
-        if isinstance(inner, (dict, str)) and not any(k in obj for k in ("tools", "functions", "messages", "input")):
+        if isinstance(inner, (dict, str)) and not any(
+            k in obj for k in ("tools", "functions", "messages", "input")
+        ):
             return _has_tools(inner)
     if _declared_tools(obj):
         return True
@@ -268,7 +272,11 @@ def _has_tool_calls(obj: Any) -> bool | None:
             if called is True:
                 return True
             explicit_empty = explicit_empty or called is False
-            if item.get("stop_reason") == "tool_use" or item.get("stopReason") == "tool_use" or item.get("finish_reason") in {"tool_calls", "function_call"}:
+            if (
+                item.get("stop_reason") == "tool_use"
+                or item.get("stopReason") == "tool_use"
+                or item.get("finish_reason") in {"tool_calls", "function_call"}
+            ):
                 finish_marker = True
             pending.extend(value for value in item.values() if isinstance(value, (dict, list)))
     return finish_marker and not explicit_empty
@@ -300,7 +308,9 @@ _ACCESS_LOG_CLIENT_KEYS = ("remote_addr", "request_uri", "clientIp", "requestUri
 
 
 def _looks_bedrock(rec: dict[str, Any]) -> bool:
-    return rec.get("schemaType") == "ModelInvocationLog" or ("modelId" in rec and "identity" in rec and "input" in rec)
+    return rec.get("schemaType") == "ModelInvocationLog" or (
+        "modelId" in rec and "identity" in rec and "input" in rec
+    )
 
 
 def _looks_vertex(rec: dict[str, Any]) -> bool:
@@ -332,7 +342,11 @@ def _looks_kong(rec: dict[str, Any]) -> bool:
 
 
 def _looks_cloudflare(rec: dict[str, Any]) -> bool:
-    return "gateway_id" in rec or ("provider" in rec and "request_type" in rec and "tokens_in" in rec) or "ai_gateway" in rec
+    return (
+        "gateway_id" in rec
+        or ("provider" in rec and "request_type" in rec and "tokens_in" in rec)
+        or "ai_gateway" in rec
+    )
 
 
 def _looks_portkey(rec: dict[str, Any]) -> bool:
@@ -346,7 +360,9 @@ def _looks_portkey(rec: dict[str, Any]) -> bool:
 
 def _looks_helicone(rec: dict[str, Any]) -> bool:
     dump = json.dumps(rec)
-    return (not _looks_access_log(rec) and "helicone" in dump[:1000].lower()) or ("request_properties" in rec and "helicone-request-id" in dump[:5000].lower())
+    return (not _looks_access_log(rec) and "helicone" in dump[:1000].lower()) or (
+        "request_properties" in rec and "helicone-request-id" in dump[:5000].lower()
+    )
 
 
 def _looks_langfuse(rec: dict[str, Any]) -> bool:
@@ -414,9 +430,15 @@ def detect_schema(rec: dict[str, Any]) -> str:
 def _normalise_litellm(rec: dict[str, Any]) -> Event:
     key = _first(rec, "api_key", "hashed_api_key", "key_hash") or ""
     alias = _first(rec, "api_key_alias", "key_alias") or get_path(rec, "metadata.user_api_key_alias") or ""
-    team = rec.get("team_id") or get_path(rec, "metadata.user_api_key_team_id", "metadata.user_api_key_team_alias")
-    user = _first(rec, "user", "end_user") or get_path(rec, "metadata.user_api_key_user_id", "metadata.user_api_key_user_email")
-    request = _first(rec, "proxy_server_request", "request") or get_path(rec, "metadata.proxy_server_request.body")
+    team = rec.get("team_id") or get_path(
+        rec, "metadata.user_api_key_team_id", "metadata.user_api_key_team_alias"
+    )
+    user = _first(rec, "user", "end_user") or get_path(
+        rec, "metadata.user_api_key_user_id", "metadata.user_api_key_user_email"
+    )
+    request = _first(rec, "proxy_server_request", "request") or get_path(
+        rec, "metadata.proxy_server_request.body"
+    )
     if key:
         caller, kind = f"litellm-key:{key}", "api-key"
     else:
@@ -430,7 +452,13 @@ def _normalise_litellm(rec: dict[str, Any]) -> Event:
         model=_first(rec, "model", "model_group"),
         provider=_first(rec, "custom_llm_provider", "provider"),
         host=host_of(rec.get("api_base")),
-        user_agent=get_path(rec, "metadata.user_agent", "metadata.headers.user-agent", "request_tags.user_agent", "metadata.requester_metadata.user_agent"),
+        user_agent=get_path(
+            rec,
+            "metadata.user_agent",
+            "metadata.headers.user-agent",
+            "request_tags.user_agent",
+            "metadata.requester_metadata.user_agent",
+        ),
         ip=get_path(rec, "metadata.requester_ip_address", "requester_ip_address"),
         user=_text(user),
         team=_text(team),
@@ -482,7 +510,11 @@ def _normalise_kong(rec: dict[str, Any]) -> Event:
         caller_kind="principal" if consumer else "ip",
         caller_label=str(consumer or client_ip or "anonymous"),
         timestamp=_timestamp(rec, "started_at", "timestamp"),
-        model=meta.get("response_model") or meta.get("request_model") or get_path(rec, "ai.proxy.meta.request_model"),
+        model=(
+            meta.get("response_model")
+            or meta.get("request_model")
+            or get_path(rec, "ai.proxy.meta.request_model")
+        ),
         provider=meta.get("provider_name"),
         host=host_of(get_path(rec, "upstream_uri", "request.url")),
         user_agent=headers.get("user-agent") if isinstance(headers, dict) else None,
@@ -493,7 +525,11 @@ def _normalise_kong(rec: dict[str, Any]) -> Event:
         cost=_f(usage.get("cost")),
         status=_label(get_path(rec, "response.status")),
         path=get_path(rec, "request.uri", "route.paths.0"),
-        metadata={"plugin": meta.get("plugin_id"), "route": get_path(rec, "route.name"), "service": get_path(rec, "service.name")},
+        metadata={
+            "plugin": meta.get("plugin_id"),
+            "route": get_path(rec, "route.name"),
+            "service": get_path(rec, "service.name"),
+        },
         schema="kong",
     )
 
@@ -550,7 +586,9 @@ def _langfuse_tools(value: Any) -> bool | None:
     """Langfuse stores the prompt as an object, a serialised object or a message list."""
     if isinstance(value, (dict, str)):
         return _has_tools(value)
-    if isinstance(value, list) and any(isinstance(m, dict) and (m.get("tool_calls") or m.get("role") == "tool") for m in value):
+    if isinstance(value, list) and any(
+        isinstance(m, dict) and (m.get("tool_calls") or m.get("role") == "tool") for m in value
+    ):
         return True
     return None
 
@@ -568,12 +606,20 @@ def _normalise_langfuse(rec: dict[str, Any]) -> Event:
         provider=None,
         tools=_langfuse_tools(rec.get("input")),
         tool_calls=_has_tool_calls(rec.get("output")),
-        tokens_in=_i(get_path(rec, "usage.input", "usageDetails.input", "usage.promptTokens", "promptTokens")),
-        tokens_out=_i(get_path(rec, "usage.output", "usageDetails.output", "usage.completionTokens", "completionTokens")),
+        tokens_in=_i(
+            get_path(rec, "usage.input", "usageDetails.input", "usage.promptTokens", "promptTokens")
+        ),
+        tokens_out=_i(
+            get_path(rec, "usage.output", "usageDetails.output", "usage.completionTokens", "completionTokens")
+        ),
         cost=_f(get_path(rec, "calculatedTotalCost", "totalCost", "costDetails.total")),
         status=rec.get("level"),
         path=name,
-        metadata={"trace": _first(rec, "traceId", "trace_id"), "tags": rec.get("tags"), "session": rec.get("sessionId")},
+        metadata={
+            "trace": _first(rec, "traceId", "trace_id"),
+            "tags": rec.get("tags"),
+            "session": rec.get("sessionId"),
+        },
         schema="langfuse",
     )
 
@@ -600,7 +646,13 @@ def _normalise_bedrock(rec: dict[str, Any]) -> Event:
         tokens_out=_i(out.get("outputTokenCount") if isinstance(out, dict) else 0),
         status="ok" if not rec.get("errorCode") else str(rec.get("errorCode")),
         path=rec.get("operation"),
-        metadata={"account": rec.get("accountId"), "region": rec.get("region"), "request_id": rec.get("requestId"), "inference_region": rec.get("inferenceRegion"), "request_metadata": rec.get("requestMetadata")},
+        metadata={
+            "account": rec.get("accountId"),
+            "region": rec.get("region"),
+            "request_id": rec.get("requestId"),
+            "inference_region": rec.get("inferenceRegion"),
+            "request_metadata": rec.get("requestMetadata"),
+        },
         schema="bedrock",
     )
 
@@ -636,7 +688,12 @@ def _normalise_azure_openai(rec: dict[str, Any]) -> Event:
         caller_kind="principal" if oid or upn else "ip",
         caller_label=str(upn or oid or caller),
         timestamp=_timestamp(rec, "time", "TimeGenerated", "timestamp"),
-        model=props.get("modelName") or props.get("modelDeploymentName") or props.get("deploymentName") or props.get("model"),
+        model=(
+            props.get("modelName")
+            or props.get("modelDeploymentName")
+            or props.get("deploymentName")
+            or props.get("model")
+        ),
         provider="azure-openai",
         host=host_of(resource_id),
         user_agent=props.get("userAgent") or get_path(rec, "properties.headers.user-agent"),
@@ -648,17 +705,27 @@ def _normalise_azure_openai(rec: dict[str, Any]) -> Event:
         tokens_out=_i(props.get("completionTokens") or get_path(props, "usage.completion_tokens")),
         status=_label(_first(rec, "resultSignature", "ResultSignature") or props.get("statusCode")),
         path=_first(rec, "operationName", "OperationName") or props.get("apiName"),
-        metadata={"resource_id": resource_id, "deployment": props.get("modelDeploymentName"), "api_version": props.get("apiVersion"), "object_id": oid, "tenant": tenant},
+        metadata={
+            "resource_id": resource_id,
+            "deployment": props.get("modelDeploymentName"),
+            "api_version": props.get("apiVersion"),
+            "object_id": oid,
+            "tenant": tenant,
+        },
         schema="azure-openai",
     )
 
 
-_VERTEX_MODEL = re.compile(r"(publishers/[^/]+/models/[^/:\s]+|endpoints/[^/:\s]+|reasoningEngines/[^/:\s]+|models/[^/:\s]+)")
+_VERTEX_MODEL = re.compile(
+    r"(publishers/[^/]+/models/[^/:\s]+|endpoints/[^/:\s]+|reasoningEngines/[^/:\s]+|models/[^/:\s]+)"
+)
 
 
 def _normalise_vertex(rec: dict[str, Any]) -> Event:
     pp = rec.get("protoPayload") or {}
-    principal = get_path(pp, "authenticationInfo.principalEmail") or get_path(pp, "authenticationInfo.principalSubject")
+    principal = get_path(pp, "authenticationInfo.principalEmail") or get_path(
+        pp, "authenticationInfo.principalSubject"
+    )
     resource = pp.get("resourceName", "")
     match = _VERTEX_MODEL.search(str(resource))
     return Event(
@@ -675,7 +742,12 @@ def _normalise_vertex(rec: dict[str, Any]) -> Event:
         tool_calls=_has_tool_calls(pp.get("response")),
         status=str(get_path(pp, "status.code") or "ok"),
         path=pp.get("methodName", ""),
-        metadata={"project": get_path(rec, "resource.labels.project_id"), "location": get_path(rec, "resource.labels.location"), "resource": resource, "service_account_delegation": get_path(pp, "authenticationInfo.serviceAccountDelegationInfo")},
+        metadata={
+            "project": get_path(rec, "resource.labels.project_id"),
+            "location": get_path(rec, "resource.labels.location"),
+            "resource": resource,
+            "service_account_delegation": get_path(pp, "authenticationInfo.serviceAccountDelegationInfo"),
+        },
         schema="vertex",
     )
 
@@ -695,7 +767,9 @@ def _usage_request_count(rec: dict[str, Any]) -> tuple[bool, int]:
 def _normalise_openai_usage(rec: dict[str, Any]) -> Event:
     actor = rec.get("actor") or {}
     key_id = rec.get("api_key_id") or get_path(actor, "api_key.id") or get_path(rec, "api_key.id")
-    user = rec.get("user_id") or get_path(actor, "session.user.email", "api_key.user.email", "api_key.service_account.name", "session.user.id")
+    user = rec.get("user_id") or get_path(
+        actor, "session.user.email", "api_key.user.email", "api_key.service_account.name", "session.user.id"
+    )
     sa = get_path(actor, "api_key.service_account.id", "api_key.service_account.name")
     caller = key_id or sa or user or rec.get("project_id") or "unknown"
     aggregate, count = _usage_request_count(rec)
@@ -703,7 +777,9 @@ def _normalise_openai_usage(rec: dict[str, Any]) -> Event:
         caller=f"openai:{caller}",
         caller_kind="api-key" if key_id else ("service" if sa else "user"),
         caller_label=str(sa or user or key_id or caller),
-        timestamp=parse_timestamp(get_path(rec, "start_time", "effective_at", "aggregation_timestamp", "timestamp")),
+        timestamp=parse_timestamp(
+            get_path(rec, "start_time", "effective_at", "aggregation_timestamp", "timestamp")
+        ),
         interval_end=parse_timestamp(rec.get("end_time")) if aggregate else None,
         request_count=count,
         aggregated=aggregate,
@@ -715,7 +791,13 @@ def _normalise_openai_usage(rec: dict[str, Any]) -> Event:
         tokens_in=_i(_first(rec, "input_tokens", "n_context_tokens_total")),
         tokens_out=_i(_first(rec, "output_tokens", "n_generated_tokens_total")),
         path=_first(rec, "operation", "type", "endpoint"),
-        metadata={"project": rec.get("project_id"), "num_requests": _first(rec, "num_model_requests", "n_requests"), "batch": rec.get("batch"), "service_account": sa, "event_type": rec.get("type")},
+        metadata={
+            "project": rec.get("project_id"),
+            "num_requests": _first(rec, "num_model_requests", "n_requests"),
+            "batch": rec.get("batch"),
+            "service_account": sa,
+            "event_type": rec.get("type"),
+        },
         schema="openai-usage",
     )
 
@@ -741,7 +823,9 @@ def _normalise_anthropic_usage(rec: dict[str, Any]) -> Event:
 
 def _access_log_path(rec: dict[str, Any]) -> Any:
     """The request path, taken from the request line when no path field is present."""
-    path = get_path(rec, "request_uri", "requestUri", "uri", "path", "http.url", "cs-uri-stem", "request_path", "url")
+    path = get_path(
+        rec, "request_uri", "requestUri", "uri", "path", "http.url", "cs-uri-stem", "request_path", "url"
+    )
     req = rec.get("request")
     if isinstance(req, str) and " " in req and not path:
         parts = req.split()
@@ -750,30 +834,53 @@ def _access_log_path(rec: dict[str, Any]) -> Any:
 
 
 def _normalise_access_log(rec: dict[str, Any]) -> Event:
-    ua = get_path(rec, "http_user_agent", "user_agent", "userAgent", "http.user_agent", "request.headers.user-agent", "cs(User-Agent)", "cs-user-agent", "useragent")
-    ip = get_path(rec, "remote_addr", "client_ip", "clientIp", "c-ip", "x_forwarded_for", "http.client_ip", "source_ip", "src_ip", "client.ip")
-    user = get_path(rec, "remote_user", "user", "username", "auth_user", "principal", "sub", "x_user", "http.user")
+    ua = get_path(
+        rec, "http_user_agent", "user_agent", "userAgent", "http.user_agent", "request.headers.user-agent",
+        "cs(User-Agent)", "cs-user-agent", "useragent",
+    )
+    ip = get_path(
+        rec, "remote_addr", "client_ip", "clientIp", "c-ip", "x_forwarded_for", "http.client_ip", "source_ip",
+        "src_ip", "client.ip",
+    )
+    user = get_path(
+        rec, "remote_user", "user", "username", "auth_user", "principal", "sub", "x_user", "http.user"
+    )
     api_key = get_path(rec, "api_key", "x_api_key", "apikey", "authorization_hash", "consumer", "client_id")
     kind, caller = _identity(("api-key", api_key), ("user", user), ("user-agent", ua), ("ip", ip))
     caller = caller or "unknown"
+    timestamp = get_path(
+        rec, "time", "timestamp", "@timestamp", "time_local", "time_iso8601", "start_time", "date", "ts",
+        "datetime",
+    )
+    host = get_path(
+        rec, "host", "http_host", "server_name", "upstream_host", "authority", "http.host", "cs-host",
+        "x-forwarded-host", "domain",
+    )
     return Event(
         caller=f"access:{caller}",
         caller_kind=kind,
         caller_label=str(caller),
-        timestamp=parse_timestamp(get_path(rec, "time", "timestamp", "@timestamp", "time_local", "time_iso8601", "start_time", "date", "ts", "datetime")),
+        timestamp=parse_timestamp(timestamp),
         model=get_path(rec, "model", "x_model", "request_model", "llm_model"),
-        host=get_path(rec, "host", "http_host", "server_name", "upstream_host", "authority", "http.host", "cs-host", "x-forwarded-host", "domain"),
+        host=host,
         user_agent=ua,
         ip=_text(ip),
         user=_text(user),
-        status=_label(get_path(rec, "status", "status_code", "response_code", "sc-status", "http.status_code")),
+        status=_label(
+            get_path(rec, "status", "status_code", "response_code", "sc-status", "http.status_code")
+        ),
         path=_access_log_path(rec),
-        metadata={"method": get_path(rec, "request_method", "method", "cs-method", "http.method"), "bytes": get_path(rec, "body_bytes_sent", "bytes", "sc-bytes")},
+        metadata={
+            "method": get_path(rec, "request_method", "method", "cs-method", "http.method"),
+            "bytes": get_path(rec, "body_bytes_sent", "bytes", "sc-bytes"),
+        },
         schema="access-log",
     )
 
 
-_GENERIC_TOOL_KEYS = ("tools", "functions", "function_declarations", "tool_choice", "toolConfig", "tool_config")
+_GENERIC_TOOL_KEYS = (
+    "tools", "functions", "function_declarations", "tool_choice", "toolConfig", "tool_config",
+)
 
 
 def _generic_tools(rec: dict[str, Any]) -> bool | None:
@@ -795,20 +902,47 @@ def _generic_tool_calls(rec: dict[str, Any]) -> bool | None:
 
 
 def _normalise_generic(rec: dict[str, Any]) -> Event | None:
-    key = _scalar_path(rec, "api_key", "apiKey", "api_key_id", "key", "key_id", "key_alias", "virtual_key", "token_id", "client_id", "clientId")
-    principal = _scalar_path(rec, "principal", "principal_id", "identity.arn", "identity", "caller", "service", "service_name", "app", "application", "app_name", "source", "team", "team_id", "org", "project")
+    key = _scalar_path(
+        rec, "api_key", "apiKey", "api_key_id", "key", "key_id", "key_alias", "virtual_key", "token_id",
+        "client_id", "clientId",
+    )
+    principal = _scalar_path(
+        rec, "principal", "principal_id", "identity.arn", "identity", "caller", "service", "service_name",
+        "app", "application", "app_name", "source", "team", "team_id", "org", "project",
+    )
     user = get_path(rec, "user", "user_id", "userId", "username", "email", "end_user", "sub", "actor")
-    ua = get_path(rec, "user_agent", "userAgent", "http_user_agent", "headers.user-agent", "request.headers.user-agent", "metadata.user_agent")
+    ua = get_path(
+        rec, "user_agent", "userAgent", "http_user_agent", "headers.user-agent", "request.headers.user-agent",
+        "metadata.user_agent",
+    )
     ip = get_path(rec, "ip", "client_ip", "source_ip", "remote_addr", "callerIp")
-    kind, who = _identity(("api-key", key), ("principal", principal), ("user", user), ("user-agent", ua), ("ip", ip))
+    kind, who = _identity(
+        ("api-key", key), ("principal", principal), ("user", user), ("user-agent", ua), ("ip", ip)
+    )
     if who is None:
         return None
+    timestamp = get_path(
+        rec, "timestamp", "time", "@timestamp", "ts", "created_at", "createdAt", "start_time", "startTime",
+        "date", "datetime", "event_time",
+    )
+    model = get_path(
+        rec, "model", "model_id", "modelId", "model_name", "deployment", "engine", "llm", "response.model",
+        "request.model",
+    )
+    tokens_in = get_path(
+        rec, "prompt_tokens", "input_tokens", "tokens_in", "usage.prompt_tokens", "usage.input_tokens",
+        "promptTokens",
+    )
+    tokens_out = get_path(
+        rec, "completion_tokens", "output_tokens", "tokens_out", "usage.completion_tokens",
+        "usage.output_tokens", "completionTokens",
+    )
     return Event(
         caller=f"{kind}:{who}",
         caller_kind=kind,
         caller_label=str(who),
-        timestamp=parse_timestamp(get_path(rec, "timestamp", "time", "@timestamp", "ts", "created_at", "createdAt", "start_time", "startTime", "date", "datetime", "event_time")),
-        model=get_path(rec, "model", "model_id", "modelId", "model_name", "deployment", "engine", "llm", "response.model", "request.model"),
+        timestamp=parse_timestamp(timestamp),
+        model=model,
         provider=get_path(rec, "provider", "llm_provider", "custom_llm_provider", "vendor", "platform"),
         host=host_of(get_path(rec, "host", "url", "endpoint", "api_base", "base_url", "upstream")),
         user_agent=ua,
@@ -818,8 +952,8 @@ def _normalise_generic(rec: dict[str, Any]) -> Event | None:
         tools=_generic_tools(rec),
         tool_calls=_generic_tool_calls(rec),
         streaming=_b(get_path(rec, "stream", "streaming")),
-        tokens_in=_i(get_path(rec, "prompt_tokens", "input_tokens", "tokens_in", "usage.prompt_tokens", "usage.input_tokens", "promptTokens")),
-        tokens_out=_i(get_path(rec, "completion_tokens", "output_tokens", "tokens_out", "usage.completion_tokens", "usage.output_tokens", "completionTokens")),
+        tokens_in=_i(tokens_in),
+        tokens_out=_i(tokens_out),
         cost=_f(get_path(rec, "cost", "spend", "total_cost", "cost_usd")),
         status=_label(get_path(rec, "status", "status_code", "http_status")),
         path=get_path(rec, "path", "endpoint", "operation", "call_type", "route", "method_name"),

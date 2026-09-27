@@ -370,7 +370,7 @@ class AwsConnector(BaseConnector):
         Provider failures keep the pages already read (see ``_pages``); any other
         failure yields no items and marks coverage incomplete (see ``_safe``).
         """
-        return self._safe(lambda: list(self._paginate(client, op, key, **kwargs))) or []
+        return self._safe(list, self._paginate(client, op, key, **kwargs)) or []
 
     def _safe(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
         try:

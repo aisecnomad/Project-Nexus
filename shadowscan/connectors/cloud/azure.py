@@ -128,6 +128,16 @@ class AzureConnector(BaseConnector):
         "input": "offline: JSONL dump of records",
     }
     offline_formats: ClassVar[str] = "JSONL dump of records"
+    # Resource type -> builder method taking (record, id, properties, tags, base).
+    # Cognitive Services accounts also take deployments and diagnostics.
+    _RESOURCE_BUILDERS: ClassVar[dict[str, str]] = {
+        "microsoft.cognitiveservices/accounts/projects": "_foundry_project",
+        "microsoft.machinelearningservices/workspaces": "_ml_workspace",
+        "microsoft.botservice/botservices": "_bot_service",
+        "microsoft.app/containerapps": "_container_app",
+        "microsoft.managedidentity/userassignedidentities": "_managed_identity",
+        "microsoft.search/searchservices": "_search_service",
+    }
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
@@ -500,16 +510,11 @@ class AzureConnector(BaseConnector):
         }
         if t == "microsoft.cognitiveservices/accounts":
             return self._cognitive_account(r, rid, props, tags, base, deps, diag)
-        builders: dict[str, Callable[..., Finding | None]] = {
-            "microsoft.cognitiveservices/accounts/projects": self._foundry_project,
-            "microsoft.machinelearningservices/workspaces": self._ml_workspace,
-            "microsoft.botservice/botservices": self._bot_service,
-            "microsoft.app/containerapps": self._container_app,
-            "microsoft.managedidentity/userassignedidentities": self._managed_identity,
-            "microsoft.search/searchservices": self._search_service,
-        }
-        builder = builders.get(t)
-        return builder(r, rid, props, tags, base) if builder else None
+        method = self._RESOURCE_BUILDERS.get(t)
+        if method is None:
+            return None
+        builder: Callable[..., Finding | None] = getattr(self, method)
+        return builder(r, rid, props, tags, base)
 
     def _foundry_project(
         self, r: dict[str, Any], rid: str, props: dict[str, Any], tags: dict[str, Any], base: _ResourceBase,

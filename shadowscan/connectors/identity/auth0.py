@@ -50,7 +50,15 @@ class Auth0Connector(BaseConnector):
             if not (cid and secret):
                 raise ConnectorError("identity.auth0: client_id + client_secret (or token) required")
             client = HttpClient()
-            resp = client.post(f"https://{self.domain}/oauth/token", json={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret, "audience": f"https://{self.domain}/api/v2/"})
+            resp = client.post(
+                f"https://{self.domain}/oauth/token",
+                json={
+                    "grant_type": "client_credentials",
+                    "client_id": cid,
+                    "client_secret": secret,
+                    "audience": f"https://{self.domain}/api/v2/",
+                },
+            )
             token = client.read_json_response(resp)["access_token"]
         self.http = HttpClient(f"https://{self.domain}", headers={"Authorization": f"Bearer {token}"})
 
@@ -60,7 +68,10 @@ class Auth0Connector(BaseConnector):
         yield from self._pages(
             "/api/v2/clients", "client",
             include_fields="true",
-            fields="client_id,name,description,app_type,grant_types,callbacks,allowed_origins,web_origins,initiate_login_uri,client_metadata,is_first_party,token_endpoint_auth_method,logo_uri,sso",
+            fields=(
+                "client_id,name,description,app_type,grant_types,callbacks,allowed_origins,web_origins,"
+                "initiate_login_uri,client_metadata,is_first_party,token_endpoint_auth_method,logo_uri,sso"
+            ),
         )
         yield from self._pages("/api/v2/client-grants", "client_grant")
 
@@ -95,8 +106,19 @@ class Auth0Connector(BaseConnector):
 
     def _record_kind(self, rec: Any) -> str | None:
         if not self._record_fields_valid(
-            rec, required=("client_id",), strings=("_kind", "name", "description", "app_type", "initiate_login_uri", "logo_uri", "token_endpoint_auth_method"),
-            mappings=("client_metadata",), arrays=("grant_types", "callbacks", "allowed_origins", "web_origins"),
+            rec,
+            required=("client_id",),
+            strings=(
+                "_kind",
+                "name",
+                "description",
+                "app_type",
+                "initiate_login_uri",
+                "logo_uri",
+                "token_endpoint_auth_method",
+            ),
+            mappings=("client_metadata",),
+            arrays=("grant_types", "callbacks", "allowed_origins", "web_origins"),
         ):
             return None
         kind = rec.get("_kind") or ("client_grant" if "audience" in rec and "scope" in rec else "client")
@@ -123,9 +145,18 @@ class Auth0Connector(BaseConnector):
             self.ctx.examined()
             try:
                 f = self._client_finding(c, grants.get(c.get("client_id", ""), []))
-            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+            except (
+                AttributeError,
+                TypeError,
+                ValueError,
+                KeyError,
+                RecursionError,
+                MatchTimeoutError,
+            ) as exc:
                 detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
-                self.ctx.warn(f"identity.auth0: skipped a malformed client record ({type(exc).__name__}){detail}")
+                self.ctx.warn(
+                    f"identity.auth0: skipped a malformed client record ({type(exc).__name__}){detail}"
+                )
                 continue
             if f:
                 yield f
@@ -133,7 +164,9 @@ class Auth0Connector(BaseConnector):
     def _client_finding(self, c: dict[str, Any], grants: list[dict[str, Any]]) -> Finding | None:
         name = c.get("name") or c.get("client_id")
         grant_types = c.get("grant_types") or []
-        machine = c.get("app_type") == "non_interactive" or "client_credentials" in grant_types or bool(grants)
+        machine = (
+            c.get("app_type") == "non_interactive" or "client_credentials" in grant_types or bool(grants)
+        )
         scope_names: set[str] = set()
         for grant in grants:
             raw_scopes = grant.get("scope") or []
@@ -172,7 +205,14 @@ class Auth0Connector(BaseConnector):
             f,
             name=name,
             description=c.get("description"),
-            urls=[c.get("initiate_login_uri"), c.get("logo_uri"), *(c.get("callbacks") or []), *(c.get("allowed_origins") or []), *(c.get("web_origins") or []), *audiences],
+            urls=[
+                c.get("initiate_login_uri"),
+                c.get("logo_uri"),
+                *(c.get("callbacks") or []),
+                *(c.get("allowed_origins") or []),
+                *(c.get("web_origins") or []),
+                *audiences,
+            ],
             scopes=scopes,
             client_id=c.get("client_id"),
             grant_types=grant_types,
@@ -182,11 +222,33 @@ class Auth0Connector(BaseConnector):
         if meta:
             from shadowscan.connectors.common import apply_matches, name_matches
 
-            apply_matches(f, name_matches(self.index, " ".join(f"{k}={v}" for k, v in meta.items())), weight_scale=0.6)
+            apply_matches(
+                f, name_matches(self.index, " ".join(f"{k}={v}" for k, v in meta.items())), weight_scale=0.6
+            )
         if not f.frameworks and not machine:
             return None
-        f.add_evidence(Evidence(signal="auth0:client", description=f"{c.get('app_type') or 'app'} '{name}', grant types {', '.join(grant_types) or 'n/a'}, {'first-party' if c.get('is_first_party') else 'third-party'}; {len(grants)} client grant(s) to {', '.join(audiences)[:200] or 'no API'}", weight=0.3 if machine else 0.15))
-        f.metadata.update({"client_id": c.get("client_id"), "app_type": c.get("app_type"), "grant_types": grant_types, "audiences": audiences, "scopes": summarize_scopes(scopes), "is_first_party": c.get("is_first_party"), "client_metadata": meta})
+        f.add_evidence(
+            Evidence(
+                signal="auth0:client",
+                description=(
+                    f"{c.get('app_type') or 'app'} '{name}', grant types {', '.join(grant_types) or 'n/a'}, "
+                    f"{'first-party' if c.get('is_first_party') else 'third-party'}; {len(grants)} client "
+                    f"grant(s) to {', '.join(audiences)[:200] or 'no API'}"
+                ),
+                weight=0.3 if machine else 0.15,
+            )
+        )
+        f.metadata.update(
+            {
+                "client_id": c.get("client_id"),
+                "app_type": c.get("app_type"),
+                "grant_types": grant_types,
+                "audiences": audiences,
+                "scopes": summarize_scopes(scopes),
+                "is_first_party": c.get("is_first_party"),
+                "client_metadata": meta,
+            }
+        )
         finalize(f, self.index)
         f.kind = kind
         return f

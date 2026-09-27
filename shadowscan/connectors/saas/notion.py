@@ -36,7 +36,10 @@ class NotionConnector(BaseConnector):
         token = self.ctx.get("token", env="NOTION_TOKEN")
         if not token:
             raise ConnectorError("saas.notion: token required")
-        http = HttpClient("https://api.notion.com", headers={"Authorization": f"Bearer {token}", "Notion-Version": "2022-06-28"})
+        http = HttpClient(
+            "https://api.notion.com",
+            headers={"Authorization": f"Bearer {token}", "Notion-Version": "2022-06-28"},
+        )
         max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
         cursor: str | None = None
         seen: set[str] = set()
@@ -68,16 +71,27 @@ class NotionConnector(BaseConnector):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for u in records:
             if not self._valid_user_record(u):
-                self.ctx.warn("saas.notion: unsupported or malformed user record or provider error; coverage incomplete")
+                self.ctx.warn(
+                    "saas.notion: unsupported or malformed user record or provider error; coverage incomplete"
+                )
                 continue
             if u.get("type") != "bot" and "bot" not in u:
                 continue
             self.ctx.examined()
             try:
                 f = self._bot_finding(u)
-            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+            except (
+                AttributeError,
+                TypeError,
+                ValueError,
+                KeyError,
+                RecursionError,
+                MatchTimeoutError,
+            ) as exc:
                 detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
-                self.ctx.warn(f"saas.notion: skipped a malformed integration record ({type(exc).__name__}){detail}")
+                self.ctx.warn(
+                    f"saas.notion: skipped a malformed integration record ({type(exc).__name__}){detail}"
+                )
                 continue
             if f:
                 yield f
@@ -86,7 +100,9 @@ class NotionConnector(BaseConnector):
         # Error bodies are {"object": "error", "status": ..., "code": ..., "message": ...}
         # and must never pass as an empty inventory.
         return (
-            self._record_fields_valid(u, strings=("object", "type", "id", "name", "avatar_url"), mappings=("bot", "person"))
+            self._record_fields_valid(
+                u, strings=("object", "type", "id", "name", "avatar_url"), mappings=("bot", "person")
+            )
             and u.get("object") in (None, "user")
             and any(isinstance(u.get(key), str) and u[key].strip() for key in ("id", "name"))
         )
@@ -108,10 +124,22 @@ class NotionConnector(BaseConnector):
             owner=owner,
         )
         assess_app(self.index, f, name=name)
-        f.add_evidence(Evidence(signal="notion:bot", description=f"Integration '{name}' owned by {owner_type or 'unknown'}{' (' + str(owner) + ')' if owner else ''}; workspace {bot.get('workspace_name') or '?'}", weight=0.35 if owner_type == "workspace" else 0.25))
+        f.add_evidence(
+            Evidence(
+                signal="notion:bot",
+                description=(
+                    f"Integration '{name}' owned by "
+                    f"{owner_type or 'unknown'}{' (' + str(owner) + ')' if owner else ''}; workspace "
+                    f"{bot.get('workspace_name') or '?'}"
+                ),
+                weight=0.35 if owner_type == "workspace" else 0.25,
+            )
+        )
         if owner_type == "user":
             f.add_tag("user-owned-integration")
-        f.metadata.update({"owner_type": owner_type, "workspace": bot.get("workspace_name"), "avatar": u.get("avatar_url")})
+        f.metadata.update(
+            {"owner_type": owner_type, "workspace": bot.get("workspace_name"), "avatar": u.get("avatar_url")}
+        )
         finalize(f, self.index)
         f.kind = Kind.BOT_APP
         return f
