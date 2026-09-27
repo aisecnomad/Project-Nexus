@@ -1,14 +1,18 @@
 """Invalid optional values must not corrupt findings or conceal lost coverage."""
 
+from __future__ import annotations
+
 from unittest.mock import Mock
 
 import pytest
 
 from shadowscan.connectors import ConnectorContext
+from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.cloud.aws import AwsConnector
 from shadowscan.connectors.cloud.azure import AzureConnector
 from shadowscan.connectors.identity.auth0 import Auth0Connector
 from shadowscan.connectors.lowcode.salesforce import SalesforceConnector
+from shadowscan.connectors.saas.atlassian import AtlassianConnector
 from shadowscan.connectors.saas.slack import SlackConnector
 from shadowscan.models import ScanStats
 
@@ -110,3 +114,11 @@ def test_invalid_model_does_not_discard_agent_finding(index, provider):
         finding = AzureConnector(context)._h_foundry_agent({"id": "AGENT", "name": "Agent", "_project": "/project", "model": {"invalid": True}})
     assert finding.models == [] and finding.resource
     assert context.stats.incomplete
+
+
+def test_atlassian_products_string_is_normalised_and_validated(index):
+    assert AtlassianConnector(ConnectorContext(config={"products": "jira"}, index=index)).products == ["jira"]
+    assert AtlassianConnector(ConnectorContext(config={"products": "confluence, jira"}, index=index)).products == ["confluence", "jira"]
+    assert AtlassianConnector(ConnectorContext(config={}, index=index)).products == ["jira", "confluence"]
+    with pytest.raises(ConnectorError):
+        AtlassianConnector(ConnectorContext(config={"products": ["bitbucket"]}, index=index))

@@ -6,6 +6,8 @@ import json
 import pytest
 import yaml
 
+from shadowscan.connectors import ConnectorContext
+from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
     parse_agent_manifest,
@@ -216,3 +218,53 @@ def test_ai_only_workflows_are_not_agents(tmp_path, run_connector, index, data):
     assert not ctx.stats.errors
     assert any(finding.kind == Kind.WORKFLOW for finding in findings)
     assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+LIMITS = "structured configuration exceeds parser limits"
+
+
+def _scan(index, root, files: dict[str, str], **config):
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    ctx = ConnectorContext(config={"path": str(root), "use_git": False, **config}, index=index)
+    return FilesystemConnector(ctx).run(), ctx
+
+
+# Python 3.12+ parses a few thousand JSON levels; this depth exceeds the C
+# recursion limit on every supported version.
+DEEP_JSON = '{"nodes": [], "pinData": ' + "[" * 200_000 + "]" * 200_000 + "}"
+XML_BOMB = (
+    '<?xml version="1.0"?><!DOCTYPE l [<!ENTITY a "aaaaaaaaaa">'
+    + "".join(f'<!ENTITY {chr(98 + i)} "' + f"&{chr(97 + i)};" * 10 + '">' for i in range(8))
+    + "]><GenAiPlanner>&i;</GenAiPlanner>"
+)
+
+
+@pytest.mark.parametrize(("rel", "text"), [
+    ("flows/workflow.json", DEEP_JSON),
+    ("flows/workflow.yaml", "a: " + "[" * 3000 + "]" * 3000),
+    ("flows/workflow.toml", "x = " + "[" * 5000 + "]" * 5000),
+    ("force-app/agent.genAiPlanner-meta.xml", XML_BOMB),
+], ids=["json-depth", "yaml-depth", "toml-depth", "xml-expansion"])
+def test_parser_limits_are_not_syntax_errors(index, rel, text):
+    errors: list[str] = []
+    limits: list[str] = []
+    assert structured_code_matches(index, rel, text, errors, limits) == []
+    assert limits == [LIMITS] and errors == []
+    # A caller that does not separate them still fails closed.
+    fallback: list[str] = []
+    structured_code_matches(index, rel, text, fallback)
+    assert fallback == [LIMITS]
+
+
+def test_parser_limits_keep_an_ordinary_config_scan_incomplete(tmp_path, index):
+    _, ctx = _scan(index, tmp_path, {"flows/workflow.json": DEEP_JSON})
+    assert ctx.stats.incomplete
+    assert any("flows/workflow.json" in error and LIMITS in error for error in ctx.stats.errors)
+
+
+def test_syntax_errors_in_ordinary_configs_still_only_warn(tmp_path, index):
+    _, ctx = _scan(index, tmp_path, {"flows/workflow.json": '{"nodes": '})
+    assert not ctx.stats.incomplete and not ctx.stats.errors

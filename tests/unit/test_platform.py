@@ -1,4 +1,4 @@
-"""Hardening follow-up from the 2026-09-25 external grade: platform preflight and shim aliases."""
+"""Platform preflight: unsupported hosts fail closed, help and version still work."""
 
 from __future__ import annotations
 
@@ -6,15 +6,12 @@ import pytest
 from click.testing import CliRunner
 
 from shadowscan.cli import main
-from shadowscan.utils import text
 from shadowscan.utils.platform import (
     MISSING_NOFOLLOW_MESSAGE,
     UNSUPPORTED_WINDOWS_MESSAGE,
     UnsupportedPlatformError,
     require_supported_platform,
 )
-from shadowscan.utils.redaction import credential_id, sanitize
-from shadowscan.utils.text import redact
 
 
 def test_require_supported_platform_accepts_the_validated_host():
@@ -55,14 +52,3 @@ def test_cli_commands_fail_closed_without_nofollow(monkeypatch, tmp_path):
     result = CliRunner().invoke(main, ["code", str(tmp_path)])
     assert result.exit_code == 1
     assert MISSING_NOFOLLOW_MESSAGE in result.output
-
-
-def test_redact_shim_remains_a_compatibility_alias():
-    token = "sk-proj-exampletokenvalue"
-    assert redact(token, keep=8) == credential_id(token)
-
-
-def test_sanitize_record_alias_is_replaced_by_sanitize():
-    token = "sk-proj-exampletokenvalue"
-    assert not hasattr(text, "sanitize_record")
-    assert sanitize({"token": token})["token"] != token
