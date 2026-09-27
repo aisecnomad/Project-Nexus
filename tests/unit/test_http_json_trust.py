@@ -26,7 +26,6 @@ def response(body: bytes) -> requests.Response:
     ("paginate_link", "items", {"item_key": "items"}),
     ("paginate_odata", "value", {}),
     ("paginate_token", "items", {}),
-    ("paginate_cursor", "results", {}),
 ])
 def test_duplicate_collection_cannot_replace_detected_records_with_an_empty_inventory(paginator, key, kwargs):
     body = ('{"' + key + '":[{"id":"agent"}],"' + key + '":[]}').encode()

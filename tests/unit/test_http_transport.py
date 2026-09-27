@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import socket
 import ssl
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -18,7 +20,7 @@ from cryptography.x509.oid import NameOID
 from shadowscan.utils.http import HttpClient
 
 
-def test_https_adapter_connects_vetted_address_and_checks_original_hostname(tmp_path, monkeypatch):
+def _certificate(tmp_path):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "service.example")])
     now = datetime.now(UTC)
@@ -38,6 +40,30 @@ def test_https_adapter_connects_vetted_address_and_checks_original_hostname(tmp_
     key_path = tmp_path / "key.pem"
     cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
     key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    return cert_path, key_path
+
+
+def _serve_tls(handler, cert_path, key_path):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(cert_path, key_path)
+    server.socket = tls.wrap_socket(server.socket, server_side=True)
+    thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def _resolve_to(port, monkeypatch, hosts=frozenset({"service.example"})):
+    def resolve(host, requested_port, *args, **kwargs):
+        assert host in hosts
+        assert requested_port == port
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", port))]
+
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolve)
+
+
+def test_https_adapter_connects_vetted_address_and_checks_original_hostname(tmp_path, monkeypatch):
+    cert_path, key_path = _certificate(tmp_path)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -50,20 +76,9 @@ def test_https_adapter_connects_vetted_address_and_checks_original_hostname(tmp_
         def log_message(self, *args):
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    tls.load_cert_chain(cert_path, key_path)
-    server.socket = tls.wrap_socket(server.socket, server_side=True)
-    thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
-    thread.start()
+    server, thread = _serve_tls(Handler, cert_path, key_path)
     port = server.server_port
-
-    def resolve(host, requested_port, *args, **kwargs):
-        assert host in {"service.example", "wrong.example"}
-        assert requested_port == port
-        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", port))]
-
-    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolve)
+    _resolve_to(port, monkeypatch, frozenset({"service.example", "wrong.example"}))
     allowed = HttpClient(allow_private_origin=True, timeout=2, max_retries=0)
     blocked = HttpClient(timeout=2, max_retries=0)
     try:
@@ -80,3 +95,67 @@ def test_https_adapter_connects_vetted_address_and_checks_original_hostname(tmp_
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+# A valid JSON document the server sends one byte every DRIP_INTERVAL seconds:
+# always inside the client's per-read timeout, but taking about four seconds.
+DRIP_BODY = b'{"items": []}'.rjust(80)
+DRIP_INTERVAL = 0.05
+READ_TIMEOUT = 0.5  # the whole-body deadline is twice this
+
+
+@pytest.mark.parametrize("framing", ["content-length", "chunked", "close-delimited"])
+def test_slow_drip_body_fails_at_the_read_deadline_instead_of_holding_the_worker(tmp_path, monkeypatch, framing):
+    cert_path, key_path = _certificate(tmp_path)
+    stop = threading.Event()
+
+    class Handler(BaseHTTPRequestHandler):
+        # HTTP/1.0 without a length ends the body when the server closes it.
+        protocol_version = "HTTP/1.0" if framing == "close-delimited" else "HTTP/1.1"
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            if framing == "content-length":
+                self.send_header("Content-Length", str(len(DRIP_BODY)))
+            elif framing == "chunked":
+                self.send_header("Transfer-Encoding", "chunked")
+            if framing != "close-delimited":
+                self.send_header("Connection", "close")
+            self.end_headers()
+            try:
+                for byte in DRIP_BODY:
+                    if stop.is_set():
+                        return
+                    data = bytes([byte])
+                    self.wfile.write(b"1\r\n" + data + b"\r\n" if framing == "chunked" else data)
+                    time.sleep(DRIP_INTERVAL)
+                if framing == "chunked":
+                    self.wfile.write(b"0\r\n\r\n")
+            except OSError:
+                return  # the client gave up on the response
+
+        def log_message(self, *args):
+            pass
+
+    server, thread = _serve_tls(Handler, cert_path, key_path)
+    port = server.server_port
+    _resolve_to(port, monkeypatch)
+    http = HttpClient(allow_private_origin=True, timeout=READ_TIMEOUT, max_retries=0)
+    try:
+        started = time.monotonic()
+        with pytest.raises(ValueError, match="read deadline") as caught:
+            http.get_json(f"https://service.example:{port}/items", verify=str(cert_path))
+        elapsed = time.monotonic() - started
+    finally:
+        stop.set()
+        http.session.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+    assert http.read_deadline == 2 * READ_TIMEOUT
+    # The deadline interrupts a read blocked inside one 64 KiB chunk rather than
+    # waiting for the server to finish its body (about four seconds).
+    assert elapsed < len(DRIP_BODY) * DRIP_INTERVAL * 0.75
+    # No transport detail is chained onto the fail-closed diagnostic.
+    assert caught.value.__cause__ is None and caught.value.__context__ is None

@@ -5,6 +5,7 @@ Kept deliberately thin so connectors read like the API docs they implement.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import ipaddress
 import json
@@ -13,6 +14,7 @@ import math
 import random
 import re
 import socket
+import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
@@ -33,6 +35,10 @@ log = logging.getLogger("shadowscan.http")
 
 DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+# A per-read socket timeout does not bound a response body: a server can send one
+# byte just inside every timeout. Each body must also finish within this multiple
+# of the client timeout (60 seconds by default).
+READ_DEADLINE_FACTOR = 2
 MAX_RETRY_DELAY = 120
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 _HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
@@ -73,6 +79,42 @@ def _positive_byte_limit(value: int | None, default: int) -> int:
     if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
         raise ValueError("max_bytes must be a positive integer")
     return limit
+
+
+def _read_deadline(timeout: float) -> float:
+    """Derive the whole-body read deadline from the per-read client timeout."""
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise ValueError("timeout must be a positive finite number of seconds")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be a positive finite number of seconds")
+    return float(timeout) * READ_DEADLINE_FACTOR
+
+
+def _read_watchdog(
+    resp: requests.Response, seconds: float, expired: threading.Event
+) -> threading.Timer | None:
+    """Abort a body read that is still blocked when its deadline passes.
+
+    urllib3 fills a whole chunk before returning it, so a server dripping bytes
+    inside the socket timeout would otherwise hold the worker until the connector
+    deadline abandons it. Shutting the socket down for reading wakes the blocked
+    read; ``expired`` tells the reader that any end of body it then sees is not a
+    complete response.
+    """
+    shutdown = getattr(resp.raw, "shutdown", None)
+    if not callable(shutdown):
+        return None
+
+    def abort() -> None:
+        expired.set()
+        # urllib3 refuses to shut down a connection already returned to the pool.
+        with contextlib.suppress(OSError, RuntimeError, ValueError):
+            shutdown()
+
+    timer = threading.Timer(seconds, abort)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -168,7 +210,8 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
         raise ValueError("API URL must use HTTPS without embedded credentials")
     if origin:
         expected = urlsplit(origin)
-        if (parsed.scheme, parsed.hostname, parsed.port or 443) != (expected.scheme, expected.hostname, expected.port or 443):
+        actual_origin = (parsed.scheme, parsed.hostname, parsed.port or 443)
+        if actual_origin != (expected.scheme, expected.hostname, expected.port or 443):
             raise ValueError("Refusing API URL outside the configured credential origin")
     allow = _allow_private_origin.get() if allow_private is None else allow_private
     if not isinstance(allow, bool):
@@ -189,7 +232,9 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
             except (ValueError, TypeError, IndexError):
                 continue
             if _blocked_ip(addr) and not allow:
-                raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination") from None
+                raise ValueError(
+                    "Refusing loopback, link-local, private, or cloud-metadata destination"
+                ) from None
     return url
 
 
@@ -314,7 +359,7 @@ class HttpClient:
         self,
         base_url: str = "",
         headers: dict[str, str] | None = None,
-        timeout: int = DEFAULT_TIMEOUT,
+        timeout: float = DEFAULT_TIMEOUT,
         max_retries: int = 4,
         session: requests.Session | None = None,
         auth: Any = None,
@@ -322,8 +367,12 @@ class HttpClient:
         allow_private_origin: bool | None = None,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     ):
+        # Validate before an injected session is modified.
+        read_deadline = _read_deadline(timeout)
         self.base_url = base_url.rstrip("/")
-        self.allow_private_origin = _allow_private_origin.get() if allow_private_origin is None else allow_private_origin
+        self.allow_private_origin = (
+            _allow_private_origin.get() if allow_private_origin is None else allow_private_origin
+        )
         if not isinstance(self.allow_private_origin, bool):
             raise TypeError("allow_private_origin must be a boolean")
         self.session = session or requests.Session()
@@ -353,6 +402,7 @@ class HttpClient:
         if auth is not None:
             self.session.auth = auth
         self.timeout = timeout
+        self.read_deadline = read_deadline
         self.max_retries = max_retries
         self.max_response_bytes = _positive_byte_limit(max_response_bytes, DEFAULT_MAX_RESPONSE_BYTES)
         self.requests_made = 0
@@ -365,7 +415,9 @@ class HttpClient:
             url = f"{self.base_url}/{path.lstrip('/')}"
         return validate_url(url, self.base_url or None, allow_private=self.allow_private_origin)
 
-    def request(self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any) -> requests.Response:
+    def request(
+        self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any
+    ) -> requests.Response:
         if not isinstance(raise_for_status, bool):
             raise TypeError("raise_for_status must be a boolean")
         _validate_headers(self.session.headers)
@@ -394,7 +446,10 @@ class HttpClient:
         redirects = 0
         origin = url
         while True:
-            if isinstance(self.session, requests.Session) and self.session.get_adapter(url) is not self._policy_adapter:
+            replaced = isinstance(self.session, requests.Session) and (
+                self.session.get_adapter(url) is not self._policy_adapter
+            )
+            if replaced:
                 raise ValueError("HTTP destination policy adapter was replaced")
             attempt += 1
             self.requests_made += 1
@@ -420,7 +475,10 @@ class HttpClient:
             if (resp.status_code in RETRY_STATUSES or _rate_limited(resp)) and attempt <= self.max_retries:
                 resp.close()
                 delay = _retry_delay(resp, attempt)
-                log.warning("HTTP %s from %s; retrying in %.0fs (attempt %d)", resp.status_code, diagnostic_url(url), delay, attempt)
+                log.warning(
+                    "HTTP %s from %s; retrying in %.0fs (attempt %d)",
+                    resp.status_code, diagnostic_url(url), delay, attempt,
+                )
                 time.sleep(delay)
                 continue
             if resp.status_code >= 400 and raise_for_status:
@@ -441,12 +499,16 @@ class HttpClient:
         return self.request("POST", path, **kwargs)
 
     def read_response_bytes(self, resp: requests.Response, *, max_bytes: int | None = None) -> bytes:
-        """Read a streamed response within the configured decoded-byte limit.
+        """Read a streamed response within the configured decoded-byte and time limits.
 
         Iteration counts bytes after HTTP content decoding, so compressed
-        responses cannot expand past the limit unnoticed. The response is closed
-        on success and on every parse, transport, or size error.
+        responses cannot expand past the limit unnoticed. The whole body must
+        arrive within ``read_deadline`` seconds; a body cut short by that
+        deadline is an error, never a truncated result. The response is closed
+        on success and on every parse, transport, size, or deadline error.
         """
+        watchdog: threading.Timer | None = None
+        expired = threading.Event()
         try:
             limit = _positive_byte_limit(max_bytes, self.max_response_bytes)
             length = resp.headers.get("Content-Length")
@@ -459,15 +521,32 @@ class HttpClient:
                 maximum = str(limit)
                 if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
                     raise ValueError("HTTP response exceeds the byte limit")
+            deadline = time.monotonic() + self.read_deadline
+            watchdog = _read_watchdog(resp, self.read_deadline, expired)
             body = bytearray()
-            for chunk in resp.iter_content(chunk_size=min(65536, limit + 1)):
-                if not isinstance(chunk, bytes):
-                    raise ValueError("Invalid HTTP response chunk")
-                if len(body) + len(chunk) > limit:
-                    raise ValueError("HTTP response exceeds the byte limit")
-                body.extend(chunk)
+            try:
+                for chunk in resp.iter_content(chunk_size=min(65536, limit + 1)):
+                    if time.monotonic() >= deadline:
+                        expired.set()
+                        break
+                    if not isinstance(chunk, bytes):
+                        raise ValueError("Invalid HTTP response chunk")
+                    if len(body) + len(chunk) > limit:
+                        raise ValueError("HTTP response exceeds the byte limit")
+                    body.extend(chunk)
+            except Exception:  # noqa: BLE001 - re-raised unless the deadline shut the read down
+                # The watchdog's shutdown surfaces as a transport or framing
+                # error; report the deadline instead, without transport text.
+                if not expired.is_set():
+                    raise
+            if expired.is_set():
+                # A close-delimited body also ends cleanly after the shutdown.
+                raise ValueError("HTTP response exceeds the read deadline")
             return bytes(body)
         finally:
+            if watchdog is not None:
+                watchdog.cancel()
+                watchdog.join()
             resp.close()
 
     def read_json_response(self, resp: requests.Response, *, max_bytes: int | None = None) -> Any:
@@ -502,7 +581,9 @@ class HttpClient:
         resp = self.post(path, **kwargs)
         return self.read_json_response(resp, max_bytes=limit)
 
-    def try_get_json(self, path: str, default: Any = None, ok_statuses: set[int] | None = None, **kwargs: Any) -> Any:
+    def try_get_json(
+        self, path: str, default: Any = None, ok_statuses: set[int] | None = None, **kwargs: Any
+    ) -> Any:
         """Optional GET; denied or unknown coverage is never silently discarded.
 
         Callers may explicitly allow a missing optional feature (e.g. 404).
@@ -543,7 +624,10 @@ class HttpClient:
             raise RuntimeError("Invalid pagination continuation; collection incomplete")
         return value
 
-    def paginate_link(self, path: str, params: dict[str, Any] | None = None, item_key: str | None = None, max_pages: int = 1000) -> Iterator[Any]:
+    def paginate_link(
+        self, path: str, params: dict[str, Any] | None = None, item_key: str | None = None,
+        max_pages: int = 1000,
+    ) -> Iterator[Any]:
         """RFC 5988 Link-header pagination for GitHub and GitLab."""
         origin = self._url(path)
         url: str | None = origin
@@ -564,7 +648,9 @@ class HttpClient:
         if url:
             raise RuntimeError("Pagination limit reached; collection incomplete")
 
-    def paginate_odata(self, path: str, params: dict[str, Any] | None = None, max_pages: int = 1000) -> Iterator[dict[str, Any]]:
+    def paginate_odata(
+        self, path: str, params: dict[str, Any] | None = None, max_pages: int = 1000
+    ) -> Iterator[dict[str, Any]]:
         """Microsoft Graph and OData next-link pagination."""
         origin = self._url(path)
         url: str | None = origin
@@ -639,43 +725,5 @@ class HttpClient:
                 raise RuntimeError("Repeated pagination token; collection incomplete")
             seen.add(token)
             params[token_param] = token
-            pages += 1
-        raise RuntimeError("Pagination limit reached; collection incomplete")
-
-    def paginate_cursor(
-        self,
-        path: str,
-        params: dict[str, Any] | None = None,
-        items_key: str = "results",
-        cursor_path: Callable[[dict[str, Any]], str | None] | None = None,
-        cursor_param: str = "cursor",
-        max_pages: int = 1000,
-    ) -> Iterator[dict[str, Any]]:
-        """Slack-style response-metadata cursor pagination."""
-        params = dict(params or {})
-        pages = 0
-        seen: set[str] = set()
-        while pages < max_pages:
-            data = self.get_json(path, params=params)
-            if not isinstance(data, dict):
-                raise RuntimeError("Invalid paginated API response; collection incomplete")
-            items = self._require_page_items(data, items_key, "Cursor pagination")
-            if cursor_path is None:
-                metadata = data.get("response_metadata", {})
-                if not isinstance(metadata, dict):
-                    raise RuntimeError("Invalid pagination metadata; collection incomplete")
-                cursor = self._continuation(metadata.get("next_cursor"))
-            else:
-                try:
-                    cursor = self._continuation(cursor_path(data))
-                except (AttributeError, KeyError, TypeError) as exc:
-                    raise RuntimeError("Invalid pagination cursor; collection incomplete") from exc
-            yield from items
-            if not cursor:
-                return
-            if cursor in seen:
-                raise RuntimeError("Repeated pagination cursor; collection incomplete")
-            seen.add(cursor)
-            params[cursor_param] = cursor
             pages += 1
         raise RuntimeError("Pagination limit reached; collection incomplete")
