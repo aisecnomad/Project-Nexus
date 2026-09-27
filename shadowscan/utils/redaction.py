@@ -202,7 +202,8 @@ class _Sanitizer:
     ``order`` ranks them for replacement; ``clean`` copies the input,
     withholding them from every other field as well. The established pass
     uses the established rules and text passes; the ``extended`` one, run
-    on the established pass's copy, the rules added since (see ``sanitize``).
+    on the established pass's copy, the rules added since (see ``sanitize``),
+    and knows only the values those find.
     """
 
     def __init__(self, *, redact_short_secrets: bool, env_values_are_secrets: bool, extended: bool) -> None:
@@ -239,14 +240,18 @@ class _Sanitizer:
             return
         if isinstance(item, (Mapping, list, tuple)):
             self.discovered.add(identity)
+        # The extended pass knows only the values the added rules find: the
+        # established pass already withheld and removed the others.
+        established = not self.extended
         if isinstance(item, Mapping):
             if _record_has_secret_value(item, environment=environment, extended=self.extended):
                 self.remember(item.get("value") or item.get("Value"))
             for key, child in item.items():
-                if _sensitive_key(str(key)) or environment and _sensitive_assignment_key(str(key)):
+                name = str(key)
+                if established and (_sensitive_key(name) or environment and _sensitive_assignment_key(name)):
                     self.remember(child)
-                child_environment = environment or str(key).lower() in _ENVIRONMENT_KEYS
-                if self.env_values_are_secrets and child_environment:
+                child_environment = environment or name.lower() in _ENVIRONMENT_KEYS
+                if established and self.env_values_are_secrets and child_environment:
                     if isinstance(child, Mapping):
                         for env_value in child.values():
                             self.remember(env_value)
@@ -259,7 +264,7 @@ class _Sanitizer:
             previous = None
             for child in item:
                 if isinstance(previous, str) and previous.startswith("-"):
-                    if _sensitive_key(previous.lstrip("-")) or (
+                    if (established and _sensitive_key(previous.lstrip("-"))) or (
                         self.extended and _opaque_option(previous) and _opaque_literal(child)
                     ):
                         self.remember(child)
@@ -267,8 +272,14 @@ class _Sanitizer:
                 previous = child
 
     def text_passes(self, text: str) -> str:
-        """This pass's text passes: the established ones, or the extended ones on their result."""
-        return _redact_extended(_checked_text(text)) if self.extended else _sanitize_established(text)
+        """This pass's text passes: the established ones, or the extended ones on their result.
+
+        Only the established passes check the text's size, as before. The
+        extended ones read what the established passes made of a value within
+        the limit, which markers can make longer than the limit ('pwd=ab'
+        becomes 'pwd=[REDACTED]'), as ``sanitize_text`` does.
+        """
+        return _redact_extended(text) if self.extended else _sanitize_established(text)
 
     def order(self) -> None:
         """Rank the known values longest first for replacement."""
@@ -283,7 +294,11 @@ class _Sanitizer:
         self.ordered = sorted(self.known, key=len, reverse=True)
 
     def text(self, item: str) -> str:
-        self.charge(len(item) * (len(self.ordered) + 1))
+        # The extended pass is charged only for removing the values it knows,
+        # which the established pass did not know. Its text passes are linear,
+        # as in sanitize_text, so a value in which it finds none cannot reach
+        # a limit the established pass did not.
+        self.charge(len(item) * (len(self.ordered) + (0 if self.extended else 1)))
         if self.redact_short_secrets and self.ordered:
             # Preserve recognizable token/URL structure before a short known
             # secret changes a scheme, hostname, or credential prefix. For
@@ -314,7 +329,11 @@ class _Sanitizer:
         parts = item.split(REDACTED) if secret in REDACTED else [item]
         occurrences = sum(part.count(secret) for part in parts)
         projected_chars = len(item) + occurrences * max(0, len(REDACTED) - len(secret))
-        if projected_chars > _MAX_SANITIZATION_CHARS:
+        # The extended pass reads the established pass's text, which markers
+        # can already have made longer than the limit. A replacement may not
+        # grow a text past the limit, nor grow a text already past it.
+        limit = max(_MAX_SANITIZATION_CHARS, len(item)) if self.extended else _MAX_SANITIZATION_CHARS
+        if projected_chars > limit:
             raise SanitizationLimitError("credential replacement size limit exceeded")
         return REDACTED.join(part.replace(secret, REDACTED) for part in parts)
 
@@ -404,7 +423,12 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     Two passes run, as in ``sanitize_text``: the established rules copy the
     value, then the rules added since (settings in name/value records,
     opaque values of argv options named for a credential) copy that copy,
-    so they only withhold more than the established pass does.
+    so they only withhold more than the established pass does. The limits
+    apply to the established pass as before. The second pass reads text the
+    first one produced, which markers can make longer than the size limit,
+    so it checks neither that text nor its length; it is charged only for
+    removing the values the added rules find from the other fields, and only
+    that removal can reach a limit the established pass did not.
     """
     _check_sanitization_structure(value)
     for extended in (False, True):
