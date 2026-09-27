@@ -943,7 +943,27 @@ class GcpConnector(BaseConnector):
         f.metadata["labels"] = rec.get("labels")
         return done(f, self.index, Kind.SECRET)
 
+    def _is_service_account_principal(self, principal: str) -> bool:
+        raw = (principal or "").strip().lower()
+        if not raw:
+            return False
+
+        # Common audit-log form: "serviceAccount:sa-name@project.iam.gserviceaccount.com"
+        if ":" in raw:
+            raw = raw.split(":", 1)[1]
+
+        host = raw
+        if "@" in host:
+            host = host.rsplit("@", 1)[1]
+        elif "://" in host:
+            parsed = urlsplit(host)
+            host = parsed.hostname or ""
+
+        host = host.strip(".")
+        return host == "gserviceaccount.com" or host.endswith(".gserviceaccount.com")
+
     def _caller_finding(self, principal: str, agg: dict[str, Any]) -> Finding:
+        is_service_account = self._is_service_account_principal(principal)
         f = cloud_finding(
             self.name,
             "gcp",
@@ -964,10 +984,10 @@ class GcpConnector(BaseConnector):
             Evidence(
                 signal="gcp:audit",
                 description=f"{agg['events']} call(s) ({', '.join(f'{k}×{v}' for k, v in list(agg['methods'].items())[:5])}) by {principal}",
-                weight=0.45 if principal.endswith("gserviceaccount.com") else 0.25,
+                weight=0.45 if is_service_account else 0.25,
             )
         )
-        if principal.endswith("gserviceaccount.com"):
+        if is_service_account:
             f.add_tag("service-account")
         if agg.get("delegated"):
             f.add_tag("delegation")
