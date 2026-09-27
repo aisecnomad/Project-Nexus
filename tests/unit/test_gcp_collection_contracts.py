@@ -298,6 +298,8 @@ class _StreamedResponse:
         self.headers: dict[str, str] = {}
         self.body = body
         self.closed = False
+        # requests.Response always carries ``raw``; this in-memory body has no socket.
+        self.raw = None
 
     def iter_content(self, chunk_size: int) -> Any:
         yield self.body
