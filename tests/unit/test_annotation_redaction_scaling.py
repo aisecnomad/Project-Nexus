@@ -99,6 +99,70 @@ def test_reused_annotation_scans_match_a_scan_per_candidate(monkeypatch):
     assert sum(decisions) > 100  # reuse was exercised, not merely available
 
 
+@pytest.mark.parametrize("unit", [
+    "{token: a}, ",       # annotations that end at a closer, all on one line
+    "(token = a, ",       # sensitive keyword arguments, all on one line
+    "{token:e.token,headers:h},function f(a){return a+1};",
+])
+def test_candidates_on_one_long_line_scale_linearly(unit):
+    small, large = unit * 1000, unit * 4000
+    small_time = _best_time(small, 3)
+    large_time = _best_time(large, 1)
+    assert large_time < max(small_time, 0.02) * 10, (small_time, large_time)
+
+
+def test_candidates_on_one_long_line_do_not_exhaust_the_budget():
+    # Each candidate's scan used to read, and be charged, the rest of the
+    # physical line although tokenizing stopped at the next ',' or '}'. A
+    # minified line with a few thousand sensitive keys exceeded the budget
+    # and every excerpt of the file was withheld as incomplete.
+    mapping = sanitize_text("{token: a}, " * 20_000)
+    assert mapping.count(REDACTED) == 20_000 and "token: a" not in mapping
+    arguments = sanitize_text("f(" + "token = a, " * 20_000 + ")")
+    assert arguments.count(REDACTED) == 20_000 and "token = a" not in arguments
+    bundle = "".join(
+        f"function f{n}(e,h){{return fetch(u,{{token:e.token,headers:h}})}};" + "var x=1;" * 100
+        for n in range(600)
+    )
+    assert len(bundle) > 500_000
+    assert sanitize_text(bundle).count("{token:e.token,headers:h}") == 600
+
+
+_LINE_PIECES = [
+    *_PIECES, "token = a, ", "(token = a, ", "{token: a}, ", "abc_def_ghi ", "1e5", "...", "?", "$",
+]
+
+
+def test_line_limited_scans_match_whole_line_scans(monkeypatch):
+    rng = random.Random(20260928)
+    sources = []
+    for _ in range(1500):
+        source = "".join(rng.choice(_LINE_PIECES) for _ in range(rng.randint(5, 80)))
+        # Join some lines so long physical lines are cut at realistic limits too.
+        sources.append(source.replace("\n", " ", rng.randint(0, 4)))
+    cuts = []
+    scan = redaction._AssignmentScanner._scan
+
+    def counting(self: redaction._AssignmentScanner, *args: object) -> object:
+        located = scan(self, *args)  # type: ignore[arg-type]
+        cuts.append(located is None)
+        return located
+
+    def redact(source: str) -> str:
+        try:
+            return redaction._redact_python_assignments(source)
+        except SanitizationLimitError as exc:
+            return f"limit: {exc}"
+
+    monkeypatch.setattr(redaction, "_SCAN_LINE_LIMIT", 1 << 40)
+    whole = [redact(source) for source in sources]
+    monkeypatch.setattr(redaction._AssignmentScanner, "_scan", counting)
+    for limit in (1, 3, 9, 24):
+        monkeypatch.setattr(redaction, "_SCAN_LINE_LIMIT", limit)
+        assert [redact(source) for source in sources] == whole, limit
+    assert sum(cuts) > 1000  # scans stopped near a cut were repeated, not trusted
+
+
 @pytest.mark.parametrize("source", [
     "api_key: Final[" + "[" * 150 + "\nimport langchain\n",
     "token = " + "(" * 150 + '"opaque-nested-value"' + ")" * 150 + "\nimport langchain\n",

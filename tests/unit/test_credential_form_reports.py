@@ -32,7 +32,9 @@ BASE62 = _random(string.ascii_letters + string.digits, 40)
 BASE64 = _random(string.ascii_letters + string.digits + "+/", 86) + "=="
 PASSWORD = _random(string.ascii_letters + string.digits + "!@%^*-_.~", 20)
 GOOGLE_TOKEN = "ya29" + "." + "a0Ad52N3" + _random(string.ascii_letters + string.digits + "_-", 60)
-SLACK_APP_TOKEN = "xapp" + "-1-A0B1C2D3E4F-" + _random(string.digits, 13) + "-" + _random(string.hexdigits, 60)
+SLACK_APP_TOKEN = (
+    "xapp" + "-1-A0B1C2D3E4F-" + _random(string.digits, 13) + "-" + _random(string.hexdigits, 60)
+)
 RUNNER_TOKEN = "glrt" + "-" + _random(string.ascii_letters + string.digits + "_-", 20)
 AZURE = "https://contoso.openai.azure.com/"
 
@@ -120,7 +122,29 @@ CASES = {
         "import openai\n"
         f'FIXTURES = ["https://api.openai.com/v1", "{GOOGLE_TOKEN}", "{SLACK_APP_TOKEN}", "{RUNNER_TOKEN}"]\n'
     ), (GOOGLE_TOKEN, SLACK_APP_TOKEN, RUNNER_TOKEN)),
+    # Methods called on a call result: the official OpenAI Java SDK builder.
+    "java-builder-chain": ("src/Chat.java", (
+        "import com.openai.client.okhttp.OpenAIOkHttpClient;\n"
+        f'OpenAIClient client = OpenAIOkHttpClient.builder().apiKey("{HEX}")'
+        '.baseUrl("https://api.openai.com/v1").build();\n'
+    ), HEX),
+    "java-builder-chain-lines": ("src/Client.java", (
+        "import com.openai.client.okhttp.OpenAIOkHttpClient;\n"
+        "OpenAIClient client = OpenAIOkHttpClient.builder()\n"
+        f'    .apiKey("{BASE62}").baseUrl("https://api.openai.com/v1")\n'
+        "    .build();\n"
+    ), BASE62),
+    "java-header-chain": ("src/Messages.java", (
+        'Request request = new Request.Builder().url("https://api.anthropic.com/v1/messages")'
+        f'.header("x-api-key", "{HEX}").build();\n'
+    ), HEX),
 }
+
+
+def _scan(root, index):
+    return Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem", {
+        "path": str(root), "use_git": False,
+    })]), index).run()
 
 
 def _outputs(result) -> dict[str, str]:
@@ -138,9 +162,7 @@ def test_credential_forms_never_reach_any_report(tmp_path, index, case):
     path = tmp_path / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(source, encoding="utf-8")
-    result = Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem", {
-        "path": str(tmp_path), "use_git": False,
-    })]), index).run()
+    result = _scan(tmp_path, index)
     assert result.complete, [error for stats in result.stats for error in stats.errors]
     assert result.findings
     outputs = _outputs(result)
@@ -150,3 +172,14 @@ def test_credential_forms_never_reach_any_report(tmp_path, index, case):
             assert secret not in output, name
     # The credential line itself is evidence: the report shows it, withheld.
     assert REDACTED in outputs["json"]
+
+
+def test_a_callee_that_names_nothing_leaves_the_scan_complete(tmp_path, index):
+    # 'token.(' in a comment used to raise IndexError while redacting the
+    # excerpt, which marked the whole scan incomplete (exit 3).
+    (tmp_path / "app.py").write_text(
+        'import openai\nclient = openai.OpenAI()\n# see token.("x") and auth._("y")\n', encoding="utf-8",
+    )
+    result = _scan(tmp_path, index)
+    assert result.complete, [error for stats in result.stats for error in stats.errors]
+    assert any("OpenAI" in finding.title for finding in result.findings)

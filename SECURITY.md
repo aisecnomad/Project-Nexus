@@ -108,13 +108,14 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   and `-H "X-Api-Key:value"`; and string literals passed to credential
   constructors and helpers such as `AzureKeyCredential("...")`,
   `HTTPBasicAuth("user", "...")`, `auth=("user", "...")` and
-  `setBearerToken("...")`. Variable references (`$VAR`, `${{ secrets.X }}`),
-  environment variable names and placeholders stay visible. A credential
-  without such context can remain: an unprefixed literal passed to an ordinary
-  function or assigned to a generic name such as `key`, a lowercase word after
-  a space-separated option, an option this list does not name (`-p`), a value
-  split across concatenated strings, and sensitive business data. Treat reports
-  as confidential.
+  `setBearerToken("...")`, including methods down a builder chain
+  (`builder().apiKey("...")`). Variable references (`$VAR`,
+  `${{ secrets.X }}`), environment variable names and placeholders stay
+  visible. A credential without such context can remain: an unprefixed
+  literal passed to an ordinary function or assigned to a generic name such
+  as `key`, a lowercase word after a space-separated option, an option this
+  list does not name (`-p`), a value split across concatenated strings, and
+  sensitive business data. Treat reports as confidential.
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
   provider and account restrictions still apply; ambiguous matches do not approve.

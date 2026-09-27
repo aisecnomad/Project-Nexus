@@ -11,7 +11,7 @@ import string
 
 import pytest
 
-from shadowscan.utils.redaction import REDACTED, sanitize_text
+from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
 
 _RANDOM = random.Random(20260927)
 
@@ -57,6 +57,12 @@ FORMS: list[tuple[str, str, str]] = [
     (f'cred = AzureKeyCredential("{HEX}" + suffix)', HEX, "AzureKeyCredential("),
     (f'cred = AzureKeyCredential("{HEX}\nnext_line()\n', HEX, "\nnext_line()\n"),
     (f'cred = AzureKeyCredential(\n    "{HEX}"\n', HEX, "AzureKeyCredential(\n"),
+    # Methods reached through a call result or down a builder chain.
+    (f'OpenAIClient client = OpenAIOkHttpClient.builder().apiKey("{HEX}").build();', HEX, ".build();"),
+    (f'client = OpenAIOkHttpClient.builder()\n    .apiKey("{HEX}")\n    .build()\n', HEX, "    .build()"),
+    (f'headers.x().setBearerAuth("{BASE62}");', BASE62, "setBearerAuth("),
+    (f'Request.builder().header("x-api-key", "{HEX}").build()', HEX, '.header("x-api-key", '),
+    (f'client?.setApiKey("{HEX}")', HEX, "client?.setApiKey("),
     # Command lines in shell scripts, CI YAML, Makefiles and argv lists.
     (f'curl -u "svc:{HEX}" https://contoso.openai.azure.com/openai/deployments', HEX,
      '"svc:'),
@@ -107,6 +113,8 @@ FORMS: list[tuple[str, str, str]] = [
     (f'{{"name": "AZURE_OPENAI_API_KEY", "value": "{HEX}"}}', HEX, '"AZURE_OPENAI_API_KEY"'),
     (f'environment = [{{ name = "OPENAI_API_KEY", value = "{HEX}" }}]', HEX, '"OPENAI_API_KEY"'),
     (f"- name: OPENAI_API_KEY\n  value: |\n    {HEX}\n- name: MODEL\n", HEX, "- name: MODEL"),
+    (f'- name: OPENAI_API_KEY\n  value: "{HEX}"  # rotated monthly\n', HEX, "  # rotated monthly"),
+    (f"- name: OPENAI_API_KEY\n  value: {BASE62}   # rotated monthly\n", BASE62, "   # rotated monthly"),
 ]
 
 
@@ -209,6 +217,19 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
 ])
 def test_names_references_placeholders_and_ordinary_arguments_are_preserved(source):
     assert sanitize_text(source) == source
+
+
+@pytest.mark.parametrize("source", [
+    'see token.("x")',
+    'auth._("x")',
+    'Key.__("abc")',
+    'call a.secret.("value", "other") here',
+])
+def test_callees_that_name_nothing_are_ordinary_text(source):
+    # 'token.(' has no name after the dot: reading one raised IndexError,
+    # which made any scan with such a line (even a comment) incomplete.
+    assert sanitize_text(source) == source
+    assert sanitize({"description": source}) == {"description": source}
 
 
 def test_authorization_scheme_spanning_lines_keeps_line_positions():

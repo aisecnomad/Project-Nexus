@@ -103,6 +103,10 @@ _INDEXED_ASSIGNMENT_KEY = re.compile(
     r"(?P=quote)"
 )
 _CALL_START = re.compile(r"(?<![\w.])[A-Za-z_][A-Za-z0-9_.]*[ \t]*\(")
+# A method reached through a call result or a chain continued on a new line:
+# 'builder().apiKey(', '\n    .apiKey(', 'client?.token('. The leading literal
+# '.' lets the regex engine skip ahead quickly.
+_CALL_CHAIN = re.compile(r"\.(?<=[\s)\]}?!]\.)[ \t]*[A-Za-z_][A-Za-z0-9_.]*[ \t]*\(")
 _CALL_KEYWORD = re.compile(r"\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)")
 _CALL_INTERPOLATED = re.compile(r"(?i)(?<!\w)(?:[ft]r?|r[ft])$")
 _CALL_LITERAL = re.compile(r"(?i)(?:[rub]{0,2})[\"']")
@@ -349,6 +353,14 @@ def _assignment_candidates(text: str) -> Iterator[tuple[int, str, str, int]]:
 # text is withheld. Python 3.12+ tokenizers stop at 200 levels and 3.11 has no
 # limit; a lower bound keeps every supported version on the same path.
 _MAX_ASSIGNMENT_NESTING = 100
+# A candidate's scan first reads at most this many characters of each physical
+# line. Most scans stop within a few tokens, and reading a long minified line to
+# its end for every candidate on it is quadratic. A scan that stops too close to
+# a cut is repeated with a four times larger limit, so no cut changes a result.
+_SCAN_LINE_LIMIT = 512
+# How far past a token's end the tokenizer may look while classifying it.
+_SCAN_LOOKAHEAD = 8
+_QUOTE_ERRORS = frozenset({"'", '"'})
 # Token classes an annotation-only scan records for the candidates it encloses.
 _TOKEN_SPACE, _TOKEN_REAL, _TOKEN_ASSIGN, _TOKEN_CLOSE, _TOKEN_NEWLINE = range(5)
 _FSTRING_STARTS = frozenset(
@@ -431,12 +443,30 @@ class _AssignmentScanner:
 
     def scan(self, start: int, candidate_end: int, annotated: bool) -> tuple[int | None, int, bool]:
         """Locate one candidate's assigned value: (assigned_at, end, argument)."""
+        limit = _SCAN_LINE_LIMIT
+        while True:
+            located = self._scan(start, candidate_end, annotated, limit)
+            if located is not None:
+                return located
+            limit *= 4
+
+    def _scan(
+        self, start: int, candidate_end: int, annotated: bool, limit: int,
+    ) -> tuple[int | None, int, bool] | None:
+        """One scan reading at most ``limit`` characters of each line; None if a cut may matter.
+
+        A cut line ends the input there. Tokens that end well before the cut
+        are the ones the whole line yields, so a scan that stops at such a
+        token is decided. A stop at end of input, near the cut, at a quote
+        whose string may close past it, or at a tokenizer error is not.
+        """
         text = self.text
         if self.stream is None:
             self.stream = io.StringIO(text)
         stream = self.stream
         stream.seek(candidate_end)
         offsets = [candidate_end]
+        cut = -1
         assigned_at: int | None = None if annotated else candidate_end
         end = len(text)
         brackets: list[str] = []
@@ -452,13 +482,19 @@ class _AssignmentScanner:
         fstrings = 0
 
         def readline() -> str:
-            line = stream.readline()
+            nonlocal cut
+            line = "" if cut >= 0 else stream.readline(limit)
             self.charge(len(line))
-            offsets.append(stream.tell())
+            offset = stream.tell()
+            if line and line[-1] != "\n" and offset < len(text):
+                cut = offset
+            offsets.append(offset)
             return line
 
+        stopped: tokenize.TokenInfo | None = None
         try:
             for item in tokenize.generate_tokens(readline):
+                stopped = item
                 position = offsets[item.start[0] - 1] + item.start[1]
                 if item.type == token.ERRORTOKEN and not item.string.isspace():
                     # Incomplete single-quoted strings generate error tokens,
@@ -535,11 +571,21 @@ class _AssignmentScanner:
                     break
                 elif item.type not in {token.INDENT, token.DEDENT, tokenize.NL, token.COMMENT}:
                     previous_operator = ""
+            else:
+                stopped = None
         except (tokenize.TokenError, IndentationError, SyntaxError) as exc:
             # Once '=' is seen, incomplete source must not expose any RHS,
             # including credential fragments on subsequent physical lines.
             # Indentation and nesting errors depend on where a scan started.
             definitive = not isinstance(exc, IndentationError) and "nest" not in str(exc)
+            stopped = None
+        if cut >= 0 and (
+            stopped is None
+            or stopped.type == token.ENDMARKER
+            or (stopped.type == token.ERRORTOKEN and stopped.string in _QUOTE_ERRORS)
+            or offsets[stopped.end[0] - 1] + stopped.end[1] > cut - _SCAN_LOOKAHEAD
+        ):
+            return None
         if record is not None:
             record.finish(definitive)
             self.annotations = [scan for scan in self.annotations if scan.last > candidate_end][-7:]
@@ -850,7 +896,8 @@ def _redact_credential_calls(text: str) -> str:
 
     Independently, a callee named for a credential (AzureKeyCredential,
     HTTPBasicAuth, setBearerToken) has its credential string literals withheld;
-    see ``_credential_literals``.
+    see ``_credential_literals``. Methods called on a call result or down a
+    builder chain ('builder().apiKey(...)') are calls like any other.
     """
     if '"' not in text and "'" not in text:
         return text
@@ -858,7 +905,8 @@ def _redact_credential_calls(text: str) -> str:
     values: list[tuple[int, int]] = []
     literals: list[tuple[int, int]] = []
     skip_until = 0
-    for call in _CALL_START.finditer(text):
+    calls = heapq.merge(_CALL_START.finditer(text), _CALL_CHAIN.finditer(text), key=lambda call: call.start())
+    for call in calls:
         if call.start() < skip_until:
             continue
         spans, state, skipped_comment = lexer.arguments(call.end(), comments=True)
@@ -984,6 +1032,8 @@ def _credential_callee(name: str) -> int:
     if _CALLEE_HINT.search(name) is None:
         return 0  # the common case, decided without splitting the name into words
     words = [word.lower() for word in _CALLEE_WORD.findall(name.rsplit(".", 1)[-1]) if not word.isdigit()]
+    if not words:
+        return 0  # 'token.(' or 'auth._(' in prose: no callee name to read
     if words[-1] in _CREDENTIAL_CONSTRUCTOR_WORDS and words[0] not in _LOOKUP_VERBS:
         return 2
     return 1 if not _CREDENTIAL_CALLEE_WORDS.isdisjoint(words) else 0
@@ -1197,14 +1247,61 @@ _XML_ATTRIBUTE = re.compile(
     r"(?<![\w.:-])(?P<name>[A-Za-z_][\w.:-]*)[ \t\r\n]*=[ \t\r\n]*"
     r"(?:\"(?P<double>[^\"<>\r\n]*)\"|'(?P<single>[^'<>\r\n]*)')"
 )
-_XML_CONTENT = re.compile(r"(?:[^<]|<!\[CDATA\[(?:[^\]]|\](?!\]>))*\]\]>)*")
 _XML_VALUE_ELEMENT = re.compile(r"[ \t\r\n]*<(?P<tag>[Vv]alue)>")
+
+
+class _MarkupContent:
+    """Where element content that starts at a position ends.
+
+    Content runs to the first '<' that does not open a terminated CDATA
+    section. Each '<' is resolved once and CDATA ends come from one forward
+    search, so an unterminated CDATA after every sensitive tag, or tags inside
+    CDATA, are not searched to the end of the text again for each tag.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.resolved: dict[int, int] = {}
+        # No ']]>' starts in [close_from, close_at); close_at is one, or -1 for none.
+        self.close_from = len(text) + 1
+        self.close_at = -1
+
+    def cdata_close(self, position: int) -> int:
+        """The first ']]>' at or after ``position``, or -1."""
+        if not (self.close_from <= position and (self.close_at < 0 or position <= self.close_at)):
+            self.close_from, self.close_at = position, self.text.find("]]>", position)
+        return self.close_at
+
+    def end(self, start: int) -> int:
+        text = self.text
+        visited: list[int] = []
+        position = start
+        while True:
+            opening = text.find("<", position)
+            if opening < 0:
+                end = len(text)
+                break
+            if opening in self.resolved:
+                end = self.resolved[opening]
+                break
+            visited.append(opening)
+            if text.startswith("<![CDATA[", opening):
+                close = self.cdata_close(opening + 9)
+                if close >= 0:
+                    position = close + 3
+                    continue
+            end = opening
+            break
+        for opening in visited:
+            self.resolved[opening] = end
+        return end
 
 
 def _redact_markup_credentials(text: str) -> str:
     """Withhold credentials in XML elements and key/value attribute pairs."""
     if "<" not in text:
         return text
+    contents = _MarkupContent(text)
     spans: list[tuple[int, int]] = []
     for tag in _XML_TAG.finditer(text):
         attributes = tag.group("attributes")
@@ -1230,10 +1327,9 @@ def _redact_markup_credentials(text: str) -> str:
         closing_tag = tag.group("tag") if inner is None else inner.group("tag")
         if inner is not None:
             start = inner.end()
-        content = _XML_CONTENT.match(text, start)
-        assert content is not None
-        if text.startswith("</" + closing_tag, content.end()):
-            spans.append((start, content.end()))
+        end = contents.end(start)
+        if text.startswith("</" + closing_tag, end):
+            spans.append((start, end))
     pieces: list[str] = []
     cursor = 0
     for start, end in sorted(spans):
@@ -1250,51 +1346,111 @@ def _redact_markup_credentials(text: str) -> str:
 
 # Name/value records in YAML, JSON, HCL and JavaScript text: Kubernetes and
 # ECS container environments, CloudFormation parameters and similar lists
-# pair a credential's name with its value in a sibling field.
+# pair a credential's name with its value in a sibling field. A name is at
+# most 128 characters, so a 'key:key:key:...' chain is not rescanned from
+# every word in it.
 _RECORD_NAME = re.compile(
     r"(?<![\w.-])(?P<quote>[\"']?)(?:name|key|Name|Key|NAME|KEY)(?P=quote)[ \t]*[:=][ \t]*"
-    r"(?P<value_quote>[\"']?)(?P<name>[A-Za-z_][A-Za-z0-9_.:-]*)(?P=value_quote)"
+    r"(?P<value_quote>[\"']?)(?P<name>[A-Za-z_][A-Za-z0-9_.:-]{0,127})(?![A-Za-z0-9_.:-])(?P=value_quote)"
 )
 # Found first (a literal alternation scans quickly), then matched in full.
 _RECORD_WORD = re.compile(r"name|key|Name|Key|NAME|KEY")
 _RECORD_VALUE = re.compile(r"(?<![\w.-])(?P<quote>[\"']?)(?:value|Value|VALUE)(?P=quote)[ \t]*[:=][ \t]*")
 _RECORD_INLINE_VALUE = re.compile(r"\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;}\])]+")
-_RECORD_LINE_VALUE = re.compile(r"\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\r\n]*?(?=[ \t]+#|[ \t]*$)", re.MULTILINE)
+_RECORD_BRACE = re.compile(r"\}")
+_RECORD_COMMENT = re.compile(r"[ \t]#")
+_RECORD_BLOCK_MARKERS = frozenset({"", "|", ">", "|-", ">-", "|+", ">+"})
 _RECORD_LINES = 16
 
 
-def _record_value_span(text: str, match: re.Match[str]) -> tuple[int, int] | None:
-    """The value paired with a record's credential name, on its line or a sibling line."""
-    line_start = text.rfind("\n", 0, match.start()) + 1
-    line_end = text.find("\n", match.end())
-    line_end = len(text) if line_end < 0 else line_end
-    brace = text.find("}", match.end(), line_end)
-    stop = line_end if brace < 0 else brace
-    inline = _RECORD_VALUE.search(text, match.end(), stop)
-    if inline is not None:
-        value = _RECORD_INLINE_VALUE.match(text, inline.end(), stop)
-        return (value.start(), value.end()) if value else None
-    column = match.start() - line_start
-    position = line_end + 1
-    for _ in range(_RECORD_LINES):
-        if position >= len(text):
-            return None
-        end = text.find("\n", position)
-        end = len(text) if end < 0 else end
-        line = text[position:end].rstrip("\r")
-        content = line.lstrip(" \t")
-        indent = len(line) - len(content)
-        if content and not content.startswith("#"):
-            if indent < column or (indent == column and content.startswith("-")):
+class _RecordIndex:
+    """Line facts that the name/value record lookups of one text share.
+
+    A lookup searches the rest of its name's line for a value field, then up
+    to 16 following lines for a sibling one. Repeating that search for every
+    name is quadratic on one long line of names, so the current line's braces
+    and value fields are indexed once and each following line measured once.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.line = (-1, -1)
+        self.braces: list[int] = []
+        self.fields: list[re.Match[str]] = []
+        self.field_starts: list[int] = []
+        self.measured: dict[int, tuple[int, int, str]] = {}
+        self.siblings: dict[int, re.Match[str] | None] = {}
+
+    def value_field(self, match: re.Match[str]) -> tuple[re.Match[str], int, int] | None:
+        """The value field paired with a record name: (field, search end, sibling column or -1)."""
+        text = self.text
+        line_start, line_end = self.line
+        if not line_start <= match.start() <= line_end:
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line_end = text.find("\n", match.end())
+            line_end = len(text) if line_end < 0 else line_end
+            self.line = (line_start, line_end)
+            self.braces = [brace.start() for brace in _RECORD_BRACE.finditer(text, line_start, line_end)]
+            # Value fields cannot overlap, so the first one after a name is
+            # what searching from that name would find.
+            self.fields = list(_RECORD_VALUE.finditer(text, line_start, line_end))
+            self.field_starts = [field.start() for field in self.fields]
+        brace = bisect_left(self.braces, match.end())
+        stop = self.braces[brace] if brace < len(self.braces) else line_end
+        inline = bisect_left(self.field_starts, match.end())
+        if inline < len(self.fields) and self.fields[inline].start() < stop:
+            return self.fields[inline], stop, -1
+        column = match.start() - line_start
+        position = line_end + 1
+        for _ in range(_RECORD_LINES):
+            if position >= len(text):
                 return None
-            sibling = _RECORD_VALUE.match(text, position + indent) if indent == column else None
-            if sibling is not None:
-                value = _RECORD_LINE_VALUE.match(text, sibling.end(), end)
-                if value is None or value.group().strip() in {"", "|", ">", "|-", ">-", "|+", ">+"}:
-                    return sibling.end(), _block_end(text, end, column)
-                return value.start(), value.end()
-        position = end + 1
-    return None
+            end, indent, lead = self._measure(position)
+            if lead and lead != "#":
+                if indent < column or (indent == column and lead == "-"):
+                    return None
+                if indent == column:
+                    if position not in self.siblings:
+                        self.siblings[position] = _RECORD_VALUE.match(text, position + indent)
+                    sibling = self.siblings[position]
+                    if sibling is not None:
+                        return sibling, end, column
+            position = end + 1
+        return None
+
+    def _measure(self, position: int) -> tuple[int, int, str]:
+        """The end, indentation and first character of the line starting at ``position``."""
+        measured = self.measured.get(position)
+        if measured is None:
+            text = self.text
+            end = text.find("\n", position)
+            end = len(text) if end < 0 else end
+            line = text[position:end].rstrip("\r")
+            content = line.lstrip(" \t")
+            measured = self.measured[position] = (end, len(line) - len(content), content[:1])
+        return measured
+
+
+def _record_line_value(text: str, start: int, end: int) -> tuple[int, int] | None:
+    """A sibling line's value: a quoted scalar, else the text before a comment and trailing blanks.
+
+    Nothing is returned when a carriage return comes first. Blank runs are
+    measured once; a lazy pattern with a trailing-blank lookahead is quadratic
+    in the length of a blank run inside one value.
+    """
+    if start < end and text[start] in "\"'":
+        closing = text.find(text[start], start + 1, end)
+        if closing >= 0 and text.find("\r", start + 1, closing) < 0:
+            return start, closing + 1
+    stop = end
+    while stop > start and text[stop - 1] in " \t":
+        stop -= 1
+    comment = _RECORD_COMMENT.search(text, start, end)
+    if comment is not None and comment.start() < stop:
+        stop = comment.start()
+        while stop > start and text[stop - 1] in " \t":
+            stop -= 1
+    return None if text.find("\r", start, stop) >= 0 else (start, stop)
 
 
 def _block_end(text: str, line_end: int, column: int) -> int:
@@ -1317,16 +1473,32 @@ def _redact_name_value_pairs(text: str) -> str:
     """Withhold values that sibling name/key fields identify as credentials."""
     pieces: list[str] = []
     cursor = 0
+    index: _RecordIndex | None = None
+    # Names that share a value field share its value, so it is decided once.
+    decided: set[int] = set()
     for word in _RECORD_WORD.finditer(text):
         start = word.start()
         match = _RECORD_NAME.match(text, start - 1) if start and text[start - 1] in "\"'" else None
         match = match or _RECORD_NAME.match(text, start)
         if match is None or match.start() < cursor or not _sensitive_assignment_key(match.group("name")):
             continue
-        span = _record_value_span(text, match)
-        if span is None:
+        index = index or _RecordIndex(text)
+        located = index.value_field(match)
+        if located is None or located[0].start() in decided:
             continue
-        start, end = span
+        field, stop, column = located
+        decided.add(field.start())
+        if column < 0:
+            value = _RECORD_INLINE_VALUE.match(text, field.end(), stop)
+            if value is None:
+                continue
+            start, end = value.span()
+        else:
+            span = _record_line_value(text, field.end(), stop)
+            if span is None or text[span[0]:span[1]].strip() in _RECORD_BLOCK_MARKERS:
+                start, end = field.end(), _block_end(text, stop, column)
+            else:
+                start, end = span
         raw = text[start:end]
         if raw[:1] in {"\"", "'"} and raw.endswith(raw[0]) and len(raw) > 1:
             start, end, raw = start + 1, end - 1, raw[1:-1]
