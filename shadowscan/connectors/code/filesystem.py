@@ -1105,7 +1105,10 @@ class FilesystemConnector(BaseConnector):
         try:
             scan.root_fd = open_confined_directory(base)
         except (OSError, ValueError):
-            self.ctx.error(f"code.filesystem: could not open {scan.root} without following links")
+            # Named by its label, like the findings: a labeled root is not exposed.
+            self.ctx.error(
+                f"code.filesystem: {scan.label}: could not open the scan root without following links",
+            )
             return
         try:
             self._walk_entries(scan)

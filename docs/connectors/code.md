@@ -53,8 +53,11 @@ oversize skip globs remain visible omissions. Each root is opened once, and ever
 file (including `CODEOWNERS`) is read relative to it without following a link in
 any path component. A directory replaced by a link while the scan runs therefore
 fails the reads below it, which makes the scan incomplete, instead of redirecting
-them outside the root. Findings describe one consistent state of the tree only
-when the checkout does not change during the scan.
+them outside the root. A root that cannot be opened this way is reported, by its
+`label` when one is set, as `could not open the scan root without following
+links`; nothing below it is scanned and the scan is incomplete. Findings describe
+one consistent state of the tree only when the checkout does not change during
+the scan.
 
 Configuration files are parsed as JSONC where their format allows comments.
 A syntax error in a file that is not coding-agent settings only skips its

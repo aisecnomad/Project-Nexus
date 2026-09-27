@@ -21,8 +21,8 @@ from shadowscan.utils.text import read_text
 OUTSIDE_AGENT = "from crewai import Agent\nAgent(role='researcher')\n"
 
 
-def _run(index, root: Path):
-    ctx = ConnectorContext(config={"path": str(root), "use_git": False}, index=index)
+def _run(index, root: Path, **config: object):
+    ctx = ConnectorContext(config={"path": str(root), "use_git": False, **config}, index=index)
     return FilesystemConnector(ctx).run(), ctx
 
 
@@ -66,17 +66,21 @@ def test_scan_root_is_opened_once_and_files_below_it_are_read(tmp_path, index, m
     assert any("framework.crewai" in finding.frameworks for finding in findings)
 
 
-def test_scan_root_that_cannot_be_opened_safely_is_incomplete(tmp_path, index, monkeypatch):
+@pytest.mark.parametrize("label", [None, "github:example/service"])
+def test_scan_root_that_cannot_be_opened_safely_is_incomplete(tmp_path, index, monkeypatch, label):
     (tmp_path / "crew.py").write_text(OUTSIDE_AGENT)
 
     def replaced(path):
         raise OSError("too many levels of symbolic links")
 
     monkeypatch.setattr("shadowscan.connectors.code.filesystem.open_confined_directory", replaced)
-    findings, ctx = _run(index, tmp_path)
+    findings, ctx = _run(index, tmp_path, **({"label": label} if label else {}))
     assert findings == [] and ctx.stats.objects_examined == 0
     assert ctx.stats.incomplete
-    assert ctx.stats.errors == [f"code.filesystem: could not open {tmp_path} without following links"]
+    # Like its findings, a labeled root is named by the label, not its local path.
+    assert ctx.stats.errors == [
+        f"code.filesystem: {label or tmp_path}: could not open the scan root without following links",
+    ]
 
 
 def test_single_file_root_is_read_relative_to_its_directory(tmp_path, index):
