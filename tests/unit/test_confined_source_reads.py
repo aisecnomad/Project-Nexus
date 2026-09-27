@@ -66,6 +66,19 @@ def test_scan_root_is_opened_once_and_files_below_it_are_read(tmp_path, index, m
     assert any("framework.crewai" in finding.frameworks for finding in findings)
 
 
+def test_scan_root_that_cannot_be_opened_safely_is_incomplete(tmp_path, index, monkeypatch):
+    (tmp_path / "crew.py").write_text(OUTSIDE_AGENT)
+
+    def replaced(path):
+        raise OSError("too many levels of symbolic links")
+
+    monkeypatch.setattr("shadowscan.connectors.code.filesystem.open_confined_directory", replaced)
+    findings, ctx = _run(index, tmp_path)
+    assert findings == [] and ctx.stats.objects_examined == 0
+    assert ctx.stats.incomplete
+    assert ctx.stats.errors == [f"code.filesystem: could not open {tmp_path} without following links"]
+
+
 def test_single_file_root_is_read_relative_to_its_directory(tmp_path, index):
     source = tmp_path / "crew.py"
     source.write_text(OUTSIDE_AGENT)
