@@ -99,6 +99,18 @@ def _require_confined_open() -> None:
         raise ValueError("secure file access is unavailable on this platform")
 
 
+def _traversal_flags() -> int:
+    """Return the flags that open a directory only to look up names below it.
+
+    ``O_PATH`` (Linux) needs search permission alone, as opening a file by its
+    path does, so a traverse-only ancestor such as a mode 0711 home directory
+    does not stop the walk. With ``O_NOFOLLOW`` and ``O_DIRECTORY`` a link is
+    still refused (``ENOTDIR``). Without ``O_PATH`` the directory is opened
+    for reading, which also needs read permission.
+    """
+    return getattr(os, "O_PATH", os.O_RDONLY) | os.O_NOFOLLOW | os.O_DIRECTORY
+
+
 def open_confined_directory(path: PurePath) -> int:
     """Open a directory without following a link in any component of its absolute path.
 
@@ -106,12 +118,16 @@ def open_confined_directory(path: PurePath) -> int:
     then opened with :func:`open_confined_file` and ``dir_fd``, which walks
     only their components relative to it, so a directory tree is confined to
     the root opened here without reopening its ancestors for every file.
+    Every component, the directory itself included, is opened only for
+    traversal (:func:`_traversal_flags`): the descriptor serves to anchor
+    those opens, not to list the directory, and like an open by path they
+    need search, not read, permission on the directory and its ancestors.
     Raises ``ValueError`` like :func:`open_confined_file`; ``OSError``
     propagates unchanged and may name the path.
     """
     _require_confined_open()
     absolute = Path(path).absolute()
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY
+    flags = _traversal_flags()
     directory = os.open(absolute.anchor, flags)
     try:
         for component in absolute.parts[1:]:
@@ -132,7 +148,9 @@ def open_confined_file(
 
     Every directory component of the absolute path is opened relative to its
     parent with ``O_NOFOLLOW`` and ``O_DIRECTORY``, so a component swapped for
-    a symlink after an earlier check cannot redirect the open. The final
+    a symlink after an earlier check cannot redirect the open. Directories are
+    opened only for traversal (:func:`_traversal_flags`), so like an ordinary
+    open by path this needs search, not read, permission on them. The final
     component is opened with ``O_NONBLOCK`` so a FIFO put in its place cannot
     block before the descriptor is inspected, and the descriptor is rejected
     with :class:`NotRegularFileError` unless ``fstat`` reports a regular file.
@@ -161,11 +179,11 @@ def open_confined_file(
     unchanged and may name the path, so diagnostics must not echo it.
     """
     _require_confined_open()
-    flags = os.O_RDONLY | os.O_NOFOLLOW
+    traversal = _traversal_flags()
     if dir_fd is None:
         absolute = Path(path).absolute()
         components, name = absolute.parts[1:-1], absolute.name
-        directory, owned = os.open(absolute.anchor, flags | os.O_DIRECTORY), True
+        directory, owned = os.open(absolute.anchor, traversal), True
     else:
         parts = PurePath(path).parts
         if not parts or PurePath(path).is_absolute() or ".." in parts:
@@ -175,11 +193,11 @@ def open_confined_file(
     fd: int | None = None
     try:
         for component in components:
-            child = os.open(component, flags | os.O_DIRECTORY, dir_fd=directory)
+            child = os.open(component, traversal, dir_fd=directory)
             if owned:
                 os.close(directory)
             directory, owned = child, True
-        fd = os.open(name, flags | os.O_NONBLOCK, dir_fd=directory)
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode):
             raise NotRegularFileError(f"{label} is not a regular file")

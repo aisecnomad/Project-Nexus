@@ -553,6 +553,26 @@ def _file_failure_reason(exc: Exception) -> str:
     return sanitize_text(reason)[:200]
 
 
+# A link in the root's path fails its no-follow directory open as ENOTDIR or ELOOP.
+_ROOT_OPEN_REASONS = {
+    errno.EACCES: "permission denied",
+    errno.EPERM: "permission denied",
+    errno.ENOENT: "not found",
+    errno.ENOTDIR: "a path component is a link or not a directory",
+    errno.ELOOP: "a path component is a link or not a directory",
+}
+
+
+def _root_open_failure(exc: OSError | ValueError) -> str:
+    """Say why a scan root could not be opened without echoing its path.
+
+    A ``ValueError`` from the confined opener carries only its own fixed text.
+    """
+    if isinstance(exc, ValueError):
+        return str(exc)
+    return _ROOT_OPEN_REASONS.get(exc.errno or 0) or errno.errorcode.get(exc.errno or 0, type(exc).__name__)
+
+
 def _is_test_path(rel: str) -> bool:
     parts = rel.lower().split("/")
     return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
@@ -1104,11 +1124,10 @@ class FilesystemConnector(BaseConnector):
         base = scan.root.parent if scan.root.is_file() else scan.root
         try:
             scan.root_fd = open_confined_directory(base)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
             # Named by its label, like the findings: a labeled root is not exposed.
-            self.ctx.error(
-                f"code.filesystem: {scan.label}: could not open the scan root without following links",
-            )
+            reason = _root_open_failure(exc)
+            self.ctx.error(f"code.filesystem: {scan.label}: could not open the scan root safely ({reason})")
             return
         try:
             self._walk_entries(scan)
