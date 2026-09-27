@@ -2,7 +2,7 @@
 
 Internal to :mod:`shadowscan.utils.redaction`, which re-exports every name
 here. A setting's name decides whether its value is withheld: see
-``_setting_level``.
+``redaction_rules._setting_level``.
 """
 
 from __future__ import annotations
@@ -10,13 +10,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_left
 
-from shadowscan.utils.redaction_rules import (
-    REDACTED,
-    _credential_literal,
-    _credential_name,
-    _kept_value,
-    _sensitive_assignment_key,
-)
+from shadowscan.utils.redaction_rules import REDACTED, _kept_value, _setting_level, _setting_value_withheld
 
 # XML and .NET configuration: a sensitive element (<password>v</password>,
 # <apiKey>v</apiKey>) or a key/name attribute naming a credential beside a
@@ -30,29 +24,6 @@ _XML_ATTRIBUTE = re.compile(
     r"(?:\"(?P<double>[^\"<>\r\n]*)\"|'(?P<single>[^'<>\r\n]*)')"
 )
 _XML_VALUE_ELEMENT = re.compile(r"[ \t\r\n]*<(?P<tag>[Vv]alue)>")
-# .NET configuration, environment variables and properties name a setting by
-# its path ('AzureOpenAI:Key', 'AzureOpenAI__Key', 'openai.token'); the last
-# segment names what the setting holds.
-_SETTING_SEGMENT = re.compile(r":|__|\.")
-
-
-def _setting_level(name: str) -> int:
-    """How a setting named ``name`` identifies its value as a credential.
-
-    2: the name alone does ('Token', 'OpenAI:Secret', 'OPENAI_API_KEY'), so
-    any value is withheld. 1: its last word names a credential ('OpenAIKey',
-    'AzureOpenAI:Key', 'CacheKey'), so only an opaque literal is withheld, as
-    for the same names in assignments. 0: an ordinary setting.
-    """
-    last = _SETTING_SEGMENT.split(name)[-1]
-    if _sensitive_assignment_key(name) or (last != name and _sensitive_assignment_key(last)):
-        return 2
-    return 1 if _credential_name(name) or (last != name and _credential_name(last)) else 0
-
-
-def _setting_value_withheld(level: int, value: str) -> bool:
-    """Whether a setting of ``level`` (see ``_setting_level``) withholds ``value``."""
-    return level == 2 or (level == 1 and _credential_literal(value.strip(), positional=False))
 
 
 class _MarkupContent:

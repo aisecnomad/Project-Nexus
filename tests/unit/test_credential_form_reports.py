@@ -88,6 +88,11 @@ CASES = {
     "flag-space": ("list.sh", f"curl --api-key {HEX} https://api.openai.com/v1/models\n", HEX),
     "flag-token": ("proxy.sh", f"llm-proxy --token {BASE62} --upstream https://api.openai.com/v1\n", BASE62),
     "flag-password": ("gateway.sh", f"llm-gateway --password={PASSWORD} --upstream {AZURE}\n", PASSWORD),
+    "flag-key": ("key.sh", f"llm --key {HEX} --base-url https://api.openai.com/v1\n", HEX),
+    "dotnet-user-secrets": ("setup.sh", (
+        f'dotnet user-secrets set "AzureOpenAI:Key" "{HEX}" && curl {AZURE}openai/deployments\n'
+    ), HEX),
+    "numbered-key": ("env.sh", f"export AZURE_OPENAI_ENDPOINT={AZURE} AZURE_OPENAI_KEY1={BASE62}\n", BASE62),
     "header-without-space": ("claude.sh", (
         f'curl -H "x-api-key:{HEX}" https://api.anthropic.com/v1/messages\n'
     ), HEX),

@@ -145,11 +145,41 @@ def _interpolated(prefix: str, quote: str, value: str) -> bool:
 
 
 def _credential_name(name: str) -> bool:
-    """Whether a name's last word names a credential ('monkey' and 'bypass' do not)."""
+    """Whether a name's last word names a credential ('monkey' and 'bypass' do not).
+
+    Trailing digits number a credential rather than name it ('KEY1', 'token2').
+    """
     if not _OPAQUE_NAME.fullmatch(name):
         return False
     words = _CALLEE_WORD.findall(name.rsplit(".", 1)[-1])
+    while words and words[-1].isdigit():
+        words.pop()
     return bool(words) and words[-1].lower() in _OPAQUE_NAME_WORDS
+
+
+# .NET configuration, environment variables and properties name a setting by
+# its path ('AzureOpenAI:Key', 'AzureOpenAI__Key', 'openai.token'); the last
+# segment names what the setting holds.
+_SETTING_SEGMENT = re.compile(r":|__|\.")
+
+
+def _setting_level(name: str) -> int:
+    """How a setting named ``name`` identifies its value as a credential.
+
+    2: the name alone does ('Token', 'OpenAI:Secret', 'OPENAI_API_KEY'), so
+    any value is withheld. 1: its last word names a credential ('OpenAIKey',
+    'AzureOpenAI:Key', 'CacheKey'), so only an opaque literal is withheld, as
+    for the same names in assignments. 0: an ordinary setting.
+    """
+    last = _SETTING_SEGMENT.split(name)[-1]
+    if _sensitive_assignment_key(name) or (last != name and _sensitive_assignment_key(last)):
+        return 2
+    return 1 if _credential_name(name) or (last != name and _credential_name(last)) else 0
+
+
+def _setting_value_withheld(level: int, value: str) -> bool:
+    """Whether a setting of ``level`` (see ``_setting_level``) withholds ``value``."""
+    return level == 2 or (level == 1 and _credential_literal(value.strip(), positional=False))
 
 
 def _name_before(text: str, end: int, characters: str) -> str:

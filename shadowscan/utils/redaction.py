@@ -51,6 +51,8 @@ from shadowscan.utils.redaction_rules import (
     _MAX_SANITIZATION_NODES,
     REDACTED,
     SanitizationLimitError,
+    _credential_literal,
+    _credential_name,
     _redact_value,
     _sensitive_assignment_key,
     _sensitive_key,
@@ -104,6 +106,20 @@ def sanitize_text(text: str) -> str:
     # annotations). Normalize those expressions in this same pass so repeated
     # sanitization does not change the result.
     return _redact_mapping_values(_redact_fallback_defaults(_redact_plain_assignments(text)))
+
+
+def _opaque_option(option: str) -> bool:
+    """An argv option whose last word names a credential ('--key', '--openai-key').
+
+    As on a command line, only a value that looks like an opaque key is one.
+    """
+    name = option.lstrip("-")
+    return not name.lower().startswith(("no-", "no_")) and _credential_name(name)
+
+
+def _opaque_literal(value: Any) -> bool:
+    """A string that looks like an opaque key."""
+    return isinstance(value, str) and _credential_literal(value, positional=False)
 
 
 def _record_has_secret_value(item: Mapping, *, environment: bool = False) -> bool:
@@ -176,7 +192,9 @@ class _Sanitizer:
             previous = None
             for child in item:
                 if isinstance(previous, str) and previous.startswith("-"):
-                    if _sensitive_key(previous.lstrip("-")):
+                    if _sensitive_key(previous.lstrip("-")) or (
+                        _opaque_option(previous) and _opaque_literal(child)
+                    ):
                         self.remember(child)
                 self.discover(child, depth + 1, environment=environment)
                 previous = child
@@ -250,15 +268,17 @@ class _Sanitizer:
             return self.clean_mapping(item, depth)
         if isinstance(item, (list, tuple)):
             sequence_out: list[Any] = []
-            redact_next = False
+            redact_next = opaque_next = False
             for child in item:
-                if redact_next:
+                if redact_next or (opaque_next and _opaque_literal(child)):
                     sequence_out.append(_redact_value(child))
-                    redact_next = False
+                    redact_next = opaque_next = False
                 else:
                     sequence_out.append(self.clean(child, depth + 1))
+                    opaque_next = False
                     if isinstance(child, str) and child.startswith("-") and "=" not in child:
                         redact_next = _sensitive_key(child.lstrip("-"))
+                        opaque_next = _opaque_option(child)
             return tuple(sequence_out) if isinstance(item, tuple) else sequence_out
         if isinstance(item, str):
             return self.text(item)

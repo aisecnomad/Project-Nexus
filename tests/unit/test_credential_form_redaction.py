@@ -176,6 +176,21 @@ FORMS: list[tuple[str, str, str]] = [
     (f"- name: OpenAIKey\n  value: |\n    {HEX}\n- name: MODEL\n", HEX, "- name: MODEL"),
     # A weak name deciding a shared value field first leaves a sensitive one to withhold it.
     ("{name: pageToken, key: token, value: hunter2hunter}", "hunter2hunter", "{name: pageToken, key: token"),
+    # Options named for a credential, numbered credential names and values
+    # stored by 'dotnet user-secrets set' lose opaque values, as the same names
+    # do in assignments; a sensitive setting name loses any value.
+    (f"llm --key {HEX} --model gpt-4o", HEX, "--model gpt-4o"),
+    (f"db-cli --pwd={BASE62} --host db.example.com", BASE62, "--host db.example.com"),
+    (f'args: ["--key", "{HEX}", "--model", "gpt-4o"]', HEX, '"--model", "gpt-4o"'),
+    (f"tool --key svc:{HEX} --verbose", HEX, "--verbose"),
+    # An option value holding an assignment is left to the assignment rules.
+    (f"tool --key a.api_key={HEX}", HEX, "tool --key a.api_key="),
+    (f"KEY1={HEX}\n", HEX, "KEY1="),
+    (f'azure_openai_key2 = "{BASE62}"', BASE62, "azure_openai_key2 = "),
+    (f'<add key="AzureOpenAI:Key2" value="{HEX}"/>', HEX, 'key="AzureOpenAI:Key2"'),
+    (f'dotnet user-secrets set "AzureOpenAI:Key" "{HEX}"', HEX, 'set "AzureOpenAI:Key" '),
+    (f"dotnet user-secrets set AzureOpenAI:ApiKey {BASE62} --project src/Api", BASE62, "--project src/Api"),
+    (f"dotnet user-secrets set 'Smtp:Password' '{PASSWORD}'", PASSWORD, "'Smtp:Password'"),
     # Properties, INI and YAML forms (already covered; kept as regressions).
     (f"spring.ai.openai.api-key={HEX}", HEX, "spring.ai.openai.api-key="),
     (f"[openai]\napi_key = {HEX}\n", HEX, "[openai]"),
@@ -381,9 +396,39 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
     "{name: OpenAIKey, value: ${OPENAI_KEY}}",
     "- name: cacheKey\n  value: users\n",
     "- name: OpenAIKey\n  value: |\n    first line\n    second line\n",
+    # Options and numbered names keep ordinary values.
+    "tool --key users --sort-key name --cache-key users-by-id",
+    "curl -k https://example.com --key client.pem --key-file ~/.ssh/id_ed25519",
+    f"tool --no-key {HEX}",
+    "payload = dict(key1='value1', key2='value2')",
+    'dotnet user-secrets set "AzureOpenAI:Endpoint" "https://contoso.openai.azure.com/"',
+    'dotnet user-secrets set "AzureOpenAI:Key" "$AZURE_OPENAI_KEY"',
+    "dotnet user-secrets list --project src/Api",
 ])
 def test_names_references_placeholders_and_ordinary_arguments_are_preserved(source):
     assert sanitize_text(source) == source
+
+
+def test_argv_options_named_for_a_credential_lose_opaque_values_everywhere():
+    # A structured argv list reads options as a command line does, and a
+    # withheld value is also withheld from the record's other fields.
+    safe = sanitize({"args": ["--key", HEX, "--model", "gpt-4o"], "note": f"started with {HEX}"})
+    assert safe == {"args": ["--key", REDACTED, "--model", "gpt-4o"], "note": f"started with {REDACTED}"}
+    ordinary = {"args": ["--key", "users", "--sort-key", "name", "--no-key", HEX]}
+    assert sanitize(ordinary) == ordinary
+
+
+# Forms SECURITY.md lists as not withheld: nothing in them names a credential
+# the way the rules above read names. When one is closed, move it to FORMS
+# and update SECURITY.md.
+@pytest.mark.xfail(strict=True, reason="documented redaction gap (SECURITY.md)")
+@pytest.mark.parametrize("source", [
+    f"llm -k {HEX}",
+    f'new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "{HEX}")',
+    f'x = "{HEX}"  # openai key',
+])
+def test_documented_gaps_are_still_open(source):
+    assert HEX not in sanitize_text(source)
 
 
 @pytest.mark.parametrize("source", [

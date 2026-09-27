@@ -1,9 +1,10 @@
 """Credentials on command lines, in request headers and in environment commands.
 
 Internal to :mod:`shadowscan.utils.redaction`, which re-exports every name
-here. Option values ('--api-key v', '-u user:v', '-H "X-Api-Key:v"'), a
-login's '-p v', a password echoed into '--password-stdin', and the values
-of 'ENV NAME v', 'setx NAME v' and '#define NAME v'.
+here. Option values ('--api-key v', '-u user:v', '-H "X-Api-Key:v"', and an
+opaque '--key v'), a login's '-p v', a password echoed into
+'--password-stdin', the value 'dotnet user-secrets set NAME v' stores, and
+the values of 'ENV NAME v', 'setx NAME v' and '#define NAME v'.
 """
 
 from __future__ import annotations
@@ -13,9 +14,13 @@ import re
 from shadowscan.utils.redaction_rules import (
     _CLI_WORD,
     REDACTED,
+    _credential_literal,
+    _credential_name,
     _kept_value,
     _sensitive_assignment_key,
     _sensitive_key,
+    _setting_level,
+    _setting_value_withheld,
     _withhold_spans,
 )
 
@@ -23,7 +28,9 @@ from shadowscan.utils.redaction_rules import (
 # argv list '"--password", "v"' or a YAML list item; user:password options
 # (curl -u/--user, httpie -a/--auth); and headers written without a space
 # after the colon ('-H "X-Api-Key:v"'), which the assignment rules skip.
-# The leading literal dash lets the regex engine skip ahead quickly.
+# An option whose last word names a credential ('--key', '--openai-key') only
+# loses a value that looks like an opaque key, as the same name does in an
+# assignment. The leading literal dash lets the regex engine skip ahead quickly.
 _CLI_OPTION = re.compile(r"-(?<![\w./\\\]-]-)-?[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za-z0-9]+)*")
 _CLI_BOUNDARY = re.compile(r"[\w./\\\]-]")
 _CLI_USER_OPTIONS = frozenset({"a", "u", "U", "auth", "basic-auth", "proxy-user", "user"})
@@ -61,6 +68,13 @@ _CLI_PIPED_PASSWORD = re.compile(
     r"(?:\"(?P<double>[^\"\r\n]*)\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>()]+))"
     r"[ \t]*\|[^|;&\r\n]*?[ \t]--password-stdin(?![\w-])"
 )
+# 'dotnet user-secrets set NAME VALUE' stores a .NET configuration setting;
+# its name decides as a setting's does (see _setting_level).
+_USER_SECRETS_SET = re.compile(
+    r"(?<![\w.-])dotnet[ \t]+user-secrets[ \t]+set[ \t]+"
+    r"(?:\"(?P<dname>[^\"\r\n]*)\"|'(?P<sname>[^'\r\n]*)'|(?P<bname>[^\s\"'`;|&<>]+))[ \t]+"
+    r"(?:\"(?P<double>[^\"\r\n]*)\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>]+))"
+)
 
 
 def _cli_option_mode(option: str) -> str:
@@ -69,9 +83,11 @@ def _cli_option_mode(option: str) -> str:
         return "user"
     if name in _CLI_HEADER_OPTIONS:
         return "header"
-    if not name.lower().startswith(("no-", "no_")) and _sensitive_assignment_key(re.sub(r"[-.]", "_", name)):
+    if name.lower().startswith(("no-", "no_")):
+        return ""
+    if _sensitive_assignment_key(re.sub(r"[-.]", "_", name)):
         return "secret"
-    return ""
+    return "opaque" if _credential_name(name) else ""
 
 
 def _cli_password_mode(text: str, option: re.Match[str], logins: bool, mysql: bool) -> str:
@@ -100,6 +116,13 @@ def _cli_secret_span(mode: str, value: str, start: int, strict: bool) -> tuple[i
     """The part of an option value ``value`` (at ``start``) that is a credential."""
     if value.startswith("-"):
         return None  # the next option, not a value
+    if mode == "opaque":
+        # A value holding an assignment or ending in a mapping key
+        # ('--key a.api_key=v', '--key a:Secret:') is left to the rules that
+        # read those, and what follows them.
+        if "=" in value.rstrip("=") or value.endswith(":"):
+            return None
+        return (start, start + len(value)) if _credential_literal(value, positional=False) else None
     if mode == "user":
         user, colon, password = value.partition(":")
         if not colon or "=" in user or not password or password.isdigit() or _kept_value(password):
@@ -139,12 +162,26 @@ def _redact_piped_passwords(text: str) -> str:
     return _withhold_spans(text, spans)
 
 
+def _redact_user_secrets(text: str) -> str:
+    """Withhold the value 'dotnet user-secrets set' stores under a credential's name."""
+    spans: list[tuple[int, int]] = []
+    for match in _USER_SECRETS_SET.finditer(text):
+        name = match.group("dname") or match.group("sname") or match.group("bname") or ""
+        group = next(group for group in ("double", "single", "bare") if match.group(group) is not None)
+        value = match.group(group)
+        if not _kept_value(value) and _setting_value_withheld(_setting_level(name), value):
+            spans.append(match.span(group))
+    return _withhold_spans(text, spans)
+
+
 def _redact_command_credentials(text: str) -> str:
     """Withhold credentials passed as command-line option values."""
     if "-" not in text:
         return text
     if "--password-stdin" in text:
         text = _redact_piped_passwords(text)
+    if "user-secrets" in text:
+        text = _redact_user_secrets(text)
     pieces: list[str] = []
     cursor = 0
     logins = "login" in text or "sshpass" in text
