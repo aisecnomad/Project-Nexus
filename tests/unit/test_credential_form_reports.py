@@ -158,6 +158,42 @@ CASES = {
         f"      env: [{{name: OPENAI_API_KEY, value: {BASE62}}}, "
         "{name: OPENAI_BASE_URL, value: https://api.openai.com/v1}]\n"
     ), BASE62),
+    "csharp-target-typed-new": ("Target.cs", (
+        "using Azure.AI.OpenAI;\n"
+        f'AzureKeyCredential openai = new("{HEX}"); '
+        f'var client = new OpenAIClient(new Uri("{AZURE}"), openai);\n'
+    ), HEX),
+    "rust-key-credential": ("src/main.rs", (
+        "use azure_core::credentials::AzureKeyCredential;\n"
+        f'let client = OpenAIClient::new("{AZURE}", AzureKeyCredential::new("{HEX}".to_string()));\n'
+    ), HEX),
+    "python-f-string": ("fclient.py", (
+        "from azure.ai.inference import ChatCompletionsClient\n"
+        f'client = ChatCompletionsClient("{AZURE}", AzureKeyCredential(f"{HEX}"))\n'
+    ), HEX),
+    "js-fallback-default": ("fallback.js", (
+        f'const k = process.env.OPENAI_API_KEY || "{HEX}"; fetch("https://api.openai.com/v1/models");\n'
+    ), HEX),
+    "csharp-fallback-default": ("Fallback.cs", (
+        "using Azure.AI.OpenAI;\n"
+        f'var k = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? "{HEX}"; '
+        f'var client = new OpenAIClient(new Uri("{AZURE}"), new AzureKeyCredential(k));\n'
+    ), HEX),
+    "python-fallback-default": ("fallback.py", (
+        "import openai\n"
+        f'k = os.getenv("OPENAI_API_KEY") or "{HEX}"; client = openai.OpenAI(api_key=k)\n'
+    ), HEX),
+    "shell-default": ("docker-compose.yml", (
+        "services:\n  app:\n"
+        f'    command: ["sh", "-c", "curl -H api-key:${{AZURE_OPENAI_KEY:-{HEX}}} {AZURE}openai"]\n'
+    ), HEX),
+    "az-login": (".github/workflows/deploy.yml", (
+        "name: deploy\non: push\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n"
+        f"      - run: az login --service-principal -u app -p {PASSWORD} --tenant t && curl {AZURE}openai\n"
+    ), PASSWORD),
+    "docker-login-stdin": ("push.sh", (
+        f"echo {BASE62} | docker login contoso.azurecr.io -u svc --password-stdin && curl {AZURE}openai\n"
+    ), BASE62),
 }
 # A marker followed by another ']' (escaped or not): a corrupted marker.
 _GROWN_MARKER = re.compile(r"REDACTED\\?\]\\?\]")

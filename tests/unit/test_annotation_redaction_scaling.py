@@ -57,6 +57,7 @@ def _best_time(source: str, repeats: int) -> float:
     "token: x ",          # one logical line of unfinished annotations
     "token: a \\\n",      # a backslash-continued statement
     "(token: a, ",        # annotations inside an unclosed bracket
+    "token: (\n",         # the 31 KB file above: one unclosed bracket per line
 ])
 def test_unfinished_annotation_redaction_scales_linearly(unit):
     small, large = unit * 500, unit * 2000

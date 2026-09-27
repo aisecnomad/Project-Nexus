@@ -904,7 +904,7 @@ def _redact_credential_calls(text: str) -> str:
     see ``_credential_literals``. Methods called on a call result or down a
     builder chain ('builder().apiKey(...)') are calls like any other.
     """
-    if '"' not in text and "'" not in text:
+    if '"' not in text and "'" not in text and "`" not in text:
         return text
     lexer = _CallLexer(text)
     values: list[tuple[int, int]] = []
@@ -919,9 +919,7 @@ def _redact_credential_calls(text: str) -> str:
             retry = lexer.arguments(call.end(), comments=False)
             if retry[1] == "closed":
                 spans, state, _ = retry
-        callee = call.group()[:-1]
-        if callee.startswith("."):
-            callee = _chained_callee(text, call.start()) + callee
+        callee = _qualified_callee(text, call)
         # Prose puts a space before a parenthesis ("Login ('log|n')"); code rarely does.
         level = 0 if callee[-1:].isspace() else _credential_callee(callee)
         if level:
@@ -981,12 +979,17 @@ _LOOKUP_VERBS = frozenset({
 # Factory methods take their receiver's name: Credentials.basic("user", "v"),
 # AwsBasicCredentials.create("id", "v") and Ruby's Cohere::Client.new("v").
 _CALLEE_FACTORIES = frozenset({"basic", "create", "from", "new", "of"})
+# C#'s target-typed 'new(' constructs the type declared before the variable:
+# 'AzureKeyCredential credential = new("...")'. A generic type's arguments
+# are skipped within 256 characters.
+_TARGET_TYPE_CONTEXT = 256
 # One whole call argument that is a string literal, optionally named
-# (Python/Kotlin 'key=', C#/Swift 'key:'). C# verbatim and interpolated
-# prefixes are accepted; interpolated text is never an opaque literal.
+# (Python/Kotlin 'key=', C#/Swift 'key:'). Python f-string, C# verbatim and
+# interpolated prefixes are accepted; interpolated text is never an opaque
+# literal.
 _CALL_ARGUMENT_LITERAL = re.compile(
     r"(?:(?P<label>[A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:=(?!=)|:(?![:=]))[ \t]*)?"
-    r"(?P<prefix>[rRbBuU]{1,2}|@\$?|\$@?)?(?P<quote>[\"'`])"
+    r"(?P<prefix>[rRbBuUfF]{1,2}|@\$?|\$@?)?(?P<quote>[\"'`])"
 )
 # Java's "secret".toCharArray() and similar conversions keep a literal whole.
 _LITERAL_CONVERSION = re.compile(r"(?:[ \t]*\.[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\))*")
@@ -1041,6 +1044,19 @@ def _credential_literal(value: str, *, positional: bool) -> bool:
     return positional or _opaque(value)
 
 
+def _interpolated(prefix: str, quote: str, value: str) -> bool:
+    """Whether a literal with ``prefix`` and ``quote`` assembles its text from expressions.
+
+    C# '$"..."' always is; a Python f-string or a JavaScript template only
+    when it holds a replacement field.
+    """
+    if "$" in prefix:
+        return True
+    if "f" in prefix.lower():
+        return "{" in value
+    return quote == "`" and "${" in value
+
+
 def _credential_callee(name: str) -> int:
     """0 for an ordinary callee, 1 for a credential-named one, 2 for a credential constructor."""
     if _CALLEE_HINT.search(name) is None:
@@ -1078,6 +1094,54 @@ def _chained_callee(text: str, dot: int) -> str:
     return ".".join(reversed(names))
 
 
+def _qualified_callee(text: str, call: re.Match[str]) -> str:
+    """A call's name, qualified by what it is reached through or constructs.
+
+    'builder().apiKey(' reads as 'builder.apiKey', Rust's and Ruby's
+    'AzureKeyCredential::new(' as 'AzureKeyCredential.new', and C#'s
+    target-typed 'AzureKeyCredential credential = new(' as
+    'AzureKeyCredential.new'. Names are read backwards from the call, so
+    each costs only its own length.
+    """
+    callee = call.group()[:-1]
+    start = call.start()
+    if callee.startswith("."):
+        return _chained_callee(text, start) + callee
+    if start >= 2 and text[start - 2:start] == "::":
+        receiver = _name_before(text, start - 2, "_")
+        return receiver + "." + callee if receiver else callee
+    if callee == "new":
+        equals = _blanks_before(text, start)
+        declared = _declared_type(text, equals - 1) if equals > 0 and text[equals - 1] == "=" else ""
+        return declared + "." + callee if declared else callee
+    return callee
+
+
+def _declared_type(text: str, equals: int) -> str:
+    """The type in a declaration 'Type name =' whose '=' is at ``equals``, read backwards."""
+    if equals > 0 and text[equals - 1] in "=!<>+-*/%&|^?:":
+        return ""  # a comparison or a compound assignment
+    end = _blanks_before(text, equals)
+    name = _name_before(text, end, "_")
+    end -= len(name)
+    if not name or name[0].isdigit():
+        return ""
+    if end > 0 and text[end - 1] == "@":
+        end -= 1  # a C# verbatim identifier
+    gap = _blanks_before(text, end)
+    if gap == end:
+        return ""  # no blank separates a declared type from the name
+    end = gap
+    if end > 0 and text[end - 1] == "?":
+        end -= 1  # a nullable type
+    if end > 0 and text[end - 1] == ">":
+        opening = text.rfind("<", max(0, end - _TARGET_TYPE_CONTEXT), end - 1)
+        if opening < 0 or text.find("\n", opening, end) >= 0:
+            return ""
+        end = opening
+    return _name_before(text, end, "_.")
+
+
 def _credential_literals(
     lexer: _CallLexer, spans: list[tuple[int, int]], closed: bool, level: int,
 ) -> list[tuple[int, int]]:
@@ -1112,7 +1176,7 @@ def _credential_literals(
         closing = stop - len(delimiter)
         terminated = closing >= opening + len(delimiter) and text.startswith(delimiter, closing)
         value = text[opening + len(delimiter):closing if terminated else stop]
-        if "$" in (literal.group("prefix") or "") or (char == "`" and "${" in value):
+        if _interpolated(literal.group("prefix") or "", char, value):
             continue  # interpolated text is assembled elsewhere
         positional = level == 2 and not named and not (index == 0 and positional_count > 1)
         if not _credential_literal(value, positional=positional):
@@ -1145,18 +1209,27 @@ _HEADER_VALUE = re.compile(
     r"(?P<name>[A-Za-z][A-Za-z0-9-]*):(?:(?:Bearer|Basic|Token|Bot|Digest|SSWS|ApiKey|Api-Key|token)[ \t]+)?"
     r"(?P<secret>\S[^\r\n]*)"
 )
-# '-p' is a password only after some commands: a registry 'login' (docker,
-# podman, helm registry...) and 'sshpass', and the attached '-pVALUE' of MySQL
-# clients ('mysql -p db' prompts and names a database). Elsewhere it is often a
-# port or a path. The command is read from at most 256 characters before '-p'.
+# '-p' is a password only after some commands: a registry or cloud 'login'
+# (docker, podman, helm registry, az, az acr, oc, cf...) and 'sshpass', and the
+# attached '-pVALUE' of MySQL clients ('mysql -p db' prompts and names a
+# database). Elsewhere it is often a port or a path. The command is read from
+# at most 256 characters before '-p'.
 _CLI_COMMAND_CONTEXT = 256
 _CLI_CONTINUATION = re.compile(r"\\\r?\n")
 _CLI_REGISTRY_LOGIN = re.compile(
-    r"(?:^|[\s(/])(?:docker|podman|nerdctl|buildah|skopeo|oras|crane|helm)[ \t](?:.*[ \t])?login(?:[ \t]|$)"
+    r"(?:^|[\s(/])(?:docker|podman|nerdctl|buildah|skopeo|oras|crane|helm|az|oc|cf)[ \t]"
+    r"(?:.*[ \t])?login(?:[ \t]|$)"
 )
 _CLI_SSHPASS = re.compile(r"(?:^|[\s(/])sshpass(?:[ \t]+-[A-Za-z]\S*)*[ \t]+$")
 _CLI_MYSQL = re.compile(
     r"(?:^|[\s(/])(?:mysql(?:dump|admin|import|show|check|sh)?|mariadb(?:-dump|-admin)?)[ \t]"
+)
+# A password echoed into a login that reads it from standard input:
+# 'echo VALUE | docker login -u svc --password-stdin'.
+_CLI_PIPED_PASSWORD = re.compile(
+    r"(?:^|[\s;&(])echo[ \t]+(?:-[neE]+[ \t]+)*"
+    r"(?:\"(?P<double>[^\"\r\n]*)\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>()]+))"
+    r"[ \t]*\|[^|;&\r\n]*?[ \t]--password-stdin(?![\w-])"
 )
 
 
@@ -1201,6 +1274,8 @@ def _cli_secret_span(mode: str, value: str, start: int, strict: bool) -> tuple[i
         user, colon, password = value.partition(":")
         if not colon or "=" in user or not password or password.isdigit() or _kept_value(password):
             return None
+        if password.startswith("//"):
+            return None  # a URL ('cf login -a https://api.example.com'), not user:password
         return start + len(user) + 1, start + len(value)
     if mode == "header":
         header = _HEADER_VALUE.fullmatch(value)
@@ -1224,10 +1299,22 @@ def _cli_value_span(mode: str, text: str, position: int, strict: bool) -> tuple[
     return _cli_secret_span(mode, value.group(group), value.start(group), strict)
 
 
+def _redact_piped_passwords(text: str) -> str:
+    """Withhold a literal password echoed into a '--password-stdin' login."""
+    spans: list[tuple[int, int]] = []
+    for match in _CLI_PIPED_PASSWORD.finditer(text):
+        group = next(name for name in ("double", "single", "bare") if match.group(name) is not None)
+        if not _kept_value(match.group(group)):
+            spans.append(match.span(group))
+    return _withhold_spans(text, spans)
+
+
 def _redact_command_credentials(text: str) -> str:
     """Withhold credentials passed as command-line option values."""
     if "-" not in text:
         return text
+    if "--password-stdin" in text:
+        text = _redact_piped_passwords(text)
     pieces: list[str] = []
     cursor = 0
     logins = "login" in text or "sshpass" in text
@@ -1631,7 +1718,7 @@ def _redact_auth_pairs(text: str) -> str:
 # name before it is read backwards.
 _OPAQUE_VALUE = re.compile(
     r"(?P<separator>:=|=(?![=>~])|:(?![:=]))[ \t]*"
-    r"(?:(?:[rRbBuU]{1,2}|@)?(?P<quote>[\"'`])(?P<quoted>[^\"'`\r\n]{8,})(?P=quote)"
+    r"(?:(?P<prefix>[rRbBuUfF]{1,2}|@)?(?P<quote>[\"'`])(?P<quoted>[^\"'`\r\n]{8,})(?P=quote)"
     r"|(?P<bare>[A-Za-z0-9+/_.~-]{8,}={0,2})(?![^\s,;)}\]]))"
 )
 _OPAQUE_NAME = re.compile(r"[A-Za-z_$][\w$-]*(?:\.[A-Za-z_$][\w$-]*)*")
@@ -1699,7 +1786,7 @@ def _redact_opaque_assignments(text: str) -> str:
         value = match.group(group)
         if group == "bare" and (match.group("separator") == ":" or _WORDY.fullmatch(value)):
             continue
-        if match.group("quote") == "`" and "${" in value:
+        if match.group("quote") and _interpolated(match.group("prefix") or "", match.group("quote"), value):
             continue  # interpolated text is assembled elsewhere
         if _credential_literal(value, positional=False):
             spans.append(match.span(group))
@@ -1710,6 +1797,11 @@ def _redact_opaque_assignments(text: str) -> str:
         value = match.group("value")
         if not _CLI_WORD.fullmatch(value) and _credential_literal(value, positional=True):
             spans.append(match.span("value"))
+    return _withhold_spans(text, spans)
+
+
+def _withhold_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    """Replace each span that does not overlap an earlier one with the marker."""
     if not spans:
         return text
     pieces: list[str] = []
@@ -1721,6 +1813,61 @@ def _redact_opaque_assignments(text: str) -> str:
             cursor = end
     pieces.append(text[cursor:])
     return "".join(pieces)
+
+
+# A literal default for a credential read from the environment or a
+# credential-named field: 'process.env.OPENAI_API_KEY || "v"',
+# 'Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? "v"',
+# 'os.getenv("OPENAI_API_KEY") or "v"', 'getenv("X") ?: "v"' and the shell's
+# '${OPENAI_API_KEY:-v}'. The pattern starts at the operator; the name before
+# it is a name, or the short string literal that ends a call or subscript.
+# Every operator starts with a literal, which lets the regex engine skip
+# ahead quickly; the word boundary before 'or' is checked after it.
+_FALLBACK_DEFAULT = re.compile(
+    r"(?:\|\||\?[?:]|or(?<![\w.$]or))[ \t]*(?P<prefix>[rRbBuUfF]{1,2}|@)?(?P<quote>[\"'`])"
+    r"(?P<value>[^\"'`\r\n]*)(?P=quote)"
+)
+_SHELL_DEFAULT = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*):?[-=](?P<value>[^{}\r\n]*)\}")
+_FALLBACK_NAME_LITERAL = 256
+
+
+def _fallback_name(text: str, operator: int) -> str:
+    """The name whose value the operator at ``operator`` falls back from."""
+    end = _blanks_before(text, operator)
+    if end == 0 or text[end - 1] not in ")]":
+        return _name_before(text, end, "_$.").rsplit(".", 1)[-1]
+    end = _blanks_before(text, end - 1)
+    if end == 0 or text[end - 1] not in "\"'":
+        return ""
+    opening = text.rfind(text[end - 1], max(0, end - 1 - _FALLBACK_NAME_LITERAL), end - 1)
+    return text[opening + 1:end - 1] if opening >= 0 else ""
+
+
+def _redact_fallback_defaults(text: str) -> str:
+    """Withhold literal defaults given to credential names by fallback operators.
+
+    A lowercase word ('default', 'none') and the values a credential
+    literal never is (placeholders, URLs, environment names) stay visible.
+    """
+    spans: list[tuple[int, int]] = []
+    for match in _FALLBACK_DEFAULT.finditer(text):
+        name = _fallback_name(text, match.start())
+        value = match.group("value")
+        if not name or _interpolated(match.group("prefix") or "", match.group("quote"), value):
+            continue
+        sensitive = _sensitive_assignment_key(name)
+        if not (sensitive or _credential_name(name)) or _CLI_WORD.fullmatch(value):
+            continue
+        if _credential_literal(value, positional=sensitive):
+            spans.append(match.span("value"))
+    if "${" in text:
+        for match in _SHELL_DEFAULT.finditer(text):
+            value = match.group("value")
+            if not _sensitive_assignment_key(match.group("name")) or _CLI_WORD.fullmatch(value):
+                continue
+            if _credential_literal(value, positional=True):
+                spans.append(match.span("value"))
+    return _withhold_spans(text, spans)
 
 
 def _sensitive_key(key: str) -> bool:
@@ -1820,7 +1967,8 @@ def sanitize_text(text: str) -> str:
 
     Context-named values are also withheld: XML elements and attributes,
     name/value records, command-line options, environment commands, basic
-    authentication pairs and literals passed to credential-named callees.
+    authentication pairs, literals passed to credential-named callees and
+    literal fallback defaults of credential names.
     """
     if not isinstance(text, str):
         text = str(text)  # type: ignore[unreachable]  # untyped callers still pass bytes-like values
@@ -1865,10 +2013,12 @@ def sanitize_text(text: str) -> str:
 
         return _ASSIGNMENT.sub(assignment, value)
 
-    # Plain assignment redaction can introduce a bracketed marker after a
-    # mapping colon (including annotations). Normalize those expressions in
-    # this same pass so repeated sanitization does not change the result.
-    return _redact_mapping_values(assignments(text))
+    # Fallback defaults come after plain assignments, which already withhold
+    # 'OPENAI_API_KEY=${OPENAI_API_KEY:-v}' whole. Plain assignment redaction
+    # can introduce a bracketed marker after a mapping colon (including
+    # annotations). Normalize those expressions in this same pass so repeated
+    # sanitization does not change the result.
+    return _redact_mapping_values(_redact_fallback_defaults(assignments(text)))
 
 
 def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_secrets: bool = True) -> Any:

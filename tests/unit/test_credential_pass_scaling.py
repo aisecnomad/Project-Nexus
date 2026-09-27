@@ -40,6 +40,12 @@ def _best_time(source: str, repeats: int) -> float:
     "mysql -pabc ",
     'openaiKey = "',                  # a credential-like name before an unfinished literal
     ").apiKey(\"",                    # a method called on a call result
+    'k || "',                         # a fallback default; the name is read backwards
+    'f("OPENAI_API_KEY") ?? "a8f3c91d7e2b" ',
+    "${TOKEN:-",                      # an unfinished shell default
+    'AzureKeyCredential a = new("a8f3c91d7e2b"); ',  # a declared type, read backwards
+    'X::new("a"), ',
+    "{name: API_KEY, value: [REDACTED",  # a record value that is not a whole marker
 ])
 def test_context_named_credential_passes_scale_linearly(unit):
     small, large = unit * 1000, unit * 4000

@@ -105,21 +105,30 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   calls; name/value records such as Kubernetes `env` lists; XML elements and
   `key`/`value` attributes; Dockerfile `ENV NAME value`, `setx`, `setenv` and
   C `#define`; command-line options such as `--api-key`, `--token`,
-  `--password`, `curl -u user:secret`, `-H "X-Api-Key:value"`,
-  `docker login -p`, `sshpass -p` and MySQL's `-pVALUE`; and string literals
-  passed to credential constructors and helpers such as
-  `AzureKeyCredential("...")`, `HTTPBasicAuth("user", "...")`,
-  `Credentials.basic("user", "...")`, `auth=("user", "...")` and
-  `setBearerToken("...")`, including methods down a builder chain
-  (`builder().apiKey("...")`). A literal that looks like an opaque key is also
-  withheld from a name whose last word names a credential (`openaiKey = "..."`,
-  `key = "..."`) and from a lone unindented line after a sensitive key such as
-  `token:`. Variable references (`$VAR`, `${{ secrets.X }}`), environment
-  variable names and placeholders stay visible. A credential without such
-  context can remain: an unprefixed literal passed to an ordinary function, a
-  word-like or short value under a name that is not itself sensitive, a
-  lowercase word after a space-separated option, an option this list does not
-  name, a value split across concatenated strings, and sensitive business
+  `--password`, `curl -u user:secret`, `-H "X-Api-Key:value"`, `-p` after
+  `docker login` and other registry or cloud logins (`az`, `az acr`, `oc`,
+  `cf`), `sshpass -p`, MySQL's `-pVALUE` and a literal echoed into
+  `--password-stdin`; literal defaults of credentials read from the
+  environment (`process.env.OPENAI_API_KEY || "..."`, `?? "..."`,
+  `or "..."`, `?: "..."`, `${OPENAI_API_KEY:-...}`); and string literals,
+  including Python f-strings without replacement fields and backtick
+  strings, passed to credential constructors and helpers such as
+  `AzureKeyCredential("...")`, Rust's `AzureKeyCredential::new("...")`, C#'s
+  target-typed `AzureKeyCredential credential = new("...")`,
+  `HTTPBasicAuth("user", "...")`, `Credentials.basic("user", "...")`,
+  `auth=("user", "...")` and `setBearerToken("...")`, including methods down a
+  builder chain (`builder().apiKey("...")`). A literal that looks like an
+  opaque key is also withheld from a name whose last word names a credential
+  (`openaiKey = "..."`, `key = "..."`) and from a lone unindented line after a
+  sensitive key such as `token:`. Variable references (`$VAR`,
+  `${{ secrets.X }}`), environment variable names and placeholders stay
+  visible. A credential without such context can remain: an unprefixed literal
+  passed to an ordinary function or nested in another call inside a
+  credential constructor (`AzureKeyCredential(str("..."))`), a word-like or
+  short value under a name that is not itself sensitive, a lowercase word
+  after a space-separated option or as a fallback default, an option this list
+  does not name, the part of an unquoted option value after a bracket, brace
+  or comma, a value split across concatenated strings, and sensitive business
   data. Treat reports as confidential.
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
