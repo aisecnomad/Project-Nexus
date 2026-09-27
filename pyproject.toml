@@ -89,12 +89,20 @@ warn_return_any = true
 warn_unreachable = true
 disallow_untyped_defs = true
 check_untyped_defs = true
-# Allow untyped calls only for third-party libraries without stubs
+# First-party imports and stubbed libraries (types-PyYAML, types-requests from
+# the dev extra) are checked; only the listed third-party packages, which ship
+# neither stubs nor a py.typed marker, may be imported untyped.
 ignore_missing_imports = false
+
 [[tool.mypy.overrides]]
 module = [
-    "yaml.*",
-    "requests.*",
+    "regex",
+    "boto3",
+    "boto3.*",
+    "botocore",
+    "botocore.*",
+    "oci",
+    "oci.*",
 ]
 ignore_missing_imports = true
 

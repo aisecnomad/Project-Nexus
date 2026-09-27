@@ -20,7 +20,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 from shadowscan.connectors.base import ConnectorError
 from shadowscan.utils.safe_json import strict_json_loads
@@ -154,7 +154,7 @@ def _scalar(value: Any) -> str | int | None:
     """Identity candidates must be scalars: an object's repr is not a caller."""
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         return None
-    return cast(str | int, value)
+    return value
 
 
 def _scalar_path(rec: dict[str, Any], *paths: str) -> str | int | None:

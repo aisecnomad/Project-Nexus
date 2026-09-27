@@ -50,7 +50,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import yaml
 
@@ -638,7 +638,7 @@ def _positive_integer(value: Any, location: str) -> int:
             raise ConfigValidationError(f"{location} must be a positive integer") from None
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ConfigValidationError(f"{location} must be a positive integer")
-    return cast(int, value)
+    return value
 
 
 class _ConfigLoader(BoundedSafeLoader):

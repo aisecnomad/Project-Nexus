@@ -105,7 +105,9 @@ nav:
   - Community: community.md
   - Development:
       - Contributing: contributing.md
+      - Testing: testing.md
       - Governance: governance.md
+      - Maintainer onboarding: maintainer-onboarding.md
       - ADRs:
           - adrs/index.md
           - "ADR-001: Connector architecture": adrs/001-connector-architecture.md

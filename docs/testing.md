@@ -1,258 +1,122 @@
-# Testing Guide
+# Testing guide
 
-This document covers setting up a reproducible test environment and running ShadowScan's comprehensive test suites.
+This page describes how to set up a reproducible development environment and
+run ShadowScan's test suites the way CI does. The gates themselves are defined
+in the [contributor guide](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#quality-gates);
+this page is the practical companion.
 
-## Environment Setup
+## Environment
 
-### Python Version
-
-ShadowScan requires Python 3.11 or newer. Use a supported version:
-
-```bash
-python --version  # Verify 3.11+
-```
-
-### Virtual Environment (Recommended)
-
-A virtual environment isolates dependencies and prevents system package conflicts:
+ShadowScan supports CPython 3.11, 3.12 and 3.13 on Linux and macOS. On Windows
+use WSL: the confined file reader needs `O_NOFOLLOW` and `dir_fd`, and the
+Makefile assumes `/tmp` and a `.venv/bin` layout.
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
+make install          # hash-locked runtime, cloud, development and docs sets
+pre-commit install    # optional: run the lint, format and secret hooks on commit
 ```
 
-### Dependency Installation
+`make install` installs `requirements-ci.lock`, `requirements.lock` and
+`requirements-docs.lock` under `--require-hashes --only-binary=:all:` and then
+the scanner itself in editable mode. `make install-dev` installs only the
+hash-locked core and development set, which is enough for lint, typing and the
+offline suite but leaves the cloud SDK code paths unexercised. Do not work
+around a hash mismatch: a lock that no longer installs is a signal to review,
+not to bypass.
 
-Install the project with all development and cloud SDKs:
+The development set already includes the `types-PyYAML` and `types-requests`
+stubs that `mypy` needs. The third-party packages that ship neither stubs nor
+a `py.typed` marker (`regex`, `boto3`, `botocore` and `oci`) are the only
+modules `pyproject.toml` allows to be imported untyped.
 
-```bash
-python -m pip install -e ".[all]"
-```
-
-This installs:
-- **dev**: pytest, pytest-cov, ruff, mypy, type stubs, responses, pip-audit, pre-commit
-- **cloud**: AWS, Azure, GCP, OCI SDKs (required for test suite)
-- **docs**: mkdocs and documentation toolchain
-
-To install only dev dependencies without cloud SDKs (faster for linting-only work):
-
-```bash
-python -m pip install -e ".[dev]"
-```
-
-### Type Checking Dependencies
-
-For full mypy support with type stubs:
-
-```bash
-python -m pip install types-PyYAML types-requests
-```
-
-These provide type information for `yaml` and `requests` libraries used throughout the codebase.
-
-## Running Tests
-
-### Quick Test (Single Test)
-
-Validate the test environment works:
+## Run one test
 
 ```bash
 python -m pytest -q tests/unit/test_signatures.py::test_all_signatures_load_and_validate
 ```
 
-This test requires no cloud credentials and verifies that all bundled signatures load successfully.
+This loads and validates the bundled signature packs and needs no credentials.
+A single passing test says nothing about the rest of the suite.
 
-### Full Test Suite
+## The full suite
 
-Run the complete test suite with coverage collection:
-
-```bash
-make test
-```
-
-This runs:
-- All unit tests
-- Integration tests
-- Acceptance tests
-- Coverage collection (with fail_under=80% gate)
-
-### Fast Testing (No Coverage)
-
-For iterative development, run tests without coverage:
+Every test is offline. Connector tests use fixtures under `tests/fixtures/` and
+stubbed transports; nothing contacts a tenant, a cloud API or the network, and
+no test needs credentials. The `tests/test_canaries.py` cases exercise the
+canary tool against replay fixtures only; live canaries are a separate,
+operator-run procedure described in [Tenant canaries](canaries.md).
 
 ```bash
-make test-fast
+make test-fast      # stop at the first failure, no coverage
+make test           # full suite with the 80% aggregate coverage floor
+make coverage-gate  # 75% per-connector floor; run after make test
 ```
 
-This stops at the first failure for quick feedback.
+`make coverage-gate` exports the coverage data recorded by the preceding
+`make test`. The per-connector floor needs the cloud SDKs installed, so run it
+after `make install` rather than `make install-dev`.
 
-### Per-Connector Coverage Gate
-
-After running the full test suite, enforce per-connector coverage minimums (≥75%):
+Useful pytest patterns:
 
 ```bash
-make coverage-gate
+python -m pytest -q tests/unit -k gateway      # tests whose id mentions gateway
+python -m pytest -q -x --tb=short              # stop early, short tracebacks
+python -m pytest -q --co tests/unit | head     # list collected tests
 ```
 
-Alternatively, generate and pass a coverage JSON report:
+## Other gates
 
 ```bash
-python -m coverage json -o /tmp/shadowscan-coverage.json
-python -m tools.coverage_gate /tmp/shadowscan-coverage.json
+make lint            # ruff check
+make format-check    # ruff format --check
+make typecheck       # mypy on the scanner and tools
+make signatures      # signature schema and regex validation
+make audit           # pip-audit on the installed environment
+make evaluate        # every bundled detection corpus
+make policy          # workflow, issue-form and repository consistency checks
+make check           # all of the above, in order
 ```
 
-## Quality Checks
+`make evaluate` runs each corpus under `tools/evaluation/`; a corpus fails on
+an unwaived regression, an over-budget or expired known-gap waiver, or a waived
+case that now passes. See [Evaluation](evaluation.md) for the report format.
+`make policy` runs `tests/test_repository_policy.py` and
+`tests/test_repository_consistency.py`, which check action pins, permissions,
+Markdown links and heading anchors, and that the Makefile, hooks and locks
+match CI. Run it whenever you touch `.github/`, a top-level document or a docs
+page; `make docs` builds the site with `mkdocs build --strict` and catches the
+rest.
 
-### Linting
+## What CI runs
 
-Check code style and common errors with ruff:
-
-```bash
-make lint
-```
-
-### Type Checking
-
-Validate type safety with mypy:
-
-```bash
-make typecheck
-```
-
-If you see "Library stubs not installed" errors, install type packages:
-
-```bash
-python -m pip install types-PyYAML types-requests
-```
-
-### Signature Validation
-
-Validate all YAML signature definitions:
-
-```bash
-python -m shadowscan.signatures.validate
-```
-
-### Dependency Audit
-
-Check for known vulnerabilities:
-
-```bash
-make audit
-```
-
-### All Quality Gates
-
-Run all local checks (the same suite CI validates):
-
-```bash
-make check
-```
-
-This runs: linting → type checking → signature validation → audit → tests → coverage gates → evaluation.
+The [CI workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/ci.yml)
+runs the same commands on Linux for Python 3.11, 3.12 and 3.13 and on macOS for
+3.11 and 3.13, installs the hash-locked dependency sets, audits every lock,
+builds and validates the wheel outside the checkout, and on Python 3.13 builds
+and smoke-tests the container image. The `CI gate` job requires every job,
+including DCO on pull requests, to succeed. [CI integration](operations/ci.md)
+describes running the scanner itself inside a pipeline.
 
 ## Troubleshooting
 
-### Dependency Version Conflicts
+- **`ModuleNotFoundError` for a cloud SDK, or a skipped SDK test:** the
+  environment came from `make install-dev`. Run `make install`.
+- **`policy input must not traverse symbolic links` or `scan root must not
+  traverse a symbolic link`:** the scanner refuses symlinked input paths by
+  design. Pass a resolved path; the evaluation, benchmark, canary and
+  acceptance tools already resolve the temporary directories they create,
+  which matters on macOS, where `/tmp` and `/var` are symbolic links.
+- **The Unix-socket report test skips:** some sandboxes forbid `AF_UNIX`
+  sockets and the test skips on `EPERM`. Hosted CI runs it.
+- **`ValueError: current limit exceeds maximum limit` from `resource`:** the
+  bounded-YAML subprocess check falls back from `RLIMIT_AS` to `RLIMIT_DATA`;
+  report a platform where neither applies.
+- **Coverage below a floor:** `python -m coverage report --skip-empty` shows
+  the missing lines. Add offline tests rather than lowering the floor.
 
-If you see "requires X but you have Y" warnings, ensure you're using the versions specified in `pyproject.toml`:
-
-```bash
-pip list | grep -E "pyyaml|requests|pyjwt|urllib3|regex"
-```
-
-For version mismatches, uninstall and reinstall:
-
-```bash
-pip install --force-reinstall --no-cache-dir 'pyyaml>=6.0.3' 'requests>=2.34.2'
-```
-
-### Import Errors on Test Run
-
-If you see `ModuleNotFoundError`, ensure the dev extras are installed:
-
-```bash
-python -m pip install -e ".[all]" --upgrade
-```
-
-### Mypy Errors on Missing Imports
-
-mypy may report "library stubs not installed" for `yaml` and `requests`. Install type packages:
-
-```bash
-python -m mypy --install-types
-```
-
-Or explicitly:
-
-```bash
-pip install types-PyYAML types-requests
-```
-
-### Test Timeout or Hang
-
-Some tests make real cloud API calls (for canaries). If a test hangs:
-
-1. Check your cloud credentials are not expired
-2. Cancel with Ctrl+C and skip canary tests:
-
-```bash
-pytest -q tests/ -k "not canary"
-```
-
-### Coverage Below Gate
-
-If coverage is below 80% aggregate or 75% per-connector:
-
-1. Identify gaps: `coverage report --skip-empty`
-2. Write tests for uncovered code paths
-3. Run `make coverage-gate` again
-
-## Integration Tests & Fixtures
-
-The test suite uses offline fixtures to avoid live cloud API calls:
-
-- **fixtures/**: Sanitized cloud exports, YAML configs, and code samples
-- **tests/fixtures/sample_repo/**: A minimal repo for code scanning tests
-- **tools/evaluation/**: Regression corpus with documented test cases
-
-Tests use these fixtures without requiring credentials. For live tenant testing, see [canaries.md](canaries.md) and [acceptance.md](../tools/acceptance/README.md).
-
-## CI/CD Integration
-
-The GitHub Actions CI runs the same checks:
-
-- **ci.yml**: Runs `make check` on Python 3.11, 3.12, 3.13
-- **release.yml**: Validates packaging and release candidate evidence
-
-For details, see `.github/workflows/`.
-
-## Contributing Changes
-
-Before submitting a pull request:
-
-1. Set up a virtual environment
-2. Install with `pip install -e ".[all]"`
-3. Install pre-commit hooks: `make install-hooks`
-4. Make your changes
-5. Run `make check` to validate
-6. Commit with a clear message (pre-commit hooks will lint)
-
-If `make check` fails:
-- Fix linting: `ruff check --fix shadowscan tests tools`
-- Add type annotations: review mypy output and add stubs where needed
-- Write or fix tests to maintain coverage
-- Run specific test: `pytest tests/unit/test_x.py -v`
-
-## Advanced: Custom Test Run
-
-Run a subset of tests by pattern:
-
-```bash
-pytest tests/ -k "gateway" -v              # All gateway tests
-pytest tests/unit/ --co -q | head -20     # List first 20 tests
-pytest tests/ -x                           # Stop on first failure
-pytest tests/ --tb=short                   # Minimal traceback
-```
-
-For more pytest options, see `pytest --help` or the [pytest docs](https://docs.pytest.org/).
+Bug fixes need a regression test, and connector changes need offline fixtures
+and documentation, as the
+[pull request requirements](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#pull-requests)
+describe.
