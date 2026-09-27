@@ -32,12 +32,21 @@ from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import truncate
 
 TABLES = {
-    "sn_aia_agent": "sys_id,name,description,instructions,active,sys_created_by,sys_created_on,sys_updated_on,sys_updated_by,role,agent_type,model,llm_model,autonomous",
+    "sn_aia_agent": (
+        "sys_id,name,description,instructions,active,sys_created_by,sys_created_on,sys_updated_on,"
+        "sys_updated_by,role,agent_type,model,llm_model,autonomous"
+    ),
     "sn_aia_usecase": "sys_id,name,description,active,sys_created_by,sys_updated_on,agents,trigger_type",
-    "sn_aia_tool": "sys_id,name,description,type,agent,tool_type,script,flow,subflow,rest_message,table,active,sys_updated_on",
+    "sn_aia_tool": (
+        "sys_id,name,description,type,agent,tool_type,script,flow,subflow,rest_message,table,active,"
+        "sys_updated_on"
+    ),
     "sn_aia_trigger": "sys_id,name,usecase,trigger_type,table,condition,active,sys_updated_on",
     "sys_hub_flow": "sys_id,name,description,active,type,sys_created_by,sys_updated_on,sys_scope",
-    "oauth_entity": "sys_id,name,client_id,type,active,oauth_entity_scope,redirect_url,sys_created_by,sys_created_on,sys_updated_on,refresh_token_lifespan,access_token_lifespan",
+    "oauth_entity": (
+        "sys_id,name,client_id,type,active,oauth_entity_scope,redirect_url,sys_created_by,sys_created_on,"
+        "sys_updated_on,refresh_token_lifespan,access_token_lifespan"
+    ),
 }
 
 
@@ -63,7 +72,9 @@ class ServiceNowConnector(BaseConnector):
     name: ClassVar[str] = "lowcode.servicenow"
     surface: ClassVar[Surface] = Surface.LOWCODE
     provider: ClassVar[str | None] = "servicenow"
-    description: ClassVar[str] = "Now Assist AI agents, tools, triggers, AI flows and OAuth application registries."
+    description: ClassVar[str] = (
+        "Now Assist AI agents, tools, triggers, AI flows and OAuth application registries."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "instance": "https://<instance>.service-now.com (env SNOW_INSTANCE)",
         "username": "basic auth user (env SNOW_USERNAME)",
@@ -103,7 +114,15 @@ class ServiceNowConnector(BaseConnector):
             seen: set[str] = set()
             for page in range(max_pages):
                 try:
-                    data = self.http.get_json(f"/api/now/table/{table}", params={"sysparm_fields": fields, "sysparm_limit": _PAGE_SIZE, "sysparm_offset": page * _PAGE_SIZE, "sysparm_display_value": "all"})
+                    data = self.http.get_json(
+                        f"/api/now/table/{table}",
+                        params={
+                            "sysparm_fields": fields,
+                            "sysparm_limit": _PAGE_SIZE,
+                            "sysparm_offset": page * _PAGE_SIZE,
+                            "sysparm_display_value": "all",
+                        },
+                    )
                 except (HttpError, RequestException, ValueError, RuntimeError) as exc:
                     status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
                     self.ctx.warn(f"lowcode.servicenow: table {table} collection incomplete ({status})")
@@ -114,7 +133,9 @@ class ServiceNowConnector(BaseConnector):
                 if self._is_error_record(data):
                     self.ctx.warn(f"lowcode.servicenow: provider error in {table} page; coverage incomplete")
                 rows = data["result"]
-                fingerprint = hashlib.sha256(json.dumps(rows, sort_keys=True, default=str).encode()).hexdigest()
+                fingerprint = hashlib.sha256(
+                    json.dumps(rows, sort_keys=True, default=str).encode()
+                ).hexdigest()
                 if fingerprint in seen:
                     self.ctx.warn(f"lowcode.servicenow: repeated pagination page for {table}")
                     break
@@ -147,22 +168,48 @@ class ServiceNowConnector(BaseConnector):
                 yield rec
 
     def _valid_provider_record(self, rec: Any, table: Any) -> bool:
-        if not isinstance(rec, dict) or self._is_error_record(rec) or not isinstance(table, str) or table not in TABLES:
+        if (
+            not isinstance(rec, dict)
+            or self._is_error_record(rec)
+            or not isinstance(table, str)
+            or table not in TABLES
+        ):
             return False
         for key in TABLES[table].split(","):
             value = rec.get(key)
             if isinstance(value, dict):
-                if "value" not in value or any(value.get(k) is not None and not isinstance(value[k], (str, int, float, bool)) for k in ("value", "display_value")):
+                if "value" not in value or any(
+                    value.get(k) is not None and not isinstance(value[k], (str, int, float, bool))
+                    for k in ("value", "display_value")
+                ):
                     return False
             elif value is not None and not isinstance(value, (str, int, float, bool)):
                 return False
-            if key in {"name", "description", "instructions", "condition", "redirect_url", "client_id", "sys_created_by", "sys_updated_by", "sys_created_on", "sys_updated_on"} and _val(value) is not None and not isinstance(_val(value), str):
+            if (
+                key
+                in {
+                    "name",
+                    "description",
+                    "instructions",
+                    "condition",
+                    "redirect_url",
+                    "client_id",
+                    "sys_created_by",
+                    "sys_updated_by",
+                    "sys_created_on",
+                    "sys_updated_on",
+                }
+                and _val(value) is not None
+                and not isinstance(_val(value), str)
+            ):
                 return False
         identifier = _reference(rec.get("sys_id")) or _val(rec.get("name"))
         if not isinstance(identifier, str) or not identifier.strip():
             return False
         parent = {"sn_aia_tool": "agent", "sn_aia_trigger": "usecase"}.get(table)
-        return not parent or bool(isinstance(_reference(rec.get(parent)), str) and _reference(rec.get(parent)).strip())
+        return not parent or bool(
+            isinstance(_reference(rec.get(parent)), str) and _reference(rec.get(parent)).strip()
+        )
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -173,9 +220,13 @@ class ServiceNowConnector(BaseConnector):
         usecases: list[dict[str, Any]] = []
         triggers: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
-            table = (rec.get("_table") or _val(rec.get("sys_class_name")) or "") if isinstance(rec, dict) else ""
+            table = (
+                (rec.get("_table") or _val(rec.get("sys_class_name")) or "") if isinstance(rec, dict) else ""
+            )
             if not self._valid_provider_record(rec, table):
-                self.ctx.warn("lowcode.servicenow: unsupported or malformed table record; coverage incomplete")
+                self.ctx.warn(
+                    "lowcode.servicenow: unsupported or malformed table record; coverage incomplete"
+                )
                 continue
             if table == "sn_aia_agent":
                 agents.append(rec)
@@ -237,15 +288,48 @@ class ServiceNowConnector(BaseConnector):
         f.add_framework("platform.servicenow-now-assist")
         f.add_capability("tool-use")
         f.add_capability("saas-actions")
-        f.add_evidence(Evidence(signal="servicenow:sn_aia_agent", description=f"AI Agent '{name}' (active={_val(a.get('active'))}, type={_val(a.get('agent_type'))}, model={_val(a.get('model')) or _val(a.get('llm_model')) or 'default'}) with {len(tools)} tool(s)", weight=0.95, signature="platform.servicenow-now-assist"))
+        f.add_evidence(
+            Evidence(
+                signal="servicenow:sn_aia_agent",
+                description=(
+                    f"AI Agent '{name}' (active={_val(a.get('active'))}, type={_val(a.get('agent_type'))}, "
+                    f"model={_val(a.get('model')) or _val(a.get('llm_model')) or 'default'}) with "
+                    f"{len(tools)} tool(s)"
+                ),
+                weight=0.95,
+                signature="platform.servicenow-now-assist",
+            )
+        )
         tool_types = sorted({str(_val(t.get("type")) or _val(t.get("tool_type")) or "?") for t in tools})
         if any("script" in t.lower() for t in tool_types):
             f.add_capability("code-exec")
-            f.add_evidence(Evidence(signal="servicenow:script-tool", description="Agent has script tools (server-side JavaScript execution)", weight=0.4))
-        if str(_val(a.get("autonomous"))).lower() in {"true", "1", "yes"} or "autonomous" in str(_val(a.get("agent_type")) or "").lower():
+            f.add_evidence(
+                Evidence(
+                    signal="servicenow:script-tool",
+                    description="Agent has script tools (server-side JavaScript execution)",
+                    weight=0.4,
+                )
+            )
+        if (
+            str(_val(a.get("autonomous"))).lower() in {"true", "1", "yes"}
+            or "autonomous" in str(_val(a.get("agent_type")) or "").lower()
+        ):
             f.add_capability("autonomous")
         apply_matches(f, self._optional_name_matches(name, _val(a.get("description"))), weight_scale=0.4)
-        f.metadata.update({"active": _val(a.get("active")), "description": truncate(_val(a.get("description"))), "instructions": truncate(_val(a.get("instructions")), 300), "role": _val(a.get("role")), "model": _val(a.get("model")) or _val(a.get("llm_model")), "tools": [{"name": _val(t.get("name")), "type": _val(t.get("type")) or _val(t.get("tool_type"))} for t in tools][:30], "tool_types": tool_types})
+        f.metadata.update(
+            {
+                "active": _val(a.get("active")),
+                "description": truncate(_val(a.get("description"))),
+                "instructions": truncate(_val(a.get("instructions")), 300),
+                "role": _val(a.get("role")),
+                "model": _val(a.get("model")) or _val(a.get("llm_model")),
+                "tools": [
+                    {"name": _val(t.get("name")), "type": _val(t.get("type")) or _val(t.get("tool_type"))}
+                    for t in tools
+                ][:30],
+                "tool_types": tool_types,
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.AGENT
         return f
@@ -265,11 +349,38 @@ class ServiceNowConnector(BaseConnector):
             last_seen=_val(u.get("sys_updated_on")),
         )
         f.add_framework("platform.servicenow-now-assist")
-        f.add_evidence(Evidence(signal="servicenow:sn_aia_usecase", description=f"Use case '{name}' (active={_val(u.get('active'))}) with {len(triggers)} trigger(s): {', '.join(str(_val(t.get('trigger_type')) or _val(t.get('table')) or '?') for t in triggers[:5])}", weight=0.8, signature="platform.servicenow-now-assist"))
+        trigger_labels = ", ".join(
+            str(_val(t.get("trigger_type")) or _val(t.get("table")) or "?") for t in triggers[:5]
+        )
+        f.add_evidence(
+            Evidence(
+                signal="servicenow:sn_aia_usecase",
+                description=(
+                    f"Use case '{name}' (active={_val(u.get('active'))}) with {len(triggers)} trigger(s): "
+                    f"{trigger_labels}"
+                ),
+                weight=0.8,
+                signature="platform.servicenow-now-assist",
+            )
+        )
         if triggers or str(_val(u.get("trigger_type") or "")).lower() not in {"", "manual", "none"}:
             f.add_capability("autonomous")
             f.add_tag("event-triggered")
-        f.metadata.update({"active": _val(u.get("active")), "description": truncate(_val(u.get("description"))), "agents": _val(u.get("agents")), "triggers": [{"type": _val(t.get("trigger_type")), "table": _val(t.get("table")), "condition": truncate(_val(t.get("condition")), 120)} for t in triggers][:20]})
+        f.metadata.update(
+            {
+                "active": _val(u.get("active")),
+                "description": truncate(_val(u.get("description"))),
+                "agents": _val(u.get("agents")),
+                "triggers": [
+                    {
+                        "type": _val(t.get("trigger_type")),
+                        "table": _val(t.get("table")),
+                        "condition": truncate(_val(t.get("condition")), 120),
+                    }
+                    for t in triggers
+                ][:20],
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.WORKFLOW
         return f
@@ -279,7 +390,20 @@ class ServiceNowConnector(BaseConnector):
         text = f"{name} {_val(rec.get('description')) or ''} {_val(rec.get('sys_scope')) or ''}"
         matches = self._optional_name_matches(text)
         low = text.lower()
-        if not matches and not any(k in low for k in ("now assist", "generative", "gen ai", "genai", "gpt", "llm", "sn_generative_ai", "sn_aia", "ai agent")):
+        if not matches and not any(
+            k in low
+            for k in (
+                "now assist",
+                "generative",
+                "gen ai",
+                "genai",
+                "gpt",
+                "llm",
+                "sn_generative_ai",
+                "sn_aia",
+                "ai agent",
+            )
+        ):
             return None
         f = Finding(
             surface=Surface.LOWCODE,
@@ -294,7 +418,16 @@ class ServiceNowConnector(BaseConnector):
             last_seen=_val(rec.get("sys_updated_on")),
         )
         f.add_framework("platform.servicenow-now-assist")
-        f.add_evidence(Evidence(signal="servicenow:flow", description=f"Flow '{name}' ({_val(rec.get('type'))}, active={_val(rec.get('active'))}) references AI: {truncate(text, 160)}", weight=0.4))
+        f.add_evidence(
+            Evidence(
+                signal="servicenow:flow",
+                description=(
+                    f"Flow '{name}' ({_val(rec.get('type'))}, active={_val(rec.get('active'))}) references "
+                    f"AI: {truncate(text, 160)}"
+                ),
+                weight=0.4,
+            )
+        )
         apply_matches(f, matches, weight_scale=0.5)
         finalize(f, self.index)
         f.kind = Kind.WORKFLOW
@@ -319,7 +452,14 @@ class ServiceNowConnector(BaseConnector):
         if self._oauth_matching_limited:
             return None
         try:
-            assess_app(self.index, f, name=name, urls=[_val(rec.get("redirect_url"))], scopes=scopes, client_id=_val(rec.get("client_id")))
+            assess_app(
+                self.index,
+                f,
+                name=name,
+                urls=[_val(rec.get("redirect_url"))],
+                scopes=scopes,
+                client_id=_val(rec.get("client_id")),
+            )
         except MatchTimeoutError:
             # OAuth classification depends on those matches; skip this record
             # and later OAuth enrichment, but continue with native agents.
@@ -328,8 +468,24 @@ class ServiceNowConnector(BaseConnector):
             return None
         if not f.frameworks:
             return None
-        f.add_evidence(Evidence(signal="servicenow:oauth_entity", description=f"OAuth {_val(rec.get('type')) or 'client'} '{name}' (active={_val(rec.get('active'))}), refresh token lifespan {_val(rec.get('refresh_token_lifespan'))}s", weight=0.3))
-        f.metadata.update({"type": _val(rec.get("type")), "active": _val(rec.get("active")), "client_id": _val(rec.get("client_id")), "scopes": scopes})
+        f.add_evidence(
+            Evidence(
+                signal="servicenow:oauth_entity",
+                description=(
+                    f"OAuth {_val(rec.get('type')) or 'client'} '{name}' (active={_val(rec.get('active'))}), "
+                    f"refresh token lifespan {_val(rec.get('refresh_token_lifespan'))}s"
+                ),
+                weight=0.3,
+            )
+        )
+        f.metadata.update(
+            {
+                "type": _val(rec.get("type")),
+                "active": _val(rec.get("active")),
+                "client_id": _val(rec.get("client_id")),
+                "scopes": scopes,
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.OAUTH_GRANT
         return f

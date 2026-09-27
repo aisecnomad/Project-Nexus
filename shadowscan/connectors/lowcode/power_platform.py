@@ -4,7 +4,8 @@ Live (Entra app registered as a Power Platform *application user* / tenant admin
 
 * environments – ``api.bap.microsoft.com`` admin API
 * flows        – ``api.flow.microsoft.com`` admin listing per environment (connection references reveal
-                 ``shared_openai`` / ``shared_azureopenai`` / ``shared_aibuilder`` / ``shared_microsoftcopilotstudio``...)
+                 ``shared_openai`` / ``shared_azureopenai`` / ``shared_aibuilder`` /
+                 ``shared_microsoftcopilotstudio``...)
 * apps         – ``api.powerplatform.com`` admin listing (connection references)
 * bots         – Dataverse ``bots`` + ``botcomponents`` of each environment (Copilot Studio agents, topics,
                  generative-answer components, actions, authentication mode)
@@ -49,7 +50,11 @@ _DATAVERSE_HOST = re.compile(
 
 def _dataverse_origin(instance_url: Any, environment: dict[str, Any], tenant: Any) -> str:
     """Bind the OAuth audience and destination to a canonical Dataverse origin."""
-    if not isinstance(instance_url, str) or len(instance_url) > 512 or not instance_url.startswith("https://"):
+    if (
+        not isinstance(instance_url, str)
+        or len(instance_url) > 512
+        or not instance_url.startswith("https://")
+    ):
         raise ValueError("invalid Dataverse organization URL")
     try:
         parsed = urlsplit(instance_url)
@@ -79,7 +84,11 @@ def _dataverse_origin(instance_url: Any, environment: dict[str, Any], tenant: An
         raise ValueError("Dataverse organization URL disagrees with environment metadata")
     # Older BAP responses omit the tenant ID. When present, do not use this
     # tenant's credentials against an environment attributed to another one.
-    for declared_tenant in (environment.get("tenantId"), properties.get("tenantId"), metadata.get("tenantId")):
+    for declared_tenant in (
+        environment.get("tenantId"),
+        properties.get("tenantId"),
+        metadata.get("tenantId"),
+    ):
         if declared_tenant is not None and (
             not isinstance(declared_tenant, str) or not isinstance(tenant, str)
             or declared_tenant.casefold() != tenant.casefold()
@@ -111,7 +120,9 @@ class PowerPlatformConnector(BaseConnector):
     name: ClassVar[str] = "lowcode.power-platform"
     surface: ClassVar[Surface] = Surface.LOWCODE
     provider: ClassVar[str | None] = "power-platform"
-    description: ClassVar[str] = "Copilot Studio agents, Power Automate flows and Power Apps that use AI connectors."
+    description: ClassVar[str] = (
+        "Copilot Studio agents, Power Automate flows and Power Apps that use AI connectors."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "tenant_id": "env AZURE_TENANT_ID",
         "client_id": "env AZURE_CLIENT_ID (must be a Power Platform application user)",
@@ -139,7 +150,12 @@ class PowerPlatformConnector(BaseConnector):
         client = HttpClient()
         resp = client.post(
             f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token",
-            data={"grant_type": "client_credentials", "client_id": self.client_id, "client_secret": self.client_secret, "scope": scope},
+            data={
+                "grant_type": "client_credentials",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "scope": scope,
+            },
         )
         tok: str = client.read_json_response(resp)["access_token"]
         self._tokens[scope] = tok
@@ -160,14 +176,19 @@ class PowerPlatformConnector(BaseConnector):
             if self.only_envs and name not in self.only_envs and display not in self.only_envs:
                 continue
             if not isinstance(name, str) or not name:
-                self.ctx.warn("lowcode.power-platform: environment missing name; child resources cannot be listed")
+                self.ctx.warn(
+                    "lowcode.power-platform: environment missing name; child resources cannot be listed"
+                )
                 continue
             env["_kind"] = "environment"
             yield env
             env_id = quote(name, safe="")
             flow = self._client(FLOW, "https://service.flow.microsoft.com/.default")
             try:
-                for fl in flow.paginate_odata(f"/providers/Microsoft.ProcessSimple/scopes/admin/environments/{env_id}/v2/flows", params={"api-version": "2016-11-01", "$top": 250}):
+                for fl in flow.paginate_odata(
+                    f"/providers/Microsoft.ProcessSimple/scopes/admin/environments/{env_id}/v2/flows",
+                    params={"api-version": "2016-11-01", "$top": 250},
+                ):
                     fl["_kind"] = "flow"
                     fl["_environment"] = display or name
                     yield fl
@@ -177,7 +198,10 @@ class PowerPlatformConnector(BaseConnector):
                 # AdminApps uses a distinct credential audience from the legacy BAP
                 # environment API. HttpClient pins all nextLink pages to this origin.
                 apps = self._client(PAPPS, "https://api.powerplatform.com/.default")
-                for app in apps.paginate_odata(f"/powerapps/environments/{env_id}/apps", params={"api-version": "2024-10-01", "$top": 250}):
+                for app in apps.paginate_odata(
+                    f"/powerapps/environments/{env_id}/apps",
+                    params={"api-version": "2024-10-01", "$top": 250},
+                ):
                     app["_kind"] = "app"
                     app["_environment"] = display or name
                     yield app
@@ -186,22 +210,45 @@ class PowerPlatformConnector(BaseConnector):
             properties = env.get("properties")
             metadata = properties.get("linkedEnvironmentMetadata") if isinstance(properties, dict) else None
             if self.include_bots and metadata is not None and not isinstance(metadata, dict):
-                self.ctx.warn("lowcode.power-platform: Dataverse environment metadata is malformed; bot coverage unknown")
+                self.ctx.warn(
+                    "lowcode.power-platform: Dataverse environment metadata is malformed; bot coverage "
+                    "unknown"
+                )
                 continue
             instance_url = get_path(env, "properties.linkedEnvironmentMetadata.instanceUrl")
             if self.include_bots and instance_url:
                 try:
                     origin = _dataverse_origin(instance_url, env, self.tenant)
                 except ValueError:
-                    self.ctx.warn("lowcode.power-platform: Dataverse environment origin is untrusted; bot coverage unknown")
+                    self.ctx.warn(
+                        "lowcode.power-platform: Dataverse environment origin is untrusted; bot coverage "
+                        "unknown"
+                    )
                     continue
                 try:
                     dv = self._client(origin, f"{origin}/.default")
-                    for bot in dv.paginate_odata("/api/data/v9.2/bots", params={"$select": "botid,name,schemaname,statecode,statuscode,createdon,modifiedon,publishedon,authenticationmode,accesscontrolpolicy,authenticationtrigger,configuration,language,_ownerid_value,_createdby_value"}):
+                    for bot in dv.paginate_odata(
+                        "/api/data/v9.2/bots",
+                        params={
+                            "$select": (
+                                "botid,name,schemaname,statecode,statuscode,createdon,modifiedon,publishedon,"
+                                "authenticationmode,accesscontrolpolicy,authenticationtrigger,configuration,"
+                                "language,_ownerid_value,_createdby_value"
+                            )
+                        },
+                    ):
                         bot["_kind"] = "bot"
                         bot["_environment"] = display or name
                         yield bot
-                    for comp in dv.paginate_odata("/api/data/v9.2/botcomponents", params={"$select": "botcomponentid,name,componenttype,statecode,data,_parentbotid_value,modifiedon"}):
+                    for comp in dv.paginate_odata(
+                        "/api/data/v9.2/botcomponents",
+                        params={
+                            "$select": (
+                                "botcomponentid,name,componenttype,statecode,data,_parentbotid_value,"
+                                "modifiedon"
+                            )
+                        },
+                    ):
                         comp["_kind"] = "botcomponent"
                         comp["_environment"] = display or name
                         yield comp
@@ -221,7 +268,9 @@ class PowerPlatformConnector(BaseConnector):
         for rec in records:
             kind = self._record_kind(rec)
             if kind is None:
-                self.ctx.warn("lowcode.power-platform: unsupported or malformed provider record; coverage incomplete")
+                self.ctx.warn(
+                    "lowcode.power-platform: unsupported or malformed provider record; coverage incomplete"
+                )
                 continue
             if kind == "flow":
                 self.ctx.examined()
@@ -236,14 +285,28 @@ class PowerPlatformConnector(BaseConnector):
             elif kind == "bot":
                 bots[str(rec.get("botid") or rec.get("id") or rec.get("schemaname"))] = rec
             elif kind == "botcomponent":
-                components.setdefault(str(rec.get("_parentbotid_value") or rec.get("parentbotid") or ""), []).append(rec)
+                components.setdefault(
+                    str(rec.get("_parentbotid_value") or rec.get("parentbotid") or ""), []
+                ).append(rec)
         for bid, bot in bots.items():
             self.ctx.examined()
             yield self._bot_finding(bot, components.get(bid, []))
 
     def _record_kind(self, rec: dict[str, Any]) -> str | None:
         if not self._record_fields_valid(
-            rec, strings=("_kind", "id", "name", "type", "botid", "botcomponentid", "schemaname", "_parentbotid_value", "parentbotid", "_environment"),
+            rec,
+            strings=(
+                "_kind",
+                "id",
+                "name",
+                "type",
+                "botid",
+                "botcomponentid",
+                "schemaname",
+                "_parentbotid_value",
+                "parentbotid",
+                "_environment",
+            ),
             mappings=("properties",),
         ):
             return None
@@ -252,7 +315,9 @@ class PowerPlatformConnector(BaseConnector):
             "environment": ("name", "id"), "flow": ("name", "id"), "app": ("name", "id"),
             "bot": ("botid", "id", "schemaname"), "botcomponent": ("botcomponentid", "id"),
         }
-        if kind not in identifiers or not any(isinstance(rec.get(key), str) and rec[key].strip() for key in identifiers[kind]):
+        if kind not in identifiers or not any(
+            isinstance(rec.get(key), str) and rec[key].strip() for key in identifiers[kind]
+        ):
             return None
         if kind == "botcomponent" and not (rec.get("_parentbotid_value") or rec.get("parentbotid")):
             return None
@@ -262,7 +327,11 @@ class PowerPlatformConnector(BaseConnector):
         summary = props.get("definitionSummary") or {}
         if not self._record_fields_valid(summary, arrays=("triggers", "actions")):
             return None
-        if any(not self._record_fields_valid(item, strings=("type", "kind", "swaggerOperationId")) for field in ("triggers", "actions") for item in summary.get(field) or []):
+        if any(
+            not self._record_fields_valid(item, strings=("type", "kind", "swaggerOperationId"))
+            for field in ("triggers", "actions")
+            for item in summary.get(field) or []
+        ):
             return None
         return kind
 
@@ -277,7 +346,14 @@ class PowerPlatformConnector(BaseConnector):
 
     def _flow_finding(self, fl: dict[str, Any]) -> Finding | None:
         props = fl.get("properties") or {}
-        blob = json.dumps({"definitionSummary": props.get("definitionSummary"), "connectionReferences": props.get("connectionReferences"), "definition": props.get("definition")}, default=str)
+        blob = json.dumps(
+            {
+                "definitionSummary": props.get("definitionSummary"),
+                "connectionReferences": props.get("connectionReferences"),
+                "definition": props.get("definition"),
+            },
+            default=str,
+        )
         refs = self._ai_refs(blob)
         matches = blob_matches(self.index, blob)
         if not refs and not matches:
@@ -288,7 +364,10 @@ class PowerPlatformConnector(BaseConnector):
             surface=Surface.LOWCODE,
             connector=self.name,
             kind=Kind.WORKFLOW,
-            title=f"Power Automate flow using {', '.join(sorted({label for _, label in refs})) or 'AI services'}: {name}",
+            title=(
+                "Power Automate flow using "
+                f"{', '.join(sorted({label for _, label in refs})) or 'AI services'}: {name}"
+            ),
             resource=f"power-platform:flow:{fl.get('name') or fl.get('id')}",
             resource_type="power-automate-flow",
             provider="power-platform",
@@ -299,25 +378,58 @@ class PowerPlatformConnector(BaseConnector):
         )
         f.add_framework("platform.power-platform-ai")
         for key, label in refs:
-            f.add_evidence(Evidence(signal=f"connector:{key}", description=f"Flow references AI connector {label} ({key})", weight=0.85, signature="platform.power-platform-ai"))
+            f.add_evidence(
+                Evidence(
+                    signal=f"connector:{key}",
+                    description=f"Flow references AI connector {label} ({key})",
+                    weight=0.85,
+                    signature="platform.power-platform-ai",
+                )
+            )
         apply_matches(f, matches, weight_scale=0.7)
         triggers = list((props.get("definitionSummary") or {}).get("triggers") or [])
-        trig_types = sorted({str(t.get("type") or t.get("kind") or t.get("swaggerOperationId") or "") for t in triggers if isinstance(t, dict)})
+        trig_types = sorted(
+            {
+                str(t.get("type") or t.get("kind") or t.get("swaggerOperationId") or "")
+                for t in triggers
+                if isinstance(t, dict)
+            }
+        )
         actions = list((props.get("definitionSummary") or {}).get("actions") or [])
         if any("recurrence" in t.lower() or "schedule" in t.lower() for t in trig_types):
             f.add_capability("autonomous")
             f.add_tag("scheduled")
-        if any(a.get("type") in {"Http", "HttpWebhook", "OpenApiConnection", "ApiConnection"} for a in actions if isinstance(a, dict)):
+        if any(
+            a.get("type") in {"Http", "HttpWebhook", "OpenApiConnection", "ApiConnection"}
+            for a in actions
+            if isinstance(a, dict)
+        ):
             f.add_capability("saas-actions")
         f.add_capability("tool-use")
-        f.metadata.update({"environment": env, "state": props.get("state"), "trigger_types": trig_types, "action_count": len(actions), "ai_connectors": sorted({k for k, _ in refs}), "flow_id": fl.get("name")})
+        f.metadata.update(
+            {
+                "environment": env,
+                "state": props.get("state"),
+                "trigger_types": trig_types,
+                "action_count": len(actions),
+                "ai_connectors": sorted({k for k, _ in refs}),
+                "flow_id": fl.get("name"),
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.WORKFLOW
         return f
 
     def _app_finding(self, app: dict[str, Any]) -> Finding | None:
         props = app.get("properties") or {}
-        blob = json.dumps({"connectionReferences": props.get("connectionReferences"), "usedConnections": props.get("usedConnections"), "appPlan": props.get("appPlanClassification")}, default=str)
+        blob = json.dumps(
+            {
+                "connectionReferences": props.get("connectionReferences"),
+                "usedConnections": props.get("usedConnections"),
+                "appPlan": props.get("appPlanClassification"),
+            },
+            default=str,
+        )
         refs = self._ai_refs(blob)
         matches = blob_matches(self.index, blob)
         if not refs and not matches:
@@ -328,20 +440,40 @@ class PowerPlatformConnector(BaseConnector):
             surface=Surface.LOWCODE,
             connector=self.name,
             kind=Kind.WORKFLOW,
-            title=f"Power App using {', '.join(sorted({label for _, label in refs})) or 'AI services'}: {name}",
+            title=(
+                "Power App using "
+                f"{', '.join(sorted({label for _, label in refs})) or 'AI services'}: {name}"
+            ),
             resource=f"power-platform:app:{app.get('name') or app.get('id')}",
             resource_type="power-app",
             provider="power-platform",
             account=env,
-            owner=get_path(props, "owner.userPrincipalName", "owner.email", "createdBy.userPrincipalName", "owner.id"),
+            owner=get_path(
+                props, "owner.userPrincipalName", "owner.email", "createdBy.userPrincipalName", "owner.id"
+            ),
             first_seen=props.get("createdTime"),
             last_seen=props.get("lastModifiedTime"),
         )
         f.add_framework("platform.power-platform-ai")
         for key, label in refs:
-            f.add_evidence(Evidence(signal=f"connector:{key}", description=f"App references AI connector {label} ({key})", weight=0.8, signature="platform.power-platform-ai"))
+            f.add_evidence(
+                Evidence(
+                    signal=f"connector:{key}",
+                    description=f"App references AI connector {label} ({key})",
+                    weight=0.8,
+                    signature="platform.power-platform-ai",
+                )
+            )
         apply_matches(f, matches, weight_scale=0.7)
-        f.metadata.update({"environment": env, "app_type": props.get("appType"), "shared_users": get_path(props, "sharedUsersCount"), "shared_groups": get_path(props, "sharedGroupsCount"), "ai_connectors": sorted({k for k, _ in refs})})
+        f.metadata.update(
+            {
+                "environment": env,
+                "app_type": props.get("appType"),
+                "shared_users": get_path(props, "sharedUsersCount"),
+                "shared_groups": get_path(props, "sharedGroupsCount"),
+                "ai_connectors": sorted({k for k, _ in refs}),
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.WORKFLOW
         return f
@@ -359,12 +491,91 @@ class PowerPlatformConnector(BaseConnector):
             resource_type="copilot-studio-agent",
             provider="power-platform",
             account=env,
-            owner=bot.get("_ownerid_value@OData.Community.Display.V1.FormattedValue") or bot.get("owner") or bot.get("_ownerid_value") or bot.get("_createdby_value"),
+            owner=(
+                bot.get("_ownerid_value@OData.Community.Display.V1.FormattedValue")
+                or bot.get("owner")
+                or bot.get("_ownerid_value")
+                or bot.get("_createdby_value")
+            ),
             first_seen=bot.get("createdon"),
             last_seen=bot.get("modifiedon") or bot.get("publishedon"),
         )
         f.add_framework("platform.copilot-studio")
-        f.add_evidence(Evidence(signal="dataverse:bot", description=f"Copilot Studio agent '{name}' (schema {bot.get('schemaname')}), state {bot.get('statecode')}, auth mode {bot.get('authenticationmode')}, published {bot.get('publishedon') or 'never'}", weight=0.95, signature="platform.copilot-studio"))
+        f.add_evidence(
+            Evidence(
+                signal="dataverse:bot",
+                description=(
+                    f"Copilot Studio agent '{name}' (schema {bot.get('schemaname')}), state "
+                    f"{bot.get('statecode')}, auth mode {bot.get('authenticationmode')}, published "
+                    f"{bot.get('publishedon') or 'never'}"
+                ),
+                weight=0.95,
+                signature="platform.copilot-studio",
+            )
+        )
+        gen_ai, actions, knowledge, topics = self._bot_components(f, comps)
+        if gen_ai:
+            f.add_evidence(
+                Evidence(
+                    signal="copilot-studio:generative",
+                    description="Generative answers / orchestration enabled",
+                    weight=0.5,
+                )
+            )
+            f.add_capability("rag")
+        if actions:
+            f.add_capability("tool-use")
+            f.add_capability("saas-actions")
+            f.add_evidence(
+                Evidence(
+                    signal="copilot-studio:actions",
+                    description=(
+                        f"{len(actions)} action(s) (flows / connectors / HTTP / MCP): "
+                        f"{', '.join(actions[:8])}"
+                    ),
+                    weight=0.5,
+                )
+            )
+        auth = str(bot.get("authenticationmode") or "")
+        if auth in {"0", "None", "none"} or bot.get("authenticationmode") == 0:
+            f.add_tag("no-authentication")
+            f.add_evidence(
+                Evidence(
+                    signal="copilot-studio:no-auth",
+                    description=(
+                        "Agent configured with no end-user authentication (anonymous access if published to "
+                        "web)"
+                    ),
+                    weight=0.2,
+                )
+            )
+        if bot.get("publishedon"):
+            f.add_tag("published")
+        apply_matches(f, name_matches(self.index, name), weight_scale=0.5)
+        f.metadata.update(
+            {
+                "environment": env,
+                "schema_name": bot.get("schemaname"),
+                "state": bot.get("statecode"),
+                "status": bot.get("statuscode"),
+                "authentication_mode": bot.get("authenticationmode"),
+                "access_control_policy": bot.get("accesscontrolpolicy"),
+                "published_on": bot.get("publishedon"),
+                "topics": topics,
+                "actions": actions[:20],
+                "knowledge_sources": knowledge[:20],
+                "generative_ai": gen_ai,
+                "language": bot.get("language"),
+            }
+        )
+        finalize(f, self.index)
+        f.kind = Kind.AGENT
+        return f
+
+    def _bot_components(
+        self, f: Finding, comps: list[dict[str, Any]]
+    ) -> tuple[bool, list[str], list[str], int]:
+        """Generative answers, actions, knowledge sources and topic count from a bot's components."""
         gen_ai = False
         actions: list[str] = []
         knowledge: list[str] = []
@@ -374,35 +585,31 @@ class PowerPlatformConnector(BaseConnector):
             blob = data if isinstance(data, str) else json.dumps(data)
             low = blob.lower()
             ctype = c.get("componenttype")
-            if "gptcomponentmetadata" in low or "generativeanswers" in low or "searchandsummarizecontent" in low or "kind: gptcomponentmetadata" in low:
+            if any(marker in low for marker in _GENERATIVE_MARKERS):
                 gen_ai = True
-            if "kind: invokeflowaction" in low or "invokeflowaction" in low or "kind: invokeconnectoraction" in low or "httprequestaction" in low or "invokeaiskill" in low or "kind: invokeskillaction" in low or "mcp" in low and "server" in low:
+            if any(marker in low for marker in _ACTION_MARKERS) or ("mcp" in low and "server" in low):
                 actions.append(str(c.get("name")))
-            if "kind: knowledgesource" in low or "knowledge" in low and ("sharepoint" in low or "dataverse" in low or "publicwebsite" in low or "file" in low):
+            if "kind: knowledgesource" in low or (
+                "knowledge" in low and any(store in low for store in _KNOWLEDGE_STORES)
+            ):
                 knowledge.append(str(c.get("name")))
             if ctype in (0, "0", 9, "9") or "kind: adaptivedialog" in low:
                 topics += 1
             for m in blob_matches(self.index, blob[:100_000]):
                 if m.signature_id not in {"platform.copilot-studio"}:
                     apply_matches(f, [m], weight_scale=0.6)
-        if gen_ai:
-            f.add_evidence(Evidence(signal="copilot-studio:generative", description="Generative answers / orchestration enabled", weight=0.5))
-            f.add_capability("rag")
-        if actions:
-            f.add_capability("tool-use")
-            f.add_capability("saas-actions")
-            f.add_evidence(Evidence(signal="copilot-studio:actions", description=f"{len(actions)} action(s) (flows / connectors / HTTP / MCP): {', '.join(actions[:8])}", weight=0.5))
-        auth = str(bot.get("authenticationmode") or "")
-        if auth in {"0", "None", "none"} or bot.get("authenticationmode") == 0:
-            f.add_tag("no-authentication")
-            f.add_evidence(Evidence(signal="copilot-studio:no-auth", description="Agent configured with no end-user authentication (anonymous access if published to web)", weight=0.2))
-        if bot.get("publishedon"):
-            f.add_tag("published")
-        apply_matches(f, name_matches(self.index, name), weight_scale=0.5)
-        f.metadata.update({"environment": env, "schema_name": bot.get("schemaname"), "state": bot.get("statecode"), "status": bot.get("statuscode"), "authentication_mode": bot.get("authenticationmode"), "access_control_policy": bot.get("accesscontrolpolicy"), "published_on": bot.get("publishedon"), "topics": topics, "actions": actions[:20], "knowledge_sources": knowledge[:20], "generative_ai": gen_ai, "language": bot.get("language")})
-        finalize(f, self.index)
-        f.kind = Kind.AGENT
-        return f
+        return gen_ai, actions, knowledge, topics
+
+
+# Lower-cased markers in Copilot Studio component definitions.
+_GENERATIVE_MARKERS = (
+    "gptcomponentmetadata", "generativeanswers", "searchandsummarizecontent", "kind: gptcomponentmetadata",
+)
+_ACTION_MARKERS = (
+    "kind: invokeflowaction", "invokeflowaction", "kind: invokeconnectoraction", "httprequestaction",
+    "invokeaiskill", "kind: invokeskillaction",
+)
+_KNOWLEDGE_STORES = ("sharepoint", "dataverse", "publicwebsite", "file")
 
 
 def _infer(rec: dict[str, Any]) -> str:

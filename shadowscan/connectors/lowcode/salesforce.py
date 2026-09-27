@@ -33,16 +33,50 @@ API = "v62.0"
 
 QUERIES: dict[str, tuple[str, str]] = {
     # kind: (api, soql)
-    "BotDefinition": ("data", "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate, CreatedBy.Name, LastModifiedBy.Name FROM BotDefinition"),
-    "BotVersion": ("data", "SELECT Id, DeveloperName, BotDefinitionId, Status, VersionNumber, LastModifiedDate FROM BotVersion"),
-    "GenAiPlannerDefinition": ("tooling", "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate, CreatedBy.Name FROM GenAiPlannerDefinition"),
-    "GenAiPluginDefinition": ("tooling", "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate FROM GenAiPluginDefinition"),
-    "GenAiFunctionDefinition": ("tooling", "SELECT Id, DeveloperName, MasterLabel, Description, InvocationTarget, InvocationTargetType, CreatedDate FROM GenAiFunctionDefinition"),
-    "GenAiPromptTemplate": ("tooling", "SELECT Id, DeveloperName, MasterLabel, Description, Type, CreatedDate, LastModifiedDate, CreatedBy.Name FROM GenAiPromptTemplate"),
-    "ConnectedApplication": ("data", "SELECT Id, Name, CreatedDate, LastModifiedDate, CreatedBy.Name, OptionsAllowAdminApprovedUsersOnly, OptionsRefreshTokenValidityMetric, MobileSessionTimeout FROM ConnectedApplication"),
+    "BotDefinition": (
+        "data",
+        "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate, CreatedBy.Name, "
+        "LastModifiedBy.Name FROM BotDefinition",
+    ),
+    "BotVersion": (
+        "data",
+        "SELECT Id, DeveloperName, BotDefinitionId, Status, VersionNumber, LastModifiedDate FROM BotVersion",
+    ),
+    "GenAiPlannerDefinition": (
+        "tooling",
+        "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate, CreatedBy.Name "
+        "FROM GenAiPlannerDefinition",
+    ),
+    "GenAiPluginDefinition": (
+        "tooling",
+        "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate FROM "
+        "GenAiPluginDefinition",
+    ),
+    "GenAiFunctionDefinition": (
+        "tooling",
+        "SELECT Id, DeveloperName, MasterLabel, Description, InvocationTarget, InvocationTargetType, "
+        "CreatedDate FROM GenAiFunctionDefinition",
+    ),
+    "GenAiPromptTemplate": (
+        "tooling",
+        "SELECT Id, DeveloperName, MasterLabel, Description, Type, CreatedDate, LastModifiedDate, "
+        "CreatedBy.Name FROM GenAiPromptTemplate",
+    ),
+    "ConnectedApplication": (
+        "data",
+        "SELECT Id, Name, CreatedDate, LastModifiedDate, CreatedBy.Name, OptionsAllowAdminApprovedUsersOnly, "
+        "OptionsRefreshTokenValidityMetric, MobileSessionTimeout FROM ConnectedApplication",
+    ),
     # Token values are never read by the analysis; do not request them.
-    "OauthToken": ("data", "SELECT Id, AppName, UserId, User.Username, LastUsedDate, UseCount, CreatedDate FROM OauthToken"),
-    "FlowDefinitionView": ("data", "SELECT Id, ApiName, Label, Description, ProcessType, TriggerType, IsActive, ActiveVersionId, LastModifiedDate, LastModifiedBy FROM FlowDefinitionView WHERE IsActive = true"),
+    "OauthToken": (
+        "data",
+        "SELECT Id, AppName, UserId, User.Username, LastUsedDate, UseCount, CreatedDate FROM OauthToken",
+    ),
+    "FlowDefinitionView": (
+        "data",
+        "SELECT Id, ApiName, Label, Description, ProcessType, TriggerType, IsActive, ActiveVersionId, "
+        "LastModifiedDate, LastModifiedBy FROM FlowDefinitionView WHERE IsActive = true",
+    ),
 }
 
 
@@ -50,7 +84,9 @@ class SalesforceConnector(BaseConnector):
     name: ClassVar[str] = "lowcode.salesforce"
     surface: ClassVar[Surface] = Surface.LOWCODE
     provider: ClassVar[str | None] = "salesforce"
-    description: ClassVar[str] = "Agentforce agents, Einstein bots, prompt templates, AI flows, connected apps and user OAuth tokens."
+    description: ClassVar[str] = (
+        "Agentforce agents, Einstein bots, prompt templates, AI flows, connected apps and user OAuth tokens."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "instance_url": "https://<org>.my.salesforce.com (env SFDC_INSTANCE_URL)",
         "access_token": "session / OAuth token (env SFDC_ACCESS_TOKEN)",
@@ -77,7 +113,10 @@ class SalesforceConnector(BaseConnector):
             if not (cid and secret):
                 raise ConnectorError("lowcode.salesforce: access_token or client_id/client_secret required")
             client = HttpClient()
-            resp = client.post(f"{self.instance}/services/oauth2/token", data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret})
+            resp = client.post(
+                f"{self.instance}/services/oauth2/token",
+                data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret},
+            )
             token = client.read_json_response(resp)["access_token"]
         self.http = HttpClient(self.instance, headers={"Authorization": f"Bearer {token}"})
 
@@ -86,7 +125,11 @@ class SalesforceConnector(BaseConnector):
         assert self.http
         max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
         for kind, (api, soql) in QUERIES.items():
-            path = f"/services/data/{self.api}/query" if api == "data" else f"/services/data/{self.api}/tooling/query"
+            path = (
+                f"/services/data/{self.api}/query"
+                if api == "data"
+                else f"/services/data/{self.api}/tooling/query"
+            )
             seen: set[str] = set()
             for page in range(max_pages):
                 if path in seen:
@@ -141,7 +184,23 @@ class SalesforceConnector(BaseConnector):
             return False
         if not self._record_fields_valid(
             rec,
-            strings=("Id", "DeveloperName", "MasterLabel", "Name", "Description", "CreatedDate", "LastModifiedDate", "LastUsedDate", "BotDefinitionId", "Status", "AppName", "UserId", "ApiName", "Label", "TriggerType"),
+            strings=(
+                "Id",
+                "DeveloperName",
+                "MasterLabel",
+                "Name",
+                "Description",
+                "CreatedDate",
+                "LastModifiedDate",
+                "LastUsedDate",
+                "BotDefinitionId",
+                "Status",
+                "AppName",
+                "UserId",
+                "ApiName",
+                "Label",
+                "TriggerType",
+            ),
             mappings=("attributes", "CreatedBy", "User"),
         ):
             return False
@@ -149,20 +208,35 @@ class SalesforceConnector(BaseConnector):
             if rec.get(field) is not None and not self._record_fields_valid(rec[field], strings=(name,)):
                 return False
         modifier = rec.get("LastModifiedBy")
-        if modifier is not None and not isinstance(modifier, str) and not self._record_fields_valid(modifier, strings=("Name",)):
+        if (
+            modifier is not None
+            and not isinstance(modifier, str)
+            and not self._record_fields_valid(modifier, strings=("Name",))
+        ):
             return False
         if kind == "OauthToken":
             uses = rec.get("UseCount")
-            valid_uses = uses is None or (isinstance(uses, int) and not isinstance(uses, bool) and uses >= 0) or (isinstance(uses, str) and uses.isascii() and uses.isdigit())
+            valid_uses = (
+                uses is None
+                or (isinstance(uses, int) and not isinstance(uses, bool) and uses >= 0)
+                or (isinstance(uses, str) and uses.isascii() and uses.isdigit())
+            )
             if valid_uses and isinstance(uses, str):
                 try:
                     int(uses)
                 except ValueError:
                     valid_uses = False
-            return bool(rec.get("AppName") and (get_path(rec, "User.Username") or rec.get("UserId")) and valid_uses)
+            return bool(
+                rec.get("AppName") and (get_path(rec, "User.Username") or rec.get("UserId")) and valid_uses
+            )
         if kind == "BotVersion":
             return bool(rec.get("BotDefinitionId"))
-        return bool(rec.get("Id") or rec.get("DeveloperName") or rec.get("ApiName") or (kind == "ConnectedApplication" and rec.get("Name")))
+        return bool(
+            rec.get("Id")
+            or rec.get("DeveloperName")
+            or rec.get("ApiName")
+            or (kind == "ConnectedApplication" and rec.get("Name"))
+        )
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -175,9 +249,13 @@ class SalesforceConnector(BaseConnector):
         apps: list[dict[str, Any]] = []
         tokens: dict[str, dict[str, Any]] = {}
         for rec in records:
-            kind = (rec.get("_kind") or get_path(rec, "attributes.type") or "") if isinstance(rec, dict) else ""
+            kind = (
+                (rec.get("_kind") or get_path(rec, "attributes.type") or "") if isinstance(rec, dict) else ""
+            )
             if not self._valid_provider_record(rec, kind):
-                self.ctx.warn("lowcode.salesforce: unsupported or malformed provider record; coverage incomplete")
+                self.ctx.warn(
+                    "lowcode.salesforce: unsupported or malformed provider record; coverage incomplete"
+                )
                 continue
             if kind == "BotDefinition":
                 bot_id = rec.get("Id") or rec.get("DeveloperName")
@@ -198,7 +276,9 @@ class SalesforceConnector(BaseConnector):
             elif kind == "ConnectedApplication":
                 apps.append(rec)
             elif kind == "OauthToken":
-                agg = tokens.setdefault(rec.get("AppName", "?"), {"users": set(), "uses": 0, "last": None, "first": None})
+                agg = tokens.setdefault(
+                    rec.get("AppName", "?"), {"users": set(), "uses": 0, "last": None, "first": None}
+                )
                 agg["users"].add(get_path(rec, "User.Username") or rec.get("UserId"))
                 agg["uses"] += int(rec.get("UseCount") or 0)
                 for k, field in (("last", "LastUsedDate"), ("first", "CreatedDate")):
@@ -248,16 +328,35 @@ class SalesforceConnector(BaseConnector):
             last_seen=bot.get("LastModifiedDate"),
         )
         f.add_framework("platform.salesforce-agentforce")
-        f.add_evidence(Evidence(signal="salesforce:bot", description=f"BotDefinition '{name}' ({bot.get('DeveloperName')}) with {len(active)} active version(s) of {len(versions)}", weight=0.9, signature="platform.salesforce-agentforce"))
+        f.add_evidence(
+            Evidence(
+                signal="salesforce:bot",
+                description=(
+                    f"BotDefinition '{name}' ({bot.get('DeveloperName')}) with {len(active)} active "
+                    f"version(s) of {len(versions)}"
+                ),
+                weight=0.9,
+                signature="platform.salesforce-agentforce",
+            )
+        )
         apply_matches(f, name_matches(self.index, name, bot.get("Description")), weight_scale=0.5)
         if active:
             f.add_tag("active")
-        f.metadata.update({"developer_name": bot.get("DeveloperName"), "description": truncate(bot.get("Description")), "versions": len(versions), "active_versions": len(active)})
+        f.metadata.update(
+            {
+                "developer_name": bot.get("DeveloperName"),
+                "description": truncate(bot.get("Description")),
+                "versions": len(versions),
+                "active_versions": len(active),
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.AGENT
         return f
 
-    def _agentforce_finding(self, what: str, rec: dict[str, Any], plugins: list[dict[str, Any]], functions: list[dict[str, Any]]) -> Finding:
+    def _agentforce_finding(
+        self, what: str, rec: dict[str, Any], plugins: list[dict[str, Any]], functions: list[dict[str, Any]]
+    ) -> Finding:
         name = rec.get("MasterLabel") or rec.get("DeveloperName")
         f = Finding(
             surface=Surface.LOWCODE,
@@ -275,13 +374,39 @@ class SalesforceConnector(BaseConnector):
         f.add_framework("platform.salesforce-agentforce")
         f.add_capability("tool-use")
         f.add_capability("saas-actions")
-        f.add_evidence(Evidence(signal="salesforce:genai-planner", description=f"GenAiPlannerDefinition '{name}'; org has {len(plugins)} topic(s) (GenAiPlugin) and {len(functions)} action(s) (GenAiFunction)", weight=0.95, signature="platform.salesforce-agentforce"))
-        targets = sorted({str(fn.get("InvocationTargetType")) for fn in functions if fn.get("InvocationTargetType")})
+        f.add_evidence(
+            Evidence(
+                signal="salesforce:genai-planner",
+                description=(
+                    f"GenAiPlannerDefinition '{name}'; org has {len(plugins)} topic(s) (GenAiPlugin) and "
+                    f"{len(functions)} action(s) (GenAiFunction)"
+                ),
+                weight=0.95,
+                signature="platform.salesforce-agentforce",
+            )
+        )
+        targets = sorted(
+            {str(fn.get("InvocationTargetType")) for fn in functions if fn.get("InvocationTargetType")}
+        )
         if any(t.lower() in {"apex", "flow", "externalservice", "prompt"} for t in targets):
-            f.add_evidence(Evidence(signal="salesforce:actions", description=f"Actions invoke: {', '.join(targets)}", weight=0.3))
+            f.add_evidence(
+                Evidence(
+                    signal="salesforce:actions",
+                    description=f"Actions invoke: {', '.join(targets)}",
+                    weight=0.3,
+                )
+            )
         if "apex" in {t.lower() for t in targets}:
             f.add_capability("code-exec")
-        f.metadata.update({"developer_name": rec.get("DeveloperName"), "description": truncate(rec.get("Description")), "topics": [p.get("MasterLabel") or p.get("DeveloperName") for p in plugins][:30], "actions": [fn.get("MasterLabel") or fn.get("DeveloperName") for fn in functions][:50], "invocation_targets": targets})
+        f.metadata.update(
+            {
+                "developer_name": rec.get("DeveloperName"),
+                "description": truncate(rec.get("Description")),
+                "topics": [p.get("MasterLabel") or p.get("DeveloperName") for p in plugins][:30],
+                "actions": [fn.get("MasterLabel") or fn.get("DeveloperName") for fn in functions][:50],
+                "invocation_targets": targets,
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.AGENT
         return f
@@ -298,8 +423,23 @@ class SalesforceConnector(BaseConnector):
             account=self.instance or None,
         )
         f.add_framework("platform.salesforce-agentforce")
-        f.add_evidence(Evidence(signal="salesforce:prompt-templates", description=f"{len(templates)} GenAiPromptTemplate(s): {', '.join(str(t.get('MasterLabel') or t.get('DeveloperName')) for t in templates[:10])}", weight=0.6, signature="platform.salesforce-agentforce"))
-        f.metadata["templates"] = [{"name": t.get("MasterLabel") or t.get("DeveloperName"), "type": t.get("Type"), "created_by": get_path(t, "CreatedBy.Name")} for t in templates[:100]]
+        labels = ", ".join(str(t.get("MasterLabel") or t.get("DeveloperName")) for t in templates[:10])
+        f.add_evidence(
+            Evidence(
+                signal="salesforce:prompt-templates",
+                description=f"{len(templates)} GenAiPromptTemplate(s): {labels}",
+                weight=0.6,
+                signature="platform.salesforce-agentforce",
+            )
+        )
+        f.metadata["templates"] = [
+            {
+                "name": t.get("MasterLabel") or t.get("DeveloperName"),
+                "type": t.get("Type"),
+                "created_by": get_path(t, "CreatedBy.Name"),
+            }
+            for t in templates[:100]
+        ]
         finalize(f, self.index)
         f.kind = Kind.FRAMEWORK_USAGE
         return f
@@ -307,7 +447,9 @@ class SalesforceConnector(BaseConnector):
     def _flow_finding(self, rec: dict[str, Any]) -> Finding | None:
         text = " ".join(str(rec.get(k) or "") for k in ("ApiName", "Label", "Description"))
         matches = name_matches(self.index, text)
-        if not matches and not any(k in text.lower() for k in ("prompt", "einstein", "gpt", "agentforce", "llm", "generative")):
+        if not matches and not any(
+            k in text.lower() for k in ("prompt", "einstein", "gpt", "agentforce", "llm", "generative")
+        ):
             return None
         f = Finding(
             surface=Surface.LOWCODE,
@@ -322,11 +464,26 @@ class SalesforceConnector(BaseConnector):
             last_seen=rec.get("LastModifiedDate"),
         )
         f.add_framework("platform.salesforce-agentforce")
-        f.add_evidence(Evidence(signal="salesforce:flow", description=f"{rec.get('ProcessType')} flow (trigger {rec.get('TriggerType')}) whose name/description references AI: {truncate(text, 160)}", weight=0.4))
+        f.add_evidence(
+            Evidence(
+                signal="salesforce:flow",
+                description=(
+                    f"{rec.get('ProcessType')} flow (trigger {rec.get('TriggerType')}) whose "
+                    f"name/description references AI: {truncate(text, 160)}"
+                ),
+                weight=0.4,
+            )
+        )
         apply_matches(f, matches, weight_scale=0.5)
         if rec.get("TriggerType") in {"Scheduled", "RecordAfterSave", "RecordBeforeSave", "PlatformEvent"}:
             f.add_capability("autonomous")
-        f.metadata.update({"api_name": rec.get("ApiName"), "process_type": rec.get("ProcessType"), "trigger_type": rec.get("TriggerType")})
+        f.metadata.update(
+            {
+                "api_name": rec.get("ApiName"),
+                "process_type": rec.get("ProcessType"),
+                "trigger_type": rec.get("TriggerType"),
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.WORKFLOW
         return f
@@ -350,10 +507,29 @@ class SalesforceConnector(BaseConnector):
         if not f.frameworks:
             return None
         users = (agg or {}).get("users") or set()
-        f.add_evidence(Evidence(signal="salesforce:connected-app", description=f"Connected app '{name}'" + (f" authorised by {len(users)} user(s), {agg['uses']} uses" if agg else "") + ("; admin-approved users only" if app.get("OptionsAllowAdminApprovedUsersOnly") else "; any user may self-authorise"), weight=0.3))
+        f.add_evidence(
+            Evidence(
+                signal="salesforce:connected-app",
+                description=f"Connected app '{name}'"
+                + (f" authorised by {len(users)} user(s), {agg['uses']} uses" if agg else "")
+                + (
+                    "; admin-approved users only"
+                    if app.get("OptionsAllowAdminApprovedUsersOnly")
+                    else "; any user may self-authorise"
+                ),
+                weight=0.3,
+            )
+        )
         if app.get("OptionsAllowAdminApprovedUsersOnly") is False:
             f.add_tag("self-authorisable")
-        f.metadata.update({"users": len(users), "uses": (agg or {}).get("uses"), "admin_approved_only": app.get("OptionsAllowAdminApprovedUsersOnly"), "tokens_only": app.get("_tokens_only", False)})
+        f.metadata.update(
+            {
+                "users": len(users),
+                "uses": (agg or {}).get("uses"),
+                "admin_approved_only": app.get("OptionsAllowAdminApprovedUsersOnly"),
+                "tokens_only": app.get("_tokens_only", False),
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.OAUTH_GRANT
         return f
