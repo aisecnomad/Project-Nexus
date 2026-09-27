@@ -816,6 +816,15 @@ class SignatureIndex:
     def by_category(self, category: str) -> list[Signature]:
         return [s for s in self.signatures.values() if s.category == category]
 
+    def signals_of_type(self, kind: str) -> list[tuple[Signature, Signal]]:
+        """Every (signature, signal) pair of signal type ``kind``, in pack order.
+
+        These are the pairs the matchers run. Unlike ``signatures``, which is
+        keyed by id, a signature id shared by two loaded signatures keeps both.
+        The list is a copy; changing it leaves the index untouched.
+        """
+        return list(self._by_type.get(kind, ()))
+
     def __len__(self) -> int:
         return len(self.signatures)
 

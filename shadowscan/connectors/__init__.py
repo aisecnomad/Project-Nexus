@@ -185,26 +185,32 @@ def _verify_connector_class(name: str, path: str, cls: object) -> type[BaseConne
     declared = cls.name
     if not isinstance(declared, str):
         raise _refuse(name, "identity-mismatch",
-                      f"{where} declares a {type(declared).__name__} name; name must be the string {_display(name)}")
+                      f"{where} declares a {type(declared).__name__} name; "
+                      f"name must be the string {_display(name)}")
     if declared != name:
         reserved = _reserved_name_reason(declared)
         if reserved is not None:
-            raise _refuse(name, "reserved-name", f"{where} declares name {_display(declared)}, which {reserved}")
+            raise _refuse(name, "reserved-name",
+                          f"{where} declares name {_display(declared)}, which {reserved}")
         raise _refuse(name, "identity-mismatch",
                       f"{where} declares name {_display(declared)}; a plugin class must declare "
                       "name equal to its entry-point name")
     surface = cls.surface
     if not isinstance(surface, Surface):
         raise _refuse(name, "invalid-attribute",
-                      f"{where} must declare surface as a shadowscan.models.Surface member, not {type(surface).__name__}")
+                      f"{where} must declare surface as a shadowscan.models.Surface member, "
+                      f"not {type(surface).__name__}")
     namespace = name.partition(".")[0]
     if namespace in _SURFACE_IDS and surface.value != namespace:
         raise _refuse(name, "surface-mismatch",
-                      f"{where} declares surface {surface.value!r} but its name is in the built-in {namespace!r} namespace")
+                      f"{where} declares surface {surface.value!r} but its name is in the built-in "
+                      f"{namespace!r} namespace")
     if not isinstance(cls.description, str) or not cls.description.strip():
         raise _refuse(name, "invalid-attribute", f"{where} must declare a nonempty string description")
     keys = cls.config_keys
-    if not isinstance(keys, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in keys.items()):
+    if not isinstance(keys, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in keys.items()
+    ):
         raise _refuse(name, "invalid-attribute",
                       f"{where} must declare config_keys as a dict of option name to description")
     if cls.provider is not None and not isinstance(cls.provider, str):
@@ -276,14 +282,16 @@ def available_connectors() -> dict[str, str]:
                                            f"plugin entry is unreadable: {type(exc).__name__}"))
             continue
         if not isinstance(name, str) or not name.strip():
-            errors.append(PluginDiagnostic(None, "invalid-name", "plugin entry is missing a nonempty connector name"))
+            errors.append(PluginDiagnostic(None, "invalid-name",
+                                           "plugin entry is missing a nonempty connector name"))
             continue
         candidates.setdefault(name, []).append(value)
     for name, values in candidates.items():
         shown = _display(name)
         if _malformed_name(name):
             errors.append(PluginDiagnostic(name, "invalid-name",
-                                           f"plugin {shown} must be a single printable token without whitespace"))
+                                           f"plugin {shown} must be a single printable token "
+                                           "without whitespace"))
             continue
         reserved = _reserved_name_reason(name)
         if reserved is not None:
@@ -297,7 +305,8 @@ def available_connectors() -> dict[str, str]:
         target = values[0]
         if not isinstance(target, str) or ":" not in target:
             errors.append(PluginDiagnostic(name, "invalid-import-path",
-                                           f"plugin {shown} has an invalid import path; expected module:ClassName"))
+                                           f"plugin {shown} has an invalid import path; "
+                                           "expected module:ClassName"))
             continue
         out[name] = target
     _listing_errors[:] = errors
@@ -323,7 +332,9 @@ def get_connector_class(name: str, *, allowed_plugins: Sequence[str] | None = No
         if name not in registry:
             raise KeyError(f"unknown connector '{name}'. Known: {', '.join(sorted(registry))}")
         if isinstance(allowed_plugins, str) or name not in (allowed_plugins or ()):
-            raise ValueError(f"third-party connector '{name}' is not approved; add its exact name to options.plugins")
+            raise ValueError(
+                f"third-party connector '{name}' is not approved; add its exact name to options.plugins"
+            )
         path = registry[name]
     if name in _cache:
         return _cache[name]

@@ -43,7 +43,9 @@ def cross_signature_duplicates(signatures: Sequence[Signature]) -> list[str]:
     for (signal_type, pattern), claimants in sorted(owners.items()):
         competing = sorted(s.id for s in claimants if s.category != "heuristic")
         if len(competing) > 1:
-            problems.append(f"{signal_type} regex {pattern!r} is claimed by competing signatures {', '.join(competing)}")
+            problems.append(
+                f"{signal_type} regex {pattern!r} is claimed by competing signatures {', '.join(competing)}"
+            )
     return problems
 
 
@@ -56,7 +58,9 @@ def builtin_namespace_violations(signatures: Sequence[Signature]) -> list[str]:
             continue
         namespace = signature.id.split(".", 1)[0]
         if namespace not in NAMESPACE_CATEGORIES:
-            problems.append(f"{signature.source}: {signature.id}: built-in signatures must use a known namespace")
+            problems.append(
+                f"{signature.source}: {signature.id}: built-in signatures must use a known namespace"
+            )
     return problems
 
 
@@ -69,12 +73,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate YAML signature schemas and compile all regexes.")
     parser.add_argument("directories", nargs="*", help="Additional signature pack directories")
     parser.add_argument("--no-builtin", action="store_true", help="Validate only the supplied directories")
-    parser.add_argument("--allow-signature-override", action="store_true", help="Allow custom packs to replace built-in signature IDs")
+    parser.add_argument(
+        "--allow-signature-override", action="store_true",
+        help="Allow custom packs to replace built-in signature IDs",
+    )
     args = parser.parse_args(argv)
     if args.no_builtin and not args.directories:
         parser.error("--no-builtin requires at least one directory")
     try:
-        signatures = load_signatures(args.directories, include_builtin=not args.no_builtin, allow_override=args.allow_signature_override)
+        signatures = load_signatures(
+            args.directories, include_builtin=not args.no_builtin,
+            allow_override=args.allow_signature_override,
+        )
         if not signatures:
             raise ValueError("no signature YAML files found")
         problems = validate_signature_set(signatures)

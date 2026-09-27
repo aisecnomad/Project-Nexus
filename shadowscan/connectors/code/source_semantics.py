@@ -71,15 +71,30 @@ class _Call:
 # These APIs construct agents even when their arguments have a different order
 # from older lexical signatures. Names have meaning only after import binding.
 _FACTORIES = {
-    "framework.langchain": r"(?:AgentExecutor|initialize_agent|create_\w*agent|createReactAgent|createToolCallingAgent)",
-    "framework.langgraph": r"(?:StateGraph|create_react_agent|createReactAgent|create_supervisor|create_swarm)",
-    "framework.llamaindex": r"(?:ReActAgent|FunctionAgent|FunctionCallingAgent|OpenAIAgent|AgentWorkflow|CodeActAgent|AgentRunner)(?:\.from_tools)?",
+    "framework.langchain": (
+        r"(?:AgentExecutor|initialize_agent|create_\w*agent|createReactAgent|createToolCallingAgent)"
+    ),
+    "framework.langgraph": (
+        r"(?:StateGraph|create_react_agent|createReactAgent|create_supervisor|create_swarm)"
+    ),
+    "framework.llamaindex": (
+        r"(?:ReActAgent|FunctionAgent|FunctionCallingAgent|OpenAIAgent|AgentWorkflow|"
+        r"CodeActAgent|AgentRunner)(?:\.from_tools)?"
+    ),
     "framework.crewai": r"(?:Agent|Crew|Flow)",
-    "framework.google-adk": r"(?:Agent|LlmAgent|SequentialAgent|ParallelAgent|LoopAgent|Runner|InMemoryRunner)",
+    "framework.google-adk": (
+        r"(?:Agent|LlmAgent|SequentialAgent|ParallelAgent|LoopAgent|Runner|InMemoryRunner)"
+    ),
     "framework.aws-strands": r"(?:Agent|GraphBuilder|Swarm)",
     "framework.microsoft-agent-framework": r"(?:ChatAgent|WorkflowBuilder|MagenticBuilder|HandoffBuilder)",
-    "framework.semantic-kernel": r"(?:ChatCompletionAgent|OpenAIAssistantAgent|AzureAIAgent|AgentGroupChat|BedrockAgent|CopilotStudioAgent)",
-    "framework.autogen": r"(?:AssistantAgent|ConversableAgent|UserProxyAgent|RoundRobinGroupChat|SelectorGroupChat|MagenticOneGroupChat|Swarm|GroupChatManager|CodeExecutorAgent)",
+    "framework.semantic-kernel": (
+        r"(?:ChatCompletionAgent|OpenAIAssistantAgent|AzureAIAgent|AgentGroupChat|BedrockAgent|"
+        r"CopilotStudioAgent)"
+    ),
+    "framework.autogen": (
+        r"(?:AssistantAgent|ConversableAgent|UserProxyAgent|RoundRobinGroupChat|SelectorGroupChat|"
+        r"MagenticOneGroupChat|Swarm|GroupChatManager|CodeExecutorAgent)"
+    ),
     "framework.smolagents": r"(?:CodeAgent|ToolCallingAgent|ManagedAgent)",
     "framework.transformers-agents": r"(?:ReactCodeAgent|ReactJsonAgent|HfAgent)",
     "framework.openai-agents-sdk": r"(?:Agent|Runner\.run(?:_sync|_streamed|Sync)?)",
@@ -105,7 +120,8 @@ _FACTORIES = {
 # dispatch/feedback loop recognized by ``provider_loops`` shows that the program
 # executes what the model selected.
 _TOOL_REQUEST_METHODS = re.compile(
-    r"(?:^|\.)(?:create|stream|parse|converse|converse_stream|generate_content|generateContent|send_message|chat)$"
+    r"(?:^|\.)(?:create|stream|parse|converse|converse_stream|generate_content|generateContent|"
+    r"send_message|chat)$"
 )
 _TOOL_ARGUMENTS = re.compile(r"(?<![\w$])(?:tools|toolConfig|functions|function_declarations)\s*[=:]")
 # Import-bound request calls whose response shape the loop recognizer understands.
@@ -120,7 +136,10 @@ _LOOP_REQUESTS: dict[str, tuple[str, frozenset[str]]] = {
     })),
     "anthropic": ("provider.anthropic", frozenset({
         f"{client}.{api}messages.{method}"
-        for client in ("Anthropic", "AsyncAnthropic", "AnthropicBedrock", "AsyncAnthropicBedrock", "AnthropicVertex", "AsyncAnthropicVertex")
+        for client in (
+            "Anthropic", "AsyncAnthropic", "AnthropicBedrock", "AsyncAnthropicBedrock", "AnthropicVertex",
+            "AsyncAnthropicVertex",
+        )
         for api in ("", "beta.")
         for method in ("create", "with_raw_response.create", "stream")
     })),
@@ -209,7 +228,9 @@ class _PythonBindings(ast.NodeVisitor):
             if alias.name == "*":
                 self.scopes[-1] = dict.fromkeys(self.scopes[-1])
                 continue
-            binding = _Binding(node.module or "", alias.name) if not node.level and alias.name != "*" else None
+            binding = (
+                _Binding(node.module or "", alias.name) if not node.level and alias.name != "*" else None
+            )
             self.scopes[-1][alias.asname or alias.name] = binding
             if binding:
                 self.imports.append((binding, node.lineno))
@@ -222,7 +243,9 @@ class _PythonBindings(ast.NodeVisitor):
             start = self._offset(node.func.end_lineno or node.lineno, node.func.end_col_offset or 0)
             end = self._offset(node.end_lineno or node.lineno, node.end_col_offset or 0)
             keywords = " ".join(f"{keyword.arg}=" for keyword in node.keywords if keyword.arg)
-            self.calls.append(_Call(binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno, keywords, node=node))
+            self.calls.append(_Call(
+                binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno, keywords, node=node
+            ))
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
@@ -391,8 +414,10 @@ class _PythonBindings(ast.NodeVisitor):
             for statement in branch:
                 self.visit(statement)
             outcomes.append(self.scopes[-1])
-        self.scopes[-1] = {name: outcomes[0].get(name) if outcomes[0].get(name) == outcomes[1].get(name) else None
-                           for name in set(outcomes[0]) | set(outcomes[1])}
+        self.scopes[-1] = {
+            name: outcomes[0].get(name) if outcomes[0].get(name) == outcomes[1].get(name) else None
+            for name in set(outcomes[0]) | set(outcomes[1])
+        }
 
 
 _LiteralGroups = tuple[tuple[str, ...], ...]
@@ -438,7 +463,7 @@ def _collect_import_hints(index: SignatureIndex) -> tuple[_LiteralGroups, ...] |
     patterns: dict[_LiteralGroups, None] = {}
     # The (signature, signal) pairs the matcher's own regex plan runs, so a
     # signature id that two signatures of the index share is covered too.
-    for _, signal in index._by_type.get("import", ()):
+    for _, signal in index.signals_of_type("import"):
         if signal.languages and "python" not in signal.languages:
             continue
         for compiled in signal.bounded_compiled:
@@ -656,7 +681,10 @@ def _javascript_bindings(
         if default:
             bind(default.group(1), module, "default", line)
 
-    rx = regex.compile(r"\b(?:const|let|var)\s+([\w$]+|\{[^}\r\n]{1,1000}\})\s*=\s*require\s*\(\s*(['\"])([^'\"\r\n]{1,240})\2\s*\)")
+    rx = regex.compile(
+        r"\b(?:const|let|var)\s+([\w$]+|\{[^}\r\n]{1,1000}\})\s*=\s*"
+        r"require\s*\(\s*(['\"])([^'\"\r\n]{1,240})\2\s*\)"
+    )
     for match in rx.finditer(text, timeout=pattern_timeout(), concurrent=False):
         if excluded(match.start()):
             continue
@@ -934,7 +962,8 @@ def _protocol_evidence(
             found.append(Match(
                 protocol,
                 Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
-                       description="import-bound Responses function dispatch with ordered conversation feedback"),
+                       description="import-bound Responses function dispatch with ordered "
+                                   "conversation feedback"),
                 "OpenAI Responses tool-selection/dispatch/feedback loop", 0.9, line=line,
                 extra={"verified_agent": True},
             ))

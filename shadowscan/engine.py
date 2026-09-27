@@ -21,7 +21,6 @@ from shadowscan.config import ConnectorSpec, ScanConfig, validate_min_confidence
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.common import merge_duplicate_metadata
-from shadowscan.connectors.common import unique_records as _unique_records  # noqa: F401 - old home
 from shadowscan.correlation import correlate_runtime
 from shadowscan.incremental import IncrementalCache
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, now_iso

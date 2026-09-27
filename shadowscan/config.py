@@ -62,7 +62,9 @@ from shadowscan.utils.safe_yaml import BoundedSafeLoader
 log = logging.getLogger("shadowscan.config")
 
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-PATH_KEYS = ("input", "path", "paths", "service_account_file", "credentials_file", "config_file", "token_file")
+PATH_KEYS = (
+    "input", "path", "paths", "service_account_file", "credentials_file", "config_file", "token_file"
+)
 _CONFIG_FIELDS = {"connectors", "inventory", "signatures", "options"}
 _OPTION_FIELDS = {
     "min_confidence", "fail_on", "dump_records", "workdir", "parallel", "incremental",
@@ -73,7 +75,9 @@ _OPTION_FIELDS = {
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 # Keys every connector accepts: BaseConnector / ConnectorContext read the input
 # and offline limits, and the engine hands every connector its ``label``.
-SHARED_CONNECTOR_KEYS = frozenset({"input", "label", "max_input_bytes", "max_input_file_bytes", "max_input_files"})
+SHARED_CONNECTOR_KEYS = frozenset(
+    {"input", "label", "max_input_bytes", "max_input_file_bytes", "max_input_files"}
+)
 # Keys a built-in connector reads without listing them in ``config_keys``
 # (aliases, alternatives named only in another key's description, and values
 # that code.github / code.gitlab hand to their child filesystem scans). The
@@ -84,7 +88,9 @@ _UNDOCUMENTED_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     "cloud.oci": frozenset({"max_pages", "region", "tenancy"}),
     "code.filesystem": frozenset({"paths", "account", "owner", "provider", "metadata"}),
     # code.github and code.gitlab forward these to the nested filesystem scan.
-    "code.github": frozenset({"github_token", "repos", "user", "exclude", "max_file_size", "max_files", "scan_secrets"}),
+    "code.github": frozenset(
+        {"github_token", "repos", "user", "exclude", "max_file_size", "max_files", "scan_secrets"}
+    ),
     "code.gitlab": frozenset({"projects", "exclude", "max_file_size", "max_files", "scan_secrets"}),
     "gateway.logs": frozenset({"gateway_name"}),
     "identity.okta": frozenset({"bearer"}),
@@ -139,7 +145,10 @@ def accepted_connector_keys(name: str) -> frozenset[str] | None:
     if name not in builtin_connector_names():
         return None
     cls = get_connector_class(name)
-    return frozenset(cls.config_keys) | SHARED_CONNECTOR_KEYS | _UNDOCUMENTED_CONNECTOR_KEYS.get(name, frozenset())
+    return (
+        frozenset(cls.config_keys) | SHARED_CONNECTOR_KEYS
+        | _UNDOCUMENTED_CONNECTOR_KEYS.get(name, frozenset())
+    )
 
 
 def validate_connector_config(name: str, config: Mapping[Any, Any]) -> None:
@@ -153,9 +162,13 @@ def validate_connector_config(name: str, config: Mapping[Any, Any]) -> None:
     accepted = accepted_connector_keys(name)
     for key in config:
         if not isinstance(key, str) or not key:
-            raise ConfigValidationError(f"connector {shown_name}: configuration keys must be nonempty strings")
+            raise ConfigValidationError(
+                f"connector {shown_name}: configuration keys must be nonempty strings"
+            )
         if key.startswith("_"):
-            raise ConfigValidationError(f"connector {shown_name}: keys starting with an underscore are reserved for internal use")
+            raise ConfigValidationError(
+                f"connector {shown_name}: keys starting with an underscore are reserved for internal use"
+            )
         if accepted is None or key in accepted:
             continue
         shown_key = _display_identifier(key, "an unsupported key")
@@ -229,21 +242,34 @@ class ScanConfig:
     def __post_init__(self, connector_timeout: float | None) -> None:
         if connector_timeout is not None:
             if self.connector_timeout_seconds != 120.0:
-                raise ConfigValidationError("specify connector_timeout_seconds or connector_timeout, not both")
-            _warn_deprecated_once("connector_timeout", "ScanConfig(connector_timeout=...) is deprecated; use connector_timeout_seconds")
+                raise ConfigValidationError(
+                    "specify connector_timeout_seconds or connector_timeout, not both"
+                )
+            _warn_deprecated_once(
+                "connector_timeout",
+                "ScanConfig(connector_timeout=...) is deprecated; use connector_timeout_seconds",
+            )
             self.connector_timeout_seconds = connector_timeout
         self.validate_security_options()
 
     def validate_security_options(self) -> None:
         self.plugins = validate_plugins(self.plugins)
-        self.allow_signature_override = _boolean_option(self.allow_signature_override, "allow_signature_override")
+        self.allow_signature_override = _boolean_option(
+            self.allow_signature_override, "allow_signature_override"
+        )
         self.allow_private_origin = _boolean_option(self.allow_private_origin, "allow_private_origin")
-        self.allow_instance_credentials = _boolean_option(self.allow_instance_credentials, "allow_instance_credentials")
-        self.allow_credential_mixing = _boolean_option(self.allow_credential_mixing, "allow_credential_mixing")
+        self.allow_instance_credentials = _boolean_option(
+            self.allow_instance_credentials, "allow_instance_credentials"
+        )
+        self.allow_credential_mixing = _boolean_option(
+            self.allow_credential_mixing, "allow_credential_mixing"
+        )
         self.connector_timeout_seconds = validate_connector_timeout_seconds(self.connector_timeout_seconds)
         self.job_deadline_seconds = validate_job_deadline_seconds(self.job_deadline_seconds)
         self.incremental = _boolean_option(self.incremental, "incremental")
-        if self.fail_on is not None and (not isinstance(self.fail_on, str) or self.fail_on not in _RISK_LEVELS):
+        if self.fail_on is not None and (
+            not isinstance(self.fail_on, str) or self.fail_on not in _RISK_LEVELS
+        ):
             raise ConfigValidationError("options.fail_on must be critical, high, medium, low, info, or null")
         self.parallel = _positive_integer(self.parallel, "options.parallel")
         if self.risk_weights is None:
@@ -282,12 +308,17 @@ class ScanConfig:
             raise ConfigValidationError("options must be a mapping")
         _check_fields(opts, _OPTION_FIELDS, "options")
         if "connector_timeout_seconds" in opts and "connector_timeout" in opts:
-            raise ConfigValidationError("specify options.connector_timeout_seconds or options.connector_timeout, not both")
+            raise ConfigValidationError(
+                "specify options.connector_timeout_seconds or options.connector_timeout, not both"
+            )
         timeout = opts.get("connector_timeout_seconds", 120.0)
         if "connector_timeout" in opts:
             # Older configurations used null for no deadline. Keep them usable
             # while enforcing the safe default instead of permitting infinity.
-            _warn_deprecated_once("connector_timeout", "options.connector_timeout is deprecated; use options.connector_timeout_seconds")
+            _warn_deprecated_once(
+                "connector_timeout",
+                "options.connector_timeout is deprecated; use options.connector_timeout_seconds",
+            )
             timeout = 120.0 if opts["connector_timeout"] is None else opts["connector_timeout"]
         connectors = data.get("connectors", [])
         if not isinstance(connectors, list):
@@ -332,10 +363,18 @@ class ScanConfig:
             incremental=_boolean_option(opts.get("incremental", False), "incremental"),
             state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
             plugins=validate_plugins(opts.get("plugins", [])),
-            allow_signature_override=_boolean_option(opts.get("allow_signature_override", False), "allow_signature_override"),
-            allow_private_origin=_boolean_option(opts.get("allow_private_origin", False), "allow_private_origin"),
-            allow_instance_credentials=_boolean_option(opts.get("allow_instance_credentials", False), "allow_instance_credentials"),
-            allow_credential_mixing=_boolean_option(opts.get("allow_credential_mixing", False), "allow_credential_mixing"),
+            allow_signature_override=_boolean_option(
+                opts.get("allow_signature_override", False), "allow_signature_override"
+            ),
+            allow_private_origin=_boolean_option(
+                opts.get("allow_private_origin", False), "allow_private_origin"
+            ),
+            allow_instance_credentials=_boolean_option(
+                opts.get("allow_instance_credentials", False), "allow_instance_credentials"
+            ),
+            allow_credential_mixing=_boolean_option(
+                opts.get("allow_credential_mixing", False), "allow_credential_mixing"
+            ),
             connector_timeout_seconds=validate_connector_timeout(timeout),
             job_deadline_seconds=validate_job_deadline_seconds(opts.get("job_deadline_seconds")),
             risk_basis=opts.get("risk_basis", "combined"),
@@ -356,7 +395,9 @@ class ScanConfig:
             # integer beyond Python's digit limit; that is malformed YAML too.
             # PyYAML diagnostics may echo source snippets containing credentials.
             # Only the position (numbers) is kept so the mistake can be located.
-            raise ConfigValidationError("invalid YAML syntax or structural limits exceeded" + yaml_error_position(exc)) from None
+            raise ConfigValidationError(
+                "invalid YAML syntax or structural limits exceeded" + yaml_error_position(exc)
+            ) from None
         if data is None:
             data = {}
         return cls.from_dict(data, source=str(p))
@@ -387,7 +428,9 @@ def validate_plugins(value: Any) -> list[str]:
 
 def _check_fields(value: dict[Any, Any], allowed: set[str], location: str) -> None:
     if any(not isinstance(key, str) or key not in allowed for key in value):
-        raise ConfigValidationError(f"{location} contains an unsupported field; allowed fields: " + ", ".join(sorted(allowed)))
+        raise ConfigValidationError(
+            f"{location} contains an unsupported field; allowed fields: " + ", ".join(sorted(allowed))
+        )
 
 
 def _nonempty_string(value: Any, location: str) -> str:
@@ -441,7 +484,10 @@ class _ConfigLoader(BoundedSafeLoader):
 def _node_position(node: yaml.Node) -> str:
     """Line and column of a YAML node for diagnostics; never its text."""
     mark = getattr(node, "start_mark", None)
-    if mark is None or not isinstance(getattr(mark, "line", None), int) or not isinstance(getattr(mark, "column", None), int):
+    if (
+        mark is None or not isinstance(getattr(mark, "line", None), int)
+        or not isinstance(getattr(mark, "column", None), int)
+    ):
         return ""
     return f" (line {mark.line + 1}, column {mark.column + 1})"
 

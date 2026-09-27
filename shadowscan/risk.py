@@ -187,7 +187,9 @@ class RiskPolicy:
                 raise ValueError(f"risk_weights.governance.{key} must be one of shadow, registered, no-owner")
             governance[key] = value
 
-        def described(defaults: Mapping[str, tuple[int, str]], overrides: dict[str, int], noun: str) -> dict[str, tuple[int, str]]:
+        def described(
+            defaults: Mapping[str, tuple[int, str]], overrides: dict[str, int], noun: str
+        ) -> dict[str, tuple[int, str]]:
             merged = dict(defaults)
             for key, value in overrides.items():
                 merged[key] = (value, defaults[key][1] if key in defaults else f"{noun} {key}")
@@ -263,11 +265,19 @@ def assess(
 
     if inventory_present:
         if finding.shadow:
-            factors.append(RiskFactor("shadow", "not present in the sanctioned agent inventory", policy.governance["shadow"] * governance_scale))
+            factors.append(RiskFactor(
+                "shadow", "not present in the sanctioned agent inventory",
+                policy.governance["shadow"] * governance_scale,
+            ))
         elif finding.shadow is False:
-            factors.append(RiskFactor("registered", f"registered as {finding.registry_match}", policy.governance["registered"] * governance_scale))
+            factors.append(RiskFactor(
+                "registered", f"registered as {finding.registry_match}",
+                policy.governance["registered"] * governance_scale,
+            ))
     if not finding.owner:
-        factors.append(RiskFactor("no-owner", "no identifiable owner", policy.governance["no-owner"] * governance_scale))
+        factors.append(RiskFactor(
+            "no-owner", "no identifiable owner", policy.governance["no-owner"] * governance_scale
+        ))
 
     seen_caps = set()
     for cap in _strings(finding.capabilities):
@@ -304,7 +314,9 @@ def assess(
     if finding.kind == Kind.MCP_SERVER:
         servers = _records(metadata.get("servers"))
         if any(s.get("transport") == "stdio" for s in servers):
-            factors.append(RiskFactor("mcp-stdio", "local stdio MCP servers run with the user's full privileges", 5))
+            factors.append(
+                RiskFactor("mcp-stdio", "local stdio MCP servers run with the user's full privileges", 5)
+            )
         if any(s.get("auto_approve") for s in servers):
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
         if any(s.get("url") and str(s.get("url")).startswith("http://") for s in servers):
@@ -322,7 +334,8 @@ def assess(
             factors.append(RiskFactor("volume", f"high call volume ({events})", 5))
     if finding.kind in {Kind.OAUTH_GRANT, Kind.BOT_APP}:
         users = _as_int(
-            metadata.get("user_count") or metadata.get("consenting_users") or metadata.get("users") or metadata.get("install_count") or 0,
+            metadata.get("user_count") or metadata.get("consenting_users") or metadata.get("users")
+            or metadata.get("install_count") or 0,
             0,
         )
         if users >= 100:
@@ -342,7 +355,8 @@ def assess(
         adjustment = min(0, scaled - total)
         factors.append(RiskFactor(
             "confidence-scaling",
-            f"score multiplied by {scale:.2f} because confidence is {finding.confidence:.2f}; this only ever lowers risk",
+            f"score multiplied by {scale:.2f} because confidence is {finding.confidence:.2f}; "
+            "this only ever lowers risk",
             adjustment,
         ))
     else:
@@ -350,6 +364,8 @@ def assess(
     explained = total + adjustment
     if score != explained:
         # Keep the explanation exact: listed factors always sum to the score.
-        factors.append(RiskFactor("bounds", "score floored at 0" if explained < 0 else "score capped at 100", score - explained))
+        factors.append(RiskFactor(
+            "bounds", "score floored at 0" if explained < 0 else "score capped at 100", score - explained
+        ))
     danger_score = max(0, min(100, int(round(danger_total * scale))))
     return Risk(score=score, level=RiskLevel.from_score(score), factors=factors, danger_score=danger_score)

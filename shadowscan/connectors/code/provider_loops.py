@@ -203,7 +203,8 @@ def _schema_variables(tree: ast.AST, budget: _Budget) -> dict[str, ast.expr]:
             for alias in node.names:
                 bound(alias.asname or alias.name.split(".", 1)[0])
         targets, value = _assignment(node)
-        if len(targets) == 1 and isinstance(targets[0], ast.Name) and isinstance(value, (ast.List, ast.Tuple)):
+        if (len(targets) == 1 and isinstance(targets[0], ast.Name)
+                and isinstance(value, (ast.List, ast.Tuple))):
             literals[targets[0].id] = value
     return {name: value for name, value in literals.items() if bindings.get(name) == 1}
 
@@ -212,7 +213,8 @@ def _invalidate(statement: ast.AST, values: dict[str, str], budget: _Budget) -> 
     # Unknown branches/reassignments destroy proof instead of assuming that
     # related-looking names still refer to the selected response/tool/result.
     for item in budget.walk(statement):
-        if isinstance(item, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(item.ctx, (ast.Store, ast.Del)):
+        if (isinstance(item, (ast.Name, ast.Attribute, ast.Subscript))
+                and isinstance(item.ctx, (ast.Store, ast.Del))):
             if root := _root(item):
                 values.pop(root, None)
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -229,7 +231,10 @@ def _assign(
     while isinstance(call, ast.Attribute):
         call = call.value  # ``subprocess.run(...).stdout`` is still the sink's result
     if isinstance(call, ast.Call):
-        name = call.func.id if isinstance(call.func, ast.Name) else call.func.attr if isinstance(call.func, ast.Attribute) else ""
+        name = (
+            call.func.id if isinstance(call.func, ast.Name)
+            else call.func.attr if isinstance(call.func, ast.Attribute) else ""
+        )
         arguments = [*call.args, *(keyword.value for keyword in call.keywords)]
         if any(_depends(argument, values, "arguments", budget) for argument in arguments):
             target_is_tool = (
@@ -241,7 +246,8 @@ def _assign(
                 kind = "result"
             elif name in {"loads", "str", "bytes", "dict"}:
                 kind = "arguments"
-        elif any(_depends(argument, values, "result", budget) for argument in arguments) and name in {"dumps", "str", "repr"}:
+        elif (any(_depends(argument, values, "result", budget) for argument in arguments)
+                and name in {"dumps", "str", "repr"}):
             kind = "result"
     _invalidate(statement, values, budget)
     for target in targets:
@@ -320,14 +326,17 @@ def _collected(statement: ast.stmt, history: str, values: dict[str, str], budget
             and len(call.args) == 1 and not call.keywords):
         return None
     pairs = _pairs(call.args[0])
-    if pairs is not None and (_tool_message(pairs, values, budget) or _tool_result_block(pairs, values, budget)):
+    if pairs is not None and (
+        _tool_message(pairs, values, budget) or _tool_result_block(pairs, values, budget)
+    ):
         return call.func.value.id
     return None
 
 
 def _history_rebound(loop: ast.For | ast.While, history: str, budget: _Budget) -> bool:
     for node in budget.walk(loop):
-        if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)) and _root(node) == history:
+        if (isinstance(node, (ast.Name, ast.Attribute, ast.Subscript))
+                and isinstance(node.ctx, (ast.Store, ast.Del)) and _root(node) == history):
             return True
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name) and node.func.value.id == history
@@ -429,7 +438,9 @@ _RAW_METHOD = "with_raw_response"
 _FINAL_MESSAGE = frozenset({"get_final_message", "get_final_completion"})
 
 
-def _request_helpers(tree: ast.AST, request_calls: set[int], budget: _Budget) -> dict[str, tuple[int | None, str, ast.expr, bool]]:
+def _request_helpers(
+    tree: ast.AST, request_calls: set[int], budget: _Budget
+) -> dict[str, tuple[int | None, str, ast.expr, bool]]:
     """Functions defined once whose body returns a bound request.
 
     ``def call(messages): return client.messages.create(..., messages=messages, tools=TOOLS)``
@@ -441,7 +452,10 @@ def _request_helpers(tree: ast.AST, request_calls: set[int], budget: _Budget) ->
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         defined[node.name] = defined.get(node.name, 0) + 1
-        returned = [statement.value for statement in node.body if isinstance(statement, ast.Return) and statement.value is not None]
+        returned = [
+            statement.value for statement in node.body
+            if isinstance(statement, ast.Return) and statement.value is not None
+        ]
         if len(returned) != 1:
             continue
         call = _unwrap(returned[0])
@@ -450,7 +464,9 @@ def _request_helpers(tree: ast.AST, request_calls: set[int], budget: _Budget) ->
         options = {keyword.arg: keyword.value for keyword in call.keywords if keyword.arg}
         history, tools = options.get("messages"), options.get("tools")
         parameters = [argument.arg for argument in (*node.args.posonlyargs, *node.args.args)]
-        if isinstance(history, ast.Name) and tools is not None and (history.id in parameters or history.id in {a.arg for a in node.args.kwonlyargs}):
+        if isinstance(history, ast.Name) and tools is not None and (
+            history.id in parameters or history.id in {a.arg for a in node.args.kwonlyargs}
+        ):
             position = parameters.index(history.id) if history.id in parameters else None
             helpers[node.name] = (position, history.id, tools, _RAW_METHOD in ast.unparse(call.func))
     return {name: helper for name, helper in helpers.items() if defined[name] == 1}
@@ -463,7 +479,8 @@ def _loop_request(
     if isinstance(statement, (ast.With, ast.AsyncWith)) and len(statement.items) == 1:
         item = statement.items[0]
         opened = _unwrap(item.context_expr)
-        if not (isinstance(opened, ast.Call) and id(opened) in request_calls and isinstance(item.optional_vars, ast.Name)):
+        if not (isinstance(opened, ast.Call) and id(opened) in request_calls
+                and isinstance(item.optional_vars, ast.Name)):
             return None
         stream = item.optional_vars.id
         for number, inner in enumerate(statement.body):
@@ -473,7 +490,10 @@ def _loop_request(
                     and isinstance(final.func, ast.Attribute) and final.func.attr in _FINAL_MESSAGE
                     and isinstance(final.func.value, ast.Name) and final.func.value.id == stream):
                 options = {keyword.arg: keyword.value for keyword in opened.keywords if keyword.arg}
-                return opened, targets[0].id, "response", options.get("messages"), options.get("tools"), statement.body[number + 1:]
+                return (
+                    opened, targets[0].id, "response", options.get("messages"), options.get("tools"),
+                    statement.body[number + 1:],
+                )
         return None
     targets, expression = _assignment(statement)
     call = _unwrap(expression) if expression is not None else None
@@ -485,7 +505,9 @@ def _loop_request(
         return call, targets[0].id, kind, options.get("messages"), options.get("tools"), []
     if isinstance(call.func, ast.Name) and call.func.id in helpers:
         position, parameter, tools, raw = helpers[call.func.id]
-        history: ast.expr | None = next((keyword.value for keyword in call.keywords if keyword.arg == parameter), None)
+        history: ast.expr | None = next(
+            (keyword.value for keyword in call.keywords if keyword.arg == parameter), None
+        )
         if history is None and position is not None and position < len(call.args):
             history = call.args[position]
         return call, targets[0].id, "raw-response" if raw else "response", history, tools, []
@@ -523,9 +545,14 @@ def provider_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[int
                 continue
             if isinstance(tools, ast.Name):
                 tools = schemas.get(tools.id, tools)  # unresolved names prove no tool names
-            if isinstance(tools, ast.Constant) or isinstance(tools, (ast.List, ast.Tuple, ast.Dict)) and not (tools.keys if isinstance(tools, ast.Dict) else tools.elts):
+            if isinstance(tools, ast.Constant) or (
+                isinstance(tools, (ast.List, ast.Tuple, ast.Dict))
+                and not (tools.keys if isinstance(tools, ast.Dict) else tools.elts)
+            ):
                 continue
             following = [*inner, *loop.body[number + 1:]]
-            if _request_loop(loop, following, response, kind, history.id, budget, _declared_tools(tools, budget), imports):
+            if _request_loop(
+                loop, following, response, kind, history.id, budget, _declared_tools(tools, budget), imports
+            ):
                 lines.add(call.lineno)
     return sorted(lines)

@@ -86,7 +86,9 @@ def _verified_clean(instance: Any) -> bool:
     return True
 
 
-def _validate_number(value: Any, name: str, *, minimum: float | None = None, maximum: float | None = None) -> None:
+def _validate_number(
+    value: Any, name: str, *, minimum: float | None = None, maximum: float | None = None
+) -> None:
     """Validate imported numeric fields without reflecting untrusted values."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"finding {name} must be a finite number")
@@ -303,7 +305,10 @@ class Finding:
     # ------------------------------------------------------------------ helpers
     def compute_id(self) -> str:
         if self.identity_schema == LEGACY_FINDING_IDENTITY_SCHEMA:
-            raw = f"{self.surface.value}|{self.connector}|{self.kind.value}|{self.provider}|{self.account}|{self.resource}"
+            raw = (
+                f"{self.surface.value}|{self.connector}|{self.kind.value}|"
+                f"{self.provider}|{self.account}|{self.resource}"
+            )
         else:
             raw = json.dumps([
                 self.identity_schema, self.surface.value, self.connector, self.provider,

@@ -161,7 +161,8 @@ def _policy(policy: Any, now: datetime) -> timedelta:
         _require(isinstance(kinds, dict) and 1 <= len(kinds) <= len(Kind)
                  and set(kinds) <= {kind.value for kind in Kind}, "invalid_kind_policy")
         for limits in kinds.values():
-            _keys(limits, {"min_positive_cases", "min_negative_cases", "max_false_positives", "max_false_negatives"})
+            _keys(limits, {"min_positive_cases", "min_negative_cases",
+                           "max_false_positives", "max_false_negatives"})
             for name in ("min_positive_cases", "min_negative_cases"):
                 _require(type(limits[name]) is int and 1 <= limits[name] <= 500, "invalid_kind_policy")
             for name in ("max_false_positives", "max_false_negatives"):
@@ -205,7 +206,8 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
              "human_holdout_declaration_required")
     evaluated = _fresh(evidence["evaluated_at"], now, age)
     frozen = _time(evidence["holdout_frozen_at"])
-    _require(_time(policy["frozen_at"]) <= frozen <= evaluated, "holdout_or_policy_not_frozen_before_evaluation")
+    _require(_time(policy["frozen_at"]) <= frozen <= evaluated,
+             "holdout_or_policy_not_frozen_before_evaluation")
     corpus, corpus_raw = _artifact(evidence["corpus"], base)
     annotations, annotation_raw = _artifact(evidence["annotations"], base)
     report, _ = _artifact(evidence["report"], base)
@@ -237,7 +239,8 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
     _require(report["corpus"] == {**metadata, "sha256": digest} and report["annotation_validation"] == ledger,
              "evaluation_label_provenance_mismatch")
     implementation = report["implementation"]
-    _keys(implementation, {"scanner_version", "scanner_source_sha256", "signature_sha256", "python", "platform"})
+    _keys(implementation,
+          {"scanner_version", "scanner_source_sha256", "signature_sha256", "python", "platform"})
     _require(implementation["scanner_version"] == __version__
              and implementation["scanner_source_sha256"] == source_sha
              and implementation["signature_sha256"] == signature_sha, "evaluation_implementation_mismatch")
@@ -266,7 +269,9 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
         for finding in row["findings"]:
             _require(isinstance(finding, dict) and isinstance(finding.get("signatures"), list),
                      "invalid_evaluation_findings")
-            if finding.get("kind") == case.kind.value and (case.signature is None or case.signature in finding["signatures"]):
+            if finding.get("kind") == case.kind.value and (
+                case.signature is None or case.signature in finding["signatures"]
+            ):
                 matched.append(finding)
         _require(row["predicted"] == bool(matched), "inconsistent_evaluation_prediction")
         _require(not _assertions(case, row["findings"]), "evaluation_assertion_failure")
@@ -280,7 +285,8 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
     for name in ("cases", "positive_cases", "negative_cases"):
         _require(overall[name] >= policy[f"min_{name}"], "sample_threshold_not_met")
     for name in ("precision", "recall", "specificity"):
-        _require(overall[name] is not None and overall[name] >= policy[f"min_{name}"], "metric_threshold_not_met")
+        _require(overall[name] is not None and overall[name] >= policy[f"min_{name}"],
+                 "metric_threshold_not_met")
     by_kind: dict[str, Any] = {}
     for kind in sorted({case.kind.value for case in cases}):
         selected = [{**row, "family": kind} for row in rows if row["target"]["kind"] == kind]
@@ -290,7 +296,8 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
         for kind, counts in by_kind.items():
             limits = policy["per_kind"][kind]
             _require(counts["positive_cases"] >= limits["min_positive_cases"]
-                     and counts["negative_cases"] >= limits["min_negative_cases"], "kind_sample_threshold_not_met")
+                     and counts["negative_cases"] >= limits["min_negative_cases"],
+                     "kind_sample_threshold_not_met")
             _require(counts["fp"] <= limits["max_false_positives"]
                      and counts["fn"] <= limits["max_false_negatives"], "kind_error_budget_exceeded")
     return {"cases": overall["cases"], "positive_cases": overall["positive_cases"],
@@ -306,7 +313,8 @@ def _scope(connector: Any, scope: Any) -> None:
         _require(_identifier(scope["population"]), "invalid_population")
     elif connector == "cloud.aws":
         _keys(scope, {"account_id", "regions", "services"})
-        _require(isinstance(scope["account_id"], str) and bool(re.fullmatch(r"[0-9]{12}", scope["account_id"])),
+        _require(isinstance(scope["account_id"], str)
+                 and bool(re.fullmatch(r"[0-9]{12}", scope["account_id"])),
                  "invalid_aws_scope")
         for name in ("regions", "services"):
             values = scope[name]
@@ -315,7 +323,8 @@ def _scope(connector: Any, scope: Any) -> None:
                      "invalid_aws_scope")
         _require(all(re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-\d", value) for value in scope["regions"])
                  and set(scope["services"]) <= KNOWN_SERVICES, "invalid_aws_scope")
-        _require(scope["regions"] == sorted(scope["regions"]) and scope["services"] == sorted(scope["services"]),
+        _require(scope["regions"] == sorted(scope["regions"])
+                 and scope["services"] == sorted(scope["services"]),
                  "scope_lists_must_be_sorted")
     else:
         _keys(scope, {"team_id"})
@@ -324,8 +333,10 @@ def _scope(connector: Any, scope: Any) -> None:
 
 
 def _receipt(ref: Any, base: Path, connector: str, scope: dict[str, Any], expectation: str,
-             now: datetime, age: timedelta, canary_source_sha: str, signature_sha: str, reviewed: datetime) -> str:
-    _keys(ref, {"artifact", "process_exit_code", "real_tenant_transport", "principal_ref", "separate_process"})
+             now: datetime, age: timedelta, canary_source_sha: str, signature_sha: str,
+             reviewed: datetime) -> str:
+    _keys(ref,
+          {"artifact", "process_exit_code", "real_tenant_transport", "principal_ref", "separate_process"})
     _require(type(ref["process_exit_code"]) is int and ref["process_exit_code"] == 0,
              "canary_process_failed")
     _require(ref["real_tenant_transport"] is True and ref["separate_process"] is True,
@@ -334,29 +345,34 @@ def _receipt(ref: Any, base: Path, connector: str, scope: dict[str, Any], expect
     receipt, _ = _artifact(ref["artifact"], base)
     _keys(receipt, {"schema", "mode", "expectation", "status", "live_acceptance", "started_at", "scanner",
                     "signature_sha256", "connector", "expected_scope", "ground_truth", "limitations",
-                    "abandoned_workers", "passed", "scope_verified", "observed_scope_ids", "collection_complete",
-                    "classified_permission_denial", "objects_examined", "diagnostic_count", "controls", "finished_at",
-                    "collection_started_at", "collection_finished_at"})
+                    "abandoned_workers", "passed", "scope_verified", "observed_scope_ids",
+                    "collection_complete", "classified_permission_denial", "objects_examined",
+                    "diagnostic_count", "controls", "finished_at", "collection_started_at",
+                    "collection_finished_at"})
     _require(receipt["schema"] == "shadowscan.tenant-canary-report/v1" and receipt["mode"] == "live"
              and receipt["status"] == "LIVE_PASS" and receipt["expectation"] == expectation,
              "live_passing_receipt_required")
-    _require(receipt["connector"] == connector and receipt["expected_scope"] == scope, "canary_scope_mismatch")
+    _require(receipt["connector"] == connector and receipt["expected_scope"] == scope,
+             "canary_scope_mismatch")
     scanner = receipt["scanner"]
     _keys(scanner, {"version", "source_sha256", "commit", "dirty"})
     _require(scanner["version"] == __version__ and scanner["source_sha256"] == canary_source_sha
              and receipt["signature_sha256"] == signature_sha, "canary_implementation_mismatch")
     start = _fresh(receipt["started_at"], now, age)
     finish = _fresh(receipt["finished_at"], now, age)
-    _require(start <= _time(receipt["collection_started_at"]) <= _time(receipt["collection_finished_at"]) <= finish <= reviewed,
+    _require(start <= _time(receipt["collection_started_at"]) <= _time(receipt["collection_finished_at"])
+             <= finish <= reviewed,
              "invalid_canary_time_order")
     truth = receipt["ground_truth"]
     _keys(truth, {"owner", "reviewed_at", "source", "independent_of_scanner"})
-    _require(truth["independent_of_scanner"] is True and isinstance(truth["owner"], str) and bool(truth["owner"].strip())
+    _require(truth["independent_of_scanner"] is True
+             and isinstance(truth["owner"], str) and bool(truth["owner"].strip())
              and isinstance(truth["source"], str) and bool(truth["source"].strip())
              and _review_before(truth["reviewed_at"], start), "independent_canary_controls_required")
     expected_id = scope["account_id"] if connector == "cloud.aws" else scope["team_id"]
     observed = receipt["observed_scope_ids"]
-    _require(isinstance(observed, list) and bool(observed) and all(value == expected_id for value in observed),
+    _require(isinstance(observed, list) and bool(observed)
+             and all(value == expected_id for value in observed),
              "canary_scope_mismatch")
     _require(receipt["passed"] is True and receipt["scope_verified"] is True
              and type(receipt["abandoned_workers"]) is int and receipt["abandoned_workers"] == 0,
@@ -385,7 +401,8 @@ def _receipt(ref: Any, base: Path, connector: str, scope: dict[str, Any], expect
         if connector == "cloud.aws":
             arn = expected["resource"].split(":", 5)
             _require(len(arn) == 6 and arn[0] == "arn" and arn[1] in {"aws", "aws-cn", "aws-us-gov"}
-                     and arn[3] in scope["regions"] and arn[4] == scope["account_id"], "canary_control_scope_mismatch")
+                     and arn[3] in scope["regions"] and arn[4] == scope["account_id"],
+                     "canary_control_scope_mismatch")
             families = {"lambda": ("lambda", "function:"), "bedrock": ("bedrock", "agent/"),
                         "bedrock-agentcore": ("agentcore", "runtime/"), "ecs": ("ecs", "task-definition/"),
                         "sagemaker": ("sagemaker", "endpoint/"), "states": ("stepfunctions", "stateMachine:")}
@@ -394,7 +411,8 @@ def _receipt(ref: Any, base: Path, connector: str, scope: dict[str, Any], expect
                      and arn[5].startswith(family[1]) and len(arn[5]) > len(family[1]),
                      "canary_control_service_mismatch")
         else:
-            _require(bool(re.fullmatch(r"slack:app:A[A-Z0-9]+", expected["resource"])), "invalid_slack_control_resource")
+            _require(bool(re.fullmatch(r"slack:app:A[A-Z0-9]+", expected["resource"])),
+                     "invalid_slack_control_resource")
         _require(isinstance(control["rationale"], str) and bool(control["rationale"].strip()),
                  "canary_control_rationale_required")
         ids.add(control["id"])
@@ -438,7 +456,9 @@ def verify(manifest: Path, *, now: datetime | None = None) -> dict[str, Any]:
         seen.add(key)
     signature_sha = get_index(reload=True).fingerprint()
     source_sha = _source_fingerprint()
-    metrics = _evaluation(data["evaluation"], manifest.parent, data["policy"], current, age, source_sha, signature_sha)
+    metrics = _evaluation(
+        data["evaluation"], manifest.parent, data["policy"], current, age, source_sha, signature_sha
+    )
     canary_source_sha = _source_provenance()["source_sha256"]
     canary_count = 0
     for deployment in deployments:
@@ -450,7 +470,9 @@ def verify(manifest: Path, *, now: datetime | None = None) -> dict[str, Any]:
         _keys(deployment, {"connector", "scope", "complete", "permission_denied"})
         principals = [_receipt(deployment[name], manifest.parent, connector, scope, expectation,
                                current, age, canary_source_sha, signature_sha, reviewed)
-                      for name, expectation in (("complete", "complete"), ("permission_denied", "permission-denied"))]
+                      for name, expectation in (
+                          ("complete", "complete"), ("permission_denied", "permission-denied")
+                      )]
         _require(principals[0] != principals[1], "separate_restricted_principal_required")
         canary_count += 2
     return {"schema": REPORT_SCHEMA, "status": "EVIDENCE_CONSISTENT", "checked_at": current.isoformat(),

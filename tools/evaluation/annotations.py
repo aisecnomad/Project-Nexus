@@ -21,13 +21,21 @@ MAX_ANNOTATION_BYTES = 1_000_000
 
 def validate_annotations(corpus: Path, annotations: Path) -> dict[str, Any]:
     metadata, cases, digest = load_corpus(corpus)
-    if annotations.is_symlink() or not annotations.is_file() or annotations.stat().st_size > MAX_ANNOTATION_BYTES:
+    if (
+        annotations.is_symlink() or not annotations.is_file()
+        or annotations.stat().st_size > MAX_ANNOTATION_BYTES
+    ):
         raise CorpusError("annotations must be a regular, nonsymlink file of at most 1 MB")
     try:
-        ledger = json.loads(read_policy_text(annotations, max_bytes=MAX_ANNOTATION_BYTES), object_pairs_hook=_unique_pairs)
+        ledger = json.loads(
+            read_policy_text(annotations, max_bytes=MAX_ANNOTATION_BYTES), object_pairs_hook=_unique_pairs
+        )
     except (UnicodeError, ValueError, RecursionError) as exc:
         raise CorpusError("invalid annotation JSON") from exc
-    _keys(ledger, {"schema", "corpus_sha256", "method", "selection", "reviewers", "adjudications"}, set(), "annotations")
+    _keys(
+        ledger, {"schema", "corpus_sha256", "method", "selection", "reviewers", "adjudications"}, set(),
+        "annotations",
+    )
     if type(ledger["schema"]) is not int or ledger["schema"] != 1 or ledger["corpus_sha256"] != digest:
         raise CorpusError("annotation schema or frozen corpus digest mismatch")
     if not isinstance(ledger["method"], str) or ledger["method"] not in {
@@ -47,7 +55,9 @@ def validate_annotations(corpus: Path, annotations: Path) -> dict[str, Any]:
         if any(case.source is None for case in cases):
             raise CorpusError("public or AI-labeled evaluation requires attributed source for every case")
         if len(cases) < 20 or not positives or negatives < 2 * positives:
-            raise CorpusError("public corpus requires at least 20 cases, positives, and two negatives per positive")
+            raise CorpusError(
+                "public corpus requires at least 20 cases, positives, and two negatives per positive"
+            )
         if len(repositories) < 3:
             raise CorpusError("public corpus requires at least three independent source repositories")
     elif metadata["type"] != "adjudicated" or len(cases) < 2 or not positives or not negatives:
@@ -61,7 +71,10 @@ def validate_annotations(corpus: Path, annotations: Path) -> dict[str, Any]:
     for reviewer in reviewers:
         _keys(reviewer, {"id", "labels"}, set(), "reviewer")
         identity = reviewer["id"]
-        if not isinstance(identity, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{1,79}", identity) or identity in identities:
+        if (
+            not isinstance(identity, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{1,79}", identity)
+            or identity in identities
+        ):
             raise CorpusError("reviewer IDs must be distinct nonempty identifiers")
         identities.add(identity)
         if not isinstance(reviewer["labels"], list) or len(reviewer["labels"]) != len(cases):
@@ -72,7 +85,10 @@ def validate_annotations(corpus: Path, annotations: Path) -> dict[str, Any]:
             case_id = label["case_id"]
             if not isinstance(case_id, str) or case_id not in expected or case_id in ballot:
                 raise CorpusError("unknown or duplicate annotation case")
-            if type(label["present"]) is not bool or not isinstance(label["reason"], str) or not 1 <= len(label["reason"]) <= 2000:
+            if (
+                type(label["present"]) is not bool or not isinstance(label["reason"], str)
+                or not 1 <= len(label["reason"]) <= 2000
+            ):
                 raise CorpusError("annotations require boolean labels and source-based reasons")
             ballot[case_id] = label["present"]
         ballots.append(ballot)
@@ -85,7 +101,10 @@ def validate_annotations(corpus: Path, annotations: Path) -> dict[str, Any]:
         case_id = resolution["case_id"]
         if not isinstance(case_id, str) or case_id not in expected or case_id in resolved:
             raise CorpusError("unknown or duplicate adjudication")
-        if type(resolution["present"]) is not bool or not isinstance(resolution["reason"], str) or not 1 <= len(resolution["reason"]) <= 2000:
+        if (
+            type(resolution["present"]) is not bool or not isinstance(resolution["reason"], str)
+            or not 1 <= len(resolution["reason"]) <= 2000
+        ):
             raise CorpusError("adjudications require boolean labels and source-based reasons")
         if ballots[0][case_id] == ballots[1][case_id]:
             raise CorpusError("adjudication may only resolve a recorded disagreement")
@@ -116,7 +135,8 @@ def validate_annotations(corpus: Path, annotations: Path) -> dict[str, Any]:
         "assurance": (
             "Recorded independent AI annotation, not human validation or representative field accuracy."
             if ledger["method"] == "independent-ai-double-label-before-scan"
-            else "Declared independent human annotation; identities are not authenticated and field representativeness is not established."
+            else "Declared independent human annotation; identities are not authenticated and field "
+            "representativeness is not established."
         ),
     }
 

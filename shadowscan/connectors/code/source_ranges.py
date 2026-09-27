@@ -719,7 +719,8 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
                 language == "php" and re.fullmatch(r"\s*" + re.escape(marker) + r"[;,)]?\s*", line)
             ):
                 heredocs.pop(0)
-            elif (language == "ruby" and "#{" in line) or (language == "php" and ("${" in line or "{$" in line)):
+            elif ((language == "ruby" and "#{" in line)
+                  or (language == "php" and ("${" in line or "{$" in line))):
                 # Interpolation inside a here-document needs language parsing.
                 # Preserve the conservative mask and report incomplete analysis.
                 incomplete = True
@@ -737,7 +738,8 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
             php_code = False
             continue
 
-        if language == "ruby" and (i == 0 or text[i - 1] == "\n") and text.startswith("=begin", i) and (i + 6 == size or text[i + 6].isspace()):
+        if (language == "ruby" and (i == 0 or text[i - 1] == "\n") and text.startswith("=begin", i)
+                and (i + 6 == size or text[i + 6].isspace())):
             # Search from a position instead of slicing: a file of many short
             # blocks would otherwise copy the remainder for each one (quadratic).
             end_marker = _RUBY_BLOCK_END.search(text, i + 6)
@@ -771,7 +773,8 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
                 i = heredoc.end()
                 continue
 
-        if language == "go" and text.startswith("import", i) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
+        if (language == "go" and text.startswith("import", i)
+                and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_"))):
             match = _GO_IMPORT_BLOCK.match(text, i)
             if match:
                 go_import_block = True
@@ -798,7 +801,8 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
             i = j
             continue
 
-        if (language != "ruby" and text.startswith("//", i)) or (language in {"ruby", "php"} and text[i] == "#"):
+        if ((language != "ruby" and text.startswith("//", i))
+                or (language in {"ruby", "php"} and text[i] == "#")):
             end = text.find("\n", i)
             end = size if end < 0 else end
             spans.append((i, end))
@@ -876,7 +880,8 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
                         i += 2 if text[i] == "\\" else 1
                     i += i < size and text[i] == '"'
                     continue
-            triple = quote == '"' and language in {"java", "dotnet", "swift", "dart", "ruby"} and text.startswith('"""', q)
+            triple = (quote == '"' and language in {"java", "dotnet", "swift", "dart", "ruby"}
+                      and text.startswith('"""', q))
             if quote == "'" and language in {"dart", "ruby"} and text.startswith("'''", q):
                 triple = True
             opener = quote * (3 if triple else 1)
@@ -890,9 +895,15 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
                 interpolation = "{"
             elif language == "ruby" and quote == '"':
                 interpolation = "#{"
-            modes.append(_Literal(i, close, escaped=quote != "`" and not (prefix == "r" or "@" in prefix or prefix.startswith("#") or triple and language == "dotnet"),
-                                  verbatim="@" in prefix, interpolation=interpolation,
-                                  multiline=triple or quote == "`" or "@" in prefix))
+            modes.append(_Literal(
+                i, close,
+                escaped=quote != "`" and not (
+                    prefix == "r" or "@" in prefix or prefix.startswith("#")
+                    or triple and language == "dotnet"
+                ),
+                verbatim="@" in prefix, interpolation=interpolation,
+                multiline=triple or quote == "`" or "@" in prefix,
+            ))
             i = q + len(opener)
             continue
         i += 1

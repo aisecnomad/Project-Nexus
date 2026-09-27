@@ -264,7 +264,8 @@ def _assertions(case: Case, findings: list[dict[str, Any]]) -> list[str]:
         observed_names = sorted(name for f in mcp for name in f["server_names"])
         if observed_names != sorted(case.assertions["server_names"]):
             failures.append(
-                f"active MCP server names: expected {sorted(case.assertions['server_names'])}; got {observed_names}"
+                "active MCP server names: expected "
+                f"{sorted(case.assertions['server_names'])}; got {observed_names}"
             )
     return failures
 
@@ -346,7 +347,10 @@ def calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
             assert mean_score is not None and observed_fraction is not None
             ece += bucket["count"] / total * abs(mean_score - observed_fraction)
     return {
-        "note": "Descriptive selected-case score reliability only; confidence is not a calibrated probability.",
+        "note": (
+            "Descriptive selected-case score reliability only; "
+            "confidence is not a calibrated probability."
+        ),
         "brier_proxy": statistics.mean((row["score"] - int(row["present"])) ** 2 for row in rows),
         "ece_proxy": ece,
         "bins": bins,
@@ -460,7 +464,9 @@ def main(argv: list[str] | None = None) -> int:
         help="bounded, labeled corpus JSON; default is the bundled synthetic corpus",
     )
     parser.add_argument("--repeats", type=int, default=1, help="repeat each scan for timing (1-20)")
-    parser.add_argument("--annotations", type=Path, help="verify independent labels and corpus digest before scanning")
+    parser.add_argument(
+        "--annotations", type=Path, help="verify independent labels and corpus digest before scanning"
+    )
     parser.add_argument("--output", type=Path, help="write JSON report to a local file, mode 0600")
     args = parser.parse_args(argv)
     try:

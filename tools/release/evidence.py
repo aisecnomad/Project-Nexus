@@ -103,8 +103,8 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("release directory must be a real directory")
     files = sorted(directory.iterdir())
-    required = {"ci-verification.json", "codeql-verification.json", "runtime-sbom.cdx.json", "requirements.lock",
-                "requirements-build.lock", "requirements-ci-constraints.txt"}
+    required = {"ci-verification.json", "codeql-verification.json", "runtime-sbom.cdx.json",
+                "requirements.lock", "requirements-build.lock", "requirements-ci-constraints.txt"}
     if not required.issubset({path.name for path in files}):
         raise ValueError("release evidence is missing required files")
     if len([path for path in files if path.suffix == ".whl"]) != 1:
@@ -118,7 +118,10 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
     for workflow, verify in (("ci", verify_ci_run), ("codeql", verify_codeql_run)):
         saved = json.loads((directory / f"{workflow}-verification.json").read_text(encoding="utf-8"))
         # Recheck each saved identity rather than copying arbitrary JSON into the manifest.
-        if not isinstance(saved, dict) or saved.get("repository") != repository or saved.get("head_sha") != commit:
+        if (
+            not isinstance(saved, dict) or saved.get("repository") != repository
+            or saved.get("head_sha") != commit
+        ):
             raise ValueError(f"saved {workflow} evidence does not match the release source")
         verified_runs[workflow] = verify(
             {**saved, "repository": {"full_name": repository}, "head_repository": {"full_name": repository}},
@@ -140,9 +143,14 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
         "scope": {
             "sbom": "dependencies in requirements.lock (core and cloud extras); not a container/OS SBOM",
             "artifact": "wheel candidate; publication requires a separate maintainer action",
-            "assurance": "CI, CodeQL and artifact identity only; not a claim of live tenant validation or reproducible builds",
+            "assurance": (
+                "CI, CodeQL and artifact identity only; "
+                "not a claim of live tenant validation or reproducible builds"
+            ),
         },
-        "files": [{"name": path.name, "sha256": _digest(path), "bytes": path.stat().st_size} for path in files],
+        "files": [
+            {"name": path.name, "sha256": _digest(path), "bytes": path.stat().st_size} for path in files
+        ],
     }
     manifest_path = directory / "build-evidence.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")

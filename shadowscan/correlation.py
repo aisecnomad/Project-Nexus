@@ -32,7 +32,9 @@ def correlate_runtime(findings: list[Finding]) -> None:
     code_identities: dict[str, set[tuple[str | None, str | None, str | None, str]]] = {}
     for code in findings:
         if code.surface == Surface.CODE:
-            code_identities.setdefault(code.resource, set()).add((code.provider, code.account, code.region, code.connector))
+            code_identities.setdefault(code.resource, set()).add(
+                (code.provider, code.account, code.region, code.connector)
+            )
     for gateway in findings:
         if gateway.surface != Surface.GATEWAY:
             continue
@@ -42,7 +44,9 @@ def correlate_runtime(findings: list[Finding]) -> None:
         for observation in observations:
             if (not isinstance(observation, dict)
                     or observation.get("identity_basis") != "configured-exact-caller-and-scope"
-                    or observation.get("identity_assurance") not in ("operator-asserted", "provider-authenticated-field")):
+                    or observation.get("identity_assurance") not in (
+                        "operator-asserted", "provider-authenticated-field"
+                    )):
                 continue
             resources = observation.get("code_resources", [])
             if isinstance(resources, list):
@@ -65,7 +69,9 @@ def correlate_runtime(findings: list[Finding]) -> None:
         missing_timestamps = False
         for gateway, observation in relevant:
             observed_frameworks = observation.get("frameworks", [])
-            if not isinstance(observed_frameworks, list) or any(not isinstance(fw, str) for fw in observed_frameworks):
+            if not isinstance(observed_frameworks, list) or any(
+                not isinstance(fw, str) for fw in observed_frameworks
+            ):
                 continue
             frameworks = sorted(set(code.frameworks).intersection(observed_frameworks))
             if not frameworks:
@@ -96,7 +102,9 @@ def correlate_runtime(findings: list[Finding]) -> None:
             first_seen = min(match["first_seen"] for match in matches)
             last_seen = max(match["last_seen"] for match in matches)
             environments = sorted({match["environment"] for match in matches if match["environment"]})
-            production_events = sum(match["events"] for match in matches if match["environment"] in {"production", "prod"})
+            production_events = sum(
+                match["events"] for match in matches if match["environment"] in {"production", "prod"}
+            )
             activity = {
                 "status": "observed",
                 "basis": "gateway-telemetry",
@@ -109,14 +117,27 @@ def correlate_runtime(findings: list[Finding]) -> None:
                 "production_events": production_events,
                 "production_label_verified": False,
                 "sources": matches,
-                "event_counting": "Source observations; distinct exports may overlap and are not deduplicated into unique requests.",
-                "limitations": "Export-window telemetry and spoofable framework fingerprints, not an execution attestation. Production is an event label, not a verified deployment identity; generic log identities require an operator assertion.",
+                "event_counting": (
+                    "Source observations; distinct exports may overlap and are not deduplicated "
+                    "into unique requests."
+                ),
+                "limitations": (
+                    "Export-window telemetry and spoofable framework fingerprints, not an execution "
+                    "attestation. Production is an event label, not a verified deployment identity; "
+                    "generic log identities require an operator assertion."
+                ),
             }
             code.add_evidence(Evidence(
                 signal="runtime:gateway-observed",
-                description=f"Linked gateway recorded {activity['events']} timestamped request(s) with matching framework fingerprints between {first_seen} and {last_seen}",
+                description=(
+                    f"Linked gateway recorded {activity['events']} timestamped request(s) with matching "
+                    f"framework fingerprints between {first_seen} and {last_seen}"
+                ),
                 weight=0.0,
-                attributes={"gateway_finding_ids": sorted({match["gateway_finding_id"] for match in matches}), "frameworks": activity["frameworks"]},
+                attributes={
+                    "gateway_finding_ids": sorted({match["gateway_finding_id"] for match in matches}),
+                    "frameworks": activity["frameworks"],
+                },
             ))
         else:
             if not usable_identity:
@@ -139,6 +160,8 @@ def correlate_runtime(findings: list[Finding]) -> None:
                 "production_observed": False,
                 "production_label_verified": False,
                 "sources": [],
-                "limitations": "Absence in exported telemetry does not establish that the framework is inactive.",
+                "limitations": (
+                    "Absence in exported telemetry does not establish that the framework is inactive."
+                ),
             }
         code.metadata["runtime_activity"] = activity
