@@ -3,6 +3,7 @@
 The engine holds no connector names. Per-root incremental caching, the
 scan-wide instance-credential approval and the per-run identity key are
 capabilities a connector class declares; BaseConnector supplies defaults.
+The engine looks each job's class up once, before it reads those hooks.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, Surface
 from shadowscan.signatures import SignatureIndex
+from shadowscan.utils import http
 
 
 def _recording_connector(**hooks: Any) -> tuple[type[BaseConnector], list[ConnectorContext]]:
@@ -155,3 +157,37 @@ def test_connector_level_instance_credentials_approval_never_takes_effect(monkey
     spec = ConnectorSpec("platform.recorder", {"allow_instance_credentials": True})
     _run(monkeypatch, connector, [spec], allow_instance_credentials=False)
     assert contexts[0].config["allow_instance_credentials"] is False
+
+
+def _recording_lookup(monkeypatch: pytest.MonkeyPatch, connector: type[BaseConnector]) -> list[bool]:
+    """Replace the class lookup; record the private-origin policy each lookup runs under."""
+    policies: list[bool] = []
+
+    def lookup(name: str) -> type[BaseConnector]:
+        policies.append(http._allow_private_origin.get())
+        return connector
+
+    monkeypatch.setattr(engine_module, "get_connector_class", lookup)
+    return policies
+
+
+def test_connector_lookup_runs_under_the_scan_private_origin_policy(monkeypatch):
+    # Looking up a plugin imports it. As in collection, that code runs under
+    # the scan's policy, which is restored afterwards.
+    connector, contexts = _recording_connector()
+    policies = _recording_lookup(monkeypatch, connector)
+    config = ScanConfig(connectors=[ConnectorSpec("platform.recorder")], allow_private_origin=True)
+    assert Engine(config, SignatureIndex([])).run().complete
+    assert policies == [True] and len(contexts) == 1
+    assert http._allow_private_origin.get() is False
+
+
+def test_job_out_of_time_does_not_look_up_its_connector(monkeypatch):
+    # A job whose deadline has already passed reports it without importing
+    # the plugin, as collection did before the lookup moved ahead of it.
+    connector, contexts = _recording_connector()
+    policies = _recording_lookup(monkeypatch, connector)
+    config = ScanConfig(connectors=[ConnectorSpec("platform.recorder")], connector_timeout_seconds=1e-9)
+    result = Engine(config, SignatureIndex([])).run()
+    assert not result.complete and result.stats[0].incomplete
+    assert policies == [] and contexts == []

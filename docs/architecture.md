@@ -84,9 +84,11 @@ defaults, which describe an ordinary connector.
 | `uses_run_identity_key` | `False` | `gateway.logs` | the connector's jobs share one private key per scan run (`ConnectorContext.gateway_identity_key`), so identical sources in one report share opaque caller and scope IDs that separate runs cannot link |
 
 The engine looks up the connector class once per configured entry and reads
-these hooks from it. When the lookup fails the defaults apply and the entry is
-reported incomplete. Plugins run with scanner privileges, so a hook a plugin
-declares is trusted like the rest of its code.
+these hooks from it. As in collection, the lookup, which imports an approved
+plugin, runs under the scan's private-origin policy and is skipped once the
+entry is out of time. When the lookup fails or is skipped the defaults apply
+and the entry is reported incomplete. Plugins run with scanner privileges, so a
+hook a plugin declares is trusted like the rest of its code.
 
 ## Design principles
 

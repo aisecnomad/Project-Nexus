@@ -153,17 +153,27 @@ class _ConnectorRunner:
             # measured runtime, even if completion precedes the next poll.
             state.completed_at = time.monotonic()
 
-    def _resolve(self, name: str) -> _Resolved:
-        """Look up a job's connector class once; ``_collect`` reports a failure."""
+    def _resolve(self, name: str, state: _JobState) -> _Resolved:
+        """Look up a job's connector class once; ``_collect`` reports a failure.
+
+        The lookup imports an approved plugin, so as in collection it runs
+        under the scan's private-origin policy and not at all for a job that
+        is already out of time: ``_collect`` reports the deadline first.
+        """
+        if state.cancelled.is_set() or (state.deadline is not None and time.monotonic() >= state.deadline):
+            return ConnectorError("connector completion deadline exceeded")
+        origin_token = set_allow_private_origin(self._config.allow_private_origin)
         try:
             if self._config.plugins:
                 return get_connector_class(name, allowed_plugins=self._config.plugins)
             return get_connector_class(name)
         except Exception as exc:  # noqa: BLE001 - reported as an incomplete connector by _collect
             return exc
+        finally:
+            reset_allow_private_origin(origin_token)
 
     def _run_job(self, number: int, spec: ConnectorSpec, state: _JobState) -> _JobResult:
-        resolved = self._resolve(spec.name)
+        resolved = self._resolve(spec.name, state)
         roots = spec.config.get("paths")
         root_ids = spec.config.get("root_ids")
         if not isinstance(roots, list) or not self._split_roots(spec, resolved, roots, root_ids):
