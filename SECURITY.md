@@ -137,12 +137,16 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   placeholders stay visible. A credential without such context can remain: an
   unprefixed literal passed to an ordinary function or nested in another call
   inside a credential constructor (`AzureKeyCredential(str("..."))`), a
-  word-like or short value under a name that is not itself sensitive, a
-  lowercase word after a space-separated option or as a fallback default, an
-  option this list does not name, including a one-letter option (`-k ...`), a
-  positional argument of any other command, the part of an unquoted option
-  value after a bracket, brace or comma, a literal fallback of a name that is
-  not a credential's, even inside a credential constructor
+  word-like or short value under a name that is not itself sensitive (an
+  unquoted value made only of capitalized words, digits and underscores reads
+  as an identifier, so `KEY1=Gh4Hj9Kl8Zx2Qw` and `openaiKey: Zx9Kq2Lm8Np4`
+  stay), a lowercase word after a space-separated option or as a fallback
+  default, an option this list does not name, including a one-letter option
+  (`-k ...`) and an option glued to the value before it
+  (`--key=...--password "..."`), a positional argument of any other command,
+  the part of an unquoted option value after a bracket, brace or comma, a
+  literal fallback of a name that is not a credential's, even inside a
+  credential constructor
   (`new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "...")`),
   a value named only by a comment (`x = "..."  # openai key`), a name/value
   record in text whose value field comes before its name

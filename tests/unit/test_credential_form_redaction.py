@@ -481,6 +481,20 @@ def test_documented_gaps_are_still_open(source):
     assert HEX not in sanitize_text(source)
 
 
+@pytest.mark.xfail(strict=True, reason="documented redaction gap (SECURITY.md)")
+@pytest.mark.parametrize(("source", "value"), [
+    # An unquoted value made of capitalized words and digits reads as an
+    # identifier, as 'Ed25519PrivateKey' does.
+    ("KEY1=Gh4Hj9Kl8Zx2Qw", "Gh4Hj9Kl8Zx2Qw"),
+    ("openaiKey: Zx9Kq2Lm8Np4", "Zx9Kq2Lm8Np4"),
+    # An option glued to the value before it is not read as an option.
+    (f'tool --key=users--password "{PASSWORD}"', PASSWORD),
+    (f'tool --key={HEX}--password "{PASSWORD}"', PASSWORD),
+])
+def test_documented_value_gaps_are_still_open(source, value):
+    assert value not in sanitize_text(source)
+
+
 @pytest.mark.parametrize("name", [
     "OpenAIKey", "OpenAI:Secret", "AzureOpenAI:Token", "AzureOpenAI__Key", "openai.token", "KEY1",
     "Db:Password",
