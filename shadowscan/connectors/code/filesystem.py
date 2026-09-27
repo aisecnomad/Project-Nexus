@@ -2381,7 +2381,9 @@ class FilesystemConnector(BaseConnector):
         if m:
             try:
                 fm = bounded_safe_load(m.group(1)) or {}
-            except yaml.YAMLError:
+            except (ValueError, RecursionError, yaml.YAMLError):
+                # Includes resource limits, and SafeLoader's plain ValueError
+                # for an impossible date or an over-long integer.
                 self.ctx.error(f"code.filesystem: {rel}: invalid agent definition YAML")
                 fm = {}
             if isinstance(fm, dict):

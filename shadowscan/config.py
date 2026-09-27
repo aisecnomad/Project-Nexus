@@ -346,9 +346,14 @@ class ScanConfig:
     @classmethod
     def from_yaml(cls, path: str | Path) -> ScanConfig:
         p = Path(path)
+        text = read_policy_text(p)
         try:
-            data = yaml.load(read_policy_text(p), Loader=_ConfigLoader)
-        except yaml.YAMLError as exc:
+            data = yaml.load(text, Loader=_ConfigLoader)
+        except ConfigValidationError:
+            raise
+        except (ValueError, yaml.YAMLError) as exc:
+            # SafeLoader raises a plain ValueError for an impossible date or an
+            # integer beyond Python's digit limit; that is malformed YAML too.
             # PyYAML diagnostics may echo source snippets containing credentials.
             # Only the position (numbers) is kept so the mistake can be located.
             raise ConfigValidationError("invalid YAML syntax or structural limits exceeded" + yaml_error_position(exc)) from None

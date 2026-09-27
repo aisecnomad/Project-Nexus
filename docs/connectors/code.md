@@ -59,7 +59,10 @@ and `strict_coverage` keep such an error incomplete. A notebook larger than
 `max_notebook_size` (default 20 MiB); its outputs are then not scanned for
 credentials, which leaves coverage incomplete unless `scan_secrets` is off. A Python module over `max_ast_nodes` (default 50000) keeps its
 lexical evidence without import-bound analysis: a warning in test code, an error
-elsewhere.
+elsewhere. Malformed YAML front matter in an agent definition, including a
+YAML value PyYAML cannot construct (an impossible date, an integer over 4,300
+digits), is reported as `invalid agent definition YAML`; the definition is
+still listed by its file name.
 
 A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding and listed under `metadata.manifests`. MCP server

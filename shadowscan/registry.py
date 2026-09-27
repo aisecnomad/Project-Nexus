@@ -160,7 +160,9 @@ class Inventory:
                 docs = [json.loads(text, object_pairs_hook=_unique_json_object)]
             else:
                 docs = list(yaml.load_all(_strip_cite_markers(text), Loader=_InventoryLoader))
-        except (json.JSONDecodeError, yaml.YAMLError, _DuplicateKeyError):
+        except (ValueError, yaml.YAMLError):
+            # JSON errors, duplicate keys and SafeLoader's plain ValueError for an
+            # impossible date or an over-long integer are all malformed input.
             # Parser errors include source excerpts, which can contain credentials.
             raise _invalid(path, "document", "invalid syntax or duplicate mapping key") from None
         if not docs:

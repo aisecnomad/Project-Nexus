@@ -287,7 +287,9 @@ def parse_conda_env(text: str) -> ManifestResult:
     except YAMLResourceLimitError:
         res.errors.append("YAML safety limit exceeded")
         return res
-    except yaml.YAMLError:
+    except (ValueError, RecursionError, yaml.YAMLError):
+        # SafeLoader raises a plain ValueError for an impossible date or an
+        # integer beyond Python's digit limit: the document is malformed.
         res.errors.append("invalid YAML")
         return res
     data = _mapping(data, res, "document")
