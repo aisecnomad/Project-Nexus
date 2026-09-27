@@ -8,11 +8,16 @@ LLM gateway logs, low-code platforms, SaaS applications and cloud accounts. It
 normalizes those observations into findings with evidence, risk factors and
 inventory matches so analysts can investigate ownership and capabilities.
 
-These pages are available in the
+These pages live in the
 [repository documentation directory](https://github.com/aisecnomad/Project-Nexus/tree/main/docs).
-A published documentation site is not currently available. To preview the site
-locally, install the documentation dependencies from a checkout and run
-`mkdocs serve`.
+GitHub Pages is enabled at
+<https://aisecnomad.github.io/Project-Nexus/>; that URL currently serves the
+repository README, not this MkDocs set. The Docs workflow builds the site on
+every `main` change and publishes only when a maintainer runs
+`docs.yml` with `publish=true` after Pages is pointed at GitHub Actions.
+Until that publish path is used, treat `docs/` in the revision you are
+reading as the source of truth. To preview locally, install the documentation
+dependencies from a checkout and run `mkdocs serve`.
 
 ## What a finding means
 
@@ -62,6 +67,7 @@ See [evaluation](evaluation.md), [production deployment](production.md) and
 - [Security policy](security.md)
 - [Community and support](community.md)
 - [Contributing](contributing.md)
+- [External reviewer packet](operations/reviewer-packet.md)
 - [Changelog](changelog.md)
 
 ## Community

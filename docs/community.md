@@ -13,6 +13,7 @@ build an offline reproducer or review a change.
 | [Governance](governance.md) | Maintainer responsibilities, decisions, review and release requirements |
 | [Security policy](security.md) | Supported revisions and private vulnerability reporting |
 | [Open issues](https://github.com/aisecnomad/Project-Nexus/issues) | Existing work, reproducible bugs and proposed improvements |
+| [External reviewer packet](operations/reviewer-packet.md) | Reading list for a reviewer who did not author the change |
 
 Start with a small, focused improvement or ask for scope guidance on an issue.
 Public reports should use synthetic examples: even redacted scan output can
