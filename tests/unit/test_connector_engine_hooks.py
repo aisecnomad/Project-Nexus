@@ -62,7 +62,8 @@ def test_engine_source_names_no_connector_and_imports_no_connector_module():
     connector_modules = {module for module in imported if module.startswith("shadowscan.connectors.")}
     assert connector_modules <= {"shadowscan.connectors.base", "shadowscan.connectors.common"}
     strings = {
-        node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
     assert not {value for value in strings if value.partition(".")[0] in namespaces and "." in value}
 
@@ -78,6 +79,10 @@ def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_co
     assert {name for name, cls in classes.items() if cls.uses_run_identity_key} == {"gateway.logs"}
     assert {name for name, cls in classes.items() if cls.inherits_instance_credentials_approval()} == {
         "cloud.aws", "cloud.azure", "cloud.gcp", "cloud.oci",
+    }
+    # The cloud surface covers every name the engine used to match by prefix.
+    assert {name for name, cls in classes.items() if cls.surface == Surface.CLOUD} == {
+        name for name in classes if name.partition(".")[0] == Surface.CLOUD.value
     }
     splitting = {
         name for name, cls in classes.items()
@@ -123,6 +128,18 @@ def test_documented_instance_credentials_key_inherits_the_scan_wide_approval(mon
     connector, contexts = _recording_connector(config_keys=documented)
     _run(monkeypatch, connector, [ConnectorSpec("platform.recorder")], allow_instance_credentials=approved)
     assert contexts[0].config["allow_instance_credentials"] is approved
+
+
+@pytest.mark.parametrize("approved", [False, True])
+def test_cloud_connector_inherits_the_scan_wide_approval_without_documenting_the_key(monkeypatch, approved):
+    # Every cloud.* entry received the scan-wide value before the hook. A
+    # cloud plugin that reads the key without documenting it must not fall
+    # back to its own default and acquire credentials the scan denied.
+    connector, contexts = _recording_connector(name="cloud.acme", surface=Surface.CLOUD)
+    _run(monkeypatch, connector, [ConnectorSpec("cloud.acme")], allow_instance_credentials=approved)
+    assert "allow_instance_credentials" not in connector.config_keys
+    assert contexts[0].config["allow_instance_credentials"] is approved
+    assert contexts[0].get("allow_instance_credentials", True) is approved
 
 
 def test_undocumented_instance_credentials_key_is_not_injected(monkeypatch):

@@ -249,11 +249,13 @@ class BaseConnector(ABC):
     def inherits_instance_credentials_approval(cls) -> bool:
         """Whether the engine sets ``allow_instance_credentials`` from the scan options.
 
-        True for a connector that documents the key in ``config_keys`` (the
-        cloud connectors). The scan-wide approval then replaces any value in
+        True for every cloud-surface connector, whether or not it documents
+        the key: the registry holds each ``cloud.*`` name, plugins included,
+        to that surface. Also true for any connector that documents the key
+        in ``config_keys``. The scan-wide approval then replaces any value in
         the connector's own configuration.
         """
-        return "allow_instance_credentials" in cls.config_keys
+        return cls.surface == Surface.CLOUD or "allow_instance_credentials" in cls.config_keys
 
     @classmethod
     def cache_roots_separately(cls, roots: list[Any], root_ids: Any, *, labelled: bool) -> bool:
