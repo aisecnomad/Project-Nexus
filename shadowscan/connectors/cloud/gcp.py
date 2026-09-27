@@ -187,6 +187,24 @@ class GcpConnector(BaseConnector):
             self.ctx.warn(f"cloud.gcp: collection failed for {url.split('?')[0]} ({status})")
             return None
 
+    def _next_page_token(self, data: dict[str, Any], seen: set[str], *, warn: str) -> str | None:
+        """Return the next page token, or None when pagination should stop.
+
+        An absent or empty token stops pagination silently (normal
+        termination); ``warn`` is only logged for an invalid or
+        already-seen token. Shared by ``_pages`` and ``_collect_audit`` so a
+        fix to this token-handling logic is made once instead of by hand at
+        every paginated call site.
+        """
+        token = data.get("nextPageToken")
+        if token is None or token == "":
+            return None
+        if not isinstance(token, str) or token in seen:
+            self.ctx.warn(warn)
+            return None
+        seen.add(token)
+        return token
+
     def _pages(self, url: str, items_key: str, **params: Any) -> Iterator[dict[str, Any]]:
         token: str | None = None
         seen: set[str] = set()
@@ -217,13 +235,11 @@ class GcpConnector(BaseConnector):
                 self.ctx.warn(f"cloud.gcp: invalid {items_key} page for {url}")
                 return
             yield from items
-            token = data.get("nextPageToken")
-            if token is None or token == "":
+            token = self._next_page_token(
+                data, seen, warn=f"cloud.gcp: invalid or repeated pagination token for {url}"
+            )
+            if token is None:
                 return
-            if not isinstance(token, str) or token in seen:
-                self.ctx.warn(f"cloud.gcp: invalid or repeated pagination token for {url}")
-                return
-            seen.add(token)
         self.ctx.warn(f"cloud.gcp: pagination limit reached for {url}")
 
     # -------------------------------------------------------------- collect
@@ -417,13 +433,11 @@ class GcpConnector(BaseConnector):
                     "ip": get_path(pp, "requestMetadata.callerIp"),
                     "delegation": get_path(pp, "authenticationInfo.serviceAccountDelegationInfo"),
                 }
-            token = data.get("nextPageToken")
-            if token is None or token == "":
+            token = self._next_page_token(
+                data, seen, warn=f"cloud.gcp: invalid or repeated audit pagination token for {project}"
+            )
+            if token is None:
                 return
-            if not isinstance(token, str) or token in seen:
-                self.ctx.warn(f"cloud.gcp: invalid or repeated audit pagination token for {project}")
-                return
-            seen.add(token)
         self.ctx.warn(f"cloud.gcp: audit pagination limit reached for {project}")
 
     # -------------------------------------------------------------- analyze
@@ -816,6 +830,11 @@ class GcpConnector(BaseConnector):
             yield done(f, self.index, Kind.IAM_GRANT)
 
     def _h_service_account(self, rec: dict[str, Any]) -> Finding | None:
+        # User-managed keys are corroborating evidence for an agent-like
+        # name/description match, not an independent finding signal: a
+        # plainly-named service account's keys are not reported here even if
+        # present, though its IAM role grants are still caught separately by
+        # _h_iam_policy.
         email = rec.get("email", "")
         f = cloud_finding(
             self.name,

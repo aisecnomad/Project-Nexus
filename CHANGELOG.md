@@ -2,6 +2,47 @@
 
 ## 0.1.1 — Unreleased
 
+### Self-graded audit follow-up
+
+Fixes from an internal, AI-assisted grading pass over the repository; each
+has a regression test.
+
+- The registry's inventory scope-matching no longer hardcodes a single
+  `google-workspace` string check to decide whether a card must list
+  `accounts` before a resource pattern can approve a finding. The same
+  requirement is now driven by
+  `shadowscan.utils.identity.PROVIDERS_REQUIRING_CARD_ACCOUNT_SCOPE`, a single
+  extensible set instead of a hand-patched exception repeated at three call
+  sites (`Inventory.match`, `Inventory._scope_matches`, `card_stub_for`).
+  Behavior for existing providers (AWS, Google Workspace, and every other
+  built-in connector) is unchanged; adding the next provider that needs this
+  protection is now a one-line addition to that set.
+- `cloud.gcp` and `cloud.oci` test coverage now exercises the Cloud Function
+  plaintext-secret handler, the Vertex endpoint and Discovery Engine
+  handlers, the Cloud Audit Logs pagination edge cases (empty-token
+  termination, repeated-token detection, invalid responses, transport
+  failures), the instance-credential transport's redirect refusal and
+  30-second timeout bound, and the three OCI GenAI resource handlers
+  (dedicated endpoint, dedicated cluster, knowledge base) that had none.
+  Both connectors were previously below the project's 75% per-connector
+  coverage floor.
+- `tests/test_repository_consistency.py`'s connector-count check now fails
+  loudly (matching its signature-count sibling) if no doc states the count
+  in bold, instead of silently matching zero times forever; README now
+  states it (`**27 connectors**`).
+- `docs/connectors/cloud.md` (the per-surface page reachable from the site
+  nav) no longer omits the GCP pagination/audit-log page-cap sentence that
+  `docs/connectors.md` documents; a regression test checks the two stay in
+  sync on this point.
+- `utils.output._require_private_pipe` now requires a named pipe's mode to
+  be exactly `0600`, matching its own error message and the CHANGELOG's
+  "Report output safety" description, instead of accepting any mode with no
+  group/other bits (e.g. `0700`).
+- `SetupError` now redacts its own message through the same sanitizer used
+  for scan diagnostics, instead of relying on every call site to have
+  hand-built a credential-free message; existing call sites that already do
+  so are unaffected since sanitization is idempotent.
+
 ### Field-review follow-up
 
 Fixes from the review of the field-review series; each has a regression test.

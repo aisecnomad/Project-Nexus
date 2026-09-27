@@ -1,7 +1,9 @@
 from pathlib import Path
 
+from shadowscan import registry
 from shadowscan.models import Finding, Kind, Surface
 from shadowscan.registry import Inventory, InventoryEntry, card_stub_for
+from shadowscan.utils import identity
 
 
 def finding(**kwargs):
@@ -98,3 +100,44 @@ def test_inventory_constraints_load_from_card_simple_and_csv(tmp_path):
 
 def test_name_only_inventory_never_auto_approves():
     assert Inventory([InventoryEntry(agent_id="trusted-agent")]).match(finding()) is None
+
+
+def test_card_account_scope_requirement_is_a_real_extension_point(monkeypatch):
+    """requires_card_account_scope must be a live lookup, not a renamed hardcode.
+
+    Registering a new provider (without touching registry.py) must change
+    _scope_matches' behavior for that provider, exactly as it already does
+    for google-workspace.
+    """
+    assert identity.requires_card_account_scope("aws") is False
+    assert identity.requires_card_account_scope("google-workspace") is True
+    assert identity.requires_card_account_scope("acme-saas") is False
+
+    unscoped_entry = InventoryEntry(
+        agent_id="approved", providers=["acme-saas"], resources=["acme-saas:client:*"]
+    )
+    item = Finding(
+        surface=Surface.SAAS,
+        connector="saas.acme",
+        kind=Kind.AGENT,
+        title="Agent: acme bot",
+        resource="acme-saas:client:shared-vendor-id",
+        resource_type="oauth-client",
+        provider="acme-saas",
+    )
+    assert Inventory([unscoped_entry]).match(item) is not None
+
+    # registry._scope_matches calls the same function object imported from
+    # identity, so patching the set it reads is enough to prove the lookup
+    # is live rather than baked in at import time.
+    monkeypatch.setattr(
+        identity, "PROVIDERS_REQUIRING_CARD_ACCOUNT_SCOPE", frozenset({"google-workspace", "acme-saas"})
+    )
+    assert registry.requires_card_account_scope("acme-saas") is True
+    assert Inventory([unscoped_entry]).match(item) is None
+
+    scoped_entry = InventoryEntry(
+        agent_id="approved", providers=["acme-saas"], accounts=["tenant-1"], resources=["acme-saas:client:*"]
+    )
+    item.account = "tenant-1"
+    assert Inventory([scoped_entry]).match(item) is not None

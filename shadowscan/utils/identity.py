@@ -32,3 +32,30 @@ def has_aws_account_scope(provider: str | None, account: str | None, resource: s
     if arn is not None:
         return account in (None, "", arn.group(1))
     return account_id is not None
+
+
+# Providers whose canonical resource identifier does not itself encode the
+# owning tenant get listed here: an inventory card approving one of their
+# resource patterns must also list ``accounts`` explicitly, or the pattern
+# could approve a resource ID reused by an unrelated tenant (for example, a
+# single third-party OAuth client ID installed by many Google Workspace
+# customers). AWS is not listed: has_aws_account_scope already ties an
+# approved ARN to one account number structurally, so no separate card-level
+# requirement is needed for it.
+#
+# This is the single place to extend when a new connector's resource ID is
+# shown to have the same reused-across-tenants shape; every call site that
+# reconciles or stubs a finding reads this one set instead of repeating its
+# own hardcoded provider check.
+PROVIDERS_REQUIRING_CARD_ACCOUNT_SCOPE = frozenset({"google-workspace"})
+
+
+def requires_card_account_scope(provider: str | None) -> bool:
+    """Whether an inventory card approving ``provider`` must list ``accounts``.
+
+    A resource-pattern-only card can approve a finding for every tenant that
+    happens to share the same identifier when the provider's resource IDs are
+    not intrinsically tenant-scoped. See
+    ``PROVIDERS_REQUIRING_CARD_ACCOUNT_SCOPE`` for which providers need this.
+    """
+    return provider in PROVIDERS_REQUIRING_CARD_ACCOUNT_SCOPE
