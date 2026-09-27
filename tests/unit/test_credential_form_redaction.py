@@ -153,6 +153,29 @@ FORMS: list[tuple[str, str, str]] = [
     (f'<entry key="openai.api.key">{HEX}</entry>', HEX, "</entry>"),
     (f'<property name="password" value="{PASSWORD}"/>', PASSWORD, 'name="password"'),
     (f'<Parameter Name="ApiKey" Value="{HEX}"/>', HEX, 'Name="ApiKey"'),
+    # Hierarchical setting names ('AzureOpenAI:Key', 'AzureOpenAI__Key',
+    # 'openai.token') and names whose last word names a credential, read as
+    # the assignment rules read them: a sensitive last segment withholds any
+    # value, a credential word only an opaque one.
+    (f'<add key="AzureOpenAI:Token" value="{HEX}"/>', HEX, 'key="AzureOpenAI:Token"'),
+    (f'<add key="OpenAI:Secret" value="{HEX}"/>', HEX, 'key="OpenAI:Secret"'),
+    (f'<add key="OpenAI:Secret" value="{PASSWORD}"/>', PASSWORD, 'key="OpenAI:Secret"'),
+    (f'<add key="OpenAIKey" value="{HEX}"/>', HEX, 'key="OpenAIKey"'),
+    (f'<add key="AzureOpenAI:Key" value="{HEX}"/>', HEX, 'key="AzureOpenAI:Key"'),
+    (f'<add key="AzureOpenAI__Key" value="{BASE62}" />', BASE62, 'key="AzureOpenAI__Key"'),
+    (f"<OpenAIKey>{HEX}</OpenAIKey>", HEX, "</OpenAIKey>"),
+    (f"<OpenAIKey>\n  {HEX}\n</OpenAIKey>", HEX, "</OpenAIKey>"),
+    (f'<entry key="openai.token">{HEX}</entry>', HEX, "</entry>"),
+    (f'<entry key="openai.key">{BASE64}</entry>', BASE64, "</entry>"),
+    (f'<setting name="AzureOpenAI:Key"><value>{HEX}</value></setting>', HEX, "</setting>"),
+    (f'<password key="CacheKey">{PASSWORD}</password>', PASSWORD, "</password>"),
+    (f"{{name: OpenAIKey, value: {HEX}}}", HEX, "{name: OpenAIKey, value: "),
+    (f"- name: AzureOpenAI__Key\n  value: {HEX}\n", HEX, "- name: AzureOpenAI__Key\n"),
+    (f"- name: AzureOpenAI:Secret\n  value: {PASSWORD}\n", PASSWORD, "- name: AzureOpenAI:Secret\n"),
+    (f'{{"name": "AzureOpenAI:Key", "value": "{BASE62}"}}', BASE62, '"AzureOpenAI:Key"'),
+    (f"- name: OpenAIKey\n  value: |\n    {HEX}\n- name: MODEL\n", HEX, "- name: MODEL"),
+    # A weak name deciding a shared value field first leaves a sensitive one to withhold it.
+    ("{name: pageToken, key: token, value: hunter2hunter}", "hunter2hunter", "{name: pageToken, key: token"),
     # Properties, INI and YAML forms (already covered; kept as regressions).
     (f"spring.ai.openai.api-key={HEX}", HEX, "spring.ai.openai.api-key="),
     (f"[openai]\napi_key = {HEX}\n", HEX, "[openai]"),
@@ -340,9 +363,41 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
     "az login --use-device-code && az acr login --name contoso",
     "echo ${{ secrets.ACR_PASSWORD }} | docker login -u svc --password-stdin contoso.azurecr.io",
     "echo hello | tee out.txt; docker login -u svc --password-stdin",
+    # Settings whose last word names a credential keep ordinary values, as the
+    # same names do in assignments ('cacheKey = "user:123"').
+    '<add key="CacheKey" value="users"/>',
+    '<add key="SortKey" value="createdAt"/>',
+    '<add key="AzureOpenAI:Key" value="YOUR_API_KEY"/>',
+    '<add key="AzureOpenAI:Key" value="%AZURE_OPENAI_KEY%"/>',
+    '<add key="Logging:LogLevel:Default" value="Information"/>',
+    '<add key="OpenAI:Endpoint" value="https://contoso.openai.azure.com/"/>',
+    "<PartitionKey>users</PartitionKey>",
+    "<Key>photos/2024/img.jpg</Key>",
+    "<NextToken></NextToken>",
+    '<entry key="openai.token">${OPENAI_TOKEN}</entry>',
+    '<setting name="OpenAIKey"><value>short</value></setting>',
+    '<input name="key" value="enter">',
+    "{name: pageToken, value: next}",
+    "{name: OpenAIKey, value: ${OPENAI_KEY}}",
+    "- name: cacheKey\n  value: users\n",
+    "- name: OpenAIKey\n  value: |\n    first line\n    second line\n",
 ])
 def test_names_references_placeholders_and_ordinary_arguments_are_preserved(source):
     assert sanitize_text(source) == source
+
+
+@pytest.mark.parametrize("source", [
+    # Environment-style names ('PAGE_TOKEN', like 'DB_PASSWORD') withhold any
+    # value: a readable password is still a password.
+    "{name: PAGE_TOKEN, value: next}",
+    "{name: DB_PASSWORD, value: hunter2}",
+    '<add key="Db:Password" value="hunter2"/>',
+    "- name: Smtp__Password\n  value: hunter2\n",
+])
+def test_sensitive_setting_names_withhold_readable_values(source):
+    safe = sanitize_text(source)
+    assert REDACTED in safe
+    assert "next" not in safe and "hunter2" not in safe
 
 
 # One form per context-named pass, and values that an earlier pass or an

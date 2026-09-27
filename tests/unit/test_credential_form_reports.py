@@ -109,6 +109,26 @@ CASES = {
         f'<appSettings><add key="AZURE_OPENAI_API_KEY" value="{HEX}" /><add key="Endpoint" value="{AZURE}" />'
         "</appSettings>\n"
     ), HEX),
+    # Hierarchical .NET setting names: the last segment names the credential.
+    # (The walker does not read '.config' files, so App.config's shape is
+    # scanned under an '.xml' name.)
+    "dotnet-hierarchical-key": ("conf/app.xml", (
+        "<configuration><appSettings>"
+        f'<add key="AzureOpenAI:Endpoint" value="{AZURE}"/><add key="AzureOpenAI:Key" value="{HEX}"/>'
+        "</appSettings></configuration>\n"
+    ), HEX),
+    "dotnet-hierarchical-secret": ("web.xml", (
+        f'<appSettings><add key="OpenAI:Endpoint" value="{AZURE}"/>'
+        f'<add key="OpenAI:Secret" value="{PASSWORD}"/></appSettings>\n'
+    ), PASSWORD),
+    "xml-credential-named-element": ("openai-settings.xml", (
+        f"<openai><endpoint>{AZURE}</endpoint><OpenAIKey>{BASE62}</OpenAIKey></openai>\n"
+    ), BASE62),
+    # Not under 'env', whose values the structural pass already withholds.
+    "yaml-hierarchical-record": ("deploy/parameters.yaml", (
+        f"parameters: [{{name: AzureOpenAI__Endpoint, value: {AZURE}}}, "
+        f"{{name: AzureOpenAI__Key, value: {HEX}}}]\n"
+    ), HEX),
     "xml-password-element": ("settings.xml", (
         f"<server><url>https://api.openai.com/v1</url><password>{PASSWORD}</password></server>\n"
     ), PASSWORD),
