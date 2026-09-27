@@ -11,6 +11,7 @@ import string
 
 import pytest
 
+from shadowscan.utils import redaction
 from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
 
 _RANDOM = random.Random(20260927)
@@ -142,6 +143,18 @@ FORMS: list[tuple[str, str, str]] = [
     (f"- name: OPENAI_API_KEY\n  value: |\n    {HEX}\n- name: MODEL\n", HEX, "- name: MODEL"),
     (f'- name: OPENAI_API_KEY\n  value: "{HEX}"  # rotated monthly\n', HEX, "  # rotated monthly"),
     (f"- name: OPENAI_API_KEY\n  value: {BASE62}   # rotated monthly\n", BASE62, "   # rotated monthly"),
+    # Unquoted values in flow-style and inline records. Their pattern stopped
+    # at ']', so each later sanitization withheld '[REDACTED' again and the
+    # marker grew by one ']' per pass.
+    (f"{{name: OPENAI_API_KEY, value: {HEX}}}", HEX, "{name: OPENAI_API_KEY, value: "),
+    (f"      env: [{{name: OPENAI_API_KEY, value: {HEX}}}]\n", HEX, "}]\n"),
+    (f"name=api_key value={HEX}", HEX, "name=api_key value="),
+    (f'{{"name": "API_KEY", "value": {BASE62}}}', BASE62, '{"name": "API_KEY", "value": '),
+    (f"Name: TOKEN Value: {BASE62}", BASE62, "Name: TOKEN Value: "),
+    (f"{{key: token, value: {HEX}}}", HEX, "{key: token, value: "),
+    (f'<add key="api_key" value="{HEX}', HEX, '<add key="api_key" value='),
+    (f"{{name: OPENAI_API_KEY, value: https://svc:{BASE62}@api.openai.com/v1}}", BASE62,
+     "{name: OPENAI_API_KEY"),
 ]
 
 
@@ -153,6 +166,7 @@ def test_credential_forms_are_withheld_with_context_and_lines_preserved(source, 
     assert kept in safe
     assert safe.count("\n") == source.count("\n")
     assert sanitize_text(safe) == safe
+    assert REDACTED + "]" not in safe
 
 
 def _prefixed(prefix: str, body: str) -> str:
@@ -277,6 +291,78 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
 ])
 def test_names_references_placeholders_and_ordinary_arguments_are_preserved(source):
     assert sanitize_text(source) == source
+
+
+# One form per context-named pass, and values that an earlier pass or an
+# earlier sanitization may already have withheld in part.
+_PASS_FORMS = [
+    "{{name: OPENAI_API_KEY, value: {v}}}",
+    '{{"name": "API_KEY", "value": {v}}}',
+    "name=api_key value={v}",
+    "Name: TOKEN Value: {v}",
+    "- name: OPENAI_API_KEY\n  value: {v}\n",
+    '<add key="api_key" value="{v}"/>',
+    '<add key="api_key" value={v}',
+    "<password>{v}</password>",
+    '<setting name="ApiKey"><value>{v}</value></setting>',
+    "curl -u svc:{v} https://contoso.openai.azure.com/",
+    "tool --api-key={v} --verbose",
+    "tool --api-key {v} --verbose",
+    '["--api-key", "{v}"]',
+    'curl -H "x-api-key:{v}" https://api.anthropic.com',
+    "docker login -u svc -p {v} registry.example.com",
+    "mysql -u root -p{v} app",
+    "ENV OPENAI_API_KEY {v}\n",
+    "setx OPENAI_API_KEY {v}",
+    "#define OPENAI_API_KEY {v}\n",
+    'auth=("svc", "{v}")',
+    'AzureKeyCredential("{v}")',
+    'builder().apiKey("{v}").build()',
+    'let openaiKey = "{v}";',
+    "openai.key={v}\n",
+    "token:\n{v}\n",
+]
+_PASS_VALUES = [
+    HEX, PASSWORD, REDACTED, f"{BASE62[:6]}{REDACTED}{BASE62[6:14]}",
+    f"https://svc:{BASE62}@api.example.com/v1", f"<![CDATA[{HEX}]]>",
+    f"eyJ{BASE62[:10]}.{BASE62[10:20]}.{BASE62[20:30]}", f"Bearer {HEX}", "",
+    f"{HEX[:8]} {HEX[8:16]}", "${OPENAI_API_KEY}",
+]
+
+
+@pytest.mark.parametrize("form", _PASS_FORMS)
+def test_every_context_named_pass_is_stable_under_resanitization(form):
+    # Reports sanitize an excerpt several times. A pass that withholds part of
+    # its own marker again ('[REDACTED' inside '[REDACTED]') grows it by one
+    # ']' each time; a stable pass leaves its first result unchanged.
+    for value in _PASS_VALUES:
+        source = form.format(v=value)
+        once = sanitize_text(source)
+        assert sanitize_text(once) == once, (source, once)
+        if "]" not in value.replace(REDACTED, ""):
+            assert REDACTED + "]" not in once, (source, once)
+
+
+@pytest.mark.parametrize("source", [
+    # A nested sensitive assignment inside an unquoted value: the value was
+    # cut inside the marker, so each pass withheld '[REDACTED' again.
+    f"Value: a.api_key={REDACTED}",
+    "Value: sk-...OPENAI_API_KEY=${OPENAI_API_KEY:-$(cat /run/secrets/key)}",
+    f"note: {{name: OPENAI_API_KEY, value: {REDACTED}}}",
+])
+def test_resanitizing_never_grows_a_marker(source):
+    once = sanitize_text(source)
+    assert sanitize_text(once) == once
+    assert REDACTED + "]" not in once
+
+
+def test_a_record_value_that_is_already_withheld_is_kept():
+    for source in (
+        f"{{name: TOKEN, value: {REDACTED}}}",
+        f"name=api_key value={REDACTED}",
+        f"Name: TOKEN Value: {REDACTED}",
+    ):
+        assert redaction._redact_name_value_pairs(source) == source
 
 
 @pytest.mark.parametrize("source", [

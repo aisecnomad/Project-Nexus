@@ -88,11 +88,15 @@ _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 # Text size and redaction work are bounded separately below. An unquoted
 # key's colon stays on its line: a YAML parent ('openai:') must not consume the
 # nested sensitive key on the next line as its own value. A quoted key may also
-# be assigned with '=' (PowerShell hashtables, TOML quoted keys).
+# be assigned with '=' (PowerShell hashtables, TOML quoted keys). An unquoted
+# value stops at ']' unless that ']' closes a marker: cut inside the marker, a
+# nested sensitive assignment ('Value: a.api_key=[REDACTED]') withheld
+# '[REDACTED' again and grew the marker by one ']' on every pass.
 _ASSIGNMENT = re.compile(
     r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
     r"(?P<sep>[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+|:[ \t]*(?=[\"']))"
-    r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;\}\]\)\"']+)"
+    r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'"
+    r"|[^\s,;\}\]\)\"']+(?:(?<=\[REDACTED)\][^\s,;\}\]\)\"']*)*)"
 )
 _QUERY_SEPARATOR = re.compile(r"[&#]")
 # R assigns with '<-' and '<<-'; the scan treats them like '='.
@@ -1437,7 +1441,12 @@ _RECORD_NAME = re.compile(
 # Found first (a literal alternation scans quickly), then matched in full.
 _RECORD_WORD = re.compile(r"name|key|Name|Key|NAME|KEY")
 _RECORD_VALUE = re.compile(r"(?<![\w.-])(?P<quote>[\"']?)(?:value|Value|VALUE)(?P=quote)[ \t]*[:=][ \t]*")
-_RECORD_INLINE_VALUE = re.compile(r"\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;}\])]+")
+# An unquoted value stops at ']' unless that ']' closes a marker an earlier
+# pass (or an earlier sanitization) left in it: stopping inside the marker
+# would withhold '[REDACTED' again and grow it by one ']' on every pass.
+_RECORD_INLINE_VALUE = re.compile(
+    r"\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;}\])]+(?:(?<=\[REDACTED)\][^\s,;}\])]*)*"
+)
 _RECORD_BRACE = re.compile(r"\}")
 _RECORD_COMMENT = re.compile(r"[ \t]#")
 _RECORD_BLOCK_MARKERS = frozenset({"", "|", ">", "|-", ">-", "|+", ">+"})

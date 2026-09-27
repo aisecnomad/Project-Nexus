@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import random
+import re
 import string
 
 import pytest
@@ -147,7 +148,19 @@ CASES = {
     "js-credential-name": ("client.js", (
         f'const openaiKey = "{HEX}", baseURL = "https://api.openai.com/v1";\n'
     ), HEX),
+    # Unquoted flow-style record values: the withheld marker used to grow by
+    # one ']' each time the pipeline sanitized the excerpt.
+    "helm-unquoted-record": ("chart/templates/deployment.yaml", (
+        f"url: https://api.openai.com/v1 {{name: OPENAI_API_KEY, value: {HEX}}}\n"
+    ), HEX),
+    "helm-unquoted-env-list": ("chart/templates/worker.yaml", (
+        "spec:\n  containers:\n    - image: {{ .Values.image }}\n"
+        f"      env: [{{name: OPENAI_API_KEY, value: {BASE62}}}, "
+        "{name: OPENAI_BASE_URL, value: https://api.openai.com/v1}]\n"
+    ), BASE62),
 }
+# A marker followed by another ']' (escaped or not): a corrupted marker.
+_GROWN_MARKER = re.compile(r"REDACTED\\?\]\\?\]")
 
 
 def _scan(root, index):
@@ -179,6 +192,7 @@ def test_credential_forms_never_reach_any_report(tmp_path, index, case):
     for name, output in outputs.items():
         for secret in secrets:
             assert secret not in output, name
+        assert _GROWN_MARKER.search(output) is None, name
     # The credential line itself is evidence: the report shows it, withheld.
     assert REDACTED in outputs["json"]
 
