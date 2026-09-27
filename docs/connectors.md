@@ -37,6 +37,27 @@ accept 'fetch_tokenz'`), so a typo cannot silently disable an option. Keys
 starting with an underscore are reserved for the engine. Third-party plugins
 are not imported while parsing, so their keys are not checked at that point.
 
+## Validation maturity and evidence status
+
+Connector availability is not production acceptance. This snapshot describes evidence published in this repository, not private tenant work or guarantees for a particular deployment. It was prepared on 2026-09-27 from [`main` at `3761a09`](https://github.com/aisecnomad/Project-Nexus/commit/3761a09d15ba0d10e24ad96d210b5405fa9c4497). Refresh it when new evidence is accepted.
+
+| Scope | Evidence published in this repository | Status supported by that evidence |
+|---|---|---|
+| `code.filesystem` | Regression corpora plus a frozen 42-file public-source corpus labeled by two separate AI reviewers. The final result followed feedback and is not a fresh held-out field estimate. | Regression-tested; field precision and recall are unestablished. |
+| `cloud.aws`, `saas.slack` | Offline replay, stubbed API/SDK tests, and a read-only canary runner for exact tenant scopes. | Canary-capable; no live tenant acceptance is recorded. |
+| Other built-in connectors | Per-connector unit, fixture, and mocked-provider coverage at varying depth; no connector-specific live acceptance receipts are published. | Regression-tested; live acceptance is unestablished. |
+| Cross-connector field accuracy | No fresh, independently sampled and human-double-labeled representative holdout is published. The bundled AI-labeled corpus does not satisfy this requirement. | Not field-evaluated. |
+| Release candidate | No qualifying independent approval is recorded for a frozen release-candidate SHA. | Not independently reviewed for release. |
+
+Use these labels literally:
+
+- **Regression-tested** means fixed fixtures and stubs passed in CI. It establishes behavior for those cases, not tenant coverage or field accuracy.
+- **Canary-capable** means a live-test runner exists. Its presence and an offline `REPLAY_PASS` do not establish live acceptance.
+- **Live-accepted** requires fresh, exact-scope evidence for both a complete collection and a separately credentialed permission-denied case. No live acceptance receipt is published in this snapshot.
+- **Field-evaluated** requires a new human-labeled holdout sampled and frozen before scanner results are examined, with acceptance policy set in advance. The bundled corpus is a regression resource, not field evidence.
+
+Before using a connector for a production decision, check the [assurance results](assurance-results.md), [field-evaluation procedure](evaluation.md#build-a-genuinely-held-out-field-set), [canary evidence rules](canaries.md#what-counts-as-evidence), and [rollout acceptance gate](production.md#rollout-acceptance). A passing replay or test suite must never be reported as a live tenant pass.
+
 ## Connector entry keys
 
 Every entry under `connectors:` in a scan configuration accepts these keys in

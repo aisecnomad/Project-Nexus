@@ -58,7 +58,9 @@ Run `make check` or the commands in CONTRIBUTING.md. Pull requests must keep:
 ShadowScan has a single maintainer. A merged pull request or green CI is not
 evidence that a second person reviewed the change. Independent review is
 required before any tagged release. Pin operators to a reviewed 40-character
-commit SHA.
+commit SHA. Scorecard, CI, CodeQL, and files under `archive/reviews/` are not
+independent human review. Do not describe them as a second-person audit.
+External reviewers can start from `docs/operations/reviewer-packet.md`.
 
 ## Security reports
 

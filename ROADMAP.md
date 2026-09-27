@@ -8,6 +8,12 @@ fail-closed trust model.
 
 - Keep community standards complete: code of conduct, support routing,
   issue forms, Scorecard, and honest maintainer status.
+- Keep the README Scorecard badge in sync with published `main` results. The
+  score is not independent review.
+- Freeze a review-candidate SHA before further hardening bursts. External
+  reviewers should start from
+  [docs/operations/reviewer-packet.md](docs/operations/reviewer-packet.md).
+  Completing the packet is not a release approval.
 - Grow the first-contribution surface: documentation, signatures, offline
   fixtures, evaluation cases.
 - Recruit a second reviewer so independent review is a repository setting,
@@ -19,8 +25,12 @@ fail-closed trust model.
   [connector requests](https://github.com/aisecnomad/Project-Nexus/issues?q=label%3Aconnector-request).
 - Tighter Agent Card binding examples and inventory authoring guides.
 - Public docs screenshots of the HTML report and SARIF upload path.
-- OpenSSF Scorecard published results and badge once the workflow has run
-  on `main`.
+- Re-check the OpenSSF Scorecard badge after each `main` Scorecard run.
+  Code-Review and Branch-Protection stay at zero until a second reviewer
+  exists.
+- Point GitHub Pages at the Docs workflow artifact and publish the MkDocs
+  site with the existing manual `docs.yml` dispatch. Do not treat the current
+  Pages URL as that site.
 
 ## Later, after independent review
 
