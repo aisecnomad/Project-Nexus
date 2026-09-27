@@ -7,7 +7,11 @@ import json
 import pytest
 import responses
 
+from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.identity.auth0 import Auth0Connector
+from shadowscan.connectors.identity.okta import OktaConnector
+from shadowscan.models import ScanStats, now_iso
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient
 
 
@@ -127,3 +131,71 @@ def test_okta_grants_pagination_and_failed_enrichment_keep_apps(run_connector):
     assert {"okta.users.read", "okta.groups.manage"} <= set(first.permissions)
     assert ctx.stats.incomplete
     assert not ctx.stats.errors
+
+
+def context(index, **config):
+    ctx = ConnectorContext(index=index, config=config)
+    ctx.stats = ScanStats(connector="test", started_at="now")
+    return ctx
+
+
+@pytest.mark.parametrize("connector_class,method,records", [
+    (Auth0Connector, "_client_finding", [{"client_id": "a"}, {"client_id": "b", "app_type": "non_interactive"}]),
+    (OktaConnector, "_app_finding", [{"id": "a"}, {"id": "b", "signOnMode": "OPENID_CONNECT", "settings": {"oauthClient": {"application_type": "service"}}}]),
+])
+def test_identity_match_timeout_is_isolated(index, monkeypatch, connector_class, method, records):
+    ctx = context(index)
+    connector = connector_class(ctx)
+    original = getattr(connector, method)
+    calls = 0
+
+    def analyze(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise MatchTimeoutError("signature matching timed out (custom.pattern)")
+        return original(*args)
+
+    monkeypatch.setattr(connector, method, analyze)
+    findings = list(connector.analyze(records))
+    assert len(findings) == 1 and findings[0].resource.endswith(":b")
+    assert ctx.stats.incomplete
+    assert any("custom.pattern" in warning for warning in ctx.stats.warnings)
+
+
+def _ctx(index, **config):
+    ctx = ConnectorContext(config=config, index=index)
+    ctx.stats = ScanStats(connector="test", started_at=now_iso())
+    return ctx
+
+
+def _okta_service_app(app_id: str, **overrides):
+    app = {
+        "id": app_id, "name": "oidc_client", "label": f"Service {app_id}", "status": "ACTIVE",
+        "signOnMode": "OPENID_CONNECT",
+        "settings": {"oauthClient": {"application_type": "service", "grant_types": ["client_credentials"]}},
+        "credentials": {"oauthClient": {"client_id": f"client-{app_id}"}},
+        "_grants": [{"scopeId": "okta.users.read"}], "_tokens": [],
+    }
+    app.update(overrides)
+    return app
+
+
+def test_okta_isolates_a_malformed_application_record(index):
+    ctx = _ctx(index)
+    connector = OktaConnector(ctx)
+    records = [_okta_service_app("a"), _okta_service_app("b", settings="not-an-object"),
+               _okta_service_app("c")]
+    findings = list(connector.analyze(records))
+    assert [f.title for f in findings] == ["Okta service app: Service a", "Okta service app: Service c"]
+    assert ctx.stats.incomplete and any("malformed application record" in w for w in ctx.stats.warnings)
+
+
+def test_auth0_isolates_a_malformed_client_record(index):
+    ctx = _ctx(index)
+    connector = Auth0Connector(ctx)
+    good = {"_kind": "client", "client_id": "c1", "name": "support-agent-m2m", "app_type": "non_interactive", "grant_types": ["client_credentials"]}
+    bad = {**good, "client_id": "c2", "name": "broken", "client_metadata": ["x"]}
+    findings = list(connector.analyze([good, bad, {**good, "client_id": "c3", "name": "other-m2m"}]))
+    assert len(findings) == 2
+    assert ctx.stats.incomplete and any("malformed client or grant record" in w for w in ctx.stats.warnings)

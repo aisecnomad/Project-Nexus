@@ -7,6 +7,7 @@ import time
 import pytest
 
 from shadowscan.connectors.code import manifests
+from shadowscan.connectors.code.manifests import parse_manifest
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.matcher import MatchTimeoutError, _run_regex
 
@@ -42,3 +43,23 @@ def test_manifest_override_keeps_the_active_input_deadline(monkeypatch):
     with pytest.raises(MatchTimeoutError, match="input execution budget"), SignatureIndex([]).scan_budget(seconds=0.02):
         _run_regex(run, "YAML manifest", max_seconds=1.0)
     assert len(timeouts) == 1 and 0 < timeouts[0] <= 0.02
+
+
+def test_yaml_chunk_matching_retries_scheduler_contention(monkeypatch):
+    actual = manifests._YAML_IMAGE
+
+    class SuspendedPattern:
+        calls = 0
+
+        def finditer(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("another worker's CPU charged to iterator")
+            return actual.finditer(*args, **kwargs)
+
+    pattern = SuspendedPattern()
+    monkeypatch.setattr(manifests, "_YAML_IMAGE", pattern)
+    result = parse_manifest("compose.yaml", "services:\n  worker:\n    image: acme/agent:1\n")
+    assert result is not None and not result.errors
+    assert [(a.kind, a.value, a.line) for a in result.artifacts] == [("image", "acme/agent:1", 3)]
+    assert pattern.calls == 2

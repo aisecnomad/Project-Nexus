@@ -67,3 +67,22 @@ def test_ai_like_names_are_still_reported(index, tmp_path):
 def test_include_unrecognized_apps_must_be_boolean(index, tmp_path):
     with pytest.raises(ConnectorError):
         _run(index, tmp_path, [DEPENDENCY_BOT], include_unrecognized_apps="yes")
+
+
+def _installations(index, tmp_path, slugs):
+    path = tmp_path / "installations.json"
+    path.write_text(json.dumps({"installations": [
+        {"id": number, "app_id": number, "app_slug": slug, "repository_selection": "all",
+         "permissions": {"contents": "write", "pull_requests": "write"}, "events": ["push"],
+         "html_url": f"https://github.com/apps/{slug}", "target_type": "Organization"}
+        for number, slug in enumerate(slugs, 1)
+    ]}))
+    ctx = ConnectorContext(config={"input": str(path)}, index=index)
+    return {f.metadata["app_slug"]: f for f in GitHubAppsConnector(ctx).run()}
+
+
+@pytest.mark.parametrize("slug", ["amazon-q-developer", "ellipsis-dev", "mentatbot", "factory-droid"])
+def test_ai_coding_agents_are_recognised_by_their_app_slug(index, tmp_path, slug):
+    found = _installations(index, tmp_path, [slug, "renovate"])
+    assert set(found) == {slug}
+    assert found[slug].frameworks and "unrecognized-app" not in found[slug].tags

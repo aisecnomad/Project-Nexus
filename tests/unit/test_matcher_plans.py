@@ -38,3 +38,19 @@ def test_regex_plan_keeps_pack_order_and_quotas(index):
     order = [(sig.id, id(s)) for sig, s in index._by_type["code"]]
     positions = [order.index((m.signature_id, id(m.signal))) for m in matches]
     assert positions == sorted(positions)
+
+
+def test_statement_cache_keeps_only_short_statements_within_a_text_budget(index, monkeypatch):
+    index._statement_imports.clear()
+    index._statement_chars = 0
+    long_statement = "from " + "pkg." * 200 + "m import x"
+    assert len(long_statement) > matcher._STATEMENT_CACHE_MAX_LENGTH
+    expected = [m.signature_id for m in index.match_imports(long_statement, "python")]
+    assert [m.signature_id for m in index.match_import_statement(long_statement, "python")] == expected
+    assert (long_statement, "python") not in index._statement_imports
+
+    monkeypatch.setattr(matcher, "_STATEMENT_CACHE_MAX_CHARS", 100)
+    for number in range(40):
+        index.match_import_statement(f"import module_{number}", "python")
+        assert index._statement_chars <= 100
+        assert index._statement_chars == sum(len(statement) for statement, _ in index._statement_imports)

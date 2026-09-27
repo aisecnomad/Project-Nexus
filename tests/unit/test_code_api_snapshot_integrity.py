@@ -11,7 +11,7 @@ import pytest
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
-from shadowscan.models import ScanStats
+from shadowscan.models import ScanStats, now_iso
 
 COMMIT = "a" * 40
 
@@ -274,3 +274,39 @@ def test_gitlab_invalid_commit_lookup_never_scans_a_moving_branch(tmp_path, inde
     assert connector.ctx.stats.incomplete
     connector.http.paginate_link.assert_not_called()
     connector.http.get.assert_not_called()
+
+
+def _blob(content: bytes) -> tuple[str, str]:
+    sha = hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()
+    return sha, base64.b64encode(content).decode()
+
+
+def test_api_mode_skips_an_unsafe_tree_path_instead_of_the_repository(tmp_path, index):
+    good_sha, good_b64 = _blob(b"import openai\nclient = openai.OpenAI()\n")
+    weird_sha, weird_b64 = _blob(b"print('hi')\n")
+    tree = {"sha": "a" * 40, "truncated": False, "tree": [
+        {"path": "src/app.py", "type": "blob", "mode": "100644", "size": 40, "sha": good_sha},
+        {"path": "src\\legacy.py", "type": "blob", "mode": "100644", "size": 12, "sha": weird_sha},
+    ]}
+    blobs = {good_sha: {"encoding": "base64", "content": good_b64}, weird_sha: {"encoding": "base64", "content": weird_b64}}
+    ctx = ConnectorContext(config={"repos": ["acme/demo"], "mode": "api", "token": "x", "use_git": False}, index=index, workdir=str(tmp_path))
+    ctx.stats = ScanStats(connector="code.github", started_at=now_iso())
+    connector = GitHubConnector(ctx)
+
+    def fake_get(path, *args, **kwargs):
+        if path.startswith("/repos/acme/demo/git/trees/"):
+            return tree
+        if path.startswith("/repos/acme/demo/git/blobs/"):
+            return blobs[path.rsplit("/", 1)[-1]]
+        raise AssertionError(path)
+
+    connector.http.try_get_json = fake_get  # type: ignore[method-assign]
+    connector.http.paginate_link = lambda *a, **k: iter([])  # type: ignore[method-assign]
+    connector.mode = "api"
+    repo = {"full_name": "acme/demo", "default_branch": "main", "owner": {"login": "acme"}, "html_url": "https://github.com/acme/demo"}
+    findings = list(connector.analyze([repo]))
+    assert [f.resource for f in findings] == ["github:acme/demo"] and not ctx.stats.errors
+    tree["tree"][1]["path"] = "../escape.py"
+    with pytest.raises(RuntimeError):
+        connector._fetch_via_api(repo, str(tmp_path / "again"))
+    assert any("unusual repository tree path skipped" in w for w in ctx.stats.warnings) and ctx.stats.incomplete

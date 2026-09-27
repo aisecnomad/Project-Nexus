@@ -216,8 +216,12 @@ def test_label_sync_only_mutates_labels_from_main() -> None:
     job = workflow["jobs"]["sync"]
     assert job.get("if") == "github.ref == 'refs/heads/main'"
     assert _write_scopes(job["permissions"]) == {"issues"}
-    install = next(step["run"] for step in job["steps"] if step.get("name", "").startswith("Install hash-locked PyYAML"))
-    sync = next(step["run"] for step in job["steps"] if step.get("name", "").startswith("Create or update every label"))
-    assert "python -m venv" in install and "requirements.lock" in install
-    assert "--require-hashes --only-binary=:all:" in install
-    assert '"$RUNNER_TEMP/labels-venv/bin/python" - <<' in sync
+    # Steps are found by what they run, not by their display names.
+    scripts = [step.get("run", "") for step in job["steps"]]
+    install = next(index for index, script in enumerate(scripts) if "python -m venv" in script)
+    assert "requirements.lock" in scripts[install]
+    assert "--require-hashes --only-binary=:all:" in scripts[install]
+    parsers = [index for index, script in enumerate(scripts) if "import yaml" in script]
+    assert parsers, "no step parses .github/labels.yml"
+    for index in parsers:
+        assert index > install and '"$RUNNER_TEMP/labels-venv/bin/python" - <<' in scripts[index]

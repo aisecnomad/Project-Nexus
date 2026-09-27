@@ -11,6 +11,7 @@ import pytest
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.models import Evidence, Finding, Kind, RiskLevel, ScanResult, ScanStats, Surface
+from shadowscan.reporters import render
 from shadowscan.reporters.sarif import _physical_locations, render_sarif
 
 ROOT = Path(__file__).parents[2]
@@ -228,3 +229,40 @@ def test_incomplete_scan_sarif_is_schema_valid():
     assert invocation["executionSuccessful"] is False
     assert [n["level"] for n in invocation["toolExecutionNotifications"]] == ["error", "error", "error"]
     assert invocation["startTimeUtc"] == "2026-01-01T00:00:00Z" and invocation["endTimeUtc"] == "2026-01-01T00:00:09Z"
+
+
+def _located_finding(location: str, root: str = "/repo", level: RiskLevel = RiskLevel.LOW,
+                     title: str = "Agent") -> Finding:
+    finding = Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT, title=title,
+                      resource=f"{root}/{title}", resource_type="project", frameworks=["framework.langchain"])
+    finding.add_evidence(Evidence(signal="import", description="import", location=location))
+    finding.metadata["scan_root"] = root
+    finding.risk.level = level
+    return finding
+
+
+def _sarif(*findings: Finding) -> dict:
+    result = ScanResult(findings=list(findings), stats=[ScanStats(connector="code.filesystem", started_at="t")])
+    return json.loads(render(result, "sarif"))
+
+
+def _uris(sarif: dict) -> list[dict]:
+    return [loc["physicalLocation"]["artifactLocation"] for res in sarif["runs"][0]["results"] for loc in res["locations"]]
+
+
+def test_sarif_uris_are_percent_encoded_and_root_relative():
+    (artifact,) = _uris(_sarif(_located_finding("/repo/dir with space/agent#1%.py:3")))
+    assert artifact == {"uri": "dir%20with%20space/agent%231%25.py", "uriBaseId": "%SRCROOT%"}
+
+
+def test_sarif_root_prefix_respects_path_boundaries():
+    (artifact,) = _uris(_sarif(_located_finding("/repo2/agent.py:1", root="/repo")))
+    assert artifact == {"uri": "file:///repo2/agent.py"}
+
+
+@pytest.mark.parametrize("order", [(RiskLevel.LOW, RiskLevel.CRITICAL), (RiskLevel.CRITICAL, RiskLevel.LOW)])
+def test_sarif_rule_severity_is_the_most_severe_result(order):
+    findings = [_located_finding(f"/repo/{i}.py:1", level=level, title=f"Agent {i}")
+                for i, level in enumerate(order)]
+    (rule,) = _sarif(*findings)["runs"][0]["tool"]["driver"]["rules"]
+    assert rule["properties"]["security-severity"] == "9.5" and rule["defaultConfiguration"]["level"] == "error"

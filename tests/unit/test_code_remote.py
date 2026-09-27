@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import hashlib
 from pathlib import Path
+from threading import Event, Lock
+from time import monotonic
 from unittest.mock import Mock
 
 import pytest
@@ -464,3 +466,159 @@ def test_gitlab_duo_setting_becomes_an_agent_config_finding(index):
     findings = list(connector.analyze([*records, disabled]))
     assert [f.resource for f in findings] == ["gitlab:acme/duo"]
     assert findings[0].kind is Kind.AGENT_CONFIG and "code-exec" in findings[0].capabilities
+
+
+@pytest.mark.parametrize("cls, fetch_method, metadata_method", [
+    (GitHubConnector, "_fetch_repo", "_repo_level_findings"),
+    (GitLabConnector, "_fetch", "_project_level"),
+])
+def test_live_download_under_symlinked_temp_parent_is_scanned(tmp_path, index, monkeypatch, cls, fetch_method, metadata_method):
+    actual = tmp_path / "actual"
+    actual.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(actual, target_is_directory=True)
+    context = ConnectorContext(config={"use_git": False}, index=index, workdir=str(alias))
+    connector = cls(context)
+    record = {"full_name": "org/agent", "path_with_namespace": "org/agent"}
+    monkeypatch.setattr(connector, "collect", lambda: iter([record]))
+    downloaded = []
+
+    def fetch(_record, destination):
+        root = Path(destination)
+        downloaded.append(root)
+        (root / "agent.py").write_text("from crewai import Agent\n")
+        return destination
+
+    monkeypatch.setattr(connector, fetch_method, fetch)
+    monkeypatch.setattr(connector, metadata_method, lambda _record: iter([]))
+    findings = connector.run()
+    assert any("framework.crewai" in f.frameworks for f in findings)
+    assert not context.stats.errors
+    assert downloaded and downloaded[0].parent == actual
+    assert not downloaded[0].exists()  # temporary source remains cleaned up
+
+
+@pytest.mark.parametrize("cls", [GitHubConnector, GitLabConnector])
+def test_nested_repository_scan_inherits_cancellation_and_publication_fence(tmp_path, index, monkeypatch, cls):
+    cancelled, publication_lock = Event(), Lock()
+    parent = ConnectorContext(
+        config={"use_git": False}, index=index, workdir=str(tmp_path),
+        deadline=monotonic() + 30, cancelled=cancelled, publication_lock=publication_lock,
+    )
+    child_contexts = []
+
+    class CaptureFilesystem:
+        def __init__(self, ctx):
+            self.ctx = ctx
+            child_contexts.append(ctx)
+
+        def analyze(self, records):
+            self.ctx.check_deadline()
+            return []
+
+    monkeypatch.setattr("shadowscan.connectors.code.remote.FilesystemConnector", CaptureFilesystem)
+    connector = cls(parent)
+    record = {"full_name": "org/repo", "path_with_namespace": "org/repo"}
+    assert list(connector._scan_local(record, str(tmp_path))) == []
+    child = child_contexts[0]
+    assert child.deadline == parent.deadline
+    assert child.cancelled is cancelled and child.publication_lock is publication_lock
+    assert child.workdir == str(tmp_path)
+    cancelled.set()
+    with pytest.raises(ConnectorError, match="deadline"):
+        child.check_deadline()
+
+
+@pytest.mark.parametrize("cls, record", [
+    (GitHubConnector, {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"}),
+    (GitLabConnector, {"http_url_to_repo": "https://gitlab.com/org/repo.git"}),
+])
+def test_clone_process_is_bounded_by_connector_deadline(tmp_path, index, monkeypatch, cls, record):
+    timeouts = []
+
+    class FakeProc:
+        def wait(self, timeout):
+            timeouts.append(timeout)
+            return 0
+
+    monkeypatch.setattr("shadowscan.utils.git.subprocess.Popen", lambda *args, **kwargs: FakeProc())
+    context = ConnectorContext(index=index, deadline=monotonic() + 2)
+    assert cls(context)._clone(record, str(tmp_path / "repo"))
+    assert len(timeouts) == 1 and 0 < timeouts[0] <= 2
+
+
+@pytest.mark.parametrize(
+    "cls,key,records,identity",
+    [
+        (GitHubConnector, "repos", ["acme/one", "acme/two"], "full_name"),
+        (GitLabConnector, "projects", ["acme/one", "acme/two"], "id"),
+    ],
+)
+def test_explicit_repository_caps_are_enforced(cls, key, records, identity, index):
+    limit = "max_repos" if cls is GitHubConnector else "max_projects"
+    ctx = ConnectorContext(config={key: records, limit: 1}, index=index)
+    ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
+    connector = cls(ctx)
+    connector.http = Mock()
+    connector.http.try_get_json.return_value = (
+        {identity: "acme/one"} if cls is GitHubConnector
+        else {identity: 1, "path_with_namespace": "acme/one"}
+    )
+    assert len(list(connector.collect())) == 1
+    assert connector.http.try_get_json.call_count == 1
+    assert ctx.stats.incomplete and any(limit in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("cls,key", [(GitHubConnector, "max_repos"), (GitLabConnector, "max_projects")])
+def test_invalid_repository_caps_rejected(cls, key, index):
+    from shadowscan.connectors.base import ConnectorError
+
+    with pytest.raises(ConnectorError, match=key):
+        cls(ConnectorContext(config={key: 0}, index=index))
+
+
+@pytest.mark.parametrize("connector", ["code.github", "code.gitlab"])
+def test_offline_repo_caps_mark_partial_coverage(tmp_path: Path, connector: str, run_connector):
+    for name in ("one", "two"):
+        repo = tmp_path / name
+        repo.mkdir()
+        (repo / "requirements.txt").write_text("langchain\n")
+    limit = "max_repos" if connector == "code.github" else "max_projects"
+    findings, ctx = run_connector(connector, input=str(tmp_path), use_git=False, **{limit: 1})
+    assert len([f for f in findings if f.resource_type == "project"]) == 1
+    assert ctx.stats.incomplete and any(limit in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("connector", ["code.github", "code.gitlab"])
+@pytest.mark.parametrize("file_only", [False, True], ids=["empty-root", "files-without-clones"])
+def test_empty_offline_clone_input_marks_scan_incomplete(tmp_path: Path, connector: str, file_only: bool, run_connector):
+    if file_only:
+        (tmp_path / "README.md").write_text("No checkout was exported here.\n")
+    findings, ctx = run_connector(connector, input=str(tmp_path), use_git=False)
+
+    assert findings == []
+    assert ctx.stats is not None and ctx.stats.objects_examined == 0
+    assert ctx.stats.incomplete
+    assert any("contains no clone directories" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("connector", ["code.github", "code.gitlab"])
+def test_nested_filesystem_respects_scan_timeout(tmp_path: Path, connector: str, run_connector):
+    checkout = tmp_path / "one"
+    checkout.mkdir()
+    (checkout / "requirements.txt").write_text("langchain\n")
+    findings, ctx = run_connector(connector, input=str(tmp_path), scan_timeout=61)
+    assert not findings and ctx.stats.incomplete
+    assert any("scan_timeout" in error for error in ctx.stats.errors)
+
+
+def test_per_repository_contexts_share_the_diagnostic_cap(tmp_path, index):
+    for name in ("acme__r1", "acme__r2", "acme__r3"):
+        repo = tmp_path / name
+        repo.mkdir()
+        for i in range(1100):
+            (repo / f"f{i}.py").write_text("ab")
+    ctx = ConnectorContext(config={"input": str(tmp_path), "max_file_size": 1, "strict_coverage": True}, index=index)
+    GitHubConnector(ctx).run()
+    assert len(ctx.stats.errors) == ConnectorContext._MAX_DIAGNOSTICS + 1
+    assert sum("diagnostic limit reached" in e for e in ctx.stats.errors) == 1

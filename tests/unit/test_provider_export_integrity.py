@@ -181,3 +181,57 @@ def test_google_malformed_user_exports_keep_other_users(tmp_path, run_connector,
     assert ctx.stats.incomplete and len(findings) == 1
     assert findings[0].metadata["user_count"] == 1
     assert findings[0].metadata["users_sample"] == ["bob@example.test"]
+
+
+def _offline(run_connector, tmp_path, name, payload, **config):
+    path = tmp_path / f"{name.replace('.', '_')}.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return run_connector(name, input=str(path), **config)
+
+
+@pytest.mark.parametrize("connector,body", [
+    ("lowcode.n8n", {"message": "'X-N8N-API-KEY' header required"}),
+    ("lowcode.make", {"detail": "Access denied", "message": "Access denied", "code": "IM002"}),
+    ("lowcode.workato", {"message": "Unauthorized"}),
+    ("saas.notion", {"object": "error", "status": 401, "code": "unauthorized", "message": "API token is invalid."}),
+])
+def test_provider_error_bodies_are_not_empty_inventories(run_connector, tmp_path, connector, body):
+    findings, ctx = _offline(run_connector, tmp_path, connector, body)
+    assert findings == []
+    assert ctx.stats.incomplete and ctx.stats.warnings and not ctx.stats.errors
+
+
+_GOOD = {
+    "lowcode.n8n": ({"id": "w1", "name": "Good workflow", "nodes": [{"name": "Agent", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {"model": "gpt-4o"}}]}, "Good workflow"),
+    "lowcode.workato": ({"id": 1, "name": "Good recipe", "code": "{\"provider\":\"openai\"}", "config": [{"provider": "openai"}]}, "Good recipe"),
+    "lowcode.make": ({"_kind": "ai-agent", "id": "ag1", "name": "Good agent", "model": "gpt-4o"}, "Good agent"),
+    "lowcode.zapier": ({"id": "z1", "title": "Claude summarizer", "steps": [{"app": {"title": "Anthropic (Claude)"}}]}, "Claude summarizer"),
+    "saas.microsoft-teams": ({"id": "app-1", "displayName": "Copilot Helper Bot", "distributionMethod": "organization", "appDefinitions": [{"displayName": "Copilot Helper Bot", "bot": {"id": "bot-1"}}]}, "Copilot Helper Bot"),
+    "saas.generic": ({"name": "ChatGPT", "scopes": ["drive.readonly"]}, "ChatGPT"),
+    "saas.notion": ({"object": "user", "id": "n1", "type": "bot", "name": "Notion AI helper", "bot": {"owner": {"type": "workspace"}, "workspace_name": "Acme"}}, "Notion AI helper"),
+}
+
+
+@pytest.mark.parametrize("connector,bad,rejected", [
+    ("lowcode.n8n", {"id": "w0", "name": "Bad", "nodes": ["not-a-node"]}, True),
+    ("lowcode.workato", {"id": 0, "name": "Bad", "code": "{truncated", "config": []}, True),
+    ("lowcode.workato", {"id": 0, "name": "Bad", "code": "", "config": 5}, True),
+    ("lowcode.make", {"_kind": "ai-agent", "id": "ag0", "name": "Bad", "model": "gpt-4o", "tools": 5}, True),
+    ("lowcode.make", {"_kind": "scenario", "id": 7, "name": "Bad", "blueprint": {"flow": 5}}, True),
+    ("saas.microsoft-teams", {"id": "app-0", "displayName": "Bad", "appDefinitions": [{"bot": "not-a-dict"}]}, True),
+    ("saas.microsoft-teams", {"id": "inst-0", "teamsApp": "not-a-dict", "teamsAppDefinition": {"teamsAppId": "x"}}, True),
+    ("saas.notion", {"object": "user", "id": "n0", "type": "bot", "name": "Bad", "bot": "not-a-dict"}, True),
+    # Scalar-typed fields are coerced to text instead of rejected; coverage stays complete.
+    ("lowcode.zapier", {"id": "z0", "title": 123, "steps": []}, False),
+    ("saas.generic", {"name": "Otter.ai", "scopes": ["admin", 5]}, False),
+    ("saas.generic", {"name": "Otter.ai", "url": [123]}, False),
+])
+def test_one_malformed_record_does_not_abort_analysis(run_connector, tmp_path, connector, bad, rejected):
+    good, title = _GOOD[connector]
+    findings, ctx = _offline(run_connector, tmp_path, connector, [bad, good])
+    assert not ctx.stats.errors
+    assert any(title in f.title for f in findings)
+    if rejected:
+        assert ctx.stats.incomplete and ctx.stats.warnings
+    else:
+        assert not ctx.stats.incomplete and not ctx.stats.warnings

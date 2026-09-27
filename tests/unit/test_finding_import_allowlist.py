@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from shadowscan.models import Evidence, Finding, Kind, Risk, RiskFactor, Surface
+from shadowscan.models import Evidence, Finding, Kind, Risk, RiskFactor, ScanResult, Surface
 
 
 def _finding() -> Finding:
@@ -65,3 +67,69 @@ def test_finding_from_dict_rejects_malformed_nested_objects():
     payload["risk"]["factors"] = ["not-an-object"]
     with pytest.raises(ValueError, match="risk factor"):
         Finding.from_dict(payload)
+
+
+def _sample_finding():
+    return Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
+                   title="sample", resource="repo:sample", resource_type="repository")
+
+
+@pytest.mark.parametrize("field", ["score", "factor", "evidence", "confidence"])
+@pytest.mark.parametrize("value", [True, False, None, "opaque-secret-value", [], {}, float("nan"), float("inf")])
+def test_finding_import_rejects_malformed_numeric_fields_without_echoing_them(field, value):
+    payload = _sample_finding().to_dict()
+    if field == "score":
+        payload["risk"]["score"] = value
+    elif field == "factor":
+        payload["risk"]["factors"] = [{"id": "test", "description": "test", "weight": value}]
+    elif field == "evidence":
+        payload["evidence"] = [{"signal": "test", "description": "test", "weight": value}]
+    else:
+        payload["confidence"] = value
+    with pytest.raises(ValueError) as failure:
+        Finding.from_dict(payload)
+    assert "opaque-secret-value" not in str(failure.value)
+
+
+@pytest.mark.parametrize("risk", [False, 0, [], ""])
+def test_empty_malformed_risk_cannot_masquerade_as_missing(risk):
+    payload = _sample_finding().to_dict()
+    payload["risk"] = risk
+    with pytest.raises(ValueError, match="risk must be an object"):
+        Finding.from_dict(payload)
+
+
+@pytest.mark.parametrize("field,value", [("score", -1), ("score", 101), ("confidence", -0.1),
+                                         ("confidence", 1.1), ("evidence", -0.1), ("evidence", 1.1)])
+def test_finding_import_rejects_out_of_range_scores(field, value):
+    payload = _sample_finding().to_dict()
+    if field == "score":
+        payload["risk"]["score"] = value
+    elif field == "evidence":
+        payload["evidence"] = [{"signal": "test", "description": "test", "weight": value}]
+    else:
+        payload["confidence"] = value
+    with pytest.raises(ValueError, match="range"):
+        Finding.from_dict(payload)
+
+
+def _bedrock_finding(**kwargs) -> Finding:
+    base = dict(surface=Surface.CLOUD, connector="cloud.aws", kind=Kind.AGENT,
+                title="Bedrock Agent: ops", resource="arn:aws:bedrock:us-east-1:123456789012:agent/A1",
+                resource_type="bedrock-agent")
+    base.update(kwargs)
+    return Finding(**base)
+
+
+def test_report_serialization_hides_private_state_and_tolerates_newer_fields():
+    finding = _bedrock_finding(evidence=[Evidence("signal", "clean")])
+    data = finding.to_dict()
+    assert "_clean_digest" not in json.dumps(ScanResult(findings=[finding]).to_dict())
+    data["future_field"] = {"anything": 1}
+    data["_clean_digest"] = "untrusted"
+    data["evidence"][0]["future_attribute"] = 2
+    data["risk"]["factors"] = [{"id": "x", "description": "y", "weight": 1, "novel": True}]
+    restored = Finding.from_dict(data)
+    assert restored.id == finding.id and restored.risk.factors[0].id == "x"
+    with pytest.raises(TypeError):
+        Finding.from_dict("not an object")  # type: ignore[arg-type]

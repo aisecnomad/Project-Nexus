@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.cloud.aws import AwsConnector
 from shadowscan.connectors.cloud.azure import AzureConnector
@@ -12,6 +14,7 @@ from shadowscan.connectors.cloud.common import (
     aggregate_caller_event,
     credential_name_matches,
     first_tag,
+    string_list,
 )
 from shadowscan.connectors.cloud.gcp import GcpConnector
 from shadowscan.connectors.cloud.oci import OciConnector
@@ -88,3 +91,18 @@ def test_credential_name_matches_uses_env_names_then_provider_keywords(index):
     assert credential_name_matches(index, "db-password", ("openai", "llm")) is None
     # A provider keyword alone qualifies the name, with no signature matches to apply.
     assert credential_name_matches(index, "team-llm-notes", ("llm",)) == []
+
+
+def test_string_list_coercion():
+    assert string_list("lambda", "services") == ["lambda"]
+    assert string_list(["a", " b "], "x") == ["a", "b"]
+    assert string_list("", "x") is None and string_list(None, "x") is None
+    assert string_list("us-east-1", "regions", pattern=r"[a-z0-9-]+") == ["us-east-1"]
+    with pytest.raises(ValueError):
+        string_list(["a", 1], "x")
+    with pytest.raises(ValueError):
+        string_list("US East", "regions", pattern=r"[a-z0-9-]+")
+
+
+def test_scope_values_are_deduplicated_without_reordering():
+    assert string_list(["us-east-1", "us-west-2", " us-east-1 "], "regions") == ["us-east-1", "us-west-2"]
