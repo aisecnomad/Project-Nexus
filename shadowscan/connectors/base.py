@@ -314,7 +314,7 @@ class BaseConnector(ABC):
     # Parsing and reading live in shadowscan.connectors.offline. These thin
     # methods keep the names connectors override and tests replace; the
     # offline functions call back through them.
-    _OFFLINE_SUFFIXES: ClassVar[AbstractSet[str]] = _offline.OFFLINE_SUFFIXES
+    _OFFLINE_SUFFIXES: ClassVar[set[str]] = set(_offline.OFFLINE_SUFFIXES)
     _MAX_OFFLINE_FILE_BYTES: ClassVar[int] = _offline.MAX_OFFLINE_FILE_BYTES
     _MAX_OFFLINE_TOTAL_BYTES: ClassVar[int] = _offline.MAX_OFFLINE_TOTAL_BYTES
     _MAX_OFFLINE_ENTRIES: ClassVar[int] = _offline.MAX_OFFLINE_ENTRIES

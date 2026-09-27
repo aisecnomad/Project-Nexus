@@ -96,6 +96,14 @@ def test_connector_wide_offline_limits_are_overridable_per_class(tmp_path, index
     assert BaseConnector._MAX_OFFLINE_FILE_BYTES == offline.MAX_OFFLINE_FILE_BYTES
 
 
+def test_offline_suffixes_stay_a_plain_set_on_base_connector():
+    # BaseConnector exposed a plain set before the extraction and keeps doing
+    # so; the module default it is copied from is immutable.
+    assert type(BaseConnector._OFFLINE_SUFFIXES) is set
+    assert BaseConnector._OFFLINE_SUFFIXES == offline.OFFLINE_SUFFIXES
+    assert isinstance(offline.OFFLINE_SUFFIXES, frozenset)
+
+
 def test_offline_file_discovery_goes_through_the_connector_method(tmp_path, index):
     exported = tmp_path / "a.json"
     exported.write_text(json.dumps([{"id": "w1"}]))
