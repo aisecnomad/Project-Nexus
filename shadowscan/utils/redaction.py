@@ -328,56 +328,115 @@ def _assignment_candidates(text: str) -> Iterator[tuple[int, str, str, int]]:
     return heapq.merge(plain, _indexed_assignment_candidates(text), key=lambda candidate: candidate[0])
 
 
-def _redact_python_assignments(text: str) -> str:
-    """Redact complete sensitive Python assignment expressions without evaluation.
+# Brackets a sensitive assignment expression may open before the remaining
+# text is withheld. Python 3.12+ tokenizers stop at 200 levels and 3.11 has no
+# limit; a lower bound keeps every supported version on the same path.
+_MAX_ASSIGNMENT_NESTING = 100
+# Token classes an annotation-only scan records for the candidates it encloses.
+_TOKEN_SPACE, _TOKEN_REAL, _TOKEN_ASSIGN, _TOKEN_CLOSE, _TOKEN_NEWLINE = range(5)
+_FSTRING_STARTS = frozenset(
+    kind for kind in (getattr(token, "FSTRING_START", None), getattr(token, "TSTRING_START", None)) if kind
+)
+_FSTRING_ENDS = frozenset(
+    kind for kind in (getattr(token, "FSTRING_END", None), getattr(token, "TSTRING_END", None)) if kind
+)
+_NEWLINE_TOKENS = frozenset({token.NEWLINE, token.NL})
+_SPACE_TOKENS = frozenset({token.INDENT, token.DEDENT, token.COMMENT, token.ERRORTOKEN})
 
-    Tokenize only sensitive candidates, including indexed assignments and call
-    arguments. String delimiters, escapes, concatenation and continued lines are
-    handled lexically. Malformed or unfinished RHS syntax is withheld through
-    EOF; the explicit work budget prevents hostile candidates from repeatedly
-    tokenizing an unlimited amount of source.
+
+class _AnnotationScan:
+    """Tokens of one annotation-only scan, reused by the annotations inside it.
+
+    Each ``key:`` candidate is tokenized from its colon to its statement end. An
+    annotation that never reaches '=' used to leave the next candidate to
+    tokenize the same text again, which is quadratic for a long run of
+    unfinished annotations. A later candidate whose colon this scan lexed as an
+    operator outside any string is lexed identically by its own scan, offset by
+    the bracket depth ``d`` of that colon. Its first *event* at depth ``d``
+    decides it: an '=' is its assignment, a closer is its unmatched bracket and
+    a newline ends its statement unless only comments preceded it. Without an
+    event, how this scan stopped decides. Whatever cannot be read off safely is
+    rescanned, so reuse only ever skips a candidate that has no assignment.
     """
-    stream: io.StringIO | None = None
-    pieces: list[str] = []
-    cursor = 0
-    work = 0
-    urls = _URL.finditer(text)
-    url = next(urls, None)
-    for start, key, separator, candidate_end in _assignment_candidates(text):
-        if start < cursor or not _sensitive_assignment_key(key):
-            continue
-        annotated = separator == ":"
-        assigned_at: int | None = None if annotated else candidate_end
-        # URL fields use URL boundaries, not Python statement boundaries,
-        # and have already been sanitized by the URL pass. Check actual spans:
-        # a '#' before a source assignment can also introduce a comment.
-        while url is not None and url.end() <= start:
-            url = next(urls, None)
-        if url is not None and url.start() <= start:
-            continue
-        value_start = candidate_end
-        if not annotated:
-            while value_start < len(text) and text[value_start] in " \t":
-                value_start += 1
-        if stream is None:
-            stream = io.StringIO(text)
+
+    def __init__(self) -> None:
+        self.kinds: list[int] = []
+        self.depths: list[int] = []
+        self.colons: dict[int, int] = {}
+        self.rescan: dict[int, bool] = {}
+        self.last = 0
+
+    def finish(self, definitive: bool) -> None:
+        """Decide every recorded colon once, from the last token backwards."""
+        kinds, depths = self.kinds, self.depths
+        real = [0]
+        for kind in kinds:
+            real.append(real[-1] + (kind == _TOKEN_REAL))
+        colon_indexes = set(self.colons.values())
+        rescan = [False] * len(kinds)
+        following: dict[int, int] = {}
+        for index in range(len(kinds) - 1, -1, -1):
+            kind = kinds[index]
+            if kind == _TOKEN_NEWLINE or index in colon_indexes:
+                event = following.get(depths[index])
+                if event is None:
+                    rescan[index] = not definitive
+                elif kinds[event] == _TOKEN_ASSIGN:
+                    rescan[index] = True
+                elif kinds[event] == _TOKEN_CLOSE or real[event] > real[index + 1]:
+                    rescan[index] = False
+                else:
+                    # A blank or comment-only line continues the statement.
+                    rescan[index] = rescan[event]
+            if kind >= _TOKEN_ASSIGN:
+                following[depths[index]] = index
+        self.rescan = {offset: rescan[index] for offset, index in self.colons.items()}
+        self.kinds, self.depths = [], []
+
+
+class _AssignmentScanner:
+    """Tokenize the sensitive assignment candidates of one text under one budget."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.stream: io.StringIO | None = None
+        self.work = 0
+        self.annotations: list[_AnnotationScan] = []
+
+    def charge(self, amount: int) -> None:
+        self.work += amount
+        if self.work > _MAX_REDACTION_WORK:
+            raise SanitizationLimitError("Python assignment work limit exceeded")
+
+    def enclosed_without_assignment(self, candidate_end: int) -> bool:
+        """Whether an earlier annotation scan shows this annotation assigns nothing."""
+        return any(scan.rescan.get(candidate_end) is False for scan in self.annotations)
+
+    def scan(self, start: int, candidate_end: int, annotated: bool) -> tuple[int | None, int, bool]:
+        """Locate one candidate's assigned value: (assigned_at, end, argument)."""
+        text = self.text
+        if self.stream is None:
+            self.stream = io.StringIO(text)
+        stream = self.stream
         stream.seek(candidate_end)
         offsets = [candidate_end]
+        assigned_at: int | None = None if annotated else candidate_end
         end = len(text)
         brackets: list[str] = []
-        previous = start - 1
-        while previous >= 0 and text[previous] in " \t\r\n":
-            previous -= 1
-        argument = not annotated and previous >= 0 and text[previous] in "(,"
+        argument = False
+        if not annotated:
+            previous = start - 1
+            while previous >= 0 and text[previous] in " \t\r\n":
+                previous -= 1
+            argument = previous >= 0 and text[previous] in "(,"
         previous_operator = ""
+        record = _AnnotationScan() if annotated else None
+        definitive = True
+        fstrings = 0
 
         def readline() -> str:
-            nonlocal work
-            assert stream is not None
             line = stream.readline()
-            work += len(line)
-            if work > _MAX_REDACTION_WORK:
-                raise SanitizationLimitError("Python assignment work limit exceeded")
+            self.charge(len(line))
             offsets.append(stream.tell())
             return line
 
@@ -388,6 +447,24 @@ def _redact_python_assignments(text: str) -> str:
                     # Incomplete single-quoted strings generate error tokens,
                     # not TokenError. A semicolon inside one is not a boundary.
                     break
+                if record is not None:
+                    depth = len(brackets)
+                    if item.type in _NEWLINE_TOKENS:
+                        kind = _TOKEN_NEWLINE
+                    elif item.type in _SPACE_TOKENS:
+                        kind = _TOKEN_SPACE
+                    elif item.type == token.OP and item.string == "=":
+                        kind = _TOKEN_ASSIGN
+                    elif item.type == token.OP and item.string in ")]}":
+                        kind = _TOKEN_CLOSE
+                    else:
+                        kind = _TOKEN_REAL
+                    fstrings += (item.type in _FSTRING_STARTS) - (item.type in _FSTRING_ENDS)
+                    if item.type == token.OP and item.string == ":" and not fstrings:
+                        record.colons[offsets[item.end[0] - 1] + item.end[1]] = len(record.kinds)
+                    record.kinds.append(kind)
+                    record.depths.append(depth)
+                    record.last = offsets[item.end[0] - 1] + item.end[1]
                 if item.type == token.OP:
                     if item.string == "`" or (item.string in {"/", "//"} and text.startswith(("/*", "//"), position)):
                         # Python's tokenizer is not a JavaScript template/comment
@@ -397,7 +474,14 @@ def _redact_python_assignments(text: str) -> str:
                         break
                     if item.string == "=" and assigned_at is None and not brackets:
                         assigned_at = offsets[item.end[0] - 1] + item.end[1]
+                        record = None
                     elif item.string in "([{":
+                        if len(brackets) >= _MAX_ASSIGNMENT_NESTING:
+                            # Too deep to follow: withhold the rest of the text.
+                            if assigned_at is None:
+                                assigned_at = candidate_end
+                            record = None
+                            break
                         brackets.append(item.string)
                     elif item.string in ")]}":
                         if not brackets:
@@ -415,9 +499,7 @@ def _redact_python_assignments(text: str) -> str:
                 elif item.type == token.NEWLINE:
                     following = position + len(item.string)
                     while following < len(text) and text[following] in " \t\r\n":
-                        work += 1
-                        if work > _MAX_REDACTION_WORK:
-                            raise SanitizationLimitError("Python assignment work limit exceeded")
+                        self.charge(1)
                         following += 1
                     # JavaScript permits binary/member/ternary expressions to
                     # continue across an unescaped newline in either direction.
@@ -427,16 +509,60 @@ def _redact_python_assignments(text: str) -> str:
                     ):
                         continue
                     end = position
+                    # A candidate enclosed here whose first line is blank goes
+                    # on past this statement end; it needs its own scan.
+                    definitive = False
                     break
                 elif item.type == token.ENDMARKER:
                     end = position
                     break
                 elif item.type not in {token.INDENT, token.DEDENT, tokenize.NL, token.COMMENT}:
                     previous_operator = ""
-        except (tokenize.TokenError, IndentationError, SyntaxError):
+        except (tokenize.TokenError, IndentationError, SyntaxError) as exc:
             # Once '=' is seen, incomplete source must not expose any RHS,
             # including credential fragments on subsequent physical lines.
-            pass
+            # Indentation and nesting errors depend on where a scan started.
+            definitive = not isinstance(exc, IndentationError) and "nest" not in str(exc)
+        if record is not None:
+            record.finish(definitive)
+            self.annotations = [scan for scan in self.annotations if scan.last > candidate_end][-7:]
+            self.annotations.append(record)
+        return assigned_at, end, argument
+
+
+def _redact_python_assignments(text: str) -> str:
+    """Redact complete sensitive Python assignment expressions without evaluation.
+
+    Tokenize only sensitive candidates, including indexed assignments and call
+    arguments. String delimiters, escapes, concatenation and continued lines are
+    handled lexically. Malformed, unfinished or too deeply nested RHS syntax is
+    withheld through EOF; the explicit work budget prevents hostile candidates
+    from repeatedly tokenizing an unlimited amount of source, and annotations
+    enclosed by an earlier annotation-only scan reuse its tokens.
+    """
+    scanner = _AssignmentScanner(text)
+    pieces: list[str] = []
+    cursor = 0
+    urls = _URL.finditer(text)
+    url = next(urls, None)
+    for start, key, separator, candidate_end in _assignment_candidates(text):
+        if start < cursor or not _sensitive_assignment_key(key):
+            continue
+        annotated = separator == ":"
+        # URL fields use URL boundaries, not Python statement boundaries,
+        # and have already been sanitized by the URL pass. Check actual spans:
+        # a '#' before a source assignment can also introduce a comment.
+        while url is not None and url.end() <= start:
+            url = next(urls, None)
+        if url is not None and url.start() <= start:
+            continue
+        if annotated and scanner.enclosed_without_assignment(candidate_end):
+            continue
+        value_start = candidate_end
+        if not annotated:
+            while value_start < len(text) and text[value_start] in " \t":
+                value_start += 1
+        assigned_at, end, argument = scanner.scan(start, candidate_end, annotated)
         if assigned_at is not None:
             raw = text[assigned_at:end]
             bare = raw.strip()
