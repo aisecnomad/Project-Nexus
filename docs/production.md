@@ -203,9 +203,11 @@ The runtime lock covers the core scanner and all cloud SDK extras on CPython
 3.11, 3.12 and 3.13, Linux x86_64. It contains exact versions and permitted
 SHA-256 hashes; Linux CI checks installation and dependency consistency on all
 three interpreters. Linux x86_64 is the only validated deployment target for
-this full runtime/cloud lock. macOS 3.11 and 3.13 are CI-validated development
-and core-test targets using `requirements-ci.lock`, but a macOS deployment still
-needs its own full runtime/cloud lock and acceptance evidence. Windows is not
+this full runtime/cloud lock. The macOS 3.11 and 3.13 CI jobs install
+`requirements-ci.lock` and this runtime lock from the same published wheel
+hashes and run the full test suite with the per-connector coverage floor, which
+validates development use there; a macOS deployment still needs its own wheel,
+container and acceptance evidence. Windows is not
 supported at all, because the confined file reader
 (`O_NOFOLLOW`, `O_DIRECTORY`, `dir_fd`) is unavailable there and the scanner
 refuses to read any input rather than weaken that policy. The lock is not

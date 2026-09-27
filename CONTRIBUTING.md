@@ -38,13 +38,13 @@ as your first contribution.
 ## Getting started
 
 Use Python 3.11, 3.12, or 3.13 and Git on a POSIX system. Linux and macOS are
-CI-validated development and core-test targets; the production runtime lock's
-full cloud-SDK set is validated only on Linux x86_64. On Windows use WSL,
+CI-validated development and test targets; Linux x86_64 is the only validated
+deployment target for the production runtime lock. On Windows use WSL,
 because the scanner's confined file reader needs `O_NOFOLLOW`/`dir_fd` and the
 Makefile assumes `/tmp` and a `.venv/bin` layout. Linux and macOS CI install the
-hash-locked core and development toolchain. Fork the repository on GitHub if
-you need a branch you can push; clone your fork in that case. In a local
-checkout:
+hash-locked runtime, cloud and development toolchain. Fork the repository on
+GitHub if you need a branch you can push; clone your fork in that case. In a
+local checkout:
 
 ```bash
 git clone https://github.com/aisecnomad/Project-Nexus.git
