@@ -36,6 +36,9 @@ def _best_time(source: str, repeats: int) -> float:
     "<password><![CDATA[",            # sensitive element content in an unterminated CDATA
     "<password><![CDATA[ <password>]]>",
     '<setting name="ApiKey"> ',
+    "docker login -p x ",             # '-p' read from its command
+    "mysql -pabc ",
+    'openaiKey = "',                  # a credential-like name before an unfinished literal
     ").apiKey(\"",                    # a method called on a call result
 ])
 def test_context_named_credential_passes_scale_linearly(unit):

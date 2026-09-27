@@ -95,8 +95,9 @@ _ASSIGNMENT = re.compile(
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;\}\]\)\"']+)"
 )
 _QUERY_SEPARATOR = re.compile(r"[&#]")
+# R assigns with '<-' and '<<-'; the scan treats them like '='.
 _PYTHON_ASSIGNMENT_KEY = re.compile(
-    r"(?<![\w.-])(?P<key>[A-Za-z_][A-Za-z0-9_.]*)[ \t]*(?P<separator>:|=(?!=))"
+    r"(?<![\w.-])(?P<key>[A-Za-z_][A-Za-z0-9_.]*)[ \t]*(?P<separator>:|=(?!=)|<<?-(?!-))"
 )
 _INDEXED_ASSIGNMENT_KEY = re.compile(
     r"\[[ \t\r\n]*(?P<quote>[\"'`])(?P<key>[A-Za-z_][A-Za-z0-9_.-]{0,100})"
@@ -914,8 +915,11 @@ def _redact_credential_calls(text: str) -> str:
             retry = lexer.arguments(call.end(), comments=False)
             if retry[1] == "closed":
                 spans, state, _ = retry
+        callee = call.group()[:-1]
+        if callee.startswith("."):
+            callee = _chained_callee(text, call.start()) + callee
         # Prose puts a space before a parenthesis ("Login ('log|n')"); code rarely does.
-        level = 0 if call.group()[-2:-1].isspace() else _credential_callee(call.group()[:-1])
+        level = 0 if callee[-1:].isspace() else _credential_callee(callee)
         if level:
             # Literal credentials do not skip nested calls: a call inside
             # another argument can still pair a credential key with a value.
@@ -957,16 +961,22 @@ def _redact_credential_calls(text: str) -> str:
 _CALLEE_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 _CALLEE_HINT = re.compile(r"(?i)key|token|secret|passw|cred|auth|bearer|client|login")
 _CREDENTIAL_CALLEE_WORDS = frozenset({
-    "apikey", "auth", "bearer", "client", "credential", "credentials", "key", "passwd", "password", "secret",
-    "token",
+    "apikey", "auth", "authentication", "bearer", "client", "credential", "credentials", "key", "oauth",
+    "passwd", "password", "secret", "token",
 })
 _CREDENTIAL_CONSTRUCTOR_WORDS = frozenset({
     "auth", "authenticate", "authentication", "credential", "credentials", "login", "passwd", "password",
 })
+# Verbs that look a credential up or check for one rather than present it
+# (get_password, requireAuth, useAuth): only opaque literals are withheld.
 _LOOKUP_VERBS = frozenset({
-    "count", "del", "delete", "describe", "fetch", "find", "get", "has", "is", "list", "load", "log",
-    "lookup", "pop", "print", "read", "remove", "show",
+    "check", "count", "del", "delete", "describe", "ensure", "fetch", "find", "get", "has", "is", "list",
+    "load", "log", "lookup", "pop", "print", "read", "remove", "require", "requires", "show", "use",
+    "validate", "verify",
 })
+# Factory methods take their receiver's name: Credentials.basic("user", "v"),
+# AwsBasicCredentials.create("id", "v") and Ruby's Cohere::Client.new("v").
+_CALLEE_FACTORIES = frozenset({"basic", "create", "from", "new", "of"})
 # One whole call argument that is a string literal, optionally named
 # (Python/Kotlin 'key=', C#/Swift 'key:'). C# verbatim and interpolated
 # prefixes are accepted; interpolated text is never an opaque literal.
@@ -1031,12 +1041,37 @@ def _credential_callee(name: str) -> int:
     """0 for an ordinary callee, 1 for a credential-named one, 2 for a credential constructor."""
     if _CALLEE_HINT.search(name) is None:
         return 0  # the common case, decided without splitting the name into words
-    words = [word.lower() for word in _CALLEE_WORD.findall(name.rsplit(".", 1)[-1]) if not word.isdigit()]
+    segments = name.split(".")
+    method = segments[-1]
+    if len(segments) > 1 and method.lower() in _CALLEE_FACTORIES:
+        # The nearest receiver named for a credential: auth.preemptive.basic.
+        method = next((part for part in reversed(segments[:-1]) if _CALLEE_HINT.search(part)), segments[-2])
+    words = [word.lower() for word in _CALLEE_WORD.findall(method) if not word.isdigit()]
     if not words:
         return 0  # 'token.(' or 'auth._(' in prose: no callee name to read
     if words[-1] in _CREDENTIAL_CONSTRUCTOR_WORDS and words[0] not in _LOOKUP_VERBS:
         return 2
     return 1 if not _CREDENTIAL_CALLEE_WORDS.isdisjoint(words) else 0
+
+
+def _chained_callee(text: str, dot: int) -> str:
+    """The empty calls a chained method is reached through: 'given().auth().basic(' gives 'given.auth'."""
+    names: list[str] = []
+    end = dot
+    while len(names) < 4:
+        while end > 0 and text[end - 1].isspace():
+            end -= 1
+        if end < 2 or text[end - 2:end] != "()":
+            break
+        name = _name_before(text, end - 2, "_$")
+        if not name:
+            break
+        names.append(name)
+        end -= 2 + len(name)
+        if end < 1 or text[end - 1] != ".":
+            break
+        end -= 1
+    return ".".join(reversed(names))
 
 
 def _credential_literals(
@@ -1106,6 +1141,19 @@ _HEADER_VALUE = re.compile(
     r"(?P<name>[A-Za-z][A-Za-z0-9-]*):(?:(?:Bearer|Basic|Token|Bot|Digest|SSWS|ApiKey|Api-Key|token)[ \t]+)?"
     r"(?P<secret>\S[^\r\n]*)"
 )
+# '-p' is a password only after some commands: a registry 'login' (docker,
+# podman, helm registry...) and 'sshpass', and the attached '-pVALUE' of MySQL
+# clients ('mysql -p db' prompts and names a database). Elsewhere it is often a
+# port or a path. The command is read from at most 256 characters before '-p'.
+_CLI_COMMAND_CONTEXT = 256
+_CLI_CONTINUATION = re.compile(r"\\\r?\n")
+_CLI_REGISTRY_LOGIN = re.compile(
+    r"(?:^|[\s(/])(?:docker|podman|nerdctl|buildah|skopeo|oras|crane|helm)[ \t](?:.*[ \t])?login(?:[ \t]|$)"
+)
+_CLI_SSHPASS = re.compile(r"(?:^|[\s(/])sshpass(?:[ \t]+-[A-Za-z]\S*)*[ \t]+$")
+_CLI_MYSQL = re.compile(
+    r"(?:^|[\s(/])(?:mysql(?:dump|admin|import|show|check|sh)?|mariadb(?:-dump|-admin)?)[ \t]"
+)
 
 
 def _cli_option_mode(option: str) -> str:
@@ -1117,6 +1165,28 @@ def _cli_option_mode(option: str) -> str:
     if not name.lower().startswith(("no-", "no_")) and _sensitive_assignment_key(re.sub(r"[-.]", "_", name)):
         return "secret"
     return ""
+
+
+def _cli_password_mode(text: str, option: re.Match[str], logins: bool, mysql: bool) -> str:
+    """'secret' for a login's '-p', 'attached' for a MySQL client's '-pVALUE', else ''.
+
+    ``logins`` and ``mysql`` say whether the text names those commands at all.
+    """
+    if not option.group().startswith("-p") or option.group().startswith("--"):
+        return ""
+    following = text[option.end():option.end() + 1]
+    rules: tuple[re.Pattern[str], ...]
+    if option.group() == "-p" and following in {" ", "\t", "\\"}:
+        mode, rules = "secret", ((_CLI_REGISTRY_LOGIN, _CLI_SSHPASS) if logins else ())
+    elif option.group() != "-p" or following.strip():
+        mode, rules = "attached", ((_CLI_MYSQL,) if mysql else ())
+    else:
+        return ""
+    if not rules:
+        return ""
+    head = _CLI_CONTINUATION.sub(" ", text[max(0, option.start() - _CLI_COMMAND_CONTEXT):option.start()])
+    command = head[max(head.rfind(separator) for separator in ";&|\n\r") + 1:]
+    return mode if any(rule.search(command) for rule in rules) else ""
 
 
 def _cli_secret_span(mode: str, value: str, start: int, strict: bool) -> tuple[int, int] | None:
@@ -1156,8 +1226,12 @@ def _redact_command_credentials(text: str) -> str:
         return text
     pieces: list[str] = []
     cursor = 0
+    logins = "login" in text or "sshpass" in text
+    mysql = "mysql" in text or "mariadb" in text
     for match in _CLI_OPTION.finditer(text):
-        mode = _cli_option_mode(match.group())
+        mode = _cli_option_mode(match.group()) or (
+            _cli_password_mode(text, match, logins, mysql) if logins or mysql else ""
+        )
         if not mode:
             continue
         start = match.start()
@@ -1171,7 +1245,10 @@ def _redact_command_credentials(text: str) -> str:
         strict = text.startswith("=", position)
         span: tuple[int, int] | None = None
         closing = -1
-        if quote and strict:
+        if mode == "attached":
+            closing = position
+            span = _cli_value_span("secret", text, start + 2, True)
+        elif quote and strict:
             # '"--api-key=value"' as one argv element.
             limit = text.find("\n", position, position + _CLI_VALUE_LIMIT)
             closing = text.find(quote, position + 1, position + _CLI_VALUE_LIMIT if limit < 0 else limit)
@@ -1202,10 +1279,11 @@ def _redact_command_credentials(text: str) -> str:
     return "".join(pieces)
 
 
-# Dockerfile's legacy 'ENV NAME value' and csh/Windows 'setenv NAME value' and
-# 'setx NAME value' set a variable without '='. 'ENV A=b C=d' is an assignment.
+# Dockerfile's legacy 'ENV NAME value', csh/Windows 'setenv NAME value' and
+# 'setx NAME value', and C's '#define NAME value' set a name without '='.
+# 'ENV A=b C=d' is an assignment.
 _ENVIRONMENT_COMMAND = re.compile(
-    r"(?m)^[ \t]*(?P<command>ENV|[Ee]nv|setenv|setx)[ \t]+(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)"
+    r"(?m)^[ \t]*(?P<command>ENV|[Ee]nv|setenv|setx|#[ \t]*define)[ \t]+(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)"
     r"(?P<gap>[ \t]+(?:\\\r?\n[ \t]*)?)(?P<value>[^\r\n]*)"
 )
 
@@ -1217,14 +1295,17 @@ def _redact_environment_commands(text: str) -> str:
     for match in _ENVIRONMENT_COMMAND.finditer(text):
         if match.start() < cursor or not _sensitive_assignment_key(match.group("name")):
             continue
+        command = match.group("command")
         start = match.start("value")
         raw = match.group("value").rstrip()
         if raw.startswith(("\"", "'")) and raw.find(raw[0], 1) > 0:
             start, raw = start + 1, raw[1:raw.find(raw[0], 1)]
-        elif match.group("command").upper() == "ENV":
+        elif command == "ENV":
             raw = raw.removesuffix("\\").rstrip()  # the legacy form's value is the rest of the line
         else:
             raw = raw.split()[0] if raw.split() else ""
+            if command in {"env", "Env"} and _CLI_WORD.fullmatch(raw):
+                continue  # prose: 'Env token should be set'
         if _kept_value(raw):
             continue
         pieces.append(text[cursor:start])
@@ -1533,6 +1614,106 @@ def _redact_auth_pairs(text: str) -> str:
     return _AUTH_PAIR.sub(replace, text) if _AUTH_PAIR_HINT.search(text) else text
 
 
+# Names whose last word names a credential (openaiKey, OPENAI-KEY, dbPass,
+# stripe.secretKey, key) also name sort keys, page tokens and cache keys, so
+# only a literal that looks like an opaque key is withheld from them. An
+# unquoted value counts only after '=': after ':' it is usually a type. Both
+# patterns below start at the separator, which is rarer than a name, and the
+# name before it is read backwards.
+_OPAQUE_VALUE = re.compile(
+    r"(?P<separator>:=|=(?![=>~])|:(?![:=]))[ \t]*"
+    r"(?:(?:[rRbBuU]{1,2}|@)?(?P<quote>[\"'`])(?P<quoted>[^\"'`\r\n]{8,})(?P=quote)"
+    r"|(?P<bare>[A-Za-z0-9+/_.~-]{8,}={0,2})(?![^\s,;)}\]]))"
+)
+_OPAQUE_NAME = re.compile(r"[A-Za-z_$][\w$-]*(?:\.[A-Za-z_$][\w$-]*)*")
+_OPAQUE_NAME_WORDS = frozenset({
+    "apikey", "credential", "credentials", "key", "pass", "passwd", "password", "pwd", "secret", "token",
+})
+# An unquoted value made of words is an identifier (key = Ed25519PrivateKey).
+# Random keys almost always have a one- or two-letter lowercase run.
+_WORDY = re.compile(r"(?:[A-Z][a-z]+|[a-z]{3,}|[A-Z]{2,}|[0-9]+|_)+")
+# A sensitive key whose colon ends its line, then a lone word on the next,
+# unindented line ('token:\n<value>' in notes and error text). An indented
+# line is YAML nesting, which the multiline pass handles.
+_NEXT_LINE_VALUE = re.compile(r":[ \t]*\r?\n(?P<value>[^\s\"'#()\[\]{}<>,;]+)[ \t]*(?=\r?\n|\Z)")
+_NEXT_LINE_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
+
+
+def _name_before(text: str, end: int, characters: str) -> str:
+    """The longest run of letters, digits and ``characters`` that ends at ``end``."""
+    start = end
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] in characters):
+        start -= 1
+    return text[start:end]
+
+
+def _blanks_before(text: str, end: int) -> int:
+    """Where the spaces and tabs that end at ``end`` start."""
+    while end > 0 and text[end - 1] in " \t":
+        end -= 1
+    return end
+
+
+def _credential_name(name: str) -> bool:
+    """Whether a name's last word names a credential ('monkey' and 'bypass' do not)."""
+    if not _OPAQUE_NAME.fullmatch(name):
+        return False
+    words = _CALLEE_WORD.findall(name.rsplit(".", 1)[-1])
+    return bool(words) and words[-1].lower() in _OPAQUE_NAME_WORDS
+
+
+def _assigned_name(text: str, separator: int) -> str:
+    """The name assigned at ``separator``, past a closing quote and a simple type annotation.
+
+    A '?' before the separator is a nullable type ('String? =') or Make's '?='.
+    """
+    end = _blanks_before(text, separator)
+    if end > 0 and text[end - 1] in "\"'":
+        end -= 1
+    elif end > 0 and text[end - 1] == "?":
+        end = _blanks_before(text, end - 1)
+    name = _name_before(text, end, "_$.-")
+    colon = _blanks_before(text, end - len(name))
+    typed = colon > 0 and text[colon - 1] == ":" and (colon < 2 or text[colon - 2] != ":")
+    if name and typed and not _credential_name(name):
+        return _name_before(text, _blanks_before(text, colon - 1), "_$.-")  # 'openaiKey: string = "..."'
+    return name
+
+
+def _redact_opaque_assignments(text: str) -> str:
+    """Withhold opaque literals given to credential-like names, and a lone value after 'token:'."""
+    spans: list[tuple[int, int]] = []
+    for match in _OPAQUE_VALUE.finditer(text):
+        if not _credential_name(_assigned_name(text, match.start())):
+            continue
+        group = "quoted" if match.group("quoted") is not None else "bare"
+        value = match.group(group)
+        if group == "bare" and (match.group("separator") == ":" or _WORDY.fullmatch(value)):
+            continue
+        if match.group("quote") == "`" and "${" in value:
+            continue  # interpolated text is assembled elsewhere
+        if _credential_literal(value, positional=False):
+            spans.append(match.span(group))
+    for match in _NEXT_LINE_VALUE.finditer(text):
+        key = _name_before(text, match.start(), "_.-")
+        if not _NEXT_LINE_KEY.fullmatch(key) or not _sensitive_assignment_key(key):
+            continue
+        value = match.group("value")
+        if not _CLI_WORD.fullmatch(value) and _credential_literal(value, positional=True):
+            spans.append(match.span("value"))
+    if not spans:
+        return text
+    pieces: list[str] = []
+    cursor = 0
+    for start, end in sorted(spans):
+        if start >= cursor:
+            pieces.append(text[cursor:start])
+            pieces.append(REDACTED)
+            cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
 def _sensitive_key(key: str) -> bool:
     normalized = _KEY_NORMALISE.sub("", key.lower())
     # This runs for every key of every sanitized record. ``str.endswith`` with
@@ -1647,6 +1828,7 @@ def sanitize_text(text: str) -> str:
     text = _redact_python_assignments(text)
     text = _redact_yaml_multiline_values(text)
     text = _redact_mapping_values(text)
+    text = _redact_opaque_assignments(text)
     text = _JWT.sub(REDACTED, text)
     text = _SECRET_TOKEN.sub(REDACTED, text)
     # The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.

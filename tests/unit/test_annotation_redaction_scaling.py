@@ -129,7 +129,7 @@ def test_candidates_on_one_long_line_do_not_exhaust_the_budget():
 
 
 _LINE_PIECES = [
-    *_PIECES, "token = a, ", "(token = a, ", "{token: a}, ", "abc_def_ghi ", "1e5", "...", "?", "$",
+    *_PIECES, "token = a, ", "(token = a, ", "{token: a}, ", "abc_def_ghi ", "1e5", "...", "?", "$", "<-",
 ]
 
 

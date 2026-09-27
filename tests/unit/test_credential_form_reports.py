@@ -138,6 +138,15 @@ CASES = {
         'Request request = new Request.Builder().url("https://api.anthropic.com/v1/messages")'
         f'.header("x-api-key", "{HEX}").build();\n'
     ), HEX),
+    "docker-login": ("deploy.sh", (
+        f"docker login -u svc -p {BASE62} contoso.azurecr.io && curl {AZURE}openai/deployments\n"
+    ), BASE62),
+    "r-assignment": ("client.R", (
+        f'api_key <- "{HEX}"; base_url <- "https://api.openai.com/v1"\n'
+    ), HEX),
+    "js-credential-name": ("client.js", (
+        f'const openaiKey = "{HEX}", baseURL = "https://api.openai.com/v1";\n'
+    ), HEX),
 }
 
 
