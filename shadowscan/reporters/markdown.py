@@ -14,7 +14,7 @@ _BACKTICKS = re.compile(r"`+")
 _AUTOLINK = re.compile(r"(?i)\b(?:(https?)://|(www)\.)")
 _LINE_BREAKS = {
     "\r": r"\r", "\n": r"\n", "\t": r"\t", "\f": r"\f", "\v": r"\v",
-    "\x85": r"\u0085", " ": r" ", " ": r" ",
+    "\x85": r"\u0085", "\u2028": r"\u2028", "\u2029": r"\u2029",
 }
 
 
