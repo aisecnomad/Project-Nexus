@@ -11,7 +11,7 @@ from shadowscan.models import Evidence, Finding, Kind, ScanResult, Surface
 from shadowscan.reporters.csv_ import _safe_cell, render_csv
 
 TRIGGERS = ("=", "+", "-", "@")
-TRIMMED = " \t\r\n\v\f﻿\""
+TRIMMED = " \t\r\n\v\f\ufeff\""
 
 HOSTILE = [
     "x;=2+5;",

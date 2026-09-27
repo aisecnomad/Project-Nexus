@@ -47,7 +47,7 @@ COLUMNS = [
 # break, or a later cell that does, is also neutralised.
 _FORMULA_CELL = re.compile(
     r"^(?=[\t\r\n])"
-    r"|(?:^|(?<=[,;\t|\r\n]))(?=[\t\r]|[ \t\r\n\v\f﻿\"]*[=+\-@])"
+    r"|(?:^|(?<=[,;\t|\r\n]))(?=[\t\r]|[ \t\r\n\v\f\ufeff\"]*[=+\-@])"
 )
 
 
