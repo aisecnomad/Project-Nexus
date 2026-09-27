@@ -13,7 +13,10 @@ Two situations are deliberately outside a repository's own content:
   directory links, whose alias paths are not inspected; configuration and
   document aliases, whose parsing can depend on their path; source aliases into
   another project or test directory; links into excluded or unread content;
-  links outside the root; and unresolved links.
+  links outside the root; and unresolved links. Files are read relative to the
+  opened scan root without following a link in any path component, so a
+  directory replaced by a link after the walk listed it fails that file's read
+  (incomplete) instead of reading content outside the root.
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain

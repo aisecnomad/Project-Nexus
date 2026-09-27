@@ -84,6 +84,7 @@ from shadowscan.connectors.common import (
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
+from shadowscan.utils.files import open_confined_directory
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
@@ -381,6 +382,8 @@ class _ScanState:
 
     root: Path
     label: str  # resource prefix of every finding
+    # Descriptor of the directory files are read relative to, open during the walk.
+    root_fd: int = -1
     projects: dict[str, _Project] = field(default_factory=lambda: {".": _Project(".")})
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
     # relpath, parsed servers
@@ -618,9 +621,12 @@ def _checked_scan_root(path: str | Path) -> Path:
     """Reject symlinked roots and ancestors before resolving a scan input.
 
     Keep ``..`` components while checking so ``link/..`` cannot conceal a
-    symlink in the path supplied by the caller. The scan itself assumes an
-    immutable checkout; an adversary concurrently replacing directories still
-    needs isolation at the filesystem/container boundary.
+    symlink in the path supplied by the caller. The walk then opens this root
+    once and reads every file relative to it without following a link in any
+    component (``FilesystemConnector._walk``), so a directory concurrently
+    replaced by a link fails its reads instead of redirecting them outside the
+    tree. Findings still describe one consistent state only when the checkout
+    does not change during the scan.
     """
     try:
         raw = Path(path).expanduser().absolute()
@@ -1087,7 +1093,28 @@ class FilesystemConnector(BaseConnector):
         return label
 
     def _walk(self, scan: _ScanState) -> None:
-        """Analyze every file under the scan root, each in its own failure isolation."""
+        """Analyze every file under the scan root, each in its own failure isolation.
+
+        Files are read relative to the root directory opened here, with no
+        link followed in any component below it. The listing itself uses
+        paths, so a directory replaced by a link after it was listed fails
+        that file's read (incomplete coverage) instead of redirecting it.
+        """
+        # A single-file root is read relative to its (equally checked) parent.
+        base = scan.root.parent if scan.root.is_file() else scan.root
+        try:
+            scan.root_fd = open_confined_directory(base)
+        except (OSError, ValueError):
+            self.ctx.error(f"code.filesystem: could not open {scan.root} without following links")
+            return
+        try:
+            self._walk_entries(scan)
+        finally:
+            os.close(scan.root_fd)
+            scan.root_fd = -1
+
+    def _walk_entries(self, scan: _ScanState) -> None:
+        """Start each file only while its matching budget fits before the connector deadline."""
         deadline = self.ctx.deadline
         margin = deadline_margin(deadline - time.monotonic()) if deadline is not None else 0.0
         entries = self._iter_entries(scan.root)
@@ -1133,7 +1160,7 @@ class FilesystemConnector(BaseConnector):
         file_matches = self.index.match_file(rel)
         if not (_analyzed_by_name(path.name) or file_matches):
             return
-        loaded = self._read_source(rel, path)
+        loaded = self._read_source(rel, path, scan.root_fd)
         if loaded is None:
             return
         text, raw_notebook = loaded
@@ -1158,14 +1185,15 @@ class FilesystemConnector(BaseConnector):
         # 4. special files
         self._record_special_files(scan, file)
 
-    def _read_source(self, rel: str, path: Path) -> tuple[str, str | None] | None:
+    def _read_source(self, rel: str, path: Path, root_fd: int) -> tuple[str, str | None] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document.
 
-        A notebook's text is its code cells. None means nothing is analyzed;
-        the recorded diagnostics say why.
+        ``rel`` is read relative to the open scan root ``root_fd``. A notebook's
+        text is its code cells. None means nothing is analyzed; the recorded
+        diagnostics say why.
         """
         read_errors: list[str] = []
-        text = read_text(path, self._size_limit(path.name), read_errors)
+        text = read_text(PurePosixPath(rel), self._size_limit(path.name), read_errors, dir_fd=root_fd)
         for issue in read_errors:
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
                 self.ctx.warn(
@@ -1801,8 +1829,14 @@ class FilesystemConnector(BaseConnector):
                     ):
                         self.ctx.error(f"code.filesystem: ignored unsafe CODEOWNERS path {cand}")
                         break
+                    # The check above is for its diagnostic; the read itself
+                    # follows no link below the root, whatever changed since.
                     errors: list[str] = []
-                    content = read_text(p, self.max_file_size, errors)
+                    directory = open_confined_directory(root)
+                    try:
+                        content = read_text(PurePosixPath(cand), self.max_file_size, errors, dir_fd=directory)
+                    finally:
+                        os.close(directory)
                     for issue in errors:
                         self.ctx.error(f"code.filesystem: {cand}: {issue}")
                     for line in (content or "").splitlines():
@@ -1819,7 +1853,7 @@ class FilesystemConnector(BaseConnector):
                                 self._ownership_exhausted.add(root)
                                 break
                             rules.append((parts[0], parts[1:]))
-                except (OSError, RuntimeError):
+                except (OSError, RuntimeError, ValueError):
                     self.ctx.error(f"code.filesystem: could not read {cand}")
                 break
         self._codeowners_cache[root] = rules

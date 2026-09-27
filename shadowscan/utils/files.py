@@ -7,7 +7,7 @@ import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from fnmatch import fnmatchcase
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import BinaryIO
 
 MAX_POLICY_BYTES = 8 * 1024 * 1024
@@ -91,8 +91,43 @@ def policy_glob(pattern: Path) -> Iterator[Path]:
                     stack.append((Path(entry.path), position + 1))
 
 
+def _require_confined_open() -> None:
+    if (
+        not all(hasattr(os, name) for name in ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK"))
+        or os.open not in os.supports_dir_fd
+    ):
+        raise ValueError("secure file access is unavailable on this platform")
+
+
+def open_confined_directory(path: PurePath) -> int:
+    """Open a directory without following a link in any component of its absolute path.
+
+    Returns a descriptor the caller must close. Files below the directory are
+    then opened with :func:`open_confined_file` and ``dir_fd``, which walks
+    only their components relative to it, so a directory tree is confined to
+    the root opened here without reopening its ancestors for every file.
+    Raises ``ValueError`` like :func:`open_confined_file`; ``OSError``
+    propagates unchanged and may name the path.
+    """
+    _require_confined_open()
+    absolute = Path(path).absolute()
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY
+    directory = os.open(absolute.anchor, flags)
+    try:
+        for component in absolute.parts[1:]:
+            child = os.open(component, flags, dir_fd=directory)
+            os.close(directory)
+            directory = child
+    except BaseException:
+        os.close(directory)
+        raise
+    return directory
+
+
 @contextmanager
-def open_confined_file(path: Path, *, label: str = "input") -> Iterator[tuple[BinaryIO, os.stat_result]]:
+def open_confined_file(
+    path: PurePath, *, label: str = "input", dir_fd: int | None = None,
+) -> Iterator[tuple[BinaryIO, os.stat_result]]:
     """Open a regular file for reading without following a link in any path component.
 
     Every directory component of the absolute path is opened relative to its
@@ -103,6 +138,12 @@ def open_confined_file(path: Path, *, label: str = "input") -> Iterator[tuple[Bi
     with :class:`NotRegularFileError` unless ``fstat`` reports a regular file.
     ``..`` components are not collapsed: callers normalise the path the way
     their surrounding checks expect, and a link anywhere in it is refused.
+
+    With ``dir_fd``, ``path`` is relative to that open directory (see
+    :func:`open_confined_directory`), which stays open and owned by the
+    caller. Only the components below it are opened, the same way, and a
+    path that is absolute, empty or contains ``..`` is refused with
+    ``ValueError`` because it could leave that directory.
 
     The binary stream and the ``fstat`` result of its descriptor are yielded
     together. Byte limits stay with the caller because the readers built on
@@ -119,21 +160,26 @@ def open_confined_file(path: Path, *, label: str = "input") -> Iterator[tuple[Bi
     support, because the walk cannot then be made safe. ``OSError`` propagates
     unchanged and may name the path, so diagnostics must not echo it.
     """
-    if (
-        not all(hasattr(os, name) for name in ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK"))
-        or os.open not in os.supports_dir_fd
-    ):
-        raise ValueError("secure file access is unavailable on this platform")
-    absolute = Path(path).absolute()
+    _require_confined_open()
     flags = os.O_RDONLY | os.O_NOFOLLOW
+    if dir_fd is None:
+        absolute = Path(path).absolute()
+        components, name = absolute.parts[1:-1], absolute.name
+        directory, owned = os.open(absolute.anchor, flags | os.O_DIRECTORY), True
+    else:
+        parts = PurePath(path).parts
+        if not parts or PurePath(path).is_absolute() or ".." in parts:
+            raise ValueError(f"{label} path must stay below its directory")
+        components, name = parts[:-1], parts[-1]
+        directory, owned = dir_fd, False
     fd: int | None = None
-    directory = os.open(absolute.anchor, flags | os.O_DIRECTORY)
     try:
-        for component in absolute.parts[1:-1]:
+        for component in components:
             child = os.open(component, flags | os.O_DIRECTORY, dir_fd=directory)
-            os.close(directory)
-            directory = child
-        fd = os.open(absolute.name, flags | os.O_NONBLOCK, dir_fd=directory)
+            if owned:
+                os.close(directory)
+            directory, owned = child, True
+        fd = os.open(name, flags | os.O_NONBLOCK, dir_fd=directory)
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode):
             raise NotRegularFileError(f"{label} is not a regular file")
@@ -142,7 +188,8 @@ def open_confined_file(path: Path, *, label: str = "input") -> Iterator[tuple[Bi
     finally:
         if fd is not None:
             os.close(fd)
-        os.close(directory)
+        if owned:
+            os.close(directory)
     with stream:
         yield stream, before
 

@@ -49,7 +49,12 @@ Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
 by default; `strict_coverage` promotes their diagnostics to errors. Declared
-oversize skip globs remain visible omissions.
+oversize skip globs remain visible omissions. Each root is opened once, and every
+file (including `CODEOWNERS`) is read relative to it without following a link in
+any path component. A directory replaced by a link while the scan runs therefore
+fails the reads below it, which makes the scan incomplete, instead of redirecting
+them outside the root. Findings describe one consistent state of the tree only
+when the checkout does not change during the scan.
 
 Configuration files are parsed as JSONC where their format allows comments.
 A syntax error in a file that is not coding-agent settings only skips its
