@@ -31,6 +31,11 @@ Analysis limits are reported with their reason, for example
 `file analysis incomplete (MatchTimeoutError: source binding call limit exceeded)`.
 The import binder only counts calls into modules that a signature describes,
 so large ordinary files (test suites, HTTP clients) no longer hit the limit.
+Its node budget (`max_ast_nodes`) and nesting limit likewise apply only to a
+Python module with an import that can resolve to a signature. The binder is
+skipped for any other module, of any size, because it could not contribute
+evidence there; a large module that does import such a library still reports
+`import-bound analysis skipped (source binding AST limit exceeded); lexical evidence retained`.
 
 ## Test and fixture code
 

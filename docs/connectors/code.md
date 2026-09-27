@@ -62,9 +62,14 @@ structured checks, with a warning; `.claude`, `.codex` and `.gemini` settings
 and `strict_coverage` keep such an error incomplete. A notebook larger than
 `max_file_size` because of saved outputs is analyzed by its code cells up to
 `max_notebook_size` (default 20 MiB); its outputs are then not scanned for
-credentials, which leaves coverage incomplete unless `scan_secrets` is off. A Python module over `max_ast_nodes` (default 50000) keeps its
-lexical evidence without import-bound analysis: a warning in test code, an error
-elsewhere. Malformed YAML front matter in an agent definition, including a
+credentials, which leaves coverage incomplete unless `scan_secrets` is off.
+Import-bound analysis is skipped for a Python module none of whose imports can
+resolve to a signature: no import, and no attribute of an imported module, forms
+an import statement that a signature's import pattern could match. Such a module
+cannot contribute import-bound evidence, so its size or nesting depth never makes
+the scan incomplete. Any other Python module over `max_ast_nodes` (default 50000) keeps
+its lexical evidence without import-bound analysis: a warning in test code, an
+error elsewhere. Malformed YAML front matter in an agent definition, including a
 YAML value PyYAML cannot construct (an impossible date, an integer over 4,300
 digits), is reported as `invalid agent definition YAML`; the definition is
 still listed by its file name.

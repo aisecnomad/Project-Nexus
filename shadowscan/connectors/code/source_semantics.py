@@ -6,7 +6,9 @@ imports, re-exports and uncertain/shadowed JavaScript bindings remain supporting
 framework evidence. No scanned code is imported or executed.
 
 Python AST work is capped at 50,000 nodes and source calls at 512 per file;
-call expressions are bounded to 8 KiB. Regex operations share the scanner's
+call expressions are bounded to 8 KiB. A Python file whose imports provably
+cannot resolve to any signature skips the binder at any size, since it could
+yield no evidence (``_python_bindable``). Regex operations share the scanner's
 per-input deadline. Other source languages do not use this resolver: filesystem
 classification requires matching import/dependency evidence for their lexical
 framework signals, and caps uncorroborated code evidence at 0.6.
@@ -16,6 +18,8 @@ from __future__ import annotations
 
 import ast
 import re
+import threading
+import weakref
 from bisect import bisect_right
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -27,12 +31,14 @@ from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal
-from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
+from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
 from shadowscan.utils.redaction import sanitize_text
 
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
 MAX_CALL_TEXT = 8192
+# Attribute-name statements checked exactly while proving a file unbindable.
+_MAX_PROOF_STATEMENTS = 512
 
 
 class SourceBudgetExceeded(MatchTimeoutError):
@@ -385,10 +391,141 @@ class _PythonBindings(ast.NodeVisitor):
                            for name in set(outcomes[0]) | set(outcomes[1])}
 
 
+_LiteralGroups = tuple[tuple[str, ...], ...]
+# Per index: the required literal groups of each Python import pattern, or
+# None when a pattern has no case-sensitive literal every match contains.
+_IMPORT_HINTS: weakref.WeakKeyDictionary[SignatureIndex, tuple[_LiteralGroups, ...] | None] = (
+    weakref.WeakKeyDictionary()
+)
+_IMPORT_HINTS_LOCK = threading.Lock()
+
+
+def _python_statement(binding: _Binding) -> str:
+    """Return the import statement whose signature matches give a Python binding its provenance."""
+    if binding.symbol:
+        return f"from {binding.module} import {binding.symbol.split('.')[0]}"
+    return f"import {binding.module}"
+
+
+def _python_import_hints(index: SignatureIndex) -> tuple[_LiteralGroups, ...] | None:
+    """Return the required literal groups of every Python import pattern of ``index``, cached.
+
+    Every match of a pattern contains an alternative of each of its groups:
+    the ``required_literals`` contract that the matcher's own prefilter relies
+    on. None means some pattern has no such case-sensitive literals, so no
+    statement can be ruled out without running it.
+    """
+    with _IMPORT_HINTS_LOCK:
+        if index in _IMPORT_HINTS:
+            return _IMPORT_HINTS[index]
+    result = _collect_import_hints(index)
+    with _IMPORT_HINTS_LOCK:
+        _IMPORT_HINTS[index] = result
+    return result
+
+
+def _collect_import_hints(index: SignatureIndex) -> tuple[_LiteralGroups, ...] | None:
+    patterns: list[_LiteralGroups] = []
+    for signature in index.signatures.values():
+        for signal in signature.signals:
+            # The same signals the matcher runs for a Python import statement.
+            if signal.type != "import" or signal.languages and "python" not in signal.languages:
+                continue
+            for compiled in signal.bounded_compiled:
+                pattern = getattr(compiled, "pattern", None)
+                if not isinstance(pattern, str):
+                    return None
+                hints = required_literals(pattern)
+                if hints.fold or not hints.groups:
+                    return None
+                patterns.append(hints.groups)
+    return tuple(patterns)
+
+
+def _python_bindable(index: SignatureIndex, tree: ast.AST) -> bool:
+    """Whether a binding ``_PythonBindings`` can create for ``tree`` has signature matches.
+
+    False proves the binder yields no evidence for the file, whatever its size:
+    every import and call it reports needs such a binding, and the provider
+    loop recognizers only follow those calls. Bindings originate in absolute
+    imports and resolve through ``_python_statement``. ``from M import A`` (A
+    and its attributes) and ``import M`` (M or its first component) are
+    checked exactly. Attributes of an ``import M`` binding give ``from M
+    import <attribute>`` for any attribute name in the file; such a statement
+    is checked exactly only when it can contain an alternative of every
+    required literal group of some pattern (``_python_import_hints``), since
+    otherwise no pattern can match it. Repository-local modules are not
+    excluded here, so True may be conservative; it never changes a result.
+    """
+
+    def matched(module: str, symbol: str) -> bool:
+        statement = _python_statement(_Binding(module, symbol))
+        return bool(index.match_import_statement(statement, "python"))
+
+    modules: set[str] = set()
+    attributes: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            attributes.add(node.attr)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                modules.update((alias.name, alias.name.split(".")[0]))
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            for alias in node.names:
+                if alias.name != "*" and matched(node.module or "", alias.name):
+                    return True
+    if not modules:
+        return False
+    hints = _python_import_hints(index)
+    if hints is None:
+        return True
+    # A literal found in no name costs one search of all names together.
+    joined = "\n".join(attributes)
+    containing: dict[str, set[str]] = {}
+
+    def names_matching(group: tuple[str, ...]) -> set[str]:
+        """Attribute names that contain an alternative of ``group``."""
+        found: set[str] = set()
+        for literal in group:
+            if literal not in containing:
+                present = literal in joined
+                containing[literal] = {name for name in attributes if literal in name} if present else set()
+            found |= containing[literal]
+        return found
+
+    checked = 0
+    for module in sorted(modules):
+        if matched(module, ""):
+            return True
+        # Names are identifiers. A literal holding a space may span the fixed
+        # text and the name, so it never rules a statement out.
+        fixed = f"from {module} import "
+        candidates: set[str] = set()
+        for groups in hints:
+            needed = [group for group in groups if not any(" " in alt or alt in fixed for alt in group)]
+            if not needed:
+                return True  # any attribute passes; too many to check exactly
+            names = names_matching(needed[0])
+            for group in needed[1:]:
+                names &= names_matching(group)
+            candidates |= names
+        checked += len(candidates)
+        if checked > _MAX_PROOF_STATEMENTS:
+            return True
+        if any(matched(module, name) for name in sorted(candidates)):
+            return True
+    return False
+
+
 def _python_bindings(
     text: str, relevant: Callable[[_Binding], bool] | None = None, max_nodes: int | None = None,
+    bindable: Callable[[ast.AST], bool] | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
+    if bindable is not None and not bindable(tree):
+        # Proven to yield nothing: skipping the binder loses no evidence, so
+        # a file of any size is complete without it.
+        return [], [], tree
     limit = MAX_AST_NODES if max_nodes is None else max_nodes
     for count, _ in enumerate(ast.walk(tree)):
         if count >= limit:
@@ -517,8 +654,7 @@ def bound_source_matches(
     def module_matches(binding: _Binding) -> list[Match]:
         if binding not in module_cache:
             if language == "python":
-                statement = f"from {binding.module} import {binding.symbol.split('.')[0]}" if binding.symbol else f"import {binding.module}"
-                matches = list(index.match_import_statement(statement, language))
+                matches = list(index.match_import_statement(_python_statement(binding), language))
                 if matches and is_local_module is not None and is_local_module(binding.module):
                     matches = []
             else:
@@ -535,7 +671,9 @@ def bound_source_matches(
     tree = None
     try:
         if language == "python":
-            calls, imports, tree = _python_bindings(text, relevant, max_ast_nodes)
+            calls, imports, tree = _python_bindings(
+                text, relevant, max_ast_nodes, bindable=lambda parsed: _python_bindable(index, parsed),
+            )
         else:
             calls, imports = _javascript_bindings(text, ignored, relevant)
     except RecursionError as exc:
