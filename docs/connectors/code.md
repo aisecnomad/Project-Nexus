@@ -55,9 +55,9 @@ any path component. A directory replaced by a link while the scan runs therefore
 fails the reads below it, which makes the scan incomplete, instead of redirecting
 them outside the root. Like reading a file by its path, this needs only search
 permission on the directories above a file, so a checkout below a traverse-only
-directory (for example a mode `0711` home directory) is scanned as before. A root
-that cannot be opened this way is reported, by its `label` when one is set, as
-`could not open the scan root safely (<reason>)`, where the reason is `permission
+directory, such as a mode `0711` home directory, can be scanned. A root that
+cannot be opened this way is reported, by its `label` when one is set, as `could
+not open the scan root safely (<reason>)`, with a reason such as `permission
 denied`, `not found` or `a path component is a link or not a directory`; nothing
 below it is scanned and the scan is incomplete. Findings describe
 one consistent state of the tree only when the checkout does not change during
