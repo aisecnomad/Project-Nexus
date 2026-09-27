@@ -6,7 +6,8 @@ size, so the budget must not make an ordinary large module incomplete. Every
 other over-budget file stays incomplete exactly as before. The proof is
 checked against the binder itself, run without a budget, on every Python
 input in the repository: the evaluation corpora, the fixtures and the
-scanner's own sources.
+scanner's own sources. Its work is linear in the file and bounded, so it can
+never exhaust the per-file matching budget and lose lexical evidence.
 """
 
 from __future__ import annotations
@@ -63,6 +64,8 @@ EDGE_CASES = {
         '"""from openai import OpenAI"""\nimport os\nkey = os.environ["OPENAI_API_KEY"]\n', False,
     ),
     "near-miss-attributes": ("import os\nos.nat_tool = 1\nos.signature_eval()\nos.path.cli_agent()\n", False),
+    # The module name alone holds every literal "from M import A" needs.
+    "module-name-holds-the-pattern-literals": ("import openai_helpers\nopenai_helpers.run()\n", True),
     "relative-import": ("from .openai import OpenAI\nOpenAI()\n", False),
     "star-import": ("from openai import *\nOpenAI()\n", False),
     "dynamic-import": ('openai = __import__("openai")\nopenai.OpenAI()\n', False),
@@ -155,6 +158,26 @@ def test_patterns_the_proof_cannot_rule_out_keep_the_binder(pattern):
     assert [m.signature_id for m in bound_source_matches(index, text, "python", [])] == ["framework.custom"]
 
 
+def test_proof_covers_every_import_signal_the_matcher_runs():
+    # ``index.signatures`` keeps one signature per id, but the matcher runs the
+    # import signals of both; the first one's pattern must not be missed.
+    index = SignatureIndex([
+        signature_from_dict({
+            "id": "framework.custom",
+            "category": "framework",
+            "signals": [
+                {"type": "import", "languages": ["python"], "patterns": [pattern]},
+                {"type": "code", "languages": ["python"], "patterns": [code]},
+            ],
+        })
+        for pattern, code in ((r"^from\s+alpha\s+import\s+Agent\b", r"\bAgent\("),
+                              (r"^from\s+beta\s+import\s+Crew\b", r"\bCrew\("))
+    ])
+    text = "import alpha\nalpha.Agent()\n"
+    assert source_semantics._python_bindable(index, ast.parse(text))
+    assert [m.signature_id for m in bound_source_matches(index, text, "python", [])] == ["framework.custom"]
+
+
 def test_too_many_candidate_names_keep_the_binder():
     index = SignatureIndex([signature_from_dict({
         "id": "framework.custom",
@@ -166,6 +189,121 @@ def test_too_many_candidate_names_keep_the_binder():
     names = "".join(f"os.AgentX{number}()\n" for number in range(source_semantics._MAX_PROOF_STATEMENTS + 1))
     assert source_semantics._python_bindable(index, ast.parse("import os\n" + names))
     assert not source_semantics._python_bindable(index, ast.parse("import os\nos.AgentX1()\n"))
+
+
+def _dotted_imports(count: int) -> str:
+    """Imports whose modules hold "." and attribute names that each hold one other group of a pattern.
+
+    ``nat.<package>`` needs "nat" or "aiq", a "." and a package name such as
+    "agent". Every group is held by some module or name, but no module and
+    name hold all three together, so the proof must pair them to rule it out.
+    """
+    imports = "".join(f"import pkg.mod{number}\n" for number in range(count))
+    return imports + "".join(
+        f"pkg.mod{number}.nat_{number}\npkg.mod{number}.agent_{number}\n" for number in range(count)
+    )
+
+
+def _proof_work(
+    index: SignatureIndex, text: str, monkeypatch: pytest.MonkeyPatch,
+) -> tuple[bool, int, int, int]:
+    """Return the verdict, the statements matched, the literal searches and the names they returned."""
+    statements: list[str] = []
+    searches: list[int] = []
+    match = index.match_import_statement
+    holding = source_semantics._Names.holding
+
+    def counted_match(statement: str, language: str | None) -> tuple[Match, ...]:
+        statements.append(statement)
+        return match(statement, language)
+
+    def counted_holding(self: Any, literal: str) -> tuple[str, ...]:
+        found = holding(self, literal)
+        searches.append(len(found))
+        return found
+
+    tree = ast.parse(text)
+    with monkeypatch.context() as patch:
+        patch.setattr(index, "match_import_statement", counted_match)
+        patch.setattr(source_semantics._Names, "holding", counted_holding)
+        verdict = source_semantics._python_bindable(index, tree)
+    return verdict, len(statements), len(searches), sum(searches)
+
+
+def test_proof_work_is_linear_in_the_modules_and_names(index, monkeypatch):
+    # Pairing every module with every name took quadratic time: thousands of
+    # imports exhausted the per-file matching budget and lost the file's
+    # lexical evidence. The work must scale with the file, not its square.
+    small = _proof_work(index, _dotted_imports(500), monkeypatch)
+    large = _proof_work(index, _dotted_imports(2000), monkeypatch)
+    assert small[0] is large[0] is False
+    # One match per distinct module ("pkg" and each "pkg.modN"), none per name.
+    assert (small[1], large[1]) == (501, 2001)
+    # The same literal searches whatever the size, each returning its holders once.
+    assert small[2] == large[2]
+    assert large[3] == 4 * small[3] <= 3 * (2001 + 2 * 2000 + 2000)
+
+
+def test_attribute_statements_are_bounded_across_patterns_and_matched_once(monkeypatch):
+    index = SignatureIndex([signature_from_dict({
+        "id": "framework.custom",
+        "category": "framework",
+        "signals": [{
+            "type": "import", "languages": ["python"],
+            "patterns": [r"^from\s+os\s+import\s+Alpha\b", r"^from\s+os\s+import\s+Beta\b"],
+        }],
+    })])
+    # Each pattern qualifies 300 statements; together they exceed what the proof matches.
+    names = "".join(f"os.Alpha{number}()\nos.Beta{number}()\n" for number in range(300))
+    assert source_semantics._python_bindable(index, ast.parse("import os\n" + names))
+    # A qualifying attribute statement that an import already matched is not matched again.
+    text = "from os import AlphaX\nimport os\nos.AlphaX()\n"
+    assert _proof_work(index, text, monkeypatch)[:2] == (False, 2)
+
+
+def test_proof_matches_at_most_its_budget_of_statements(index, monkeypatch):
+    limit = source_semantics._MAX_PROOF_MATCHES
+    many_from = "".join(f"from mod{number} import name{number}\n" for number in range(limit + 100))
+    assert _proof_work(index, many_from, monkeypatch)[:2] == (True, limit)
+    # "pkg" and every "pkg.modN" are distinct modules to match.
+    assert _proof_work(index, _dotted_imports(limit - 1), monkeypatch)[:2] == (False, limit)
+    assert _proof_work(index, _dotted_imports(limit), monkeypatch)[:2] == (True, 0)
+
+
+PROVIDER_URL = 'URL = "https://api.anthropic.com/v1/messages"\n'
+SKIPPED_BINDING = (
+    "code.filesystem: service.py: import-bound analysis skipped (source binding AST limit exceeded); "
+    "lexical evidence retained"
+)
+
+
+def _plain_imports(count: int) -> str:
+    return "".join(f"import mod{number}\n" for number in range(count)) + "".join(
+        f"mod{number}.agent_tool_{number}\n" for number in range(count)
+    )
+
+
+# Thousands of imports under and over the node budget, below and beyond the
+# proof's match budget, each with lexical provider evidence: the scan keeps
+# that evidence and the base result, except that the proof now completes an
+# oversized module it decides.
+MANY_IMPORTS = {
+    "within-node-budget": (_plain_imports(4000), False, 0, []),
+    "within-node-budget-beyond-match-budget": (_plain_imports(4200), False, 0, []),
+    "over-node-budget": (_plain_imports(3000) + _filler(6000), True, 0, []),
+    "over-node-budget-beyond-match-budget": (_plain_imports(8000), True, 3, [SKIPPED_BINDING]),
+}
+
+
+@pytest.mark.parametrize(
+    ("text", "oversized", "exit_code", "errors"), MANY_IMPORTS.values(), ids=list(MANY_IMPORTS),
+)
+def test_many_imports_keep_lexical_evidence_and_the_file_budget(tmp_path, text, oversized, exit_code, errors):
+    assert (sum(1 for _ in ast.walk(ast.parse(text))) > MAX_AST_NODES) is oversized
+    code, report = _scan(tmp_path, PROVIDER_URL + text)
+    assert code == exit_code
+    assert report["stats"][0]["errors"] == errors
+    assert any("provider.anthropic" in finding["model_providers"] for finding in report["findings"])
 
 
 def test_default_budget_applies_only_when_a_binding_can_resolve(index):

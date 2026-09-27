@@ -67,12 +67,15 @@ Import-bound analysis is skipped for a Python module none of whose imports can
 resolve to a signature: no import, and no attribute of an imported module, forms
 an import statement that a signature's import pattern could match. Such a module
 cannot contribute import-bound evidence, so its size or nesting depth never makes
-the scan incomplete. Any other Python module over `max_ast_nodes` (default 50000) keeps
-its lexical evidence without import-bound analysis: a warning in test code, an
-error elsewhere. Malformed YAML front matter in an agent definition, including a
-YAML value PyYAML cannot construct (an impossible date, an integer over 4,300
-digits), is reported as `invalid agent definition YAML`; the definition is
-still listed by its file name.
+the scan incomplete. Deciding this takes time linear in the module and at most
+4,096 distinct import statement matches, 512 of them for attributes; a module
+that needs more, which ordinary code does not, is treated like one that imports
+a signature's library. Any other Python module over `max_ast_nodes` (default
+50000) keeps its lexical evidence without import-bound analysis: a warning in
+test code, an error elsewhere. Malformed YAML front matter in an agent
+definition, including a YAML value PyYAML cannot construct (an impossible date,
+an integer over 4,300 digits), is reported as `invalid agent definition YAML`;
+the definition is still listed by its file name.
 
 A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding and listed under `metadata.manifests`. MCP server

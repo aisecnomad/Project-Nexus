@@ -34,7 +34,10 @@ so large ordinary files (test suites, HTTP clients) no longer hit the limit.
 Its node budget (`max_ast_nodes`) and nesting limit likewise apply only to a
 Python module with an import that can resolve to a signature. The binder is
 skipped for any other module, of any size, because it could not contribute
-evidence there; a large module that does import such a library still reports
+evidence there. Deciding that is linear in the module and matches at most
+4,096 distinct import statements, so it cannot exhaust a file's matching budget.
+A large module that does import such a library, or has more imports than that,
+still reports
 `import-bound analysis skipped (source binding AST limit exceeded); lexical evidence retained`.
 
 ## Test and fixture code

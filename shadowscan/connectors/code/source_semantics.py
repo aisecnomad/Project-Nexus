@@ -8,8 +8,9 @@ framework evidence. No scanned code is imported or executed.
 Python AST work is capped at 50,000 nodes and source calls at 512 per file;
 call expressions are bounded to 8 KiB. A Python file whose imports provably
 cannot resolve to any signature skips the binder at any size, since it could
-yield no evidence (``_python_bindable``). Regex operations share the scanner's
-per-input deadline. Other source languages do not use this resolver: filesystem
+yield no evidence (``_python_bindable``, linear in the file and bounded to 4,096
+statement matches). Regex operations share the scanner's per-input deadline.
+Other source languages do not use this resolver: filesystem
 classification requires matching import/dependency evidence for their lexical
 framework signals, and caps uncorroborated code evidence at 0.6.
 """
@@ -37,7 +38,10 @@ from shadowscan.utils.redaction import sanitize_text
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
 MAX_CALL_TEXT = 8192
-# Attribute-name statements checked exactly while proving a file unbindable.
+# Proving a file unbindable matches at most this many distinct synthesized
+# statements (real modules need a few hundred), of which at most 512 name an
+# attribute of an imported module; a file needing more keeps the binder.
+_MAX_PROOF_MATCHES = 4096
 _MAX_PROOF_STATEMENTS = 512
 
 
@@ -392,8 +396,9 @@ class _PythonBindings(ast.NodeVisitor):
 
 
 _LiteralGroups = tuple[tuple[str, ...], ...]
-# Per index: the required literal groups of each Python import pattern, or
-# None when a pattern has no case-sensitive literal every match contains.
+# Per index: for each Python import pattern, the required literal groups that
+# a synthesized "from M import A" can hold only through M or A, or None when
+# some pattern cannot rule such a statement out (``_python_import_hints``).
 _IMPORT_HINTS: weakref.WeakKeyDictionary[SignatureIndex, tuple[_LiteralGroups, ...] | None] = (
     weakref.WeakKeyDictionary()
 )
@@ -408,12 +413,17 @@ def _python_statement(binding: _Binding) -> str:
 
 
 def _python_import_hints(index: SignatureIndex) -> tuple[_LiteralGroups, ...] | None:
-    """Return the required literal groups of every Python import pattern of ``index``, cached.
+    """Return what ``from M import A`` must hold in M or A to match each Python import pattern, cached.
 
-    Every match of a pattern contains an alternative of each of its groups:
-    the ``required_literals`` contract that the matcher's own prefilter relies
-    on. None means some pattern has no such case-sensitive literals, so no
-    statement can be ruled out without running it.
+    Every match of a pattern contains an alternative of each of its required
+    literal groups: the ``required_literals`` contract that the matcher's own
+    prefilter relies on. M (a dotted name) and A (an identifier) hold no space,
+    so an alternative without one lies within "from", M, "import" or A. A
+    group that "from" or "import" already satisfies constrains neither name,
+    and neither does one with an alternative holding a space, which may span
+    the parts; both are dropped. None means some pattern has no case-sensitive
+    literals, or no group is left, so no attribute statement can be ruled out
+    without running it.
     """
     with _IMPORT_HINTS_LOCK:
         if index in _IMPORT_HINTS:
@@ -425,21 +435,112 @@ def _python_import_hints(index: SignatureIndex) -> tuple[_LiteralGroups, ...] | 
 
 
 def _collect_import_hints(index: SignatureIndex) -> tuple[_LiteralGroups, ...] | None:
-    patterns: list[_LiteralGroups] = []
-    for signature in index.signatures.values():
-        for signal in signature.signals:
-            # The same signals the matcher runs for a Python import statement.
-            if signal.type != "import" or signal.languages and "python" not in signal.languages:
-                continue
-            for compiled in signal.bounded_compiled:
-                pattern = getattr(compiled, "pattern", None)
-                if not isinstance(pattern, str):
-                    return None
-                hints = required_literals(pattern)
-                if hints.fold or not hints.groups:
-                    return None
-                patterns.append(hints.groups)
+    patterns: dict[_LiteralGroups, None] = {}
+    # The (signature, signal) pairs the matcher's own regex plan runs, so a
+    # signature id that two signatures of the index share is covered too.
+    for _, signal in index._by_type.get("import", ()):
+        if signal.languages and "python" not in signal.languages:
+            continue
+        for compiled in signal.bounded_compiled:
+            pattern = getattr(compiled, "pattern", None)
+            if not isinstance(pattern, str):
+                return None
+            hints = required_literals(pattern)
+            if hints.fold or not hints.groups:
+                return None
+            groups = tuple(
+                group for group in hints.groups
+                if not any(" " in literal or literal in "from" or literal in "import" for literal in group)
+            )
+            if not groups:
+                return None
+            patterns[groups] = None
     return tuple(patterns)
+
+
+class _Names:
+    """Distinct names joined one per line, so finding those holding a literal costs one search."""
+
+    def __init__(self, names: set[str]) -> None:
+        self.names = sorted(names)
+        self.text = "\n".join(self.names)
+        self.starts = [0]
+        for name in self.names[:-1]:
+            self.starts.append(self.starts[-1] + len(name) + 1)
+        self._holding: dict[str, tuple[str, ...]] = {}
+
+    def holding(self, literal: str) -> tuple[str, ...]:
+        """Return the names containing ``literal`` (and any that a match across a line break starts in)."""
+        found = self._holding.get(literal)
+        if found is None:
+            names: list[str] = []
+            position = self.text.find(literal) if self.names else -1
+            while position >= 0:
+                number = bisect_right(self.starts, position) - 1
+                names.append(self.names[number])
+                # Continue at the next name: each holder costs one search.
+                if number + 1 == len(self.names):
+                    break
+                position = self.text.find(literal, self.starts[number + 1])
+            found = self._holding[literal] = tuple(names)
+        return found
+
+    def masks(self, groups: _LiteralGroups) -> dict[str, int]:
+        """Return, for each name holding an alternative of some group, the bit mask of the groups it holds."""
+        masks: dict[str, int] = {}
+        for bit, group in enumerate(groups):
+            for literal in group:
+                for name in self.holding(literal):
+                    masks[name] = masks.get(name, 0) | 1 << bit
+        return masks
+
+
+def _by_mask(masks: dict[str, int]) -> dict[int, list[str]]:
+    buckets: dict[int, list[str]] = {}
+    for name, mask in masks.items():
+        buckets.setdefault(mask, []).append(name)
+    return buckets
+
+
+def _attribute_statements(
+    hints: tuple[_LiteralGroups, ...], modules: set[str], attributes: set[str],
+) -> set[tuple[str, str]] | None:
+    """Return each (M, A) whose ``from M import A`` holds an alternative of every group of some pattern.
+
+    Only these statements can match. Per pattern, a module and an attribute
+    name each reduce to the bit mask of the groups they hold, and a pair
+    qualifies when its two masks cover every group. Pairs are counted per
+    combination of masks, never per module and name, and each literal is
+    searched once among all modules and once among all names, so the work is
+    linear in the names and the qualifying pairs. None means a module alone
+    holds every group of a pattern, so any attribute qualifies, or more than
+    ``_MAX_PROOF_STATEMENTS`` pairs qualify: too many to match either way.
+    """
+    module_names, attribute_names = _Names(modules), _Names(attributes)
+    statements: set[tuple[str, str]] = set()
+    for groups in hints:
+        if not all(
+            any(module_names.holding(literal) or attribute_names.holding(literal) for literal in group)
+            for group in groups
+        ):
+            continue  # a group no module and no name holds
+        module_masks = module_names.masks(groups)
+        full = (1 << len(groups)) - 1
+        if full in module_masks.values():
+            return None
+        by_module, by_name = _by_mask(module_masks), _by_mask(attribute_names.masks(groups))
+        # Mask 0 stands for the modules that hold no group.
+        pairs = [(mask, other) for mask in (0, *by_module) for other in by_name if mask | other == full]
+        unheld = len(modules) - len(module_masks)
+        count = sum((len(by_module[mask]) if mask else unheld) * len(by_name[other]) for mask, other in pairs)
+        if count > _MAX_PROOF_STATEMENTS:
+            return None
+        for mask, other in pairs:
+            holders = by_module.get(mask) or [module for module in modules if module not in module_masks]
+            statements.update((module, name) for module in holders for name in by_name[other])
+        if len(statements) > _MAX_PROOF_STATEMENTS:
+            return None
+    return statements
 
 
 def _python_bindable(index: SignatureIndex, tree: ast.AST) -> bool:
@@ -451,16 +552,23 @@ def _python_bindable(index: SignatureIndex, tree: ast.AST) -> bool:
     imports and resolve through ``_python_statement``. ``from M import A`` (A
     and its attributes) and ``import M`` (M or its first component) are
     checked exactly. Attributes of an ``import M`` binding give ``from M
-    import <attribute>`` for any attribute name in the file; such a statement
-    is checked exactly only when it can contain an alternative of every
-    required literal group of some pattern (``_python_import_hints``), since
-    otherwise no pattern can match it. Repository-local modules are not
-    excluded here, so True may be conservative; it never changes a result.
+    import <attribute>`` for any attribute name in the file; only the
+    statements ``_attribute_statements`` returns can match, and those are
+    checked exactly. The work is linear in the tree plus at most
+    ``_MAX_PROOF_MATCHES`` distinct statement matches; beyond that, or with
+    too many attribute statements, the answer is True. True may be
+    conservative (repository-local modules are not excluded either); it never
+    changes a result.
     """
+    checked: set[str] = set()
 
     def matched(module: str, symbol: str) -> bool:
+        """Whether the statement has matches; beyond the budget, assume it may."""
         statement = _python_statement(_Binding(module, symbol))
-        return bool(index.match_import_statement(statement, "python"))
+        if statement in checked:
+            return False  # an earlier check found no match
+        checked.add(statement)
+        return len(checked) > _MAX_PROOF_MATCHES or bool(index.match_import_statement(statement, "python"))
 
     modules: set[str] = set()
     attributes: set[str] = set()
@@ -477,44 +585,12 @@ def _python_bindable(index: SignatureIndex, tree: ast.AST) -> bool:
     if not modules:
         return False
     hints = _python_import_hints(index)
-    if hints is None:
+    if hints is None or len(checked) + len(modules) > _MAX_PROOF_MATCHES:
         return True
-    # A literal found in no name costs one search of all names together.
-    joined = "\n".join(attributes)
-    containing: dict[str, set[str]] = {}
-
-    def names_matching(group: tuple[str, ...]) -> set[str]:
-        """Attribute names that contain an alternative of ``group``."""
-        found: set[str] = set()
-        for literal in group:
-            if literal not in containing:
-                present = literal in joined
-                containing[literal] = {name for name in attributes if literal in name} if present else set()
-            found |= containing[literal]
-        return found
-
-    checked = 0
-    for module in sorted(modules):
-        if matched(module, ""):
-            return True
-        # Names are identifiers. A literal holding a space may span the fixed
-        # text and the name, so it never rules a statement out.
-        fixed = f"from {module} import "
-        candidates: set[str] = set()
-        for groups in hints:
-            needed = [group for group in groups if not any(" " in alt or alt in fixed for alt in group)]
-            if not needed:
-                return True  # any attribute passes; too many to check exactly
-            names = names_matching(needed[0])
-            for group in needed[1:]:
-                names &= names_matching(group)
-            candidates |= names
-        checked += len(candidates)
-        if checked > _MAX_PROOF_STATEMENTS:
-            return True
-        if any(matched(module, name) for name in sorted(candidates)):
-            return True
-    return False
+    if any(matched(module, "") for module in sorted(modules)):
+        return True
+    statements = _attribute_statements(hints, modules, attributes)
+    return statements is None or any(matched(module, name) for module, name in sorted(statements))
 
 
 def _python_bindings(
