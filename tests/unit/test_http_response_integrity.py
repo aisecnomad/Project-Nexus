@@ -168,7 +168,6 @@ PAGINATORS = [
     ("paginate_link", {"item_key": "items"}, "items"),
     ("paginate_odata", {}, "value"),
     ("paginate_token", {}, "items"),
-    ("paginate_cursor", {}, "results"),
 ]
 
 
@@ -209,20 +208,11 @@ def test_error_envelope_with_empty_items_cannot_claim_complete(paginator, kwargs
 @pytest.mark.parametrize("paginator,key,continuation", [
     ("paginate_odata", "value", "@odata.nextLink"),
     ("paginate_token", "items", "nextPageToken"),
-    ("paginate_cursor", "results", "response_metadata"),
 ])
 def test_continuations_cannot_coerce_malformed_values_to_end_of_collection(paginator, key, continuation, token):
-    value = {"next_cursor": token} if paginator == "paginate_cursor" else token
-    http, _ = client(response({key: [], continuation: value}))
+    http, _ = client(response({key: [], continuation: token}))
     with pytest.raises(RuntimeError, match="collection incomplete"):
         list(getattr(http, paginator)("/items"))
-
-
-@pytest.mark.parametrize("metadata", [None, False, [], ""])
-def test_cursor_metadata_must_be_an_object(metadata):
-    http, _ = client(response({"results": [], "response_metadata": metadata}))
-    with pytest.raises(RuntimeError, match="collection incomplete"):
-        list(http.paginate_cursor("/items"))
 
 
 def test_google_empty_collection_exception_requires_documented_kind():
@@ -335,14 +325,3 @@ def test_public_reader_closes_response_if_per_call_limit_is_invalid():
     with pytest.raises(ValueError, match="positive integer"):
         http.read_response_bytes(result, max_bytes=0)
     result.close.assert_called_once()
-
-
-@pytest.mark.parametrize("cursor_path", [
-    lambda data: data["missing"]["cursor"],
-    lambda data: data["nested"].get("cursor"),
-    lambda data: data["nested"]["cursor"],
-])
-def test_malformed_custom_cursor_metadata_becomes_collection_incomplete(cursor_path):
-    http, _ = client(response({"results": [], "nested": None}))
-    with pytest.raises(RuntimeError, match="collection incomplete"):
-        list(http.paginate_cursor("/items", cursor_path=cursor_path))

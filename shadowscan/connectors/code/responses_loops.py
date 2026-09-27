@@ -12,6 +12,7 @@ dynamic control flow outside the supported direct loop structure.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 
@@ -37,9 +38,11 @@ def _member(node: ast.AST | None, owner: str, name: str) -> bool:
 
 
 def _assigned(statement: ast.stmt) -> tuple[str, ast.expr] | None:
-    if isinstance(statement, ast.Assign) and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name):
+    if (isinstance(statement, ast.Assign) and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)):
         return statement.targets[0].id, statement.value
-    if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name) and statement.value is not None:
+    if (isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name)
+            and statement.value is not None):
         return statement.target.id, statement.value
     return None
 
@@ -78,7 +81,7 @@ def _output(value: ast.AST, item: str, results: set[str], budget: _Budget) -> bo
                     for child in _walk(content, budget)))
 
 
-def _walk(node: ast.AST, budget: _Budget):
+def _walk(node: ast.AST, budget: _Budget) -> Iterator[ast.AST]:
     for child in ast.walk(node):
         budget.tick()
         yield child
@@ -120,7 +123,7 @@ def _paths(
     statements: list[ast.stmt], item: str, budget: _Budget, depth: int = 0,
     initial_facts: dict[str, bool] | None = None,
     finished: list[tuple[list[ast.stmt], dict[str, bool]]] | None = None,
-):
+) -> list[tuple[list[ast.stmt], dict[str, bool]]]:
     """Generate source-ordered reachable paths and correlate simple predicates.
 
     Paths ending in ``break``/``continue``/``return``/``raise`` are dropped.
@@ -154,7 +157,9 @@ def _paths(
                     ):
                         candidates.append((nodes + branch_nodes, branch_conditions))
                     if finished is not None and branch_finished:
-                        finished.extend((nodes + ended, ended_facts) for ended, ended_facts in branch_finished)
+                        finished.extend(
+                            (nodes + ended, ended_facts) for ended, ended_facts in branch_finished
+                        )
             elif isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
                 if finished is not None and isinstance(statement, ast.Return) and statement.value is not None:
                     finished.append(([*nodes, statement], facts))
@@ -214,7 +219,8 @@ def _has_feedback(
         # is overwritten before dispatch/feedback. A cached object with the
         # same attribute names is not evidence of model-selected execution.
         for node in _walk(statement, budget):
-            if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if (isinstance(node, (ast.Name, ast.Attribute, ast.Subscript))
+                    and isinstance(node.ctx, (ast.Store, ast.Del))):
                 target: ast.AST = node
                 while isinstance(target, (ast.Attribute, ast.Subscript)):
                     target = target.value
@@ -285,7 +291,8 @@ def _can_repeat(loop: ast.For | ast.AsyncFor | ast.While) -> bool:
 
 def _history_rebound(loop: ast.AST, history: str, budget: _Budget) -> bool:
     for node in _walk(loop, budget):
-        if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        if (isinstance(node, (ast.Name, ast.Attribute, ast.Subscript))
+                and isinstance(node.ctx, (ast.Store, ast.Del))):
             target: ast.AST = node
             while isinstance(target, (ast.Attribute, ast.Subscript)):
                 target = target.value
@@ -401,7 +408,8 @@ def responses_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[in
                         break
                     if _filter_list(bound[1], response, budget):
                         selected.add(bound[0])
-                if not isinstance(selection, (ast.For, ast.AsyncFor)) or not isinstance(selection.target, ast.Name):
+                if (not isinstance(selection, (ast.For, ast.AsyncFor))
+                        or not isinstance(selection.target, ast.Name)):
                     continue
                 item = selection.target.id
                 direct = _member(selection.iter, response, "output")
@@ -433,7 +441,8 @@ def _single_dispatch(path: list[ast.stmt], item: str, budget: _Budget) -> bool:
     results: set[str] = set()
     for statement in path:
         for node in _walk(statement, budget):
-            if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if (isinstance(node, (ast.Name, ast.Attribute, ast.Subscript))
+                    and isinstance(node.ctx, (ast.Store, ast.Del))):
                 target: ast.AST = node
                 while isinstance(target, (ast.Attribute, ast.Subscript)):
                     target = target.value
@@ -525,11 +534,13 @@ def responses_dispatch_lines(tree: ast.AST, request_calls: set[int]) -> list[int
             if cursor >= len(body):
                 continue
             selection = body[cursor]
-            if not isinstance(selection, (ast.For, ast.AsyncFor)) or not isinstance(selection.target, ast.Name):
+            if (not isinstance(selection, (ast.For, ast.AsyncFor))
+                    or not isinstance(selection.target, ast.Name)):
                 continue
             item = selection.target.id
             direct = _member(selection.iter, response, "output")
-            filtered = selected is not None and isinstance(selection.iter, ast.Name) and selection.iter.id == selected
+            filtered = (selected is not None and isinstance(selection.iter, ast.Name)
+                        and selection.iter.id == selected)
             if not (direct or filtered) or item in (response, selected):
                 continue
             if direct and not any(_type_guard(node.test, item) is not None

@@ -17,7 +17,7 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,7 +39,7 @@ try:
     import fcntl as _fcntl
 
     fcntl = _fcntl
-except ImportError:  # pragma: no cover - fcntl is absent only on platforms the confined reader already refuses
+except ImportError:  # pragma: no cover - absent only where the confined reader already refuses to run
     fcntl = None
 
 
@@ -117,7 +117,9 @@ class _HashBudget:
             raise ValueError("static fingerprint budget exceeded")
 
 
-def _file_digest(path: Path, *, max_bytes: int = _MAX_HASH_FILE_BYTES, budget: _HashBudget | None = None) -> str:
+def _file_digest(
+    path: Path, *, max_bytes: int = _MAX_HASH_FILE_BYTES, budget: _HashBudget | None = None
+) -> str:
     """Hash regular files only; fail rather than trust a moving or special input."""
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     with os.fdopen(fd, "rb") as stream:
@@ -138,7 +140,8 @@ def _file_digest(path: Path, *, max_bytes: int = _MAX_HASH_FILE_BYTES, budget: _
         after = os.fstat(stream.fileno())
     current = path.stat()
     attrs = _FILE_STAT_ATTRS
-    if any(getattr(before, a) != getattr(after, a) or getattr(after, a) != getattr(current, a) for a in attrs):
+    if any(getattr(before, a) != getattr(after, a) or getattr(after, a) != getattr(current, a)
+           for a in attrs):
         raise ValueError("input changed while hashing")
     # Change time and inode identity catch ordinary replace/restore changes.
     # These checks are not an atomic snapshot or a defense against an adversary
@@ -159,8 +162,8 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     def git(*args: str) -> bytes:
         budget.check()
         result = subprocess.run(
-            [*metadata_git_argv_prefix(), "-C", str(root), *args], check=False, capture_output=True, timeout=10,
-            env=metadata_git_env(),
+            [*metadata_git_argv_prefix(), "-C", str(root), *args],
+            check=False, capture_output=True, timeout=10, env=metadata_git_env(),
         )
         budget.check(size=len(result.stdout))
         if result.returncode:
@@ -172,7 +175,9 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     head = git("rev-parse", "--verify", "HEAD")
     if git("for-each-ref", "--format=%(refname)", "refs/replace").strip():
         raise ValueError("git history has replacement refs")
-    history_paths = git("rev-parse", "--path-format=absolute", "--git-path", "shallow", "--git-path", "info/grafts").decode().splitlines()
+    history_paths = git(
+        "rev-parse", "--path-format=absolute", "--git-path", "shallow", "--git-path", "info/grafts",
+    ).decode().splitlines()
     if len(history_paths) != 2:
         raise ValueError("cannot resolve git history paths")
     shallow, grafts = [Path(p) for p in history_paths]
@@ -232,7 +237,8 @@ def _tree_digest(
             path = basepath / name
             if code and name == ".git":
                 # A worktree's gitdir pointer also affects its metadata.
-                digest.update(_json(["git-marker", rel, _file_digest(path, max_bytes=max_file_bytes, budget=budget)]))
+                marker = _file_digest(path, max_bytes=max_file_bytes, budget=budget)
+                digest.update(_json(["git-marker", rel, marker]))
                 continue
             if path.is_symlink():
                 raise ValueError("symlink in static input")
@@ -241,9 +247,11 @@ def _tree_digest(
                 raise ValueError("special file in input")
             relative = path.relative_to(root).as_posix()
             if unread_above is not None and info.st_size > unread_above:
-                digest.update(_json(["oversize", relative, [getattr(info, attr) for attr in _FILE_STAT_ATTRS]]))
+                metadata = [getattr(info, attr) for attr in _FILE_STAT_ATTRS]
+                digest.update(_json(["oversize", relative, metadata]))
                 continue
-            digest.update(_json(["file", relative, _file_digest(path, max_bytes=max_file_bytes, budget=budget)]))
+            content = _file_digest(path, max_bytes=max_file_bytes, budget=budget)
+            digest.update(_json(["file", relative, content]))
         after = basepath.stat(follow_symlinks=False)
         if any(getattr(before, attr) != getattr(after, attr) for attr in attrs):
             raise ValueError("input directory changed while hashing")
@@ -342,12 +350,15 @@ class IncrementalCache:
             # The code scanners never open a file over their max_file_size, so
             # such files are tracked by metadata; a hashed file stays capped.
             unread_above = int(spec.config.get("max_file_size", 1_000_000)) if code else None
-            max_bytes = min(unread_above, _MAX_HASH_FILE_BYTES) if unread_above is not None else _MAX_HASH_FILE_BYTES
+            max_bytes = (
+                _MAX_HASH_FILE_BYTES if unread_above is None else min(unread_above, _MAX_HASH_FILE_BYTES)
+            )
             inputs = []
             for root in roots:
                 if spec.name in {"code.github", "code.gitlab"}:
                     digest = _checkout_container_digest(
-                        root, use_git=use_git, budget=budget, max_file_bytes=max_bytes, unread_above=unread_above,
+                        root, use_git=use_git, budget=budget, max_file_bytes=max_bytes,
+                        unread_above=unread_above,
                     )
                 else:
                     digest = _tree_digest(
@@ -372,9 +383,10 @@ class IncrementalCache:
             return None
 
     @contextmanager
-    def _slot_lock(self, snapshot: Snapshot, *, exclusive: bool):
+    def _slot_lock(self, snapshot: Snapshot, *, exclusive: bool) -> Iterator[None]:
         """Use a stable per-slot inode; contention degrades to a full scan."""
-        if fcntl is None or len(snapshot.slot) != 64 or any(c not in "0123456789abcdef" for c in snapshot.slot):
+        valid_slot = len(snapshot.slot) == 64 and all(c in "0123456789abcdef" for c in snapshot.slot)
+        if fcntl is None or not valid_slot:
             raise ValueError("invalid or unsupported incremental lock")
         self._secure_directory()
         fd = os.open(self.directory / f"{snapshot.slot}.lock", os.O_CREAT | os.O_RDWR
@@ -400,7 +412,9 @@ class IncrementalCache:
         except (OSError, ValueError):
             return None
 
-    def _load_unlocked(self, spec: ConnectorSpec, snapshot: Snapshot) -> tuple[list[Finding], ScanStats] | None:
+    def _load_unlocked(
+        self, spec: ConnectorSpec, snapshot: Snapshot
+    ) -> tuple[list[Finding], ScanStats] | None:
         path = self.directory / f"{snapshot.slot}.json"
         try:
             fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))

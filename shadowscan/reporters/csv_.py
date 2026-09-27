@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 
 from shadowscan.models import ScanResult
 
@@ -38,13 +39,22 @@ COLUMNS = [
     "connector",
 ]
 
+# A spreadsheet cell must not begin with a formula trigger (OWASP CSV injection).
+# A value can start several cells: a report opened with another delimiter (for
+# example a semicolon locale), or a joined list split on "|", starts a new cell
+# after each delimiter or line break. Leading whitespace and quotes may be
+# trimmed, so they do not hide a trigger. A value that starts with a tab or line
+# break, or a later cell that does, is also neutralised.
+_FORMULA_CELL = re.compile(
+    r"^(?=[\t\r\n])"
+    r"|(?:^|(?<=[,;\t|\r\n]))(?=[\t\r]|[ \t\r\n\v\f\ufeff\"]*[=+\-@])"
+)
+
 
 def _safe_cell(value: object) -> object:
-    """Force formula-like untrusted strings to spreadsheet text cells."""
+    """Force every formula-like cell in an untrusted string to spreadsheet text."""
     if isinstance(value, str):
-        stripped = value.lstrip(" \t\r\n\v\f\ufeff")
-        if stripped.startswith(("=", "+", "-", "@")) or value.startswith(("\t", "\r", "\n")):
-            return "'" + value
+        return _FORMULA_CELL.sub("'", value)
     return value
 
 
@@ -54,6 +64,7 @@ def render_csv(result: ScanResult) -> str:
     w.writeheader()
     for f in result.findings:
         f.sanitize()
+        top_evidence = sorted(f.evidence, key=lambda e: -e.weight)[:3]
         row = {
             "id": f.id,
             "risk_level": f.risk.level.value,
@@ -81,7 +92,7 @@ def render_csv(result: ScanResult) -> str:
             "last_seen": f.last_seen or "",
             "risk_factors": "; ".join(x.description for x in f.risk.factors if x.weight > 0),
             "evidence_count": len(f.evidence),
-            "top_evidence": " | ".join(e.description for e in sorted(f.evidence, key=lambda e: -e.weight)[:3]),
+            "top_evidence": " | ".join(e.description for e in top_evidence),
             "connector": f.connector,
         }
         w.writerow({key: _safe_cell(value) for key, value in row.items()})
