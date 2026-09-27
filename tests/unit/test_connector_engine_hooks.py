@@ -191,3 +191,14 @@ def test_job_out_of_time_does_not_look_up_its_connector(monkeypatch):
     result = Engine(config, SignatureIndex([])).run()
     assert not result.complete and result.stats[0].incomplete
     assert policies == [] and contexts == []
+
+
+def test_connector_without_the_split_hook_scans_its_roots_in_one_job(monkeypatch, tmp_path):
+    # Only a connector that declares cache_roots_separately runs one
+    # incremental job per root; the others receive every root at once.
+    connector, contexts = _recording_connector()
+    roots = [str(tmp_path / "a"), str(tmp_path / "b")]
+    spec = ConnectorSpec("platform.recorder", {"paths": roots})
+    _run(monkeypatch, connector, [spec], incremental=True, state_dir=str(tmp_path / "state"))
+    assert [ctx.config["paths"] for ctx in contexts] == [roots]
+    assert "_shared_label_roots" not in contexts[0].config
