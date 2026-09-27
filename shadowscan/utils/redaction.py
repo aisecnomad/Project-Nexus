@@ -13,6 +13,10 @@ and ``redaction_markup``. This module drives them and is their one public
 face: every name they define reads through it, and a name replaced here (by a
 test's monkeypatch, for example) is replaced in every module that binds it,
 exactly as when all of them lived in this one module.
+
+Patch and replace rules through this module, never through a ``redaction_*``
+module: a name set on one of those changes only that module, and every other
+module that imported the name silently keeps the old object.
 """
 
 from __future__ import annotations
@@ -484,4 +488,9 @@ _POLICY_BINDINGS: tuple[tuple[dict[str, Any], str], ...] = tuple(
 
 
 _RedactionNamespace._binders = _binding_modules()
+# From here on, setting or deleting a name on this module writes every module
+# that binds it. Patch rules through shadowscan.utils.redaction only: a name
+# set on a redaction_* module directly changes that module alone, and the
+# other passes keep the object they imported, so a patched rule or limit would
+# apply to some passes and silently not to others.
 sys.modules[__name__].__class__ = _RedactionNamespace
