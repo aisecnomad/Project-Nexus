@@ -144,15 +144,16 @@ def _interpolated(prefix: str, quote: str, value: str) -> bool:
     return quote == "`" and "${" in value
 
 
-def _credential_name(name: str) -> bool:
+def _credential_name(name: str, *, numbered: bool = False) -> bool:
     """Whether a name's last word names a credential ('monkey' and 'bypass' do not).
 
-    Trailing digits number a credential rather than name it ('KEY1', 'token2').
+    With ``numbered``, trailing digits number a credential rather than name it
+    ('KEY1', 'token2'); the established passes read the last word as it is.
     """
     if not _OPAQUE_NAME.fullmatch(name):
         return False
     words = _CALLEE_WORD.findall(name.rsplit(".", 1)[-1])
-    while words and words[-1].isdigit():
+    while numbered and words and words[-1].isdigit():
         words.pop()
     return bool(words) and words[-1].lower() in _OPAQUE_NAME_WORDS
 
@@ -168,13 +169,14 @@ def _setting_level(name: str) -> int:
 
     2: the name alone does ('Token', 'OpenAI:Secret', 'OPENAI_API_KEY'), so
     any value is withheld. 1: its last word names a credential ('OpenAIKey',
-    'AzureOpenAI:Key', 'CacheKey'), so only an opaque literal is withheld, as
-    for the same names in assignments. 0: an ordinary setting.
+    'AzureOpenAI:Key', 'CacheKey', 'KEY1'), so only an opaque literal is
+    withheld, as for the same names in assignments. 0: an ordinary setting.
     """
     last = _SETTING_SEGMENT.split(name)[-1]
     if _sensitive_assignment_key(name) or (last != name and _sensitive_assignment_key(last)):
         return 2
-    return 1 if _credential_name(name) or (last != name and _credential_name(last)) else 0
+    named = _credential_name(name, numbered=True) or (last != name and _credential_name(last, numbered=True))
+    return 1 if named else 0
 
 
 def _setting_value_withheld(level: int, value: str) -> bool:

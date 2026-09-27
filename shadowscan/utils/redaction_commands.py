@@ -12,7 +12,10 @@ from __future__ import annotations
 import re
 
 from shadowscan.utils.redaction_rules import (
+    _ALPHANUMERIC,
     _CLI_WORD,
+    _FINGERPRINT,
+    _REFERENCE,
     REDACTED,
     _credential_literal,
     _credential_name,
@@ -40,19 +43,26 @@ _CLI_LIST_GAP = re.compile(r"[ \t]*,[ \t]*|[ \t]*\r?\n[ \t]*-[ \t]+|[ \t]+")
 _CLI_VALUE = re.compile(
     r"\"(?P<double>[^\"\r\n]*)\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>(){}\[\],\\]+)"
 )
+# One character of an unquoted value (the 'bare' group above), and a run of them.
+_CLI_BARE_CHARACTER = re.compile(r"[^\s\"'`;|&<>(){}\[\],\\]")
+_CLI_BARE_RUN = re.compile(r"[^\s\"'`;|&<>(){}\[\],\\]+")
 # An unquoted value that holds a marker an earlier pass left in it.
 _CLI_MARKED_VALUE = re.compile(r"(?:\[REDACTED\]|[^\s\"'`;|&<>(){}\[\],\\])+")
 _CLI_METAVAR = re.compile(r"[A-Z]+(?:[_-][A-Z0-9]+)*")
 _CLI_VALUE_LIMIT = 4096
-# An option value that is kept is read to the end of its unquoted word, and
-# every later option in that word reads it again ('-u=#-u=#-u=#...'). Past
-# this many options in one word the rest of the word is withheld instead,
-# which keeps the pass linear; command lines separate their options.
+# An opaque option's value that is kept is read to the end of its unquoted
+# word, and every later option in that word reads it again
+# ('--key=#--key=#...'). Past this many options in one word the last pass
+# withholds the rest of the word instead, which keeps it linear; command
+# lines separate their options. (The established options read each run of
+# value characters once: see _ValueRuns.)
 _CLI_WORD_OPTIONS = 16
 _HEADER_VALUE = re.compile(
     r"(?P<name>[A-Za-z][A-Za-z0-9-]*):(?:(?:Bearer|Basic|Token|Bot|Digest|SSWS|ApiKey|Api-Key|token)[ \t]+)?"
     r"(?P<secret>\S[^\r\n]*)"
 )
+_HEADER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
+_FINGERPRINT_LENGTH = len("credential:sha256:") + 64
 # '-p' is a password only after some commands: a registry or cloud 'login'
 # (docker, podman, helm registry, az, az acr, oc, cf...) and 'sshpass', and the
 # attached '-pVALUE' of MySQL clients ('mysql -p db' prompts and names a
@@ -94,7 +104,7 @@ def _cli_option_mode(option: str) -> str:
         return ""
     if _sensitive_assignment_key(re.sub(r"[-.]", "_", name)):
         return "secret"
-    return "opaque" if _credential_name(name) else ""
+    return "opaque" if _credential_name(name, numbered=True) else ""
 
 
 def _cli_password_mode(text: str, option: re.Match[str], logins: bool, mysql: bool) -> str:
@@ -149,9 +159,101 @@ def _cli_secret_span(mode: str, value: str, start: int, strict: bool) -> tuple[i
     return start, start + len(value)
 
 
-def _cli_value_span(mode: str, text: str, position: int, strict: bool) -> tuple[int, int] | None:
+class _ValueRuns:
+    """The unquoted option values of one text, each run of value characters read once.
+
+    An unquoted value runs to the end of its run of value characters, so each
+    option inside one run ('-u=#-u=#-u=#...', '-H=a:-H=a:...') read its own
+    copy of the rest of the run, which made the pass quadratic. The end of
+    the current run and the next ':' and '=' in it are kept, and ``kept`` and
+    ``digits`` stop at the first character that decides them: the next
+    option in a run has a letter that no reference covers. Each decision is
+    the one ``_cli_secret_span`` makes on the copy.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.run = (0, 0)
+        # A character -> (searched from, run end, where it is or -1).
+        self.found: dict[str, tuple[int, int, int]] = {}
+
+    def end(self, position: int) -> int:
+        """The end of the unquoted value that starts at ``position``, a value character."""
+        start, end = self.run
+        if not start <= position < end:
+            run = _CLI_BARE_RUN.match(self.text, position)
+            end = position if run is None else run.end()
+            self.run = (position, end)
+        return end
+
+    def find(self, character: str, start: int, end: int) -> int:
+        """``text.find(character, start, end)`` for the tail of a run, searched once per run."""
+        searched, run_end, found = self.found.get(character, (-1, -1, -1))
+        if run_end == end and 0 <= searched <= start and (found < 0 or start <= found):
+            return found
+        found = self.text.find(character, start, end)
+        self.found[character] = (start, end, found)
+        return found
+
+    def kept(self, start: int, end: int) -> bool:
+        """``_kept_value(text[start:end])``: a run holds no blank, marker, bracket or brace."""
+        text = self.text
+        if end - start == _FINGERPRINT_LENGTH and _FINGERPRINT.fullmatch(text[start:end]):
+            return True
+        position = start
+        while position < end:
+            reference = _REFERENCE.match(text, position, end)
+            if reference is not None:
+                position = reference.end()
+            elif _ALPHANUMERIC.match(text, position):
+                return False
+            else:
+                position += 1
+        return True
+
+    def digits(self, start: int, end: int) -> bool:
+        """``text[start:end].isdigit()``."""
+        text = self.text
+        return start < end and all(text[position].isdigit() for position in range(start, end))
+
+
+def _run_secret_span(
+    mode: str, runs: _ValueRuns, start: int, end: int, strict: bool,
+) -> tuple[int, int] | None:
+    """``_cli_secret_span`` of the unquoted value text[start:end] of a 'secret', 'user' or 'header' option."""
+    text = runs.text
+    if text.startswith("-", start):
+        return None  # the next option, not a value
+    if mode == "user":
+        colon = runs.find(":", start, end)
+        if colon < 0 or 0 <= runs.find("=", start, end) < colon or colon + 1 == end:
+            return None
+        if runs.digits(colon + 1, end) or runs.kept(colon + 1, end) or text.startswith("//", colon + 1, end):
+            return None
+        return colon + 1, end
+    if mode == "header":
+        # The pattern's scheme needs a blank, which a run does not hold.
+        name = _HEADER_NAME.match(text, start, end)
+        if name is None or not text.startswith(":", name.end(), end) or name.end() + 1 == end:
+            return None
+        if not _sensitive_key(name.group()) or runs.kept(name.end() + 1, end):
+            return None
+        return name.end() + 1, end
+    if runs.kept(start, end) or _CLI_METAVAR.fullmatch(text, start, end):
+        return None
+    if not strict and _CLI_WORD.fullmatch(text, start, end):
+        return None  # prose ('--token to authenticate') or an argparse dest name
+    return start, end
+
+
+def _cli_value_span(
+    mode: str, text: str, position: int, strict: bool, runs: _ValueRuns | None = None,
+) -> tuple[int, int] | None:
+    """The credential in the option value at ``position``; ``runs`` reads unquoted ones (see _ValueRuns)."""
     if text.startswith("-", position):
         return None  # the next option: checked first so chained options are not rescanned
+    if runs is not None and mode != "opaque" and _CLI_BARE_CHARACTER.match(text, position):
+        return _run_secret_span(mode, runs, position, runs.end(position), strict)
     value = _CLI_VALUE.match(text, position)
     if mode == "opaque" and (value is None or value.group("bare") is not None):
         # These options are read last, after an earlier pass may have withheld
@@ -179,6 +281,8 @@ def _redact_piped_passwords(text: str) -> str:
 
 def _redact_user_secrets(text: str) -> str:
     """Withhold the value 'dotnet user-secrets set' stores under a credential's name."""
+    if "user-secrets" not in text:
+        return text
     spans: list[tuple[int, int]] = []
     for match in _USER_SECRETS_SET.finditer(text):
         name = match.group("dname") or match.group("sname") or match.group("bname") or ""
@@ -190,17 +294,15 @@ def _redact_user_secrets(text: str) -> str:
 
 
 def _redact_command_credentials(text: str) -> str:
-    """Withhold credentials passed as command-line option values.
+    """Withhold credentials passed as command-line option values (the established rules).
 
     Opaque values of options whose last word names a credential are left to
-    ``_redact_opaque_options``, which runs after every pass that reads a name.
+    ``_redact_opaque_options``, which runs after every established pass.
     """
     if "-" not in text:
         return text
     if "--password-stdin" in text:
         text = _redact_piped_passwords(text)
-    if "user-secrets" in text:
-        text = _redact_user_secrets(text)
     return _redact_options(text, opaque=False)
 
 
@@ -209,7 +311,8 @@ def _redact_opaque_options(text: str) -> str:
 
     This runs after every pass that reads a name: an opaque value glued to a
     following assignment ('--key v#password = "p"') would otherwise hide that
-    assignment's name from them.
+    assignment's name from them. It also withholds the rest of a word crowded
+    with options (see _CLI_WORD_OPTIONS), which nothing reads after it.
     """
     return text if "-" not in text else _redact_options(text, opaque=True)
 
@@ -224,10 +327,22 @@ def _redact_options(text: str, *, opaque: bool) -> str:
     cursor = 0
     logins = "login" in text or "sshpass" in text
     mysql = "mysql" in text or "mariadb" in text
-    # The unquoted word the last kept option value was read in, and how many
-    # options start in it: see _CLI_WORD_OPTIONS.
+    runs = None if opaque else _ValueRuns(text)
+    # The unquoted word the current option starts in, and how many options start in it.
     word_end = word_options = 0
     for match in _CLI_OPTION.finditer(text):
+        start = match.start()
+        if opaque:
+            if start < word_end:
+                word_options += 1
+            else:
+                word = _CLI_MARKED_VALUE.match(text, start)
+                word_end, word_options = (start + 1 if word is None else word.end()), 1
+            if word_options > _CLI_WORD_OPTIONS:
+                if start >= cursor:
+                    spans.append((start, word_end))
+                    cursor = word_end
+                continue
         mode = _cli_option_mode(match.group())
         if opaque and mode != "opaque":
             continue
@@ -236,31 +351,23 @@ def _redact_options(text: str, *, opaque: bool) -> str:
             mode = _cli_password_mode(text, match, logins, mysql) or mode
         if not mode or (mode == "opaque") != opaque:
             continue
-        start = match.start()
         # An opening quote belongs to the option unless it closes a preceding word.
         quote = text[start - 1] if start and text[start - 1] in "\"'" else ""
         if quote and start > 1 and _CLI_BOUNDARY.match(text, start - 2):
             quote = ""
         if start - len(quote) < cursor:
             continue
-        if start < word_end:
-            word_options += 1
-            if word_options > _CLI_WORD_OPTIONS:
-                spans.append((start, word_end))
-                cursor = word_end
-                continue
-        span = _option_value_span(text, match, mode, quote)
+        span = _option_value_span(text, match, mode, quote, runs)
         if span is None:
-            if start >= word_end:
-                word = _CLI_MARKED_VALUE.match(text, start)
-                word_end, word_options = (start + 1 if word is None else word.end()), 1
             continue
         spans.append(span)
         cursor = span[1]
     return _withhold_spans(text, spans)
 
 
-def _option_value_span(text: str, match: re.Match[str], mode: str, quote: str) -> tuple[int, int] | None:
+def _option_value_span(
+    text: str, match: re.Match[str], mode: str, quote: str, runs: _ValueRuns | None,
+) -> tuple[int, int] | None:
     """The credential that the option ``match`` of ``mode`` passes, if any.
 
     ``quote`` is the quote that opens the option ('"--api-key=v"'), or ''.
@@ -268,7 +375,7 @@ def _option_value_span(text: str, match: re.Match[str], mode: str, quote: str) -
     start, position = match.start(), match.end()
     strict = text.startswith("=", position)
     if mode == "attached":
-        return _cli_value_span("secret", text, start + 2, True)
+        return _cli_value_span("secret", text, start + 2, True, runs)
     if quote and strict:
         # '"--api-key=value"' as one argv element.
         limit = text.find("\n", position, position + _CLI_VALUE_LIMIT)
@@ -280,12 +387,12 @@ def _option_value_span(text: str, match: re.Match[str], mode: str, quote: str) -
         gap = _CLI_LIST_GAP.match(text, position + 1)
         if gap is None or not text.startswith(("\"", "'"), gap.end()):
             return None
-        return _cli_value_span(mode, text, gap.end(), False)
+        return _cli_value_span(mode, text, gap.end(), False, runs)
     # Plain text, or a quote that does not delimit this option.
     if strict:
-        return _cli_value_span(mode, text, position + 1, True)
+        return _cli_value_span(mode, text, position + 1, True, runs)
     gap = _CLI_SPACE.match(text, position)
-    return None if gap is None else _cli_value_span(mode, text, gap.end(), False)
+    return None if gap is None else _cli_value_span(mode, text, gap.end(), False, runs)
 
 
 # Dockerfile's legacy 'ENV NAME value', csh/Windows 'setenv NAME value' and

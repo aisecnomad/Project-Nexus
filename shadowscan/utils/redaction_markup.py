@@ -1,16 +1,24 @@
 """Credentials named by XML elements, key/value attributes and name/value records.
 
 Internal to :mod:`shadowscan.utils.redaction`, which re-exports every name
-here. A setting's name decides whether its value is withheld: see
-``redaction_rules._setting_level``.
+here. Each form has two passes: the established one decides by a sensitive
+name, and the settings one, which runs after every established pass, reads
+names as settings (see ``redaction_rules._setting_level``).
 """
 
 from __future__ import annotations
 
 import re
 from bisect import bisect_left
+from collections.abc import Callable, Iterator
 
-from shadowscan.utils.redaction_rules import REDACTED, _kept_value, _setting_level, _setting_value_withheld
+from shadowscan.utils.redaction_rules import (
+    REDACTED,
+    _kept_value,
+    _sensitive_assignment_key,
+    _setting_level,
+    _setting_value_withheld,
+)
 
 # XML and .NET configuration: a sensitive element (<password>v</password>,
 # <apiKey>v</apiKey>) or a key/name attribute naming a credential beside a
@@ -89,46 +97,30 @@ def _markup_content(
     return (start, end) if text.startswith("</" + closing_tag, end) else None
 
 
-def _redact_markup_credentials(text: str) -> str:
-    """Withhold credentials in XML elements and key/value attribute pairs.
+def _markup_attributes(
+    text: str, tag: re.Match[str], level: Callable[[str], int],
+) -> tuple[int, list[tuple[int, int]]]:
+    """The strongest ``level`` of the key/name attributes of ``tag``, and where its value attributes are."""
+    named = 0
+    values: list[tuple[int, int]] = []
+    for attribute in _XML_ATTRIBUTE.finditer(tag.group("attributes")):
+        group = "double" if attribute.group("double") is not None else "single"
+        name = attribute.group("name").rsplit(":", 1)[-1].lower()
+        if name in {"key", "name"}:
+            named = max(named, level(attribute.group(group)))
+        elif name == "value":
+            offset = tag.start("attributes")
+            values.append((offset + attribute.start(group), offset + attribute.end(group)))
+    return named, values
 
-    Key/name attributes and element names are read as settings (see
-    ``_setting_level``): a sensitive one withholds any value, one whose last
-    word names a credential only an opaque literal. A key/name attribute
-    decides the element's value attributes, its <value> child and its
-    content; the element's own name decides its content as well, whatever
-    the attributes decided.
-    """
-    if "<" not in text:
-        return text
-    contents = _MarkupContent(text)
-    spans: list[tuple[int, int]] = []
-    for tag in _XML_TAG.finditer(text):
-        attributes = tag.group("attributes")
-        named = 0  # the strongest level of a key/name attribute
-        values: list[tuple[int, int]] = []
-        for attribute in _XML_ATTRIBUTE.finditer(attributes):
-            group = "double" if attribute.group("double") is not None else "single"
-            name = attribute.group("name").rsplit(":", 1)[-1].lower()
-            if name in {"key", "name"}:
-                named = max(named, _setting_level(attribute.group(group)))
-            elif name == "value":
-                offset = tag.start("attributes")
-                values.append((offset + attribute.start(group), offset + attribute.end(group)))
-        if named:
-            spans.extend(span for span in values if _setting_value_withheld(named, text[span[0]:span[1]]))
-        if attributes.rstrip().endswith("/"):
-            continue  # a self-closing element has no content
-        if named:
-            content = _markup_content(text, contents, tag, inner_value=True)
-            if content is not None and _setting_value_withheld(named, text[content[0]:content[1]]):
-                spans.append(content)
-        # Overlapping spans (the same content decided twice) are dropped below.
-        level = _setting_level(tag.group("tag").rsplit(":", 1)[-1])
-        if level:
-            content = _markup_content(text, contents, tag, inner_value=False)
-            if content is not None and _setting_value_withheld(level, text[content[0]:content[1]]):
-                spans.append(content)
+
+def _sensitive_level(name: str) -> int:
+    """The established rule as a level: 2 for a sensitive name, else 0."""
+    return 2 if _sensitive_assignment_key(name) else 0
+
+
+def _withhold_markup(text: str, spans: list[tuple[int, int]]) -> str:
+    """Withhold each span that is not empty, a reference or inside an earlier one; keep line counts."""
     pieces: list[str] = []
     cursor = 0
     for start, end in sorted(spans):
@@ -141,6 +133,63 @@ def _redact_markup_credentials(text: str) -> str:
         return text
     pieces.append(text[cursor:])
     return "".join(pieces)
+
+
+def _redact_markup_credentials(text: str) -> str:
+    """Withhold credentials in XML elements and key/value attribute pairs (the established rules).
+
+    A key/name attribute with a sensitive name withholds the element's value
+    attributes or, when it has none, its <value> child or content; otherwise
+    a sensitive element name withholds the content. ``_redact_markup_settings``
+    reads the same markup with the setting rules afterwards.
+    """
+    if "<" not in text:
+        return text
+    contents = _MarkupContent(text)
+    spans: list[tuple[int, int]] = []
+    for tag in _XML_TAG.finditer(text):
+        named, values = _markup_attributes(text, tag, _sensitive_level)
+        if named and values:
+            spans.extend(values)
+            continue
+        if tag.group("attributes").rstrip().endswith("/"):
+            continue
+        if named or _sensitive_assignment_key(tag.group("tag").rsplit(":", 1)[-1]):
+            content = _markup_content(text, contents, tag, inner_value=bool(named))
+            if content is not None:
+                spans.append(content)
+    return _withhold_markup(text, spans)
+
+
+def _redact_markup_settings(text: str) -> str:
+    """Withhold credentials that XML key/name attributes and element names name as settings.
+
+    Names are read as settings (see ``_setting_level``): a sensitive one
+    withholds any value, one whose last word names a credential only an
+    opaque literal. A key/name attribute decides the element's value
+    attributes, its <value> child and its content; the element's own name
+    decides its content as well, whatever the attributes decided.
+    """
+    if "<" not in text:
+        return text
+    contents = _MarkupContent(text)
+    spans: list[tuple[int, int]] = []
+    for tag in _XML_TAG.finditer(text):
+        named, values = _markup_attributes(text, tag, _setting_level)
+        spans.extend(span for span in values if _setting_value_withheld(named, text[span[0]:span[1]]))
+        if tag.group("attributes").rstrip().endswith("/"):
+            continue  # a self-closing element has no content
+        if named:
+            content = _markup_content(text, contents, tag, inner_value=True)
+            if content is not None and _setting_value_withheld(named, text[content[0]:content[1]]):
+                spans.append(content)
+        # The same content decided twice is one span: the copy is dropped when withheld.
+        level = _setting_level(tag.group("tag").rsplit(":", 1)[-1])
+        if level:
+            content = _markup_content(text, contents, tag, inner_value=False)
+            if content is not None and _setting_value_withheld(level, text[content[0]:content[1]]):
+                spans.append(content)
+    return _withhold_markup(text, spans)
 
 
 # Name/value records in YAML, JSON, HCL and JavaScript text: Kubernetes and
@@ -282,12 +331,79 @@ def _record_scalar(raw: str) -> str:
     return rest.strip() if newline and head.strip() in _RECORD_BLOCK_MARKERS else value
 
 
+def _record_names(text: str) -> Iterator[re.Match[str]]:
+    """Each record name field ('name: X', '"Key": "X"') in ``text``, in order."""
+    for word in _RECORD_WORD.finditer(text):
+        start = word.start()
+        match = _RECORD_NAME.match(text, start - 1) if start and text[start - 1] in "\"'" else None
+        match = match or _RECORD_NAME.match(text, start)
+        if match is not None:
+            yield match
+
+
+def _record_value(
+    text: str, located: tuple[re.Match[str], int, int], quoted: bool,
+) -> tuple[int, int, str] | None:
+    """Where the value of a located value field is, without its quotes: (start, end, value).
+
+    An inline value stops at a '}' (when ``quoted``, only outside quotes);
+    a sibling line's value is its scalar or the block indented under it.
+    """
+    field, stop, column = located
+    if column < 0:
+        value = _RECORD_QUOTED_VALUE.match(text, field.end()) if quoted else None
+        value = value or _RECORD_INLINE_VALUE.match(text, field.end(), stop)
+        if value is None:
+            return None
+        start, end = value.span()
+    else:
+        span = _record_line_value(text, field.end(), stop)
+        if span is None or text[span[0]:span[1]].strip() in _RECORD_BLOCK_MARKERS:
+            start, end = field.end(), _block_end(text, stop, column)
+        else:
+            start, end = span
+    raw = text[start:end]
+    if raw[:1] in {"\"", "'"} and raw.endswith(raw[0]) and len(raw) > 1:
+        return start + 1, end - 1, raw[1:-1]
+    return start, end, raw
+
+
 def _redact_name_value_pairs(text: str) -> str:
-    """Withhold values that sibling name/key fields identify as credentials.
+    """Withhold values that sibling name/key fields identify as credentials (the established rules).
+
+    ``_redact_record_settings`` reads the same records with the setting rules afterwards.
+    """
+    pieces: list[str] = []
+    cursor = 0
+    index: _RecordIndex | None = None
+    # Names that share a value field share its value, so it is decided once.
+    decided: set[int] = set()
+    for match in _record_names(text):
+        if match.start() < cursor or not _sensitive_assignment_key(match.group("name")):
+            continue
+        index = index or _RecordIndex(text)
+        located = index.value_field(match)
+        if located is None or located[0].start() in decided:
+            continue
+        decided.add(located[0].start())
+        value = _record_value(text, located, quoted=False)
+        if value is None or value[0] < cursor or _kept_value(value[2]):
+            continue
+        pieces.append(text[cursor:value[0]])
+        pieces.append(REDACTED + "\n" * value[2].count("\n"))
+        cursor = value[1]
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _redact_record_settings(text: str) -> str:
+    """Withhold values that sibling name/key fields name as settings.
 
     Names are read as settings (see ``_setting_level``): a sensitive one
     withholds any value, one whose last word names a credential only an opaque
-    literal.
+    literal. A quoted value runs to its closing quote, past a '}' inside it.
     """
     pieces: list[str] = []
     cursor = 0
@@ -295,11 +411,8 @@ def _redact_name_value_pairs(text: str) -> str:
     # Names that share a value field share its value, so it is decided once
     # per level: a weak name deciding it first leaves a sensitive one to withhold it.
     decided: dict[int, int] = {}
-    for word in _RECORD_WORD.finditer(text):
-        start = word.start()
-        match = _RECORD_NAME.match(text, start - 1) if start and text[start - 1] in "\"'" else None
-        match = match or _RECORD_NAME.match(text, start)
-        if match is None or match.start() < cursor:
+    for match in _record_names(text):
+        if match.start() < cursor:
             continue
         level = _setting_level(match.group("name"))
         if not level:
@@ -308,29 +421,15 @@ def _redact_name_value_pairs(text: str) -> str:
         located = index.value_field(match)
         if located is None or decided.get(located[0].start(), 0) >= level:
             continue
-        field, stop, column = located
-        decided[field.start()] = level
-        if column < 0:
-            value = _RECORD_QUOTED_VALUE.match(text, field.end()) or _RECORD_INLINE_VALUE.match(
-                text, field.end(), stop,
-            )
-            if value is None:
-                continue
-            start, end = value.span()
-        else:
-            span = _record_line_value(text, field.end(), stop)
-            if span is None or text[span[0]:span[1]].strip() in _RECORD_BLOCK_MARKERS:
-                start, end = field.end(), _block_end(text, stop, column)
-            else:
-                start, end = span
-        raw = text[start:end]
-        if raw[:1] in {"\"", "'"} and raw.endswith(raw[0]) and len(raw) > 1:
-            start, end, raw = start + 1, end - 1, raw[1:-1]
-        if start < cursor or _kept_value(raw) or not _setting_value_withheld(level, _record_scalar(raw)):
+        decided[located[0].start()] = level
+        value = _record_value(text, located, quoted=True)
+        if value is None or value[0] < cursor or _kept_value(value[2]):
             continue
-        pieces.append(text[cursor:start])
-        pieces.append(REDACTED + "\n" * raw.count("\n"))
-        cursor = end
+        if not _setting_value_withheld(level, _record_scalar(value[2])):
+            continue
+        pieces.append(text[cursor:value[0]])
+        pieces.append(REDACTED + "\n" * value[2].count("\n"))
+        cursor = value[1]
     if not pieces:
         return text
     pieces.append(text[cursor:])

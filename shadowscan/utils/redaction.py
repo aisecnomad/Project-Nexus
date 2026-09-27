@@ -49,9 +49,15 @@ from shadowscan.utils.redaction_commands import (
     _redact_command_credentials,
     _redact_environment_commands,
     _redact_opaque_options,
+    _redact_user_secrets,
 )
 from shadowscan.utils.redaction_formats import _AUTH, _JWT, _PEM, _SECRET_TOKEN, _URL, _sanitize_url
-from shadowscan.utils.redaction_markup import _redact_markup_credentials, _redact_name_value_pairs
+from shadowscan.utils.redaction_markup import (
+    _redact_markup_credentials,
+    _redact_markup_settings,
+    _redact_name_value_pairs,
+    _redact_record_settings,
+)
 from shadowscan.utils.redaction_rules import (
     _FINGERPRINT,
     _MAX_REDACTION_WORK,
@@ -86,12 +92,51 @@ def sanitize_text(text: str) -> str:
     name/value records, command-line options, environment commands, basic
     authentication pairs, literals passed to credential-named callees and
     literal fallback defaults of credential names.
+
+    The established passes run first, with the rules and in the order they
+    had before the extended passes were added; the extended passes then read
+    what they leave. Each pass reads the text the passes before it leave, so
+    a rule that withheld more in an early pass would change what the later
+    passes see: a value withheld together with the name glued after it
+    ('v#password = ...') hides that name from the assignment rules, and the
+    credential after the name is no longer withheld. Run last, an added rule
+    only adds markers, and whatever the established passes withhold stays
+    withheld.
     """
+    return _redact_extended(_sanitize_established(text))
+
+
+def _checked_text(text: str) -> str:
+    """``text`` as a string within the sanitization size limit."""
     if not isinstance(text, str):
         # Untyped callers still pass bytes-like values.
         text = str(text)  # type: ignore[unreachable]
     if len(text) > _MAX_SANITIZATION_CHARS:
         raise SanitizationLimitError("text sanitization size limit exceeded")
+    return text
+
+
+def _redact_extended(text: str) -> str:
+    """The rules added to the established passes, on the text those leave (see ``sanitize_text``).
+
+    Settings in markup and name/value records (hierarchical and
+    credential-like names), 'dotnet user-secrets set', numbered names and
+    YAML values under credential-like names, and opaque values of options
+    named for a credential. The options come last: withheld earlier, a value
+    glued to a following name ('--key v#openaiKey = ...') would hide that
+    name from the others.
+    """
+    text = _redact_markup_settings(text)
+    text = _redact_record_settings(text)
+    text = _redact_user_secrets(text)
+    text = _redact_opaque_assignments(text, extended=True)
+    text = _redact_fallback_defaults(text, extended=True)
+    return _redact_opaque_options(text)
+
+
+def _sanitize_established(text: str) -> str:
+    """The established passes, in their order and with their rules (see ``sanitize_text``)."""
+    text = _checked_text(text)
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
     text = _redact_markup_credentials(text)
@@ -113,11 +158,7 @@ def sanitize_text(text: str) -> str:
     # can introduce a bracketed marker after a mapping colon (including
     # annotations). Normalize those expressions in this same pass so repeated
     # sanitization does not change the result.
-    text = _redact_mapping_values(_redact_fallback_defaults(_redact_plain_assignments(text)))
-    # Opaque values of options named for a credential ('--key v') come last:
-    # withheld earlier, a value glued to a following name ('v#password = ...',
-    # 'v#process.env.TOKEN || "..."') hid that name from the rules that read it.
-    return _redact_opaque_options(text)
+    return _redact_mapping_values(_redact_fallback_defaults(_redact_plain_assignments(text)))
 
 
 def _opaque_option(option: str) -> bool:
@@ -126,7 +167,7 @@ def _opaque_option(option: str) -> bool:
     As on a command line, only a value that looks like an opaque key is one.
     """
     name = option.lstrip("-")
-    return not name.lower().startswith(("no-", "no_")) and _credential_name(name)
+    return not name.lower().startswith(("no-", "no_")) and _credential_name(name, numbered=True)
 
 
 def _opaque_literal(value: Any) -> bool:
@@ -143,17 +184,20 @@ def _record_has_secret_value(item: Mapping, *, environment: bool = False) -> boo
 
 
 class _Sanitizer:
-    """One ``sanitize`` call: the credential values it knows and its work budgets.
+    """One ``sanitize`` pass: the credential values it knows and its work budgets.
 
     ``discover`` collects the values of sensitive fields, secret-shaped
     records, credential options and (optionally) environment blocks;
     ``order`` ranks them for replacement; ``clean`` copies the input,
-    withholding them from every other field as well.
+    withholding them from every other field as well. The established pass
+    uses the established rules and text passes; the ``extended`` one, run
+    on the established pass's copy, the rules added since (see ``sanitize``).
     """
 
-    def __init__(self, *, redact_short_secrets: bool, env_values_are_secrets: bool) -> None:
+    def __init__(self, *, redact_short_secrets: bool, env_values_are_secrets: bool, extended: bool) -> None:
         self.redact_short_secrets = redact_short_secrets
         self.env_values_are_secrets = env_values_are_secrets
+        self.extended = extended
         self.known: set[str] = set()
         # The same aliased object can occur both outside and inside an environment
         # block. Revisit it under the stricter naming policy, but still bound cycles.
@@ -205,11 +249,15 @@ class _Sanitizer:
             for child in item:
                 if isinstance(previous, str) and previous.startswith("-"):
                     if _sensitive_key(previous.lstrip("-")) or (
-                        _opaque_option(previous) and _opaque_literal(child)
+                        self.extended and _opaque_option(previous) and _opaque_literal(child)
                     ):
                         self.remember(child)
                 self.discover(child, depth + 1, environment=environment)
                 previous = child
+
+    def text_passes(self, text: str) -> str:
+        """This pass's text passes: the established ones, or the extended ones on their result."""
+        return _redact_extended(_checked_text(text)) if self.extended else _sanitize_established(text)
 
     def order(self) -> None:
         """Rank the known values longest first for replacement."""
@@ -218,7 +266,7 @@ class _Sanitizer:
             # Remember that spelling too so its other opaque fragments are removed.
             for secret in tuple(self.known):
                 self.charge(len(secret))
-                spelling = sanitize_text(secret)
+                spelling = self.text_passes(secret)
                 if spelling and spelling != REDACTED:
                     self.known.add(spelling)
         self.ordered = sorted(self.known, key=len, reverse=True)
@@ -231,7 +279,7 @@ class _Sanitizer:
             # example, removing 'hooks' first would hide a Slack webhook URL
             # from the path-secret rules while retaining its capability token.
             self.charge(len(item))
-            item = sanitize_text(item)
+            item = self.text_passes(item)
         for secret in self.ordered:
             if self.redact_short_secrets:
                 item = self.replace(item, secret)
@@ -243,7 +291,7 @@ class _Sanitizer:
                 # Keep line counts stable: excerpts index sanitized text by the
                 # raw line number, and a multi-line secret would shift them.
                 item = item.replace(secret, REDACTED + "\n" * secret.count("\n"))
-        return sanitize_text(item)
+        return self.text_passes(item)
 
     def replace(self, item: str, secret: str) -> str:
         """Replace each occurrence of a known ``secret`` in ``item`` within the size limit."""
@@ -290,7 +338,7 @@ class _Sanitizer:
                     opaque_next = False
                     if isinstance(child, str) and child.startswith("-") and "=" not in child:
                         redact_next = _sensitive_key(child.lstrip("-"))
-                        opaque_next = _opaque_option(child)
+                        opaque_next = self.extended and _opaque_option(child)
             return tuple(sequence_out) if isinstance(item, tuple) else sequence_out
         if isinstance(item, str):
             return self.text(item)
@@ -339,14 +387,22 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     removing those from sibling fields destroys resource identities. Producers of
     such records pass ``False``; values under sensitive names, secret-record
     shapes and recognizable credential formats are still removed everywhere.
+
+    Two passes run, as in ``sanitize_text``: the established rules copy the
+    value, then the rules added since (opaque values of argv options named
+    for a credential) copy that copy, so they only withhold more than the
+    established pass does.
     """
     _check_sanitization_structure(value)
-    sanitizer = _Sanitizer(
-        redact_short_secrets=redact_short_secrets, env_values_are_secrets=env_values_are_secrets,
-    )
-    sanitizer.discover(value)
-    sanitizer.order()
-    return sanitizer.clean(value)
+    for extended in (False, True):
+        sanitizer = _Sanitizer(
+            redact_short_secrets=redact_short_secrets, env_values_are_secrets=env_values_are_secrets,
+            extended=extended,
+        )
+        sanitizer.discover(value)
+        sanitizer.order()
+        value = sanitizer.clean(value)
+    return value
 
 
 def _check_sanitization_structure(value: Any) -> None:

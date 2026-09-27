@@ -53,6 +53,12 @@ def _best_time(source: str, repeats: int) -> float:
     "-u=#",
     "-H=#",
     "--key=[REDACTED]#",
+    "-u=a:",                           # a kept user:password or header value after each ':'
+    "-u=a=b:",
+    "-H=a:",
+    "--user=a://",
+    "--api-key=$A#",                   # a reference before the next option
+    "-u=%K%:",
 ])
 def test_context_named_credential_passes_scale_linearly(unit):
     small, large = unit * 1000, unit * 4000

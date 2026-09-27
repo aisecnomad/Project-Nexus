@@ -121,29 +121,42 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   names and name/value records are read as settings: a hierarchical .NET name
   counts by its last `:`, `__` or `.` segment as well as whole
   (`<add key="OpenAI:Secret" value="..."/>`, `- name: AzureOpenAI__Token`,
-  `<entry key="openai.token">`). A literal that looks like an opaque key is
-  also withheld from a name whose last word, ignoring trailing digits, names a
-  credential: in assignments (`openaiKey = "..."`, `key = "..."`,
-  `KEY1=...`), settings (`<add key="AzureOpenAI:Key" value="..."/>`,
+  `<entry key="openai.token">`). A key/name attribute names the element's
+  value attributes, `<value>` child and content, and the element's own name
+  decides its content as well (`<token key="openai.token" value="">...</token>`).
+  A literal that looks like an opaque key is also withheld from a name whose
+  last word, ignoring trailing digits, names a credential: in assignments
+  (`openaiKey = "..."`, `key = "..."`, `KEY1=...`, YAML `openaiKey: ...`),
+  settings (`<add key="AzureOpenAI:Key" value="..."/>`,
   `<OpenAIKey>...</OpenAIKey>`, `{name: OpenAIKey, value: ...}`), options
   (`--key ...`, also in an argv list) and `dotnet user-secrets set NAME
   VALUE`; ordinary values under such names (`<add key="CacheKey"
-  value="users"/>`) stay. It is also withheld from a lone unindented line
-  after a sensitive key such as `token:`. Variable references (`$VAR`,
-  `${{ secrets.X }}`), environment variable names and placeholders stay
-  visible. A credential without such context can remain: an unprefixed literal
-  passed to an ordinary function or nested in another call inside a
-  credential constructor (`AzureKeyCredential(str("..."))`), a word-like or
-  short value under a name that is not itself sensitive, a lowercase word
-  after a space-separated option or as a fallback default, an option this list
-  does not name, including a one-letter option (`-k ...`), a positional
-  argument of any other command, the part of an unquoted option value after a
-  bracket, brace or comma, a literal fallback of a name that is not a
-  credential's, even inside a credential constructor
+  value="users"/>`, `cacheKey: users-by-id`) stay. It is also withheld from a
+  lone unindented line after a sensitive key such as `token:`. Variable
+  references (`$VAR`, `${{ secrets.X }}`), environment variable names and
+  placeholders stay visible. A credential without such context can remain: an
+  unprefixed literal passed to an ordinary function or nested in another call
+  inside a credential constructor (`AzureKeyCredential(str("..."))`), a
+  word-like or short value under a name that is not itself sensitive, a
+  lowercase word after a space-separated option or as a fallback default, an
+  option this list does not name, including a one-letter option (`-k ...`), a
+  positional argument of any other command, the part of an unquoted option
+  value after a bracket, brace or comma, a literal fallback of a name that is
+  not a credential's, even inside a credential constructor
   (`new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "...")`),
-  a value named only by a comment (`x = "..."  # openai key`), a value split
-  across concatenated strings, and sensitive business data. Treat reports as
-  confidential.
+  a value named only by a comment (`x = "..."  # openai key`), a name/value
+  record in text whose value field comes before its name
+  (`{"value": "...", "name": "Password"}`, `- value: ...` above
+  `name: DB_PASSWORD`), the part of a quoted record value after a `}` inside
+  it under a name sensitive as a whole (`{"name": "Password", "value":
+  "p}..."}`), a value split across concatenated strings, and sensitive
+  business data. Structured records that connectors pass to the sanitizer
+  (metadata, not report excerpts) still decide by the whole name with the
+  sensitive-key rule, so there `{"name": "OpenAIKey", "value": "..."}` and
+  `{"name": "OpenAI:Secret", "value": "..."}` keep a value that has no
+  recognizable format. The rules added for settings, options, numbered
+  names and YAML values run after the earlier rules, on their output, so
+  they only withhold more. Treat reports as confidential.
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
   provider and account restrictions still apply; ambiguous matches do not approve.

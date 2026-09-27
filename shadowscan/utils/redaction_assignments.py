@@ -182,10 +182,11 @@ def _redact_mapping_values(text: str) -> str:
 # Names whose last word names a credential (openaiKey, OPENAI-KEY, dbPass,
 # stripe.secretKey, key) also name sort keys, page tokens and cache keys, so
 # only a literal that looks like an opaque key is withheld from them. An
-# unquoted value counts after '=' and, as a YAML value, after ': ' ('key:v' is
-# a scalar or a URL part); a word-like one is an identifier or a type
-# ('key: Ed25519PrivateKey'). Both patterns below start at the separator,
-# which is rarer than a name, and the name before it is read backwards.
+# unquoted value counts after '=' and, in the extended pass, as a YAML value
+# after ': ' ('key:v' is a scalar or a URL part); a word-like one is an
+# identifier or a type ('key: Ed25519PrivateKey'). Both patterns below start
+# at the separator, which is rarer than a name, and the name before it is
+# read backwards.
 _OPAQUE_VALUE = re.compile(
     r"(?P<separator>:=|=(?![=>~])|:(?![:=]))[ \t]*"
     r"(?:(?P<prefix>[rRbBuUfF]{1,2}|@)?(?P<quote>[\"'`])(?P<quoted>[^\"'`\r\n]{8,})(?P=quote)"
@@ -201,10 +202,11 @@ _NEXT_LINE_VALUE = re.compile(r":[ \t]*\r?\n(?P<value>[^\s\"'#()\[\]{}<>,;]+)[ \
 _NEXT_LINE_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 
 
-def _assigned_name(text: str, separator: int) -> str:
+def _assigned_name(text: str, separator: int, *, numbered: bool = False) -> str:
     """The name assigned at ``separator``, past a closing quote and a simple type annotation.
 
     A '?' before the separator is a nullable type ('String? =') or Make's '?='.
+    ``numbered`` is passed on to ``_credential_name``.
     """
     end = _blanks_before(text, separator)
     if end > 0 and text[end - 1] in "\"'":
@@ -214,27 +216,36 @@ def _assigned_name(text: str, separator: int) -> str:
     name = _name_before(text, end, "_$.-")
     colon = _blanks_before(text, end - len(name))
     typed = colon > 0 and text[colon - 1] == ":" and (colon < 2 or text[colon - 2] != ":")
-    if name and typed and not _credential_name(name):
+    if name and typed and not _credential_name(name, numbered=numbered):
         return _name_before(text, _blanks_before(text, colon - 1), "_$.-")  # 'openaiKey: string = "..."'
     return name
 
 
-def _redact_opaque_assignments(text: str) -> str:
-    """Withhold opaque literals given to credential-like names, and a lone value after 'token:'."""
+def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
+    """Withhold opaque literals given to credential-like names, and a lone value after 'token:'.
+
+    The ``extended`` pass, which runs after every established pass, also
+    reads a name numbered by trailing digits ('KEY1=...') and an unquoted
+    YAML value ('openaiKey: ...'); the lone value after 'token:' is the
+    established pass's alone.
+    """
     spans: list[tuple[int, int]] = []
     for match in _OPAQUE_VALUE.finditer(text):
-        if not _credential_name(_assigned_name(text, match.start())):
+        name = _assigned_name(text, match.start(), numbered=extended)
+        if not _credential_name(name, numbered=extended):
             continue
         group = "quoted" if match.group("quoted") is not None else "bare"
         value = match.group(group)
-        if group == "bare" and (_WORDY.fullmatch(value) or (
-            match.group("separator") == ":" and not text.startswith((" ", "\t"), match.end("separator"))
-        )):
+        if group == "bare" and (_WORDY.fullmatch(value) or (match.group("separator") == ":" and not (
+            extended and text.startswith((" ", "\t"), match.end("separator"))
+        ))):
             continue
         if match.group("quote") and _interpolated(match.group("prefix") or "", match.group("quote"), value):
             continue  # interpolated text is assembled elsewhere
         if _credential_literal(value, positional=False):
             spans.append(match.span(group))
+    if extended:
+        return _withhold_spans(text, spans)
     for match in _NEXT_LINE_VALUE.finditer(text):
         key = _name_before(text, match.start(), "_.-")
         if not _NEXT_LINE_KEY.fullmatch(key) or not _sensitive_assignment_key(key):
@@ -273,11 +284,13 @@ def _fallback_name(text: str, operator: int) -> str:
     return text[opening + 1:end - 1] if opening >= 0 else ""
 
 
-def _redact_fallback_defaults(text: str) -> str:
+def _redact_fallback_defaults(text: str, *, extended: bool = False) -> str:
     """Withhold literal defaults given to credential names by fallback operators.
 
     A lowercase word ('default', 'none') and the values a credential
     literal never is (placeholders, URLs, environment names) stay visible.
+    The ``extended`` pass, which runs after every established pass, also
+    reads a name numbered by trailing digits ('process.env.KEY1 || "..."').
     """
     spans: list[tuple[int, int]] = []
     for match in _FALLBACK_DEFAULT.finditer(text):
@@ -286,11 +299,11 @@ def _redact_fallback_defaults(text: str) -> str:
         if not name or _interpolated(match.group("prefix") or "", match.group("quote"), value):
             continue
         sensitive = _sensitive_assignment_key(name)
-        if not (sensitive or _credential_name(name)) or _CLI_WORD.fullmatch(value):
+        if not (sensitive or _credential_name(name, numbered=extended)) or _CLI_WORD.fullmatch(value):
             continue
         if _credential_literal(value, positional=sensitive):
             spans.append(match.span("value"))
-    if "${" in text:
+    if "${" in text and not extended:
         for match in _SHELL_DEFAULT.finditer(text):
             value = match.group("value")
             if not _sensitive_assignment_key(match.group("name")) or _CLI_WORD.fullmatch(value):
