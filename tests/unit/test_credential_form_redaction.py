@@ -98,6 +98,8 @@ FORMS: list[tuple[str, str, str]] = [
     (f"spring.ai.openai.api-key={HEX}", HEX, "spring.ai.openai.api-key="),
     (f"[openai]\napi_key = {HEX}\n", HEX, "[openai]"),
     (f"openai:\n  api_key: {HEX}\n", HEX, "openai:"),
+    (f'$headers = @{{"api-key" = "{HEX}"}}', HEX, '$headers = @{"api-key" = '),
+    (f'[openai]\n"api-key" = "{HEX}"\n', HEX, '"api-key" = '),
     (f"if token:\n    return token\nopenai:\n  api_key: {HEX}\n", HEX, "    return token"),
     # Name/value records in container environments and parameter lists.
     (f"env:\n  - name: OPENAI_API_KEY\n    value: {HEX}\n  - name: MODEL\n    value: gpt-4o\n", HEX,
@@ -202,6 +204,8 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
     "env:\n  - name: MODEL\n    value: gpt-4o\n",
     "env:\n  - name: OPENAI_API_KEY\n    valueFrom:\n      secretKeyRef: {name: openai, key: api-key}\n",
     "requests.get(url, auth=(username, password))",
+    'if headers["token"] == "expected": pass',
+    'value = lookup("token") or "default"',
 ])
 def test_names_references_placeholders_and_ordinary_arguments_are_preserved(source):
     assert sanitize_text(source) == source

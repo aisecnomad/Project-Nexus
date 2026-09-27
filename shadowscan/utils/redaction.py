@@ -87,10 +87,11 @@ _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 # lexer (including '.' and '-'), preventing retries at interior key segments.
 # Text size and redaction work are bounded separately below. An unquoted
 # key's colon stays on its line: a YAML parent ('openai:') must not consume the
-# nested sensitive key on the next line as its own value.
+# nested sensitive key on the next line as its own value. A quoted key may also
+# be assigned with '=' (PowerShell hashtables, TOML quoted keys).
 _ASSIGNMENT = re.compile(
     r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
-    r"(?P<sep>[\"']\s*:\s*|\s*=\s*|:[ \t]+|:[ \t]*(?=[\"']))"
+    r"(?P<sep>[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+|:[ \t]*(?=[\"']))"
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;\}\]\)\"']+)"
 )
 _QUERY_SEPARATOR = re.compile(r"[&#]")
