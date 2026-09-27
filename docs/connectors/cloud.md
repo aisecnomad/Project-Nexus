@@ -104,5 +104,31 @@ incomplete while preserving available resource evidence. Audit credentials need
 the corresponding application/function read permissions; list-only access is
 insufficient to inspect configuration.
 
+### Offline record kinds
+Offline exports are JSONL files with one record per line. Each record's `_kind`
+selects how it is analyzed; produce exports with `--dump-records` from a live
+run rather than writing records by hand.
+
+| Connector | Accepted `_kind` values |
+| --- | --- |
+| `cloud.aws` | `account`, `bedrock-agent`, `bedrock-knowledge-base`, `bedrock-flow`, `bedrock-logging`, `bedrock-guardrail`, `bedrock-custom-model`, `agentcore-runtime`, `agentcore-gateway`, `agentcore-memory`, `agentcore-browser`, `agentcore-code-interpreter`, `agentcore-workload-identity`, `lambda`, `ecs-task-definition`, `sagemaker-endpoint`, `state-machine`, `qbusiness-application`, `lex-bot`, `secret-name`, `ssm-parameter`, `iam-principal`, `cloudtrail-event` |
+| `cloud.gcp` | `project`, `reasoning-engine`, `vertex-endpoint`, `dialogflow-agent`, `discovery-engine`, `cloud-run-service`, `cloud-function`, `iam-policy`, `service-account`, `api-key`, `secret-name`, `audit-event` |
+| `cloud.azure` | `resource`, `deployment`, `diagnostics`, `foundry-agent`, `logicapp-definition`, `appsettings`, `role-assignment` |
+| `cloud.oci` | `tenancy`, `genai-agent`, `genai-agent-endpoint`, `genai-knowledge-base`, `genai-endpoint`, `genai-cluster`, `genai-custom-model`, `oda-instance`, `model-deployment`, `function`, `container-instance`, `secret-name`, `policy`, `dynamic-group` |
+
+All four connectors apply the same record contract. A record with a missing,
+unsupported or non-string `_kind`, or with fields that do not fit its kind, is
+reported as a warning and makes the scan incomplete; the remaining records are
+still analyzed. Envelope records (`account`, `tenancy`) and related records
+(Azure deployments and diagnostic settings, OCI agent endpoints) are resolved
+before findings are emitted. CloudTrail events become one gateway-caller
+finding per principal, and Cloud Audit Log events one per principal and
+project, with event counts and the first and last event time.
+
+Synthetic sample exports for all four connectors are kept in
+`tests/fixtures/cloud/` (`<provider>_records.jsonl`, plus
+`gcp_extended_records.jsonl` and `oci_extended_records.jsonl` for the remaining
+GCP and OCI kinds).
+
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.
