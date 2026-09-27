@@ -51,7 +51,7 @@ from typing import Any, ClassVar
 
 import yaml
 
-from shadowscan.connectors.base import BaseConnector, ConnectorError
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
 from shadowscan.connectors.code.mcp_tools import mcp_tool_capabilities, mcp_tool_names
@@ -684,7 +684,7 @@ class FilesystemConnector(BaseConnector):
     shared_config_keys: ClassVar[dict[str, str]] = {}  # scans a checkout, not an export file
     offline_formats: ClassVar[str] = "n/a (path is the input)"
 
-    def __init__(self, ctx):
+    def __init__(self, ctx: ConnectorContext) -> None:
         super().__init__(ctx)
         self.max_file_size = int(ctx.get("max_file_size", 1_000_000))
         self.max_files = int(ctx.get("max_files", 100_000))
