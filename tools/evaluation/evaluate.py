@@ -110,95 +110,110 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
     ids: set[str] = set()
     total_bytes = 0
     for i, item in enumerate(items):
-        where = f"case {i}"
-        obj = _keys(
-            item,
-            {"id", "family", "description", "files", "target", "present"},
-            {"assertions", "source", "known_gap"},
-            where,
-        )
-        case_id, family, desc = obj["id"], obj["family"], obj["description"]
-        if not isinstance(case_id, str) or not _ID.fullmatch(case_id) or case_id in ids:
-            raise CorpusError(f"{where}: case IDs must be unique slugs")
-        ids.add(case_id)
-        if not isinstance(family, str) or not _ID.fullmatch(family):
-            raise CorpusError(f"{where}: family must be a slug")
-        if family == "all":
-            raise CorpusError(f"{where}: family 'all' is reserved for aggregate metrics")
-        if not isinstance(desc, str) or not 1 <= len(desc) <= 500:
-            raise CorpusError(f"{where}: description must be 1 to 500 characters")
-        if type(obj["present"]) is not bool:
-            raise CorpusError(f"{where}: present must be boolean")
-        known_gap = obj.get("known_gap", False)
-        if type(known_gap) is not bool:
-            raise CorpusError(f"{where}: known_gap must be boolean")
-        target = _keys(obj["target"], {"kind"}, {"signature"}, f"{where} target")
-        try:
-            kind = Kind(target["kind"])
-        except (ValueError, TypeError) as exc:
-            raise CorpusError(f"{where}: unknown finding kind") from exc
-        sig = target.get("signature")
-        if sig is not None and (not isinstance(sig, str) or not _SIGNATURE.fullmatch(sig)):
-            raise CorpusError(f"{where}: signature must be a signature ID")
-        assertions = _keys(
-            obj.get("assertions", {}),
-            set(),
-            {"max_agent_findings", "max_secret_findings", "server_count", "server_names"},
-            f"{where} assertions",
-        )
-        for key in ("max_agent_findings", "max_secret_findings", "server_count"):
-            if key in assertions and (type(assertions[key]) is not int or not 0 <= assertions[key] <= 20):
-                raise CorpusError(f"{where}: {key} must be an integer from 0 to 20")
-        if "server_names" in assertions and (
-            not isinstance(assertions["server_names"], list)
-            or len(assertions["server_names"]) > 20
-            or any(
-                not isinstance(name, str) or not name or len(name) > 100
-                for name in assertions["server_names"]
-            )
-            or len(set(assertions["server_names"])) != len(assertions["server_names"])
-        ):
-            raise CorpusError(f"{where}: server_names must contain up to 20 unique names")
-        files = obj["files"]
-        if not isinstance(files, dict) or not 1 <= len(files) <= MAX_FILES_PER_CASE:
-            raise CorpusError(f"{where}: files must contain 1 to 20 entries")
-        for name, contents in files.items():
-            if not _safe_name(name) or not isinstance(contents, str):
-                raise CorpusError(f"{where}: invalid text file or unsafe relative path")
-            size = len(contents.encode("utf-8"))
-            if size > MAX_FILE_BYTES:
-                raise CorpusError(f"{where}: file exceeds 32 KB")
-            total_bytes += size
-            if total_bytes > MAX_TOTAL_FILE_BYTES:
-                raise CorpusError("case files exceed 1 MB combined")
-        source = obj.get("source")
-        if source is not None:
-            source = _keys(
-                source,
-                {"repo", "url", "commit", "path", "sha256", "license", "label_evidence"},
-                set(),
-                f"{where} source",
-            )
-            if (
-                len(files) != 1
-                or not all(isinstance(v, str) and v and len(v) <= 500 for v in source.values())
-                or source["path"] not in files
-                or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", source["repo"])
-                or not re.fullmatch(r"[0-9a-f]{40}", source["commit"])
-                or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"])
-            ):
-                raise CorpusError(f"{where}: invalid source attribution")
-            expected_url = f"https://github.com/{source['repo']}/blob/{source['commit']}/{source['path']}"
-            if source["url"] != expected_url:
-                raise CorpusError(f"{where}: source URL does not match repository commit and path")
-            if hashlib.sha256(files[source["path"]].encode("utf-8")).hexdigest() != source["sha256"]:
-                raise CorpusError(f"{where}: source snapshot digest mismatch")
-        if meta["type"] == "public-pinned" and source is None:
-            raise CorpusError(f"{where}: public pinned cases require source attribution")
-        cases.append(
-            Case(case_id, family, desc, files, kind, sig, obj["present"], assertions, source, known_gap)
-        )
+        case, total_bytes = _parse_case(item, f"case {i}", ids, total_bytes, meta["type"])
+        cases.append(case)
     return meta, cases, hashlib.sha256(raw).hexdigest()
+
+
+def _parse_case(item: Any, where: str, ids: set[str], total_bytes: int, corpus_type: str) -> tuple[Case, int]:
+    """Validate one corpus case; return it and the running total of case file bytes."""
+    obj = _keys(
+        item,
+        {"id", "family", "description", "files", "target", "present"},
+        {"assertions", "source", "known_gap"},
+        where,
+    )
+    case_id, family, desc = obj["id"], obj["family"], obj["description"]
+    if not isinstance(case_id, str) or not _ID.fullmatch(case_id) or case_id in ids:
+        raise CorpusError(f"{where}: case IDs must be unique slugs")
+    ids.add(case_id)
+    if not isinstance(family, str) or not _ID.fullmatch(family):
+        raise CorpusError(f"{where}: family must be a slug")
+    if family == "all":
+        raise CorpusError(f"{where}: family 'all' is reserved for aggregate metrics")
+    if not isinstance(desc, str) or not 1 <= len(desc) <= 500:
+        raise CorpusError(f"{where}: description must be 1 to 500 characters")
+    if type(obj["present"]) is not bool:
+        raise CorpusError(f"{where}: present must be boolean")
+    known_gap = obj.get("known_gap", False)
+    if type(known_gap) is not bool:
+        raise CorpusError(f"{where}: known_gap must be boolean")
+    target = _keys(obj["target"], {"kind"}, {"signature"}, f"{where} target")
+    try:
+        kind = Kind(target["kind"])
+    except (ValueError, TypeError) as exc:
+        raise CorpusError(f"{where}: unknown finding kind") from exc
+    sig = target.get("signature")
+    if sig is not None and (not isinstance(sig, str) or not _SIGNATURE.fullmatch(sig)):
+        raise CorpusError(f"{where}: signature must be a signature ID")
+    assertions = _case_assertions(obj.get("assertions", {}), where)
+    files = obj["files"]
+    if not isinstance(files, dict) or not 1 <= len(files) <= MAX_FILES_PER_CASE:
+        raise CorpusError(f"{where}: files must contain 1 to 20 entries")
+    for name, contents in files.items():
+        if not _safe_name(name) or not isinstance(contents, str):
+            raise CorpusError(f"{where}: invalid text file or unsafe relative path")
+        size = len(contents.encode("utf-8"))
+        if size > MAX_FILE_BYTES:
+            raise CorpusError(f"{where}: file exceeds 32 KB")
+        total_bytes += size
+        if total_bytes > MAX_TOTAL_FILE_BYTES:
+            raise CorpusError("case files exceed 1 MB combined")
+    source = obj.get("source")
+    if source is not None:
+        source = _case_source(source, files, where)
+    if corpus_type == "public-pinned" and source is None:
+        raise CorpusError(f"{where}: public pinned cases require source attribution")
+    case = Case(case_id, family, desc, files, kind, sig, obj["present"], assertions, source, known_gap)
+    return case, total_bytes
+
+
+def _case_assertions(value: Any, where: str) -> dict[str, Any]:
+    assertions = _keys(
+        value,
+        set(),
+        {"max_agent_findings", "max_secret_findings", "server_count", "server_names"},
+        f"{where} assertions",
+    )
+    for key in ("max_agent_findings", "max_secret_findings", "server_count"):
+        if key in assertions and (type(assertions[key]) is not int or not 0 <= assertions[key] <= 20):
+            raise CorpusError(f"{where}: {key} must be an integer from 0 to 20")
+    if "server_names" in assertions and (
+        not isinstance(assertions["server_names"], list)
+        or len(assertions["server_names"]) > 20
+        or any(
+            not isinstance(name, str) or not name or len(name) > 100
+            for name in assertions["server_names"]
+        )
+        or len(set(assertions["server_names"])) != len(assertions["server_names"])
+    ):
+        raise CorpusError(f"{where}: server_names must contain up to 20 unique names")
+    return assertions
+
+
+def _case_source(value: Any, files: dict[str, str], where: str) -> dict[str, Any]:
+    """Check a public case's attribution against its single pinned file."""
+    source = _keys(
+        value,
+        {"repo", "url", "commit", "path", "sha256", "license", "label_evidence"},
+        set(),
+        f"{where} source",
+    )
+    if (
+        len(files) != 1
+        or not all(isinstance(v, str) and v and len(v) <= 500 for v in source.values())
+        or source["path"] not in files
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", source["repo"])
+        or not re.fullmatch(r"[0-9a-f]{40}", source["commit"])
+        or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"])
+    ):
+        raise CorpusError(f"{where}: invalid source attribution")
+    expected_url = f"https://github.com/{source['repo']}/blob/{source['commit']}/{source['path']}"
+    if source["url"] != expected_url:
+        raise CorpusError(f"{where}: source URL does not match repository commit and path")
+    if hashlib.sha256(files[source["path"]].encode("utf-8")).hexdigest() != source["sha256"]:
+        raise CorpusError(f"{where}: source snapshot digest mismatch")
+    return source
 
 
 def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str, Any]]]:

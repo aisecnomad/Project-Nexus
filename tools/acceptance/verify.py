@@ -245,6 +245,27 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
              and implementation["scanner_source_sha256"] == source_sha
              and implementation["signature_sha256"] == signature_sha, "evaluation_implementation_mismatch")
     rows = report["cases"]
+    _evaluation_rows(rows, cases)
+    _require(type(report["passed"]) is bool and report["passed"] == all(row["correct"] for row in rows),
+             "inconsistent_evaluation_result")
+    metrics = summarize(rows)
+    _require(report["metrics"] == metrics, "inconsistent_evaluation_metrics")
+    _require(report["known_gaps"] == known_gaps(rows), "inconsistent_evaluation_result")
+    _require(report["known_gaps"]["count"] == 0, "known_gap_not_allowed_in_holdout")
+    overall = metrics["all"]
+    for name in ("cases", "positive_cases", "negative_cases"):
+        _require(overall[name] >= policy[f"min_{name}"], "sample_threshold_not_met")
+    for name in ("precision", "recall", "specificity"):
+        _require(overall[name] is not None and overall[name] >= policy[f"min_{name}"],
+                 "metric_threshold_not_met")
+    by_kind = _kind_metrics(rows, cases, policy)
+    return {"cases": overall["cases"], "positive_cases": overall["positive_cases"],
+            "negative_cases": overall["negative_cases"], "precision": overall["precision"],
+            "recall": overall["recall"], "specificity": overall["specificity"], "by_kind": by_kind}
+
+
+def _evaluation_rows(rows: Any, cases: list[Case]) -> None:
+    """Each report row must restate its frozen case and agree with its own findings."""
     _require(isinstance(rows, list) and len(rows) == len(cases), "evaluation_case_mismatch")
     expected = {case.id: case for case in cases}
     seen: set[str] = set()
@@ -275,18 +296,10 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
                 matched.append(finding)
         _require(row["predicted"] == bool(matched), "inconsistent_evaluation_prediction")
         _require(not _assertions(case, row["findings"]), "evaluation_assertion_failure")
-    _require(type(report["passed"]) is bool and report["passed"] == all(row["correct"] for row in rows),
-             "inconsistent_evaluation_result")
-    metrics = summarize(rows)
-    _require(report["metrics"] == metrics, "inconsistent_evaluation_metrics")
-    _require(report["known_gaps"] == known_gaps(rows), "inconsistent_evaluation_result")
-    _require(report["known_gaps"]["count"] == 0, "known_gap_not_allowed_in_holdout")
-    overall = metrics["all"]
-    for name in ("cases", "positive_cases", "negative_cases"):
-        _require(overall[name] >= policy[f"min_{name}"], "sample_threshold_not_met")
-    for name in ("precision", "recall", "specificity"):
-        _require(overall[name] is not None and overall[name] >= policy[f"min_{name}"],
-                 "metric_threshold_not_met")
+
+
+def _kind_metrics(rows: list[dict[str, Any]], cases: list[Case], policy: dict[str, Any]) -> dict[str, Any]:
+    """Summarize each target kind and enforce the policy's per-kind sample and error budgets."""
     by_kind: dict[str, Any] = {}
     for kind in sorted({case.kind.value for case in cases}):
         selected = [{**row, "family": kind} for row in rows if row["target"]["kind"] == kind]
@@ -300,9 +313,7 @@ def _evaluation(evidence: Any, base: Path, policy: dict[str, Any], now: datetime
                      "kind_sample_threshold_not_met")
             _require(counts["fp"] <= limits["max_false_positives"]
                      and counts["fn"] <= limits["max_false_negatives"], "kind_error_budget_exceeded")
-    return {"cases": overall["cases"], "positive_cases": overall["positive_cases"],
-            "negative_cases": overall["negative_cases"], "precision": overall["precision"],
-            "recall": overall["recall"], "specificity": overall["specificity"], "by_kind": by_kind}
+    return by_kind
 
 
 def _scope(connector: Any, scope: Any) -> None:
