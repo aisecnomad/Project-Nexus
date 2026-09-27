@@ -7,7 +7,8 @@ agents), fingerprints AI steps with the platform signatures and emits one
 Offline exports:
 
 * n8n     – ``/api/v1/workflows`` JSON (or exported workflow JSON files)
-* Make    – ``/api/v2/scenarios`` list with embedded ``blueprint`` (or blueprint JSON files) and ``/api/v2/ai-agents``
+* Make    – ``/api/v2/scenarios`` list with embedded ``blueprint`` (or blueprint JSON files)
+  and ``/api/v2/ai-agents``
 * Zapier  – Zapier for Companies / Enterprise CSV or JSON export of Zaps (title, status, apps/steps, owner)
 * Workato – ``/api/recipes`` JSON (``items`` with ``code`` and ``config``)
 """
@@ -70,11 +71,14 @@ class _AutomationBase(BaseConnector):
         matches = blob_matches(self.index, blob)
         if not matches and not ai_steps:
             return None
+        platform = self.index.get(self.platform_signature)
+        label = platform.name if platform else self.provider
+        noun = "agent" if kind == Kind.AGENT else "workflow"
         f = Finding(
             surface=Surface.LOWCODE,
             connector=self.name,
             kind=kind,
-            title=f"{self.index.get(self.platform_signature).name if self.index.get(self.platform_signature) else self.provider} {'agent' if kind == Kind.AGENT else 'workflow'} with AI steps: {name}",  # type: ignore[union-attr]
+            title=f"{label} {noun} with AI steps: {name}",
             resource=f"{self.provider}:{resource_type}:{wid}",
             resource_type=resource_type,
             provider=self.provider,
@@ -86,7 +90,10 @@ class _AutomationBase(BaseConnector):
         f.add_framework(self.platform_signature)
         apply_matches(f, matches, location=url)
         if ai_steps:
-            f.add_evidence(Evidence(signal=f"{self.provider}:ai-steps", description=f"AI steps: {', '.join(ai_steps[:10])}", location=url, weight=0.8, signature=self.platform_signature))
+            f.add_evidence(Evidence(
+                signal=f"{self.provider}:ai-steps", description=f"AI steps: {', '.join(ai_steps[:10])}",
+                location=url, weight=0.8, signature=self.platform_signature,
+            ))
             f.add_capability("tool-use")
         if any(re.search(r"(?i)cron|schedule|interval|timer|recurr", t) for t in triggers):
             f.add_capability("autonomous")
@@ -96,7 +103,10 @@ class _AutomationBase(BaseConnector):
             f.add_tag("event-triggered")
         if active is False:
             f.add_tag("inactive")
-        f.metadata.update({"active": active, "triggers": triggers[:10], "ai_steps": ai_steps[:20], "url": url, **(extra or {})})
+        f.metadata.update({
+            "active": active, "triggers": triggers[:10], "ai_steps": ai_steps[:20], "url": url,
+            **(extra or {}),
+        })
         finalize(f, self.index)
         f.kind = kind
         return f
@@ -121,7 +131,10 @@ class N8nConnector(_AutomationBase):
         if not (base and key):
             raise ConnectorError("lowcode.n8n: api_url and api_key required")
         http = HttpClient(base, headers={"X-N8N-API-KEY": key})
-        yield from http.paginate_token("/workflows", params={"limit": 250}, items_key="data", token_key="nextCursor", token_param="cursor", max_pages=max(1, int(self.ctx.get("max_pages", 1000))))
+        yield from http.paginate_token(
+            "/workflows", params={"limit": 250}, items_key="data", token_key="nextCursor",
+            token_param="cursor", max_pages=max(1, int(self.ctx.get("max_pages", 1000))),
+        )
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for w in records:
@@ -135,7 +148,10 @@ class N8nConnector(_AutomationBase):
 
     def _valid_workflow(self, w: Any) -> bool:
         return (
-            self._record_fields_valid(w, strings=("name", "createdAt", "updatedAt"), mappings=("homeProject",), arrays=("nodes", "tags"))
+            self._record_fields_valid(
+                w, strings=("name", "createdAt", "updatedAt"), mappings=("homeProject",),
+                arrays=("nodes", "tags"),
+            )
             and isinstance(w.get("nodes"), list)
         )
 
@@ -149,17 +165,33 @@ class N8nConnector(_AutomationBase):
         if not identified:
             self.ctx.warn("lowcode.n8n: workflow has no valid provider id; identity coverage incomplete")
             workflow_id = hashlib.sha256(json.dumps(w, sort_keys=True, default=str).encode()).hexdigest()
-        nodes = [node for node in w["nodes"] if self._record_fields_valid(node, required=("type",), strings=("name",), mappings=("parameters",))]
+        nodes = [
+            node for node in w["nodes"]
+            if self._record_fields_valid(
+                node, required=("type",), strings=("name",), mappings=("parameters",),
+            )
+        ]
         if len(nodes) != len(w["nodes"]):
             self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
         types = [str(n.get("type", "")) for n in nodes]
-        ai_steps = [f"{n.get('name')} ({n.get('type')})" for n in nodes if re.search(r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace|\.agent$|mcp", str(n.get("type", "")), re.I)]
+        ai_steps = [
+            f"{n.get('name')} ({n.get('type')})" for n in nodes
+            if re.search(r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace"
+                         r"|\.agent$|mcp", str(n.get("type", "")), re.I)
+        ]
         triggers = [t for t in types if re.search(r"trigger|cron|schedule|webhook", t, re.I)]
-        models = [str(get_path(n, "parameters.model.value", "parameters.model", "parameters.modelId.value", "parameters.options.model")) for n in nodes if get_path(n, "parameters.model", "parameters.modelId")]
+        models = [
+            str(get_path(n, "parameters.model.value", "parameters.model", "parameters.modelId.value",
+                         "parameters.options.model"))
+            for n in nodes if get_path(n, "parameters.model", "parameters.modelId")
+        ]
         f = self._workflow_finding(
             wid=str(workflow_id),
             name=w.get("name") or "Unnamed workflow",
-            blob=json.dumps({"nodes": [{"type": n.get("type"), "parameters": n.get("parameters")} for n in nodes]}, default=str)[:300_000],
+            blob=json.dumps(
+                {"nodes": [{"type": n.get("type"), "parameters": n.get("parameters")} for n in nodes]},
+                default=str,
+            )[:300_000],
             owner=get_path(w, "homeProject.name", "shared.0.project.name", "owner", "createdBy"),
             account=self.ctx.get("api_url", env="N8N_API_URL"),
             active=w.get("active"),
@@ -167,9 +199,13 @@ class N8nConnector(_AutomationBase):
             updated=w.get("updatedAt"),
             triggers=triggers,
             ai_steps=ai_steps,
-            kind=Kind.AGENT if any(t.endswith(".agent") or t.endswith("agentTool") for t in types) else Kind.WORKFLOW,
+            kind=(Kind.AGENT if any(t.endswith(".agent") or t.endswith("agentTool") for t in types)
+                  else Kind.WORKFLOW),
             resource_type="workflow" if identified else "unresolved-workflow",
-            extra={"node_count": len(nodes), "node_types": sorted(set(types))[:40], "tags": [t.get("name") for t in w.get("tags") or [] if isinstance(t, dict)]},
+            extra={
+                "node_count": len(nodes), "node_types": sorted(set(types))[:40],
+                "tags": [t.get("name") for t in w.get("tags") or [] if isinstance(t, dict)],
+            },
         )
         if f:
             if not identified:
@@ -177,7 +213,8 @@ class N8nConnector(_AutomationBase):
                 f.add_tag("unresolved-identity")
             apply_matches(f, model_matches(self.index, *models), weight_scale=0.5)
             f.models = sorted({m for m in models if m and m != "None"})
-            if any("toolCode" in t or "executeCommand" in t or "n8n-nodes-base.code" in t or "ssh" in t.lower() for t in types):
+            if any("toolCode" in t or "executeCommand" in t or "n8n-nodes-base.code" in t
+                   or "ssh" in t.lower() for t in types):
                 f.add_capability("code-exec")
         return f
 
@@ -197,7 +234,9 @@ class MakeConnector(_AutomationBase):
         "input": "offline: scenarios JSON (with blueprint) / ai-agents JSON / blueprint files",
     }
 
-    def _offset_pages(self, http: HttpClient, path: str, items_key: str, **params: Any) -> Iterator[dict[str, Any]]:
+    def _offset_pages(
+        self, http: HttpClient, path: str, items_key: str, **params: Any,
+    ) -> Iterator[dict[str, Any]]:
         seen: set[str] = set()
         for page in range(max(1, int(self.ctx.get("max_pages", 1000)))):
             try:
@@ -230,7 +269,9 @@ class MakeConnector(_AutomationBase):
         if self.ctx.get("team_id"):
             teams = [str(self.ctx.get("team_id"))]
         elif self.ctx.get("organization_id"):
-            teams = [str(t["id"]) for t in self._offset_pages(http, "/teams", "teams", organizationId=self.ctx.get("organization_id"))]
+            organization = self.ctx.get("organization_id")
+            pages = self._offset_pages(http, "/teams", "teams", organizationId=organization)
+            teams = [str(t["id"]) for t in pages]
         else:
             raise ConnectorError("lowcode.make: team_id or organization_id required")
         for team in teams:
@@ -249,17 +290,26 @@ class MakeConnector(_AutomationBase):
                     blueprint_errors[status] = blueprint_errors.get(status, 0) + 1
                 yield {**s, "_kind": "scenario", "_team": team}
             if blueprint_errors:
-                details = ", ".join(f"{status}: {total}" for status, total in sorted(blueprint_errors.items()))
-                self.ctx.warn(f"lowcode.make: blueprints unreadable for {sum(blueprint_errors.values())} scenario(s) in team {team} ({details}); workflow inventory incomplete")
+                details = ", ".join(
+                    f"{status}: {total}" for status, total in sorted(blueprint_errors.items())
+                )
+                self.ctx.warn(
+                    f"lowcode.make: blueprints unreadable for {sum(blueprint_errors.values())} scenario(s) "
+                    f"in team {team} ({details}); workflow inventory incomplete"
+                )
             try:
                 data = http.get_json("/ai-agents/v1/agents", params={"teamId": team})
             except (HttpError, RequestException, RuntimeError, ValueError) as exc:
                 status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
-                self.ctx.warn(f"lowcode.make: AI agents unreadable for team {team} ({status}); agent inventory incomplete")
+                self.ctx.warn(
+                    f"lowcode.make: AI agents unreadable for team {team} ({status}); "
+                    "agent inventory incomplete"
+                )
                 continue
             agents = data
             if isinstance(data, dict):
-                agents = [data] if data.get("id") and data.get("name") else data.get("aiAgents", data.get("agents"))
+                agents = ([data] if data.get("id") and data.get("name")
+                          else data.get("aiAgents", data.get("agents")))
             if not isinstance(agents, list):
                 self.ctx.warn(f"lowcode.make: invalid AI agents response for team {team}")
                 continue
@@ -277,23 +327,32 @@ class MakeConnector(_AutomationBase):
                 self.ctx.warn("lowcode.make: unsupported or malformed provider record; coverage incomplete")
                 continue
             self.ctx.examined()
-            f = self._guarded_finding(rec, self._agent_finding if kind == "ai-agent" else self._scenario_finding, kind)
+            build = self._agent_finding if kind == "ai-agent" else self._scenario_finding
+            f = self._guarded_finding(rec, build, kind)
             if f:
                 yield f
 
     def _record_kind(self, rec: Any) -> str | None:
-        if not self._record_fields_valid(rec, strings=("_kind", "name", "_team"), mappings=("blueprint", "createdByUser", "scheduling"), arrays=("tools",)):
+        if not self._record_fields_valid(
+            rec, strings=("_kind", "name", "_team"), mappings=("blueprint", "createdByUser", "scheduling"),
+            arrays=("tools",),
+        ):
             return None
-        kind = rec.get("_kind") or ("ai-agent" if "agentId" in rec or ("model" in rec and "systemPrompt" in rec) else "scenario")
+        kind = rec.get("_kind") or (
+            "ai-agent" if "agentId" in rec or ("model" in rec and "systemPrompt" in rec) else "scenario"
+        )
         if kind == "ai-agent":
             return kind if self._identified(rec, "id", "agentId", "name") else None
         if kind != "scenario":
             return None
         blueprint = rec.get("blueprint")
-        identified = self._identified(rec, "id", "name") or (isinstance(blueprint, dict) and ("flow" in blueprint or bool(blueprint.get("name"))))
+        identified = self._identified(rec, "id", "name") or (
+            isinstance(blueprint, dict) and ("flow" in blueprint or bool(blueprint.get("name")))
+        )
         return kind if identified else None
 
     def _agent_finding(self, rec: dict[str, Any]) -> Finding | None:
+        model = rec.get("model") or rec.get("llmModel") or rec.get("defaultModel")
         f = self._workflow_finding(
             wid=str(rec.get("id") or rec.get("agentId") or rec.get("name")),
             name=str(rec.get("name")),
@@ -304,26 +363,37 @@ class MakeConnector(_AutomationBase):
             created=rec.get("createdAt"),
             updated=rec.get("updatedAt"),
             triggers=[],
-            ai_steps=[f"Make AI Agent (model {rec.get('model') or rec.get('llmModel') or rec.get('defaultModel') or '?'})"],
+            ai_steps=[f"Make AI Agent (model {model or '?'})"],
             kind=Kind.AGENT,
             resource_type="ai-agent",
-            extra={"model": rec.get("model") or rec.get("llmModel") or rec.get("defaultModel"), "tools": [t.get("name") for t in rec.get("tools") or [] if isinstance(t, dict)][:20], "system_prompt": truncate(str(rec.get("systemPrompt") or ""), 200)},
+            extra={
+                "model": model,
+                "tools": [t.get("name") for t in rec.get("tools") or [] if isinstance(t, dict)][:20],
+                "system_prompt": truncate(str(rec.get("systemPrompt") or ""), 200),
+            },
         )
         if f:
-            apply_matches(f, model_matches(self.index, rec.get("model") or rec.get("llmModel") or rec.get("defaultModel")), weight_scale=0.5)
+            apply_matches(f, model_matches(self.index, model), weight_scale=0.5)
         return f
 
     def _scenario_finding(self, rec: dict[str, Any]) -> Finding | None:
         bp = rec.get("blueprint") or rec
         flow = bp.get("flow") if isinstance(bp, dict) else None
         modules = [str(m.get("module", "")) for m in (flow or []) if isinstance(m, dict)]
-        ai_steps = [m for m in modules if re.search(r"openai|anthropic|claude|gemini|mistral|ai-agents|perplexity|hugging|eden-ai|cohere|groq|deepseek|assistants", m, re.I)]
+        ai_steps = [
+            m for m in modules
+            if re.search(r"openai|anthropic|claude|gemini|mistral|ai-agents|perplexity|hugging|eden-ai"
+                         r"|cohere|groq|deepseek|assistants", m, re.I)
+        ]
         triggers = modules[:1] + [m for m in modules if re.search(r"webhook|watch|schedule|trigger", m, re.I)]
         return self._workflow_finding(
             wid=str(rec.get("id") or rec.get("name")),
             name=str(rec.get("name") or bp.get("name") if isinstance(bp, dict) else rec.get("name")),
             blob=json.dumps(bp, default=str)[:300_000],
-            owner=str(rec.get("createdByUser", {}).get("name") if isinstance(rec.get("createdByUser"), dict) else rec.get("createdBy") or "") or None,
+            owner=str(
+                rec.get("createdByUser", {}).get("name") if isinstance(rec.get("createdByUser"), dict)
+                else rec.get("createdBy") or ""
+            ) or None,
             account=str(rec.get("_team") or rec.get("teamId") or "") or None,
             active=rec.get("isActive", rec.get("active")),
             created=rec.get("createdAt") or rec.get("created"),
@@ -332,7 +402,10 @@ class MakeConnector(_AutomationBase):
             ai_steps=ai_steps,
             kind=Kind.AGENT if any("ai-agents" in m for m in modules) else Kind.WORKFLOW,
             resource_type="scenario",
-            extra={"module_count": len(modules), "modules": sorted(set(modules))[:40], "scheduling": rec.get("scheduling")},
+            extra={
+                "module_count": len(modules), "modules": sorted(set(modules))[:40],
+                "scheduling": rec.get("scheduling"),
+            },
         )
 
 
@@ -341,7 +414,9 @@ class ZapierConnector(_AutomationBase):
     name: ClassVar[str] = "lowcode.zapier"
     provider: ClassVar[str | None] = "zapier"
     platform_signature: ClassVar[str] = "platform.zapier"
-    description: ClassVar[str] = "Zaps with AI steps (ChatGPT, Claude, Gemini, AI by Zapier) and Zapier Agents from account exports."
+    description: ClassVar[str] = (
+        "Zaps with AI steps (ChatGPT, Claude, Gemini, AI by Zapier) and Zapier Agents from account exports."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "token": "OAuth bearer with `zap` scope for https://api.zapier.com/v2/zaps (env ZAPIER_TOKEN)",
         "max_pages": "cap on 100-zap pages, at least 1 (default 1000)",
@@ -380,16 +455,26 @@ class ZapierConnector(_AutomationBase):
 
     def _zap_finding(self, rec: dict[str, Any]) -> Finding | None:
         # JSON exports may carry numeric titles; CSV columns are always text.
-        title = str(rec.get("title") or rec.get("name") or rec.get("Title") or rec.get("Zap") or rec.get("id"))
+        title = str(
+            rec.get("title") or rec.get("name") or rec.get("Title") or rec.get("Zap") or rec.get("id")
+        )
         steps = rec.get("steps") or rec.get("Steps") or rec.get("apps") or rec.get("Apps") or []
         if isinstance(steps, str):
             steps_list = [s.strip() for s in re.split(r"[,;|>→]", steps) if s.strip()]
         else:
-            steps_list = [str(get_path(s, "app.title", "app", "title", "action") or s) for s in steps] if isinstance(steps, list) else []
+            steps_list = (
+                [str(get_path(s, "app.title", "app", "title", "action") or s) for s in steps]
+                if isinstance(steps, list) else []
+            )
         blob = json.dumps(rec, default=str)[:100_000]
-        ai_steps = [s for s in steps_list if re.search(r"(?i)chatgpt|openai|claude|anthropic|gemini|ai by zapier|zapier ai|agent|copilot|gpt|perplexity|mistral|hugging", s)]
+        ai_steps = [
+            s for s in steps_list
+            if re.search(r"(?i)chatgpt|openai|claude|anthropic|gemini|ai by zapier|zapier ai|agent"
+                         r"|copilot|gpt|perplexity|mistral|hugging", s)
+        ]
         owner = rec.get("owner") or rec.get("Owner") or get_path(rec, "owner.email", "user.email", "creator")
-        kind = Kind.AGENT if re.search(r"(?i)\bagent\b", title) or rec.get("type") == "agent" or "instructions" in rec else Kind.WORKFLOW
+        agent = re.search(r"(?i)\bagent\b", title) or rec.get("type") == "agent" or "instructions" in rec
+        kind = Kind.AGENT if agent else Kind.WORKFLOW
         f = self._workflow_finding(
             wid=str(rec.get("id") or rec.get("Id") or title),
             name=title,
@@ -421,7 +506,9 @@ class WorkatoConnector(_AutomationBase):
     platform_signature: ClassVar[str] = "platform.workato"
     description: ClassVar[str] = "Workato recipes using GenAI / LLM connectors and agentic recipes."
     config_keys: ClassVar[dict[str, str]] = {
-        "api_url": "default https://www.workato.com/api (EU: https://app.eu.workato.com/api; env WORKATO_API_URL)",
+        "api_url": (
+            "default https://www.workato.com/api (EU: https://app.eu.workato.com/api; env WORKATO_API_URL)"
+        ),
         "token": "API client token (env WORKATO_API_TOKEN)",
         "max_pages": "cap on 100-recipe pages, at least 1 (default 1000)",
         "input": "offline: /api/recipes JSON",
@@ -462,7 +549,10 @@ class WorkatoConnector(_AutomationBase):
 
     def _valid_recipe(self, r: Any) -> bool:
         return (
-            self._record_fields_valid(r, strings=("name", "author_name", "created_at", "updated_at", "last_run_at"), arrays=("config",))
+            self._record_fields_valid(
+                r, strings=("name", "author_name", "created_at", "updated_at", "last_run_at"),
+                arrays=("config",),
+            )
             and self._identified(r, "id", "name")
             and (r.get("code") is None or isinstance(r["code"], (str, dict, list)))
         )
@@ -470,8 +560,14 @@ class WorkatoConnector(_AutomationBase):
     def _recipe_finding(self, r: dict[str, Any]) -> Finding | None:
         code = r.get("code") or ""
         config = r.get("config") or []
-        providers = sorted({str(c.get("provider") or c.get("keyword") or "") for c in config if isinstance(c, dict)})
-        ai_steps = [p for p in providers if re.search(r"(?i)openai|genai|anthropic|claude|gemini|vertex|bedrock|cohere|mistral|azure_openai|workato_agent|agentic|copilot|llm", p)]
+        providers = sorted({
+            str(c.get("provider") or c.get("keyword") or "") for c in config if isinstance(c, dict)
+        })
+        ai_steps = [
+            p for p in providers
+            if re.search(r"(?i)openai|genai|anthropic|claude|gemini|vertex|bedrock|cohere|mistral"
+                         r"|azure_openai|workato_agent|agentic|copilot|llm", p)
+        ]
         blob = (code if isinstance(code, str) else json.dumps(code)) + " " + json.dumps(config, default=str)
         parsed: Any = {}
         if isinstance(code, str) and code.startswith("{"):
@@ -494,7 +590,10 @@ class WorkatoConnector(_AutomationBase):
             ai_steps=ai_steps,
             kind=Kind.AGENT if any("agent" in p.lower() for p in providers) else Kind.WORKFLOW,
             resource_type="recipe",
-            extra={"providers": providers[:30], "job_succeeded_count": r.get("job_succeeded_count"), "folder": r.get("folder_id")},
+            extra={
+                "providers": providers[:30], "job_succeeded_count": r.get("job_succeeded_count"),
+                "folder": r.get("folder_id"),
+            },
         )
 
 
@@ -504,7 +603,3 @@ def _truthy(v: Any) -> bool | None:
     if isinstance(v, bool):
         return v
     return str(v).strip().lower() in {"true", "1", "on", "enabled", "active", "yes", "running"}
-
-
-def load_offline_dir_or_file(conn: BaseConnector, path: str) -> Iterator[dict[str, Any]]:
-    yield from BaseConnector.load_offline(conn, path)
