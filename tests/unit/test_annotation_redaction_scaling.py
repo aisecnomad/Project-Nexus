@@ -9,6 +9,7 @@ exhaust the redaction work budget, leaving the whole file incomplete.
 from __future__ import annotations
 
 import random
+import sys
 import time
 
 import pytest
@@ -30,7 +31,15 @@ def test_unfinished_annotations_complete_quickly_in_a_full_scan(tmp_path, index)
     elapsed = time.perf_counter() - started
     # Generous for slow CI runners; the quadratic scan took about 45 seconds.
     assert elapsed < 5, elapsed
-    assert result.complete, [error for stats in result.stats for error in stats.errors]
+    errors = [error for stats in result.stats for error in stats.errors]
+    # The C tokenizer of Python 3.12+ refuses more than 200 nested brackets, so
+    # the lexical pass fails closed there independently of redaction; only that
+    # diagnostic may remain. Redaction itself must finish within its budget.
+    lexical = "code.filesystem: app.py: incomplete source lexical analysis"
+    if sys.version_info < (3, 12):
+        assert result.complete, errors
+    else:
+        assert errors == [lexical], errors
     assert any("OpenAI" in finding.title for finding in result.findings)
 
 
