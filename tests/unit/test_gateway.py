@@ -5,24 +5,54 @@ from shadowscan.models import Kind
 
 
 def test_schema_detection():
-    assert detect_schema({"schemaType": "ModelInvocationLog", "modelId": "x", "identity": {}, "input": {}}) == "bedrock"
+    assert (
+        detect_schema({"schemaType": "ModelInvocationLog", "modelId": "x", "identity": {}, "input": {}})
+        == "bedrock"
+    )
     assert detect_schema({"spend": 0.1, "api_key": "h", "model": "gpt-4o"}) == "litellm"
-    assert detect_schema({"category": "RequestResponse", "resourceId": "/x", "properties": {}}) == "azure-openai"
+    assert (
+        detect_schema({"category": "RequestResponse", "resourceId": "/x", "properties": {}}) == "azure-openai"
+    )
     assert detect_schema({"protoPayload": {"serviceName": "aiplatform.googleapis.com"}}) == "vertex"
-    assert detect_schema({"remote_addr": "1.2.3.4", "request_uri": "/v1/chat/completions", "http_user_agent": "x"}) == "access-log"
+    assert (
+        detect_schema(
+            {"remote_addr": "1.2.3.4", "request_uri": "/v1/chat/completions", "http_user_agent": "x"}
+        )
+        == "access-log"
+    )
     assert detect_schema({"gateway_id": "g", "provider": "openai", "model": "gpt-4o"}) == "cloudflare"
     assert detect_schema({"model": "gpt-4o", "user": "alice", "prompt_tokens": 1}) == "generic"
 
 
 def test_normalise_litellm_tool_use():
-    rec = {"api_key": "abc", "api_key_alias": "bot", "model": "gpt-4o", "spend": 0.2, "startTime": "2025-01-01T00:00:00Z", "proxy_server_request": {"body": {"tools": [{"type": "function"}]}}, "response": {"choices": [{"finish_reason": "tool_calls"}]}, "metadata": {"user_agent": "langchain/0.3"}}
+    rec = {
+        "api_key": "abc",
+        "api_key_alias": "bot",
+        "model": "gpt-4o",
+        "spend": 0.2,
+        "startTime": "2025-01-01T00:00:00Z",
+        "proxy_server_request": {"body": {"tools": [{"type": "function"}]}},
+        "response": {"choices": [{"finish_reason": "tool_calls"}]},
+        "metadata": {"user_agent": "langchain/0.3"},
+    }
     ev = normalise(rec, "litellm")
-    assert ev.caller_kind == "api-key" and ev.tools is True and ev.tool_calls is True and ev.user_agent == "langchain/0.3"
+    assert (
+        ev.caller_kind == "api-key"
+        and ev.tools is True
+        and ev.tool_calls is True
+        and ev.user_agent == "langchain/0.3"
+    )
 
 
 def test_parse_access_log_line():
-    rec = parse_text_line('10.0.0.1 - - [10/Sep/2025:10:00:00 +0000] "POST /v1/chat/completions HTTP/1.1" 200 512 "-" "OpenAI/Python 1.5" host=api.openai.com')
-    assert rec["request_uri"] == "/v1/chat/completions" and rec["http_user_agent"] == "OpenAI/Python 1.5" and rec["host"] == "api.openai.com"
+    rec = parse_text_line(
+        '10.0.0.1 - - [10/Sep/2025:10:00:00 +0000] "POST /v1/chat/completions HTTP/1.1" 200 512 "-" "OpenAI/Python 1.5" host=api.openai.com'
+    )
+    assert (
+        rec["request_uri"] == "/v1/chat/completions"
+        and rec["http_user_agent"] == "OpenAI/Python 1.5"
+        and rec["host"] == "api.openai.com"
+    )
 
 
 def test_litellm_fixture_callers(run_connector, fixtures):

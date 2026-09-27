@@ -16,18 +16,27 @@ def _auth0_client(client_id="good"):
 
 
 def _okta_app(app_id="good", **overrides):
-    return {"id": app_id, "name": "oidc_client", "label": "Otter.ai worker", "status": "ACTIVE",
-            "signOnMode": "OPENID_CONNECT", **overrides}
+    return {
+        "id": app_id,
+        "name": "oidc_client",
+        "label": "Otter.ai worker",
+        "status": "ACTIVE",
+        "signOnMode": "OPENID_CONNECT",
+        **overrides,
+    }
 
 
-@pytest.mark.parametrize("bad", [
-    {"client_id": "bad", "client_metadata": ["invalid"]},
-    {"client_id": ["bad"]},
-    {"client_id": "bad", "grant_types": [1]},
-    {"client_id": "bad", "callbacks": {"invalid": True}},
-    {"name": "LangGraph agent"},
-    {"error": "denied"},
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"client_id": "bad", "client_metadata": ["invalid"]},
+        {"client_id": ["bad"]},
+        {"client_id": "bad", "grant_types": [1]},
+        {"client_id": "bad", "callbacks": {"invalid": True}},
+        {"name": "LangGraph agent"},
+        {"error": "denied"},
+    ],
+)
 def test_auth0_malformed_neighbor_preserves_valid_client(tmp_path, run_connector, bad):
     source = tmp_path / "clients.json"
     source.write_text(json.dumps([bad, _auth0_client()]))
@@ -37,12 +46,15 @@ def test_auth0_malformed_neighbor_preserves_valid_client(tmp_path, run_connector
     assert bool(ctx.stats.errors) is ("error" in bad)
 
 
-@pytest.mark.parametrize("bad", [
-    {"id": "bad", "settings": ["invalid"]},
-    {"id": "bad", "settings": {"oauthClient": {"grant_types": [1]}}},
-    {"id": {"invalid": True}},
-    {"error": "denied"},
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"id": "bad", "settings": ["invalid"]},
+        {"id": "bad", "settings": {"oauthClient": {"grant_types": [1]}}},
+        {"id": {"invalid": True}},
+        {"error": "denied"},
+    ],
+)
 def test_okta_malformed_neighbor_preserves_valid_app(tmp_path, run_connector, bad):
     source = tmp_path / "apps.json"
     source.write_text(json.dumps([bad, _okta_app()]))
@@ -100,9 +112,10 @@ def test_auth0_page_cap_marks_inventory_incomplete(monkeypatch, run_connector):
         self.http = HttpClient("https://tenant.auth0.com")
 
     monkeypatch.setattr(Auth0Connector, "_auth", auth)
-    responses.get("https://tenant.auth0.com/api/v2/clients", json=[
-        {**_auth0_client(str(i)), "name": f"Example {i}"} for i in range(100)
-    ])
+    responses.get(
+        "https://tenant.auth0.com/api/v2/clients",
+        json=[{**_auth0_client(str(i)), "name": f"Example {i}"} for i in range(100)],
+    )
     responses.get("https://tenant.auth0.com/api/v2/clients", json=[])
     responses.get("https://tenant.auth0.com/api/v2/client-grants", json=[])
     findings, ctx = run_connector("identity.auth0", max_pages=1)
@@ -115,8 +128,11 @@ def test_auth0_page_cap_marks_inventory_incomplete(monkeypatch, run_connector):
 def test_okta_grants_pagination_and_failed_enrichment_keep_apps(run_connector):
     base = "https://tenant.okta.com"
     responses.get(base + "/api/v1/apps", json=[_okta_app("first"), _okta_app("second")])
-    responses.get(base + "/api/v1/apps/first/grants", json=[{"scopeId": "okta.users.read"}],
-                  headers={"Link": f'<{base}/api/v1/apps/first/grants?after=2>; rel="next"'})
+    responses.get(
+        base + "/api/v1/apps/first/grants",
+        json=[{"scopeId": "okta.users.read"}],
+        headers={"Link": f'<{base}/api/v1/apps/first/grants?after=2>; rel="next"'},
+    )
     responses.get(base + "/api/v1/apps/first/grants?after=2", json=[{"scopeId": "okta.groups.manage"}])
     responses.get(base + "/api/v1/apps/first/tokens", status=403)
     responses.get(base + "/api/v1/apps/second/grants", status=403)

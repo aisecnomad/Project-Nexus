@@ -17,30 +17,42 @@ def test_generic_server_filename_does_not_confirm_mcp(tmp_path: Path, run_connec
     assert not ctx.stats.errors
     assert not [f for f in findings if "protocol.mcp" in f.frameworks or f.kind == Kind.MCP_SERVER]
 
-    (tmp_path / "server.json").write_text(json.dumps({
-        "name": "ordinary web service",
-        "remotes": [{"url": "https://replica.example.test"}],
-    }))
+    (tmp_path / "server.json").write_text(
+        json.dumps(
+            {
+                "name": "ordinary web service",
+                "remotes": [{"url": "https://replica.example.test"}],
+            }
+        )
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert not [f for f in findings if "protocol.mcp" in f.frameworks or f.kind == Kind.MCP_SERVER]
 
 
 def test_mcp_registry_manifest_requires_structural_package_or_remote(tmp_path: Path, run_connector):
-    (tmp_path / "server.json").write_text(json.dumps({
-        "name": "io.github.acme/tools",
-        "packages": [{"registryType": "npm", "identifier": "@acme/mcp-tools"}],
-    }))
+    (tmp_path / "server.json").write_text(
+        json.dumps(
+            {
+                "name": "io.github.acme/tools",
+                "packages": [{"registryType": "npm", "identifier": "@acme/mcp-tools"}],
+            }
+        )
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     mcp = [f for f in findings if f.kind == Kind.MCP_SERVER]
     assert len(mcp) == 1
     assert mcp[0].metadata["servers"][0]["name"] == "io.github.acme/tools"
 
-    (tmp_path / "server.json").write_text(json.dumps({
-        "name": "io.github.acme/tools",
-        "remotes": [{"type": "streamable-http", "url": "https://tools.example.test/mcp"}],
-    }))
+    (tmp_path / "server.json").write_text(
+        json.dumps(
+            {
+                "name": "io.github.acme/tools",
+                "remotes": [{"type": "streamable-http", "url": "https://tools.example.test/mcp"}],
+            }
+        )
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert [f.metadata["servers"][0]["url"] for f in findings if f.kind == Kind.MCP_SERVER] == [
@@ -58,7 +70,9 @@ def test_readme_examples_do_not_confirm_framework_or_agent(tmp_path: Path, run_c
     assert not ctx.stats.errors
     assert not [f for f in findings if f.kind == Kind.AGENT or "framework.langchain" in f.frameworks]
 
-    (tmp_path / "agent.py").write_text("from langchain.agents import create_agent\nagent = create_agent(model, tools)\n")
+    (tmp_path / "agent.py").write_text(
+        "from langchain.agents import create_agent\nagent = create_agent(model, tools)\n"
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert [f for f in findings if f.kind == Kind.AGENT and "framework.langchain" in f.frameworks]
@@ -86,7 +100,9 @@ def test_python_examples_do_not_exhaust_live_match_quota(tmp_path: Path, run_con
     assert not ctx.stats.errors
     agents = [f for f in findings if f.kind == Kind.AGENT]
     assert len(agents) == 1
-    assert any(e.signal == "code:framework.langchain" and e.location == "agent.py:12" for e in agents[0].evidence)
+    assert any(
+        e.signal == "code:framework.langchain" and e.location == "agent.py:12" for e in agents[0].evidence
+    )
 
 
 def test_typescript_comments_literals_and_templates_do_not_confirm_agent(tmp_path: Path, run_connector):
@@ -104,8 +120,7 @@ def test_typescript_comments_literals_and_templates_do_not_confirm_agent(tmp_pat
 
 def test_typescript_live_import_and_template_interpolation_remain_detected(tmp_path: Path, run_connector):
     (tmp_path / "agent.ts").write_text(
-        'import { StateGraph } from "@langchain/langgraph";\n'
-        "const graph = `${StateGraph({})}`;\n"
+        'import { StateGraph } from "@langchain/langgraph";\nconst graph = `${StateGraph({})}`;\n'
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
@@ -120,7 +135,7 @@ def test_typescript_regex_quotes_do_not_hide_live_agent(tmp_path: Path, run_conn
         "const single = /'/;\n"
         'const double = /"/;\n'
         "const escaped = /a\\/'b/;\n"
-        'const klass = /[\\/"\']+/;\n'
+        "const klass = /[\\/\"']+/;\n"
         "const graph = StateGraph({});\n"
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
@@ -130,8 +145,7 @@ def test_typescript_regex_quotes_do_not_hide_live_agent(tmp_path: Path, run_conn
 
 def test_typescript_regex_body_does_not_confirm_agent(tmp_path: Path, run_connector):
     (tmp_path / "example.ts").write_text(
-        "const pattern = /StateGraph(example)/;\n"
-        "const matcher = /[/'\\\"]StateGraph(example)/;\n"
+        "const pattern = /StateGraph(example)/;\nconst matcher = /[/'\\\"]StateGraph(example)/;\n"
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
@@ -170,7 +184,7 @@ def test_jsx_nested_text_nodes_do_not_confirm_agent(tmp_path: Path, run_connecto
     (tmp_path / "Help.tsx").write_text(
         "export function Help() { return (\n"
         "  <main>StateGraph( <span>create_react_agent(</span>\n"
-        "    <p title=\"StateGraph(\">createReactAgent(</p>\n"
+        '    <p title="StateGraph(">createReactAgent(</p>\n'
         "  </main>\n"
         "); }\n"
     )
@@ -224,20 +238,36 @@ def test_framework_dependency_without_executable_agent_remains_framework_usage(t
 
 def test_empty_and_disabled_mcp_configs_do_not_claim_active_servers(tmp_path: Path, run_connector):
     (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {}}))
-    (tmp_path / "mcp.json").write_text(json.dumps({"mcpServers": {"old": {"command": "npx", "disabled": True}}}))
+    (tmp_path / "mcp.json").write_text(
+        json.dumps({"mcpServers": {"old": {"command": "npx", "disabled": True}}})
+    )
     (tmp_path / "server.json").write_text(json.dumps({"mcpServers": {}}))
-    (tmp_path / "smithery.yaml").write_text('mcpServers:\n  archived:\n    command: npx\n    enabled: false\n')
+    (tmp_path / "smithery.yaml").write_text(
+        "mcpServers:\n  archived:\n    command: npx\n    enabled: false\n"
+    )
     (tmp_path / "config.toml").write_text('[mcp_servers.archived]\ncommand = "npx"\ndisabled = true\n')
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
-    assert not [f for f in findings if f.kind in {Kind.MCP_SERVER, Kind.AGENT} or "protocol.mcp" in f.frameworks]
+    assert not [
+        f for f in findings if f.kind in {Kind.MCP_SERVER, Kind.AGENT} or "protocol.mcp" in f.frameworks
+    ]
 
 
 def test_mixed_mcp_config_counts_only_enabled_servers(tmp_path: Path, run_connector):
-    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {
-        "archived": {"command": "bash", "disabled": True, "url": "https://mcp.zapier.com/example"},
-        "live": {"command": "npx", "args": ["@modelcontextprotocol/server-filesystem"]},
-    }}))
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "archived": {
+                        "command": "bash",
+                        "disabled": True,
+                        "url": "https://mcp.zapier.com/example",
+                    },
+                    "live": {"command": "npx", "args": ["@modelcontextprotocol/server-filesystem"]},
+                }
+            }
+        )
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     mcp = [f for f in findings if f.kind == Kind.MCP_SERVER]
@@ -250,10 +280,16 @@ def test_mixed_mcp_config_counts_only_enabled_servers(tmp_path: Path, run_connec
 
 
 def test_mcp_placeholder_and_disabled_example_commands_are_not_agents(tmp_path: Path, run_connector):
-    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {
-        "placeholder": {},
-        "example": {"command": "create_agent(model, tools)", "disabled": True},
-    }}))
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "placeholder": {},
+                    "example": {"command": "create_agent(model, tools)", "disabled": True},
+                }
+            }
+        )
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not [f for f in findings if f.kind in {Kind.MCP_SERVER, Kind.AGENT}]
     assert any("no command, URL, or valid package" in error for error in ctx.stats.errors)
@@ -286,7 +322,11 @@ def test_maven_comments_are_neither_dependencies_nor_code(tmp_path: Path, run_co
     (tmp_path / "pom.xml").write_text(pom)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
-    assert not [f for f in findings if "framework.langchain4j" in f.frameworks or "framework.langchain" in f.frameworks]
+    assert not [
+        f
+        for f in findings
+        if "framework.langchain4j" in f.frameworks or "framework.langchain" in f.frameworks
+    ]
 
 
 def test_pom_cdata_examples_do_not_confirm_agent_but_active_dependencies_do(tmp_path: Path, run_connector):
@@ -311,8 +351,8 @@ def test_pom_cdata_examples_do_not_confirm_agent_but_active_dependencies_do(tmp_
 def test_pom_xml_entities_fail_closed():
     result = parse_pom(
         '<!DOCTYPE project [<!ENTITY x "dev.langchain4j">]>'
-        '<project><dependencies><dependency><groupId>&x;</groupId>'
-        '<artifactId>langchain4j</artifactId></dependency></dependencies></project>'
+        "<project><dependencies><dependency><groupId>&x;</groupId>"
+        "<artifactId>langchain4j</artifactId></dependency></dependencies></project>"
     )
     assert not result.deps
     assert result.errors

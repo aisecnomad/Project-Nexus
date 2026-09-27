@@ -41,10 +41,20 @@ def test_text_line_parsers_are_linear_on_hostile_input():
     assert parse_text_line(unterminated) is None
     assert time.monotonic() - started < 2
     normal = 'ts=2026-01-01T00:00:00Z method=POST path="/v1/chat/completions" status=200 ua="langchain/0.3"'
-    assert parse_text_line(normal) == {"ts": "2026-01-01T00:00:00Z", "method": "POST", "path": "/v1/chat/completions", "status": "200", "ua": "langchain/0.3"}
+    assert parse_text_line(normal) == {
+        "ts": "2026-01-01T00:00:00Z",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "status": "200",
+        "ua": "langchain/0.3",
+    }
     combined = '10.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /v1/chat/completions HTTP/1.1" 200 5 "-" "langchain/0.3"'
     parsed = parse_text_line(combined)
-    assert parsed and parsed["request_uri"] == "/v1/chat/completions" and parsed["http_user_agent"] == "langchain/0.3"
+    assert (
+        parsed
+        and parsed["request_uri"] == "/v1/chat/completions"
+        and parsed["http_user_agent"] == "langchain/0.3"
+    )
     without_protocol = '10.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /v1/models" 200 5'
     assert parse_text_line(without_protocol)["request_uri"] == "/v1/models"
 
@@ -53,10 +63,19 @@ def test_gateway_memoizes_user_agents_and_strips_query_strings(index, tmp_path, 
     export = tmp_path / "gateway.jsonl"
     with export.open("w") as stream:
         for i in range(60):
-            stream.write(json.dumps({
-                "api_key": "key-one", "model": "gpt-4o", "metadata": {"user_agent": "langchain/0.3"}, "spend": 0.01,
-                "call_type": f"/v1/chat/completions?session={i}", "startTime": f"2026-01-01T10:{i % 60:02d}:00Z",
-            }) + "\n")
+            stream.write(
+                json.dumps(
+                    {
+                        "api_key": "key-one",
+                        "model": "gpt-4o",
+                        "metadata": {"user_agent": "langchain/0.3"},
+                        "spend": 0.01,
+                        "call_type": f"/v1/chat/completions?session={i}",
+                        "startTime": f"2026-01-01T10:{i % 60:02d}:00Z",
+                    }
+                )
+                + "\n"
+            )
     original = index.match_user_agent
     calls = []
 
@@ -93,7 +112,7 @@ def test_base_json_lines_caps_per_line_errors():
     assert records == [{"id": "ok"}]
     assert len(reports) == BaseConnector._MAX_INVALID_LINE_ERRORS + 1
     reports.clear()
-    assert list(BaseConnector._json_lines("[\n  {\"a\": 1},\n", reports.append)) == []
+    assert list(BaseConnector._json_lines('[\n  {"a": 1},\n', reports.append)) == []
     assert reports == ["invalid JSON export"]
 
 
@@ -101,7 +120,12 @@ def test_gateway_observation_buckets_are_bounded(index, tmp_path):
     export = tmp_path / "gateway.jsonl"
     with export.open("w") as stream:
         for i in range(logs_module._MAX_DISTINCT_KEYS + 10):
-            stream.write(json.dumps({"api_key": "key-one", "model": "gpt-4o", "spend": 0.01, "environment": f"env-{i}"}) + "\n")
+            stream.write(
+                json.dumps(
+                    {"api_key": "key-one", "model": "gpt-4o", "spend": 0.01, "environment": f"env-{i}"}
+                )
+                + "\n"
+            )
     findings = GatewayLogConnector(_ctx(index, input=str(export), format="litellm")).run()
     assert len(findings) == 1
     assert len(findings[0].metadata["runtime_observations"]) == logs_module._MAX_DISTINCT_KEYS
@@ -120,7 +144,9 @@ def _unsigned(claims: dict) -> str:
 
 def test_jwt_hostile_numeric_claims_do_not_abort_other_tokens(index, monkeypatch):
     tokens = [
-        _unsigned({"sub": "svc-a", "iss": "https://issuer.example", "iat": 1_700_000_000, "exp": 1_700_003_600}),
+        _unsigned(
+            {"sub": "svc-a", "iss": "https://issuer.example", "iat": 1_700_000_000, "exp": 1_700_003_600}
+        ),
         _unsigned({"sub": "svc-b", "iss": "https://issuer.example", "iat": 10**400, "exp": "1" * 5000}),
         _unsigned({"sub": "svc-c", "iss": "https://issuer.example"}),
     ]
@@ -148,9 +174,14 @@ def test_jwks_is_fetched_once_per_run(index, monkeypatch):
         return {"keys": []}
 
     monkeypatch.setattr(jwt_module, "fetch_jwks", fake_fetch)
+
     def encoded(data):
         return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
-    tokens = [f"{encoded({'alg': 'RS256'})}.{encoded({'sub': f'svc-{i}', 'iss': 'https://issuer.example'})}.AAAA" for i in range(3)]
+
+    tokens = [
+        f"{encoded({'alg': 'RS256'})}.{encoded({'sub': f'svc-{i}', 'iss': 'https://issuer.example'})}.AAAA"
+        for i in range(3)
+    ]
     ctx = _ctx(index, tokens=tokens, jwks_url="https://keys.example/jwks")
     findings = JwtConnector(ctx).run()
     assert len(findings) == 3 and fetches == ["https://keys.example/jwks"]
@@ -159,11 +190,15 @@ def test_jwks_is_fetched_once_per_run(index, monkeypatch):
 
 def _okta_app(app_id: str, **overrides):
     app = {
-        "id": app_id, "name": "oidc_client", "label": f"Service {app_id}", "status": "ACTIVE",
+        "id": app_id,
+        "name": "oidc_client",
+        "label": f"Service {app_id}",
+        "status": "ACTIVE",
         "signOnMode": "OPENID_CONNECT",
         "settings": {"oauthClient": {"application_type": "service", "grant_types": ["client_credentials"]}},
         "credentials": {"oauthClient": {"client_id": f"client-{app_id}"}},
-        "_grants": [{"scopeId": "okta.users.read"}], "_tokens": [],
+        "_grants": [{"scopeId": "okta.users.read"}],
+        "_tokens": [],
     }
     app.update(overrides)
     return app
@@ -181,7 +216,13 @@ def test_okta_isolates_a_malformed_application_record(index):
 def test_auth0_isolates_a_malformed_client_record(index):
     ctx = _ctx(index)
     connector = Auth0Connector(ctx)
-    good = {"_kind": "client", "client_id": "c1", "name": "support-agent-m2m", "app_type": "non_interactive", "grant_types": ["client_credentials"]}
+    good = {
+        "_kind": "client",
+        "client_id": "c1",
+        "name": "support-agent-m2m",
+        "app_type": "non_interactive",
+        "grant_types": ["client_credentials"],
+    }
     bad = {**good, "client_id": "c2", "name": "broken", "client_metadata": ["x"]}
     findings = list(connector.analyze([good, bad, {**good, "client_id": "c3", "name": "other-m2m"}]))
     assert len(findings) == 2
@@ -190,7 +231,9 @@ def test_auth0_isolates_a_malformed_client_record(index):
 
 def test_gitlab_group_records_keep_the_plain_group_path(index):
     connector = GitLabConnector(ConnectorContext(index=index))
-    connector._optional_list = Mock(side_effect=[[{"id": 7, "name": "bot"}], [], [{"key": "OPENAI_API_KEY", "masked": True}]])
+    connector._optional_list = Mock(
+        side_effect=[[{"id": 7, "name": "bot"}], [], [{"key": "OPENAI_API_KEY", "masked": True}]]
+    )
     connector.http = Mock()
     connector.http.try_get_json.return_value = {}
     records = list(connector._group_identities("my-org/platform"))

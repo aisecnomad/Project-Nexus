@@ -30,7 +30,9 @@ from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
 # ------------------------------------------------------------------ HTTP retries
 
 
-def _response(status: int, headers: dict[str, str] | None = None, body: bytes = b'{"ok": true}') -> requests.Response:
+def _response(
+    status: int, headers: dict[str, str] | None = None, body: bytes = b'{"ok": true}'
+) -> requests.Response:
     resp = requests.Response()
     resp.status_code = status
     resp.headers.update(headers or {})
@@ -64,7 +66,9 @@ def _client(*responses: requests.Response) -> tuple[HttpClient, _ScriptedSession
 
 def test_primary_rate_limit_403_waits_for_reset_then_succeeds(sleep):
     reset = str(int(time.time()) + 30)
-    http, session = _client(_response(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset}), _response(200))
+    http, session = _client(
+        _response(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset}), _response(200)
+    )
     assert http.get_json("/orgs/acme/repos") == {"ok": True} and session.calls == 2
     (delay,), _ = sleep.call_args
     assert 29 <= delay <= MAX_RETRY_DELAY
@@ -91,9 +95,14 @@ def test_backoff_without_hints_is_jittered_within_bounds():
 
 def test_every_delay_is_capped():
     far = str(int(time.time()) + 3600)
-    assert _retry_delay(_response(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": far}), 1) == MAX_RETRY_DELAY
+    assert (
+        _retry_delay(_response(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": far}), 1)
+        == MAX_RETRY_DELAY
+    )
     assert _retry_delay(_response(429, {"Retry-After": "999999"}), 1) == MAX_RETRY_DELAY
-    assert _rate_limited(_response(403, {"Retry-After": "1"})) and not _rate_limited(_response(404, {"Retry-After": "1"}))
+    assert _rate_limited(_response(403, {"Retry-After": "1"})) and not _rate_limited(
+        _response(404, {"Retry-After": "1"})
+    )
 
 
 # ------------------------------------------------------------- webhook redaction
@@ -109,19 +118,47 @@ def _discord() -> str:
 
 WEBHOOKS = {
     "slack": (_slack, "https://hooks.slack.com/services/"),
-    "slack-workflow": (lambda: "https://hooks.slack.com/triggers/" + "E" + "0" * 8 + "/" + "9" * 12 + "/" + "z" * 32,
-                       "https://hooks.slack.com/triggers/"),
+    "slack-workflow": (
+        lambda: "https://hooks.slack.com/triggers/" + "E" + "0" * 8 + "/" + "9" * 12 + "/" + "z" * 32,
+        "https://hooks.slack.com/triggers/",
+    ),
     "discord": (_discord, "https://discord.com/api/webhooks/"),
-    "discord-versioned": (lambda: "https://discordapp.com/api/v10/webhooks/" + "1" * 18 + "/" + "y" * 68,
-                          "https://discordapp.com/api/v10/webhooks/"),
-    "teams": (lambda: "https://acme.webhook.office.com/webhookb2/" + "a" * 8 + "@tenant/IncomingWebhook/" + "b" * 32 + "/" + "c" * 8,
-              "https://acme.webhook.office.com/webhookb2/"),
-    "zapier": (lambda: "https://hooks.zapier.com/hooks/catch/" + "1" * 7 + "/" + "q" * 7 + "/", "https://hooks.zapier.com/hooks/"),
+    "discord-versioned": (
+        lambda: "https://discordapp.com/api/v10/webhooks/" + "1" * 18 + "/" + "y" * 68,
+        "https://discordapp.com/api/v10/webhooks/",
+    ),
+    "teams": (
+        lambda: (
+            "https://acme.webhook.office.com/webhookb2/"
+            + "a" * 8
+            + "@tenant/IncomingWebhook/"
+            + "b" * 32
+            + "/"
+            + "c" * 8
+        ),
+        "https://acme.webhook.office.com/webhookb2/",
+    ),
+    "zapier": (
+        lambda: "https://hooks.zapier.com/hooks/catch/" + "1" * 7 + "/" + "q" * 7 + "/",
+        "https://hooks.zapier.com/hooks/",
+    ),
     "make": (lambda: "https://hook.eu1.make.com/" + "m" * 32, "https://hook.eu1.make.com/"),
-    "ifttt": (lambda: "https://maker.ifttt.com/trigger/deploy/with/key/" + "k" * 22, "https://maker.ifttt.com/trigger/deploy/with/key/"),
-    "telegram": (lambda: "https://api.telegram.org/bot" + "1" * 9 + ":AA" + "t" * 33 + "/sendMessage", "https://api.telegram.org/bot"),
-    "n8n": (lambda: "https://n8n.acme.example/webhook/" + "5" * 8 + "-aaaa-bbbb-cccc-" + "6" * 12, "https://n8n.acme.example/webhook/"),
-    "n8n-subpath": (lambda: "https://acme.example/automation/webhook-test/lead-intake", "https://acme.example/automation/webhook-test/"),
+    "ifttt": (
+        lambda: "https://maker.ifttt.com/trigger/deploy/with/key/" + "k" * 22,
+        "https://maker.ifttt.com/trigger/deploy/with/key/",
+    ),
+    "telegram": (
+        lambda: "https://api.telegram.org/bot" + "1" * 9 + ":AA" + "t" * 33 + "/sendMessage",
+        "https://api.telegram.org/bot",
+    ),
+    "n8n": (
+        lambda: "https://n8n.acme.example/webhook/" + "5" * 8 + "-aaaa-bbbb-cccc-" + "6" * 12,
+        "https://n8n.acme.example/webhook/",
+    ),
+    "n8n-subpath": (
+        lambda: "https://acme.example/automation/webhook-test/lead-intake",
+        "https://acme.example/automation/webhook-test/",
+    ),
 }
 
 
@@ -134,20 +171,25 @@ def test_webhook_capability_urls_withhold_their_path_secret(name):
     assert sanitize_text(out) == out
 
 
-@pytest.mark.parametrize("text", [
-    "https://api.github.com/repos/acme/app/hooks/123",
-    "https://docs.slack.com/services/overview",
-    "https://discord.com/channels/1/2",
-    "https://hooks.slack.com/services/",
-    "https://example.com/docs/webhooks",
-    "my webapp-configuration-for-production-envs",
-    "requests.get(url, timeout=30)",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://api.github.com/repos/acme/app/hooks/123",
+        "https://docs.slack.com/services/overview",
+        "https://discord.com/channels/1/2",
+        "https://hooks.slack.com/services/",
+        "https://example.com/docs/webhooks",
+        "my webapp-configuration-for-production-envs",
+        "requests.get(url, timeout=30)",
+    ],
+)
 def test_benign_urls_and_identifiers_are_unchanged(text):
     assert sanitize_text(text) == text
 
 
-@pytest.mark.parametrize("key", ["webhookUrl", "webhook_uri", "webhookId", "AccountKey", "SharedAccessKey", "sas_token"])
+@pytest.mark.parametrize(
+    "key", ["webhookUrl", "webhook_uri", "webhookId", "AccountKey", "SharedAccessKey", "sas_token"]
+)
 def test_capability_and_connection_string_fields_are_sensitive(key):
     assert sanitize({key: "opaque-capability-value"}) == {key: REDACTED}
 
@@ -156,15 +198,35 @@ def test_record_exports_withhold_webhook_credentials(tmp_path: Path, index):
     """Regression: --dump-records wrote n8n webhook URLs verbatim."""
     slack, discord = _slack(), _discord()
     export = tmp_path / "n8n.json"
-    export.write_text(json.dumps([{
-        "id": "wf1", "name": "Lead triage", "active": True,
-        "nodes": [
-            {"type": "@n8n/n8n-nodes-langchain.agent", "name": "AI Agent", "parameters": {}},
-            {"type": "@n8n/n8n-nodes-langchain.lmChatOpenAi", "name": "OpenAI", "parameters": {"model": "gpt-4o"}},
-            {"type": "n8n-nodes-base.slack", "name": "Notify", "parameters": {"webhookUri": slack}},
-            {"type": "n8n-nodes-base.httpRequest", "name": "Discord", "parameters": {"url": discord}},
-        ],
-    }]))
+    export.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "wf1",
+                    "name": "Lead triage",
+                    "active": True,
+                    "nodes": [
+                        {"type": "@n8n/n8n-nodes-langchain.agent", "name": "AI Agent", "parameters": {}},
+                        {
+                            "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+                            "name": "OpenAI",
+                            "parameters": {"model": "gpt-4o"},
+                        },
+                        {
+                            "type": "n8n-nodes-base.slack",
+                            "name": "Notify",
+                            "parameters": {"webhookUri": slack},
+                        },
+                        {
+                            "type": "n8n-nodes-base.httpRequest",
+                            "name": "Discord",
+                            "parameters": {"url": discord},
+                        },
+                    ],
+                }
+            ]
+        )
+    )
     config = ScanConfig(
         connectors=[ConnectorSpec(name="lowcode.n8n", config={"input": str(export)})],
         dump_records=str(tmp_path / "exports"),
@@ -183,9 +245,18 @@ def test_record_exports_withhold_webhook_credentials(tmp_path: Path, index):
 # ------------------------------------------------------------------ SARIF output
 
 
-def _finding(location: str, root: str = "/repo", level: RiskLevel = RiskLevel.LOW, title: str = "Agent") -> Finding:
-    finding = Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT, title=title,
-                      resource=f"{root}/{title}", resource_type="project", frameworks=["framework.langchain"])
+def _finding(
+    location: str, root: str = "/repo", level: RiskLevel = RiskLevel.LOW, title: str = "Agent"
+) -> Finding:
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title=title,
+        resource=f"{root}/{title}",
+        resource_type="project",
+        frameworks=["framework.langchain"],
+    )
     finding.add_evidence(Evidence(signal="import", description="import", location=location))
     finding.metadata["scan_root"] = root
     finding.risk.level = level
@@ -193,12 +264,18 @@ def _finding(location: str, root: str = "/repo", level: RiskLevel = RiskLevel.LO
 
 
 def _sarif(*findings: Finding) -> dict:
-    result = ScanResult(findings=list(findings), stats=[ScanStats(connector="code.filesystem", started_at="t")])
+    result = ScanResult(
+        findings=list(findings), stats=[ScanStats(connector="code.filesystem", started_at="t")]
+    )
     return json.loads(render(result, "sarif"))
 
 
 def _uris(sarif: dict) -> list[dict]:
-    return [loc["physicalLocation"]["artifactLocation"] for res in sarif["runs"][0]["results"] for loc in res["locations"]]
+    return [
+        loc["physicalLocation"]["artifactLocation"]
+        for res in sarif["runs"][0]["results"]
+        for loc in res["locations"]
+    ]
 
 
 def test_sarif_uris_are_percent_encoded_and_root_relative():
@@ -215,7 +292,9 @@ def test_sarif_root_prefix_respects_path_boundaries():
 def test_sarif_rule_severity_is_the_most_severe_result(order):
     findings = [_finding(f"/repo/{i}.py:1", level=level, title=f"Agent {i}") for i, level in enumerate(order)]
     (rule,) = _sarif(*findings)["runs"][0]["tool"]["driver"]["rules"]
-    assert rule["properties"]["security-severity"] == "9.5" and rule["defaultConfiguration"]["level"] == "error"
+    assert (
+        rule["properties"]["security-severity"] == "9.5" and rule["defaultConfiguration"]["level"] == "error"
+    )
 
 
 # ------------------------------------------------------- Keycloak classification
@@ -248,13 +327,15 @@ def test_service_account_username_only_marks_keycloak_issuers(index):
 def test_inventory_check_renders_card_fields_literally(tmp_path: Path):
     """Regression: Rich markup in an inventory card crashed ``inventory check``."""
     cards = tmp_path / "agents.yaml"
-    cards.write_text(dedent("""\
+    cards.write_text(
+        dedent("""\
         agents:
           - id: bot-one
             name: "[/]"
             owner: "[bold red]owner[/]"
             resources: ["arn:aws:iam::123456789012:role/[link=https://evil.example]x[/link]"]
-    """))
+    """)
+    )
     result = CliRunner().invoke(main, ["inventory", "check", str(cards)])
     assert result.exit_code == 0, result.output
     assert "[bold red]owner[/]" in result.output and "[/]" in result.output

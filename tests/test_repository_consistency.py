@@ -247,7 +247,9 @@ def test_security_policy_has_the_sections_reporters_expect() -> None:
     assert ADVISORY_URL in _read(ROOT / "SECURITY.md")
 
 
-@pytest.mark.parametrize("name", ["SECURITY.md", "SUPPORT.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "MAINTAINERS.md"])
+@pytest.mark.parametrize(
+    "name", ["SECURITY.md", "SUPPORT.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "MAINTAINERS.md"]
+)
 def test_private_reporting_channel_is_reachable_from_every_entry_point(name: str) -> None:
     text = _read(ROOT / name)
     assert ADVISORY_URL in text or "SECURITY.md#reporting" in text, (
@@ -263,7 +265,9 @@ def test_code_of_conduct_is_linked_from_entry_points(name: str) -> None:
 def test_code_of_conduct_is_the_contributor_covenant_with_a_reporting_route() -> None:
     text = _read(ROOT / "CODE_OF_CONDUCT.md")
     assert "Contributor Covenant" in text
-    assert "reporting-a-concern" in _anchors(ROOT / "CODE_OF_CONDUCT.md"), "SUPPORT.md deep-links this heading"
+    assert "reporting-a-concern" in _anchors(ROOT / "CODE_OF_CONDUCT.md"), (
+        "SUPPORT.md deep-links this heading"
+    )
     assert ADVISORY_URL in text
 
 
@@ -321,7 +325,9 @@ def test_ci_matrix_covers_every_classified_python_version() -> None:
 def test_makefile_lint_and_typecheck_paths_match_ci() -> None:
     ci = _ci_run_lines()
     makefile = [line.strip() for line in _read(ROOT / "Makefile").splitlines()]
-    assert _first_tool_arguments(makefile, "mypy") == _first_tool_arguments(ci, "mypy"), "make typecheck drifted from CI"
+    assert _first_tool_arguments(makefile, "mypy") == _first_tool_arguments(ci, "mypy"), (
+        "make typecheck drifted from CI"
+    )
     ci_ruff = {arg for arg in _first_tool_arguments(ci, "ruff") if arg != "check"}
     make_ruff = {arg for arg in _first_tool_arguments(makefile, "ruff") if arg != "check"}
     assert make_ruff == ci_ruff, "make lint drifted from CI"
@@ -330,15 +336,25 @@ def test_makefile_lint_and_typecheck_paths_match_ci() -> None:
 def test_makefile_evaluates_the_same_corpora_as_ci() -> None:
     ci_corpora = set(re.findall(r"--corpus (\S+)", "\n".join(_ci_run_lines())))
     make_corpora = set(re.findall(r"--corpus (\S+)", _read(ROOT / "Makefile")))
-    assert make_corpora == ci_corpora, f"make evaluate runs {sorted(make_corpora)} but CI runs {sorted(ci_corpora)}"
+    assert make_corpora == ci_corpora, (
+        f"make evaluate runs {sorted(make_corpora)} but CI runs {sorted(ci_corpora)}"
+    )
     for corpus in ci_corpora:
         assert (ROOT / corpus).is_file(), f"CI references a missing corpus {corpus}"
 
 
 def test_pre_commit_hooks_run_the_same_ruff_and_mypy_as_ci() -> None:
     config = _load_yaml(ROOT / ".pre-commit-config.yaml")
-    revisions = {repo["repo"].rsplit("/", 1)[1]: str(repo["rev"]).lstrip("v") for repo in config["repos"] if "rev" in repo}
-    constraints = dict(re.findall(r"^([A-Za-z0-9_.-]+)==(\S+)$", _read(ROOT / "requirements-ci-constraints.txt"), re.MULTILINE))
+    revisions = {
+        repo["repo"].rsplit("/", 1)[1]: str(repo["rev"]).lstrip("v")
+        for repo in config["repos"]
+        if "rev" in repo
+    }
+    constraints = dict(
+        re.findall(
+            r"^([A-Za-z0-9_.-]+)==(\S+)$", _read(ROOT / "requirements-ci-constraints.txt"), re.MULTILINE
+        )
+    )
     assert revisions["ruff-pre-commit"] == constraints["ruff"], "pre-commit ruff rev differs from the CI pin"
     assert revisions["mirrors-mypy"] == constraints["mypy"], "pre-commit mypy rev differs from the CI pin"
 
@@ -354,7 +370,9 @@ def test_docs_toolchain_is_hash_locked_everywhere_it_is_installed() -> None:
         assert locked.get(name.lower()) == floor, f"{requirement} and requirements-docs.lock disagree"
     install = "--require-hashes --only-binary=:all: -r requirements-docs.lock"
     for workflow in ("docs.yml", "ci.yml"):
-        assert install in _read(GITHUB / "workflows" / workflow), f"{workflow} must install docs tools from the lock"
+        assert install in _read(GITHUB / "workflows" / workflow), (
+            f"{workflow} must install docs tools from the lock"
+        )
     assert install in _read(ROOT / "Makefile"), "make docs must install docs tools from the lock"
     for workflow in WORKFLOWS:
         assert "mkdocs-material==" not in _read(workflow), f"{workflow.name} pins mkdocs outside the lock"
@@ -382,6 +400,7 @@ def test_example_workflows_pin_actions_to_commit_shas(example: Path) -> None:
 
 def test_example_action_pins_match_the_repository_workflows() -> None:
     """An action pinned in both places must point at the same commit."""
+
     def pins(paths):
         found: dict[str, set[str]] = {}
         for path in paths:
@@ -392,10 +411,13 @@ def test_example_action_pins_match_the_repository_workflows() -> None:
                 name, _, sha = match.group("ref").partition("@")
                 found.setdefault(name, set()).add(sha)
         return found
+
     repository = pins(WORKFLOWS)
     for name, shas in pins(sorted((ROOT / "examples").glob("*.yml"))).items():
         if name in repository:
-            assert shas <= repository[name], f"examples pin {name} to {sorted(shas)} but workflows use {sorted(repository[name])}"
+            assert shas <= repository[name], (
+                f"examples pin {name} to {sorted(shas)} but workflows use {sorted(repository[name])}"
+            )
 
 
 def test_pre_commit_hooks_select_files_with_types_or() -> None:
@@ -412,8 +434,11 @@ def test_dev_extra_is_fully_pinned_for_ci() -> None:
     # CI constrains the [dev] install with both runtime and build-backend locks.
     pinned = {
         name.lower().replace("_", "-")
-        for text in (_read(ROOT / "requirements-ci-constraints.txt"), _read(ROOT / "requirements.lock"),
-                     _read(ROOT / "requirements-build.lock"))
+        for text in (
+            _read(ROOT / "requirements-ci-constraints.txt"),
+            _read(ROOT / "requirements.lock"),
+            _read(ROOT / "requirements-build.lock"),
+        )
         for name in re.findall(r"^([A-Za-z0-9_.-]+)==", text, re.MULTILINE)
     }
     for requirement in _pyproject()["project"]["optional-dependencies"]["dev"]:
@@ -425,7 +450,9 @@ def test_codeql_action_steps_share_one_release() -> None:
     """init, analyze and upload-sarif must run the same CodeQL Action release."""
     pins: dict[str, set[str]] = {}
     for workflow in WORKFLOWS:
-        for match in re.finditer(r"github/codeql-action/([\w-]+)@([0-9a-f]{40})\s*#\s*(v\S+)", _read(workflow)):
+        for match in re.finditer(
+            r"github/codeql-action/([\w-]+)@([0-9a-f]{40})\s*#\s*(v\S+)", _read(workflow)
+        ):
             pins.setdefault(match.group(2), set()).add(f"{workflow.name}:{match.group(1)} {match.group(3)}")
     assert pins, "no CodeQL Action steps found"
     assert len(pins) == 1, "CodeQL Action steps are pinned to different releases: " + "; ".join(
@@ -460,11 +487,15 @@ def test_documented_signature_counts_match_the_shipped_packs(index) -> None:
     for path in _current_docs():
         for _, line in _prose_lines(_read(path)):
             for match in _BARE_SIGNATURE_CLAIM.finditer(line):
-                assert int(match.group(1)) == actual[0], f"{_relative(path)} says {match.group(0)}, packs ship {actual[0]}"
+                assert int(match.group(1)) == actual[0], (
+                    f"{_relative(path)} says {match.group(0)}, packs ship {actual[0]}"
+                )
 
 
 def test_documented_connector_counts_match_the_registry() -> None:
     actual = len(builtin_connector_names())
     for path in _current_docs():
         for match in _CONNECTOR_CLAIM.finditer(_read(path)):
-            assert int(match.group(1)) == actual, f"{_relative(path)} claims {match.group(1)} connectors, registry has {actual}"
+            assert int(match.group(1)) == actual, (
+                f"{_relative(path)} claims {match.group(1)} connectors, registry has {actual}"
+            )

@@ -24,7 +24,9 @@ def config(tmp_path: Path, **overrides) -> ScanConfig:
     (repo / "requirements.txt").write_text("langchain\n")
     values = dict(
         connectors=[ConnectorSpec("code.filesystem", {"path": str(repo), "use_git": False})],
-        incremental=True, state_dir=str(tmp_path / "state"), parallel=1,
+        incremental=True,
+        state_dir=str(tmp_path / "state"),
+        parallel=1,
     )
     values.update(overrides)
     return ScanConfig(**values)
@@ -100,10 +102,14 @@ def test_unchanged_code_reuses_findings_without_leaking_mutations(tmp_path, inde
 
 def test_signature_fingerprint_is_reused_within_one_cache_lifecycle(tmp_path, monkeypatch):
     cfg = config(tmp_path)
-    signature = signature_from_dict({
-        "id": "framework.example", "name": "Example", "category": "framework",
-        "signals": [{"type": "dependency", "ecosystem": "pypi", "names": ["example"]}],
-    })
+    signature = signature_from_dict(
+        {
+            "id": "framework.example",
+            "name": "Example",
+            "category": "framework",
+            "signals": [{"type": "dependency", "ecosystem": "pypi", "names": ["example"]}],
+        }
+    )
     index = SignatureIndex([signature])
     original = index.fingerprint
     calls = 0
@@ -191,10 +197,14 @@ def test_configuration_and_signature_changes_invalidate(tmp_path, index, monkeyp
     Engine(cfg, index).run()
     cfg.connectors[0].config["scan_secrets"] = False
     assert not Engine(cfg, index).run().stats[0].cached
-    replacement = signature_from_dict({
-        "id": "framework.test", "name": "Test", "category": "framework",
-        "signals": [{"type": "dependency", "ecosystem": "pypi", "names": ["langchain"]}],
-    })
+    replacement = signature_from_dict(
+        {
+            "id": "framework.test",
+            "name": "Test",
+            "category": "framework",
+            "signals": [{"type": "dependency", "ecosystem": "pypi", "names": ["langchain"]}],
+        }
+    )
     changed = Engine(cfg, SignatureIndex([replacement])).run()
     assert not changed.stats[0].cached
     assert any("framework.test" in f.frameworks for f in changed.findings)
@@ -206,7 +216,9 @@ def test_inventory_and_confidence_are_reapplied_even_with_same_engine(tmp_path, 
     first = Engine(cfg, index).run()
     resource = first.findings[0].resource
     inventory = tmp_path / "agents.json"
-    inventory.write_text(json.dumps({"agents": [{"id": "approved", "resources": [resource], "owner": "first-owner"}]}))
+    inventory.write_text(
+        json.dumps({"agents": [{"id": "approved", "resources": [resource], "owner": "first-owner"}]})
+    )
     cfg.inventory = [str(inventory)]
     engine = Engine(cfg, index)
     approved = engine.run()
@@ -222,7 +234,9 @@ def test_inventory_and_confidence_are_reapplied_even_with_same_engine(tmp_path, 
     assert filtered.stats[0].cached and not filtered.findings
 
 
-@pytest.mark.parametrize("damage", ["garbage", "missing", "unsafe_permissions", "payload_modified", "deep_json"])
+@pytest.mark.parametrize(
+    "damage", ["garbage", "missing", "unsafe_permissions", "payload_modified", "deep_json"]
+)
 def test_unusable_cache_falls_back_to_scan(tmp_path, index, monkeypatch, damage):
     cfg = config(tmp_path)
     calls = count_runs(monkeypatch)
@@ -252,8 +266,9 @@ def test_concurrent_cache_writers_publish_only_complete_matching_entries(tmp_pat
 
     def write_and_read(writer):
         snapshot = Snapshot(slot="a" * 64, fingerprint=f"writer-{writer}")
-        item = Finding(Surface.CODE, "code.filesystem", Kind.AGENT,
-                       f"Writer {writer}", f"repo:{writer}", "repository")
+        item = Finding(
+            Surface.CODE, "code.filesystem", Kind.AGENT, f"Writer {writer}", f"repo:{writer}", "repository"
+        )
         stats = ScanStats(connector="code.filesystem", started_at="now", warnings=[f"writer-{writer}"])
         for _ in range(20):
             cache.save(snapshot, [item], stats)
@@ -424,11 +439,15 @@ def test_reused_engine_reloads_signature_pack_between_runs(tmp_path):
     extra.mkdir()
     override = extra / "langchain.yaml"
     cfg.signature_dirs = [str(extra)]
-    override.write_text("id: framework.langchain\nname: LangChain\ncategory: framework\nsignals:\n  - type: dependency\n    ecosystem: pypi\n    names: [langchain]\n")
+    override.write_text(
+        "id: framework.langchain\nname: LangChain\ncategory: framework\nsignals:\n  - type: dependency\n    ecosystem: pypi\n    names: [langchain]\n"
+    )
     engine = Engine(cfg)
     first = engine.run()
     assert first.complete and any("framework.langchain" in f.frameworks for f in first.findings)
-    override.write_text("id: framework.langchain\nname: LangChain\ncategory: framework\nsignals:\n  - type: dependency\n    ecosystem: pypi\n    names: [unrelated]\n")
+    override.write_text(
+        "id: framework.langchain\nname: LangChain\ncategory: framework\nsignals:\n  - type: dependency\n    ecosystem: pypi\n    names: [unrelated]\n"
+    )
     second = engine.run()
     assert second.complete and not second.stats[0].cached
     assert not any("framework.langchain" in f.frameworks for f in second.findings)
@@ -451,7 +470,9 @@ def test_cache_never_serializes_post_scan_correlation(tmp_path, index, monkeypat
 
 
 def test_incremental_config_paths_and_boolean_validation(tmp_path):
-    cfg = ScanConfig.from_dict({"options": {"incremental": True, "state_dir": "state"}}, source=str(tmp_path / "config.yaml"))
+    cfg = ScanConfig.from_dict(
+        {"options": {"incremental": True, "state_dir": "state"}}, source=str(tmp_path / "config.yaml")
+    )
     assert cfg.incremental and cfg.state_dir == str(tmp_path / "state")
     with pytest.raises(ValueError, match="YAML boolean"):
         ScanConfig.from_dict({"options": {"incremental": "false"}})
@@ -558,7 +579,9 @@ def test_plugin_overriding_builtin_name_is_not_cached(tmp_path, index, monkeypat
 
         def analyze(self, records):
             runs.append(1)
-            yield Finding(Surface.CODE, "code.filesystem", Kind.AGENT, "Plugin", f"run:{len(runs)}", "repository")
+            yield Finding(
+                Surface.CODE, "code.filesystem", Kind.AGENT, "Plugin", f"run:{len(runs)}", "repository"
+            )
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda _: Plugin)
     assert Engine(cfg, index).run().findings[0].resource == "run:1"
@@ -573,7 +596,9 @@ def test_git_replacement_cannot_reuse_stale_owner(tmp_path, index):
     cfg.connectors[0].config["use_git"] = True
 
     def git(*args, env=None):
-        return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=env).stdout.strip()
+        return subprocess.run(
+            ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=env
+        ).stdout.strip()
 
     git("init")
     git("config", "user.name", "Alice")
@@ -585,9 +610,17 @@ def test_git_replacement_cannot_reuse_stale_owner(tmp_path, index):
     assert Engine(cfg, index).run().stats[0].cached
     head = git("rev-parse", "HEAD")
     tree = git("rev-parse", "HEAD^{tree}")
-    replacement = git("commit-tree", tree, "-m", "replacement", env={
-        **os.environ, "GIT_AUTHOR_NAME": "Bob", "GIT_AUTHOR_EMAIL": "bob@example.com",
-    })
+    replacement = git(
+        "commit-tree",
+        tree,
+        "-m",
+        "replacement",
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": "Bob",
+            "GIT_AUTHOR_EMAIL": "bob@example.com",
+        },
+    )
     git("replace", head, replacement)
     changed = Engine(cfg, index).run()
     assert changed.complete and not changed.stats[0].cached

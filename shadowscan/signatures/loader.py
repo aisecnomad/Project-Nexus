@@ -32,6 +32,7 @@ class SignaturePackError(SetupError, ValueError):
     never included, so the CLI may print the message verbatim.
     """
 
+
 VALID_CATEGORIES = {
     "framework",  # agent orchestration frameworks (LangChain, CrewAI, ADK...)
     "provider",  # model providers / inference APIs (OpenAI, Bedrock, Ollama...)
@@ -81,7 +82,9 @@ class Signal:
     names: list[str] = field(default_factory=list)  # dependency / env / client_id
     prefixes: list[str] = field(default_factory=list)  # dependency
     exclude_names: list[str] = field(default_factory=list)  # dependency: exact names a prefix must not claim
-    exclude_prefixes: list[str] = field(default_factory=list)  # dependency: name prefixes a prefix must not claim
+    exclude_prefixes: list[str] = field(
+        default_factory=list
+    )  # dependency: name prefixes a prefix must not claim
     patterns: list[str] = field(default_factory=list)  # regexes
     globs: list[str] = field(default_factory=list)  # file
     values: list[str] = field(default_factory=list)  # domain / scope / iac
@@ -153,7 +156,10 @@ class Signature:
                 raise ValueError(f"{self.source}: {self.id}: signal weight out of range")
             if s.type == "dependency" and not (s.names or s.prefixes):
                 raise ValueError(f"{self.source}: {self.id}: dependency signal needs names/prefixes")
-            if s.type in {"import", "code", "user_agent", "name", "model", "secret", "image"} and not s.patterns:
+            if (
+                s.type in {"import", "code", "user_agent", "name", "model", "secret", "image"}
+                and not s.patterns
+            ):
                 raise ValueError(f"{self.source}: {self.id}: {s.type} signal needs patterns")
             if s.type == "file" and not s.globs:
                 raise ValueError(f"{self.source}: {self.id}: file signal needs globs")
@@ -269,7 +275,9 @@ def load_signature_file(path: Path) -> list[Signature]:
                 for item in require_list(doc, context, nonempty=True):
                     out.append(signature_from_dict(item, source=context))
             else:
-                raise SignaturePackError(f"{context}: expected a signature, signature list, or signatures pack")
+                raise SignaturePackError(
+                    f"{context}: expected a signature, signature list, or signatures pack"
+                )
     except SignaturePackError:
         raise
     except ValueError as exc:
@@ -302,7 +310,8 @@ def _signature_dirs(extra_dirs: Sequence[str | os.PathLike[str]] | None, include
 def signature_source_digest(
     extra_dirs: Sequence[str | os.PathLike[str]] | None = None,
     include_builtin: bool = True,
-    *, allow_override: bool = False,
+    *,
+    allow_override: bool = False,
 ) -> str:
     """Digest the exact inputs :func:`load_signatures` would read.
 
@@ -329,7 +338,8 @@ def signature_source_digest(
 def load_signatures(
     extra_dirs: Sequence[str | os.PathLike[str]] | None = None,
     include_builtin: bool = True,
-    *, allow_override: bool = False,
+    *,
+    allow_override: bool = False,
 ) -> list[Signature]:
     """Load built-in signatures plus any extra packs.
 
@@ -350,7 +360,9 @@ def load_signatures(
                 if sig.id in pack_ids:
                     raise SignaturePackError(f"{f}: duplicate signature id {sig.id!r} in {d}")
                 if sig.id in reserved and not allow_override:
-                    raise SignaturePackError(f"{f}: signature id {sig.id!r} is reserved by a built-in; explicitly enable signature overrides")
+                    raise SignaturePackError(
+                        f"{f}: signature id {sig.id!r} is reserved by a built-in; explicitly enable signature overrides"
+                    )
                 pack_ids.add(sig.id)
                 by_id[sig.id] = sig
         if include_builtin and number == 0:

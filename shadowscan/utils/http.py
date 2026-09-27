@@ -168,7 +168,11 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
         raise ValueError("API URL must use HTTPS without embedded credentials")
     if origin:
         expected = urlsplit(origin)
-        if (parsed.scheme, parsed.hostname, parsed.port or 443) != (expected.scheme, expected.hostname, expected.port or 443):
+        if (parsed.scheme, parsed.hostname, parsed.port or 443) != (
+            expected.scheme,
+            expected.hostname,
+            expected.port or 443,
+        ):
             raise ValueError("Refusing API URL outside the configured credential origin")
     allow = _allow_private_origin.get() if allow_private is None else allow_private
     if not isinstance(allow, bool):
@@ -189,7 +193,9 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
             except (ValueError, TypeError, IndexError):
                 continue
             if _blocked_ip(addr) and not allow:
-                raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination") from None
+                raise ValueError(
+                    "Refusing loopback, link-local, private, or cloud-metadata destination"
+                ) from None
     return url
 
 
@@ -241,6 +247,7 @@ class _PublicHTTPSConnection(HTTPSConnection):
 class _PrivateHTTPSConnection(_PublicHTTPSConnection):
     allow_private_origin = True
 
+
 class _PublicHTTPSConnectionPool(HTTPSConnectionPool):
     ConnectionCls = _PublicHTTPSConnection
 
@@ -283,7 +290,7 @@ def _retry_delay(resp: requests.Response, attempt: int) -> float:
     if retry_after and retry_after.isascii() and retry_after.isdigit():
         delay = float(retry_after) + random.uniform(0, 1)
     else:
-        step = min(2 ** attempt, 30)
+        step = min(2**attempt, 30)
         delay = step / 2 + random.uniform(0, step / 2)
     reset = resp.headers.get("X-RateLimit-Reset")
     if resp.headers.get("X-RateLimit-Remaining") == "0" and reset and reset.isascii() and reset.isdigit():
@@ -323,7 +330,9 @@ class HttpClient:
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     ):
         self.base_url = base_url.rstrip("/")
-        self.allow_private_origin = _allow_private_origin.get() if allow_private_origin is None else allow_private_origin
+        self.allow_private_origin = (
+            _allow_private_origin.get() if allow_private_origin is None else allow_private_origin
+        )
         if not isinstance(self.allow_private_origin, bool):
             raise TypeError("allow_private_origin must be a boolean")
         self.session = session or requests.Session()
@@ -365,7 +374,9 @@ class HttpClient:
             url = f"{self.base_url}/{path.lstrip('/')}"
         return validate_url(url, self.base_url or None, allow_private=self.allow_private_origin)
 
-    def request(self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any) -> requests.Response:
+    def request(
+        self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any
+    ) -> requests.Response:
         if not isinstance(raise_for_status, bool):
             raise TypeError("raise_for_status must be a boolean")
         _validate_headers(self.session.headers)
@@ -394,7 +405,10 @@ class HttpClient:
         redirects = 0
         origin = url
         while True:
-            if isinstance(self.session, requests.Session) and self.session.get_adapter(url) is not self._policy_adapter:
+            if (
+                isinstance(self.session, requests.Session)
+                and self.session.get_adapter(url) is not self._policy_adapter
+            ):
                 raise ValueError("HTTP destination policy adapter was replaced")
             attempt += 1
             self.requests_made += 1
@@ -420,7 +434,13 @@ class HttpClient:
             if (resp.status_code in RETRY_STATUSES or _rate_limited(resp)) and attempt <= self.max_retries:
                 resp.close()
                 delay = _retry_delay(resp, attempt)
-                log.warning("HTTP %s from %s; retrying in %.0fs (attempt %d)", resp.status_code, diagnostic_url(url), delay, attempt)
+                log.warning(
+                    "HTTP %s from %s; retrying in %.0fs (attempt %d)",
+                    resp.status_code,
+                    diagnostic_url(url),
+                    delay,
+                    attempt,
+                )
                 time.sleep(delay)
                 continue
             if resp.status_code >= 400 and raise_for_status:
@@ -502,7 +522,9 @@ class HttpClient:
         resp = self.post(path, **kwargs)
         return self.read_json_response(resp, max_bytes=limit)
 
-    def try_get_json(self, path: str, default: Any = None, ok_statuses: set[int] | None = None, **kwargs: Any) -> Any:
+    def try_get_json(
+        self, path: str, default: Any = None, ok_statuses: set[int] | None = None, **kwargs: Any
+    ) -> Any:
         """Optional GET; denied or unknown coverage is never silently discarded.
 
         Callers may explicitly allow a missing optional feature (e.g. 404).
@@ -543,7 +565,13 @@ class HttpClient:
             raise RuntimeError("Invalid pagination continuation; collection incomplete")
         return value
 
-    def paginate_link(self, path: str, params: dict[str, Any] | None = None, item_key: str | None = None, max_pages: int = 1000) -> Iterator[Any]:
+    def paginate_link(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        item_key: str | None = None,
+        max_pages: int = 1000,
+    ) -> Iterator[Any]:
         """RFC 5988 Link-header pagination for GitHub and GitLab."""
         origin = self._url(path)
         url: str | None = origin
@@ -564,7 +592,9 @@ class HttpClient:
         if url:
             raise RuntimeError("Pagination limit reached; collection incomplete")
 
-    def paginate_odata(self, path: str, params: dict[str, Any] | None = None, max_pages: int = 1000) -> Iterator[dict[str, Any]]:
+    def paginate_odata(
+        self, path: str, params: dict[str, Any] | None = None, max_pages: int = 1000
+    ) -> Iterator[dict[str, Any]]:
         """Microsoft Graph and OData next-link pagination."""
         origin = self._url(path)
         url: str | None = origin

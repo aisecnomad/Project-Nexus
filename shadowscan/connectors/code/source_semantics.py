@@ -102,18 +102,35 @@ _TOOL_ARGUMENTS = re.compile(r"(?<![\w$])(?:tools|toolConfig|functions|function_
 _LOOP_REQUESTS: dict[str, tuple[str, frozenset[str]]] = {
     # Plain, raw-response (``.parse()`` returns the message) and streaming
     # (``get_final_message()`` / ``get_final_completion()``) request forms.
-    "openai": ("provider.openai", frozenset({
-        f"{client}.{api}chat.completions.{method}"
-        for client in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI")
-        for api in ("", "beta.")
-        for method in ("create", "with_raw_response.create", "stream")
-    })),
-    "anthropic": ("provider.anthropic", frozenset({
-        f"{client}.{api}messages.{method}"
-        for client in ("Anthropic", "AsyncAnthropic", "AnthropicBedrock", "AsyncAnthropicBedrock", "AnthropicVertex", "AsyncAnthropicVertex")
-        for api in ("", "beta.")
-        for method in ("create", "with_raw_response.create", "stream")
-    })),
+    "openai": (
+        "provider.openai",
+        frozenset(
+            {
+                f"{client}.{api}chat.completions.{method}"
+                for client in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI")
+                for api in ("", "beta.")
+                for method in ("create", "with_raw_response.create", "stream")
+            }
+        ),
+    ),
+    "anthropic": (
+        "provider.anthropic",
+        frozenset(
+            {
+                f"{client}.{api}messages.{method}"
+                for client in (
+                    "Anthropic",
+                    "AsyncAnthropic",
+                    "AnthropicBedrock",
+                    "AsyncAnthropicBedrock",
+                    "AnthropicVertex",
+                    "AsyncAnthropicVertex",
+                )
+                for api in ("", "beta.")
+                for method in ("create", "with_raw_response.create", "stream")
+            }
+        ),
+    ),
 }
 # Keyword arguments that evidence a specific capability of a bound construction.
 _KEYWORD_CAPABILITIES: dict[str, tuple[tuple[str, str], ...]] = {
@@ -199,7 +216,9 @@ class _PythonBindings(ast.NodeVisitor):
             if alias.name == "*":
                 self.scopes[-1] = dict.fromkeys(self.scopes[-1])
                 continue
-            binding = _Binding(node.module or "", alias.name) if not node.level and alias.name != "*" else None
+            binding = (
+                _Binding(node.module or "", alias.name) if not node.level and alias.name != "*" else None
+            )
             self.scopes[-1][alias.asname or alias.name] = binding
             if binding:
                 self.imports.append((binding, node.lineno))
@@ -212,7 +231,15 @@ class _PythonBindings(ast.NodeVisitor):
             start = self._offset(node.func.end_lineno or node.lineno, node.func.end_col_offset or 0)
             end = self._offset(node.end_lineno or node.lineno, node.end_col_offset or 0)
             keywords = " ".join(f"{keyword.arg}=" for keyword in node.keywords if keyword.arg)
-            self.calls.append(_Call(binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno, keywords, node=node))
+            self.calls.append(
+                _Call(
+                    binding,
+                    self.text[start : min(end, start + MAX_CALL_TEXT)],
+                    node.lineno,
+                    keywords,
+                    node=node,
+                )
+            )
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
@@ -381,12 +408,16 @@ class _PythonBindings(ast.NodeVisitor):
             for statement in branch:
                 self.visit(statement)
             outcomes.append(self.scopes[-1])
-        self.scopes[-1] = {name: outcomes[0].get(name) if outcomes[0].get(name) == outcomes[1].get(name) else None
-                           for name in set(outcomes[0]) | set(outcomes[1])}
+        self.scopes[-1] = {
+            name: outcomes[0].get(name) if outcomes[0].get(name) == outcomes[1].get(name) else None
+            for name in set(outcomes[0]) | set(outcomes[1])
+        }
 
 
 def _python_bindings(
-    text: str, relevant: Callable[[_Binding], bool] | None = None, max_nodes: int | None = None,
+    text: str,
+    relevant: Callable[[_Binding], bool] | None = None,
+    max_nodes: int | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
     limit = MAX_AST_NODES if max_nodes is None else max_nodes
@@ -399,7 +430,9 @@ def _python_bindings(
 
 
 def _javascript_bindings(
-    text: str, ignored: list[tuple[int, int]], relevant: Callable[[_Binding], bool] | None = None,
+    text: str,
+    ignored: list[tuple[int, int]],
+    relevant: Callable[[_Binding], bool] | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
     starts = [start for start, _ in ignored]
 
@@ -443,7 +476,9 @@ def _javascript_bindings(
         if default:
             bind(default.group(1), module, "default", line)
 
-    rx = regex.compile(r"\b(?:const|let|var)\s+([\w$]+|\{[^}\r\n]{1,1000}\})\s*=\s*require\s*\(\s*(['\"])([^'\"\r\n]{1,240})\2\s*\)")
+    rx = regex.compile(
+        r"\b(?:const|let|var)\s+([\w$]+|\{[^}\r\n]{1,1000}\})\s*=\s*require\s*\(\s*(['\"])([^'\"\r\n]{1,240})\2\s*\)"
+    )
     for match in rx.finditer(text, timeout=pattern_timeout(), concurrent=False):
         if excluded(match.start()):
             continue
@@ -475,11 +510,15 @@ def _javascript_bindings(
             rf"\bcatch\s*\(\s*{escaped}\b",
             rf"(?:^|[;{{}}\n])\s*(?:async\s+)?[\w$]+\s*\([^)]*\b{escaped}\b[^)]*\)\s*(?::[^{{}};]+)?\{{",
         ]
-        if any(regex.search(pattern, rest, timeout=pattern_timeout(), concurrent=False) for pattern in patterns):
+        if any(
+            regex.search(pattern, rest, timeout=pattern_timeout(), concurrent=False) for pattern in patterns
+        ):
             del bindings[name]
 
     calls: list[_Call] = []
-    rx = regex.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?:<[^;(){}]{1,1000}>)?\s*\(")
+    rx = regex.compile(
+        r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?:<[^;(){}]{1,1000}>)?\s*\("
+    )
     for match in rx.finditer(masked, timeout=pattern_timeout(), concurrent=False):
         parts = re.split(r"\s*\.\s*", match.group(1))
         binding = bindings.get(parts[0])
@@ -497,14 +536,25 @@ def _javascript_bindings(
         if depth:
             continue
         symbol = ".".join(filter(None, (binding.symbol, *parts[1:])))
-        calls.append(_Call(_Binding(binding.module, symbol), text[opening:end], text.count("\n", 0, match.start()) + 1,
-                           masked[opening:end]))
+        calls.append(
+            _Call(
+                _Binding(binding.module, symbol),
+                text[opening:end],
+                text.count("\n", 0, match.start()) + 1,
+                masked[opening:end],
+            )
+        )
     return calls, imports
 
 
 def bound_source_matches(
-    index: SignatureIndex, text: str, language: str, ignored: list[tuple[int, int]],
-    *, is_local_module: Callable[[str], bool] | None = None, max_ast_nodes: int | None = None,
+    index: SignatureIndex,
+    text: str,
+    language: str,
+    ignored: list[tuple[int, int]],
+    *,
+    is_local_module: Callable[[str], bool] | None = None,
+    max_ast_nodes: int | None = None,
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
@@ -517,12 +567,18 @@ def bound_source_matches(
     def module_matches(binding: _Binding) -> list[Match]:
         if binding not in module_cache:
             if language == "python":
-                statement = f"from {binding.module} import {binding.symbol.split('.')[0]}" if binding.symbol else f"import {binding.module}"
+                statement = (
+                    f"from {binding.module} import {binding.symbol.split('.')[0]}"
+                    if binding.symbol
+                    else f"import {binding.module}"
+                )
                 matches = list(index.match_import_statement(statement, language))
                 if matches and is_local_module is not None and is_local_module(binding.module):
                     matches = []
             else:
-                matches = list(index.match_import_statement(f"import {{ example }} from '{binding.module}'", language))
+                matches = list(
+                    index.match_import_statement(f"import {{ example }} from '{binding.module}'", language)
+                )
                 matches += index.match_dependency("npm", binding.module)
                 if binding.module.startswith("@langchain/langgraph"):
                     matches = [m for m in matches if m.signature_id != "framework.langchain"]
@@ -545,16 +601,27 @@ def bound_source_matches(
 
     for binding, line in imports:
         for match in module_matches(binding):
-            found.append(Match(match.signature, Signal(type="import", weight=match.weight),
-                               sanitize_text(binding.module), match.weight, line=line,
-                               extra={"verified_agent": False}))
+            found.append(
+                Match(
+                    match.signature,
+                    Signal(type="import", weight=match.weight),
+                    sanitize_text(binding.module),
+                    match.weight,
+                    line=line,
+                    extra={"verified_agent": False},
+                )
+            )
         # Some signatures describe capabilities conveyed by a particular
         # imported tool. Retain those as supporting evidence, never an agent.
         resolved = {m.signature_id for m in module_matches(binding)}
         if language == "python" and resolved:
             # Only matches of signatures this import resolves to are kept, so
             # an unresolved import (most of them) needs no code pass at all.
-            statement = f"from {binding.module} import {binding.symbol}" if binding.symbol else f"import {binding.module}"
+            statement = (
+                f"from {binding.module} import {binding.symbol}"
+                if binding.symbol
+                else f"import {binding.module}"
+            )
             for match in index.match_code(statement, language):
                 if match.signature_id in resolved:
                     match.line = line
@@ -565,19 +632,35 @@ def bound_source_matches(
     javascript_constructors: set[int] = set()
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
-        if (language == "javascript" and "provider.openai" in signatures and call.binding.module == "openai"
-                and call.binding.symbol in {"default", "OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI"}):
+        if (
+            language == "javascript"
+            and "provider.openai" in signatures
+            and call.binding.module == "openai"
+            and call.binding.symbol in {"default", "OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI"}
+        ):
             javascript_constructors.add(call.line)
         loop_request = _LOOP_REQUESTS.get(call.binding.module)
-        if (tree is not None and call.node is not None and loop_request is not None
-                and loop_request[0] in signatures and call.binding.symbol in loop_request[1]):
+        if (
+            tree is not None
+            and call.node is not None
+            and loop_request is not None
+            and loop_request[0] in signatures
+            and call.binding.symbol in loop_request[1]
+        ):
             provider_requests.add(id(call.node))
-        if (tree is not None and call.node is not None and "provider.openai" in signatures
-                and call.binding.module == "openai"
-                and call.binding.symbol in {
-                    "OpenAI.responses.create", "AsyncOpenAI.responses.create",
-                    "AzureOpenAI.responses.create", "AsyncAzureOpenAI.responses.create",
-                }):
+        if (
+            tree is not None
+            and call.node is not None
+            and "provider.openai" in signatures
+            and call.binding.module == "openai"
+            and call.binding.symbol
+            in {
+                "OpenAI.responses.create",
+                "AsyncOpenAI.responses.create",
+                "AzureOpenAI.responses.create",
+                "AsyncAzureOpenAI.responses.create",
+            }
+        ):
             responses_requests.add(id(call.node))
         symbol = _symbol_tail(call.binding.symbol)
         canonical = symbol + call.arguments
@@ -588,21 +671,44 @@ def bound_source_matches(
                 # Options belong to a resolved SDK call, not unrelated config.
                 verified = bool(re.search(r"\btools\s*:\s*\{", call.structural_arguments))
             if (
-                signature.category == "provider" and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
+                signature.category == "provider"
+                and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
                 and _TOOL_ARGUMENTS.search(call.structural_arguments)
             ):
                 # Schema-only requests stay tool-enabled LLM usage: the loop
                 # evidence below decides whether selected tools are executed.
-                found.append(Match(signature, Signal(type="code", weight=0.7, capabilities=["tool-use"],
-                                                     description="import-bound request offering tools"),
-                                   sanitize_text(f"{call.binding.module}:{symbol}(tools="), 0.7, line=call.line,
-                                   extra={"verified_agent": False}))
+                found.append(
+                    Match(
+                        signature,
+                        Signal(
+                            type="code",
+                            weight=0.7,
+                            capabilities=["tool-use"],
+                            description="import-bound request offering tools",
+                        ),
+                        sanitize_text(f"{call.binding.module}:{symbol}(tools="),
+                        0.7,
+                        line=call.line,
+                        extra={"verified_agent": False},
+                    )
+                )
             for keyword, capability in _KEYWORD_CAPABILITIES.get(signature.id, ()):
                 if re.search(rf"(?<![\w$]){keyword}\s*[=:]", call.structural_arguments):
-                    found.append(Match(signature, Signal(type="code", weight=0.6, capabilities=[capability],
-                                                         description=f"{keyword} argument"),
-                                       sanitize_text(f"{symbol}({keyword}="), 0.6, line=call.line,
-                                       extra={"verified_agent": False}))
+                    found.append(
+                        Match(
+                            signature,
+                            Signal(
+                                type="code",
+                                weight=0.6,
+                                capabilities=[capability],
+                                description=f"{keyword} argument",
+                            ),
+                            sanitize_text(f"{symbol}({keyword}="),
+                            0.6,
+                            line=call.line,
+                            extra={"verified_agent": False},
+                        )
+                    )
             for signal in signature.signals:
                 if signal.type != "code" or signal.languages and language not in signal.languages:
                     continue
@@ -613,43 +719,90 @@ def bound_source_matches(
                     # A known factory list excludes memory/model utility calls
                     # from inherited broad agent_indicator declarations.
                     indicator = verified if factory else signature.agent_indicator or signal.agent_indicator
-                    found.append(Match(signature, signal, sanitize_text(canonical[:len(symbol) + 1]), signal.weight,
-                                       line=call.line, extra={"verified_agent": indicator}))
+                    found.append(
+                        Match(
+                            signature,
+                            signal,
+                            sanitize_text(canonical[: len(symbol) + 1]),
+                            signal.weight,
+                            line=call.line,
+                            extra={"verified_agent": indicator},
+                        )
+                    )
                     break
             if verified:
-                found.append(Match(signature, Signal(type="code", weight=0.9, agent_indicator=True,
-                                                     description="import-bound agent construction"),
-                                   sanitize_text(f"{call.binding.module}:{symbol}("), 0.9, line=call.line,
-                                   extra={"verified_agent": True}))
+                found.append(
+                    Match(
+                        signature,
+                        Signal(
+                            type="code",
+                            weight=0.9,
+                            agent_indicator=True,
+                            description="import-bound agent construction",
+                        ),
+                        sanitize_text(f"{call.binding.module}:{symbol}("),
+                        0.9,
+                        line=call.line,
+                        extra={"verified_agent": True},
+                    )
+                )
     protocol = index.get("protocol.openai-function-calling")
     if tree is not None and protocol is not None:
         for line in provider_tool_loop_lines(tree, provider_requests):
-            found.append(Match(
-                protocol,
-                Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
-                       description="import-bound model-selected tool dispatch with conversation feedback"),
-                "provider tool-selection/dispatch/feedback loop", 0.9, line=line,
-                extra={"verified_agent": True},
-            ))
+            found.append(
+                Match(
+                    protocol,
+                    Signal(
+                        type="code",
+                        weight=0.9,
+                        agent_indicator=True,
+                        capabilities=["tool-use", "autonomous"],
+                        description="import-bound model-selected tool dispatch with conversation feedback",
+                    ),
+                    "provider tool-selection/dispatch/feedback loop",
+                    0.9,
+                    line=line,
+                    extra={"verified_agent": True},
+                )
+            )
         for line in responses_tool_loop_lines(tree, responses_requests):
-            found.append(Match(
-                protocol,
-                Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
-                       description="import-bound Responses function dispatch with ordered conversation feedback"),
-                "OpenAI Responses tool-selection/dispatch/feedback loop", 0.9, line=line,
-                extra={"verified_agent": True},
-            ))
+            found.append(
+                Match(
+                    protocol,
+                    Signal(
+                        type="code",
+                        weight=0.9,
+                        agent_indicator=True,
+                        capabilities=["tool-use", "autonomous"],
+                        description="import-bound Responses function dispatch with ordered conversation feedback",
+                    ),
+                    "OpenAI Responses tool-selection/dispatch/feedback loop",
+                    0.9,
+                    line=line,
+                    extra={"verified_agent": True},
+                )
+            )
     if protocol is not None:
         dispatch_lines = (
-            responses_dispatch_lines(tree, responses_requests) if tree is not None else
-            javascript_responses_dispatch_lines(text, ignored, javascript_constructors)
+            responses_dispatch_lines(tree, responses_requests)
+            if tree is not None
+            else javascript_responses_dispatch_lines(text, ignored, javascript_constructors)
         )
         for line in dispatch_lines:
-            found.append(Match(
-                protocol,
-                Signal(type="code", weight=0.85, agent_indicator=True, capabilities=["tool-use"],
-                       description="import-bound Responses selected-action dispatch"),
-                "OpenAI Responses selected-action dispatch", 0.85, line=line,
-                extra={"verified_agent": True, "agent_classification": "openai-responses-tool-dispatch"},
-            ))
+            found.append(
+                Match(
+                    protocol,
+                    Signal(
+                        type="code",
+                        weight=0.85,
+                        agent_indicator=True,
+                        capabilities=["tool-use"],
+                        description="import-bound Responses selected-action dispatch",
+                    ),
+                    "OpenAI Responses selected-action dispatch",
+                    0.85,
+                    line=line,
+                    extra={"verified_agent": True, "agent_classification": "openai-responses-tool-dispatch"},
+                )
+            )
     return found

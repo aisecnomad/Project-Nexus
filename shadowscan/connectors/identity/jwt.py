@@ -45,8 +45,41 @@ from shadowscan.utils.redaction import sanitize_text
 from shadowscan.utils.text import parse_timestamp, to_iso
 
 _JWT_RX = re.compile(r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*$")
-USER_CLAIMS = ("upn", "preferred_username", "email", "unique_name", "name", "given_name", "family_name", "username", "cognito:username", "oid_user")
-AGENT_CLAIM_KEYS = ("agent_id", "agent", "agent_name", "agentid", "x-agent-id", "bot", "bot_id", "client_name", "app_displayname", "azp_name", "workload", "spiffe_id", "delegation", "on_behalf_of", "obo", "actor", "act", "may_act", "purpose", "tool", "tools")
+USER_CLAIMS = (
+    "upn",
+    "preferred_username",
+    "email",
+    "unique_name",
+    "name",
+    "given_name",
+    "family_name",
+    "username",
+    "cognito:username",
+    "oid_user",
+)
+AGENT_CLAIM_KEYS = (
+    "agent_id",
+    "agent",
+    "agent_name",
+    "agentid",
+    "x-agent-id",
+    "bot",
+    "bot_id",
+    "client_name",
+    "app_displayname",
+    "azp_name",
+    "workload",
+    "spiffe_id",
+    "delegation",
+    "on_behalf_of",
+    "obo",
+    "actor",
+    "act",
+    "may_act",
+    "purpose",
+    "tool",
+    "tools",
+)
 # Client-naming claims are present on ordinary user tokens (every Entra v1
 # delegated token carries app_displayname). Their *value* must match an AI
 # product / agent name signature before they count as an agent hint.
@@ -63,7 +96,9 @@ class JwtConnector(BaseConnector, _NoDump):
     name: ClassVar[str] = "identity.jwt"
     surface: ClassVar[Surface] = Surface.IDENTITY
     provider: ClassVar[str | None] = "jwt"
-    description: ClassVar[str] = "Classify JWTs as human, service or agent (delegated) identities and assess their privileges."
+    description: ClassVar[str] = (
+        "Classify JWTs as human, service or agent (delegated) identities and assess their privileges."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "tokens": "list of JWT strings",
         "jwks_url": "optional operator-trusted JWKS endpoint for signature verification",
@@ -146,7 +181,9 @@ class JwtConnector(BaseConnector, _NoDump):
                 continue
             self.ctx.examined()
             try:
-                f = self.analyze_token(str(token).strip(), jwks_url=jwks_url, context=rec.get("context") or rec.get("source"))
+                f = self.analyze_token(
+                    str(token).strip(), jwks_url=jwks_url, context=rec.get("context") or rec.get("source")
+                )
             except (ValueError, TypeError, OverflowError, RecursionError, KeyError, MatchTimeoutError) as exc:
                 # Hostile claims (huge numbers, odd types) must not stop the
                 # analysis of every later token in the input.
@@ -174,7 +211,9 @@ class JwtConnector(BaseConnector, _NoDump):
         return cached
 
     # -------------------------------------------------------------- analysis
-    def analyze_token(self, token: str, jwks_url: str | None = None, context: str | None = None) -> Finding | None:
+    def analyze_token(
+        self, token: str, jwks_url: str | None = None, context: str | None = None
+    ) -> Finding | None:
         import jwt as pyjwt
 
         if len(token) > 131072:
@@ -182,7 +221,9 @@ class JwtConnector(BaseConnector, _NoDump):
             return None
         try:
             header = pyjwt.get_unverified_header(token)
-            claims = pyjwt.decode(token, options={"verify_signature": False, "verify_exp": False, "verify_aud": False})
+            claims = pyjwt.decode(
+                token, options={"verify_signature": False, "verify_exp": False, "verify_aud": False}
+            )
         except (pyjwt.PyJWTError, RecursionError, ValueError) as exc:
             self.ctx.warn(f"identity.jwt: cannot decode token ({type(exc).__name__})")
             return None
@@ -227,16 +268,25 @@ class JwtConnector(BaseConnector, _NoDump):
         if str(claims.get("idtyp", "")).lower() == "app":
             identity_type = "service"
             reasons.append("Entra idtyp=app (app-only token)")
-        elif family == "entra" and ("appid" in claims or "azp" in claims) and not has_user and "oid" in claims:
+        elif (
+            family == "entra" and ("appid" in claims or "azp" in claims) and not has_user and "oid" in claims
+        ):
             identity_type = "service"
             reasons.append("Entra token has appid/azp and oid but no user claims")
         if family == "okta" and claims.get("cid") and claims.get("cid") == sub:
             identity_type = "service"
             reasons.append("Okta cid == sub (service app token)")
-        if sub.endswith(".iam.gserviceaccount.com") or str(claims.get("email", "")).endswith(".iam.gserviceaccount.com"):
+        if sub.endswith(".iam.gserviceaccount.com") or str(claims.get("email", "")).endswith(
+            ".iam.gserviceaccount.com"
+        ):
             identity_type = "service"
             reasons.append("Google service account")
-        if family == "cognito" and claims.get("token_use") == "access" and claims.get("client_id") and not claims.get("username"):
+        if (
+            family == "cognito"
+            and claims.get("token_use") == "access"
+            and claims.get("client_id")
+            and not claims.get("username")
+        ):
             identity_type = "service"
             reasons.append("Cognito client-credentials access token")
         if sub.startswith("spiffe://") or str(claims.get("spiffe_id", "")).startswith("spiffe://"):
@@ -270,13 +320,19 @@ class JwtConnector(BaseConnector, _NoDump):
             f.add_capability("delegated-identity")
         azp = claims.get("azp") or claims.get("appid") or claims.get("client_id") or claims.get("cid")
         if azp and aud_list and str(azp) not in aud_list and identity_type == "human":
-            reasons.append(f"authorised party {azp} differs from audience (token issued to a client acting for the user)")
+            reasons.append(
+                f"authorised party {azp} differs from audience (token issued to a client acting for the user)"
+            )
         if agent_hints:
             reasons.append(f"agent-related claims: {', '.join(agent_hints)}")
             f.add_tag("agent-claims")
             if identity_type == "human":
                 identity_type = "agent"
-        hint_text = " ".join(str(v) for v in agent_hints.values()) + " " + " ".join(str(claims.get(k, "")) for k in ("client_name", "app_displayname", "sub", "azp_name"))
+        hint_text = (
+            " ".join(str(v) for v in agent_hints.values())
+            + " "
+            + " ".join(str(claims.get(k, "")) for k in ("client_name", "app_displayname", "sub", "azp_name"))
+        )
         apply_matches(f, name_matches(self.index, hint_text), weight_scale=0.7)
         apply_matches(f, domain_matches(self.index, *aud_list, iss), weight_scale=0.7)
 
@@ -312,22 +368,45 @@ class JwtConnector(BaseConnector, _NoDump):
             f.add_tag("token-hygiene")
             f.add_evidence(Evidence(signal="jwt:hygiene", description=h, weight=0.1))
 
-        weight = {"human": 0.05, "delegated": 0.35, "service": 0.5, "workload": 0.5, "agent": 0.6, "delegated-agent": 0.75}[identity_type]
-        f.add_evidence(Evidence(signal=f"jwt:{identity_type}", description=f"Identity type '{identity_type}' for sub={sub or '?'} iss={iss or '?'}" + (f" ({'; '.join(reasons)})" if reasons else ""), weight=weight))
+        weight = {
+            "human": 0.05,
+            "delegated": 0.35,
+            "service": 0.5,
+            "workload": 0.5,
+            "agent": 0.6,
+            "delegated-agent": 0.75,
+        }[identity_type]
+        f.add_evidence(
+            Evidence(
+                signal=f"jwt:{identity_type}",
+                description=f"Identity type '{identity_type}' for sub={sub or '?'} iss={iss or '?'}"
+                + (f" ({'; '.join(reasons)})" if reasons else ""),
+                weight=weight,
+            )
+        )
         if verified is not None:
             expected_issuer = self.ctx.get("expected_issuer")
             verified_description = (
                 "signature and configured issuer verified; expiry and audience NOT validated"
-                if expected_issuer else "signature verified against configured JWKS; issuer, expiry and audience NOT validated"
+                if expected_issuer
+                else "signature verified against configured JWKS; issuer, expiry and audience NOT validated"
             )
-            f.add_evidence(Evidence(signal="jwt:signature", description=verified_description if verified else "signature NOT verified", weight=0.0))
+            f.add_evidence(
+                Evidence(
+                    signal="jwt:signature",
+                    description=verified_description if verified else "signature NOT verified",
+                    weight=0.0,
+                )
+            )
             f.metadata["verified"] = verified
             f.metadata["verification_scope"] = "signature-and-issuer" if expected_issuer else "signature-only"
             f.metadata["issuer_verified"] = bool(verified and expected_issuer)
             f.metadata["authorization_validated"] = False
         f.add_tag(f"identity:{identity_type}")
         f.title = f"JWT ({identity_type}) for {sub or azp or '?'} from {family}"
-        f.owner = str(claims.get("email") or claims.get("upn") or claims.get("preferred_username") or "") or None
+        f.owner = (
+            str(claims.get("email") or claims.get("upn") or claims.get("preferred_username") or "") or None
+        )
         f.first_seen = to_iso(iat)
         f.last_seen = to_iso(exp)
         f.metadata.update(
@@ -345,7 +424,10 @@ class JwtConnector(BaseConnector, _NoDump):
                 "scopes": scopes[:40],
                 # Sanitize before shortening: a nested token loses its
                 # recognizable three-segment shape once truncated.
-                "agent_claims": {k: (v if isinstance(v, (str, int, bool)) else sanitize_text(json.dumps(v))[:200]) for k, v in agent_hints.items()},
+                "agent_claims": {
+                    k: (v if isinstance(v, (str, int, bool)) else sanitize_text(json.dumps(v))[:200])
+                    for k, v in agent_hints.items()
+                },
                 "claim_names": sorted(claims.keys()),
                 "context": context,
             }
@@ -366,9 +448,10 @@ def _has_kubernetes_service_account_claims(claims: dict[str, Any]) -> bool:
     structured = claims.get("kubernetes.io")
     if isinstance(structured, dict) and structured:
         return True
-    return any(isinstance(value, str) and bool(value.strip()) for value in (
-        claims.get(key) for key in _KUBERNETES_LEGACY_CLAIMS
-    ))
+    return any(
+        isinstance(value, str) and bool(value.strip())
+        for value in (claims.get(key) for key in _KUBERNETES_LEGACY_CLAIMS)
+    )
 
 
 def _issuer_family(iss: str, claims: dict[str, Any]) -> str:
@@ -392,7 +475,13 @@ def _issuer_family(iss: str, claims: dict[str, Any]) -> str:
     def domain(name: str) -> bool:
         return host == name or host.endswith("." + name)
 
-    if host in {"login.microsoftonline.com", "sts.windows.net", "login.windows.net", "login.microsoftonline.us", "login.chinacloudapi.cn"}:
+    if host in {
+        "login.microsoftonline.com",
+        "sts.windows.net",
+        "login.windows.net",
+        "login.microsoftonline.us",
+        "login.chinacloudapi.cn",
+    }:
         return "entra"
     if any(domain(name) for name in ("okta.com", "oktapreview.com", "okta-emea.com")):
         return "okta"

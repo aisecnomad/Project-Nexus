@@ -26,27 +26,48 @@ def annotated_corpus(tmp_path):
         text = "pass\n"
         repo = f"example/repo-{i % 3}"
         revision = "a" * 40
-        cases.append({
-            "id": f"case-{i:02}", "family": "agent", "description": "Unit fixture, not a public benchmark",
-            "files": {name: text}, "target": {"kind": "agent"}, "present": i < 8,
-            "source": {
-                "repo": repo, "commit": revision, "path": name,
-                "url": f"https://github.com/{repo}/blob/{revision}/{name}",
-                "sha256": hashlib.sha256(text.encode()).hexdigest(), "license": "MIT",
-                "label_evidence": "Test fixture for integrity validation only",
-            },
-        })
-    corpus = _write(tmp_path / "corpus.json", {
-        "schema": 1, "metadata": {"name": "test", "type": "adjudicated", "provenance": "unit fixture"},
-        "cases": cases,
-    })
+        cases.append(
+            {
+                "id": f"case-{i:02}",
+                "family": "agent",
+                "description": "Unit fixture, not a public benchmark",
+                "files": {name: text},
+                "target": {"kind": "agent"},
+                "present": i < 8,
+                "source": {
+                    "repo": repo,
+                    "commit": revision,
+                    "path": name,
+                    "url": f"https://github.com/{repo}/blob/{revision}/{name}",
+                    "sha256": hashlib.sha256(text.encode()).hexdigest(),
+                    "license": "MIT",
+                    "label_evidence": "Test fixture for integrity validation only",
+                },
+            }
+        )
+    corpus = _write(
+        tmp_path / "corpus.json",
+        {
+            "schema": 1,
+            "metadata": {"name": "test", "type": "adjudicated", "provenance": "unit fixture"},
+            "cases": cases,
+        },
+    )
     ledger = {
-        "schema": 1, "corpus_sha256": hashlib.sha256(corpus.read_bytes()).hexdigest(),
-        "method": "independent-ai-double-label-before-scan", "selection": "Unit fixture only",
-        "reviewers": [{"id": reviewer, "labels": [
-            {"case_id": case["id"], "present": case["present"], "reason": "Fixture annotation"}
-            for case in cases
-        ]} for reviewer in ("first", "second")],
+        "schema": 1,
+        "corpus_sha256": hashlib.sha256(corpus.read_bytes()).hexdigest(),
+        "method": "independent-ai-double-label-before-scan",
+        "selection": "Unit fixture only",
+        "reviewers": [
+            {
+                "id": reviewer,
+                "labels": [
+                    {"case_id": case["id"], "present": case["present"], "reason": "Fixture annotation"}
+                    for case in cases
+                ],
+            }
+            for reviewer in ("first", "second")
+        ],
         "adjudications": [],
     }
     return corpus, tmp_path / "labels.json", ledger
@@ -106,13 +127,18 @@ def test_disagreement_requires_explicit_source_based_resolution(annotated_corpus
     ledger["reviewers"][1]["labels"][0]["present"] = False
     with pytest.raises(CorpusError, match="unresolved"):
         validate_annotations(corpus, _write(path, ledger))
-    ledger["adjudications"] = [{"case_id": "case-00", "present": True, "reason": "Explicit source-based adjudication"}]
+    ledger["adjudications"] = [
+        {"case_id": "case-00", "present": True, "reason": "Explicit source-based adjudication"}
+    ]
     result = validate_annotations(corpus, _write(path, ledger))
     assert result["adjudicated_disagreements"] == 1
     assert result["initial_agreement"] == pytest.approx(23 / 24)
 
 
-@pytest.mark.parametrize("tamper", ["duplicate-reviewer", "missing-label", "duplicate-label", "changed-label", "fabricated-adjudication"])
+@pytest.mark.parametrize(
+    "tamper",
+    ["duplicate-reviewer", "missing-label", "duplicate-label", "changed-label", "fabricated-adjudication"],
+)
 def test_annotation_integrity_failures(annotated_corpus, tamper):
     corpus, path, ledger = annotated_corpus
     if tamper == "duplicate-reviewer":
@@ -125,6 +151,8 @@ def test_annotation_integrity_failures(annotated_corpus, tamper):
         for reviewer in ledger["reviewers"]:
             reviewer["labels"][0]["present"] = False
     else:
-        ledger["adjudications"] = [{"case_id": "case-00", "present": True, "reason": "No disagreement existed"}]
+        ledger["adjudications"] = [
+            {"case_id": "case-00", "present": True, "reason": "No disagreement existed"}
+        ]
     with pytest.raises(CorpusError):
         validate_annotations(corpus, _write(path, ledger))

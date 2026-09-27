@@ -13,18 +13,52 @@ from shadowscan.models import Kind
 @pytest.mark.parametrize(
     ("filename", "inert", "live"),
     [
-        ("agent.go", '// agents.NewExecutor(\nvar example = `agents.NewExecutor(`\n', "agents.NewExecutor(ctx, model)\n"),
-        ("agent.rs", '/* AgentBuilder /* nested AgentBuilder */ */\nlet docs = r#"AgentBuilder"#;\n', "let x = AgentBuilder::new();\n"),
-        ("Agent.java", '// AiServices.builder(\nString docs = """AiServices.builder(""";\n', "AiServices.builder(Foo.class);\n"),
-        ("Agent.kt", '/* AiServices.builder( */\nval docs = """AiServices.builder("""\n', "AiServices.builder(Foo::class.java)\n"),
-        ("Agent.cs", '/* AIFunctionFactory.Create( */\nvar docs = @"AIFunctionFactory.Create(";\n', "AIFunctionFactory.Create(foo);\n"),
+        (
+            "agent.go",
+            "// agents.NewExecutor(\nvar example = `agents.NewExecutor(`\n",
+            "agents.NewExecutor(ctx, model)\n",
+        ),
+        (
+            "agent.rs",
+            '/* AgentBuilder /* nested AgentBuilder */ */\nlet docs = r#"AgentBuilder"#;\n',
+            "let x = AgentBuilder::new();\n",
+        ),
+        (
+            "Agent.java",
+            '// AiServices.builder(\nString docs = """AiServices.builder(""";\n',
+            "AiServices.builder(Foo.class);\n",
+        ),
+        (
+            "Agent.kt",
+            '/* AiServices.builder( */\nval docs = """AiServices.builder("""\n',
+            "AiServices.builder(Foo::class.java)\n",
+        ),
+        (
+            "Agent.cs",
+            '/* AIFunctionFactory.Create( */\nvar docs = @"AIFunctionFactory.Create(";\n',
+            "AIFunctionFactory.Create(foo);\n",
+        ),
         ("agent.rb", '# AiServices.builder(\ndocs = "AiServices.builder("\n', "AiServices.builder(foo)\n"),
-        ("agent.php", '<?php\n# AiServices.builder(\n$docs = "AiServices.builder(";\n', "AiServices.builder($foo);\n"),
-        ("Agent.swift", '/* AiServices.builder( */\nlet docs = #"AiServices.builder("#\n', "AiServices.builder(foo)\n"),
-        ("agent.dart", '// AiServices.builder(\nfinal docs = r"AiServices.builder(";\n', "AiServices.builder(foo);\n"),
+        (
+            "agent.php",
+            '<?php\n# AiServices.builder(\n$docs = "AiServices.builder(";\n',
+            "AiServices.builder($foo);\n",
+        ),
+        (
+            "Agent.swift",
+            '/* AiServices.builder( */\nlet docs = #"AiServices.builder("#\n',
+            "AiServices.builder(foo)\n",
+        ),
+        (
+            "agent.dart",
+            '// AiServices.builder(\nfinal docs = r"AiServices.builder(";\n',
+            "AiServices.builder(foo);\n",
+        ),
     ],
 )
-def test_polyglot_examples_do_not_create_agents(tmp_path: Path, run_connector, filename: str, inert: str, live: str):
+def test_polyglot_examples_do_not_create_agents(
+    tmp_path: Path, run_connector, filename: str, inert: str, live: str
+):
     path = tmp_path / filename
     path.write_text(inert)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
@@ -41,13 +75,34 @@ def test_polyglot_examples_do_not_create_agents(tmp_path: Path, run_connector, f
     assert any(e.signal.startswith("code:") for finding in findings for e in finding.evidence)
 
 
-@pytest.mark.parametrize(("filename", "source", "signature"), [
-    ("agent.go", 'package main\nimport "github.com/tmc/langchaingo/agents"\nfunc run() { agents.NewExecutor(ctx, model) }\n', "framework.langchaingo"),
-    ("Agent.java", 'import dev.langchain4j.service.AiServices;\nclass App { void run() { AiServices.builder(Foo.class); } }\n', "framework.langchain4j"),
-    ("Agent.cs", 'using Microsoft.Extensions.AI;\nclass App { void Run() { AIFunctionFactory.Create(foo); } }\n', "framework.microsoft-extensions-ai"),
-    ("agent.rs", 'use rig::agent::AgentBuilder;\nfn main() { let x = AgentBuilder::new(); }\n', "framework.rig"),
-])
-def test_polyglot_agent_idioms_require_matching_library_evidence(tmp_path, run_connector, filename, source, signature):
+@pytest.mark.parametrize(
+    ("filename", "source", "signature"),
+    [
+        (
+            "agent.go",
+            'package main\nimport "github.com/tmc/langchaingo/agents"\nfunc run() { agents.NewExecutor(ctx, model) }\n',
+            "framework.langchaingo",
+        ),
+        (
+            "Agent.java",
+            "import dev.langchain4j.service.AiServices;\nclass App { void run() { AiServices.builder(Foo.class); } }\n",
+            "framework.langchain4j",
+        ),
+        (
+            "Agent.cs",
+            "using Microsoft.Extensions.AI;\nclass App { void Run() { AIFunctionFactory.Create(foo); } }\n",
+            "framework.microsoft-extensions-ai",
+        ),
+        (
+            "agent.rs",
+            "use rig::agent::AgentBuilder;\nfn main() { let x = AgentBuilder::new(); }\n",
+            "framework.rig",
+        ),
+    ],
+)
+def test_polyglot_agent_idioms_require_matching_library_evidence(
+    tmp_path, run_connector, filename, source, signature
+):
     (tmp_path / filename).write_text(source)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
@@ -90,7 +145,9 @@ def test_long_go_line_with_many_quotes_and_import_tokens_stays_bounded():
             assert self.searched <= len(self), "source searches rescanned earlier prefixes"
             return super().rfind(sub, start, end)
 
-    source = WorkBoundedText('import "github.com/tmc/langchaingo/agents"\nvar _ = ' + ('""+import ""+' * 40_000))
+    source = WorkBoundedText(
+        'import "github.com/tmc/langchaingo/agents"\nvar _ = ' + ('""+import ""+' * 40_000)
+    )
     spans, incomplete = noncode_ranges(source, "go", ".go")
     assert not incomplete
     imported = source.index("github.com/")

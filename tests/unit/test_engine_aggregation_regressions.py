@@ -13,9 +13,13 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 
 def finding(**values):
     return Finding(
-        surface=values.pop("surface", Surface.CODE), connector="test.aggregate",
-        kind=Kind.AGENT, title="Same workload", resource="repo:shared",
-        resource_type="repository", **values,
+        surface=values.pop("surface", Surface.CODE),
+        connector="test.aggregate",
+        kind=Kind.AGENT,
+        title="Same workload",
+        resource="repo:shared",
+        resource_type="repository",
+        **values,
     )
 
 
@@ -39,11 +43,16 @@ def test_parallel_completion_order_does_not_select_owner_or_metadata(monkeypatch
             yield finding(owner=self.ctx.config["owner"], metadata={"source": self.ctx.config["owner"]})
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda _: Probe)
+
     # Force completion iteration opposite to configured precedence, independent
     # of machine timing. All submitted futures still execute normally.
     class ReversedCompleted(set):
         def __iter__(self):
-            return iter(sorted(super().__iter__(), key=lambda future: future.result()[0].config["owner"], reverse=True))
+            return iter(
+                sorted(
+                    super().__iter__(), key=lambda future: future.result()[0].config["owner"], reverse=True
+                )
+            )
 
     def reverse_completed(futures, **kwargs):
         completed, pending = wait(futures)
@@ -60,9 +69,13 @@ def test_parallel_completion_order_does_not_select_owner_or_metadata(monkeypatch
 
 def test_large_gateway_observation_merge_is_idempotent_and_preserves_sources():
     observations = [{"scope": {"tenant": str(i)}, "timestamped_events": 1} for i in range(1500)]
-    first = finding(surface=Surface.GATEWAY, metadata={
-        "runtime_source": {"input": "a.jsonl"}, "runtime_observations": observations,
-    })
+    first = finding(
+        surface=Surface.GATEWAY,
+        metadata={
+            "runtime_source": {"input": "a.jsonl"},
+            "runtime_observations": observations,
+        },
+    )
     same = deepcopy(first)
     other = deepcopy(first)
     other.metadata["runtime_source"] = {"input": "b.jsonl"}

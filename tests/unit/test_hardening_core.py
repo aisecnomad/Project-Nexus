@@ -14,9 +14,14 @@ from shadowscan.utils.http import HttpClient
 
 
 def _finding(**kwargs) -> Finding:
-    base = dict(surface=Surface.CLOUD, connector="cloud.aws", kind=Kind.AGENT,
-                title="Bedrock Agent: ops", resource="arn:aws:bedrock:us-east-1:123456789012:agent/A1",
-                resource_type="bedrock-agent")
+    base = dict(
+        surface=Surface.CLOUD,
+        connector="cloud.aws",
+        kind=Kind.AGENT,
+        title="Bedrock Agent: ops",
+        resource="arn:aws:bedrock:us-east-1:123456789012:agent/A1",
+        resource_type="bedrock-agent",
+    )
     base.update(kwargs)
     return Finding(**base)
 
@@ -55,11 +60,25 @@ def test_ssws_scheme_and_repr_escaped_values_are_redacted():
     assert "SuperSecretOktaApiToken" not in message
 
 
-@pytest.mark.parametrize("secret", [
-    "pplx-" + "a" * 45, "gsk_" + "A" * 45, "xai-" + "b" * 64, "nvapi-" + "c" * 64, "r8_" + "d" * 32,
-    "csk-" + "e" * 32, "tgp_v1_" + "f" * 32, "e2b_" + "0" * 40, "lsv2_pt_" + "a" * 32 + "_" + "b" * 10,
-    "tvly-dev-" + "g" * 24, "pcsk_" + "h" * 24, "fc-" + "1" * 32, "app-" + "A" * 24, "sk-lf-" + "0" * 36,
-])
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "pplx-" + "a" * 45,
+        "gsk_" + "A" * 45,
+        "xai-" + "b" * 64,
+        "nvapi-" + "c" * 64,
+        "r8_" + "d" * 32,
+        "csk-" + "e" * 32,
+        "tgp_v1_" + "f" * 32,
+        "e2b_" + "0" * 40,
+        "lsv2_pt_" + "a" * 32 + "_" + "b" * 10,
+        "tvly-dev-" + "g" * 24,
+        "pcsk_" + "h" * 24,
+        "fc-" + "1" * 32,
+        "app-" + "A" * 24,
+        "sk-lf-" + "0" * 36,
+    ],
+)
 def test_every_detectable_credential_format_is_redacted_by_the_text_sanitizer(secret):
     assert secret not in redaction.sanitize_text(f"value {secret} trailing")
 
@@ -71,7 +90,9 @@ def test_http_client_rejects_control_characters_in_headers_without_echoing_them(
 
 
 def test_inventory_name_patterns_are_reused(tmp_path):
-    (tmp_path / "agents.yaml").write_text("agents:\n  - id: reviewer\n    names: [coderabbitai]\n    resources: ['x:*']\n")
+    (tmp_path / "agents.yaml").write_text(
+        "agents:\n  - id: reviewer\n    names: [coderabbitai]\n    resources: ['x:*']\n"
+    )
     inventory = Inventory.load([str(tmp_path)])
     for _ in range(3):
         assert inventory.suggest(_finding(title="Slack app: CodeRabbitAI", resource="slack:app:1"))

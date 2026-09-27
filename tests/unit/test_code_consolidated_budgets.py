@@ -25,11 +25,17 @@ from shadowscan.utils.text import parse_timestamp
 
 
 def _index(pattern="token"):
-    return SignatureIndex([signature_from_dict({
-        "id": "custom.test",
-        "category": "framework",
-        "signals": [{"type": "code", "patterns": [pattern]}],
-    })])
+    return SignatureIndex(
+        [
+            signature_from_dict(
+                {
+                    "id": "custom.test",
+                    "category": "framework",
+                    "signals": [{"type": "code", "patterns": [pattern]}],
+                }
+            )
+        ]
+    )
 
 
 def test_explicit_scan_budget_is_not_silently_capped_at_default(monkeypatch):
@@ -99,8 +105,11 @@ def test_yaml_chunk_matching_retries_scheduler_contention(monkeypatch):
     assert pattern.calls == 2
 
 
-@pytest.mark.parametrize("value", [True, False, float("inf"), float("nan"), 10**400, "9" * 5000],
-                         ids=["true", "false", "infinity", "nan", "huge-number", "huge-string"])
+@pytest.mark.parametrize(
+    "value",
+    [True, False, float("inf"), float("nan"), 10**400, "9" * 5000],
+    ids=["true", "false", "infinity", "nan", "huge-number", "huge-string"],
+)
 def test_untrusted_invalid_timestamps_do_not_raise_or_become_valid_dates(value):
     assert parse_timestamp(value) is None
 
@@ -111,16 +120,32 @@ def test_fractional_epoch_strings_support_gateway_timestamps():
 
 
 def test_same_text_from_distinct_signals_retains_agent_capabilities(tmp_path):
-    index = SignatureIndex([signature_from_dict({
-        "id": "custom.agent",
-        "category": "framework",
-        "signals": [
-            {"type": "import", "languages": ["python"], "patterns": [r"^from custom_sdk import execute_agent\b"], "weight": 0.8},
-            {"type": "code", "patterns": [r"execute_agent\("], "weight": 0.5},
-            {"type": "code", "patterns": [r"execute_agent\("], "weight": 0.95,
-             "agent_indicator": True, "capabilities": ["code-exec"]},
-        ],
-    })])
+    index = SignatureIndex(
+        [
+            signature_from_dict(
+                {
+                    "id": "custom.agent",
+                    "category": "framework",
+                    "signals": [
+                        {
+                            "type": "import",
+                            "languages": ["python"],
+                            "patterns": [r"^from custom_sdk import execute_agent\b"],
+                            "weight": 0.8,
+                        },
+                        {"type": "code", "patterns": [r"execute_agent\("], "weight": 0.5},
+                        {
+                            "type": "code",
+                            "patterns": [r"execute_agent\("],
+                            "weight": 0.95,
+                            "agent_indicator": True,
+                            "capabilities": ["code-exec"],
+                        },
+                    ],
+                }
+            )
+        ]
+    )
     (tmp_path / "agent.py").write_text("from custom_sdk import execute_agent\nexecute_agent()\n")
     context = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
     findings = FilesystemConnector(context).run()
@@ -132,11 +157,16 @@ def test_same_text_from_distinct_signals_retains_agent_capabilities(tmp_path):
     assert {e.weight for e in code_evidence} == {0.5, 0.95}
 
 
-@pytest.mark.parametrize("cls, fetch_method, metadata_method", [
-    (GitHubConnector, "_fetch_repo", "_repo_level_findings"),
-    (GitLabConnector, "_fetch", "_project_level"),
-])
-def test_live_download_under_symlinked_temp_parent_is_scanned(tmp_path, index, monkeypatch, cls, fetch_method, metadata_method):
+@pytest.mark.parametrize(
+    "cls, fetch_method, metadata_method",
+    [
+        (GitHubConnector, "_fetch_repo", "_repo_level_findings"),
+        (GitLabConnector, "_fetch", "_project_level"),
+    ],
+)
+def test_live_download_under_symlinked_temp_parent_is_scanned(
+    tmp_path, index, monkeypatch, cls, fetch_method, metadata_method
+):
     actual = tmp_path / "actual"
     actual.mkdir()
     alias = tmp_path / "alias"
@@ -163,11 +193,17 @@ def test_live_download_under_symlinked_temp_parent_is_scanned(tmp_path, index, m
 
 
 @pytest.mark.parametrize("cls", [GitHubConnector, GitLabConnector])
-def test_nested_repository_scan_inherits_cancellation_and_publication_fence(tmp_path, index, monkeypatch, cls):
+def test_nested_repository_scan_inherits_cancellation_and_publication_fence(
+    tmp_path, index, monkeypatch, cls
+):
     cancelled, publication_lock = Event(), Lock()
     parent = ConnectorContext(
-        config={"use_git": False}, index=index, workdir=str(tmp_path),
-        deadline=monotonic() + 30, cancelled=cancelled, publication_lock=publication_lock,
+        config={"use_git": False},
+        index=index,
+        workdir=str(tmp_path),
+        deadline=monotonic() + 30,
+        cancelled=cancelled,
+        publication_lock=publication_lock,
     )
     child_contexts = []
 
@@ -193,10 +229,13 @@ def test_nested_repository_scan_inherits_cancellation_and_publication_fence(tmp_
         child.check_deadline()
 
 
-@pytest.mark.parametrize("cls, record", [
-    (GitHubConnector, {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"}),
-    (GitLabConnector, {"http_url_to_repo": "https://gitlab.com/org/repo.git"}),
-])
+@pytest.mark.parametrize(
+    "cls, record",
+    [
+        (GitHubConnector, {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"}),
+        (GitLabConnector, {"http_url_to_repo": "https://gitlab.com/org/repo.git"}),
+    ],
+)
 def test_clone_process_is_bounded_by_connector_deadline(tmp_path, index, monkeypatch, cls, record):
     timeouts = []
 

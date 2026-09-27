@@ -59,6 +59,7 @@ def test_cancellation_stops_the_tree_walk(tmp_path, index):
 
 def test_credentials_are_reported_when_a_content_pass_times_out(tmp_path, index, monkeypatch):
     (tmp_path / "app.js").write_text(f'const k = "{SECRET}"; const model = "gpt-4";\n')
+
     # Force a failure after the independent credential pass. Wall-clock timing
     # depends on the machine and on #47's optimized matchers.
     def exhausted(*args, **kwargs):
@@ -72,7 +73,9 @@ def test_credentials_are_reported_when_a_content_pass_times_out(tmp_path, index,
 
 
 def test_credentials_are_reported_when_structured_sanitization_exceeds_its_budget(tmp_path, index):
-    (tmp_path / "fixture.json").write_text(json.dumps({"OPENAI_API_KEY": SECRET, "values": list(range(110_000))}))
+    (tmp_path / "fixture.json").write_text(
+        json.dumps({"OPENAI_API_KEY": SECRET, "values": list(range(110_000))})
+    )
     findings, ctx = _scan(index, tmp_path)
     secret = next(f for f in findings if f.kind == Kind.SECRET)
     assert ctx.stats is not None and any("excerpts withheld" in e for e in ctx.stats.errors)
@@ -87,7 +90,9 @@ def test_multiline_structured_secret_keeps_excerpt_lines_aligned(tmp_path, index
     findings, ctx = _scan(index, tmp_path)
     domain_evidence = [e for f in findings for e in f.evidence if e.signal.startswith("domain:")]
     expected = 'endpoint = "https://api.openai.com/v1"'
-    assert domain_evidence and all(e.location == "config.toml:5" and e.snippet == expected for e in domain_evidence)
+    assert domain_evidence and all(
+        e.location == "config.toml:5" and e.snippet == expected for e in domain_evidence
+    )
     assert "abcdefgh" not in json.dumps([f.to_dict() for f in findings])
 
 
@@ -106,15 +111,25 @@ def test_directory_exclusion_names_do_not_skip_files(tmp_path, index):
 def test_containerfile_is_parsed_like_a_dockerfile():
     text = "FROM ghcr.io/berriai/litellm:main-latest\nENV OPENAI_API_KEY=\n"
     assert is_manifest_name("Containerfile")
-    assert [(a.kind, a.value) for a in parse_manifest("Containerfile", text).artifacts] == \
-        [(a.kind, a.value) for a in parse_manifest("Dockerfile", text).artifacts]
+    assert [(a.kind, a.value) for a in parse_manifest("Containerfile", text).artifacts] == [
+        (a.kind, a.value) for a in parse_manifest("Dockerfile", text).artifacts
+    ]
 
 
 def test_notebook_outputs_and_markdown_cells_are_scanned_for_credentials(tmp_path, index):
-    notebook = {"cells": [
-        {"cell_type": "code", "source": ["import os\n"], "outputs": [{"output_type": "stream", "name": "stdout", "text": [SECRET + "\n"]}]},
-        {"cell_type": "markdown", "source": ["Use key `" + SECRET + "` for the demo\n"]},
-    ], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
+    notebook = {
+        "cells": [
+            {
+                "cell_type": "code",
+                "source": ["import os\n"],
+                "outputs": [{"output_type": "stream", "name": "stdout", "text": [SECRET + "\n"]}],
+            },
+            {"cell_type": "markdown", "source": ["Use key `" + SECRET + "` for the demo\n"]},
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
     (tmp_path / "demo.ipynb").write_text(json.dumps(notebook))
     findings, ctx = _scan(index, tmp_path)
     secret = next(f for f in findings if f.kind == Kind.SECRET)
@@ -126,7 +141,9 @@ def test_agent_definition_and_manifest_aggregates_are_bounded(tmp_path, index):
     agents = tmp_path / ".claude" / "agents"
     agents.mkdir(parents=True)
     for i in range(60):
-        (agents / f"a{i}.md").write_text("---\nname: a\ntools:\n" + "".join(f"  - t{j}\n" for j in range(300)) + "---\nbody\n")
+        (agents / f"a{i}.md").write_text(
+            "---\nname: a\ntools:\n" + "".join(f"  - t{j}\n" for j in range(300)) + "---\nbody\n"
+        )
     (tmp_path / "app.py").write_text("import openai\n")
     (tmp_path / "secrets.env").write_text(f"OPENAI_API_KEY={SECRET}\n")
     findings, ctx = _scan(index, tmp_path)
@@ -165,9 +182,16 @@ def test_git_author_containing_the_separator_cannot_forge_fields(tmp_path, index
 
     monkeypatch.setattr(fs_module.subprocess, "run", fake_run)
     info = connector._git_info(tmp_path, ".")
-    assert info == {"last_author": "Eve|forged@example.com|2001-01-01T00:00:00+00:00", "last_author_email": "a@b.c",
-                    "last_commit": "2026-01-01T00:00:00+00:00"}
-    monkeypatch.setattr(fs_module.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout="a\x00b\x00not-a-date", stderr=""))
+    assert info == {
+        "last_author": "Eve|forged@example.com|2001-01-01T00:00:00+00:00",
+        "last_author_email": "a@b.c",
+        "last_commit": "2026-01-01T00:00:00+00:00",
+    }
+    monkeypatch.setattr(
+        fs_module.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout="a\x00b\x00not-a-date", stderr=""),
+    )
     assert connector._git_info(tmp_path, ".") == {} and ctx.stats.warnings
 
 
@@ -179,12 +203,23 @@ def _blob(content: bytes) -> tuple[str, str]:
 def test_api_mode_skips_an_unsafe_tree_path_instead_of_the_repository(tmp_path, index):
     good_sha, good_b64 = _blob(b"import openai\nclient = openai.OpenAI()\n")
     weird_sha, weird_b64 = _blob(b"print('hi')\n")
-    tree = {"sha": "a" * 40, "truncated": False, "tree": [
-        {"path": "src/app.py", "type": "blob", "mode": "100644", "size": 40, "sha": good_sha},
-        {"path": "src\\legacy.py", "type": "blob", "mode": "100644", "size": 12, "sha": weird_sha},
-    ]}
-    blobs = {good_sha: {"encoding": "base64", "content": good_b64}, weird_sha: {"encoding": "base64", "content": weird_b64}}
-    ctx = ConnectorContext(config={"repos": ["acme/demo"], "mode": "api", "token": "x", "use_git": False}, index=index, workdir=str(tmp_path))
+    tree = {
+        "sha": "a" * 40,
+        "truncated": False,
+        "tree": [
+            {"path": "src/app.py", "type": "blob", "mode": "100644", "size": 40, "sha": good_sha},
+            {"path": "src\\legacy.py", "type": "blob", "mode": "100644", "size": 12, "sha": weird_sha},
+        ],
+    }
+    blobs = {
+        good_sha: {"encoding": "base64", "content": good_b64},
+        weird_sha: {"encoding": "base64", "content": weird_b64},
+    }
+    ctx = ConnectorContext(
+        config={"repos": ["acme/demo"], "mode": "api", "token": "x", "use_git": False},
+        index=index,
+        workdir=str(tmp_path),
+    )
     ctx.stats = ScanStats(connector="code.github", started_at=now_iso())
     connector = GitHubConnector(ctx)
 
@@ -198,13 +233,20 @@ def test_api_mode_skips_an_unsafe_tree_path_instead_of_the_repository(tmp_path, 
     connector.http.try_get_json = fake_get  # type: ignore[method-assign]
     connector.http.paginate_link = lambda *a, **k: iter([])  # type: ignore[method-assign]
     connector.mode = "api"
-    repo = {"full_name": "acme/demo", "default_branch": "main", "owner": {"login": "acme"}, "html_url": "https://github.com/acme/demo"}
+    repo = {
+        "full_name": "acme/demo",
+        "default_branch": "main",
+        "owner": {"login": "acme"},
+        "html_url": "https://github.com/acme/demo",
+    }
     findings = list(connector.analyze([repo]))
     assert [f.resource for f in findings] == ["github:acme/demo"] and not ctx.stats.errors
     tree["tree"][1]["path"] = "../escape.py"
     with pytest.raises(RuntimeError):
         connector._fetch_via_api(repo, str(tmp_path / "again"))
-    assert any("unusual repository tree path skipped" in w for w in ctx.stats.warnings) and ctx.stats.incomplete
+    assert (
+        any("unusual repository tree path skipped" in w for w in ctx.stats.warnings) and ctx.stats.incomplete
+    )
 
 
 def test_per_repository_contexts_share_the_diagnostic_cap(tmp_path, index):
@@ -213,16 +255,21 @@ def test_per_repository_contexts_share_the_diagnostic_cap(tmp_path, index):
         repo.mkdir()
         for i in range(1100):
             (repo / f"f{i}.py").write_text("ab")
-    ctx = ConnectorContext(config={"input": str(tmp_path), "max_file_size": 1, "strict_coverage": True}, index=index)
+    ctx = ConnectorContext(
+        config={"input": str(tmp_path), "max_file_size": 1, "strict_coverage": True}, index=index
+    )
     GitHubConnector(ctx).run()
     assert len(ctx.stats.errors) == ConnectorContext._MAX_DIAGNOSTICS + 1
     assert sum("diagnostic limit reached" in e for e in ctx.stats.errors) == 1
 
 
-@pytest.mark.parametrize("source, ambiguous", [
-    ("x = '''never closed\nimport openai\n", False),  # EOF in a multi-line literal masks the rest
-    ("import openai\nx = (1,\n", False),
-])
+@pytest.mark.parametrize(
+    "source, ambiguous",
+    [
+        ("x = '''never closed\nimport openai\n", False),  # EOF in a multi-line literal masks the rest
+        ("import openai\nx = (1,\n", False),
+    ],
+)
 def test_python_eof_errors_remain_unambiguous(source, ambiguous):
     spans, flagged = noncode_ranges(source, "python")
     assert flagged is ambiguous
@@ -234,9 +281,9 @@ def test_unclosed_one_line_string_masks_only_its_line():
     # scanning the rest of the file as complete coverage.
     source = (
         'a = "never closed; StateGraph(\n'
-        'import openai\n'
+        "import openai\n"
         "b = 'also open\n"
-        'from langgraph.graph import StateGraph\n'
+        "from langgraph.graph import StateGraph\n"
     )
     spans, flagged = noncode_ranges(source, "python")
     assert flagged is False
@@ -252,7 +299,7 @@ def test_unclosed_one_line_string_masks_only_its_line():
 def test_many_unclosed_one_line_strings_reuse_a_single_reader(monkeypatch):
     # Recreating StringIO from every remaining suffix makes malformed source
     # quadratic within the normal one-megabyte file limit.
-    source = ('value = "never closed; StateGraph(\n' * 8_000) + 'import openai\n'
+    source = ('value = "never closed; StateGraph(\n' * 8_000) + "import openai\n"
     original = source_ranges.io.StringIO
     allocations = []
 
@@ -284,4 +331,6 @@ def test_resumed_python_lexing_keeps_offsets_after_unicode_separators():
     assert not incomplete
     assert not any(start <= source.index("import openai") < end for start, end in spans)
     secret_start = source.index("opaque-credential")
-    assert any(start <= secret_start and secret_start + len("opaque-credential") <= end for start, end in spans)
+    assert any(
+        start <= secret_start and secret_start + len("opaque-credential") <= end for start, end in spans
+    )

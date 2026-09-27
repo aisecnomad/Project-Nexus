@@ -61,7 +61,9 @@ class GitLabConnector(BaseConnector):
     name: ClassVar[str] = "code.gitlab"
     surface: ClassVar[Surface] = Surface.CODE
     provider: ClassVar[str | None] = "gitlab"
-    description: ClassVar[str] = "Enumerate GitLab group projects and scan their contents; report CI variables and bot identities."
+    description: ClassVar[str] = (
+        "Enumerate GitLab group projects and scan their contents; report CI variables and bot identities."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "group": "group path or id (env GITLAB_GROUP; subgroups included); or `projects`",
         "projects": "explicit list of path/with/namespace projects to scan",
@@ -96,11 +98,14 @@ class GitLabConnector(BaseConnector):
         if self.max_projects < 1:
             raise ConnectorError("code.gitlab: max_projects must be positive")
         self.clone_max_bytes, self.clone_timeout_seconds = clone_limits(
-            ctx.get("clone_max_bytes", 256 * 1024 * 1024), ctx.get("clone_timeout_seconds", 120),
+            ctx.get("clone_max_bytes", 256 * 1024 * 1024),
+            ctx.get("clone_timeout_seconds", 120),
         )
         self.include_archived = bool(ctx.get("include_archived", False))
         headers = {"PRIVATE-TOKEN": self.token} if self.token else {}
-        self.http = HttpClient(self.api_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True))
+        self.http = HttpClient(
+            self.api_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True)
+        )
 
     def collect(self) -> Iterable[dict[str, Any]]:
         group = self.ctx.get("group", env="GITLAB_GROUP")
@@ -126,7 +131,9 @@ class GitLabConnector(BaseConnector):
                 or not isinstance(data.get("path_with_namespace"), str)
                 or not data["path_with_namespace"].strip()
             ):
-                self.ctx.warn("code.gitlab: explicit project response is missing a valid id or path; coverage unknown")
+                self.ctx.warn(
+                    "code.gitlab: explicit project response is missing a valid id or path; coverage unknown"
+                )
                 continue
             # A successful HTTP response does not prove that it describes the
             # requested project. GitLab may resolve an old path after a rename;
@@ -146,7 +153,13 @@ class GitLabConnector(BaseConnector):
         if group:
             gid = quote(str(group), safe="")
             yield from self._group_identities(str(group), gid)
-            params = {"per_page": 100, "include_subgroups": "true", "archived": "false" if not self.include_archived else None, "order_by": "last_activity_at", "simple": "false"}
+            params = {
+                "per_page": 100,
+                "include_subgroups": "true",
+                "archived": "false" if not self.include_archived else None,
+                "order_by": "last_activity_at",
+                "simple": "false",
+            }
             params = {k: v for k, v in params.items() if v is not None}
             for p in self.http.paginate_link(f"/groups/{gid}/projects", params=params):
                 if p["id"] in seen:
@@ -165,18 +178,30 @@ class GitLabConnector(BaseConnector):
             yield _GitLabMetadata("service_account", {**sa, "group": group})
         for tok in self._optional_list(f"/groups/{gid}/access_tokens"):
             yield _GitLabMetadata("group_access_token", {**tok, "group": group})
-        variables = [{k: v for k, v in var.items() if k != "value"} for var in self._optional_list(f"/groups/{gid}/variables")]
+        variables = [
+            {k: v for k, v in var.items() if k != "value"}
+            for var in self._optional_list(f"/groups/{gid}/variables")
+        ]
         if variables:
             yield _GitLabMetadata("group_variables", {"group": group, "variables": variables})
         group_details = self.http.try_get_json(f"/groups/{gid}")
         if isinstance(group_details, dict) and (group_details.get("duo_features_enabled") is not None):
-            yield _GitLabMetadata("duo", {"group": group_details.get("full_path"), "duo_features_enabled": group_details.get("duo_features_enabled"), "lock_duo_features_enabled": group_details.get("lock_duo_features_enabled")})
+            yield _GitLabMetadata(
+                "duo",
+                {
+                    "group": group_details.get("full_path"),
+                    "duo_features_enabled": group_details.get("duo_features_enabled"),
+                    "lock_duo_features_enabled": group_details.get("lock_duo_features_enabled"),
+                },
+            )
 
     def _optional_list(self, path: str) -> Iterator[dict[str, Any]]:
         try:
             yield from self.http.paginate_link(path, params={"per_page": 100})
         except HttpError as exc:
-            self.ctx.warn(f"code.gitlab: metadata HTTP {exc.status} for {path}; coverage unknown", incomplete=True)
+            self.ctx.warn(
+                f"code.gitlab: metadata HTTP {exc.status} for {path}; coverage unknown", incomplete=True
+            )
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
         p = Path(path).expanduser().absolute()
@@ -258,7 +283,21 @@ class GitLabConnector(BaseConnector):
         full = proj.get("path_with_namespace") or Path(local).name
         ns = (proj.get("namespace") or {}).get("full_path") or full.rsplit("/", 1)[0]
         cfg = {
-            **{k: v for k, v in self.ctx.config.items() if k in {"exclude", "max_file_size", "max_files", "scan_timeout", "scan_secrets", "use_git", "strict_coverage", "include_tests"}},
+            **{
+                k: v
+                for k, v in self.ctx.config.items()
+                if k
+                in {
+                    "exclude",
+                    "max_file_size",
+                    "max_files",
+                    "scan_timeout",
+                    "scan_secrets",
+                    "use_git",
+                    "strict_coverage",
+                    "include_tests",
+                }
+            },
             "path": local,
             "label": f"gitlab:{full}",
             "account": ns,
@@ -271,14 +310,24 @@ class GitLabConnector(BaseConnector):
                 "archived": proj.get("archived"),
                 "last_activity_at": proj.get("last_activity_at"),
                 "topics": proj.get("topics"),
-                **({"source_snapshot": proj["source_snapshot"]} if isinstance(proj.get("source_snapshot"), dict) else {}),
+                **(
+                    {"source_snapshot": proj["source_snapshot"]}
+                    if isinstance(proj.get("source_snapshot"), dict)
+                    else {}
+                ),
             },
         }
-        fs = FilesystemConnector(ConnectorContext(
-            config=cfg, index=self.index, logger=self.log, workdir=self.ctx.workdir,
-            deadline=self.ctx.deadline, cancelled=self.ctx.cancelled,
-            publication_lock=self.ctx.publication_lock,
-        ))
+        fs = FilesystemConnector(
+            ConnectorContext(
+                config=cfg,
+                index=self.index,
+                logger=self.log,
+                workdir=self.ctx.workdir,
+                deadline=self.ctx.deadline,
+                cancelled=self.ctx.cancelled,
+                publication_lock=self.ctx.publication_lock,
+            )
+        )
         fs.ctx.stats = self.ctx.stats
         # Share the diagnostic budget so repositories cannot each fill 1000 entries.
         fs.ctx._diagnostic_counts = self.ctx._diagnostic_counts
@@ -306,13 +355,17 @@ class GitLabConnector(BaseConnector):
             # project detail when the caller's token can see its size.
             if not has_clone_size_estimate(size) and proj.get("id") is not None:
                 detail = self.http.try_get_json(
-                    f"/projects/{quote(str(proj['id']), safe='')}", params={"statistics": "true"},
+                    f"/projects/{quote(str(proj['id']), safe='')}",
+                    params={"statistics": "true"},
                 )
                 detail_stats = detail.get("statistics") if isinstance(detail, dict) else None
                 if isinstance(detail_stats, dict):
                     size = detail_stats.get("repository_size")
             if exceeds_clone_size(size, 1, self.clone_max_bytes):
-                self.ctx.warn(f"code.gitlab: repository {proj.get('path_with_namespace')} exceeds clone_max_bytes; using sampled API mode", incomplete=True)
+                self.ctx.warn(
+                    f"code.gitlab: repository {proj.get('path_with_namespace')} exceeds clone_max_bytes; using sampled API mode",
+                    incomplete=True,
+                )
             elif not has_clone_size_estimate(size):
                 self.ctx.warn(
                     f"code.gitlab: size metadata unavailable for {proj.get('path_with_namespace')}; using sampled API mode",
@@ -322,13 +375,19 @@ class GitLabConnector(BaseConnector):
                 if self._clone(proj, dest):
                     self._set_clone_snapshot(proj, dest)
                     return dest
-                self.ctx.warn(f"code.gitlab: clone failed for {proj.get('path_with_namespace')}; using sampled API mode", incomplete=True)
+                self.ctx.warn(
+                    f"code.gitlab: clone failed for {proj.get('path_with_namespace')}; using sampled API mode",
+                    incomplete=True,
+                )
                 if os.path.lexists(dest):
                     if os.path.islink(dest):
                         raise ConnectorError("code.gitlab: partial clone destination is a symlink")
                     shutil.rmtree(dest)
         elif self.mode == "clone":
-            self.ctx.warn(f"code.gitlab: git is unavailable for {proj.get('path_with_namespace')}; using sampled API mode", incomplete=True)
+            self.ctx.warn(
+                f"code.gitlab: git is unavailable for {proj.get('path_with_namespace')}; using sampled API mode",
+                incomplete=True,
+            )
         self.ctx.check_deadline()
         return self._fetch_via_api(proj, tmp)
 
@@ -361,7 +420,10 @@ class GitLabConnector(BaseConnector):
         if branch:
             cmd += ["--branch", branch]
         elif proj.get("default_branch"):
-            self.ctx.warn("code.gitlab: unsupported default branch; cloned remote HEAD, requested branch coverage unknown", incomplete=True)
+            self.ctx.warn(
+                "code.gitlab: unsupported default branch; cloned remote HEAD, requested branch coverage unknown",
+                incomplete=True,
+            )
         cmd += ["--", url, dest]
         try:
             return run_bounded_clone(cmd, env, self.ctx, self.clone_timeout_seconds)
@@ -373,19 +435,24 @@ class GitLabConnector(BaseConnector):
         proj.pop("source_snapshot", None)
         ref = validate_git_ref(proj.get("default_branch") or "main")
         if ref is None:
-            self.ctx.warn("code.gitlab: unsupported default branch; repository content skipped", incomplete=True)
+            self.ctx.warn(
+                "code.gitlab: unsupported default branch; repository content skipped", incomplete=True
+            )
             return None
         # Tree pages must describe one snapshot. Pin the branch before the
         # first page; pinning only blobs cannot prevent drift between pages.
         commit = self.http.try_get_json(
-            f"/projects/{pid}/repository/commits/{quote(ref, safe='')}", params={"stats": "false"},
+            f"/projects/{pid}/repository/commits/{quote(ref, safe='')}",
+            params={"stats": "false"},
         )
         try:
             if not isinstance(commit, dict) or self._is_error_record(commit):
                 raise ConnectorError("invalid commit response")
             snapshot = repository_blob_id(commit.get("id"))
         except ConnectorError:
-            self.ctx.warn("code.gitlab: cannot resolve immutable commit; repository content skipped", incomplete=True)
+            self.ctx.warn(
+                "code.gitlab: cannot resolve immutable commit; repository content skipped", incomplete=True
+            )
             return None
         proj["source_snapshot"] = {
             "provider": "gitlab",
@@ -395,13 +462,18 @@ class GitLabConnector(BaseConnector):
         }
         blobs: dict[str, dict[str, Any]] = {}
         skipped_links = False
-        for item in self.http.paginate_link(f"/projects/{pid}/repository/tree", params={"recursive": "true", "per_page": 100, "ref": snapshot}):
+        for item in self.http.paginate_link(
+            f"/projects/{pid}/repository/tree", params={"recursive": "true", "per_page": 100, "ref": snapshot}
+        ):
             if not isinstance(item, dict) or not isinstance(item.get("path"), str):
                 self.ctx.warn("code.gitlab: malformed tree entry; source coverage partial", incomplete=True)
                 continue
             if item.get("type") == "commit" or item.get("mode") in {"120000", "160000"}:
                 if not skipped_links:
-                    self.ctx.warn("code.gitlab: symbolic links or submodules skipped; source coverage partial", incomplete=True)
+                    self.ctx.warn(
+                        "code.gitlab: symbolic links or submodules skipped; source coverage partial",
+                        incomplete=True,
+                    )
                     skipped_links = True
                 continue
             if item.get("type") == "blob":
@@ -409,14 +481,19 @@ class GitLabConnector(BaseConnector):
         paths = list(blobs)
         selected = GitHubConnector._select_paths(paths)
         if len(selected) < len(paths):
-            self.ctx.warn("code.gitlab: API mode samples repository; source coverage partial", incomplete=True)
+            self.ctx.warn(
+                "code.gitlab: API mode samples repository; source coverage partial", incomplete=True
+            )
         dest = os.path.join(tmp, "repo")
         os.makedirs(dest, exist_ok=True)
         for p in selected:
             try:
                 target = repository_target(dest, p)
             except UnusualRepositoryPath:
-                self.ctx.warn("code.gitlab: unusual repository tree path skipped; source coverage partial", incomplete=True)
+                self.ctx.warn(
+                    "code.gitlab: unusual repository tree path skipped; source coverage partial",
+                    incomplete=True,
+                )
                 continue
             try:
                 blob_id = repository_blob_id(blobs[p].get("id"))
@@ -432,13 +509,18 @@ class GitLabConnector(BaseConnector):
                 )
                 content = self.http.read_response_bytes(resp, max_bytes=512_000)
             except HttpError as exc:
-                self.ctx.warn(f"code.gitlab: repository content HTTP {exc.status}; coverage partial", incomplete=True)
+                self.ctx.warn(
+                    f"code.gitlab: repository content HTTP {exc.status}; coverage partial", incomplete=True
+                )
                 continue
             except ValueError:
                 self.ctx.warn("code.gitlab: oversized or invalid API content skipped", incomplete=True)
                 continue
             if not repository_blob_matches(blob_id, content):
-                self.ctx.warn("code.gitlab: API content does not match its immutable blob ID; content skipped", incomplete=True)
+                self.ctx.warn(
+                    "code.gitlab: API content does not match its immutable blob ID; content skipped",
+                    incomplete=True,
+                )
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
@@ -449,16 +531,24 @@ class GitLabConnector(BaseConnector):
         pid = proj["id"]
         full = proj.get("path_with_namespace", str(pid))
         variables = list(self._optional_list(f"/projects/{pid}/variables"))
-        f = self._variables_finding(full, [{k: v for k, v in var.items() if k != "value"} for var in variables], scope="project")
+        f = self._variables_finding(
+            full, [{k: v for k, v in var.items() if k != "value"} for var in variables], scope="project"
+        )
         if f:
             yield f
         for tok in self._optional_list(f"/projects/{pid}/access_tokens"):
             yield self._identity_finding(_GitLabMetadata("project_access_token", {**tok, "project": full}))
         for member in self._optional_list(f"/projects/{pid}/members"):
-            if member.get("bot") or str(member.get("username", "")).startswith(("project_", "group_")) and "_bot" in str(member.get("username", "")):
+            if (
+                member.get("bot")
+                or str(member.get("username", "")).startswith(("project_", "group_"))
+                and "_bot" in str(member.get("username", ""))
+            ):
                 yield self._identity_finding(_GitLabMetadata("project_bot", {**member, "project": full}))
 
-    def _variables_finding(self, scope_name: str, variables: list[dict[str, Any]], scope: str) -> Finding | None:
+    def _variables_finding(
+        self, scope_name: str, variables: list[dict[str, Any]], scope: str
+    ) -> Finding | None:
         names = [name for v in variables if isinstance(name := v.get("key"), str) and name]
         matches = []
         for n in names:
@@ -477,14 +567,27 @@ class GitLabConnector(BaseConnector):
         )
         matched_names = {m.value for m in matches}
         unmasked = [
-            name for v in variables
+            name
+            for v in variables
             if isinstance(name := v.get("key"), str) and name in matched_names and not v.get("masked")
         ]
-        f.add_evidence(Evidence(signal="ci:variable-names", description=f"CI/CD variable names: {', '.join(sorted(set(names)))[:400]}", weight=0.3))
+        f.add_evidence(
+            Evidence(
+                signal="ci:variable-names",
+                description=f"CI/CD variable names: {', '.join(sorted(set(names)))[:400]}",
+                weight=0.3,
+            )
+        )
         apply_matches(f, matches, location=f"{scope_name} ({scope} CI/CD variables)", weight_scale=0.8)
         if unmasked:
             f.add_tag("unmasked-ci-variable")
-            f.add_evidence(Evidence(signal="ci:unmasked", description=f"Provider credentials stored unmasked: {', '.join(unmasked)}", weight=0.4))
+            f.add_evidence(
+                Evidence(
+                    signal="ci:unmasked",
+                    description=f"Provider credentials stored unmasked: {', '.join(unmasked)}",
+                    weight=0.4,
+                )
+            )
         f.metadata["variable_names"] = sorted(set(names))
         f.add_tag("ci-credentials")
         finalize(f, self.index)
@@ -506,13 +609,26 @@ class GitLabConnector(BaseConnector):
             account=str(scope_name).split("/")[0] if scope_name else None,
             owner=rec.get("created_by") or None,
         )
-        f.add_evidence(Evidence(signal=f"gitlab:{kind}", description=f"Machine identity in {scope_name or 'group'}", weight=0.3))
+        f.add_evidence(
+            Evidence(
+                signal=f"gitlab:{kind}",
+                description=f"Machine identity in {scope_name or 'group'}",
+                weight=0.3,
+            )
+        )
         scopes = rec.get("scopes") or []
         if scopes:
             f.permissions.extend(scopes)
             apply_matches(f, [m for s in scopes for m in self.index.match_scope(s)], weight_scale=0.5)
         apply_matches(f, name_matches(self.index, name, rec.get("username")), weight_scale=0.8)
-        f.metadata.update({k: v for k, v in rec.items() if k in {"username", "access_level", "expires_at", "last_used_at", "active", "revoked", "state"}})
+        f.metadata.update(
+            {
+                k: v
+                for k, v in rec.items()
+                if k
+                in {"username", "access_level", "expires_at", "last_used_at", "active", "revoked", "state"}
+            }
+        )
         f.last_seen = rec.get("last_used_at") or rec.get("last_activity_on")
         f.first_seen = rec.get("created_at")
         finalize(f, self.index)
@@ -531,7 +647,13 @@ class GitLabConnector(BaseConnector):
             account=str(rec.get("group", "")).split("/")[0],
         )
         f.add_framework("identity-app.coding-assistants-saas")
-        f.add_evidence(Evidence(signal="gitlab:duo", description="GitLab Duo (AI code suggestions / agentic chat / Duo Agent Platform) features enabled", weight=0.8))
+        f.add_evidence(
+            Evidence(
+                signal="gitlab:duo",
+                description="GitLab Duo (AI code suggestions / agentic chat / Duo Agent Platform) features enabled",
+                weight=0.8,
+            )
+        )
         f.add_capability("code-exec")
         f.metadata.update(rec)
         finalize(f, self.index)

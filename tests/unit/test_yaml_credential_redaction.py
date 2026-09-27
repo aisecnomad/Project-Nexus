@@ -49,7 +49,9 @@ def test_yaml_source_secret_body_is_redacted_before_evidence_selection(tmp_path,
         'nodes:\n  - type: "@n8n/n8n-nodes-langchain.agent"\n    name: Researcher\n',
         encoding="utf-8",
     )
-    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=scan_secrets)
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=scan_secrets
+    )
     assert findings and not ctx.stats.incomplete
     # Real operational configuration still produces evidence; code-like text
     # inside a secret cannot establish a LangChain agent.

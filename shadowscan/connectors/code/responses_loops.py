@@ -33,14 +33,26 @@ class _Budget:
 
 
 def _member(node: ast.AST | None, owner: str, name: str) -> bool:
-    return (isinstance(node, ast.Attribute) and node.attr == name
-            and isinstance(node.value, ast.Name) and node.value.id == owner)
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == name
+        and isinstance(node.value, ast.Name)
+        and node.value.id == owner
+    )
 
 
 def _assigned(statement: ast.stmt) -> tuple[str, ast.expr] | None:
-    if isinstance(statement, ast.Assign) and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name):
+    if (
+        isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+    ):
         return statement.targets[0].id, statement.value
-    if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name) and statement.value is not None:
+    if (
+        isinstance(statement, ast.AnnAssign)
+        and isinstance(statement.target, ast.Name)
+        and statement.value is not None
+    ):
         return statement.target.id, statement.value
     return None
 
@@ -73,10 +85,13 @@ def _fields(value: ast.AST) -> dict[str, ast.expr]:
 def _output(value: ast.AST, item: str, results: set[str], budget: _Budget) -> bool:
     fields = _fields(value)
     kind, call_id, content = fields.get("type"), fields.get("call_id"), fields.get("output")
-    return (isinstance(kind, ast.Constant) and kind.value == "function_call_output"
-            and _member(call_id, item, "call_id") and content is not None
-            and any(isinstance(child, ast.Name) and child.id in results
-                    for child in _walk(content, budget)))
+    return (
+        isinstance(kind, ast.Constant)
+        and kind.value == "function_call_output"
+        and _member(call_id, item, "call_id")
+        and content is not None
+        and any(isinstance(child, ast.Name) and child.id in results for child in _walk(content, budget))
+    )
 
 
 def _walk(node: ast.AST, budget: _Budget) -> Iterator[ast.AST]:
@@ -92,8 +107,7 @@ def _type_guard(test: ast.AST, item: str) -> bool | None:
     left, right = test.left, test.comparators[0]
     if _member(right, item, "type"):
         left, right = right, left
-    if not (_member(left, item, "type") and isinstance(right, ast.Constant)
-            and isinstance(right.value, str)):
+    if not (_member(left, item, "type") and isinstance(right, ast.Constant) and isinstance(right.value, str)):
         return None
     if isinstance(test.ops[0], ast.Eq):
         return right.value == "function_call"
@@ -118,7 +132,10 @@ def _condition(test: ast.AST, item: str) -> tuple[str, bool] | bool | None:
 
 
 def _paths(
-    statements: list[ast.stmt], item: str, budget: _Budget, depth: int = 0,
+    statements: list[ast.stmt],
+    item: str,
+    budget: _Budget,
+    depth: int = 0,
     initial_facts: dict[str, bool] | None = None,
     finished: list[tuple[list[ast.stmt], dict[str, bool]]] | None = None,
 ) -> list[tuple[list[ast.stmt], dict[str, bool]]]:
@@ -151,18 +168,37 @@ def _paths(
                         [] if finished is not None else None
                     )
                     for branch_nodes, branch_conditions in _paths(
-                        branch, item, budget, depth + 1, initial_facts=branch_facts, finished=branch_finished,
+                        branch,
+                        item,
+                        budget,
+                        depth + 1,
+                        initial_facts=branch_facts,
+                        finished=branch_finished,
                     ):
                         candidates.append((nodes + branch_nodes, branch_conditions))
                     if finished is not None and branch_finished:
-                        finished.extend((nodes + ended, ended_facts) for ended, ended_facts in branch_finished)
+                        finished.extend(
+                            (nodes + ended, ended_facts) for ended, ended_facts in branch_finished
+                        )
             elif isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
                 if finished is not None and isinstance(statement, ast.Return) and statement.value is not None:
                     finished.append(([*nodes, statement], facts))
                 continue
-            elif isinstance(statement, (ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With,
-                                        ast.AsyncWith, ast.Match, ast.FunctionDef, ast.AsyncFunctionDef,
-                                        ast.ClassDef)):
+            elif isinstance(
+                statement,
+                (
+                    ast.For,
+                    ast.AsyncFor,
+                    ast.While,
+                    ast.Try,
+                    ast.With,
+                    ast.AsyncWith,
+                    ast.Match,
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.ClassDef,
+                ),
+            ):
                 # Nested scopes and unmodeled control flow cannot supply proof.
                 candidates.append((nodes, facts))
             else:
@@ -181,8 +217,9 @@ def _paths(
 
 def _schema_names(tree: ast.AST, tools: ast.expr, budget: _Budget) -> set[str]:
     if isinstance(tools, ast.Name) and isinstance(tree, ast.Module):
-        matches = [assigned[1] for stmt in tree.body if (assigned := _assigned(stmt))
-                   and assigned[0] == tools.id]
+        matches = [
+            assigned[1] for stmt in tree.body if (assigned := _assigned(stmt)) and assigned[0] == tools.id
+        ]
         if len(matches) != 1:
             return set()
         tools = matches[0]
@@ -193,16 +230,24 @@ def _schema_names(tree: ast.AST, tools: ast.expr, budget: _Budget) -> set[str]:
         budget.tick()
         fields = _fields(entry)
         kind, name = fields.get("type"), fields.get("name")
-        if (isinstance(kind, ast.Constant) and kind.value == "function"
-                and isinstance(name, ast.Constant) and isinstance(name.value, str)
-                and name.value.isidentifier()):
+        if (
+            isinstance(kind, ast.Constant)
+            and kind.value == "function"
+            and isinstance(name, ast.Constant)
+            and isinstance(name.value, str)
+            and name.value.isidentifier()
+        ):
             names.add(name.value)
     return names
 
 
 def _has_feedback(
-    path: list[ast.stmt], item: str, history: str, static: set[str],
-    response_linked: bool, budget: _Budget,
+    path: list[ast.stmt],
+    item: str,
+    history: str,
+    static: set[str],
+    response_linked: bool,
+    budget: _Budget,
 ) -> bool:
     handlers: set[str] = set()
     results: set[str] = set()
@@ -215,7 +260,9 @@ def _has_feedback(
         # is overwritten before dispatch/feedback. A cached object with the
         # same attribute names is not evidence of model-selected execution.
         for node in _walk(statement, budget):
-            if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
                 target: ast.AST = node
                 while isinstance(target, (ast.Attribute, ast.Subscript)):
                     target = target.value
@@ -230,14 +277,24 @@ def _has_feedback(
             outputs.discard(name)
             static.discard(name)
             call = _call(expression)
-            if (isinstance(expression, ast.Subscript) and _member(expression.slice, item, "name")
-                    or call is not None and isinstance(call.func, ast.Attribute) and call.func.attr == "get"
-                    and any(_member(arg, item, "name") for arg in call.args)):
+            if (
+                isinstance(expression, ast.Subscript)
+                and _member(expression.slice, item, "name")
+                or call is not None
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "get"
+                and any(_member(arg, item, "name") for arg in call.args)
+            ):
                 handlers.add(name)
-            elif (call is not None and isinstance(call.func, ast.Name)
-                  and (call.func.id in handlers or call.func.id in static)
-                  and any(_depends(arg, item, "arguments", budget) for arg in
-                          [*call.args, *(keyword.value for keyword in call.keywords)])):
+            elif (
+                call is not None
+                and isinstance(call.func, ast.Name)
+                and (call.func.id in handlers or call.func.id in static)
+                and any(
+                    _depends(arg, item, "arguments", budget)
+                    for arg in [*call.args, *(keyword.value for keyword in call.keywords)]
+                )
+            ):
                 results.add(name)
             elif _output(expression, item, results, budget):
                 outputs.add(name)
@@ -249,8 +306,10 @@ def _has_feedback(
         if _member(call.func, history, "append") and len(call.args) == 1 and not call.keywords:
             if isinstance(call.args[0], ast.Name) and call.args[0].id == item:
                 raw_call = True
-            if ((isinstance(call.args[0], ast.Name) and call.args[0].id in outputs)
-                    or _output(call.args[0], item, results, budget)) and raw_call:
+            if (
+                (isinstance(call.args[0], ast.Name) and call.args[0].id in outputs)
+                or _output(call.args[0], item, results, budget)
+            ) and raw_call:
                 return True
         if _member(call.func, history, "extend") and len(call.args) == 1 and not call.keywords:
             sequence = call.args[0]
@@ -260,8 +319,11 @@ def _has_feedback(
                 for part in sequence.elts:
                     if isinstance(part, ast.Name) and part.id == item:
                         raw_call = True
-                    if raw_call and (isinstance(part, ast.Name) and part.id in outputs
-                                     or _output(part, item, results, budget)):
+                    if raw_call and (
+                        isinstance(part, ast.Name)
+                        and part.id in outputs
+                        or _output(part, item, results, budget)
+                    ):
                         return True
     return False
 
@@ -272,12 +334,18 @@ def _can_repeat(loop: ast.For | ast.AsyncFor | ast.While) -> bool:
     source = loop.iter
     if isinstance(source, (ast.List, ast.Tuple, ast.Set)):
         return len(source.elts) > 1
-    if (isinstance(source, ast.Call) and isinstance(source.func, ast.Name) and source.func.id == "range"
-            and not source.keywords and 1 <= len(source.args) <= 3
-            and all(isinstance(arg, ast.Constant) and type(arg.value) is int for arg in source.args)):
+    if (
+        isinstance(source, ast.Call)
+        and isinstance(source.func, ast.Name)
+        and source.func.id == "range"
+        and not source.keywords
+        and 1 <= len(source.args) <= 3
+        and all(isinstance(arg, ast.Constant) and type(arg.value) is int for arg in source.args)
+    ):
         try:
-            values = [arg.value for arg in source.args if isinstance(arg, ast.Constant)
-                      and type(arg.value) is int]
+            values = [
+                arg.value for arg in source.args if isinstance(arg, ast.Constant) and type(arg.value) is int
+            ]
             return len(range(*values)) > 1
         except (OverflowError, ValueError):
             return True
@@ -286,15 +354,21 @@ def _can_repeat(loop: ast.For | ast.AsyncFor | ast.While) -> bool:
 
 def _history_rebound(loop: ast.AST, history: str, budget: _Budget) -> bool:
     for node in _walk(loop, budget):
-        if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
             target: ast.AST = node
             while isinstance(target, (ast.Attribute, ast.Subscript)):
                 target = target.value
             if isinstance(target, ast.Name) and target.id == history:
                 return True
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name) and node.func.value.id == history
-                and node.func.attr not in {"append", "extend"}):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == history
+            and node.func.attr not in {"append", "extend"}
+        ):
             return True
     return False
 
@@ -304,14 +378,21 @@ def _filter_list(value: ast.expr, response: str, budget: _Budget) -> bool:
         return False
     generator = value.generators[0]
     budget.tick()
-    return (isinstance(generator.target, ast.Name) and _member(generator.iter, response, "output")
-            and isinstance(value.elt, ast.Name) and value.elt.id == generator.target.id
-            and any(_type_guard(condition, generator.target.id) is True for condition in generator.ifs)
-            and all(_condition(condition, generator.target.id) is not False for condition in generator.ifs))
+    return (
+        isinstance(generator.target, ast.Name)
+        and _member(generator.iter, response, "output")
+        and isinstance(value.elt, ast.Name)
+        and value.elt.id == generator.target.id
+        and any(_type_guard(condition, generator.target.id) is True for condition in generator.ifs)
+        and all(_condition(condition, generator.target.id) is not False for condition in generator.ifs)
+    )
 
 
 def _continuations(
-    statements: list[ast.stmt], facts: dict[str, bool], budget: _Budget, depth: int = 0,
+    statements: list[ast.stmt],
+    facts: dict[str, bool],
+    budget: _Budget,
+    depth: int = 0,
 ) -> list[tuple[dict[str, bool], bool]]:
     """Keep only paths on which feedback can reach the next model request."""
     if depth > 64:
@@ -343,8 +424,10 @@ def _continuations(
         elif isinstance(statement, ast.Continue):
             paths = [(current_facts, True) for current_facts, _ in paths]
         elif (assignment := _assigned(statement)) is not None:
-            paths = [({key: value for key, value in current_facts.items() if key != assignment[0]}, done)
-                     for current_facts, done in paths]
+            paths = [
+                ({key: value for key, value in current_facts.items() if key != assignment[0]}, done)
+                for current_facts, done in paths
+            ]
         if len(paths) > MAX_PATHS:
             raise MatchTimeoutError("Responses continuation path limit exceeded")
     return paths
@@ -355,8 +438,11 @@ def responses_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[in
     if not request_calls:
         return []
     budget = _Budget()
-    functions = {node.name for node in getattr(tree, "body", [])
-                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    functions = {
+        node.name
+        for node in getattr(tree, "body", [])
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
     found: set[int] = set()
     for loop in _walk(tree, budget):
         if not isinstance(loop, (ast.For, ast.AsyncFor, ast.While)) or not _can_repeat(loop):
@@ -388,12 +474,16 @@ def responses_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[in
             static = functions & _schema_names(tree, tools, budget)
             selected: set[str] = set()
             response_linked = False
-            for selection_position, selection in enumerate(body[position + 1:], position + 1):
+            for selection_position, selection in enumerate(body[position + 1 :], position + 1):
                 budget.tick()
-                if (isinstance(selection, ast.Expr) and isinstance(selection.value, ast.Call)
-                        and _member(selection.value.func, history.id, "extend")
-                        and len(selection.value.args) == 1 and not selection.value.keywords
-                        and _member(selection.value.args[0], response, "output")):
+                if (
+                    isinstance(selection, ast.Expr)
+                    and isinstance(selection.value, ast.Call)
+                    and _member(selection.value.func, history.id, "extend")
+                    and len(selection.value.args) == 1
+                    and not selection.value.keywords
+                    and _member(selection.value.args[0], response, "output")
+                ):
                     response_linked = True
                 bound = _assigned(selection)
                 if bound:
@@ -402,24 +492,32 @@ def responses_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[in
                         break
                     if _filter_list(bound[1], response, budget):
                         selected.add(bound[0])
-                if not isinstance(selection, (ast.For, ast.AsyncFor)) or not isinstance(selection.target, ast.Name):
+                if not isinstance(selection, (ast.For, ast.AsyncFor)) or not isinstance(
+                    selection.target, ast.Name
+                ):
                     continue
                 item = selection.target.id
                 direct = _member(selection.iter, response, "output")
                 filtered = isinstance(selection.iter, ast.Name) and selection.iter.id in selected
                 if not (direct or filtered):
                     continue
-                if direct and not any(_type_guard(node.test, item) is not None
-                                      for node in _walk(selection, budget) if isinstance(node, ast.If)):
+                if direct and not any(
+                    _type_guard(node.test, item) is not None
+                    for node in _walk(selection, budget)
+                    if isinstance(node, ast.If)
+                ):
                     continue
                 # Carry reachable branch facts through the request and the
                 # selection. Statements after break/continue cannot prove a
                 # loop, nor can mutually exclusive branches supply its parts.
                 prefixes = _continuations(body[:selection_position], {}, budget)
-                if any(_has_feedback(path, item, history.id, static, response_linked, budget)
-                       and _continuations(body[selection_position + 1:], facts, budget)
-                       for prefix_facts, continued in prefixes if not continued
-                       for path, facts in _paths(selection.body, item, budget, initial_facts=prefix_facts)):
+                if any(
+                    _has_feedback(path, item, history.id, static, response_linked, budget)
+                    and _continuations(body[selection_position + 1 :], facts, budget)
+                    for prefix_facts, continued in prefixes
+                    if not continued
+                    for path, facts in _paths(selection.body, item, budget, initial_facts=prefix_facts)
+                ):
                     found.add(request.lineno)
                     break
     return sorted(found)
@@ -434,7 +532,9 @@ def _single_dispatch(path: list[ast.stmt], item: str, budget: _Budget) -> bool:
     results: set[str] = set()
     for statement in path:
         for node in _walk(statement, budget):
-            if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
                 target: ast.AST = node
                 while isinstance(target, (ast.Attribute, ast.Subscript)):
                     target = target.value
@@ -457,9 +557,14 @@ def _single_dispatch(path: list[ast.stmt], item: str, budget: _Budget) -> bool:
         ):
             if isinstance(call.func, ast.Subscript) and _member(call.func.slice, item, "name"):
                 return True
-            if (isinstance(call.func, ast.Call) and isinstance(call.func.func, ast.Attribute)
-                    and call.func.func.attr == "get" and len(call.func.args) == 1
-                    and not call.func.keywords and _member(call.func.args[0], item, "name")):
+            if (
+                isinstance(call.func, ast.Call)
+                and isinstance(call.func.func, ast.Attribute)
+                and call.func.func.attr == "get"
+                and len(call.func.args) == 1
+                and not call.func.keywords
+                and _member(call.func.args[0], item, "name")
+            ):
                 return True
             if isinstance(call.func, ast.Name) and name is not None:
                 # A fixed local handler needs result/call-id linkage too;
@@ -468,15 +573,23 @@ def _single_dispatch(path: list[ast.stmt], item: str, budget: _Budget) -> bool:
                 continue
         if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
             call = statement.value
-            if (isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name)
-                    and call.func.attr == "append" and len(call.args) == 1 and not call.keywords
-                    and _output(call.args[0], item, results, budget)):
+            if (
+                isinstance(call.func, ast.Attribute)
+                and isinstance(call.func.value, ast.Name)
+                and call.func.attr == "append"
+                and len(call.args) == 1
+                and not call.keywords
+                and _output(call.args[0], item, results, budget)
+            ):
                 return True
     return False
 
 
 def _dispatch_paths(
-    body: list[ast.stmt], item: str, budget: _Budget, facts: dict[str, bool],
+    body: list[ast.stmt],
+    item: str,
+    budget: _Budget,
+    facts: dict[str, bool],
 ) -> list[tuple[list[ast.stmt], dict[str, bool]]]:
     """Reachable paths through one selection, including those returning a dispatch."""
     finished: list[tuple[list[ast.stmt], dict[str, bool]]] = []
@@ -526,15 +639,24 @@ def responses_dispatch_lines(tree: ast.AST, request_calls: set[int]) -> list[int
             if cursor >= len(body):
                 continue
             selection = body[cursor]
-            if not isinstance(selection, (ast.For, ast.AsyncFor)) or not isinstance(selection.target, ast.Name):
+            if not isinstance(selection, (ast.For, ast.AsyncFor)) or not isinstance(
+                selection.target, ast.Name
+            ):
                 continue
             item = selection.target.id
             direct = _member(selection.iter, response, "output")
-            filtered = selected is not None and isinstance(selection.iter, ast.Name) and selection.iter.id == selected
+            filtered = (
+                selected is not None
+                and isinstance(selection.iter, ast.Name)
+                and selection.iter.id == selected
+            )
             if not (direct or filtered) or item in (response, selected):
                 continue
-            if direct and not any(_type_guard(node.test, item) is not None
-                                  for node in _walk(selection, budget) if isinstance(node, ast.If)):
+            if direct and not any(
+                _type_guard(node.test, item) is not None
+                for node in _walk(selection, budget)
+                if isinstance(node, ast.If)
+            ):
                 continue
             # Reachability of the request is the expensive step: it runs only
             # for requests already followed by a selection over their output,
@@ -542,8 +664,11 @@ def responses_dispatch_lines(tree: ast.AST, request_calls: set[int]) -> list[int
             prefixes = _continuations(body[:position], {}, budget)
             if not prefixes:
                 continue
-            if any(_single_dispatch(path, item, budget)
-                   for facts, continued in prefixes if not continued
-                   for path, _ in _dispatch_paths(selection.body, item, budget, facts)):
+            if any(
+                _single_dispatch(path, item, budget)
+                for facts, continued in prefixes
+                if not continued
+                for path, _ in _dispatch_paths(selection.body, item, budget, facts)
+            ):
                 found.add(request.lineno)
     return sorted(found)

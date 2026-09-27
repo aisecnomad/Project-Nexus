@@ -67,7 +67,10 @@ from shadowscan.connectors.code.source_ranges import noncode_ranges
     ],
 )
 def test_ambiguous_multiline_source_retains_neighbor_and_fails_closed(
-    tmp_path, filename: str, source: str, phantom_framework: str,
+    tmp_path,
+    filename: str,
+    source: str,
+    phantom_framework: str,
 ):
     (tmp_path / filename).write_text(source, encoding="utf-8")
     (tmp_path / "real.py").write_text(
@@ -80,10 +83,15 @@ def test_ambiguous_multiline_source_retains_neighbor_and_fails_closed(
     assert result.exit_code == 3, result.output
     report = json.loads(result.stdout)
     assert report["summary"]["complete"] is False
-    assert any(filename in error and "incomplete source lexical analysis" in error
-               for stat in report["stats"] for error in stat["errors"])
-    assert any(finding["kind"] == "agent" and "framework.crewai" in finding["frameworks"]
-               for finding in report["findings"])
+    assert any(
+        filename in error and "incomplete source lexical analysis" in error
+        for stat in report["stats"]
+        for error in stat["errors"]
+    )
+    assert any(
+        finding["kind"] == "agent" and "framework.crewai" in finding["frameworks"]
+        for finding in report["findings"]
+    )
     assert all(phantom_framework not in finding["frameworks"] for finding in report["findings"])
 
 

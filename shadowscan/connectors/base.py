@@ -173,7 +173,9 @@ class ConnectorContext:
         try:
             # Use positional extraction: a short secret can also occur in a
             # wrapper key such as 'message', which the sanitizer must redact.
-            result: str = sanitize([{**self.config, **self._resolved_config}, msg], redact_short_secrets=True)[1]
+            result: str = sanitize(
+                [{**self.config, **self._resolved_config}, msg], redact_short_secrets=True
+            )[1]
             return result
         except SanitizationLimitError:
             if self.stats is not None:
@@ -252,10 +254,14 @@ class BaseConnector(ABC):
             self._MAX_OFFLINE_TOTAL_BYTES,
         )
         self.max_input_file_bytes = min(
-            _positive_limit(ctx.get("max_input_file_bytes", _DEFAULT_MAX_INPUT_FILE_BYTES), "max_input_file_bytes"),
+            _positive_limit(
+                ctx.get("max_input_file_bytes", _DEFAULT_MAX_INPUT_FILE_BYTES), "max_input_file_bytes"
+            ),
             self._MAX_OFFLINE_FILE_BYTES,
         )
-        self.max_input_files = _positive_limit(ctx.get("max_input_files", _DEFAULT_MAX_INPUT_FILES), "max_input_files")
+        self.max_input_files = _positive_limit(
+            ctx.get("max_input_files", _DEFAULT_MAX_INPUT_FILES), "max_input_files"
+        )
 
     # ----------------------------------------------------------------- modes
     @property
@@ -360,12 +366,21 @@ class BaseConnector(ABC):
             with open_confined_file(path.expanduser().absolute(), label="offline input") as (stream, before):
                 used = budget.bytes_read if budget is not None else getattr(self, "_offline_bytes_read", 0)
                 remaining = (budget.max_bytes - used) if budget is not None else (self.max_input_bytes - used)
-                limit = min(self.max_input_file_bytes, remaining, self._MAX_OFFLINE_FILE_BYTES, self._MAX_OFFLINE_TOTAL_BYTES - used)
+                limit = min(
+                    self.max_input_file_bytes,
+                    remaining,
+                    self._MAX_OFFLINE_FILE_BYTES,
+                    self._MAX_OFFLINE_TOTAL_BYTES - used,
+                )
 
                 def oversized() -> None:
                     if budget is None:
                         raise ValueError("offline input exceeds the byte limit")
-                    limit_name = "max_input_file_bytes" if self.max_input_file_bytes <= remaining else "max_input_bytes"
+                    limit_name = (
+                        "max_input_file_bytes"
+                        if self.max_input_file_bytes <= remaining
+                        else "max_input_bytes"
+                    )
                     self.ctx.warn(f"{self.name}: {limit_name} reached; oversized offline input was skipped")
 
                 if before.st_size > limit:
@@ -435,11 +450,19 @@ class BaseConnector(ABC):
                         if not line:
                             break
                         if len(line) > _MAX_OFFLINE_LINE_BYTES:
-                            self.ctx.warn(f"{self.name}: max_input_line_bytes ({_MAX_OFFLINE_LINE_BYTES}) reached")
+                            self.ctx.warn(
+                                f"{self.name}: max_input_line_bytes ({_MAX_OFFLINE_LINE_BYTES}) reached"
+                            )
                             return
                         if len(line) > remaining:
-                            limit_name = "max_input_file_bytes" if self.max_input_file_bytes - file_bytes <= budget.remaining_bytes else "max_input_bytes"
-                            self.ctx.warn(f"{self.name}: {limit_name} reached; remaining offline input was skipped")
+                            limit_name = (
+                                "max_input_file_bytes"
+                                if self.max_input_file_bytes - file_bytes <= budget.remaining_bytes
+                                else "max_input_bytes"
+                            )
+                            self.ctx.warn(
+                                f"{self.name}: {limit_name} reached; remaining offline input was skipped"
+                            )
                             return
                         if not budget.consume(len(line)):
                             self.ctx.warn(f"{self.name}: max_input_bytes ({budget.max_bytes}) reached")
@@ -490,7 +513,11 @@ class BaseConnector(ABC):
             try:
                 reader = csv.DictReader(self._iter_bounded_lines(source, budget), strict=True)
                 fields = reader.fieldnames
-                if not fields or any(not field.strip() for field in fields) or len(set(fields)) != len(fields):
+                if (
+                    not fields
+                    or any(not field.strip() for field in fields)
+                    or len(set(fields)) != len(fields)
+                ):
                     report("CSV export needs unique, nonempty column names")
                     return
                 for rec in reader:
@@ -498,7 +525,9 @@ class BaseConnector(ABC):
                         report(f"CSV row at line {reader.line_num} has the wrong number of columns")
                         continue
                     if self._is_csv_provider_error(rec):
-                        report(f"provider error response in CSV row at line {reader.line_num}; coverage incomplete")
+                        report(
+                            f"provider error response in CSV row at line {reader.line_num}; coverage incomplete"
+                        )
                         continue
                     yield rec
             except csv.Error:
@@ -585,7 +614,9 @@ class BaseConnector(ABC):
                     report(f"CSV row at line {reader.line_num} has the wrong number of columns")
                     continue
                 if BaseConnector._is_csv_provider_error(rec):
-                    report(f"provider error response in CSV row at line {reader.line_num}; coverage incomplete")
+                    report(
+                        f"provider error response in CSV row at line {reader.line_num}; coverage incomplete"
+                    )
                     continue
                 yield rec
         except csv.Error:
@@ -596,7 +627,16 @@ class BaseConnector(ABC):
         """Recognize metadata-only failures without treating log event rows as failures."""
         fields = {key.strip().lower(): value for key, value in record.items()}
         if not fields.keys() <= {
-            "id", "name", "error", "ok", "code", "message", "status", "requestid", "request_id", "traceid",
+            "id",
+            "name",
+            "error",
+            "ok",
+            "code",
+            "message",
+            "status",
+            "requestid",
+            "request_id",
+            "traceid",
         }:
             return False
         return bool(fields.get("error", "").strip()) or fields.get("ok", "").strip().lower() == "false"
@@ -636,9 +676,20 @@ class BaseConnector(ABC):
         # type fields can identify a native record with nested collections.
         collections = {"items", "records", "value", "data", "results", "resources", "logEvents"}
         pagination = {
-            "has_more", "IsTruncated", "next_page", "nextPage", "next_page_token",
-            "nextPageToken", "nextToken", "NextToken", "NextMarker", "@odata.nextLink",
-            "nextLink", "nextCursor", "next_cursor", "response_metadata",
+            "has_more",
+            "IsTruncated",
+            "next_page",
+            "nextPage",
+            "next_page_token",
+            "nextPageToken",
+            "nextToken",
+            "NextToken",
+            "NextMarker",
+            "@odata.nextLink",
+            "nextLink",
+            "nextCursor",
+            "next_cursor",
+            "response_metadata",
         }
         if collections.intersection(data) and pagination.intersection(data):
             # A page can carry an ID, resource-looking type and continuation.
@@ -664,8 +715,10 @@ class BaseConnector(ABC):
                 return True
             if kind == "audit-event" and data.get("principal") and data.get("timestamp"):
                 return True
-            if kind == "integration_log" and data.get("change_type") and (
-                data.get("app_id") or data.get("service_id")
+            if (
+                kind == "integration_log"
+                and data.get("change_type")
+                and (data.get("app_id") or data.get("service_id"))
             ):
                 return True
             # A known log event can legitimately describe an upstream error.
@@ -673,15 +726,21 @@ class BaseConnector(ABC):
             # an error with page records remains a failed partial export.
             event_fields = {"attempt", "timestamp", "message", "status", "operation", "duration_ms"}
             return (
-                "id" in data and isinstance(data.get("error"), dict)
-                and isinstance(payload, list) and bool(payload)
+                "id" in data
+                and isinstance(data.get("error"), dict)
+                and isinstance(payload, list)
+                and bool(payload)
                 and all(
-                    isinstance(item, dict) and bool(event_fields.intersection(item))
-                    and not collections.intersection(item) and not pagination.intersection(item)
+                    isinstance(item, dict)
+                    and bool(event_fields.intersection(item))
+                    and not collections.intersection(item)
+                    and not pagination.intersection(item)
                     for item in payload
                 )
             )
-        if ("items" in data or "records" in data or ("value" in data and isinstance(data["value"], list))) and not (
+        if (
+            "items" in data or "records" in data or ("value" in data and isinstance(data["value"], list))
+        ) and not (
             {"_kind", "resource", "resourceId", "arn"}.intersection(data)
             or ("type" in data and data["type"] not in ("list", "page", "collection"))
             or data.get("object") not in (None, "list", "page", "collection")
@@ -698,8 +757,12 @@ class BaseConnector(ABC):
 
     @staticmethod
     def _record_fields_valid(
-        data: Any, *, strings: tuple[str, ...] = (), mappings: tuple[str, ...] = (),
-        arrays: tuple[str, ...] = (), required: tuple[str, ...] = (),
+        data: Any,
+        *,
+        strings: tuple[str, ...] = (),
+        mappings: tuple[str, ...] = (),
+        arrays: tuple[str, ...] = (),
+        required: tuple[str, ...] = (),
     ) -> bool:
         """Check fields consumed by a provider without disclosing rejected values."""
         if not isinstance(data, dict) or BaseConnector._is_error_record(data):
@@ -727,8 +790,15 @@ class BaseConnector(ABC):
         if not isinstance(metadata, dict):
             return "offline export has invalid pagination metadata"
         string_cursors = (
-            "next_page_token", "nextPageToken", "nextToken", "NextToken",
-            "NextMarker", "@odata.nextLink", "nextLink", "nextCursor", "next_cursor",
+            "next_page_token",
+            "nextPageToken",
+            "nextToken",
+            "NextToken",
+            "NextMarker",
+            "@odata.nextLink",
+            "nextLink",
+            "nextCursor",
+            "next_cursor",
         )
         for key in string_cursors:
             cursor = data.get(key)
@@ -742,12 +812,14 @@ class BaseConnector(ABC):
             # Providers use either an opaque link/token or a positive page
             # number. Falsey containers/booleans are malformed, not a proof
             # that collection reached its terminal page.
-            if page is not None and not (
-                isinstance(page, str) or (type(page) is int and page > 0)
-            ):
+            if page is not None and not (isinstance(page, str) or (type(page) is int and page > 0)):
                 return "offline export has invalid pagination metadata"
         keys = (
-            "has_more", "IsTruncated", "next_page", "nextPage", *string_cursors,
+            "has_more",
+            "IsTruncated",
+            "next_page",
+            "nextPage",
+            *string_cursors,
         )
         if any(data.get(key) for key in keys) or metadata.get("next_cursor"):
             return "offline export contains an uncollected next page"
@@ -760,16 +832,39 @@ class BaseConnector(ABC):
         Identified native records keep nested fields such as data/results intact.
         An envelope containing more than one collection is ambiguous, not empty.
         """
+
         def failed(message: str) -> None:
             if on_error is None:
                 raise ConnectorError(message)
             on_error(message)
 
         wrappers = {
-            "records", "items", "value", "data", "results", "resources", "logs", "entries",
-            "plugins", "installations", "apps", "users", "members", "workflows", "scenarios",
-            "aiAgents", "teamsApps", "servicePrincipals", "clients", "tokens", "agents", "bots",
-            "flows", "Records", "logEvents", "hits",
+            "records",
+            "items",
+            "value",
+            "data",
+            "results",
+            "resources",
+            "logs",
+            "entries",
+            "plugins",
+            "installations",
+            "apps",
+            "users",
+            "members",
+            "workflows",
+            "scenarios",
+            "aiAgents",
+            "teamsApps",
+            "servicePrincipals",
+            "clients",
+            "tokens",
+            "agents",
+            "bots",
+            "flows",
+            "Records",
+            "logEvents",
+            "hits",
         }
         wrappers.update(cls._OFFLINE_COLLECTION_KINDS)
         record_kind: str | None = None
@@ -845,7 +940,9 @@ class BaseConnector(ABC):
                         fh.seek(offset)
                         fh.truncate()
                         rejected = True
-                        self.ctx.error(f"{self.name}: export record rejected: sanitization safety limit exceeded")
+                        self.ctx.error(
+                            f"{self.name}: export record rejected: sanitization safety limit exceeded"
+                        )
                         continue
                     written += 1
                     yield rec

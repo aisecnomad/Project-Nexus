@@ -71,7 +71,11 @@ def test_github_clone_skips_hostile_branch(index, monkeypatch):
     monkeypatch.setattr(github_mod, "run_bounded_clone", fake_clone)
     monkeypatch.setattr(github_mod.shutil, "which", lambda _: "/usr/bin/git")
     assert connector._clone(
-        {"full_name": "acme/app", "clone_url": "https://github.com/acme/app.git", "default_branch": "--upload-pack=evil"},
+        {
+            "full_name": "acme/app",
+            "clone_url": "https://github.com/acme/app.git",
+            "default_branch": "--upload-pack=evil",
+        },
         "/tmp/dest",
     )
     assert "--branch" not in captured["cmd"]

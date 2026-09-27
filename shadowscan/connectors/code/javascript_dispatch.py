@@ -18,13 +18,57 @@ MAX_TOKENS = 50_000
 _TOKEN = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*|[0-9]+(?:\.[0-9]+)?|===|==|[{}()\[\].,:;=]")
 _IDENTIFIER = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*\Z")
 _CONSTRUCTORS = frozenset({"default", "OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI"})
-_RESERVED = frozenset({
-    "await", "break", "case", "catch", "class", "const", "continue", "debugger", "default",
-    "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for", "function",
-    "if", "implements", "import", "in", "instanceof", "interface", "let", "new", "null",
-    "package", "private", "protected", "public", "return", "static", "super", "switch", "this",
-    "throw", "true", "try", "typeof", "var", "void", "while", "with", "yield", "undefined",
-})
+_RESERVED = frozenset(
+    {
+        "await",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "enum",
+        "export",
+        "extends",
+        "false",
+        "finally",
+        "for",
+        "function",
+        "if",
+        "implements",
+        "import",
+        "in",
+        "instanceof",
+        "interface",
+        "let",
+        "new",
+        "null",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "return",
+        "static",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "var",
+        "void",
+        "while",
+        "with",
+        "yield",
+        "undefined",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -49,11 +93,17 @@ def _tokens(text: str, ignored: list[tuple[int, int]]) -> list[_Token] | None:
         if len(result) % 256 == 0:
             pattern_timeout()
         if span is not None and offset == span[0]:
-            value = text[span[0]:span[1]]
+            value = text[span[0] : span[1]]
             if value.startswith("//") or value.startswith("/*") and value.endswith("*/"):
                 pass
-            elif (len(value) >= 2 and value[0] in {"'", '"'} and value[-1] == value[0]
-                  and "\\" not in value and "\n" not in value and "\r" not in value):
+            elif (
+                len(value) >= 2
+                and value[0] in {"'", '"'}
+                and value[-1] == value[0]
+                and "\\" not in value
+                and "\n" not in value
+                and "\r" not in value
+            ):
                 result.append(_Token(value[1:-1], line, literal=True))
             else:
                 return None
@@ -84,8 +134,11 @@ class _Parser:
         self.position = 0
 
     def peek(self, value: str) -> bool:
-        return (self.position < len(self.tokens) and not self.tokens[self.position].literal
-                and self.tokens[self.position].value == value)
+        return (
+            self.position < len(self.tokens)
+            and not self.tokens[self.position].literal
+            and self.tokens[self.position].value == value
+        )
 
     def take(self, value: str) -> None:
         if not self.peek(value):
@@ -165,8 +218,11 @@ class _Parser:
                 raise _Unsupported
             self.take(":")
             value = self.token()
-            if not (value.literal or _IDENTIFIER.fullmatch(value.value)
-                    or re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", value.value)):
+            if not (
+                value.literal
+                or _IDENTIFIER.fullmatch(value.value)
+                or re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", value.value)
+            ):
                 raise _Unsupported
             if not value.literal and value.value in _RESERVED - {"true", "false", "null", "undefined"}:
                 raise _Unsupported
@@ -188,7 +244,11 @@ class _Parser:
         client = self.declaration()
         self.take("new")
         constructor = self.token()
-        if constructor.literal or constructor.value not in constructors or constructor.line not in constructor_lines:
+        if (
+            constructor.literal
+            or constructor.value not in constructors
+            or constructor.line not in constructor_lines
+        ):
             raise _Unsupported
         self.take("(")
         if self.peek("{"):
@@ -203,7 +263,12 @@ class _Parser:
             self.take(value)
         options = self.options()
         tools = options.get("tools")
-        if tools is None or tools.literal or not _IDENTIFIER.fullmatch(tools.value) or tools.value in _RESERVED:
+        if (
+            tools is None
+            or tools.literal
+            or not _IDENTIFIER.fullmatch(tools.value)
+            or tools.value in _RESERVED
+        ):
             raise _Unsupported
         self.take(")")
         self.take(";")
@@ -235,7 +300,9 @@ class _Parser:
 
 
 def javascript_responses_dispatch_lines(
-    text: str, ignored: list[tuple[int, int]], constructor_lines: set[int],
+    text: str,
+    ignored: list[tuple[int, int]],
+    constructor_lines: set[int],
 ) -> list[int]:
     """Return a request line only for the supported, import-bound direct flow.
 

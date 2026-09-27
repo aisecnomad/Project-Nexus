@@ -15,13 +15,20 @@ def test_entra_assignment_denial_preserves_grants_but_marks_scan_incomplete(monk
     class Graph:
         def paginate_odata(self, path, params=None):
             if path == "/servicePrincipals":
-                yield {"id": "sp-1", "appId": "agent-app", "displayName": "LangGraph agent", "servicePrincipalType": "Application"}
+                yield {
+                    "id": "sp-1",
+                    "appId": "agent-app",
+                    "displayName": "LangGraph agent",
+                    "servicePrincipalType": "Application",
+                }
                 return
             if path == "/oauth2PermissionGrants":
                 yield {"clientId": "sp-1", "scope": "Mail.Read", "consentType": "AllPrincipals"}
                 return
             if path.endswith("/appRoleAssignments"):
-                raise HttpError(403, "https://graph.microsoft.com/v1.0/servicePrincipals/sp-1/appRoleAssignments")
+                raise HttpError(
+                    403, "https://graph.microsoft.com/v1.0/servicePrincipals/sp-1/appRoleAssignments"
+                )
             assert path == "/applications"
 
     def fake_auth(self):
@@ -39,7 +46,15 @@ def test_entra_assignment_denial_preserves_grants_but_marks_scan_incomplete(monk
 def test_entra_requested_permissions_are_not_reported_as_granted(tmp_path, run_connector, index):
     data = [
         {"_kind": "roleMap", "roles": {"role-id": "Directory.ReadWrite.All"}},
-        {"_kind": "application", "id": "reg-1", "appId": "request-only", "displayName": "Ordinary scheduler", "requiredResourceAccess": [{"resourceAppId": "graph", "resourceAccess": [{"id": "role-id", "type": "Role"}]}]},
+        {
+            "_kind": "application",
+            "id": "reg-1",
+            "appId": "request-only",
+            "displayName": "Ordinary scheduler",
+            "requiredResourceAccess": [
+                {"resourceAppId": "graph", "resourceAccess": [{"id": "role-id", "type": "Role"}]}
+            ],
+        },
     ]
     source = tmp_path / "entra.json"
     source.write_text(json.dumps(data), encoding="utf-8")
@@ -52,16 +67,31 @@ def test_entra_requested_permissions_are_not_reported_as_granted(tmp_path, run_c
     assert registration.permissions == []
     assert "policy.privileged-scopes" not in registration.tags
     assert "permissions-requested" in registration.tags
-    assert "policy.privileged-scopes" not in {factor.id.removeprefix("tag:") for factor in assess(registration, index).factors}
+    assert "policy.privileged-scopes" not in {
+        factor.id.removeprefix("tag:") for factor in assess(registration, index).factors
+    }
 
 
 def test_entra_resolves_requested_delegated_permission_ids_in_live_collection(monkeypatch, run_connector):
     class Graph:
         def paginate_odata(self, path, params=None):
             if path == "/servicePrincipals":
-                yield {"id": "graph-sp", "appId": "graph", "displayName": "Microsoft Graph", "appOwnerOrganizationId": FIRST_PARTY_OWNER, "oauth2PermissionScopes": [{"id": "scope-id", "value": "Directory.ReadWrite.All"}]}
+                yield {
+                    "id": "graph-sp",
+                    "appId": "graph",
+                    "displayName": "Microsoft Graph",
+                    "appOwnerOrganizationId": FIRST_PARTY_OWNER,
+                    "oauth2PermissionScopes": [{"id": "scope-id", "value": "Directory.ReadWrite.All"}],
+                }
             elif path == "/applications":
-                yield {"id": "reg-1", "appId": "request-only", "displayName": "Ordinary scheduler", "requiredResourceAccess": [{"resourceAppId": "graph", "resourceAccess": [{"id": "scope-id", "type": "Scope"}]}]}
+                yield {
+                    "id": "reg-1",
+                    "appId": "request-only",
+                    "displayName": "Ordinary scheduler",
+                    "requiredResourceAccess": [
+                        {"resourceAppId": "graph", "resourceAccess": [{"id": "scope-id", "type": "Scope"}]}
+                    ],
+                }
             else:
                 assert path == "/oauth2PermissionGrants"
 
@@ -89,7 +119,15 @@ def test_google_token_denial_marks_scan_incomplete_and_preserves_other_users(mon
                 return {"id": "C01234567"}
             if "second@example.test" in path:
                 raise HttpError(403, "https://admin.googleapis.com/admin/directory/v1/users/second/tokens")
-            return {"items": [{"clientId": "client-1", "displayText": "Fireflies.ai", "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]}]}
+            return {
+                "items": [
+                    {
+                        "clientId": "client-1",
+                        "displayText": "Fireflies.ai",
+                        "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+                    }
+                ]
+            }
 
     def fake_auth(self):
         self.http = Directory()
@@ -109,7 +147,12 @@ def test_make_missing_blueprint_and_agents_marks_scan_incomplete(monkeypatch, ru
 
         def get_json(self, path, params=None):
             if path == "/scenarios":
-                return {"scenarios": [{"id": "with-blueprint", "name": "Classification flow"}, {"id": "without-blueprint", "name": "Routine backup"}]}
+                return {
+                    "scenarios": [
+                        {"id": "with-blueprint", "name": "Classification flow"},
+                        {"id": "without-blueprint", "name": "Routine backup"},
+                    ]
+                }
             if path == "/scenarios/with-blueprint/blueprint":
                 return {"response": {"blueprint": {"flow": [{"module": "openai:CreateCompletion"}]}}}
             if path == "/scenarios/without-blueprint/blueprint":
@@ -119,7 +162,9 @@ def test_make_missing_blueprint_and_agents_marks_scan_incomplete(monkeypatch, ru
             raise AssertionError(path)
 
     monkeypatch.setattr(automation, "HttpClient", MakeAPI)
-    findings, ctx = run_connector("lowcode.make", api_url="https://eu1.make.com/api/v2", token="dummy", team_id="team-1")
+    findings, ctx = run_connector(
+        "lowcode.make", api_url="https://eu1.make.com/api/v2", token="dummy", team_id="team-1"
+    )
     assert any(f.resource == "make:scenario:with-blueprint" for f in findings)
     assert ctx.stats.incomplete
     assert not ctx.stats.errors

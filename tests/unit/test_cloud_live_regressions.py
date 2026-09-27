@@ -24,22 +24,35 @@ def test_bedrock_agent_reads_action_group_details_for_deployed_versions(index):
     ctx = context(index)
     connector = AwsConnector(ctx)
     bedrock_agent = Mock()
-    bedrock_agent.get_agent.return_value = {"agent": {"agentId": "A1", "agentName": "ops", "agentStatus": "PREPARED"}}
+    bedrock_agent.get_agent.return_value = {
+        "agent": {"agentId": "A1", "agentName": "ops", "agentStatus": "PREPARED"}
+    }
 
     def get_action_group(*, agentId, agentVersion, actionGroupId):
         assert agentId == "A1"
-        return {"agentActionGroup": {"actionGroupId": actionGroupId, "agentVersion": agentVersion,
-                                     "actionGroupState": "ENABLED", **{
-                                         "LAMBDA": {"actionGroupExecutor": {"lambda": "arn:aws:lambda:us-east-1:123:function:tool"}},
-                                         "CODE": {"parentActionSignature": "AMAZON.CodeInterpreter"},
-                                         "USER": {"parentActionSignature": "AMAZON.UserInput"},
-                                     }[actionGroupId]}}
+        return {
+            "agentActionGroup": {
+                "actionGroupId": actionGroupId,
+                "agentVersion": agentVersion,
+                "actionGroupState": "ENABLED",
+                **{
+                    "LAMBDA": {
+                        "actionGroupExecutor": {"lambda": "arn:aws:lambda:us-east-1:123:function:tool"}
+                    },
+                    "CODE": {"parentActionSignature": "AMAZON.CodeInterpreter"},
+                    "USER": {"parentActionSignature": "AMAZON.UserInput"},
+                }[actionGroupId],
+            }
+        }
 
     bedrock_agent.get_agent_action_group.side_effect = get_action_group
-    bedrock_agent.get_agent_version.return_value = {"agentVersion": {
-        "version": "3", "foundationModel": "anthropic.claude-3-haiku-20240307-v1:0",
-        "guardrailConfiguration": {"guardrailIdentifier": "G1", "guardrailVersion": "1"},
-    }}
+    bedrock_agent.get_agent_version.return_value = {
+        "agentVersion": {
+            "version": "3",
+            "foundationModel": "anthropic.claude-3-haiku-20240307-v1:0",
+            "guardrailConfiguration": {"guardrailIdentifier": "G1", "guardrailVersion": "1"},
+        }
+    }
     bedrock = Mock()
     bedrock.get_model_invocation_logging_configuration.return_value = {"loggingConfig": {}}
     connector._client = lambda service, region: bedrock_agent if service == "bedrock-agent" else bedrock
@@ -50,20 +63,33 @@ def test_bedrock_agent_reads_action_group_details_for_deployed_versions(index):
         if op == "list_agent_aliases":
             return iter([{"agentAliasName": "prod", "routingConfiguration": [{"agentVersion": "3"}]}])
         if op == "list_agent_action_groups":
-            return iter([{"actionGroupId": id_, "actionGroupName": id_.lower()} for id_ in (
-                ["LAMBDA", "CODE", "USER"] if kw["agentVersion"] == "3" else ["USER"]
-            )])
+            return iter(
+                [
+                    {"actionGroupId": id_, "actionGroupName": id_.lower()}
+                    for id_ in (["LAMBDA", "CODE", "USER"] if kw["agentVersion"] == "3" else ["USER"])
+                ]
+            )
         if op == "list_agent_knowledge_bases":
-            return iter([{"knowledgeBaseId": "KB3", "knowledgeBaseState": "ENABLED"}] if kw["agentVersion"] == "3" else [])
+            return iter(
+                [{"knowledgeBaseId": "KB3", "knowledgeBaseState": "ENABLED"}]
+                if kw["agentVersion"] == "3"
+                else []
+            )
         if op == "list_agent_collaborators":
-            return iter([{"collaboratorId": "C3", "collaboratorName": "reviewer"}] if kw["agentVersion"] == "3" else [])
+            return iter(
+                [{"collaboratorId": "C3", "collaboratorName": "reviewer"}]
+                if kw["agentVersion"] == "3"
+                else []
+            )
         return iter([])
 
     connector._paginate = pages
     records = list(connector._collect_bedrock("us-east-1"))
     agent = next(r for r in records if r["_kind"] == "bedrock-agent")
     assert {a["agentVersion"] for a in agent["_action_groups"]} == {"DRAFT", "3"}
-    assert agent["_knowledge_bases"] == [{"knowledgeBaseId": "KB3", "knowledgeBaseState": "ENABLED", "_agentVersion": "3"}]
+    assert agent["_knowledge_bases"] == [
+        {"knowledgeBaseId": "KB3", "knowledgeBaseState": "ENABLED", "_agentVersion": "3"}
+    ]
     assert agent["_collaborators"][0]["_agentVersion"] == "3"
     assert bedrock_agent.get_agent_action_group.call_count == 4
     finding = connector._h_bedrock_agent(agent)
@@ -86,7 +112,10 @@ def test_agentcore_gateway_reads_target_detail_for_lambda(index):
     connector = AwsConnector(ctx)
     client = Mock()
     client.get_gateway_target.return_value = {
-        "targetId": "t1", "targetConfiguration": {"mcp": {"lambda": {"lambdaArn": "arn:aws:lambda:us-east-1:123:function:tool"}}}
+        "targetId": "t1",
+        "targetConfiguration": {
+            "mcp": {"lambda": {"lambdaArn": "arn:aws:lambda:us-east-1:123:function:tool"}}
+        },
     }
     connector._client = lambda service, region: client
 
@@ -107,18 +136,28 @@ def test_agentcore_gateway_reads_target_detail_for_lambda(index):
 
 def test_disabled_bedrock_actions_and_knowledge_bases_do_not_grant_capabilities(index):
     connector = AwsConnector(context(index))
-    finding = connector._h_bedrock_agent({
-        "agentId": "A1", "agentName": "ops", "_region": "us-east-1",
-        "_action_groups": [{"actionGroupName": "code", "actionGroupState": "DISABLED",
-                            "parentActionSignature": "AMAZON.CodeInterpreter"}],
-        "_knowledge_bases": [{"knowledgeBaseId": "K1", "knowledgeBaseState": "DISABLED"}],
-    })
+    finding = connector._h_bedrock_agent(
+        {
+            "agentId": "A1",
+            "agentName": "ops",
+            "_region": "us-east-1",
+            "_action_groups": [
+                {
+                    "actionGroupName": "code",
+                    "actionGroupState": "DISABLED",
+                    "parentActionSignature": "AMAZON.CodeInterpreter",
+                }
+            ],
+            "_knowledge_bases": [{"knowledgeBaseId": "K1", "knowledgeBaseState": "DISABLED"}],
+        }
+    )
     assert "code-exec" not in finding.capabilities
     assert "rag" not in finding.capabilities
 
 
 def test_oci_collections_and_keyword_only_genai_calls(index, monkeypatch):
     """GenAI Agent list APIs return Collection(items), which OCI pagination flattens."""
+
     class Client:
         def __getattr__(self, name):
             if name.startswith("list_"):
@@ -150,7 +189,9 @@ def test_oci_collections_and_keyword_only_genai_calls(index, monkeypatch):
         functions=SimpleNamespace(FunctionsManagementClient=Client),
         container_instances=SimpleNamespace(ContainerInstanceClient=Client),
         vault=SimpleNamespace(VaultsClient=Client),
-        pagination=SimpleNamespace(list_call_get_all_results=lambda fn, *args, **kw: SimpleNamespace(data=fn(*args, **kw))),
+        pagination=SimpleNamespace(
+            list_call_get_all_results=lambda fn, *args, **kw: SimpleNamespace(data=fn(*args, **kw))
+        ),
         util=SimpleNamespace(to_dict=vars),
     )
     monkeypatch.setitem(sys.modules, "oci", oci)
@@ -179,7 +220,10 @@ def test_gcp_repeated_pagination_token_preserves_partial_data_but_marks_incomple
         {"items": [{"id": "first"}], "nextPageToken": "same"},
         {"items": [{"id": "second"}], "nextPageToken": "same"},
     ]
-    assert [item["id"] for item in connector._pages("https://example.googleapis.com/v1/items", "items")] == ["first", "second"]
+    assert [item["id"] for item in connector._pages("https://example.googleapis.com/v1/items", "items")] == [
+        "first",
+        "second",
+    ]
     assert connector.http.get_json.call_count == 2
     assert ctx.stats.incomplete
 

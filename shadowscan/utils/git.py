@@ -64,8 +64,11 @@ def _stop_clone(proc: subprocess.Popen[bytes]) -> None:
             try:
                 subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=3, check=False,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=3,
+                    check=False,
                 )
             except (OSError, subprocess.TimeoutExpired):
                 pass
@@ -91,13 +94,21 @@ def run_bounded_clone(cmd: list[str], env: dict[str, str], ctx: ConnectorContext
         deadline = min(deadline, ctx.deadline)
     if os.name == "posix":
         proc: subprocess.Popen[bytes] = subprocess.Popen(
-            cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, start_new_session=True,
+            cmd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
     else:
         proc = subprocess.Popen(
-            cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            cmd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
         )
     try:
         while True:
@@ -212,20 +223,24 @@ def metadata_git_env() -> dict[str, str]:
     precedence over every such setting. Clone authentication must never be
     passed to this environment.
     """
-    return safe_git_env({
-        **git_config_overlay([
-            ("core.hooksPath", os.devnull),
-            ("credential.helper", ""),
-            ("core.fsmonitor", "false"),
-            ("maintenance.auto", "false"),
-            ("gc.auto", "0"),
-            ("protocol.allow", "never"),
-        ]),
-        "GIT_ALLOW_PROTOCOL": "",
-        "GIT_PROTOCOL_FROM_USER": "0",
-        "GIT_NO_LAZY_FETCH": "1",
-        "GIT_OPTIONAL_LOCKS": "0",
-    })
+    return safe_git_env(
+        {
+            **git_config_overlay(
+                [
+                    ("core.hooksPath", os.devnull),
+                    ("credential.helper", ""),
+                    ("core.fsmonitor", "false"),
+                    ("maintenance.auto", "false"),
+                    ("gc.auto", "0"),
+                    ("protocol.allow", "never"),
+                ]
+            ),
+            "GIT_ALLOW_PROTOCOL": "",
+            "GIT_PROTOCOL_FROM_USER": "0",
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+        }
+    )
 
 
 def metadata_git_argv_prefix() -> list[str]:

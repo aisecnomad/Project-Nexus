@@ -48,7 +48,9 @@ def _mock_live_power_api(monkeypatch, responder):
     return calls
 
 
-def test_power_platform_collects_all_environment_pages_and_uses_separate_app_audience(monkeypatch, run_connector):
+def test_power_platform_collects_all_environment_pages_and_uses_separate_app_audience(
+    monkeypatch, run_connector
+):
     def respond(base, path, params):
         if base == BAP:
             if "nextLink" in path:
@@ -60,7 +62,13 @@ def test_power_platform_collects_all_environment_pages_and_uses_separate_app_aud
         return {"value": [_app("app-1")]}
 
     calls = _mock_live_power_api(monkeypatch, respond)
-    findings, ctx = run_connector("lowcode.power-platform", tenant_id="tenant", client_id="app", client_secret="secret", include_bots=False)
+    findings, ctx = run_connector(
+        "lowcode.power-platform",
+        tenant_id="tenant",
+        client_id="app",
+        client_secret="secret",
+        include_bots=False,
+    )
 
     assert not ctx.stats.incomplete
     assert len(findings) == 4
@@ -84,7 +92,13 @@ def test_power_platform_rejects_cross_origin_environment_continuation(monkeypatc
         return {"value": [_app("app-1")]} if base == PAPPS else {"value": []}
 
     calls = _mock_live_power_api(monkeypatch, respond)
-    findings, ctx = run_connector("lowcode.power-platform", tenant_id="tenant", client_id="app", client_secret="secret", include_bots=False)
+    findings, ctx = run_connector(
+        "lowcode.power-platform",
+        tenant_id="tenant",
+        client_id="app",
+        client_secret="secret",
+        include_bots=False,
+    )
 
     assert any(f.resource == "power-platform:app:app-1" for f in findings)
     assert ctx.stats.incomplete
@@ -92,7 +106,9 @@ def test_power_platform_rejects_cross_origin_environment_continuation(monkeypatc
     assert "attacker.example" not in " ".join(ctx.stats.errors)
 
 
-def test_power_platform_app_later_page_failure_keeps_findings_and_scans_next_environment(monkeypatch, run_connector):
+def test_power_platform_app_later_page_failure_keeps_findings_and_scans_next_environment(
+    monkeypatch, run_connector
+):
     def respond(base, path, params):
         if base == BAP:
             return {"value": [_env("env-1"), _env("env-2")]}
@@ -101,11 +117,20 @@ def test_power_platform_app_later_page_failure_keeps_findings_and_scans_next_env
         if "env-1" in path and "$skiptoken" in path:
             raise HttpError(403, PAPPS + "/powerapps/environments/env-1/apps?secret=do-not-log")
         if "env-1" in path:
-            return {"value": [_app("first")], "nextLink": PAPPS + "/powerapps/environments/env-1/apps?$skiptoken=opaque"}
+            return {
+                "value": [_app("first")],
+                "nextLink": PAPPS + "/powerapps/environments/env-1/apps?$skiptoken=opaque",
+            }
         return {"value": [_app("second")]}
 
     calls = _mock_live_power_api(monkeypatch, respond)
-    findings, ctx = run_connector("lowcode.power-platform", tenant_id="tenant", client_id="app", client_secret="secret", include_bots=False)
+    findings, ctx = run_connector(
+        "lowcode.power-platform",
+        tenant_id="tenant",
+        client_id="app",
+        client_secret="secret",
+        include_bots=False,
+    )
 
     assert {f.resource for f in findings} == {"power-platform:app:first", "power-platform:app:second"}
     assert ctx.stats.incomplete
@@ -118,12 +143,24 @@ def test_power_platform_app_later_page_failure_keeps_findings_and_scans_next_env
     ("responses", "max_pages", "warning"),
     [
         ([{"results": [{"id": "bot-1", "type": "bot"}], "has_more": True}], 1000, "without next_cursor"),
-        ([{"results": [{"id": "bot-1", "type": "bot"}], "has_more": True, "next_cursor": "same"},
-          {"results": [{"id": "bot-2", "type": "bot"}], "has_more": True, "next_cursor": "same"}], 1000, "repeated users cursor"),
-        ([{"results": [{"id": "bot-1", "type": "bot"}], "has_more": True, "next_cursor": "remaining"}], 1, "page limit"),
+        (
+            [
+                {"results": [{"id": "bot-1", "type": "bot"}], "has_more": True, "next_cursor": "same"},
+                {"results": [{"id": "bot-2", "type": "bot"}], "has_more": True, "next_cursor": "same"},
+            ],
+            1000,
+            "repeated users cursor",
+        ),
+        (
+            [{"results": [{"id": "bot-1", "type": "bot"}], "has_more": True, "next_cursor": "remaining"}],
+            1,
+            "page limit",
+        ),
     ],
 )
-def test_notion_bad_continuation_or_page_cap_is_incomplete(monkeypatch, run_connector, responses, max_pages, warning):
+def test_notion_bad_continuation_or_page_cap_is_incomplete(
+    monkeypatch, run_connector, responses, max_pages, warning
+):
     calls = []
     pages = iter(responses)
 

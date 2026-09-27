@@ -42,9 +42,16 @@ def test_cloud_run_discovers_project_locations_before_listing_services(index):
             return {"locations": [{"locationId": "us-central1"}], "nextPageToken": "next"}
         if "run.googleapis.com/v2" in url:
             assert "/locations/-/" not in url
-            return {"services": [{"name": f"{url.split('/v2/')[1]}/agent", "template": {
-                "containers": [{"image": "ollama/ollama:latest"}],
-            }}]}
+            return {
+                "services": [
+                    {
+                        "name": f"{url.split('/v2/')[1]}/agent",
+                        "template": {
+                            "containers": [{"image": "ollama/ollama:latest"}],
+                        },
+                    }
+                ]
+            }
         if url.endswith("/serviceAccounts"):
             return {"accounts": []}
         raise AssertionError(url)
@@ -67,9 +74,12 @@ def test_gcp_unreachable_locations_make_partial_inventory_incomplete(index, unre
         "functions": [{"name": "projects/acme/locations/us-central1/functions/agent"}],
         "unreachable": unreachable,
     }
-    records = list(connector._pages(
-        "https://cloudfunctions.googleapis.com/v2/projects/acme/locations/-/functions", "functions",
-    ))
+    records = list(
+        connector._pages(
+            "https://cloudfunctions.googleapis.com/v2/projects/acme/locations/-/functions",
+            "functions",
+        )
+    )
     assert len(records) == 1
     assert connector.ctx.stats.incomplete
 
@@ -78,7 +88,14 @@ def test_gcp_valid_empty_unreachable_is_complete(index):
     connector = GcpConnector(context(index))
     connector.http = Mock()
     connector.http.get_json.return_value = {"functions": [], "unreachable": []}
-    assert list(connector._pages("https://cloudfunctions.googleapis.com/v2/projects/acme/locations/-/functions", "functions")) == []
+    assert (
+        list(
+            connector._pages(
+                "https://cloudfunctions.googleapis.com/v2/projects/acme/locations/-/functions", "functions"
+            )
+        )
+        == []
+    )
     assert not connector.ctx.stats.incomplete
 
 
@@ -91,8 +108,14 @@ def test_cloud_run_bad_location_does_not_erase_valid_neighbor(index):
         if "serviceusage" in url:
             return {"services": [{"config": {"name": "run.googleapis.com"}}]}
         if url.endswith("/locations"):
-            return {"locations": [{"locationId": "../../projects/other"}, {"name": "missing-id"},
-                                   {"locationId": "us-central1"}, {"locationId": "us-central1"}]}
+            return {
+                "locations": [
+                    {"locationId": "../../projects/other"},
+                    {"name": "missing-id"},
+                    {"locationId": "us-central1"},
+                    {"locationId": "us-central1"},
+                ]
+            }
         if "run.googleapis.com/v2" in url:
             assert url == "https://run.googleapis.com/v2/projects/acme/locations/us-central1/services"
             return {"services": [{"name": "projects/acme/locations/us-central1/services/worker"}]}
@@ -104,16 +127,23 @@ def test_cloud_run_bad_location_does_not_erase_valid_neighbor(index):
     assert connector.ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("late", [
-    HttpError(403, "https://management.azure.com/next"),
-    HttpError(429, "https://management.azure.com/next"),
-    Timeout("credential-bearing diagnostic"), None, {"error": {}}, {"value": {}},
-])
+@pytest.mark.parametrize(
+    "late",
+    [
+        HttpError(403, "https://management.azure.com/next"),
+        HttpError(429, "https://management.azure.com/next"),
+        Timeout("credential-bearing diagnostic"),
+        None,
+        {"error": {}},
+        {"value": {}},
+    ],
+)
 def test_azure_arm_late_failure_retains_prior_inventory(index, late):
     connector = AzureConnector(context(index))
     connector.http = Mock()
     connector.http.get_json.side_effect = [
-        {"value": [{"id": "observed"}], "nextLink": "https://management.azure.com/next"}, late,
+        {"value": [{"id": "observed"}], "nextLink": "https://management.azure.com/next"},
+        late,
     ]
     assert connector._list("/resources", "v1", allow_partial=True) == [{"id": "observed"}]
     assert connector.ctx.stats.incomplete
@@ -142,10 +172,12 @@ def test_azure_collect_retains_deployments_and_continues_after_page_failure(inde
     connector = AzureConnector(context(index, subscriptions=["sub"]))
     connector._auth = Mock()
     connector.http = Mock()
-    connector.http.post_json.return_value = {"data": [
-        {"id": account, "type": "microsoft.cognitiveservices/accounts", "kind": "OpenAI"}
-        for account in ("/first-account", "/second-account")
-    ]}
+    connector.http.post_json.return_value = {
+        "data": [
+            {"id": account, "type": "microsoft.cognitiveservices/accounts", "kind": "OpenAI"}
+            for account in ("/first-account", "/second-account")
+        ]
+    }
 
     def get(path, **kwargs):
         if path == "/first-account/deployments":
@@ -158,7 +190,10 @@ def test_azure_collect_retains_deployments_and_continues_after_page_failure(inde
 
     connector.http.get_json.side_effect = get
     records = list(connector.collect())
-    assert {r["_account"] for r in records if r["_kind"] == "deployment"} == {"/first-account", "/second-account"}
+    assert {r["_account"] for r in records if r["_kind"] == "deployment"} == {
+        "/first-account",
+        "/second-account",
+    }
     assert connector.ctx.stats.incomplete
 
 
@@ -166,9 +201,15 @@ def test_azure_partial_diagnostics_remain_unknown(index):
     connector = AzureConnector(context(index, subscriptions=["sub"]))
     connector._auth = Mock()
     connector.http = Mock()
-    connector.http.post_json.return_value = {"data": [{
-        "id": "/account", "type": "microsoft.cognitiveservices/accounts", "kind": "OpenAI",
-    }]}
+    connector.http.post_json.return_value = {
+        "data": [
+            {
+                "id": "/account",
+                "type": "microsoft.cognitiveservices/accounts",
+                "kind": "OpenAI",
+            }
+        ]
+    }
 
     def get(path, **kwargs):
         if path.endswith("/diagnosticSettings"):
@@ -190,9 +231,13 @@ def test_azure_partial_diagnostics_remain_unknown(index):
 def test_aws_sdk_clients_bound_authentication_and_inventory_requests(index, monkeypatch):
     pytest.importorskip("botocore")
     sessions = [Mock(), Mock()]
-    sessions[0].client.return_value.assume_role.return_value = {"Credentials": {
-        "AccessKeyId": "test", "SecretAccessKey": "test", "SessionToken": "test",
-    }}
+    sessions[0].client.return_value.assume_role.return_value = {
+        "Credentials": {
+            "AccessKeyId": "test",
+            "SecretAccessKey": "test",
+            "SessionToken": "test",
+        }
+    }
     sessions[1].client.return_value.get_caller_identity.return_value = {"Account": "123456789012"}
     monkeypatch.setitem(sys.modules, "boto3", SimpleNamespace(Session=Mock(side_effect=sessions)))
     connector = AwsConnector(context(index, role_arn="arn:aws:iam::123456789012:role/audit"))

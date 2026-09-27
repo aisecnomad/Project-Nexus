@@ -209,12 +209,30 @@ def classify_permissions(index: SignatureIndex, finding: Finding, scopes: Iterab
     apply_matches(finding, matches, weight_scale=0.5)
 
 
-_PLACEHOLDER = re.compile(r"^(?:x{3,}|\*{3,}|<[^>]+>|\$\{[^}]+\}|your[_-]?[a-z_]*|changeme|redacted|placeholder|todo|null|none)$", re.IGNORECASE)
+_PLACEHOLDER = re.compile(
+    r"^(?:x{3,}|\*{3,}|<[^>]+>|\$\{[^}]+\}|your[_-]?[a-z_]*|changeme|redacted|placeholder|todo|null|none)$",
+    re.IGNORECASE,
+)
 _TEMPLATE_MARKER = re.compile(r"<[^<>\s]+>|\$\{[^{}]*\}|\{\{[^{}]*\}\}")
 # Lowercase words that documentation uses where a real key would go.
 _PLACEHOLDER_WORDS: tuple[str, ...] = (
-    "replaceme", "replace", "placeholder", "changeme", "example", "sample", "dummy", "fake",
-    "test", "insert", "paste", "here", "todo", "your", "redacted", "mock", "demo",
+    "replaceme",
+    "replace",
+    "placeholder",
+    "changeme",
+    "example",
+    "sample",
+    "dummy",
+    "fake",
+    "test",
+    "insert",
+    "paste",
+    "here",
+    "todo",
+    "your",
+    "redacted",
+    "mock",
+    "demo",
 )
 _FILL_RUN = re.compile(r"(?<![A-Za-z])(?:x{4,}|X{4,})(?![A-Za-z])|[*#?]{4,}")
 _ALPHA_RUN = re.compile(r"[A-Za-z]+")
@@ -228,12 +246,18 @@ _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*\s*[=:]\s*[\"']?(.*?)[\"']?$
 
 def _case_delimited(value: str, start: int, end: int) -> bool:
     """True when value[start:end] is its own token by separators or case changes."""
-    left = start == 0 or not value[start - 1].isalpha() or (value[start - 1].islower() and value[start].isupper())
+    left = (
+        start == 0
+        or not value[start - 1].isalpha()
+        or (value[start - 1].islower() and value[start].isupper())
+    )
     if not left:
         return False
     if end == len(value) or not value[end].isalpha():
         return True
-    return (value[end - 1].islower() and value[end].isupper()) or (value[start:end].isupper() and value[end].islower())
+    return (value[end - 1].islower() and value[end].isupper()) or (
+        value[start:end].isupper() and value[end].islower()
+    )
 
 
 def _placeholder_word(value: str) -> bool:
@@ -259,7 +283,9 @@ def _low_entropy_body(value: str) -> bool:
         return False
     if len(set(body)) <= 2:
         return True
-    continued = sum(1 for previous, current in zip(body, body[1:], strict=False) if abs(ord(current) - ord(previous)) <= 1)
+    continued = sum(
+        1 for previous, current in zip(body, body[1:], strict=False) if abs(ord(current) - ord(previous)) <= 1
+    )
     return continued / (len(body) - 1) >= 0.5
 
 
@@ -334,8 +360,15 @@ def blob_matches(index: SignatureIndex, text: str, *, secrets: bool = False) -> 
     seen: set[tuple[str, str, str]] = set()
     if not text:
         return out
-    secret_matches = [m for m in index.match_secrets(text) if not looks_like_placeholder(m.value)] if secrets else []
-    for m in [*index.match_code(text, None), *index.match_domains_in_text(text), *index.match_envs_in_text(text), *secret_matches]:
+    secret_matches = (
+        [m for m in index.match_secrets(text) if not looks_like_placeholder(m.value)] if secrets else []
+    )
+    for m in [
+        *index.match_code(text, None),
+        *index.match_domains_in_text(text),
+        *index.match_envs_in_text(text),
+        *secret_matches,
+    ]:
         if m.signature.category == "identity-app" and m.signal.type == "domain":
             continue
         key = (m.signature_id, m.signal.type, m.value[:60])

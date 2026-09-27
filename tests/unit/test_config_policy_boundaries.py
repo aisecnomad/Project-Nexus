@@ -38,8 +38,10 @@ def test_environment_values_are_not_reexpanded(monkeypatch):
 def test_config_missing_environment_fails_before_collection_and_preserves_secrets(tmp_path, monkeypatch):
     monkeypatch.delenv("NEXUS_REQUIRED_ISSUER", raising=False)
     path = tmp_path / "scan.yaml"
-    path.write_text("connectors:\n  - name: identity.jwt\n    token: arbitrary-private-value\n"
-                    "    expected_issuer: ${NEXUS_REQUIRED_ISSUER}\n")
+    path.write_text(
+        "connectors:\n  - name: identity.jwt\n    token: arbitrary-private-value\n"
+        "    expected_issuer: ${NEXUS_REQUIRED_ISSUER}\n"
+    )
     collected = []
     monkeypatch.setattr("shadowscan.cli.Engine", lambda *args, **kwargs: collected.append(True))
     result = CliRunner().invoke(main, ["scan", "-c", str(path)])
@@ -49,11 +51,14 @@ def test_config_missing_environment_fails_before_collection_and_preserves_secret
     assert not collected
 
 
-@pytest.mark.parametrize("content", [
-    "options:\n  fail_on: high\n  fail_on: null\n",
-    "connectors: []\nconnectors: [cloud.aws]\n",
-    "connectors:\n  - name: cloud.aws\n    config:\n      account: one\n      account: two\n",
-])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "options:\n  fail_on: high\n  fail_on: null\n",
+        "connectors: []\nconnectors: [cloud.aws]\n",
+        "connectors:\n  - name: cloud.aws\n    config:\n      account: one\n      account: two\n",
+    ],
+)
 def test_duplicate_yaml_cannot_replace_security_configuration(tmp_path, content):
     path = tmp_path / "scan.yaml"
     path.write_text(content)
@@ -63,8 +68,10 @@ def test_duplicate_yaml_cannot_replace_security_configuration(tmp_path, content)
 
 def test_ordinary_yaml_merge_override_remains_supported(tmp_path):
     path = tmp_path / "scan.yaml"
-    path.write_text("connectors:\n  - name: cloud.aws\n    config: &defaults\n      regions: [us-east-1]\n"
-                    "  - name: cloud.aws\n    config:\n      <<: *defaults\n      regions: [eu-west-1]\n")
+    path.write_text(
+        "connectors:\n  - name: cloud.aws\n    config: &defaults\n      regions: [us-east-1]\n"
+        "  - name: cloud.aws\n    config:\n      <<: *defaults\n      regions: [eu-west-1]\n"
+    )
     config = ScanConfig.from_yaml(path)
     assert config.connectors[0].config["regions"] == ["us-east-1"]
     assert config.connectors[1].config["regions"] == ["eu-west-1"]
@@ -72,28 +79,33 @@ def test_ordinary_yaml_merge_override_remains_supported(tmp_path):
 
 def test_nested_reused_yaml_merge_overrides_remain_supported(tmp_path):
     path = tmp_path / "scan.yaml"
-    path.write_text("connectors:\n  - name: cloud.aws\n    config:\n      <<: &defaults\n"
-                    "        <<: {regions: [us-east-1]}\n        regions: [eu-west-1]\n"
-                    "  - name: cloud.aws\n    config: *defaults\n")
+    path.write_text(
+        "connectors:\n  - name: cloud.aws\n    config:\n      <<: &defaults\n"
+        "        <<: {regions: [us-east-1]}\n        regions: [eu-west-1]\n"
+        "  - name: cloud.aws\n    config: *defaults\n"
+    )
     assert all(spec.config["regions"] == ["eu-west-1"] for spec in ScanConfig.from_yaml(path).connectors)
 
 
-@pytest.mark.parametrize("payload,field", [
-    ({"option": {"fail_on": "high"}}, "scan configuration"),
-    ({"options": {"fail_onn": "high"}}, "options"),
-    ({"options": []}, "options"),
-    ({"connectors": "cloud.aws"}, "connectors"),
-    ({"connectors": {"cloud.aws": {}}}, "connectors"),
-    ({"connectors": [{"name": "cloud.aws", "config": "expected_issuer=required"}]}, "connector config"),
-    ({"connectors": [{"name": 42}]}, "connector name"),
-    ({"connectors": [""]}, "connector name"),
-    ({"connectors": [{"name": "cloud.aws", "label": []}]}, "connector label"),
-    ({"inventory": "inventory/"}, "inventory"),
-    ({"inventory": [""]}, "inventory"),
-    ({"signatures": "signatures/"}, "signatures"),
-    ({"options": {"dump_records": 123}}, "options.dump_records"),
-    ({"options": {"state_dir": True}}, "options.state_dir"),
-])
+@pytest.mark.parametrize(
+    "payload,field",
+    [
+        ({"option": {"fail_on": "high"}}, "scan configuration"),
+        ({"options": {"fail_onn": "high"}}, "options"),
+        ({"options": []}, "options"),
+        ({"connectors": "cloud.aws"}, "connectors"),
+        ({"connectors": {"cloud.aws": {}}}, "connectors"),
+        ({"connectors": [{"name": "cloud.aws", "config": "expected_issuer=required"}]}, "connector config"),
+        ({"connectors": [{"name": 42}]}, "connector name"),
+        ({"connectors": [""]}, "connector name"),
+        ({"connectors": [{"name": "cloud.aws", "label": []}]}, "connector label"),
+        ({"inventory": "inventory/"}, "inventory"),
+        ({"inventory": [""]}, "inventory"),
+        ({"signatures": "signatures/"}, "signatures"),
+        ({"options": {"dump_records": 123}}, "options.dump_records"),
+        ({"options": {"state_dir": True}}, "options.state_dir"),
+    ],
+)
 def test_config_schema_rejects_ignored_or_misinterpreted_fields(payload, field):
     with pytest.raises(ConfigValidationError, match=field):
         ScanConfig.from_dict(payload)
@@ -111,11 +123,14 @@ def test_parallel_requires_positive_integer(value):
         ScanConfig.from_dict({"options": {"parallel": value}})
 
 
-@pytest.mark.parametrize("content", [
-    "options:\n  secret-as-key: arbitrary-private-value\n",
-    "connectors:\n  - name: cloud.aws\n    123: arbitrary-private-value\n",
-    "connectors: [arbitrary-private-value\n",
-])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "options:\n  secret-as-key: arbitrary-private-value\n",
+        "connectors:\n  - name: cloud.aws\n    123: arbitrary-private-value\n",
+        "connectors: [arbitrary-private-value\n",
+    ],
+)
 def test_schema_diagnostics_never_echo_unknown_keys_or_values(tmp_path, content):
     path = tmp_path / "scan.yaml"
     path.write_text(content)
@@ -127,16 +142,31 @@ def test_schema_diagnostics_never_echo_unknown_keys_or_values(tmp_path, content)
 
 def test_connector_specific_fields_and_nested_overrides_remain_supported(monkeypatch):
     monkeypatch.setenv("NEXUS_PARALLEL", "2")
-    config = ScanConfig.from_dict({
-        "options": {"parallel": "${NEXUS_PARALLEL}"},
-        "connectors": [{"name": "cloud.aws", "regions": ["us-east-1"],
-                        "config": {"regions": ["eu-west-1"], "cloudtrail_days": 3}}],
-    })
+    config = ScanConfig.from_dict(
+        {
+            "options": {"parallel": "${NEXUS_PARALLEL}"},
+            "connectors": [
+                {
+                    "name": "cloud.aws",
+                    "regions": ["us-east-1"],
+                    "config": {"regions": ["eu-west-1"], "cloudtrail_days": 3},
+                }
+            ],
+        }
+    )
     assert config.parallel == 2
     assert config.connectors[0].config == {"regions": ["eu-west-1"], "cloudtrail_days": 3}
 
 
 def test_unknown_built_in_connector_key_fails_closed_without_echoing_its_value():
-    with pytest.raises(ConfigValidationError, match=r"connector 'cloud\.aws' does not accept 'custom_plugin_setting'") as failure:
-        ScanConfig.from_dict({"connectors": [{"name": "cloud.aws", "config": {"custom_plugin_setting": "arbitrary-private-value"}}]})
+    with pytest.raises(
+        ConfigValidationError, match=r"connector 'cloud\.aws' does not accept 'custom_plugin_setting'"
+    ) as failure:
+        ScanConfig.from_dict(
+            {
+                "connectors": [
+                    {"name": "cloud.aws", "config": {"custom_plugin_setting": "arbitrary-private-value"}}
+                ]
+            }
+        )
     assert "arbitrary-private-value" not in str(failure.value)

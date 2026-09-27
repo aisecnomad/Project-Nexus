@@ -460,7 +460,9 @@ def main(argv: list[str] | None = None) -> int:
         help="bounded, labeled corpus JSON; default is the bundled synthetic corpus",
     )
     parser.add_argument("--repeats", type=int, default=1, help="repeat each scan for timing (1-20)")
-    parser.add_argument("--annotations", type=Path, help="verify independent labels and corpus digest before scanning")
+    parser.add_argument(
+        "--annotations", type=Path, help="verify independent labels and corpus digest before scanning"
+    )
     parser.add_argument("--output", type=Path, help="write JSON report to a local file, mode 0600")
     args = parser.parse_args(argv)
     try:

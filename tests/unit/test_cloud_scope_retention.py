@@ -29,9 +29,16 @@ def test_aws_late_lambda_page_failure_keeps_first_page(index):
     ctx = _context(index)
     connector = AwsConnector(ctx)
     client = Mock()
-    client.get_paginator.return_value.paginate.return_value = _late_failure({
-        "Functions": [{"FunctionName": "observed", "FunctionArn": "arn:aws:lambda:us-east-1:123456789012:function:observed"}],
-    })
+    client.get_paginator.return_value.paginate.return_value = _late_failure(
+        {
+            "Functions": [
+                {
+                    "FunctionName": "observed",
+                    "FunctionArn": "arn:aws:lambda:us-east-1:123456789012:function:observed",
+                }
+            ],
+        }
+    )
     client.list_tags.return_value = {"Tags": {}}
     connector._client = Mock(return_value=client)
     records = list(connector._collect_lambda("us-east-1"))
@@ -45,14 +52,28 @@ def test_aws_late_iam_page_failure_keeps_permission_evidence(index):
     ctx = _context(index)
     connector = AwsConnector(ctx)
     client = Mock()
-    client.get_paginator.return_value.paginate.return_value = _late_failure({
-        "RoleDetailList": [{
-            "Arn": "arn:aws:iam::123456789012:role/observed", "RoleName": "observed",
-            "RolePolicyList": [{"PolicyDocument": {"Statement": [{
-                "Effect": "Allow", "Action": "bedrock:InvokeModel",
-            }]}}],
-        }],
-    })
+    client.get_paginator.return_value.paginate.return_value = _late_failure(
+        {
+            "RoleDetailList": [
+                {
+                    "Arn": "arn:aws:iam::123456789012:role/observed",
+                    "RoleName": "observed",
+                    "RolePolicyList": [
+                        {
+                            "PolicyDocument": {
+                                "Statement": [
+                                    {
+                                        "Effect": "Allow",
+                                        "Action": "bedrock:InvokeModel",
+                                    }
+                                ]
+                            }
+                        }
+                    ],
+                }
+            ],
+        }
+    )
     connector._client = Mock(return_value=client)
     records = list(connector._collect_iam())
     assert [r["actions"] for r in records] == [["bedrock:InvokeModel"]]
@@ -70,7 +91,8 @@ def test_aws_repeated_manual_cursor_keeps_pages_and_marks_incomplete(index):
         {"items": [{"id": "second"}], "nextToken": "again"},
     ]
     assert list(connector._paginate(client, "list_items", "items")) == [
-        {"id": "first"}, {"id": "second"},
+        {"id": "first"},
+        {"id": "second"},
     ]
     assert ctx.stats.incomplete
     assert client.list_items.call_count == 2
@@ -89,14 +111,20 @@ def test_aws_missing_or_failed_collection_page_is_incomplete(index, invalid_page
 
 def test_gcp_shared_principal_is_attributed_per_resource_project(index):
     connector = GcpConnector(_context(index))
-    records = [{
-        "_kind": "audit-event", "principal": "agent@example.iam.gserviceaccount.com",
-        "_project": project, "method": "Predict",
-        "resource": f"projects/{project}/locations/us/endpoints/model",
-    } for project in ("project-a", "project-a", "project-b")]
+    records = [
+        {
+            "_kind": "audit-event",
+            "principal": "agent@example.iam.gserviceaccount.com",
+            "_project": project,
+            "method": "Predict",
+            "resource": f"projects/{project}/locations/us/endpoints/model",
+        }
+        for project in ("project-a", "project-a", "project-b")
+    ]
     findings = list(connector.analyze(records))
     assert {f.account: f.metadata["events"] for f in findings} == {
-        "project-a": 2, "project-b": 1,
+        "project-a": 2,
+        "project-b": 1,
     }
     assert len({f.id for f in findings}) == 2
     assert not connector.ctx.stats.incomplete
@@ -110,7 +138,15 @@ def test_azure_late_resource_graph_failure_keeps_first_page(index, later):
     connector._list = Mock(return_value=[])
     connector.http = Mock()
     connector.http.post_json.side_effect = [
-        {"data": [{"id": "/subscriptions/sub/providers/Microsoft.KeyVault/vaults/observed", "type": "microsoft.keyvault/vaults"}], "$skipToken": "next"},
+        {
+            "data": [
+                {
+                    "id": "/subscriptions/sub/providers/Microsoft.KeyVault/vaults/observed",
+                    "type": "microsoft.keyvault/vaults",
+                }
+            ],
+            "$skipToken": "next",
+        },
         later,
     ]
     records = list(connector.collect())
@@ -126,7 +162,8 @@ def test_azure_invalid_cursor_keeps_first_page_and_stops(index, cursor):
     connector._list = Mock(return_value=[])
     connector.http = Mock()
     connector.http.post_json.return_value = {
-        "data": [{"id": "/known-resource"}], "$skipToken": cursor,
+        "data": [{"id": "/known-resource"}],
+        "$skipToken": cursor,
     }
     assert [r["id"] for r in connector.collect()] == ["/known-resource"]
     assert connector.http.post_json.call_count == 1

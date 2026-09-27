@@ -121,7 +121,7 @@ def test_retries_share_the_original_current_thread_cpu_budget(monkeypatch):
 
 
 def test_genuinely_expensive_regex_is_preempted_without_retry():
-    code = r'''
+    code = r"""
 import regex
 import shadowscan.signatures.matcher as matcher
 matcher.REGEX_TIMEOUT_SECONDS = 0.03
@@ -138,7 +138,7 @@ except matcher.MatchTimeoutError:
     print('preempted once')
 else:
     raise AssertionError('expected a bounded failure')
-'''
+"""
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=3)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "preempted once"

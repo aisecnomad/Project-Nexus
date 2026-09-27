@@ -4,6 +4,7 @@ These are discovery checks, not substitutes for a vendor's versioned schema
 validator. Descriptive strings are never evaluated as source code. A filename
 only selects a parser; it does not establish an agent or a deployment.
 """
+
 from __future__ import annotations
 
 import json
@@ -34,6 +35,7 @@ class AgentManifestResult:
 
 _TEMPLATE_MARKER_RX = re.compile(r"\{\{-?\s*[.$a-zA-Z_\"']|\{%-?\s*[a-z]")
 
+
 def agent_manifest_kind(rel: str) -> str | None:
     path = PurePosixPath(rel)
     name = path.name.lower()
@@ -61,7 +63,9 @@ def _http_url(value: Any) -> bool:
         return False
     try:
         url = urlsplit(value)
-        return url.scheme in {"https", "http"} and bool(url.hostname) and not url.username and not url.password
+        return (
+            url.scheme in {"https", "http"} and bool(url.hostname) and not url.username and not url.password
+        )
     except ValueError:
         return False
 
@@ -73,9 +77,14 @@ def _service_endpoint(value: Any, transport: Any = None) -> bool:
         return False
     try:
         address = urlsplit("//" + value)
-        return bool(address.hostname) and address.port is not None and not (
-            address.path or address.query or address.fragment or address.username or address.password
-        ) and not any(char.isspace() for char in value)
+        return (
+            bool(address.hostname)
+            and address.port is not None
+            and not (
+                address.path or address.query or address.fragment or address.username or address.password
+            )
+            and not any(char.isspace() for char in value)
+        )
     except ValueError:
         return False
 
@@ -94,7 +103,11 @@ def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
     """
     result = AgentManifestResult()
     try:
-        data = bounded_safe_load(text) if PurePosixPath(rel).suffix.lower() in {".yaml", ".yml"} else json.loads(text)
+        data = (
+            bounded_safe_load(text)
+            if PurePosixPath(rel).suffix.lower() in {".yaml", ".yml"}
+            else json.loads(text)
+        )
     except (ValueError, RecursionError, yaml.YAMLError):
         result.errors.append("invalid agent manifest syntax")
         return result
@@ -110,7 +123,8 @@ def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
         elif any(not _nonempty(name) or not _graph_entrypoint(entry) for name, entry in graphs.items()):
             errors.append("LangGraph graph entries require a name and module-or-path:symbol entry point")
         if "dependencies" in data and (
-            not isinstance(data["dependencies"], list) or not all(_nonempty(dep) for dep in data["dependencies"])
+            not isinstance(data["dependencies"], list)
+            or not all(_nonempty(dep) for dep in data["dependencies"])
         ):
             errors.append("LangGraph dependencies must be an array of nonempty strings")
         if "env" in data and not isinstance(data["env"], (str, dict)):
@@ -119,24 +133,33 @@ def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
         for key in ("name", "version"):
             if not _nonempty(data.get(key)):
                 errors.append(f"A2A card requires a nonempty {key}")
-        interfaces = data.get("supportedInterfaces", data.get("supported_interfaces", data.get("additionalInterfaces", [])))
+        interfaces = data.get(
+            "supportedInterfaces", data.get("supported_interfaces", data.get("additionalInterfaces", []))
+        )
         if not _list_of_objects(interfaces):
             errors.append("A2A interfaces must be an array of objects")
             interfaces = []
         if not _service_endpoint(data.get("url"), data.get("preferredTransport")) and not any(
-            _service_endpoint(item.get("url"), item.get("protocolBinding", item.get("protocol_binding", item.get("transport"))))
+            _service_endpoint(
+                item.get("url"),
+                item.get("protocolBinding", item.get("protocol_binding", item.get("transport"))),
+            )
             for item in _objects(interfaces)
         ):
             errors.append("A2A card requires an HTTP(S) or declared gRPC service endpoint")
         if not isinstance(data.get("capabilities"), dict):
             errors.append("A2A card requires a capabilities object")
         skills = data.get("skills")
-        if not _list_of_objects(skills) or not skills or any(
-            not _nonempty(skill.get("id")) or not _nonempty(skill.get("name")) for skill in skills
+        if (
+            not _list_of_objects(skills)
+            or not skills
+            or any(not _nonempty(skill.get("id")) or not _nonempty(skill.get("name")) for skill in skills)
         ):
             errors.append("A2A card requires nonempty skills with string id and name")
         for key in ("defaultInputModes", "defaultOutputModes"):
-            if key in data and (not isinstance(data[key], list) or not all(_nonempty(mode) for mode in data[key])):
+            if key in data and (
+                not isinstance(data[key], list) or not all(_nonempty(mode) for mode in data[key])
+            ):
                 errors.append(f"A2A {key} must be an array of strings")
     elif kind == "m365":
         for key in ("name", "version", "description", "instructions"):
@@ -147,7 +170,8 @@ def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
                 errors.append(f"M365 {key} must be an array of objects")
     elif kind == "crewai":
         if not data or any(
-            not _nonempty(name) or not isinstance(agent, dict)
+            not _nonempty(name)
+            or not isinstance(agent, dict)
             or not all(_nonempty(agent.get(key)) for key in ("role", "goal", "backstory"))
             for name, agent in data.items()
         ):
@@ -166,7 +190,9 @@ def _graph_entrypoint(value: Any) -> bool:
     if not _nonempty(value) or ":" not in value or any(char.isspace() for char in value):
         return False
     module, symbol = value.rsplit(":", 1)
-    return bool(re.fullmatch(r"[A-Za-z0-9_./@$-]+", module)) and bool(re.fullmatch(r"[A-Za-z_$][\w.$]*", symbol))
+    return bool(re.fullmatch(r"[A-Za-z0-9_./@$-]+", module)) and bool(
+        re.fullmatch(r"[A-Za-z_$][\w.$]*", symbol)
+    )
 
 
 def _objects(value: Any) -> Iterator[dict[str, Any]]:
@@ -182,31 +208,54 @@ def _projected_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
         node_type = node.get("type")
         if "disabled" in node and node["disabled"] is not False:
             continue
-        if isinstance(node_type, str) and node_type.startswith(("@n8n/n8n-nodes-langchain.", "n8n-nodes-base.")):
+        if isinstance(node_type, str) and node_type.startswith(
+            ("@n8n/n8n-nodes-langchain.", "n8n-nodes-base.")
+        ):
             yield "platform.n8n", json.dumps({"type": node_type})
         node_data = node.get("data")
         if not isinstance(node_data, dict):
             continue
-        if _choice(node_data.get("category"), {"Agents", "Multi Agents", "Sequential Agents", "Agentflow"}) and _nonempty(node_data.get("name")):
-            yield "platform.flowise", json.dumps({"category": node_data["category"], "name": node_data["name"]})
+        if _choice(
+            node_data.get("category"), {"Agents", "Multi Agents", "Sequential Agents", "Agentflow"}
+        ) and _nonempty(node_data.get("name")):
+            yield (
+                "platform.flowise",
+                json.dumps({"category": node_data["category"], "name": node_data["name"]}),
+            )
         if node_data.get("type") == "Agent" and isinstance(node_data.get("node"), dict):
             yield "platform.langflow", json.dumps({"type": "Agent", "display_name": "Agent"})
     # Langflow wraps its graph in a data object; only enter that known graph
     # shape, not descriptions, samples, or arbitrary nested dictionaries.
     graph = data.get("data")
-    if isinstance(graph, dict) and isinstance(graph.get("nodes"), list) and isinstance(graph.get("edges"), list):
+    if (
+        isinstance(graph, dict)
+        and isinstance(graph.get("nodes"), list)
+        and isinstance(graph.get("edges"), list)
+    ):
         for node in _objects(graph["nodes"]):
             node_data = node.get("data")
-            if isinstance(node_data, dict) and node_data.get("type") == "Agent" and isinstance(node_data.get("node"), dict):
+            if (
+                isinstance(node_data, dict)
+                and node_data.get("type") == "Agent"
+                and isinstance(node_data.get("node"), dict)
+            ):
                 yield "platform.langflow", json.dumps({"type": "Agent", "display_name": "Agent"})
     # Dify's top-level app identity plus an actual model/workflow declaration.
     app = data.get("app")
-    if data.get("kind") == "app" and isinstance(app, dict) and _choice(app.get("mode"), {"agent-chat", "advanced-chat", "workflow", "completion", "chat"}):
+    if (
+        data.get("kind") == "app"
+        and isinstance(app, dict)
+        and _choice(app.get("mode"), {"agent-chat", "advanced-chat", "workflow", "completion", "chat"})
+    ):
         model = data.get("model_config")
         workflow = data.get("workflow")
         model_spec = model.get("model") if isinstance(model, dict) else None
         graph_spec = workflow.get("graph") if isinstance(workflow, dict) else None
-        has_model = isinstance(model_spec, dict) and _nonempty(model_spec.get("provider")) and _nonempty(model_spec.get("name"))
+        has_model = (
+            isinstance(model_spec, dict)
+            and _nonempty(model_spec.get("provider"))
+            and _nonempty(model_spec.get("name"))
+        )
         has_nodes = isinstance(graph_spec, dict) and any(
             isinstance(node.get("data"), dict) and _choice(node["data"].get("type"), {"agent", "llm", "tool"})
             for node in _objects(graph_spec.get("nodes"))
@@ -237,13 +286,26 @@ def _projected_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
     for step in _objects(data.get("code", data.get("steps"))):
         if _nonempty(step.get("provider")) and _nonempty(step.get("name", step.get("operation"))):
             yield "platform.workato", json.dumps({"provider": step["provider"]})
-    if _choice(data.get("kind"), {"AdaptiveDialog", "GptComponentMetadata", "OnRecognizedIntent", "CustomTopic", "TaskDialog", "ConversationalTopic"}) and (
-        isinstance(data.get("beginDialog"), dict) or isinstance(data.get("actions"), list)
-    ):
+    if _choice(
+        data.get("kind"),
+        {
+            "AdaptiveDialog",
+            "GptComponentMetadata",
+            "OnRecognizedIntent",
+            "CustomTopic",
+            "TaskDialog",
+            "ConversationalTopic",
+        },
+    ) and (isinstance(data.get("beginDialog"), dict) or isinstance(data.get("actions"), list)):
         yield "platform.copilot-studio", "kind: " + data["kind"]
     # Gateways: structural configuration, without promoting arbitrary prompts.
     models = data.get("model_list")
-    if isinstance(models, list) and any(_nonempty(model.get("model_name")) and isinstance(model.get("litellm_params"), dict) and _nonempty(model["litellm_params"].get("model")) for model in _objects(models)):
+    if isinstance(models, list) and any(
+        _nonempty(model.get("model_name"))
+        and isinstance(model.get("litellm_params"), dict)
+        and _nonempty(model["litellm_params"].get("model"))
+        for model in _objects(models)
+    ):
         yield "platform.litellm", "model_list:\n"
     for plugin in _objects(data.get("plugins")):
         if _nonempty(plugin.get("name")) and isinstance(plugin.get("config"), dict):
@@ -262,9 +324,14 @@ def _projected_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
             host = inputs.get("host") if isinstance(inputs.get("host"), dict) else {}
             connection = inputs.get("serviceProviderConfiguration")
             projection: dict[str, Any] = {
-                "host": {key: host[key] for key in ("apiId", "operationId", "connectionName") if isinstance(host.get(key), str)},
+                "host": {
+                    key: host[key]
+                    for key in ("apiId", "operationId", "connectionName")
+                    if isinstance(host.get(key), str)
+                },
                 "serviceProviderConfiguration": {
-                    key: connection[key] for key in ("serviceProviderId", "operationId", "connectionName")
+                    key: connection[key]
+                    for key in ("serviceProviderId", "operationId", "connectionName")
                     if isinstance(connection, dict) and isinstance(connection.get(key), str)
                 },
             }
@@ -290,7 +357,11 @@ def _coding_agent_signals(rel: str, data: dict[str, Any]) -> Iterator[tuple[str,
     if ".codex" in path.parts and path.name == "config.toml":
         active = data.copy()
         profiles, profile = data.get("profiles"), data.get("profile")
-        if isinstance(profiles, dict) and isinstance(profile, str) and isinstance(profiles.get(profile), dict):
+        if (
+            isinstance(profiles, dict)
+            and isinstance(profile, str)
+            and isinstance(profiles.get(profile), dict)
+        ):
             active.update(profiles[profile])
         for key, expected in (("approval_policy", "never"), ("sandbox_mode", "danger-full-access")):
             if active.get(key) == expected:
@@ -313,16 +384,23 @@ _AGENT_CONFIG_FILES = {
 def is_agent_config_path(rel: str) -> bool:
     """Whether ``rel`` is a coding-agent settings file read by this module."""
     path = PurePosixPath(rel)
-    return any(directory in path.parts and path.name in names for directory, names in _AGENT_CONFIG_FILES.items())
+    return any(
+        directory in path.parts and path.name in names for directory, names in _AGENT_CONFIG_FILES.items()
+    )
 
 
 # Expat refuses documents whose entity expansion exceeds its amplification
 # limit; like a nesting limit, that says nothing about the syntax.
-_XML_AMPLIFICATION_LIMIT = expat_errors.codes.get(getattr(expat_errors, "XML_ERROR_AMPLIFICATION_LIMIT_BREACH", ""))
+_XML_AMPLIFICATION_LIMIT = expat_errors.codes.get(
+    getattr(expat_errors, "XML_ERROR_AMPLIFICATION_LIMIT_BREACH", "")
+)
 
 
 def structured_code_matches(
-    index: SignatureIndex, rel: str, text: str, errors: list[str] | None = None,
+    index: SignatureIndex,
+    rel: str,
+    text: str,
+    errors: list[str] | None = None,
     limit_errors: list[str] | None = None,
 ) -> list[Match]:
     """Match recognized operational config shapes, preserving signature policy.
@@ -357,7 +435,14 @@ def structured_code_matches(
             # descriptions/CDATA do not become active Salesforce metadata.
             root = ET.fromstring(text)
             tag = root.tag.rsplit("}", 1)[-1]
-            if tag in {"GenAiPlanner", "GenAiPlugin", "GenAiFunction", "GenAiPromptTemplate", "BotDefinition", "BotVersion"} and len(root):
+            if tag in {
+                "GenAiPlanner",
+                "GenAiPlugin",
+                "GenAiFunction",
+                "GenAiPromptTemplate",
+                "BotDefinition",
+                "BotVersion",
+            } and len(root):
                 return _matches(index, "platform.salesforce-agentforce", "<" + tag + ">")
             return []
         else:
@@ -389,10 +474,12 @@ def structured_code_matches(
 
 def _matches(index: SignatureIndex, signature: str, projection: str) -> list[Match]:
     matches = [
-        match for match in index.match_code(projection, None)
+        match
+        for match in index.match_code(projection, None)
         # n8n model nodes (lmChatOpenAi, lmChatAnthropic...) also name the
         # provider that receives the workflow's data.
-        if match.signature_id == signature or (signature == "platform.n8n" and match.signature.category == "provider")
+        if match.signature_id == signature
+        or (signature == "platform.n8n" and match.signature.category == "provider")
     ]
     for match in matches:
         # Projection offsets are not source line numbers. Do not claim an
@@ -402,7 +489,8 @@ def _matches(index: SignatureIndex, signature: str, projection: str) -> list[Mat
         if signature == "platform.n8n":
             node_type = json.loads(projection).get("type", "")
             match.extra["verified_agent"] = match.signature_id == signature and node_type in {
-                "@n8n/n8n-nodes-langchain.agent", "@n8n/n8n-nodes-langchain.agentTool",
+                "@n8n/n8n-nodes-langchain.agent",
+                "@n8n/n8n-nodes-langchain.agentTool",
                 "@n8n/n8n-nodes-langchain.openAiAssistant",
             }
         elif signature == "platform.dify":

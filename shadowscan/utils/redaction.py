@@ -23,17 +23,56 @@ from urllib.parse import unquote
 REDACTED = "[REDACTED]"
 _FINGERPRINT = re.compile(r"^credential:sha256:[a-f0-9]{64}$")
 _SENSITIVE_SUFFIXES = (
-    "apikey", "accesskey", "secretkey", "keystring", "privatekeydata", "accesskeyid", "secretaccesskey",
-    "accesstoken", "refreshtoken", "idtoken", "authtoken", "apitoken", "foundrytoken", "githubtoken", "clientsecret",
-    "authorization", "proxyauthorization", "password", "passwd", "privatekey",
-    "credential", "credentials", "bearertoken", "sessiontoken", "signingkey",
-    "secretstring", "secretbinary", "connectionstring", "connstr",
+    "apikey",
+    "accesskey",
+    "secretkey",
+    "keystring",
+    "privatekeydata",
+    "accesskeyid",
+    "secretaccesskey",
+    "accesstoken",
+    "refreshtoken",
+    "idtoken",
+    "authtoken",
+    "apitoken",
+    "foundrytoken",
+    "githubtoken",
+    "clientsecret",
+    "authorization",
+    "proxyauthorization",
+    "password",
+    "passwd",
+    "privatekey",
+    "credential",
+    "credentials",
+    "bearertoken",
+    "sessiontoken",
+    "signingkey",
+    "secretstring",
+    "secretbinary",
+    "connectionstring",
+    "connstr",
     # Azure storage / Service Bus connection-string members and SAS tokens.
-    "accountkey", "sharedaccesskey", "sastoken",
+    "accountkey",
+    "sharedaccesskey",
+    "sastoken",
     # Capability URLs: whoever holds a webhook URL can post through it.
-    "webhookurl", "webhookuri", "webhookid", "hookurl",
+    "webhookurl",
+    "webhookuri",
+    "webhookid",
+    "hookurl",
 )
-_SENSITIVE_NAMES = {"token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie"}
+_SENSITIVE_NAMES = {
+    "token",
+    "jwt",
+    "secret",
+    "bearer",
+    "passwd",
+    "password",
+    "authorization",
+    "cookie",
+    "setcookie",
+}
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
 _SECRET_TOKEN = re.compile(
@@ -52,7 +91,10 @@ _SECRET_TOKEN = re.compile(
 # withheld. Query parameters (e.g. Power Automate's ``sig``) are handled by the
 # ordinary query-field rules.
 _PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
-    (re.compile(r"hooks\.slack(?:-gov)?\.com"), re.compile(r"/(?:services|workflows|triggers|actions|commands)/")),
+    (
+        re.compile(r"hooks\.slack(?:-gov)?\.com"),
+        re.compile(r"/(?:services|workflows|triggers|actions|commands)/"),
+    ),
     (re.compile(r"(?:(?:ptb|canary)\.)?discord(?:app)?\.com"), re.compile(r"/api(?:/v\d+)?/webhooks/")),
     (re.compile(r"(?:[a-z0-9-]+\.)*webhook\.office\.com"), re.compile(r"/webhook(?:b2)?/")),
     (re.compile(r"outlook\.office(?:365)?\.com"), re.compile(r"/webhook(?:b2)?/")),
@@ -64,7 +106,10 @@ _PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     (re.compile(r".+"), re.compile(r"(?:/[^/]+)*?/webhook(?:-test|-waiting)?/")),
 )
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
-_PEM = re.compile(r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)", re.DOTALL)
+_PEM = re.compile(
+    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)",
+    re.DOTALL,
+)
 _AUTH = re.compile(r"(?i)\b(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 # A key must be consumed in full: truncating it to a fixed number of characters
@@ -100,7 +145,8 @@ _YAML_MAPPING_LINE = re.compile(
     r"^(?P<prefix>[ \t]*(?:-[ \t]+)*)(?:(?P<quote>[\"'])"
     r"(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
     r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*:[ \t]*"
-    r"(?P<value>[^\r\n]*)", re.MULTILINE,
+    r"(?P<value>[^\r\n]*)",
+    re.MULTILINE,
 )
 _YAML_CONTINUATION_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n|\Z)")
 _MAX_SANITIZATION_NODES = 100_000
@@ -133,7 +179,9 @@ def _redact_yaml_multiline_values(text: str) -> str:
     pieces: list[str] = []
     cursor = 0
     for match in _YAML_MAPPING_LINE.finditer(text):
-        if match.start() < cursor or not _sensitive_assignment_key(match.group("quoted") or match.group("plain")):
+        if match.start() < cursor or not _sensitive_assignment_key(
+            match.group("quoted") or match.group("plain")
+        ):
             continue
         value = match.group("value").strip()
         # Quoted and flow-style values are consumed by the mapping lexer.
@@ -224,7 +272,9 @@ def _redact_mapping_values(text: str) -> str:
     pieces: list[str] = []
     cursor = 0
     for match in _MAPPING_VALUE.finditer(text):
-        if match.start() < cursor or not _sensitive_assignment_key(match.group("quoted") or match.group("plain")):
+        if match.start() < cursor or not _sensitive_assignment_key(
+            match.group("quoted") or match.group("plain")
+        ):
             continue
         start = match.start("value")
         end = _mapping_expression_end(text, start)
@@ -233,7 +283,7 @@ def _redact_mapping_values(text: str) -> str:
         if len(bare) > 1 and bare[0] in "\"'" and bare[-1] == bare[0] and _FINGERPRINT.fullmatch(bare[1:-1]):
             continue
         pieces.append(text[cursor:start])
-        trailing_space = raw[len(raw.rstrip(" \t")):]
+        trailing_space = raw[len(raw.rstrip(" \t")) :]
         pieces.append('"' + REDACTED + '"' + "\n" * raw.count("\n") + trailing_space)
         cursor = end
     if not pieces:
@@ -315,7 +365,20 @@ def _indexed_assignment_candidates(text: str) -> Iterator[tuple[int, str, str, i
                     # a stored credential.
                     yield match.start(), key, ":", position + 1
                     break
-                operator = next((op for op in ("&&=", "||=", "??=", "+=", "=",) if text.startswith(op, position)), None)
+                operator = next(
+                    (
+                        op
+                        for op in (
+                            "&&=",
+                            "||=",
+                            "??=",
+                            "+=",
+                            "=",
+                        )
+                        if text.startswith(op, position)
+                    ),
+                    None,
+                )
                 if operator and not text.startswith(("==", "=>"), position):
                     yield match.start(), key, "=", position + len(operator)
                 break
@@ -323,8 +386,10 @@ def _indexed_assignment_candidates(text: str) -> Iterator[tuple[int, str, str, i
 
 
 def _assignment_candidates(text: str) -> Iterator[tuple[int, str, str, int]]:
-    plain = ((match.start(), match.group("key"), match.group("separator"), match.end())
-             for match in _PYTHON_ASSIGNMENT_KEY.finditer(text))
+    plain = (
+        (match.start(), match.group("key"), match.group("separator"), match.end())
+        for match in _PYTHON_ASSIGNMENT_KEY.finditer(text)
+    )
     return heapq.merge(plain, _indexed_assignment_candidates(text), key=lambda candidate: candidate[0])
 
 
@@ -389,7 +454,9 @@ def _redact_python_assignments(text: str) -> str:
                     # not TokenError. A semicolon inside one is not a boundary.
                     break
                 if item.type == token.OP:
-                    if item.string == "`" or (item.string in {"/", "//"} and text.startswith(("/*", "//"), position)):
+                    if item.string == "`" or (
+                        item.string in {"/", "//"} and text.startswith(("/*", "//"), position)
+                    ):
                         # Python's tokenizer is not a JavaScript template/comment
                         # lexer (some Python versions classify backticks as OP).
                         # Withhold the remaining expression conservatively instead
@@ -406,8 +473,10 @@ def _redact_python_assignments(text: str) -> str:
                             break
                         if brackets.pop() != {")": "(", "]": "[", "}": "{"}[item.string]:
                             break
-                    elif assigned_at is not None and not brackets and (
-                        item.string == ";" or (argument and item.string == ",")
+                    elif (
+                        assigned_at is not None
+                        and not brackets
+                        and (item.string == ";" or (argument and item.string == ","))
                     ):
                         end = position
                         break
@@ -590,7 +659,9 @@ class _CallLexer:
                 continue
             if comments and (char == "#" or text.startswith(("//", "/*"), position)):
                 skipped_comment = True
-                position = self.block_end(position) if text.startswith("/*", position) else self.line_end(position)
+                position = (
+                    self.block_end(position) if text.startswith("/*", position) else self.line_end(position)
+                )
                 continue
             if char in "([{":
                 if len(brackets) >= _MAX_CALL_DEPTH:
@@ -633,7 +704,7 @@ def _call_argument_start(text: str, start: int, end: int) -> int:
 
 def _literal_credential_key(expression: str) -> bool:
     """Read only a literal string key; never evaluate an arbitrary expression."""
-    expression = expression[_call_argument_start(expression, 0, len(expression)):].strip()
+    expression = expression[_call_argument_start(expression, 0, len(expression)) :].strip()
     plain = _CALL_PLAIN_KEY.fullmatch(expression)
     if plain:
         return _sensitive_assignment_key(plain.group("key"))
@@ -660,13 +731,15 @@ def _credential_key_argument(text: str, start: int, end: int, bounded: bool) -> 
     """
     if bounded or end - start <= 4096:
         return _literal_credential_key(text[start:end])
-    head = text[start:start + 4096]
+    head = text[start : start + 4096]
     plain = _CALL_PLAIN_KEY.match(head, _call_argument_start(head, 0, len(head)))
     return plain is not None and _sensitive_assignment_key(plain.group("key"))
 
 
 def _credential_call_values(
-    text: str, spans: list[tuple[int, int]], closed: bool,
+    text: str,
+    spans: list[tuple[int, int]],
+    closed: bool,
 ) -> tuple[bool, list[tuple[int, int]]]:
     """Whether a call pairs a literal credential key with values, and their spans."""
     sensitive = False
@@ -729,7 +802,7 @@ def _redact_credential_calls(text: str) -> str:
                 continue
             pieces.append(text[cursor:start])
             # Preserve physical line numbers and surrounding call arguments.
-            spaces = raw[:len(raw) - len(raw.lstrip(" \t"))]
+            spaces = raw[: len(raw) - len(raw.lstrip(" \t"))]
             pieces.append(spaces + '"' + REDACTED + '"' + "\n" * raw.count("\n"))
             cursor = end
     if not pieces:
@@ -770,7 +843,7 @@ def _redact_value(value: Any) -> Any:
 def _url_host(authority: str) -> str:
     host = authority.rsplit("@", 1)[-1]
     if host.startswith("["):
-        host = host[1:host.find("]")] if "]" in host else host[1:]
+        host = host[1 : host.find("]")] if "]" in host else host[1:]
     else:
         host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
     return host.rstrip(".").lower()
@@ -788,7 +861,7 @@ def _redact_path_secret(host: str, path: str) -> str:
             continue
         prefix = prefix_rx.match(path)
         if prefix and prefix.end() < len(path):
-            return path[:prefix.end()] + REDACTED
+            return path[: prefix.end()] + REDACTED
     return path
 
 
@@ -810,7 +883,14 @@ def _sanitize_url(match: re.Match[str]) -> str:
         if not equals:
             return field
         decoded = unquote(key).lower()
-        sensitive = _sensitive_assignment_key(decoded) or decoded in {"key", "sig", "signature", "code", "x-amz-signature", "x-goog-signature"}
+        sensitive = _sensitive_assignment_key(decoded) or decoded in {
+            "key",
+            "sig",
+            "signature",
+            "code",
+            "x-amz-signature",
+            "x-goog-signature",
+        }
         return key + equals + (REDACTED if sensitive else value)
 
     # Consume each field once. A regex that retries an unbounded key after every
@@ -820,10 +900,10 @@ def _sanitize_url(match: re.Match[str]) -> str:
     start = min((pos for c in "?&#" if (pos := url.find(c)) >= 0), default=len(url))
     if start == len(url):
         return url
-    parts = [url[:start + 1]]
+    parts = [url[: start + 1]]
     cursor = start + 1
     for separator in _QUERY_SEPARATOR.finditer(url, cursor):
-        parts.append(query_value(url[cursor:separator.start()]))
+        parts.append(query_value(url[cursor : separator.start()]))
         parts.append(separator.group(0))
         cursor = separator.end()
     parts.append(query_value(url[cursor:]))
@@ -897,7 +977,9 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
 
     def record_has_secret_value(item: Mapping, *, environment: bool = False) -> bool:
         name = item.get("name") or item.get("Name") or item.get("key") or item.get("Key")
-        return isinstance(name, str) and (_sensitive_assignment_key(name) if environment else _sensitive_key(name))
+        return isinstance(name, str) and (
+            _sensitive_assignment_key(name) if environment else _sensitive_key(name)
+        )
 
     def remember(child: Any) -> None:
         if isinstance(child, str) and child:
@@ -925,7 +1007,12 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
             for key, child in item.items():
                 if _sensitive_key(str(key)) or environment and _sensitive_assignment_key(str(key)):
                     remember(child)
-                child_environment = environment or str(key).lower() in {"env", "environment", "environment_variables", "environmentvariables"}
+                child_environment = environment or str(key).lower() in {
+                    "env",
+                    "environment",
+                    "environment_variables",
+                    "environmentvariables",
+                }
                 if env_values_are_secrets and child_environment:
                     if isinstance(child, Mapping):
                         for env_value in child.values():
@@ -938,7 +1025,11 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
         elif isinstance(item, (list, tuple)):
             previous = None
             for child in item:
-                if isinstance(previous, str) and previous.startswith("-") and _sensitive_key(previous.lstrip("-")):
+                if (
+                    isinstance(previous, str)
+                    and previous.startswith("-")
+                    and _sensitive_key(previous.lstrip("-"))
+                ):
                     remember(child)
                 discover(child, depth + 1, environment=environment)
                 previous = child
@@ -1023,12 +1114,28 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
                 name = str(key)
                 if _sensitive_key(name) or (record_has_secret_value(item) and name.lower() == "value"):
                     result = _redact_value(child)
-                elif name.lower() in {"env", "environment", "environment_variables", "environmentvariables"} and isinstance(child, Mapping):
+                elif name.lower() in {
+                    "env",
+                    "environment",
+                    "environment_variables",
+                    "environmentvariables",
+                } and isinstance(child, Mapping):
                     result = {text(str(k)): _redact_value(v) for k, v in child.items()}
-                elif name.lower() in {"env", "environment", "environment_variables", "environmentvariables"} and isinstance(child, list):
+                elif name.lower() in {
+                    "env",
+                    "environment",
+                    "environment_variables",
+                    "environmentvariables",
+                } and isinstance(child, list):
                     result = [
-                        {text(str(k)): (_redact_value(v) if str(k).lower() == "value" else clean(v, depth + 1)) for k, v in entry.items()}
-                        if isinstance(entry, Mapping) else _redact_value(entry)
+                        {
+                            text(str(k)): (
+                                _redact_value(v) if str(k).lower() == "value" else clean(v, depth + 1)
+                            )
+                            for k, v in entry.items()
+                        }
+                        if isinstance(entry, Mapping)
+                        else _redact_value(entry)
                         for entry in child
                     ]
                 else:
@@ -1129,4 +1236,6 @@ def _is_policy(value: Any) -> bool:
 
 # Every module-level rule, pattern, limit and helper defined above. Computed
 # last so a newly added policy constant is covered without registration.
-_POLICY_NAMES = tuple(sorted(name for name, value in globals().items() if not name.startswith("__") and _is_policy(value)))
+_POLICY_NAMES = tuple(
+    sorted(name for name, value in globals().items() if not name.startswith("__") and _is_policy(value))
+)

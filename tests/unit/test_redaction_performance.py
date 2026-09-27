@@ -14,36 +14,39 @@ ROOT = Path(__file__).resolve().parents[2]
 SECRET = "opaque-value-with-no-provider-prefix"
 
 
-@pytest.mark.parametrize(("url", "expected"), [
-    (
-        f"https://example.test/path?%61pi%5Fkey={SECRET}&model=test#state=next",
-        f"https://example.test/path?%61pi%5Fkey={REDACTED}&model=test#state=next",
-    ),
-    (
-        f"https://example.test/#access_token={SECRET}&state=next",
-        f"https://example.test/#access_token={REDACTED}&state=next",
-    ),
-    (
-        f"https://user:{SECRET}@example.test?token={SECRET}&contact=a@b.test",
-        f"https://{REDACTED}@example.test?token={REDACTED}&contact=a@b.test",
-    ),
-    (
-        f"https://example.test?contact=a@b.test&signature={SECRET}",
-        f"https://example.test?contact=a@b.test&signature={REDACTED}",
-    ),
-    (
-        f"https://example.test?token={SECRET}?private-suffix&safe=a?b#code={SECRET}",
-        f"https://example.test?token={REDACTED}&safe=a?b#code={REDACTED}",
-    ),
-    (
-        f"https://example.test?token={SECRET}&token={SECRET}#%70assword={SECRET}",
-        f"https://example.test?token={REDACTED}&token={REDACTED}#%70assword={REDACTED}",
-    ),
-    (
-        "https://example.test/path?&&q=ordinary??text&flag#fragment",
-        "https://example.test/path?&&q=ordinary??text&flag#fragment",
-    ),
-])
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            f"https://example.test/path?%61pi%5Fkey={SECRET}&model=test#state=next",
+            f"https://example.test/path?%61pi%5Fkey={REDACTED}&model=test#state=next",
+        ),
+        (
+            f"https://example.test/#access_token={SECRET}&state=next",
+            f"https://example.test/#access_token={REDACTED}&state=next",
+        ),
+        (
+            f"https://user:{SECRET}@example.test?token={SECRET}&contact=a@b.test",
+            f"https://{REDACTED}@example.test?token={REDACTED}&contact=a@b.test",
+        ),
+        (
+            f"https://example.test?contact=a@b.test&signature={SECRET}",
+            f"https://example.test?contact=a@b.test&signature={REDACTED}",
+        ),
+        (
+            f"https://example.test?token={SECRET}?private-suffix&safe=a?b#code={SECRET}",
+            f"https://example.test?token={REDACTED}&safe=a?b#code={REDACTED}",
+        ),
+        (
+            f"https://example.test?token={SECRET}&token={SECRET}#%70assword={SECRET}",
+            f"https://example.test?token={REDACTED}&token={REDACTED}#%70assword={REDACTED}",
+        ),
+        (
+            "https://example.test/path?&&q=ordinary??text&flag#fragment",
+            "https://example.test/path?&&q=ordinary??text&flag#fragment",
+        ),
+    ],
+)
 def test_url_redaction_preserves_structure_and_is_idempotent(url, expected):
     safe = sanitize_text(url)
     assert safe == expected
@@ -56,8 +59,12 @@ def _bounded_process(script: str, *args: str) -> None:
     # ordinary hardware) from the former quadratic retry, which takes minutes.
     # No small wall-clock threshold or machine-dependent timing ratio is used.
     result = subprocess.run(
-        [sys.executable, "-c", script, *args], cwd=ROOT,
-        capture_output=True, text=True, timeout=30, check=False,
+        [sys.executable, "-c", script, *args],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -86,10 +93,12 @@ assert secret not in safe and REDACTED in safe
 
 def test_full_source_scan_survives_hostile_url_preprocessing(tmp_path):
     (tmp_path / "a.py").write_text(
-        "url = 'https://example.test/" + "?" * 500_000 + "'\n", encoding="utf-8",
+        "url = 'https://example.test/" + "?" * 500_000 + "'\n",
+        encoding="utf-8",
     )
     (tmp_path / "b.py").write_text("from crewai import Agent\n", encoding="utf-8")
-    _bounded_process("""
+    _bounded_process(
+        """
 import sys
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector
@@ -100,4 +109,6 @@ ctx = ConnectorContext(config={
 findings = FilesystemConnector(ctx).run()
 assert ctx.stats.objects_examined == 2, ctx.stats
 assert any('framework.crewai' in finding.frameworks for finding in findings), ctx.stats
-""", str(tmp_path))
+""",
+        str(tmp_path),
+    )

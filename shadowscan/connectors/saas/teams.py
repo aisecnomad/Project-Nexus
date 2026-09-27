@@ -31,7 +31,9 @@ class TeamsConnector(BaseConnector):
     name: ClassVar[str] = "saas.microsoft-teams"
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "microsoft-teams"
-    description: ClassVar[str] = "Teams apps (custom + store) with bots, message extensions and Copilot agents, plus their installations."
+    description: ClassVar[str] = (
+        "Teams apps (custom + store) with bots, message extensions and Copilot agents, plus their installations."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "tenant_id": "env AZURE_TENANT_ID",
         "client_id": "env AZURE_CLIENT_ID",
@@ -54,9 +56,19 @@ class TeamsConnector(BaseConnector):
             cid = self.ctx.get("client_id", env="AZURE_CLIENT_ID")
             secret = self.ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
             if not (self.tenant and cid and secret):
-                raise ConnectorError("saas.microsoft-teams: tenant_id, client_id, client_secret (or access_token) required")
+                raise ConnectorError(
+                    "saas.microsoft-teams: tenant_id, client_id, client_secret (or access_token) required"
+                )
             client = HttpClient()
-            resp = client.post(f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token", data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret, "scope": "https://graph.microsoft.com/.default"})
+            resp = client.post(
+                f"https://login.microsoftonline.com/{self.tenant}/oauth2/v2.0/token",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": cid,
+                    "client_secret": secret,
+                    "scope": "https://graph.microsoft.com/.default",
+                },
+            )
             token = client.read_json_response(resp)["access_token"]
         return HttpClient(GRAPH, headers={"Authorization": f"Bearer {token}"})
 
@@ -76,14 +88,18 @@ class TeamsConnector(BaseConnector):
         for app in self._pages(http, "/appCatalogs/teamsApps", params=params):
             app["_kind"] = "teamsApp"
             yield app
-        for n, team in enumerate(self._pages(http, "/teams", params={"$select": "id,displayName", "$top": 999})):
+        for n, team in enumerate(
+            self._pages(http, "/teams", params={"$select": "id,displayName", "$top": 999})
+        ):
             if n >= self.max_teams:
                 self.ctx.warn("saas.microsoft-teams: max_teams reached")
                 break
             if not self._record_fields_valid(team, required=("id",), strings=("displayName",)):
                 self.ctx.warn("saas.microsoft-teams: malformed team identity; installed-app coverage unknown")
                 continue
-            for inst in self._pages(http, f"/teams/{team['id']}/installedApps", params={"$expand": "teamsApp,teamsAppDefinition"}):
+            for inst in self._pages(
+                http, f"/teams/{team['id']}/installedApps", params={"$expand": "teamsApp,teamsAppDefinition"}
+            ):
                 inst["_kind"] = "installedApp"
                 inst["_team"] = team.get("displayName")
                 yield inst
@@ -94,7 +110,9 @@ class TeamsConnector(BaseConnector):
         for rec in records:
             kind = self._record_kind(rec)
             if kind is None:
-                self.ctx.warn("saas.microsoft-teams: unsupported or malformed app record; coverage incomplete")
+                self.ctx.warn(
+                    "saas.microsoft-teams: unsupported or malformed app record; coverage incomplete"
+                )
                 continue
             if kind == "teamsApp":
                 apps[rec["id"]] = rec
@@ -104,23 +122,41 @@ class TeamsConnector(BaseConnector):
                 app_id = app.get("id") or definition["teamsAppId"]
                 installs.setdefault(app_id, []).append(rec)
                 if app_id not in apps:
-                    apps[app_id] = {"id": app_id, "displayName": definition.get("displayName"), **app,
-                                    "appDefinitions": [definition] if definition else [], "_from_install": True}
+                    apps[app_id] = {
+                        "id": app_id,
+                        "displayName": definition.get("displayName"),
+                        **app,
+                        "appDefinitions": [definition] if definition else [],
+                        "_from_install": True,
+                    }
         for app_id, app in apps.items():
             self.ctx.examined()
             try:
                 f = self._app_finding(app_id, app, installs.get(app_id, []))
-            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+            except (
+                AttributeError,
+                TypeError,
+                ValueError,
+                KeyError,
+                RecursionError,
+                MatchTimeoutError,
+            ) as exc:
                 detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
-                self.ctx.warn(f"saas.microsoft-teams: skipped a malformed app record ({type(exc).__name__}){detail}")
+                self.ctx.warn(
+                    f"saas.microsoft-teams: skipped a malformed app record ({type(exc).__name__}){detail}"
+                )
                 continue
             if f:
                 yield f
 
     def _record_kind(self, rec: dict[str, Any]) -> str | None:
-        if not self._record_fields_valid(rec, strings=("_kind", "id", "_team"), mappings=("teamsApp", "teamsAppDefinition")):
+        if not self._record_fields_valid(
+            rec, strings=("_kind", "id", "_team"), mappings=("teamsApp", "teamsAppDefinition")
+        ):
             return None
-        kind = rec.get("_kind") or ("installedApp" if "teamsApp" in rec or "teamsAppDefinition" in rec else "teamsApp")
+        kind = rec.get("_kind") or (
+            "installedApp" if "teamsApp" in rec or "teamsAppDefinition" in rec else "teamsApp"
+        )
         if kind == "teamsApp":
             return kind if self._valid_app(rec) else None
         if kind != "installedApp":
@@ -135,12 +171,16 @@ class TeamsConnector(BaseConnector):
         definition_app_id = (definition or {}).get("teamsAppId")
         # An installation ID is a different resource. It cannot substitute for
         # the catalog app ID when the requested expansion is absent or invalid.
-        if not (app_id or definition_app_id) or (app_id and definition_app_id and app_id != definition_app_id):
+        if not (app_id or definition_app_id) or (
+            app_id and definition_app_id and app_id != definition_app_id
+        ):
             return None
         return kind
 
     def _valid_app(self, app: Any) -> bool:
-        if not self._record_fields_valid(app, required=("id",), strings=("displayName", "distributionMethod", "externalId")):
+        if not self._record_fields_valid(
+            app, required=("id",), strings=("displayName", "distributionMethod", "externalId")
+        ):
             return False
         if "appDefinitions" not in app:
             return True
@@ -152,18 +192,34 @@ class TeamsConnector(BaseConnector):
 
     def _valid_definition(self, definition: Any) -> bool:
         if not self._record_fields_valid(
-            definition, strings=("id", "teamsAppId", "version", "displayName", "publishingState", "description", "shortDescription", "lastModifiedDateTime"),
+            definition,
+            strings=(
+                "id",
+                "teamsAppId",
+                "version",
+                "displayName",
+                "publishingState",
+                "description",
+                "shortDescription",
+                "lastModifiedDateTime",
+            ),
             mappings=("bot", "createdBy", "authorization"),
         ):
             return False
         if "teamsAppId" in definition and not self._record_fields_valid(definition, required=("teamsAppId",)):
             return False
-        if definition.get("bot") is not None and not self._record_fields_valid(definition["bot"], required=("id",)):
+        if definition.get("bot") is not None and not self._record_fields_valid(
+            definition["bot"], required=("id",)
+        ):
             return False
         creator = definition.get("createdBy") or {}
         if not self._record_fields_valid(creator, mappings=("user", "application")):
             return False
-        if any(not self._record_fields_valid(creator[key], strings=("id", "displayName")) for key in ("user", "application") if creator.get(key) is not None):
+        if any(
+            not self._record_fields_valid(creator[key], strings=("id", "displayName"))
+            for key in ("user", "application")
+            if creator.get(key) is not None
+        ):
             return False
         authorization = definition.get("authorization") or {}
         if not self._record_fields_valid(authorization, mappings=("requiredPermissionSet",)):
@@ -179,7 +235,9 @@ class TeamsConnector(BaseConnector):
             for permission in permissions
         )
 
-    def _app_finding(self, app_id: str, app: dict[str, Any], installs: list[dict[str, Any]]) -> Finding | None:
+    def _app_finding(
+        self, app_id: str, app: dict[str, Any], installs: list[dict[str, Any]]
+    ) -> Finding | None:
         defs = [d for d in app.get("appDefinitions") or [] if isinstance(d, dict)]
         latest = defs[-1] if defs else {}
         name = app.get("displayName") or latest.get("displayName") or app_id
@@ -202,17 +260,42 @@ class TeamsConnector(BaseConnector):
             owner=get_path(latest, "createdBy.user.displayName", "createdBy.application.displayName"),
             first_seen=latest.get("lastModifiedDateTime"),
         )
-        assess_app(self.index, f, name=name, publisher=str(publisher) if publisher else None, description=" ".join(x for x in [latest.get("description"), latest.get("shortDescription")] if x), scopes=perms, client_id=bot.get("id") if isinstance(bot, dict) else None)
+        assess_app(
+            self.index,
+            f,
+            name=name,
+            publisher=str(publisher) if publisher else None,
+            description=" ".join(x for x in [latest.get("description"), latest.get("shortDescription")] if x),
+            scopes=perms,
+            client_id=bot.get("id") if isinstance(bot, dict) else None,
+        )
         is_custom = app.get("distributionMethod") == "organization"
         if not f.frameworks and not bot and not is_custom:
             return None
-        f.add_evidence(Evidence(signal="teams:app", description=f"{app.get('distributionMethod') or 'unknown'} app '{name}' v{latest.get('version') or '?'}{' with bot ' + str(bot.get('id')) if bot else ''}; installed in {len(installs)} team(s); RSC permissions: {', '.join(perms) or 'none'}", weight=0.35 if bot else 0.15))
+        f.add_evidence(
+            Evidence(
+                signal="teams:app",
+                description=f"{app.get('distributionMethod') or 'unknown'} app '{name}' v{latest.get('version') or '?'}{' with bot ' + str(bot.get('id')) if bot else ''}; installed in {len(installs)} team(s); RSC permissions: {', '.join(perms) or 'none'}",
+                weight=0.35 if bot else 0.15,
+            )
+        )
         if bot:
             f.add_tag("bot")
             f.add_framework("framework.bot-framework")
         if is_custom:
             f.add_tag("custom-app")
-        f.metadata.update({"distribution": app.get("distributionMethod"), "external_id": app.get("externalId"), "version": latest.get("version"), "bot_id": bot.get("id") if isinstance(bot, dict) else None, "publishing_state": latest.get("publishingState"), "installed_teams": sorted({str(i.get("_team")) for i in installs if i.get("_team")})[:20], "install_count": len(installs), "rsc_permissions": summarize_scopes(perms)})
+        f.metadata.update(
+            {
+                "distribution": app.get("distributionMethod"),
+                "external_id": app.get("externalId"),
+                "version": latest.get("version"),
+                "bot_id": bot.get("id") if isinstance(bot, dict) else None,
+                "publishing_state": latest.get("publishingState"),
+                "installed_teams": sorted({str(i.get("_team")) for i in installs if i.get("_team")})[:20],
+                "install_count": len(installs),
+                "rsc_permissions": summarize_scopes(perms),
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.BOT_APP
         return f

@@ -11,12 +11,15 @@ from shadowscan.cli import main
 from shadowscan.connectors.base import BaseConnector
 
 
-@pytest.mark.parametrize("pagination", [
-    {"response_metadata": {"next_cursor": "opaque-page-secret"}},
-    {"next_cursor": "opaque-page-secret"},
-    {"IsTruncated": True},
-    {"NextMarker": "opaque-page-secret"},
-])
+@pytest.mark.parametrize(
+    "pagination",
+    [
+        {"response_metadata": {"next_cursor": "opaque-page-secret"}},
+        {"next_cursor": "opaque-page-secret"},
+        {"IsTruncated": True},
+        {"NextMarker": "opaque-page-secret"},
+    ],
+)
 @pytest.mark.parametrize("suffix", ["json", "jsonl", "yaml"])
 def test_partial_slack_export_is_incomplete(tmp_path, pagination, suffix):
     import yaml
@@ -34,13 +37,16 @@ def test_partial_slack_export_is_incomplete(tmp_path, pagination, suffix):
     assert "opaque-page-secret" not in result.output
 
 
-@pytest.mark.parametrize("pagination", [
-    {"response_metadata": []},
-    {"response_metadata": {"next_cursor": []}},
-    {"next_cursor": False},
-    {"has_more": 0},
-    {"IsTruncated": None},
-])
+@pytest.mark.parametrize(
+    "pagination",
+    [
+        {"response_metadata": []},
+        {"response_metadata": {"next_cursor": []}},
+        {"next_cursor": False},
+        {"has_more": 0},
+        {"IsTruncated": None},
+    ],
+)
 def test_malformed_pagination_preserves_observed_records(pagination):
     errors = []
     record = {"id": "observed-agent"}
@@ -48,10 +54,22 @@ def test_malformed_pagination_preserves_observed_records(pagination):
     assert errors == ["offline export has invalid pagination metadata"]
 
 
-@pytest.mark.parametrize("key", [
-    "next_page_token", "nextPageToken", "nextToken", "NextToken", "NextMarker",
-    "@odata.nextLink", "nextLink", "nextCursor", "next_cursor", "next_page", "nextPage",
-])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "next_page_token",
+        "nextPageToken",
+        "nextToken",
+        "NextToken",
+        "NextMarker",
+        "@odata.nextLink",
+        "nextLink",
+        "nextCursor",
+        "next_cursor",
+        "next_page",
+        "nextPage",
+    ],
+)
 @pytest.mark.parametrize("value", [False, 0, [], {}])
 def test_falsey_malformed_cursors_cannot_attest_complete_collection(key, value):
     errors = []
@@ -67,14 +85,17 @@ def test_page_number_and_link_continuations_remain_incomplete(key, value):
     assert errors == ["offline export contains an uncollected next page"]
 
 
-@pytest.mark.parametrize("pagination", [
-    {},
-    {"response_metadata": {}},
-    {"response_metadata": {"next_cursor": ""}},
-    {"response_metadata": {"next_cursor": None}},
-    {"has_more": False, "next_cursor": None},
-    {"IsTruncated": False},
-])
+@pytest.mark.parametrize(
+    "pagination",
+    [
+        {},
+        {"response_metadata": {}},
+        {"response_metadata": {"next_cursor": ""}},
+        {"response_metadata": {"next_cursor": None}},
+        {"has_more": False, "next_cursor": None},
+        {"IsTruncated": False},
+    ],
+)
 def test_terminal_pagination_remains_complete(pagination):
     errors = []
     assert list(BaseConnector._unwrap({"items": [], **pagination}, errors.append)) == []

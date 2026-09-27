@@ -60,7 +60,9 @@ def cloud_finding(
     )
 
 
-def scan_env(index: SignatureIndex, finding: Finding, env: dict[str, Any] | None, location: str | None = None) -> None:
+def scan_env(
+    index: SignatureIndex, finding: Finding, env: dict[str, Any] | None, location: str | None = None
+) -> None:
     """Match environment variable names against signatures and detect credentials in values.
 
     Values are never stored: only redacted previews of matched secrets.
@@ -80,32 +82,72 @@ def scan_env(index: SignatureIndex, finding: Finding, env: dict[str, Any] | None
                 if looks_like_placeholder(m.value):
                     continue
                 finding.add_tag("plaintext-credential")
-                finding.add_evidence(Evidence(signal=f"secret:{m.signature_id}", description=f"Plaintext {m.signal.description or m.signature.name} in environment variable {name}: {redact(m.value)}", location=location, weight=0.6, signature=m.signature_id))
+                finding.add_evidence(
+                    Evidence(
+                        signal=f"secret:{m.signature_id}",
+                        description=f"Plaintext {m.signal.description or m.signature.name} in environment variable {name}: {redact(m.value)}",
+                        location=location,
+                        weight=0.6,
+                        signature=m.signature_id,
+                    )
+                )
                 finding.add_model_provider(m.signature_id) if m.signature.category == "provider" else None
-            is_secretish = _SECRETISH.search(str(name)) and len(value) >= 16 and not value.startswith(("http", "/", "@Microsoft.KeyVault", "{", "$")) and not looks_like_placeholder(value)
-            provider_key = next((m for m in matches if m.signature.category == "provider"), None) if matches else None
+            is_secretish = (
+                _SECRETISH.search(str(name))
+                and len(value) >= 16
+                and not value.startswith(("http", "/", "@Microsoft.KeyVault", "{", "$"))
+                and not looks_like_placeholder(value)
+            )
+            provider_key = (
+                next((m for m in matches if m.signature.category == "provider"), None) if matches else None
+            )
             if is_secretish and provider_key:
                 finding.add_tag("plaintext-credential")
-                finding.add_evidence(Evidence(signal=f"secret:{provider_key.signature_id}", description=f"Plaintext value in provider credential variable {name}: {redact(value)}", location=location, weight=0.5, signature=provider_key.signature_id))
+                finding.add_evidence(
+                    Evidence(
+                        signal=f"secret:{provider_key.signature_id}",
+                        description=f"Plaintext value in provider credential variable {name}: {redact(value)}",
+                        location=location,
+                        weight=0.5,
+                        signature=provider_key.signature_id,
+                    )
+                )
             elif is_secretish:
                 finding.add_tag("secret-in-env")
     if matched_names:
         finding.metadata["env_matches"] = matched_names[:30]
 
 
-def scan_blob(index: SignatureIndex, finding: Finding, obj: Any, location: str | None = None, weight_scale: float = 0.8) -> int:
+def scan_blob(
+    index: SignatureIndex, finding: Finding, obj: Any, location: str | None = None, weight_scale: float = 0.8
+) -> int:
     """Serialise an object and run text signatures over it."""
     text = obj if isinstance(obj, str) else json.dumps(obj, default=str)
-    return apply_matches(finding, blob_matches(index, text[:400_000]), location=location, weight_scale=weight_scale)
+    return apply_matches(
+        finding, blob_matches(index, text[:400_000]), location=location, weight_scale=weight_scale
+    )
 
 
-def scan_iam_actions(index: SignatureIndex, finding: Finding, actions: list[str], location: str | None = None) -> list[str]:
+def scan_iam_actions(
+    index: SignatureIndex, finding: Finding, actions: list[str], location: str | None = None
+) -> list[str]:
     """Classify IAM actions / roles; returns the LLM-related ones."""
     llm: list[str] = []
     for a in actions:
         for m in index.match_scope(a):
             apply_matches(finding, [m], location=location, weight_scale=0.6)
-            if m.signature_id in {"policy.llm-access-scopes", "provider.aws-bedrock", "cloud.aws-bedrock-agents", "cloud.aws-other-ai", "provider.google-vertex-ai", "cloud.gcp-vertex-agent-engine", "provider.azure-openai", "cloud.azure-ai-foundry-agents", "provider.oci-generative-ai", "cloud.oci-generative-ai-agents"}:
+            if m.signature_id in {
+                "policy.llm-access-scopes",
+                "provider.aws-bedrock",
+                "cloud.aws-bedrock-agents",
+                "cloud.aws-other-ai",
+                "provider.google-vertex-ai",
+                "cloud.gcp-vertex-agent-engine",
+                "provider.azure-openai",
+                "cloud.azure-ai-foundry-agents",
+                "provider.oci-generative-ai",
+                "cloud.oci-generative-ai-agents",
+            }:
                 llm.append(a)
     for a in actions:
         if a not in finding.permissions:

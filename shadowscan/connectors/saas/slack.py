@@ -30,7 +30,9 @@ from shadowscan.utils.text import get_path, parse_timestamp, to_iso
 class SlackConnector(BaseConnector):
     name: ClassVar[str] = "saas.slack"
     _OFFLINE_COLLECTION_KINDS: ClassVar[dict[str, str]] = {
-        "approved_apps": "approved_app", "restricted_apps": "restricted_app", "app_requests": "app_request",
+        "approved_apps": "approved_app",
+        "restricted_apps": "restricted_app",
+        "app_requests": "app_request",
     }
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "slack"
@@ -60,11 +62,17 @@ class SlackConnector(BaseConnector):
         if info is None:
             return
         team = info.get("team")
-        if not isinstance(team, dict) or not self._record_fields_valid(team, required=("id",), strings=("name", "domain")) or not self._workspace_id_valid(team["id"]):
+        if (
+            not isinstance(team, dict)
+            or not self._record_fields_valid(team, required=("id",), strings=("name", "domain"))
+            or not self._workspace_id_valid(team["id"])
+        ):
             self.ctx.warn("saas.slack: invalid team.info response; workspace identity and coverage unknown")
             return
         if self.team_id is not None and team["id"] != self.team_id:
-            self.ctx.warn("saas.slack: authenticated workspace does not match configured team_id; inventory not collected")
+            self.ctx.warn(
+                "saas.slack: authenticated workspace does not match configured team_id; inventory not collected"
+            )
             return
         yield {"_kind": "team", **team}
         for u in self._cursor(http, "/users.list", {"limit": 200}, "members"):
@@ -74,7 +82,11 @@ class SlackConnector(BaseConnector):
         params = {"limit": 100}
         if self.team_id:
             params["team_id"] = self.team_id
-        for method, kind, key in (("admin.apps.approved.list", "approved_app", "approved_apps"), ("admin.apps.restricted.list", "restricted_app", "restricted_apps"), ("admin.apps.requests.list", "app_request", "app_requests")):
+        for method, kind, key in (
+            ("admin.apps.approved.list", "approved_app", "approved_apps"),
+            ("admin.apps.restricted.list", "restricted_app", "restricted_apps"),
+            ("admin.apps.requests.list", "app_request", "app_requests"),
+        ):
             for item in self._cursor(http, f"/{method}", params, key):
                 item["_kind"] = kind
                 yield item
@@ -102,7 +114,9 @@ class SlackConnector(BaseConnector):
             page += 1
         self.ctx.warn("saas.slack: integration log page limit reached", incomplete=True)
 
-    def _api(self, http: HttpClient, path: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    def _api(
+        self, http: HttpClient, path: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
         try:
             data = http.get_json(path, params=params)
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
@@ -113,18 +127,29 @@ class SlackConnector(BaseConnector):
             error = data.get("error") if isinstance(data, dict) else None
             # Preserve only known machine-readable denial codes; provider text may contain sensitive data.
             if not isinstance(error, str) or error not in {
-                "missing_scope", "not_allowed_token_type", "restricted_action",
-                "invalid_auth", "not_authed", "token_revoked", "account_inactive",
-                "team_access_not_granted", "org_login_required", "not_allowed",
+                "missing_scope",
+                "not_allowed_token_type",
+                "restricted_action",
+                "invalid_auth",
+                "not_authed",
+                "token_revoked",
+                "account_inactive",
+                "team_access_not_granted",
+                "org_login_required",
+                "not_allowed",
             }:
                 error = "invalid or failed response"
             self.ctx.warn(f"saas.slack: {path}: {error}; coverage unknown", incomplete=True)
             return None
         if "error" in data or data.get("errors"):
-            self.ctx.warn(f"saas.slack: {path}: contradictory success response; coverage unknown", incomplete=True)
+            self.ctx.warn(
+                f"saas.slack: {path}: contradictory success response; coverage unknown", incomplete=True
+            )
         return data
 
-    def _cursor(self, http: HttpClient, path: str, params: dict[str, Any], key: str) -> Iterable[dict[str, Any]]:
+    def _cursor(
+        self, http: HttpClient, path: str, params: dict[str, Any], key: str
+    ) -> Iterable[dict[str, Any]]:
         params = dict(params)
         seen: set[str] = set()
         for _ in range(1000):
@@ -183,19 +208,39 @@ class SlackConnector(BaseConnector):
             elif kind in {"approved_app", "restricted_app"}:
                 app = rec.get("app") or rec
                 app_id = app.get("id") or app.get("app_id")
-                entry = apps.setdefault(str(app_id), {"app": app, "scopes": [], "status": kind.replace("_app", ""), "last_resolved_by": None, "date_updated": None})
+                entry = apps.setdefault(
+                    str(app_id),
+                    {
+                        "app": app,
+                        "scopes": [],
+                        "status": kind.replace("_app", ""),
+                        "last_resolved_by": None,
+                        "date_updated": None,
+                    },
+                )
                 entry["scopes"] = rec.get("scopes") or app.get("scopes") or []
-                entry["last_resolved_by"] = get_path(rec, "last_resolved_by.actor_id", "last_resolved_by.actor_type")
+                entry["last_resolved_by"] = get_path(
+                    rec, "last_resolved_by.actor_id", "last_resolved_by.actor_type"
+                )
                 entry["date_updated"] = rec.get("date_updated")
             elif kind == "app_request":
                 requests.append(rec)
             elif kind == "integration_log":
-                key = rec.get("app_id") or rec.get("service_id") or rec.get("app_type") or rec.get("service_type")
+                key = (
+                    rec.get("app_id")
+                    or rec.get("service_id")
+                    or rec.get("app_type")
+                    or rec.get("service_type")
+                )
                 logs.setdefault(str(key), []).append(rec)
         # App IDs are shared across workspaces. Resolve the entire export before
         # emitting findings so a later conflicting team cannot relabel earlier
         # records. Names are presentation metadata, never identity.
-        if invalid_scope or len(teams) > 1 or (teams and self.team_id is not None and self.team_id not in teams):
+        if (
+            invalid_scope
+            or len(teams) > 1
+            or (teams and self.team_id is not None and self.team_id not in teams)
+        ):
             self.ctx.warn("saas.slack: conflicting or malformed workspace identity; findings not attributed")
             return
         team_id = next(iter(teams), None)
@@ -207,14 +252,24 @@ class SlackConnector(BaseConnector):
             self.ctx.warn("saas.slack: workspace identity missing; supply team_id for an offline export")
             return
         if record_teams - {team_id}:
-            self.ctx.warn("saas.slack: record workspace does not match declared workspace; findings not attributed")
+            self.ctx.warn(
+                "saas.slack: record workspace does not match declared workspace; findings not attributed"
+            )
             return
         team_name = teams.get(team_id)
         seen: set[str] = set()
         for app_id, entry in apps.items():
             self.ctx.examined()
             seen.add(app_id)
-            f = self._app_finding(app_id, entry["app"], entry["scopes"], entry["status"], bots.get(app_id), logs.get(app_id, []), team_id)
+            f = self._app_finding(
+                app_id,
+                entry["app"],
+                entry["scopes"],
+                entry["status"],
+                bots.get(app_id),
+                logs.get(app_id, []),
+                team_id,
+            )
             if f:
                 f.metadata.update(workspace_name=team_name, workspace_scope_source=scope_source)
                 yield f
@@ -222,7 +277,11 @@ class SlackConnector(BaseConnector):
             if app_id in seen:
                 continue
             self.ctx.examined()
-            app = {"id": app_id, "name": get_path(bot, "profile.real_name", "real_name", "name"), "description": get_path(bot, "profile.title")}
+            app = {
+                "id": app_id,
+                "name": get_path(bot, "profile.real_name", "real_name", "name"),
+                "description": get_path(bot, "profile.title"),
+            }
             f = self._app_finding(app_id, app, [], "installed", bot, logs.get(app_id, []), team_id)
             if f:
                 f.metadata.update(workspace_name=team_name, workspace_scope_source=scope_source)
@@ -230,7 +289,17 @@ class SlackConnector(BaseConnector):
         for req in requests:
             self.ctx.examined()
             app = req.get("app") or {}
-            f = self._app_finding(str(app.get("id") or app.get("app_id")), app, req.get("scopes") or [], "requested", None, [], team_id, requester=get_path(req, "user.email", "user.name", "user.id"), message=req.get("message"))
+            f = self._app_finding(
+                str(app.get("id") or app.get("app_id")),
+                app,
+                req.get("scopes") or [],
+                "requested",
+                None,
+                [],
+                team_id,
+                requester=get_path(req, "user.email", "user.name", "user.id"),
+                message=req.get("message"),
+            )
             if f:
                 f.add_tag("pending-request")
                 f.metadata.update(workspace_name=team_name, workspace_scope_source=scope_source)
@@ -238,11 +307,29 @@ class SlackConnector(BaseConnector):
 
     def _record_kind(self, rec: dict[str, Any]) -> str | None:
         if not self._record_fields_valid(
-            rec, strings=("_kind", "id", "name", "real_name", "domain", "app_id", "service_id", "app_type", "service_type", "change_type", "scope", "user_name", "user_id", "message"),
+            rec,
+            strings=(
+                "_kind",
+                "id",
+                "name",
+                "real_name",
+                "domain",
+                "app_id",
+                "service_id",
+                "app_type",
+                "service_type",
+                "change_type",
+                "scope",
+                "user_name",
+                "user_id",
+                "message",
+            ),
             mappings=("profile", "app", "user", "last_resolved_by"),
         ):
             return None
-        if any(rec.get(key) is not None and not isinstance(rec[key], bool) for key in ("is_bot", "is_app_user")):
+        if any(
+            rec.get(key) is not None and not isinstance(rec[key], bool) for key in ("is_bot", "is_app_user")
+        ):
             return None
         kind = rec.get("_kind") or _infer(rec)
         if kind in {"team", "user", "bot_user"}:
@@ -255,20 +342,52 @@ class SlackConnector(BaseConnector):
                 return None
         elif kind in {"approved_app", "restricted_app", "app_request"}:
             app = rec.get("app") if "app" in rec else rec
-            if not isinstance(app, dict) or not self._record_fields_valid(app, strings=("id", "app_id", "name", "description", "additional_info", "publisher", "app_homepage_url", "privacy_policy_url", "app_directory_url")):
+            if not isinstance(app, dict) or not self._record_fields_valid(
+                app,
+                strings=(
+                    "id",
+                    "app_id",
+                    "name",
+                    "description",
+                    "additional_info",
+                    "publisher",
+                    "app_homepage_url",
+                    "privacy_policy_url",
+                    "app_directory_url",
+                ),
+            ):
                 return None
-            if not (isinstance(app.get("id"), str) and app["id"].strip() or isinstance(app.get("app_id"), str) and app["app_id"].strip()):
+            if not (
+                isinstance(app.get("id"), str)
+                and app["id"].strip()
+                or isinstance(app.get("app_id"), str)
+                and app["app_id"].strip()
+            ):
                 return None
             if kind == "app_request" and not isinstance(rec.get("app"), dict):
                 return None
         elif kind == "integration_log":
-            if not any(isinstance(rec.get(key), str) and rec[key].strip() for key in ("app_id", "service_id", "app_type", "service_type")):
+            if not any(
+                isinstance(rec.get(key), str) and rec[key].strip()
+                for key in ("app_id", "service_id", "app_type", "service_type")
+            ):
                 return None
         else:
             return None
         return kind
 
-    def _app_finding(self, app_id: str, app: dict[str, Any], scopes: Any, status: str, bot: dict[str, Any] | None, logs: list[dict[str, Any]], team: str | None, requester: str | None = None, message: str | None = None) -> Finding | None:
+    def _app_finding(
+        self,
+        app_id: str,
+        app: dict[str, Any],
+        scopes: Any,
+        status: str,
+        bot: dict[str, Any] | None,
+        logs: list[dict[str, Any]],
+        team: str | None,
+        requester: str | None = None,
+        message: str | None = None,
+    ) -> Finding | None:
         name = app.get("name") or get_path(bot or {}, "profile.real_name", "real_name") or app_id
         scope_names: list[str] = []
         if not isinstance(scopes, list):
@@ -301,16 +420,47 @@ class SlackConnector(BaseConnector):
             first_seen=installed_at,
             last_seen=to_iso(parse_timestamp((bot or {}).get("updated"))),
         )
-        assess_app(self.index, f, name=name, publisher=app.get("publisher") or get_path(app, "app_homepage_url"), description=app.get("description") or app.get("additional_info"), urls=[app.get("app_homepage_url"), app.get("privacy_policy_url"), get_path(app, "app_directory_url")], scopes=scope_names)
-        interesting = bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags) or status == "requested"
+        assess_app(
+            self.index,
+            f,
+            name=name,
+            publisher=app.get("publisher") or get_path(app, "app_homepage_url"),
+            description=app.get("description") or app.get("additional_info"),
+            urls=[
+                app.get("app_homepage_url"),
+                app.get("privacy_policy_url"),
+                get_path(app, "app_directory_url"),
+            ],
+            scopes=scope_names,
+        )
+        interesting = (
+            bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags) or status == "requested"
+        )
         if not interesting and not (bot and scope_names):
             return None
-        f.add_evidence(Evidence(signal="slack:app", description=f"App '{name}' ({status}){' with bot user' if bot else ''}; scopes: {', '.join(sorted(set(scope_names)))[:400] or 'unknown'}" + (f"; requested by {requester}: {message}" if requester else ""), weight=0.3 if bot else 0.2))
+        f.add_evidence(
+            Evidence(
+                signal="slack:app",
+                description=f"App '{name}' ({status}){' with bot user' if bot else ''}; scopes: {', '.join(sorted(set(scope_names)))[:400] or 'unknown'}"
+                + (f"; requested by {requester}: {message}" if requester else ""),
+                weight=0.3 if bot else 0.2,
+            )
+        )
         if bot:
             f.add_tag("bot-user")
         if app.get("is_app_directory_approved") is False:
             f.add_tag("not-directory-approved")
-        f.metadata.update({"app_id": app_id, "status": status, "scopes": summarize_scopes(scope_names), "bot_user_id": (bot or {}).get("id"), "is_directory_approved": app.get("is_app_directory_approved"), "install_logs": len(logs), "homepage": app.get("app_homepage_url")})
+        f.metadata.update(
+            {
+                "app_id": app_id,
+                "status": status,
+                "scopes": summarize_scopes(scope_names),
+                "bot_user_id": (bot or {}).get("id"),
+                "is_directory_approved": app.get("is_app_directory_approved"),
+                "install_logs": len(logs),
+                "homepage": app.get("app_homepage_url"),
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.BOT_APP
         return f

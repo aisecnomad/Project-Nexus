@@ -15,20 +15,29 @@ from shadowscan.utils.http import HttpClient
 
 
 def _finding():
-    return Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-                   title="sample", resource="repo:sample", resource_type="repository")
+    return Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="sample",
+        resource="repo:sample",
+        resource_type="repository",
+    )
 
 
-@pytest.mark.parametrize("entry", [
-    {"Authorization": "opaque-secret-value\n"},
-    {"Authorization": "opaque-secret-value\rInjected: header"},
-    {"Authorization": "opaque-secret-value\0"},
-    {"Authorization": "opaque-secret-value\x7f"},
-    {"Authorization": "opaque-secret-value\u2603"},
-    {"opaque-secret-value\n": "value"},
-    {"opaque-secret-value:bad": "value"},
-    {"Authorization": ["opaque-secret-value"]},
-])
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"Authorization": "opaque-secret-value\n"},
+        {"Authorization": "opaque-secret-value\rInjected: header"},
+        {"Authorization": "opaque-secret-value\0"},
+        {"Authorization": "opaque-secret-value\x7f"},
+        {"Authorization": "opaque-secret-value\u2603"},
+        {"opaque-secret-value\n": "value"},
+        {"opaque-secret-value:bad": "value"},
+        {"Authorization": ["opaque-secret-value"]},
+    ],
+)
 @pytest.mark.parametrize("source", ["constructor", "injected", "override", "mutated"])
 def test_invalid_header_never_echoes_credentials_or_reaches_transport(entry, source):
     session = Mock(headers={})
@@ -65,8 +74,11 @@ def test_valid_byte_headers_and_request_header_removal_are_supported():
     response._content = b"{}"
     response._content_consumed = True
     session.send = Mock(return_value=response)
-    client = HttpClient("https://8.8.8.8", session=session,
-                        headers={"Authorization": "Bearer synthetic", "X-Label": b"caf\xe9"})
+    client = HttpClient(
+        "https://8.8.8.8",
+        session=session,
+        headers={"Authorization": "Bearer synthetic", "X-Label": b"caf\xe9"},
+    )
     client.get("/items", headers={"Authorization": None, "X-Correlation-ID": "a\tb"})
     request = session.send.call_args.args[0]
     assert "Authorization" not in request.headers
@@ -74,7 +86,9 @@ def test_valid_byte_headers_and_request_header_removal_are_supported():
 
 
 @pytest.mark.parametrize("field", ["score", "factor", "evidence", "confidence"])
-@pytest.mark.parametrize("value", [True, False, None, "opaque-secret-value", [], {}, float("nan"), float("inf")])
+@pytest.mark.parametrize(
+    "value", [True, False, None, "opaque-secret-value", [], {}, float("nan"), float("inf")]
+)
 def test_finding_import_rejects_malformed_numeric_fields_without_echoing_them(field, value):
     payload = _finding().to_dict()
     if field == "score":
@@ -98,8 +112,17 @@ def test_empty_malformed_risk_cannot_masquerade_as_missing(risk):
         Finding.from_dict(payload)
 
 
-@pytest.mark.parametrize("field,value", [("score", -1), ("score", 101), ("confidence", -0.1),
-                                         ("confidence", 1.1), ("evidence", -0.1), ("evidence", 1.1)])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("score", -1),
+        ("score", 101),
+        ("confidence", -0.1),
+        ("confidence", 1.1),
+        ("evidence", -0.1),
+        ("evidence", 1.1),
+    ],
+)
 def test_finding_import_rejects_out_of_range_scores(field, value):
     payload = _finding().to_dict()
     if field == "score":
