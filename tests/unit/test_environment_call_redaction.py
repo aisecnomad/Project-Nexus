@@ -49,7 +49,7 @@ CALLS = [
     f'os.getenv("AZURE_OPENAI_API_KEY", ("{SECRET}" +\n "{TAIL}"))',
     f'os.getenv("AZURE_OPENAI_API_KEY", """{SECRET}\n{TAIL}""")',
     *PEP701_CALLS,
-    'os.getenv("AZURE_OPENAI_API_KEY", `prefix-${lookup(`)`)}}' + SECRET + '`)',
+    'os.getenv("AZURE_OPENAI_API_KEY", `prefix-${lookup(`)`)}}' + SECRET + "`)",
     f'os.getenv("AZURE_OPENAI_API_KEY", decode("{SECRET}", suffix="{TAIL}"))',
     f'os.getenv(# credential name\n "AZURE_OPENAI_API_KEY", "{SECRET}")',
     f'os.getenv(# credential name\n key="AZURE_OPENAI_API_KEY", default="{SECRET}")',
@@ -71,13 +71,16 @@ def test_environment_call_withholds_entire_value_expression(source):
     assert sanitize_text(safe) == safe
 
 
-@pytest.mark.parametrize("source", [
-    'os.getenv("PUBLIC_MODEL", "safe-model")',
-    'os.getenv("AZURE_OPENAI_API_KEY")',
-    'os.getenv(key="AZURE_OPENAI_API_KEY")',
-    'os.getenv("AZURE_OPENAI_API_KEY",)',
-    'read_setting(source, "safe-model")',
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        'os.getenv("PUBLIC_MODEL", "safe-model")',
+        'os.getenv("AZURE_OPENAI_API_KEY")',
+        'os.getenv(key="AZURE_OPENAI_API_KEY")',
+        'os.getenv("AZURE_OPENAI_API_KEY",)',
+        'read_setting(source, "safe-model")',
+    ],
+)
 def test_nonsecret_defaults_and_reads_are_preserved(source):
     assert sanitize_text(source) == source
 
@@ -85,12 +88,12 @@ def test_nonsecret_defaults_and_reads_are_preserved(source):
 def test_neighboring_arguments_and_original_line_numbers_are_preserved():
     source = (
         f'fetch(default=("{SECRET}" +\n "{TAIL}"), key="AZURE_OPENAI_API_KEY", model="public")\n'
-        'import langchain\n'
+        "import langchain\n"
     )
     safe = sanitize_text(source)
     assert SECRET not in safe and TAIL not in safe
     assert 'key="AZURE_OPENAI_API_KEY", model="public")\n' in safe
-    assert safe.splitlines()[2] == 'import langchain'
+    assert safe.splitlines()[2] == "import langchain"
     assert sanitize_text(safe) == safe
 
 
@@ -112,41 +115,64 @@ def test_credential_call_bounds_fail_closed(monkeypatch):
         sanitize_text('os.getenv("API_KEY", "' + SECRET * 10 + '")')
     monkeypatch.setattr(redaction, "_MAX_REDACTION_WORK", 128 * 1024 * 1024)
     with pytest.raises(SanitizationLimitError, match="credential call nesting limit"):
-        sanitize_text('os.getenv("API_KEY", ' + '[' * 65 + '"private"' + ']' * 65 + ')')
+        sanitize_text('os.getenv("API_KEY", ' + "[" * 65 + '"private"' + "]" * 65 + ")")
     monkeypatch.setattr(redaction, "_MAX_SANITIZATION_NODES", 4)
     with pytest.raises(SanitizationLimitError, match="credential call argument limit"):
         sanitize_text('os.getenv("API_KEY", "private", 1, 2, 3, 4)')
 
 
 def test_many_calls_and_long_keys_finish_within_work_bound():
-    script = '''
+    script = """
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 source = 'read_setting("PUBLIC_MODEL", "safe")\\n' * 10_000
 assert sanitize_text(source) == source
 key = 'A' * 500_000 + '_API_KEY'
 safe = sanitize_text('read_setting("' + key + '", "opaque-value")')
 assert 'opaque-value' not in safe and REDACTED in safe
-'''
+"""
     result = subprocess.run(
-        [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[2],
-        capture_output=True, text=True, timeout=15, check=False,
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("scan_secrets", [False, True])
-@pytest.mark.parametrize(("sources", "requires_pep701"), [
-    pytest.param([source for source in CALLS if source not in PEP701_CALLS], False, id="portable"),
-    pytest.param(PEP701_CALLS, True, id="pep701"),
-])
+@pytest.mark.parametrize(
+    ("sources", "requires_pep701"),
+    [
+        pytest.param([source for source in CALLS if source not in PEP701_CALLS], False, id="portable"),
+        pytest.param(PEP701_CALLS, True, id="pep701"),
+    ],
+)
 def test_environment_credentials_never_reach_any_evidence_reporter(
-    tmp_path, index, scan_secrets, sources, requires_pep701,
+    tmp_path,
+    index,
+    scan_secrets,
+    sources,
+    requires_pep701,
 ):
     for number, source in enumerate(sources):
-        (tmp_path / f"agent_{number}.py").write_text('import langchain; ' + source + '\n', encoding="utf-8")
-    result = Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem", {
-        "path": str(tmp_path), "use_git": False, "scan_secrets": scan_secrets,
-    })]), index).run()
+        (tmp_path / f"agent_{number}.py").write_text("import langchain; " + source + "\n", encoding="utf-8")
+    result = Engine(
+        ScanConfig(
+            connectors=[
+                ConnectorSpec(
+                    "code.filesystem",
+                    {
+                        "path": str(tmp_path),
+                        "use_git": False,
+                        "scan_secrets": scan_secrets,
+                    },
+                )
+            ]
+        ),
+        index,
+    ).run()
     assert result.findings and len(result.stats) == 1
     if requires_pep701 and sys.version_info < (3, 12):
         # Python 3.11 cannot lex same-quote nested f-strings. Preserve the
@@ -167,12 +193,21 @@ def test_environment_credentials_never_reach_any_evidence_reporter(
             assert REDACTED in output, render.__name__
 
 
-@pytest.mark.parametrize(("connector_cls", "record", "fetch_method"), [
-    (GitHubConnector, {"full_name": "test/repo"}, "_fetch_repo"),
-    (GitLabConnector, {"path_with_namespace": "test/repo"}, "_fetch"),
-])
+@pytest.mark.parametrize(
+    ("connector_cls", "record", "fetch_method"),
+    [
+        (GitHubConnector, {"full_name": "test/repo"}, "_fetch_repo"),
+        (GitLabConnector, {"path_with_namespace": "test/repo"}, "_fetch"),
+    ],
+)
 def test_debug_connector_failures_never_emit_raw_exception_or_traceback(
-    tmp_path, index, caplog, monkeypatch, connector_cls, record, fetch_method,
+    tmp_path,
+    index,
+    caplog,
+    monkeypatch,
+    connector_cls,
+    record,
+    fetch_method,
 ):
     ctx = ConnectorContext(config={"token": SECRET}, index=index, workdir=str(tmp_path))
     connector = connector_cls(ctx)
@@ -196,13 +231,16 @@ def test_debug_connector_failures_never_emit_raw_exception_or_traceback(
     assert all(record.exc_info is None for record in caplog.records)
 
 
-@pytest.mark.parametrize("line", [
-    "- Fix the release notes (#{n})\n",              # changelog references
-    "See the guide (https://example.test/{n}) first\n",  # prose links
-    "It's the {n}th entry (don't panic)\n",           # apostrophes in prose
-    "half = int(size // {n})\n",                     # Python floor division
-    "total = Math.max(this.#count, {n});\n",          # JavaScript private fields
-])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- Fix the release notes (#{n})\n",  # changelog references
+        "See the guide (https://example.test/{n}) first\n",  # prose links
+        "It's the {n}th entry (don't panic)\n",  # apostrophes in prose
+        "half = int(size // {n})\n",  # Python floor division
+        "total = Math.max(this.#count, {n});\n",  # JavaScript private fields
+    ],
+)
 def test_ordinary_text_never_trips_the_call_lexer(line):
     # Comment markers are language specific and prose uses parentheses freely.
     # None of this pairs a credential key with a value, so it must pass through
@@ -219,16 +257,20 @@ def test_misread_comment_marker_cannot_withhold_the_rest_of_the_file():
 
 
 def test_unclosed_calls_before_a_long_tail_stay_linear():
-    script = '''
+    script = """
 import time
 from shadowscan.utils.redaction import sanitize_text
 source = "".join(f"step{n}(#\\\\n" for n in range(60)) + "plain line\\\\n" * 200_000
 started = time.perf_counter()
 assert sanitize_text(source) == source
 assert time.perf_counter() - started < 5
-'''
+"""
     result = subprocess.run(
-        [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[2],
-        capture_output=True, text=True, timeout=30, check=False,
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr

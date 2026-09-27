@@ -7,12 +7,15 @@ import pytest
 from shadowscan.signatures import matcher
 
 
-@pytest.mark.parametrize(("statement", "language"), [
-    ("from openai import OpenAI", "python"),
-    ("from agents import Agent", "python"),
-    ("import os", "python"),
-    ("import { example } from '@anthropic-ai/sdk'", "javascript"),
-])
+@pytest.mark.parametrize(
+    ("statement", "language"),
+    [
+        ("from openai import OpenAI", "python"),
+        ("from agents import Agent", "python"),
+        ("import os", "python"),
+        ("import { example } from '@anthropic-ai/sdk'", "javascript"),
+    ],
+)
 def test_statement_import_cache_matches_uncached_results(index, statement, language):
     expected = [(m.signature_id, m.value, m.weight) for m in index.match_imports(statement, language)]
     first = index.match_import_statement(statement, language)
@@ -29,7 +32,9 @@ def test_statement_import_cache_is_bounded(index, monkeypatch):
 
 
 def test_regex_plan_keeps_pack_order_and_quotas(index):
-    text = "\n".join(["from openai import OpenAI", "client = OpenAI()"] + ["client.chat.completions.create()"] * 6)
+    text = "\n".join(
+        ["from openai import OpenAI", "client = OpenAI()"] + ["client.chat.completions.create()"] * 6
+    )
     matches = index.match_code(text, "python")
     per_signal: dict[int, int] = {}
     for m in matches:

@@ -45,7 +45,9 @@ def test_github_installation_denial_keeps_independent_billing_and_pat(run_connec
 
     assert {f.resource for f in findings} == {"github:acme/copilot", "github:pat:501"}
     assert ctx.stats.incomplete and not ctx.stats.errors
-    assert any("installation inventory" in warning and "HTTP 403" in warning for warning in ctx.stats.warnings)
+    assert any(
+        "installation inventory" in warning and "HTTP 403" in warning for warning in ctx.stats.warnings
+    )
     assert "opaque-provider-secret" not in str(ctx.stats)
     assert len(responses.calls) == 3
 
@@ -98,17 +100,20 @@ def test_github_billing_network_failure_keeps_pat(run_connector):
     assert "opaque-provider-secret" not in str(ctx.stats)
 
 
-@pytest.mark.parametrize("bad_record", [
-    _installation(id={"invalid": "opaque-provider-secret"}),
-    _installation(permissions={"contents": ["write"]}),
-    _installation(events=[{"invalid": "opaque-provider-secret"}]),
-    _installation(account=["invalid"]),
-    _installation(app_slug={"invalid": "opaque-provider-secret"}),
-    _pat(permissions={"repository": ["invalid"]}),
-    _pat(owner={"login": ["invalid"]}),
-    {"_kind": "unsupported", "app_slug": "claude"},
-    {"_kind": "copilot_billing", "seat_breakdown": "invalid"},
-])
+@pytest.mark.parametrize(
+    "bad_record",
+    [
+        _installation(id={"invalid": "opaque-provider-secret"}),
+        _installation(permissions={"contents": ["write"]}),
+        _installation(events=[{"invalid": "opaque-provider-secret"}]),
+        _installation(account=["invalid"]),
+        _installation(app_slug={"invalid": "opaque-provider-secret"}),
+        _pat(permissions={"repository": ["invalid"]}),
+        _pat(owner={"login": ["invalid"]}),
+        {"_kind": "unsupported", "app_slug": "claude"},
+        {"_kind": "copilot_billing", "seat_breakdown": "invalid"},
+    ],
+)
 def test_github_malformed_records_preserve_valid_neighbors(tmp_path, run_connector, bad_record):
     source = tmp_path / "github.json"
     source.write_text(json.dumps([bad_record, _installation(), _pat()]))
@@ -124,7 +129,10 @@ def test_github_malformed_records_preserve_valid_neighbors(tmp_path, run_connect
 def test_github_live_billing_kind_is_assigned_by_collector(run_connector):
     base = "https://api.github.com/orgs/acme"
     responses.get(f"{base}/installations", json={"installations": []})
-    responses.get(f"{base}/copilot/billing", json={"_kind": "pat", "plan_type": "business", "seat_breakdown": {"total": 3}})
+    responses.get(
+        f"{base}/copilot/billing",
+        json={"_kind": "pat", "plan_type": "business", "seat_breakdown": {"total": 3}},
+    )
     responses.get(f"{base}/personal-access-tokens", json=[])
 
     findings, ctx = run_connector("saas.github-apps", org="acme", token="example-token")
@@ -135,7 +143,14 @@ def test_github_live_billing_kind_is_assigned_by_collector(run_connector):
 
 @pytest.mark.parametrize("container", [set, frozenset])
 def test_unordered_permissions_have_stable_order(index, container):
-    finding = Finding(surface=Surface.SAAS, connector="test", kind=Kind.BOT_APP, title="Agent", resource="test:agent", resource_type="app")
+    finding = Finding(
+        surface=Surface.SAAS,
+        connector="test",
+        kind=Kind.BOT_APP,
+        title="Agent",
+        resource="test:agent",
+        resource_type="app",
+    )
     scopes = container(["repo:write", "admin:org", "read:user"])
 
     classify_permissions(index, finding, scopes)
@@ -144,24 +159,76 @@ def test_unordered_permissions_have_stable_order(index, container):
 
 
 def test_ordered_permissions_preserve_provider_order(index):
-    finding = Finding(surface=Surface.SAAS, connector="test", kind=Kind.BOT_APP, title="Agent", resource="test:agent", resource_type="app")
+    finding = Finding(
+        surface=Surface.SAAS,
+        connector="test",
+        kind=Kind.BOT_APP,
+        title="Agent",
+        resource="test:agent",
+        resource_type="app",
+    )
 
     classify_permissions(index, finding, ["repo:write", "read:user", "admin:org"])
 
     assert finding.permissions == ["repo:write", "read:user", "admin:org"]
 
 
-@pytest.mark.parametrize("connector,bad,valid,resource", [
-    ("saas.atlassian", {"key": "broken", "name": ["opaque-provider-secret"]}, {"key": "ai.glean", "name": "Glean AI"}, "atlassian:jira:app:ai.glean"),
-    ("saas.atlassian", {"key": "broken", "description": ["opaque-provider-secret"]}, {"key": "ai.glean", "name": "Glean AI"}, "atlassian:jira:app:ai.glean"),
-    ("saas.atlassian", {"key": "broken", "scopes": "read:confluence-content.all"}, {"key": "ai.glean", "name": "Glean AI"}, "atlassian:jira:app:ai.glean"),
-    ("saas.atlassian", {"key": "broken", "vendor": {"link": ["opaque-provider-secret"]}}, {"key": "ai.glean", "name": "Glean AI"}, "atlassian:jira:app:ai.glean"),
-    ("saas.zoom", {"app_id": "broken", "app_name": ["opaque-provider-secret"]}, {"app_id": "valid", "app_name": "Fathom AI Notetaker"}, "zoom:app:valid"),
-    ("saas.zoom", {"app_id": "broken", "app_description": ["opaque-provider-secret"]}, {"app_id": "valid", "app_name": "Fathom AI Notetaker"}, "zoom:app:valid"),
-    ("saas.zoom", {"app_id": "broken", "owner": {"name": "opaque-provider-secret"}}, {"app_id": "valid", "app_name": "Fathom AI Notetaker"}, "zoom:app:valid"),
-    ("saas.zoom", {"app_id": "broken", "installed_users_count": -1}, {"app_id": "valid", "app_name": "Fathom AI Notetaker"}, "zoom:app:valid"),
-])
-def test_malformed_saas_apps_preserve_valid_neighbors(tmp_path, run_connector, connector, bad, valid, resource):
+@pytest.mark.parametrize(
+    "connector,bad,valid,resource",
+    [
+        (
+            "saas.atlassian",
+            {"key": "broken", "name": ["opaque-provider-secret"]},
+            {"key": "ai.glean", "name": "Glean AI"},
+            "atlassian:jira:app:ai.glean",
+        ),
+        (
+            "saas.atlassian",
+            {"key": "broken", "description": ["opaque-provider-secret"]},
+            {"key": "ai.glean", "name": "Glean AI"},
+            "atlassian:jira:app:ai.glean",
+        ),
+        (
+            "saas.atlassian",
+            {"key": "broken", "scopes": "read:confluence-content.all"},
+            {"key": "ai.glean", "name": "Glean AI"},
+            "atlassian:jira:app:ai.glean",
+        ),
+        (
+            "saas.atlassian",
+            {"key": "broken", "vendor": {"link": ["opaque-provider-secret"]}},
+            {"key": "ai.glean", "name": "Glean AI"},
+            "atlassian:jira:app:ai.glean",
+        ),
+        (
+            "saas.zoom",
+            {"app_id": "broken", "app_name": ["opaque-provider-secret"]},
+            {"app_id": "valid", "app_name": "Fathom AI Notetaker"},
+            "zoom:app:valid",
+        ),
+        (
+            "saas.zoom",
+            {"app_id": "broken", "app_description": ["opaque-provider-secret"]},
+            {"app_id": "valid", "app_name": "Fathom AI Notetaker"},
+            "zoom:app:valid",
+        ),
+        (
+            "saas.zoom",
+            {"app_id": "broken", "owner": {"name": "opaque-provider-secret"}},
+            {"app_id": "valid", "app_name": "Fathom AI Notetaker"},
+            "zoom:app:valid",
+        ),
+        (
+            "saas.zoom",
+            {"app_id": "broken", "installed_users_count": -1},
+            {"app_id": "valid", "app_name": "Fathom AI Notetaker"},
+            "zoom:app:valid",
+        ),
+    ],
+)
+def test_malformed_saas_apps_preserve_valid_neighbors(
+    tmp_path, run_connector, connector, bad, valid, resource
+):
     source = tmp_path / "apps.json"
     source.write_text(json.dumps([bad, valid]))
 

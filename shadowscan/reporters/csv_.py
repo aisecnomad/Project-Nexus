@@ -81,7 +81,9 @@ def render_csv(result: ScanResult) -> str:
             "last_seen": f.last_seen or "",
             "risk_factors": "; ".join(x.description for x in f.risk.factors if x.weight > 0),
             "evidence_count": len(f.evidence),
-            "top_evidence": " | ".join(e.description for e in sorted(f.evidence, key=lambda e: -e.weight)[:3]),
+            "top_evidence": " | ".join(
+                e.description for e in sorted(f.evidence, key=lambda e: -e.weight)[:3]
+            ),
             "connector": f.connector,
         }
         w.writerow({key: _safe_cell(value) for key, value in row.items()})

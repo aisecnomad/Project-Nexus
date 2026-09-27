@@ -13,8 +13,12 @@ from shadowscan.signatures.matcher import MatchTimeoutError
 
 
 def record():
-    return {"service": "worker", "model": "gpt-4o", "user_agent": "langchain/0.3",
-            "timestamp": "2026-09-23T12:00:00Z"}
+    return {
+        "service": "worker",
+        "model": "gpt-4o",
+        "user_agent": "langchain/0.3",
+        "timestamp": "2026-09-23T12:00:00Z",
+    }
 
 
 def test_parallel_repeated_gateway_records_preserve_counts_with_fewer_matches(index, monkeypatch):
@@ -55,9 +59,13 @@ def test_timeout_does_not_cache_partial_framework_results(index, monkeypatch):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
+
             def partial():
                 yield from original(ua)
-                raise MatchTimeoutError("signature matching timed out (custom.pattern); input scan is incomplete")
+                raise MatchTimeoutError(
+                    "signature matching timed out (custom.pattern); input scan is incomplete"
+                )
+
             return partial()
         return original(ua)
 

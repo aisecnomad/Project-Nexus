@@ -45,12 +45,19 @@ def _verify_codeql(run: Any, **overrides: Any) -> dict[str, Any]:
     return verify_codeql_run(run, **(arguments | overrides))
 
 
-@pytest.mark.parametrize("workflow,verify,run_id", [
-    ("ci", _verify, 123), ("codeql", _verify_codeql, 456),
-])
+@pytest.mark.parametrize(
+    "workflow,verify,run_id",
+    [
+        ("ci", _verify, 123),
+        ("codeql", _verify_codeql, 456),
+    ],
+)
 @pytest.mark.parametrize("suffix", ["", "@main"])
 def test_accepts_exact_successful_push_run_for_main(
-    workflow: str, verify: Any, run_id: int, suffix: str,
+    workflow: str,
+    verify: Any,
+    run_id: int,
+    suffix: str,
 ) -> None:
     verified = verify(_run(workflow) | {"id": run_id, "path": f".github/workflows/{workflow}.yml{suffix}"})
     assert verified["path"] == f".github/workflows/{workflow}.yml{suffix}"
@@ -60,13 +67,20 @@ def test_accepts_exact_successful_push_run_for_main(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("id", 124), ("id", 123.0), ("id", True),
-        ("head_sha", "b" * 40), ("head_branch", "feature"),
+        ("id", 124),
+        ("id", 123.0),
+        ("id", True),
+        ("head_sha", "b" * 40),
+        ("head_branch", "feature"),
         ("path", ".github/workflows/spoof-ci.yml@main"),
-        ("path", ".github/workflows/ci.yml@feature"), ("event", "pull_request"),
-        ("status", "in_progress"), ("conclusion", "failure"), ("conclusion", "skipped"),
+        ("path", ".github/workflows/ci.yml@feature"),
+        ("event", "pull_request"),
+        ("status", "in_progress"),
+        ("conclusion", "failure"),
+        ("conclusion", "skipped"),
         ("repository", {"full_name": "someone/fork"}),
-        ("head_repository", {"full_name": "someone/fork"}), ("head_repository", None),
+        ("head_repository", {"full_name": "someone/fork"}),
+        ("head_repository", None),
     ],
 )
 def test_ci_gate_rejects_wrong_or_incomplete_run(field: str, value: Any) -> None:
@@ -74,22 +88,35 @@ def test_ci_gate_rejects_wrong_or_incomplete_run(field: str, value: Any) -> None
         _verify(_run() | {field: value})
 
 
-@pytest.mark.parametrize("field,value", [
-    ("id", 457), ("head_sha", "b" * 40), ("head_branch", "feature"),
-    ("path", ".github/workflows/ci.yml"), ("path", ".github/workflows/codeql.yml@feature"),
-    ("event", "pull_request"), ("status", "in_progress"), ("conclusion", "failure"),
-    ("repository", {"full_name": "someone/fork"}),
-    ("head_repository", {"full_name": "someone/fork"}),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("id", 457),
+        ("head_sha", "b" * 40),
+        ("head_branch", "feature"),
+        ("path", ".github/workflows/ci.yml"),
+        ("path", ".github/workflows/codeql.yml@feature"),
+        ("event", "pull_request"),
+        ("status", "in_progress"),
+        ("conclusion", "failure"),
+        ("repository", {"full_name": "someone/fork"}),
+        ("head_repository", {"full_name": "someone/fork"}),
+    ],
+)
 def test_codeql_gate_rejects_wrong_or_incomplete_run(field: str, value: Any) -> None:
     with pytest.raises(ValueError, match="CodeQL gate failed"):
         _verify_codeql(_run("codeql") | {"id": 456, field: value})
 
 
 @pytest.mark.parametrize(
-    "overrides", [
-        {"expected_sha": "a" * 7}, {"expected_sha": "A" * 40}, {"current_sha": "b" * 40},
-        {"run_id": "123/../../another"}, {"run_id": "0"}, {"repository": "bad\n/repository"},
+    "overrides",
+    [
+        {"expected_sha": "a" * 7},
+        {"expected_sha": "A" * 40},
+        {"current_sha": "b" * 40},
+        {"run_id": "123/../../another"},
+        {"run_id": "0"},
+        {"repository": "bad\n/repository"},
     ],
 )
 def test_ci_gate_rejects_invalid_dispatch_identity(overrides: dict[str, str]) -> None:
@@ -107,16 +134,31 @@ def test_ci_gate_retains_only_verified_fields() -> None:
 
 @pytest.mark.parametrize("workflow,run_id", [("ci", "123"), ("codeql", "456")])
 def test_release_cli_writes_only_verified_run_and_refuses_failed_run(
-    tmp_path: Path, workflow: str, run_id: str,
+    tmp_path: Path,
+    workflow: str,
+    run_id: str,
 ) -> None:
     source = tmp_path / "api-response.json"
     output = tmp_path / "verified.json"
     run = _run(workflow) | {"id": int(run_id)}
     source.write_text(json.dumps(run), encoding="utf-8")
     command = [
-        sys.executable, "-m", "tools.release.evidence", f"verify-{workflow}",
-        "--input", str(source), "--output", str(output), "--repository", REPOSITORY,
-        "--expected-sha", SHA, "--current-sha", SHA, "--run-id", run_id,
+        sys.executable,
+        "-m",
+        "tools.release.evidence",
+        f"verify-{workflow}",
+        "--input",
+        str(source),
+        "--output",
+        str(output),
+        "--repository",
+        REPOSITORY,
+        "--expected-sha",
+        SHA,
+        "--current-sha",
+        SHA,
+        "--run-id",
+        run_id,
     ]
     assert subprocess.run(command, capture_output=True, text=True, check=False).returncode == 0
     saved = json.loads(output.read_text(encoding="utf-8"))
@@ -185,14 +227,20 @@ def test_release_evidence_refuses_failed_saved_ci(candidate: Path) -> None:
         _manifest(candidate)
 
 
-@pytest.mark.parametrize("field,value,error", [
-    ("head_sha", "b" * 40, "release source"),
-    ("conclusion", "failure", "CodeQL gate failed"),
-    ("path", ".github/workflows/ci.yml", "CodeQL gate failed"),
-    ("head_branch", "feature", "CodeQL gate failed"),
-])
+@pytest.mark.parametrize(
+    "field,value,error",
+    [
+        ("head_sha", "b" * 40, "release source"),
+        ("conclusion", "failure", "CodeQL gate failed"),
+        ("path", ".github/workflows/ci.yml", "CodeQL gate failed"),
+        ("head_branch", "feature", "CodeQL gate failed"),
+    ],
+)
 def test_release_evidence_refuses_mismatched_codeql(
-    candidate: Path, field: str, value: Any, error: str,
+    candidate: Path,
+    field: str,
+    value: Any,
+    error: str,
 ) -> None:
     saved_path = candidate / "codeql-verification.json"
     saved_path.write_text(json.dumps(json.loads(saved_path.read_text()) | {field: value}), encoding="utf-8")
@@ -201,8 +249,19 @@ def test_release_evidence_refuses_mismatched_codeql(
     assert not (candidate / "SHA256SUMS").exists()
 
 
-@pytest.mark.parametrize("case", ["missing-sbom", "missing-codeql", "missing-build-lock", "empty-sbom", "no-wheel",
-                                 "two-wheels", "symlink", "bad-name"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing-sbom",
+        "missing-codeql",
+        "missing-build-lock",
+        "empty-sbom",
+        "no-wheel",
+        "two-wheels",
+        "symlink",
+        "bad-name",
+    ],
+)
 def test_release_evidence_refuses_incomplete_or_unsafe_bundle(candidate: Path, case: str) -> None:
     if case == "missing-sbom":
         (candidate / "runtime-sbom.cdx.json").unlink()
@@ -211,7 +270,9 @@ def test_release_evidence_refuses_incomplete_or_unsafe_bundle(candidate: Path, c
     elif case == "missing-build-lock":
         (candidate / "requirements-build.lock").unlink()
     elif case == "empty-sbom":
-        (candidate / "runtime-sbom.cdx.json").write_text('{"bomFormat":"CycloneDX","components":[]}', encoding="utf-8")
+        (candidate / "runtime-sbom.cdx.json").write_text(
+            '{"bomFormat":"CycloneDX","components":[]}', encoding="utf-8"
+        )
     elif case == "no-wheel":
         next(candidate.glob("*.whl")).unlink()
     elif case == "two-wheels":
@@ -243,7 +304,7 @@ def test_release_workflow_limits_signing_to_artifacts_without_executing_source()
     assert build["if"] == "github.ref == 'refs/heads/main'"
     assert all(value == "read" for value in build["permissions"].values())
     gate = next(step for step in build["steps"] if step.get("name", "").startswith("Verify exact commit"))
-    assert "gh api \"repos/$GITHUB_REPOSITORY/actions/runs/$CODEQL_RUN_ID\"" in gate["run"]
+    assert 'gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CODEQL_RUN_ID"' in gate["run"]
     assert "verify-codeql" in gate["run"]
     assert "candidate/codeql-verification.json" in gate["run"]
     assert attest["needs"] == "build"

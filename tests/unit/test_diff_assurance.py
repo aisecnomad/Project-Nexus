@@ -19,8 +19,12 @@ from shadowscan.utils.redaction import credential_id
 
 def _finding(resource: str, level: str = "high") -> dict:
     finding = Finding(
-        surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-        title=resource, resource=resource, resource_type="repository",
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title=resource,
+        resource=resource,
+        resource_type="repository",
     ).to_dict()
     finding["risk"] = {"level": level, "score": 55 if level == "high" else 15, "factors": []}
     return finding
@@ -29,7 +33,11 @@ def _finding(resource: str, level: str = "high") -> dict:
 def _report(*findings: dict, complete: bool = True) -> dict:
     report = ScanResult(
         stats=[ScanStats(connector="code.filesystem", started_at="2026-01-01", incomplete=not complete)],
-        collection_scope={"schema": "shadowscan.collection-scope/v1", "comparable": True, "fingerprint": "a" * 64},
+        collection_scope={
+            "schema": "shadowscan.collection-scope/v1",
+            "comparable": True,
+            "fingerprint": "a" * 64,
+        },
     ).to_dict()
     report["findings"] = list(findings)
     return report
@@ -121,19 +129,23 @@ def test_static_scope_tracks_detection_settings_not_content(tmp_path, index):
 
 
 @pytest.mark.parametrize("connector", ["cloud.aws", "code.github"])
-@pytest.mark.parametrize("private_config", [
-    {"token": "t1"},
-    {"token": credential_id("t1")},
-    {"safe_alias": credential_id("t1")},
-    {"safe_alias": "alias-" + credential_id("t1")},
-    {"auth": {"password": "t1"}},
-    {"env": {"CUSTOM_VALUE": "t1"}},
-])
+@pytest.mark.parametrize(
+    "private_config",
+    [
+        {"token": "t1"},
+        {"token": credential_id("t1")},
+        {"safe_alias": credential_id("t1")},
+        {"safe_alias": "alias-" + credential_id("t1")},
+        {"auth": {"password": "t1"}},
+        {"env": {"CUSTOM_VALUE": "t1"}},
+    ],
+)
 def test_secret_bearing_offline_scope_omits_public_fingerprint(tmp_path, index, connector, private_config):
     spec = ConnectorSpec(connector, {"input": str(tmp_path / "records.json"), **private_config})
     scope = build_collection_scope(ScanConfig(connectors=[spec]), index, [spec])
     assert scope == {
-        "schema": "shadowscan.collection-scope/v1", "comparable": False,
+        "schema": "shadowscan.collection-scope/v1",
+        "comparable": False,
         "reason": "configuration contains private comparison values",
     }
     assert "t1" not in json.dumps(scope)
@@ -144,13 +156,20 @@ def test_gateway_binding_cannot_be_guessed_from_collection_scope_digest(tmp_path
     binding = {"caller": "principal:worker", "code_resource": "github:org/app", "scope": {"tenant": "t1"}}
     spec = ConnectorSpec("gateway.logs", {"input": source, "correlation_bindings": [binding]})
     scope = build_collection_scope(ScanConfig(connectors=[spec]), index, [spec])
-    guessed_public_digest = hashlib.sha256(json.dumps({
-        "inputs": [{"name": "gateway.logs", "label": None, "config": spec.config}],
-        "min_confidence": 0.0,
-        "signatures": index.fingerprint(),
-        "scanner": _scanner_digest(),
-        "version": __version__,
-    }, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    guessed_public_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "inputs": [{"name": "gateway.logs", "label": None, "config": spec.config}],
+                "min_confidence": 0.0,
+                "signatures": index.fingerprint(),
+                "scanner": _scanner_digest(),
+                "version": __version__,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
     assert scope["comparable"] is False
     assert scope.get("fingerprint") != guessed_public_digest
     assert "fingerprint" not in scope and "t1" not in json.dumps(scope)
@@ -172,9 +191,11 @@ def test_scope_selection_order_paths_and_signature_changes(tmp_path, index):
     moved = copy.deepcopy(a)
     moved.config["input"] = str(tmp_path / "c.json")
     assert build_collection_scope(config, index, [moved, b]) != original
+
     class NewIndex:
         def fingerprint(self):
             return "different signatures"
+
     assert build_collection_scope(config, NewIndex(), [a, b]) != original
 
 

@@ -37,10 +37,11 @@ as your first contribution.
 
 ## Getting started
 
-Use Python 3.11 or newer and Git on a POSIX system: Linux is the CI-validated
-target, macOS may work but is untested, and on Windows use WSL, because the
-scanner's confined file reader needs `O_NOFOLLOW`/`dir_fd` and the Makefile
-assumes `/tmp` and a `.venv/bin` layout. Fork the repository on GitHub if you
+Use Python 3.11 or newer and Git on a POSIX system: Linux and macOS are
+CI-validated targets, and on Windows use WSL, because the scanner's confined
+file reader needs `O_NOFOLLOW`/`dir_fd` and the Makefile assumes `/tmp` and a
+`.venv/bin` layout. The macOS CI job runs lint, typecheck, tests and coverage
+without hash-locked supply chain validation (wheel hashes are Linux-specific). Fork the repository on GitHub if you
 need a branch you can push; clone your fork in that case. In a local checkout:
 
 ```bash

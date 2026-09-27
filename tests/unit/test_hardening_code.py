@@ -25,7 +25,9 @@ def _run(index, root, **config):
 def test_secret_excerpt_is_redacted_before_truncation(tmp_path, index):
     # Derived at runtime so no secret-shaped literal sits in the source.
     key = "pplx-" + hashlib.sha256(b"perplexity-sample").hexdigest()[:48]
-    (tmp_path / "client.py").write_text('headers = {"X-Trace": "' + "p" * 100 + '", "X-Custom-Header": "' + key + '"}\n')
+    (tmp_path / "client.py").write_text(
+        'headers = {"X-Trace": "' + "p" * 100 + '", "X-Custom-Header": "' + key + '"}\n'
+    )
     findings, _ = _run(index, tmp_path)
     secrets = [f for f in findings if f.kind == Kind.SECRET]
     assert len(secrets) == 1
@@ -62,7 +64,9 @@ def test_git_metadata_decoding_is_lenient_and_isolated(tmp_path, index, monkeypa
 
     def fake_run(argv, **kwargs):
         captured.update(kwargs)
-        return subprocess.CompletedProcess(argv, 0, stdout="Jos�\x00j@example.test\x002026-01-01T00:00:00Z", stderr="")
+        return subprocess.CompletedProcess(
+            argv, 0, stdout="Jos�\x00j@example.test\x002026-01-01T00:00:00Z", stderr=""
+        )
 
     monkeypatch.setattr(fs_module.subprocess, "run", fake_run)
     assert connector._git_info(tmp_path, ".")["last_author_email"] == "j@example.test"
@@ -78,7 +82,9 @@ def test_git_metadata_decoding_is_lenient_and_isolated(tmp_path, index, monkeypa
 
 def test_emit_phase_failures_are_isolated_per_finding(tmp_path, index, monkeypatch):
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
-    (tmp_path / "config.py").write_text("OPENAI_API_KEY = 'sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h'\n")
+    (tmp_path / "config.py").write_text(
+        "OPENAI_API_KEY = 'sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h'\n"
+    )
 
     def boom(self, *args, **kwargs):
         raise RuntimeError("synthetic")
@@ -129,15 +135,18 @@ def test_codeowners_aggregate_budget_marks_later_ownership_incomplete(tmp_path, 
     assert len(ctx.stats.errors) == errors_before
 
 
-@pytest.mark.parametrize("pattern, path, expected", [
-    ("/services/api/", "services/api/main.py", True),
-    ("/services/api/", "packages/api/main.py", False),
-    ("/**/api/", "packages/api/x.py", True),
-    ("*.py", "a/b/c.py", True),
-    ("/docs/*.md", "docs/readme.md", True),
-    ("/docs/*.md", "src/docs/readme.md", False),
-    ("services/*/agents/", "services/x/agents/run.py", True),
-])
+@pytest.mark.parametrize(
+    "pattern, path, expected",
+    [
+        ("/services/api/", "services/api/main.py", True),
+        ("/services/api/", "packages/api/main.py", False),
+        ("/**/api/", "packages/api/x.py", True),
+        ("*.py", "a/b/c.py", True),
+        ("/docs/*.md", "docs/readme.md", True),
+        ("/docs/*.md", "src/docs/readme.md", False),
+        ("services/*/agents/", "services/x/agents/run.py", True),
+    ],
+)
 def test_codeowners_first_selector_short_circuit_preserves_semantics(pattern, path, expected):
     assert codeowners_match(pattern, path) is expected
 

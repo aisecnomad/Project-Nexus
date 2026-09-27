@@ -17,8 +17,15 @@ KEY = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
 
 
 def _finding(title: str, **kwargs) -> Finding:
-    return Finding(surface=Surface.CODE, connector="test.records", kind=Kind.AGENT, title=title,
-                   resource=f"repo:{title}", resource_type="repository", **kwargs)
+    return Finding(
+        surface=Surface.CODE,
+        connector="test.records",
+        kind=Kind.AGENT,
+        title=title,
+        resource=f"repo:{title}",
+        resource_type="repository",
+        **kwargs,
+    )
 
 
 class _Oversized(BaseConnector):
@@ -49,27 +56,38 @@ def test_one_oversized_finding_is_omitted_without_discarding_the_others(index):
     assert KEY not in json.dumps([f.to_dict() for f in findings])
 
 
-@pytest.mark.parametrize("line, value", [
-    ('AZURE_OPENAI_KEY = "0123456789abcdef0123456789abcdef"', "0123456789abcdef"),
-    ("export DATABRICKS_TOKEN=synthetic-databricks-token-value-0000", "synthetic-databricks"),
-    ('modal_token_secret = "as-deadbeefcafe0123456789"', "as-deadbeefcafe"),
-    ("LITELLM_MASTER_KEY: sk-1234", "sk-1234"),
-    ('"OPENAI_ADMIN_KEY": "fedcba9876543210fedcba9876543210"', "fedcba9876543210"),
-    ("CLAUDE_CODE_OAUTH_TOKEN=abcdefabcdefabcdefabcdef", "abcdefabcdef"),
-    ("hugging_face_hub_token = 'hf_synthetic_value_without_known_prefix_shape'", "synthetic_value"),
-    ("https://example.com/callback?litellm_master_key=sk-1234&model=gpt", "sk-1234"),
-    ('os.environ["DATABRICKS_TOKEN"] = "synthetic-databricks-token-value-0000"', "synthetic-databricks"),
-    ("process.env['AZURE_OPENAI_KEY'] = '0123456789abcdef0123456789abcdef'", "0123456789abcdef"),
-])
+@pytest.mark.parametrize(
+    "line, value",
+    [
+        ('AZURE_OPENAI_KEY = "0123456789abcdef0123456789abcdef"', "0123456789abcdef"),
+        ("export DATABRICKS_TOKEN=synthetic-databricks-token-value-0000", "synthetic-databricks"),
+        ('modal_token_secret = "as-deadbeefcafe0123456789"', "as-deadbeefcafe"),
+        ("LITELLM_MASTER_KEY: sk-1234", "sk-1234"),
+        ('"OPENAI_ADMIN_KEY": "fedcba9876543210fedcba9876543210"', "fedcba9876543210"),
+        ("CLAUDE_CODE_OAUTH_TOKEN=abcdefabcdefabcdefabcdef", "abcdefabcdef"),
+        ("hugging_face_hub_token = 'hf_synthetic_value_without_known_prefix_shape'", "synthetic_value"),
+        ("https://example.com/callback?litellm_master_key=sk-1234&model=gpt", "sk-1234"),
+        ('os.environ["DATABRICKS_TOKEN"] = "synthetic-databricks-token-value-0000"', "synthetic-databricks"),
+        ("process.env['AZURE_OPENAI_KEY'] = '0123456789abcdef0123456789abcdef'", "0123456789abcdef"),
+    ],
+)
 def test_environment_style_credential_names_are_redacted_in_text(line, value):
     clean = sanitize_text(line)
     assert value not in clean and REDACTED in clean
 
 
-@pytest.mark.parametrize("line", [
-    "sort_key_fn = compute()", "key = 1", 'nextPageToken = "abc"', 'partition = "id"',
-    'AWS_REGION = "us-east-1"', 'OPENAI_BASE_URL = "https://api.openai.com/v1"', "MAX_TOKENS = 4096",
-])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "sort_key_fn = compute()",
+        "key = 1",
+        'nextPageToken = "abc"',
+        'partition = "id"',
+        'AWS_REGION = "us-east-1"',
+        'OPENAI_BASE_URL = "https://api.openai.com/v1"',
+        "MAX_TOKENS = 4096",
+    ],
+)
 def test_non_credential_assignments_are_preserved(line):
     assert sanitize_text(line) == line
 

@@ -91,7 +91,8 @@ def wilson_lower95(successes: int, attempts: int) -> float | None:
     proportion = successes / attempts
     z2 = _Z_95 * _Z_95
     return (
-        proportion + z2 / (2 * attempts)
+        proportion
+        + z2 / (2 * attempts)
         - _Z_95 * math.sqrt((proportion * (1 - proportion) + z2 / (4 * attempts)) / attempts)
     ) / (1 + z2 / attempts)
 

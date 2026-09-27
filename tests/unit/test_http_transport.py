@@ -37,7 +37,11 @@ def test_https_adapter_connects_vetted_address_and_checks_original_hostname(tmp_
     cert_path = tmp_path / "cert.pem"
     key_path = tmp_path / "key.pem"
     cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
-    key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+        )
+    )
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -69,7 +73,9 @@ def test_https_adapter_connects_vetted_address_and_checks_original_hostname(tmp_
     try:
         # A hostname, rather than an IP URL, reaches the adapter. It must retain
         # that name for certificate verification while connecting the vetted IP.
-        assert allowed.get_json(f"https://service.example:{port}/keys", verify=str(cert_path), max_bytes=64) == {"keys": []}
+        assert allowed.get_json(
+            f"https://service.example:{port}/keys", verify=str(cert_path), max_bytes=64
+        ) == {"keys": []}
         with pytest.raises(requests.exceptions.SSLError):
             allowed.get_json(f"https://wrong.example:{port}/keys", verify=str(cert_path), max_bytes=64)
         with pytest.raises(ValueError, match="Refusing"):

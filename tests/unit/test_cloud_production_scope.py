@@ -34,7 +34,14 @@ def test_lambda_limit_stops_lazy_listing_and_limits_detail_reads(index):
     def pages(**kwargs):
         for n in range(10):
             fetched.append(n)
-            yield {"Functions": [{"FunctionName": f"worker-{n}", "FunctionArn": f"arn:aws:lambda:us-east-1:{ACCOUNT}:function:worker-{n}"}]}
+            yield {
+                "Functions": [
+                    {
+                        "FunctionName": f"worker-{n}",
+                        "FunctionArn": f"arn:aws:lambda:us-east-1:{ACCOUNT}:function:worker-{n}",
+                    }
+                ]
+            }
 
     client.get_paginator.return_value.paginate.side_effect = pages
     assert len(list(connector._collect_lambda("us-east-1"))) == 2
@@ -74,14 +81,20 @@ def test_aws_sdk_page_limit_does_not_request_an_extra_page(index, monkeypatch, c
     boto3 = pytest.importorskip("boto3")
     from botocore.stub import Stubber
 
-    client = boto3.client("lambda", region_name="us-east-1", aws_access_key_id="test", aws_secret_access_key="test")
+    client = boto3.client(
+        "lambda", region_name="us-east-1", aws_access_key_id="test", aws_secret_access_key="test"
+    )
     client._make_api_call = Mock(wraps=client._make_api_call)
     ctx = context(index)
     connector = AwsConnector(ctx)
     monkeypatch.setattr("shadowscan.connectors.cloud.aws.MAX_LIST_PAGES", 1)
     with Stubber(client) as stubber:
-        stubber.add_response("list_functions", {"Functions": [{"FunctionName": "worker"}], **continuation}, {})
-        assert list(connector._paginate(client, "list_functions", "Functions")) == [{"FunctionName": "worker"}]
+        stubber.add_response(
+            "list_functions", {"Functions": [{"FunctionName": "worker"}], **continuation}, {}
+        )
+        assert list(connector._paginate(client, "list_functions", "Functions")) == [
+            {"FunctionName": "worker"}
+        ]
     assert client._make_api_call.call_count == 1
     assert ctx.stats.incomplete is bool(continuation)
 
@@ -124,7 +137,12 @@ def test_aws_invalid_sts_identity_fails_before_inventory(index, monkeypatch, acc
 
 def test_aws_offline_account_label_does_not_require_live_authentication(index, tmp_path):
     export = tmp_path / "aws.jsonl"
-    export.write_text(json.dumps({"_kind": "lambda", "FunctionName": "worker", "Environment": {"OPENAI_API_KEY": "${SECRET}"}}) + "\n")
+    export.write_text(
+        json.dumps(
+            {"_kind": "lambda", "FunctionName": "worker", "Environment": {"OPENAI_API_KEY": "${SECRET}"}}
+        )
+        + "\n"
+    )
     connector = AwsConnector(context(index, account_id="offline-account", input=str(export)))
     connector._session_ = Mock(side_effect=AssertionError("offline scans must not authenticate"))
     findings = connector.run()

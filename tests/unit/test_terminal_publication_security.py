@@ -32,15 +32,24 @@ def test_terminal_text_retains_printable_unicode_and_exposes_control_characters(
 
 def test_table_neutralizes_controls_in_findings_and_connector_diagnostics():
     finding = Finding(
-        surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-        title=PAYLOAD, resource=PAYLOAD, resource_type="repository", owner=PAYLOAD,
-        frameworks=[PAYLOAD], capabilities=[PAYLOAD], registry_match=PAYLOAD,
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title=PAYLOAD,
+        resource=PAYLOAD,
+        resource_type="repository",
+        owner=PAYLOAD,
+        frameworks=[PAYLOAD],
+        capabilities=[PAYLOAD],
+        registry_match=PAYLOAD,
         evidence=[Evidence(signal="example", description=PAYLOAD, location=PAYLOAD)],
         risk=Risk(factors=[RiskFactor(id="example", description=PAYLOAD, weight=1)]),
         metadata={"runtime_activity": {"status": PAYLOAD}},
     )
     result = ScanResult(
-        findings=[finding], inventory_size=1, version=PAYLOAD,
+        findings=[finding],
+        inventory_size=1,
+        version=PAYLOAD,
         stats=[ScanStats(connector=PAYLOAD, started_at="now", errors=[PAYLOAD], warnings=[PAYLOAD])],
     )
     output = io.StringIO()
@@ -51,12 +60,22 @@ def test_table_neutralizes_controls_in_findings_and_connector_diagnostics():
 
 
 def test_diff_terminal_output_neutralizes_imported_title_and_resource(tmp_path):
-    finding = Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-                      title=PAYLOAD, resource=PAYLOAD, resource_type="repository")
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title=PAYLOAD,
+        resource=PAYLOAD,
+        resource_type="repository",
+    )
     report = ScanResult(
-        findings=[finding], stats=[ScanStats(connector="code.filesystem", started_at="now")],
-        collection_scope={"schema": "shadowscan.collection-scope/v1", "comparable": True,
-                          "fingerprint": "a" * 64},
+        findings=[finding],
+        stats=[ScanStats(connector="code.filesystem", started_at="now")],
+        collection_scope={
+            "schema": "shadowscan.collection-scope/v1",
+            "comparable": True,
+            "fingerprint": "a" * 64,
+        },
     ).to_dict()
     after = tmp_path / "after.json"
     after.write_text(json.dumps(report))

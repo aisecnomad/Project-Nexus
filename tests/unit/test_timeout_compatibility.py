@@ -24,10 +24,14 @@ def test_legacy_yaml_timeout_maps_to_canonical_value(tmp_path, value, expected):
 @pytest.mark.parametrize("legacy,canonical", [(2, 3), (2, 2), (None, 120), (None, None)])
 def test_both_yaml_timeout_keys_are_rejected(legacy, canonical):
     with pytest.raises(ConfigValidationError, match="not both"):
-        ScanConfig.from_dict({"options": {"connector_timeout": legacy, "connector_timeout_seconds": canonical}})
+        ScanConfig.from_dict(
+            {"options": {"connector_timeout": legacy, "connector_timeout_seconds": canonical}}
+        )
 
 
-@pytest.mark.parametrize("value", [0, -1, True, False, float("nan"), float("inf"), "infinity", "opaque-secret-value"])
+@pytest.mark.parametrize(
+    "value", [0, -1, True, False, float("nan"), float("inf"), "infinity", "opaque-secret-value"]
+)
 def test_legacy_timeout_alias_cannot_disable_completion_deadlines(value):
     with pytest.raises(ConfigValidationError) as failure:
         ScanConfig.from_dict({"options": {"connector_timeout": value}})
@@ -58,7 +62,9 @@ def test_constructor_conflicting_timeout_values_are_rejected():
 @pytest.mark.parametrize("flag", ["--connector-timeout", "--connector-timeout-seconds"])
 def test_cli_alias_sets_canonical_setting(monkeypatch, flag):
     received = []
-    monkeypatch.setattr("shadowscan.cli._run_and_emit", lambda config, *args, **kwargs: received.append(config))
+    monkeypatch.setattr(
+        "shadowscan.cli._run_and_emit", lambda config, *args, **kwargs: received.append(config)
+    )
     result = CliRunner().invoke(main, ["run", "gateway.logs", flag, "2.5"])
     assert result.exit_code == 0, result.output
     assert received[0].connector_timeout_seconds == 2.5

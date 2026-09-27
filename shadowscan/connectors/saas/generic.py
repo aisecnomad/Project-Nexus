@@ -20,14 +20,35 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 
 DEFAULT_FIELDS: dict[str, list[str]] = {
-    "name": ["name", "app", "app_name", "application", "app name", "application name", "display_name", "displayName", "title", "integration", "product"],
+    "name": [
+        "name",
+        "app",
+        "app_name",
+        "application",
+        "app name",
+        "application name",
+        "display_name",
+        "displayName",
+        "title",
+        "integration",
+        "product",
+    ],
     "id": ["id", "app_id", "client_id", "clientId", "application_id", "appId", "key"],
     "publisher": ["publisher", "vendor", "developer", "company", "owner_org", "provider"],
     "description": ["description", "category", "categories", "summary", "notes"],
     "url": ["url", "homepage", "website", "domain", "domains", "redirect_uri", "redirect_uris", "app_url"],
     "scopes": ["scopes", "scope", "permissions", "permission", "oauth_scopes", "access", "granted_scopes"],
     "users": ["users", "user_count", "num_users", "installs", "install_count", "seats", "user"],
-    "owner": ["owner", "installed_by", "requested_by", "admin", "installer", "created_by", "user_email", "email"],
+    "owner": [
+        "owner",
+        "installed_by",
+        "requested_by",
+        "admin",
+        "installer",
+        "created_by",
+        "user_email",
+        "email",
+    ],
     "installed_at": ["installed_at", "created_at", "date", "first_seen", "install_date", "granted_at"],
     "last_used": ["last_used", "last_used_at", "last_activity", "last_seen", "updated_at"],
     "status": ["status", "state", "approval", "sanctioned", "risk", "risk_score"],
@@ -38,7 +59,9 @@ class GenericSaaSConnector(BaseConnector):
     name: ClassVar[str] = "saas.generic"
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "saas"
-    description: ClassVar[str] = "Offline app-inventory export from any SaaS admin console or CASB (column mapping via `fields`)."
+    description: ClassVar[str] = (
+        "Offline app-inventory export from any SaaS admin console or CASB (column mapping via `fields`)."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "input": "CSV / JSON export (required)",
         "platform": "label for the platform the export came from (e.g. 'google-marketplace', 'hubspot', 'defender-mcas')",
@@ -52,7 +75,9 @@ class GenericSaaSConnector(BaseConnector):
         self.platform = str(ctx.get("platform") or "saas")
         self.keep_all = bool(ctx.get("keep_all", False))
         user_fields = ctx.get("fields") or {}
-        self.fields = {k: ([user_fields[k]] if k in user_fields else []) + v for k, v in DEFAULT_FIELDS.items()}
+        self.fields = {
+            k: ([user_fields[k]] if k in user_fields else []) + v for k, v in DEFAULT_FIELDS.items()
+        }
 
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError("saas.generic: offline only; set 'input' to an export file")
@@ -71,7 +96,14 @@ class GenericSaaSConnector(BaseConnector):
             self.ctx.examined()
             try:
                 f = self._finding(rec)
-            except (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError) as exc:
+            except (
+                AttributeError,
+                TypeError,
+                ValueError,
+                KeyError,
+                RecursionError,
+                MatchTimeoutError,
+            ) as exc:
                 detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
                 self.ctx.warn(f"saas.generic: skipped a malformed app record ({type(exc).__name__}){detail}")
                 continue
@@ -84,9 +116,17 @@ class GenericSaaSConnector(BaseConnector):
             return None
         raw_scopes = self._get(rec, "scopes")
         # JSON exports may carry non-string list members; coerce rather than crash.
-        scopes = [str(s) for s in raw_scopes if s not in (None, "")] if isinstance(raw_scopes, list) else [s.strip() for s in re.split(r"[,;\s]+", str(raw_scopes or "")) if s.strip()]
+        scopes = (
+            [str(s) for s in raw_scopes if s not in (None, "")]
+            if isinstance(raw_scopes, list)
+            else [s.strip() for s in re.split(r"[,;\s]+", str(raw_scopes or "")) if s.strip()]
+        )
         urls = self._get(rec, "url")
-        url_list = [str(u) for u in urls if u not in (None, "")] if isinstance(urls, list) else [u.strip() for u in re.split(r"[,;\s]+", str(urls or "")) if u.strip()]
+        url_list = (
+            [str(u) for u in urls if u not in (None, "")]
+            if isinstance(urls, list)
+            else [u.strip() for u in re.split(r"[,;\s]+", str(urls or "")) if u.strip()]
+        )
         app_id = self._get(rec, "id")
         f = Finding(
             surface=Surface.SAAS,
@@ -100,17 +140,43 @@ class GenericSaaSConnector(BaseConnector):
             first_seen=str(self._get(rec, "installed_at") or "") or None,
             last_seen=str(self._get(rec, "last_used") or "") or None,
         )
-        assess_app(self.index, f, name=str(name), publisher=str(self._get(rec, "publisher") or "") or None, description=str(self._get(rec, "description") or "") or None, urls=url_list, scopes=scopes, client_id=str(app_id) if app_id else None)
+        assess_app(
+            self.index,
+            f,
+            name=str(name),
+            publisher=str(self._get(rec, "publisher") or "") or None,
+            description=str(self._get(rec, "description") or "") or None,
+            urls=url_list,
+            scopes=scopes,
+            client_id=str(app_id) if app_id else None,
+        )
         interesting = bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags)
         if not interesting and not self.keep_all:
             return None
         users = self._get(rec, "users")
         try:
-            user_count = int(str(users).replace(",", "")) if users is not None and str(users).replace(",", "").isdigit() else None
+            user_count = (
+                int(str(users).replace(",", ""))
+                if users is not None and str(users).replace(",", "").isdigit()
+                else None
+            )
         except ValueError:
             user_count = None
-        f.add_evidence(Evidence(signal=f"{self.platform}:app", description=f"'{name}' from {self.platform} export; status {self._get(rec, 'status') or 'n/a'}; users {user_count if user_count is not None else users or '?'}; scopes {', '.join(scopes)[:300] or 'n/a'}", weight=0.2 + (min(0.2, user_count / 500) if user_count else 0)))
-        f.metadata.update({"platform": self.platform, "status": self._get(rec, "status"), "users": user_count if user_count is not None else users, "scopes": summarize_scopes(scopes)})
+        f.add_evidence(
+            Evidence(
+                signal=f"{self.platform}:app",
+                description=f"'{name}' from {self.platform} export; status {self._get(rec, 'status') or 'n/a'}; users {user_count if user_count is not None else users or '?'}; scopes {', '.join(scopes)[:300] or 'n/a'}",
+                weight=0.2 + (min(0.2, user_count / 500) if user_count else 0),
+            )
+        )
+        f.metadata.update(
+            {
+                "platform": self.platform,
+                "status": self._get(rec, "status"),
+                "users": user_count if user_count is not None else users,
+                "scopes": summarize_scopes(scopes),
+            }
+        )
         finalize(f, self.index)
         f.sanitize()
         return f

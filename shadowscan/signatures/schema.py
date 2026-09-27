@@ -17,7 +17,17 @@ from typing import Any
 
 SIGNATURE_STRINGS = {"id", "name", "category", "vendor", "homepage", "description"}
 SIGNATURE_LISTS = {"tags", "capabilities", "risk_notes", "references"}
-SIGNAL_LISTS = {"languages", "names", "prefixes", "exclude_names", "exclude_prefixes", "patterns", "globs", "values", "capabilities"}
+SIGNAL_LISTS = {
+    "languages",
+    "names",
+    "prefixes",
+    "exclude_names",
+    "exclude_prefixes",
+    "patterns",
+    "globs",
+    "values",
+    "capabilities",
+}
 SIGNAL_COMMON = {"type", "weight", "capabilities", "agent_indicator", "description"}
 SIGNAL_FIELDS = {
     "dependency": {"ecosystem", "names", "prefixes", "exclude_names", "exclude_prefixes"},
@@ -38,17 +48,31 @@ SIGNAL_FIELDS = {
 
 # Dependency ecosystems the manifest parsers emit. ``any`` matches every
 # ecosystem; an omitted ecosystem is treated as ``any`` by the matcher.
-ECOSYSTEMS = frozenset({"pypi", "npm", "nuget", "maven", "go", "cargo", "rubygems", "composer", "conda", "any"})
+ECOSYSTEMS = frozenset(
+    {"pypi", "npm", "nuget", "maven", "go", "cargo", "rubygems", "composer", "conda", "any"}
+)
 
 # Canonical language names produced by ``matcher.language_for_path``.
-LANGUAGES = frozenset({"python", "javascript", "go", "rust", "java", "dotnet", "ruby", "php", "swift", "dart"})
+LANGUAGES = frozenset(
+    {"python", "javascript", "go", "rust", "java", "dotnet", "ruby", "php", "swift", "dart"}
+)
 
 # Capability vocabulary scored by ``shadowscan.risk.CAPABILITY_WEIGHTS``. The
 # risk engine keys on these exact strings; anything else would never score.
-CAPABILITIES = frozenset({
-    "code-exec", "autonomous", "saas-actions", "browsing", "memory", "multi-agent", "delegated-identity", "tool-use", "rag",
-    "data-access",
-})
+CAPABILITIES = frozenset(
+    {
+        "code-exec",
+        "autonomous",
+        "saas-actions",
+        "browsing",
+        "memory",
+        "multi-agent",
+        "delegated-identity",
+        "tool-use",
+        "rag",
+        "data-access",
+    }
+)
 
 # Signature id namespaces (the part before the first dot) and the category each
 # one requires. ``cloud.*`` keeps its historical spelling for the cloud-service
@@ -73,6 +97,7 @@ NAMESPACE_CATEGORIES = {
     "policy": "policy",
 }
 
+
 def require_mapping(value: Any, context: str) -> dict[str, Any]:
     if not isinstance(value, dict) or not all(isinstance(k, str) for k in value):
         raise ValueError(f"{context}: expected a mapping with string keys")
@@ -93,7 +118,11 @@ def _string(value: Any, context: str) -> None:
 def _unknown(value: dict[str, Any], allowed: set[str], context: str) -> None:
     unknown = value.keys() - allowed
     if unknown:
-        suffix = "; severity is derived by the risk engine; use weight for confidence" if "severity" in unknown else ""
+        suffix = (
+            "; severity is derived by the risk engine; use weight for confidence"
+            if "severity" in unknown
+            else ""
+        )
         raise ValueError(f"{context}: unknown fields {', '.join(sorted(unknown))}{suffix}")
 
 
@@ -112,7 +141,9 @@ def _string_list(value: Any, context: str) -> list[str]:
 def _vocabulary(items: list[str], allowed: frozenset[str], context: str, label: str) -> None:
     for entry in items:
         if entry not in allowed:
-            raise ValueError(f"{context}: unknown {label} {entry!r}; expected one of {', '.join(sorted(allowed))}")
+            raise ValueError(
+                f"{context}: unknown {label} {entry!r}; expected one of {', '.join(sorted(allowed))}"
+            )
 
 
 def matches_empty_string(pattern: str, flags: int = re.MULTILINE) -> bool:
@@ -205,14 +236,18 @@ def validate_signal_shape(value: Any, context: str) -> dict[str, Any]:
             elif key == "patterns":
                 for i, pattern in enumerate(items):
                     if matches_empty_string(pattern):
-                        raise ValueError(f"{context}.{key}[{i}]: pattern {pattern!r} matches the empty string")
+                        raise ValueError(
+                            f"{context}.{key}[{i}]: pattern {pattern!r} matches the empty string"
+                        )
             elif key == "globs":
                 for i, glob in enumerate(items):
                     check_glob(glob, f"{context}.{key}[{i}]")
             elif key == "values" and kind == "domain":
                 for i, domain in enumerate(items):
                     if domain.startswith("re:") and matches_empty_string(domain[3:], re.IGNORECASE):
-                        raise ValueError(f"{context}.{key}[{i}]: domain regex {domain!r} matches the empty string")
+                        raise ValueError(
+                            f"{context}.{key}[{i}]: domain regex {domain!r} matches the empty string"
+                        )
         elif key == "weight":
             # Range first: math.isfinite overflows on arbitrarily large ints.
             if type(item) not in (float, int) or not 0 < item <= 1 or not math.isfinite(item):
@@ -222,7 +257,9 @@ def validate_signal_shape(value: Any, context: str) -> dict[str, Any]:
                 raise ValueError(f"{context}.{key}: expected a boolean")
         elif key == "ecosystem":
             if not isinstance(item, str) or item not in ECOSYSTEMS:
-                raise ValueError(f"{context}.ecosystem: expected one of {', '.join(sorted(ECOSYSTEMS))}, got {item!r}")
+                raise ValueError(
+                    f"{context}.ecosystem: expected one of {', '.join(sorted(ECOSYSTEMS))}, got {item!r}"
+                )
         else:
             _string(item, f"{context}.{key}")
     return d

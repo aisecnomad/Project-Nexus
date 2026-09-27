@@ -11,8 +11,11 @@ def test_gateway_activity_refreshes_when_code_is_cached(tmp_path):
     (repo / "requirements.txt").write_text("langchain==0.3.0\n")
     gateway = tmp_path / "gateway.jsonl"
     record = {
-        "service": "svc-ops", "tenant_id": "tenant-a", "model": "gpt-4o",
-        "user_agent": "langchain/0.3", "timestamp": "2026-09-22T10:00:00Z",
+        "service": "svc-ops",
+        "tenant_id": "tenant-a",
+        "model": "gpt-4o",
+        "user_agent": "langchain/0.3",
+        "timestamp": "2026-09-22T10:00:00Z",
         "environment": "production",
     }
     gateway.write_text(json.dumps(record) + "\n")

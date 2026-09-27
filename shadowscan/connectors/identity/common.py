@@ -8,7 +8,12 @@ from shadowscan.connectors.common import apply_matches, classify_permissions, do
 from shadowscan.models import Evidence, Finding, Kind
 from shadowscan.signatures import SignatureIndex
 
-MACHINE_GRANT_TYPES = {"client_credentials", "urn:ietf:params:oauth:grant-type:jwt-bearer", "urn:ietf:params:oauth:grant-type:token-exchange", "urn:ietf:params:oauth:grant-type:device_code"}
+MACHINE_GRANT_TYPES = {
+    "client_credentials",
+    "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    "urn:ietf:params:oauth:grant-type:token-exchange",
+    "urn:ietf:params:oauth:grant-type:device_code",
+}
 
 
 def assess_app(
@@ -48,7 +53,12 @@ def assess_app(
         if "urn:ietf:params:oauth:grant-type:token-exchange" in gts:
             finding.add_tag("delegation")
             finding.add_capability("delegated-identity")
-    if auth_method and auth_method.lower() in {"private_key_jwt", "client_secret_jwt", "client_secret_post", "client_secret_basic"}:
+    if auth_method and auth_method.lower() in {
+        "private_key_jwt",
+        "client_secret_jwt",
+        "client_secret_post",
+        "client_secret_basic",
+    }:
         finding.metadata["token_endpoint_auth_method"] = auth_method
 
 

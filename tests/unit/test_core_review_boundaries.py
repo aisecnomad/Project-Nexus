@@ -18,13 +18,22 @@ from shadowscan.models import Finding, Kind, Risk, RiskLevel, ScanResult, ScanSt
 
 def _report() -> dict:
     finding = Finding(
-        surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-        title="Agent", resource="repo/agent", resource_type="repository",
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="Agent",
+        resource="repo/agent",
+        resource_type="repository",
         risk=Risk(score=55, level=RiskLevel.HIGH),
     )
     return ScanResult(
-        findings=[finding], stats=[ScanStats(connector="code.filesystem", started_at="2026-01-01")],
-        collection_scope={"schema": "shadowscan.collection-scope/v1", "comparable": True, "fingerprint": "a" * 64},
+        findings=[finding],
+        stats=[ScanStats(connector="code.filesystem", started_at="2026-01-01")],
+        collection_scope={
+            "schema": "shadowscan.collection-scope/v1",
+            "comparable": True,
+            "fingerprint": "a" * 64,
+        },
     ).to_dict()
 
 
@@ -44,8 +53,11 @@ def test_report_commands_reject_symlink_inputs(tmp_path, command):
     source.write_text(json.dumps(_report()))
     link = tmp_path / "linked-report.json"
     link.symlink_to(source)
-    args = (["diff", str(source), str(link), "--json"] if command == "diff" else
-            ["inventory", "stubs", str(link), "-o", str(tmp_path / "stubs")])
+    args = (
+        ["diff", str(source), str(link), "--json"]
+        if command == "diff"
+        else ["inventory", "stubs", str(link), "-o", str(tmp_path / "stubs")]
+    )
     result = CliRunner().invoke(main, args)
     assert result.exit_code == 1
     assert "Error:" in result.output and "Traceback" not in result.output
@@ -90,8 +102,11 @@ def test_comparison_validates_security_attributes_of_missing_findings():
 def test_report_commands_reject_duplicate_json_keys(tmp_path, command):
     source = tmp_path / "report.json"
     source.write_text(json.dumps(_report())[:-1] + ', "findings": []}')
-    args = (["diff", str(source), str(source), "--json"] if command == "diff" else
-            ["inventory", "stubs", str(source), "-o", str(tmp_path / "stubs")])
+    args = (
+        ["diff", str(source), str(source), "--json"]
+        if command == "diff"
+        else ["inventory", "stubs", str(source), "-o", str(tmp_path / "stubs")]
+    )
     result = CliRunner().invoke(main, args)
     assert result.exit_code == 1
     assert "Error:" in result.output
@@ -113,8 +128,11 @@ def test_report_commands_reject_oversized_input_before_reading(tmp_path, monkeyp
     source = tmp_path / "report.json"
     with source.open("wb") as stream:
         stream.truncate(4097)
-    args = (["diff", str(source), str(source)] if command == "diff" else
-            ["inventory", "stubs", str(source), "-o", str(tmp_path / "stubs")])
+    args = (
+        ["diff", str(source), str(source)]
+        if command == "diff"
+        else ["inventory", "stubs", str(source), "-o", str(tmp_path / "stubs")]
+    )
     result = CliRunner().invoke(main, args)
     assert result.exit_code == 1 and "Error:" in result.output
 
@@ -139,8 +157,11 @@ def test_report_reader_rejects_parent_symlinks(tmp_path):
 @pytest.mark.parametrize("command", ["diff", "stubs"])
 def test_report_commands_report_excessive_nesting_safely(tmp_path, command):
     source = tmp_path / "report.json"
-    source.write_text('{' + '"nested":[' + '[' * 1500 + '0' + ']' * 1501 + '}')
-    args = (["diff", str(source), str(source)] if command == "diff" else
-            ["inventory", "stubs", str(source), "-o", str(tmp_path / "stubs")])
+    source.write_text("{" + '"nested":[' + "[" * 1500 + "0" + "]" * 1501 + "}")
+    args = (
+        ["diff", str(source), str(source)]
+        if command == "diff"
+        else ["inventory", "stubs", str(source), "-o", str(tmp_path / "stubs")]
+    )
     result = CliRunner().invoke(main, args)
     assert result.exit_code == 1 and "Error:" in result.output

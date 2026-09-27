@@ -45,7 +45,24 @@ from shadowscan.utils.identity import has_aws_account_scope, has_google_workspac
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
-NAME_FIELDS = ("agent_name", "name", "names", "display_name", "displayName", "app_slug", "okta_name", "developer_name", "schema_name", "caller", "principal", "function_name", "repository", "project", "agents", "agent_definitions")
+NAME_FIELDS = (
+    "agent_name",
+    "name",
+    "names",
+    "display_name",
+    "displayName",
+    "app_slug",
+    "okta_name",
+    "developer_name",
+    "schema_name",
+    "caller",
+    "principal",
+    "function_name",
+    "repository",
+    "project",
+    "agents",
+    "agent_definitions",
+)
 _MAX_NAME_PATTERNS = 4096
 
 
@@ -228,12 +245,23 @@ class Inventory:
         if not isinstance(disc, dict):
             raise _invalid(path, f"{location}.discovery", "expected a mapping")
         _check_fields(disc, _LIST_FIELDS - {"tags"}, path, f"{location}.discovery")
-        for name in ("agent_id", "id", "name", "display_name", "owner_team", "owner", "owner_email", "classification"):
+        for name in (
+            "agent_id",
+            "id",
+            "name",
+            "display_name",
+            "owner_team",
+            "owner",
+            "owner_email",
+            "classification",
+        ):
             _optional_string(meta, name, path, f"{location}.metadata")
         aid = meta.get("agent_id") or meta.get("id") or meta.get("name")
         if not aid:
             raise _invalid(path, f"{location}.metadata", "agent_id, id, or name is required")
-        lists = {name: _string_list(disc, name, path, f"{location}.discovery") for name in _LIST_FIELDS - {"tags"}}
+        lists = {
+            name: _string_list(disc, name, path, f"{location}.discovery") for name in _LIST_FIELDS - {"tags"}
+        }
         tags = _string_list(meta, "tags", path, f"{location}.metadata")
         if meta.get("classification"):
             tags.append(meta["classification"].strip())
@@ -310,7 +338,8 @@ class Inventory:
             finding.metadata["registry_match_reason"] = "unresolved-resource-identity"
             return None
         matches = [
-            entry for entry in self.entries
+            entry
+            for entry in self.entries
             if self._scope_matches(entry, finding)
             and any(fnmatch.fnmatchcase(finding.resource or "", pattern) for pattern in entry.resources)
         ]
@@ -378,7 +407,17 @@ def _invalid(path: Path, location: str, message: str) -> InventoryValidationErro
     return InventoryValidationError(sanitize_text(f"invalid inventory {path}: {location}: {message}"))
 
 
-_LIST_FIELDS = {"resources", "names", "aliases", "frameworks", "surfaces", "providers", "accounts", "regions", "tags"}
+_LIST_FIELDS = {
+    "resources",
+    "names",
+    "aliases",
+    "frameworks",
+    "surfaces",
+    "providers",
+    "accounts",
+    "regions",
+    "tags",
+}
 _SIMPLE_FIELDS = _LIST_FIELDS | {"id", "agent_id", "name", "owner", "owner_team"}
 
 
@@ -389,7 +428,11 @@ def _check_fields(value: dict, allowed: set[str], path: Path, location: str) -> 
 
 
 def _optional_string(value: dict, name: str, path: Path, location: str) -> None:
-    if name in value and value[name] is not None and (not isinstance(value[name], str) or not value[name].strip()):
+    if (
+        name in value
+        and value[name] is not None
+        and (not isinstance(value[name], str) or not value[name].strip())
+    ):
         raise _invalid(path, f"{location}.{name}", "expected a nonempty string")
 
 
@@ -402,12 +445,16 @@ def _string_list(value: dict, name: str, path: Path, location: str) -> list[str]
         return []
     items = value[name]
     if not isinstance(items, list) or any(not isinstance(item, str) or not item.strip() for item in items):
-        raise _invalid(path, f"{location}.{name}", "expected a list of nonempty strings (quote numeric identifiers)")
+        raise _invalid(
+            path, f"{location}.{name}", "expected a list of nonempty strings (quote numeric identifiers)"
+        )
     if name == "resources" and any(_CITE.search(item) for item in items):
         # Citation markers in a resource pattern can silently turn a specific
         # approval into a glob if stripped. Require the author to correct it.
         raise _invalid(path, f"{location}.{name}", "citation marker in resource pattern")
-    if name == "surfaces" and any(item.strip() not in {surface.value for surface in Surface} for item in items):
+    if name == "surfaces" and any(
+        item.strip() not in {surface.value for surface in Surface} for item in items
+    ):
         raise _invalid(path, f"{location}.{name}", "contains an unknown discovery surface")
     return [item.strip() for item in items]
 
@@ -454,7 +501,7 @@ def _strip_cite_markers(text: str) -> str:
     preamble = True
     for line in text.splitlines(keepends=True):
         if preamble and line == line.lstrip() and _CITE.fullmatch(line.strip()):
-            result.append(line[len(line.rstrip("\r\n")):])
+            result.append(line[len(line.rstrip("\r\n")) :])
             continue
         result.append(line)
         if line.strip() and not line.lstrip().startswith("#"):
@@ -468,7 +515,11 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
     autonomy = 4 if "autonomous" in caps else 3 if "tool-use" in caps else 2
     return {
         "metadata": {
-            "agent_id": _slug(finding.metadata.get("agent_name") or finding.metadata.get("name") or finding.title.split(":")[-1].strip()),
+            "agent_id": _slug(
+                finding.metadata.get("agent_name")
+                or finding.metadata.get("name")
+                or finding.title.split(":")[-1].strip()
+            ),
             "version": "0.1.0",
             "owner_team": finding.owner or "UNKNOWN",
             "classification": "Internal",
@@ -481,24 +532,32 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
             "max_loop_iterations": None,
             "velocity_limit": None,
         },
-        "identity_and_delegation": {"spiffe_id": None, "auth_mechanism": None, "privileged_account": "policy.privileged-scopes" in finding.tags},
+        "identity_and_delegation": {
+            "spiffe_id": None,
+            "auth_mechanism": None,
+            "privileged_account": "policy.privileged-scopes" in finding.tags,
+        },
         "capability_surface (Tools)": {"authorized_tools": [{"name": c} for c in caps]},
-        "security_controls": {"egress_proxy_required": True, "sandbox_type": None, "kill_switch_enabled": False},
+        "security_controls": {
+            "egress_proxy_required": True,
+            "sandbox_type": None,
+            "kill_switch_enabled": False,
+        },
         "risk_scoring": {"AARS_initial_score": finding.risk.score, "blast_radius": finding.risk.level.value},
         "discovery": {
             # The discovered ID is literal. Hand-authored resource entries may
             # still deliberately use wildcards; generated approvals never do.
             # Redacted resource or scope values can collide across objects.
             # Leave this approval unbound pending an exact, reviewed identity.
-            "resources": [] if not (
+            "resources": []
+            if not (
                 _has_usable_resource_identity(finding)
                 and _has_usable_scope_identity(finding)
                 and has_aws_account_scope(finding.provider, finding.account, finding.resource)
                 and has_google_workspace_account_scope(finding.provider, finding.account)
                 and finding.metadata.get("identity_unresolved") is not True
-            ) else [
-                finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})
-            ],
+            )
+            else [finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})],
             "names": sorted({str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}),
             "frameworks": finding.frameworks,
             "surfaces": [finding.surface.value],

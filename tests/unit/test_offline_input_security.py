@@ -107,7 +107,9 @@ def test_gateway_gzip_expansion_is_bounded(tmp_path, index):
     ("connector_type", "config_key"),
     [(GitHubConnector, "max_repos"), (GitLabConnector, "max_projects")],
 )
-def test_offline_clone_loaders_skip_symlinks_and_enforce_repo_caps(tmp_path, index, connector_type, config_key):
+def test_offline_clone_loaders_skip_symlinks_and_enforce_repo_caps(
+    tmp_path, index, connector_type, config_key
+):
     root = tmp_path / "clones"
     root.mkdir()
     (root / "repo-a").mkdir()

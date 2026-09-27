@@ -47,7 +47,10 @@ def _signature_candidate(item: Any, *, alg: str, kid: str | None) -> bool:
     if alg in {"RS256", "PS256"}:
         # Bound attacker-controlled big integers before the cryptography backend
         # constructs or verifies with them (8192-bit modulus, 48-bit exponent).
-        if any(not isinstance(item.get(name), str) or not 0 < len(item[name]) <= limit for name, limit in (("n", 1366), ("e", 8))):
+        if any(
+            not isinstance(item.get(name), str) or not 0 < len(item[name]) <= limit
+            for name, limit in (("n", 1366), ("e", 8))
+        ):
             return False
     if alg == "ES256" and item.get("crv") != "P-256":
         return False

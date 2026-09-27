@@ -30,7 +30,9 @@ def test_salesforce_never_requests_token_values_and_survives_expired_locators(in
     assert "AccessToken" not in salesforce_module.QUERIES["OauthToken"][1]
     ctx = context(index, instance_url="https://acme.my.salesforce.com", access_token="synthetic")
     connector = SalesforceConnector(ctx)
-    monkeypatch.setattr(salesforce_module, "QUERIES", {"BotDefinition": ("data", "SELECT Id FROM BotDefinition")})
+    monkeypatch.setattr(
+        salesforce_module, "QUERIES", {"BotDefinition": ("data", "SELECT Id FROM BotDefinition")}
+    )
     monkeypatch.setattr(connector, "_auth", lambda: None)
     connector.http = Mock()
     connector.http.get_json.side_effect = [
@@ -49,11 +51,15 @@ def test_servicenow_pagination_stops_on_a_repeated_page(index, monkeypatch):
     monkeypatch.setattr(connector, "_auth", lambda: None)
     connector.http = Mock()
     # Every response is a fresh object, as it would be from the transport.
-    connector.http.get_json.side_effect = lambda *args, **kwargs: {"result": [{"sys_id": str(i)} for i in range(kwargs["params"]["sysparm_limit"])]}
+    connector.http.get_json.side_effect = lambda *args, **kwargs: {
+        "result": [{"sys_id": str(i)} for i in range(kwargs["params"]["sysparm_limit"])]
+    }
     records = list(connector.collect())
     assert len(records) == 500
     assert connector.http.get_json.call_count == 2
-    assert ctx.stats.incomplete and any("repeated pagination page" in warning for warning in ctx.stats.warnings)
+    assert ctx.stats.incomplete and any(
+        "repeated pagination page" in warning for warning in ctx.stats.warnings
+    )
 
 
 def test_github_apps_pat_inventory_is_optional(index, monkeypatch):
@@ -75,4 +81,6 @@ def test_github_apps_pat_inventory_is_optional(index, monkeypatch):
     monkeypatch.setattr(github_apps_module, "HttpClient", FakeHttp)
     records = list(connector.collect())
     assert [r["_kind"] for r in records] == ["installation"]
-    assert ctx.stats.incomplete and any("PAT inventory unavailable" in warning for warning in ctx.stats.warnings)
+    assert ctx.stats.incomplete and any(
+        "PAT inventory unavailable" in warning for warning in ctx.stats.warnings
+    )

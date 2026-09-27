@@ -62,8 +62,9 @@ def test_oci_explicit_resource_principal_uses_opted_in_tenancy(index, monkeypatc
     get_signer = Mock(return_value=signer)
     monkeypatch.setattr(oci.auth.signers, "get_resource_principals_signer", get_signer)
 
-    scanner = connector(index, auth="resource_principal", allow_instance_credentials=True,
-                        tenancy="ocid1.tenancy.explicit")
+    scanner = connector(
+        index, auth="resource_principal", allow_instance_credentials=True, tenancy="ocid1.tenancy.explicit"
+    )
     scanner._init()
     get_signer.assert_called_once_with()
     assert scanner._signer is signer
@@ -73,22 +74,28 @@ def test_oci_explicit_resource_principal_uses_opted_in_tenancy(index, monkeypatc
 
 def test_oci_sdk_page_headers_drive_cursor_and_preserve_partial_results(index):
     scanner = connector(index)
-    fetch = Mock(side_effect=[
-        response(SimpleNamespace(items=[{"id": "first"}]), next_page="page-2"),
-        response(SimpleNamespace(items=[{"id": "second"}])),
-    ])
+    fetch = Mock(
+        side_effect=[
+            response(SimpleNamespace(items=[{"id": "first"}]), next_page="page-2"),
+            response(SimpleNamespace(items=[{"id": "second"}])),
+        ]
+    )
     assert scanner._all(fetch, "ocid1.tenancy.test", lifecycle_state="ACTIVE") == [
-        {"id": "first"}, {"id": "second"},
+        {"id": "first"},
+        {"id": "second"},
     ]
     assert fetch.call_args_list[1].args == ("ocid1.tenancy.test",)
     assert fetch.call_args_list[1].kwargs == {"lifecycle_state": "ACTIVE", "page": "page-2"}
     assert not scanner.ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("ending", [
-    response([{"id": "second"}], next_page="again"),
-    oci.exceptions.ServiceError(429, "TooManyRequests", {}, "private diagnostic token"),
-])
+@pytest.mark.parametrize(
+    "ending",
+    [
+        response([{"id": "second"}], next_page="again"),
+        oci.exceptions.ServiceError(429, "TooManyRequests", {}, "private diagnostic token"),
+    ],
+)
 def test_oci_late_pagination_failure_retains_observations_without_leaking_exception(index, ending):
     scanner = connector(index)
     fetch = Mock(side_effect=[response([{"id": "first"}], next_page="again"), ending])
@@ -113,48 +120,75 @@ def test_oci_tenancy_scan_paginates_scope_and_correlates_agent_endpoint(index):
     scanner._init = Mock()  # Access to the SDK is fully represented by clients below.
 
     identity = _empty_client("list_policies", "list_dynamic_groups")
-    identity.list_compartments = Mock(side_effect=[
-        response([oci.identity.models.Compartment(id="ocid1.compartment.one")], "more"),
-        response([oci.identity.models.Compartment(id="ocid1.compartment.two")]),
-    ])
-    identity.list_region_subscriptions.return_value = response([
-        oci.identity.models.RegionSubscription(region_name="uk-london-1"),
-    ])
+    identity.list_compartments = Mock(
+        side_effect=[
+            response([oci.identity.models.Compartment(id="ocid1.compartment.one")], "more"),
+            response([oci.identity.models.Compartment(id="ocid1.compartment.two")]),
+        ]
+    )
+    identity.list_region_subscriptions.return_value = response(
+        [
+            oci.identity.models.RegionSubscription(region_name="uk-london-1"),
+        ]
+    )
 
     agents = _empty_client("list_agents", "list_tools", "list_agent_endpoints", "list_knowledge_bases")
 
     def list_agents(*, compartment_id, **kwargs):
         assert kwargs == {}
         if compartment_id == "ocid1.compartment.one":
-            return response(SimpleNamespace(items=[oci.generative_ai_agent.models.AgentSummary(
-                id="ocid1.agent.audit", display_name="audit assistant", lifecycle_state="ACTIVE",
-                knowledge_base_ids=["ocid1.kb.audit"],
-            )]))
+            return response(
+                SimpleNamespace(
+                    items=[
+                        oci.generative_ai_agent.models.AgentSummary(
+                            id="ocid1.agent.audit",
+                            display_name="audit assistant",
+                            lifecycle_state="ACTIVE",
+                            knowledge_base_ids=["ocid1.kb.audit"],
+                        )
+                    ]
+                )
+            )
         return response([])
 
     agents.list_agents.side_effect = list_agents
     agents.list_tools.return_value = response([{"display_name": "lookup", "type": "HTTP"}])
-    agents.list_agent_endpoints.side_effect = lambda *, compartment_id: response([
-        oci.generative_ai_agent.models.AgentEndpointSummary(
-            id="ocid1.endpoint.audit", agent_id="ocid1.agent.audit", should_enable_trace=False,
-            content_moderation_config=None,
-        )
-    ] if compartment_id == "ocid1.compartment.one" else [])
+    agents.list_agent_endpoints.side_effect = lambda *, compartment_id: response(
+        [
+            oci.generative_ai_agent.models.AgentEndpointSummary(
+                id="ocid1.endpoint.audit",
+                agent_id="ocid1.agent.audit",
+                should_enable_trace=False,
+                content_moderation_config=None,
+            )
+        ]
+        if compartment_id == "ocid1.compartment.one"
+        else []
+    )
     other_clients = {
-        oci.generative_ai.GenerativeAiClient: _empty_client("list_endpoints", "list_dedicated_ai_clusters", "list_models"),
+        oci.generative_ai.GenerativeAiClient: _empty_client(
+            "list_endpoints", "list_dedicated_ai_clusters", "list_models"
+        ),
         oci.oda.OdaClient: _empty_client("list_oda_instances"),
         oci.data_science.DataScienceClient: _empty_client("list_model_deployments"),
         oci.functions.FunctionsManagementClient: _empty_client("list_applications"),
         oci.container_instances.ContainerInstanceClient: _empty_client("list_container_instances"),
         oci.vault.VaultsClient: _empty_client("list_secrets"),
     }
-    clients = {oci.identity.IdentityClient: identity, oci.generative_ai_agent.GenerativeAiAgentClient: agents,
-               **other_clients}
+    clients = {
+        oci.identity.IdentityClient: identity,
+        oci.generative_ai_agent.GenerativeAiAgentClient: agents,
+        **other_clients,
+    }
     scanner._client = Mock(side_effect=lambda cls, region=None: clients[cls])
 
     records = list(scanner.collect())
-    assert records[0] == {"_kind": "tenancy", "tenancy": "ocid1.tenancy.audit", "compartments": 3,
-                          "regions": ["uk-london-1"]}
+    assert records[0] == {
+        "_kind": "tenancy",
+        "tenancy": "ocid1.tenancy.audit",
+        "compartments": 3,
+        "regions": ["uk-london-1"],
+    }
     assert [r["_kind"] for r in records[1:]] == ["genai-agent", "genai-agent-endpoint"]
     assert records[1]["_tools"] == [{"display_name": "lookup", "type": "HTTP"}]
     findings = list(scanner.analyze(records))
@@ -175,15 +209,34 @@ def test_oci_denied_compartment_inventory_never_reports_complete_scan(index):
     scanner.tenancy = "ocid1.tenancy.audit"
     scanner._init = Mock()
     identity = _empty_client("list_dynamic_groups", "list_policies")
-    identity.list_compartments = Mock(side_effect=oci.exceptions.ServiceError(
-        403, "NotAuthorizedOrNotFound", {}, "private cloud diagnostic",
-    ))
+    identity.list_compartments = Mock(
+        side_effect=oci.exceptions.ServiceError(
+            403,
+            "NotAuthorizedOrNotFound",
+            {},
+            "private cloud diagnostic",
+        )
+    )
     clients = {oci.identity.IdentityClient: identity}
-    scanner._client = Mock(side_effect=lambda cls, region=None: clients[cls] if cls in clients else _empty_client(
-        "list_agents", "list_agent_endpoints", "list_knowledge_bases", "list_endpoints",
-        "list_dedicated_ai_clusters", "list_models", "list_oda_instances", "list_model_deployments",
-        "list_applications", "list_container_instances", "list_secrets",
-    ))
+    scanner._client = Mock(
+        side_effect=lambda cls, region=None: (
+            clients[cls]
+            if cls in clients
+            else _empty_client(
+                "list_agents",
+                "list_agent_endpoints",
+                "list_knowledge_bases",
+                "list_endpoints",
+                "list_dedicated_ai_clusters",
+                "list_models",
+                "list_oda_instances",
+                "list_model_deployments",
+                "list_applications",
+                "list_container_instances",
+                "list_secrets",
+            )
+        )
+    )
     records = list(scanner.collect())
     assert records[0]["compartments"] == 1  # Known tenancy remains scoped, not a clean inventory.
     assert scanner.ctx.stats.incomplete
@@ -196,45 +249,83 @@ def test_oci_live_inventory_classifies_models_containers_policies_and_secret_nam
     scanner._init = Mock()
 
     identity = _empty_client("list_dynamic_groups")
-    identity.list_policies.return_value = response([oci.identity.models.Policy(
-        id="ocid1.policy.audit", name="ai-runner",
-        statements=["Allow dynamic-group ai-runners to manage generative-ai-family in compartment audit"],
-    )])
+    identity.list_policies.return_value = response(
+        [
+            oci.identity.models.Policy(
+                id="ocid1.policy.audit",
+                name="ai-runner",
+                statements=[
+                    "Allow dynamic-group ai-runners to manage generative-ai-family in compartment audit"
+                ],
+            )
+        ]
+    )
     genai = _empty_client("list_endpoints", "list_dedicated_ai_clusters")
-    genai.list_models.return_value = response([
-        oci.generative_ai.models.ModelSummary(id="ocid1.model.custom", display_name="tuned",
-                                               base_model_id="ocid1.model.base", type="CUSTOM", vendor="cohere",
-                                               capabilities=["TEXT_GENERATION"]),
-        oci.generative_ai.models.ModelSummary(id="ocid1.model.base", display_name="foundation", vendor="meta"),
-    ])
+    genai.list_models.return_value = response(
+        [
+            oci.generative_ai.models.ModelSummary(
+                id="ocid1.model.custom",
+                display_name="tuned",
+                base_model_id="ocid1.model.base",
+                type="CUSTOM",
+                vendor="cohere",
+                capabilities=["TEXT_GENERATION"],
+            ),
+            oci.generative_ai.models.ModelSummary(
+                id="ocid1.model.base", display_name="foundation", vendor="meta"
+            ),
+        ]
+    )
     ds = _empty_client()
-    ds.list_model_deployments.return_value = response([
-        oci.data_science.models.ModelDeploymentSummary(id="ocid1.deployment.ai", display_name="ollama",
-            model_deployment_configuration_details={"environment_configuration_details": {
-                "image": "ollama/ollama:latest", "environment_variables": {"OPENAI_API_KEY": "synthetic-secret-value"},
-            }}),
-        oci.data_science.models.ModelDeploymentSummary(id="ocid1.deployment.nonai", display_name="static-api"),
-    ])
+    ds.list_model_deployments.return_value = response(
+        [
+            oci.data_science.models.ModelDeploymentSummary(
+                id="ocid1.deployment.ai",
+                display_name="ollama",
+                model_deployment_configuration_details={
+                    "environment_configuration_details": {
+                        "image": "ollama/ollama:latest",
+                        "environment_variables": {"OPENAI_API_KEY": "synthetic-secret-value"},
+                    }
+                },
+            ),
+            oci.data_science.models.ModelDeploymentSummary(
+                id="ocid1.deployment.nonai", display_name="static-api"
+            ),
+        ]
+    )
     containers = _empty_client()
-    containers.list_container_instances.return_value = response([
-        oci.container_instances.models.ContainerInstanceSummary(id="ocid1.instance.ai", display_name="ai-service"),
-    ])
-    containers.list_containers.return_value = response([
-        oci.container_instances.models.ContainerSummary(id="ocid1.container.ai"),
-    ])
-    containers.get_container.return_value = response(oci.container_instances.models.Container(
-        id="ocid1.container.ai", image_url="ollama/ollama:latest",
-        environment_variables={"ANTHROPIC_API_KEY": "synthetic-anthropic-secret"},
-    ))
+    containers.list_container_instances.return_value = response(
+        [
+            oci.container_instances.models.ContainerInstanceSummary(
+                id="ocid1.instance.ai", display_name="ai-service"
+            ),
+        ]
+    )
+    containers.list_containers.return_value = response(
+        [
+            oci.container_instances.models.ContainerSummary(id="ocid1.container.ai"),
+        ]
+    )
+    containers.get_container.return_value = response(
+        oci.container_instances.models.Container(
+            id="ocid1.container.ai",
+            image_url="ollama/ollama:latest",
+            environment_variables={"ANTHROPIC_API_KEY": "synthetic-anthropic-secret"},
+        )
+    )
     vault = _empty_client()
-    vault.list_secrets.return_value = response([
-        oci.vault.models.SecretSummary(id="ocid1.secret.openai", secret_name="OPENAI_API_KEY"),
-        oci.vault.models.SecretSummary(id="ocid1.secret.unrelated", secret_name="invoice-signing-key"),
-    ])
+    vault.list_secrets.return_value = response(
+        [
+            oci.vault.models.SecretSummary(id="ocid1.secret.openai", secret_name="OPENAI_API_KEY"),
+            oci.vault.models.SecretSummary(id="ocid1.secret.unrelated", secret_name="invoice-signing-key"),
+        ]
+    )
     clients = {
         oci.identity.IdentityClient: identity,
         oci.generative_ai_agent.GenerativeAiAgentClient: _empty_client(
-            "list_agents", "list_agent_endpoints", "list_knowledge_bases"),
+            "list_agents", "list_agent_endpoints", "list_knowledge_bases"
+        ),
         oci.generative_ai.GenerativeAiClient: genai,
         oci.oda.OdaClient: _empty_client("list_oda_instances"),
         oci.data_science.DataScienceClient: ds,
@@ -247,7 +338,13 @@ def test_oci_live_inventory_classifies_models_containers_policies_and_secret_nam
     records = list(scanner.collect())
     findings = list(scanner.analyze(records))
     by_type = {finding.resource_type: finding for finding in findings}
-    assert {"iam-policy", "genai-custom-model", "model-deployment", "container-instance", "vault-secret"} <= set(by_type)
+    assert {
+        "iam-policy",
+        "genai-custom-model",
+        "model-deployment",
+        "container-instance",
+        "vault-secret",
+    } <= set(by_type)
     assert by_type["iam-policy"].metadata["subjects"] == ["ai-runners"]
     assert by_type["container-instance"].resource == "ocid1.instance.ai"
     assert "provider.ollama" in by_type["model-deployment"].model_providers

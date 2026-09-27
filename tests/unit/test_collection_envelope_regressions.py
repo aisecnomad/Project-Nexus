@@ -21,17 +21,24 @@ def _cli_scan(tmp_path, connector: str, body: object):
     report = tmp_path / "report.json"
     source.write_text(json.dumps(body), encoding="utf-8")
     outcome = CliRunner().invoke(
-        main, ["run", connector, "--input", str(source), "--format", "json", "-o", str(report), "--fail-on", "high"]
-        + (["--set", "team_id=T1"] if connector == "saas.slack" else [])
+        main,
+        ["run", connector, "--input", str(source), "--format", "json", "-o", str(report), "--fail-on", "high"]
+        + (["--set", "team_id=T1"] if connector == "saas.slack" else []),
     )
     return outcome, json.loads(report.read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("connector,record", [
-    ("saas.slack", _APP),
-    ("identity.entra", {"_kind": "servicePrincipal", "id": "sp-1", "appId": "app-1", "displayName": "Claude"}),
-    ("lowcode.power-platform", {"_kind": "bot", "botid": "bot-1", "name": "Claude Agent"}),
-])
+@pytest.mark.parametrize(
+    "connector,record",
+    [
+        ("saas.slack", _APP),
+        (
+            "identity.entra",
+            {"_kind": "servicePrincipal", "id": "sp-1", "appId": "app-1", "displayName": "Claude"},
+        ),
+        ("lowcode.power-platform", {"_kind": "bot", "botid": "bot-1", "name": "Claude Agent"}),
+    ],
+)
 def test_id_on_export_envelope_does_not_hide_items(tmp_path, connector, record):
     outcome, report = _cli_scan(tmp_path, connector, {"id": "export-1", "items": [record]})
     assert outcome.exit_code in {0, 2}, outcome.output
@@ -41,13 +48,16 @@ def test_id_on_export_envelope_does_not_hide_items(tmp_path, connector, record):
 
 
 @pytest.mark.parametrize("connector", ["saas.slack", "identity.entra", "lowcode.power-platform"])
-@pytest.mark.parametrize("body", [
-    {"id": "export-1", "error": {"code": "access_denied", "message": "synthetic denied"}},
-    {"id": "export-1", "ok": False, "error": "access_denied"},
-    {"id": "export-1", "name": "OpenAI", "error": "access_denied"},
-    {"object": "error", "error": "access_denied"},
-    {"id": "export-1", "items": [], "error": "access_denied"},
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"id": "export-1", "error": {"code": "access_denied", "message": "synthetic denied"}},
+        {"id": "export-1", "ok": False, "error": "access_denied"},
+        {"id": "export-1", "name": "OpenAI", "error": "access_denied"},
+        {"object": "error", "error": "access_denied"},
+        {"id": "export-1", "items": [], "error": "access_denied"},
+    ],
+)
 def test_provider_error_with_page_id_is_incomplete_for_cli(tmp_path, connector, body):
     outcome, report = _cli_scan(tmp_path, connector, body)
     assert outcome.exit_code == 3, outcome.output
@@ -57,7 +67,9 @@ def test_provider_error_with_page_id_is_incomplete_for_cli(tmp_path, connector, 
 
 
 def test_export_error_keeps_valid_items_without_claiming_completeness(tmp_path):
-    outcome, report = _cli_scan(tmp_path, "saas.slack", {"id": "export-1", "error": "later page denied", "items": [_APP]})
+    outcome, report = _cli_scan(
+        tmp_path, "saas.slack", {"id": "export-1", "error": "later page denied", "items": [_APP]}
+    )
     assert outcome.exit_code == 3, outcome.output
     assert report["summary"]["complete"] is False
     assert len(report["findings"]) == 1
@@ -84,9 +96,25 @@ def test_labelled_export_items_are_unwrapped(tmp_path):
 def test_jsonl_error_with_request_id_is_incomplete_and_preserves_neighbor(tmp_path):
     source = tmp_path / "export.jsonl"
     output = tmp_path / "report.json"
-    source.write_text(json.dumps({"error": "permission denied", "id": "req1"}) + "\n" + json.dumps(_APP) + "\n")
+    source.write_text(
+        json.dumps({"error": "permission denied", "id": "req1"}) + "\n" + json.dumps(_APP) + "\n"
+    )
     outcome = CliRunner().invoke(
-        main, ["run", "saas.slack", "--input", str(source), "--format", "json", "-o", str(output), "--fail-on", "high", "--set", "team_id=T1"]
+        main,
+        [
+            "run",
+            "saas.slack",
+            "--input",
+            str(source),
+            "--format",
+            "json",
+            "-o",
+            str(output),
+            "--fail-on",
+            "high",
+            "--set",
+            "team_id=T1",
+        ],
     )
     report = json.loads(output.read_text())
     assert outcome.exit_code == 3, outcome.output
@@ -98,7 +126,19 @@ def test_csv_error_row_is_incomplete_and_preserves_valid_neighbor(tmp_path):
     output = tmp_path / "report.json"
     source.write_text("id,name,error\napp1,Claude,\nreq1,,permission denied\n")
     outcome = CliRunner().invoke(
-        main, ["run", "saas.generic", "--input", str(source), "--format", "json", "-o", str(output), "--fail-on", "high"]
+        main,
+        [
+            "run",
+            "saas.generic",
+            "--input",
+            str(source),
+            "--format",
+            "json",
+            "-o",
+            str(output),
+            "--fail-on",
+            "high",
+        ],
     )
     report = json.loads(output.read_text())
     assert outcome.exit_code == 3, outcome.output
@@ -107,17 +147,30 @@ def test_csv_error_row_is_incomplete_and_preserves_valid_neighbor(tmp_path):
 
 def test_csv_native_log_event_with_error_column_is_preserved():
     errors: list[str] = []
-    records = list(BaseConnector._csv_records("id,name,error,timestamp\nlog-1,OpenAI,timeout,2026-01-01\n", errors.append))
+    records = list(
+        BaseConnector._csv_records(
+            "id,name,error,timestamp\nlog-1,OpenAI,timeout,2026-01-01\n", errors.append
+        )
+    )
     assert len(records) == 1 and records[0]["id"] == "log-1" and not errors
 
 
-@pytest.mark.parametrize("connector,record", [
-    ("saas.microsoft-teams", {
-        "_kind": "teamsApp", "id": "A1", "displayName": "OpenAI", "distributionMethod": "organization",
-        "error": "access_denied",
-    }),
-    ("saas.generic", {"_kind": "saas-app", "id": "A1", "name": "Claude", "error": "access_denied"}),
-])
+@pytest.mark.parametrize(
+    "connector,record",
+    [
+        (
+            "saas.microsoft-teams",
+            {
+                "_kind": "teamsApp",
+                "id": "A1",
+                "displayName": "OpenAI",
+                "distributionMethod": "organization",
+                "error": "access_denied",
+            },
+        ),
+        ("saas.generic", {"_kind": "saas-app", "id": "A1", "name": "Claude", "error": "access_denied"}),
+    ],
+)
 @pytest.mark.parametrize("as_array", [False, True])
 def test_typed_provider_error_is_not_a_complete_native_app(tmp_path, connector, record, as_array):
     outcome, report = _cli_scan(tmp_path, connector, [record] if as_array else record)
@@ -126,11 +179,24 @@ def test_typed_provider_error_is_not_a_complete_native_app(tmp_path, connector, 
     assert report["findings"] == []
 
 
-@pytest.mark.parametrize("record", [
-    {"_kind": "cloudtrail-event", "eventName": "InvokeModel", "eventTime": "2026-01-01", "error": "AccessDenied"},
-    {"_kind": "audit-event", "principal": "agent@example.test", "timestamp": "2026-01-01", "error": "AccessDenied"},
-    {"_kind": "integration_log", "change_type": "enabled", "app_id": "A1", "error": "install-failed"},
-])
+@pytest.mark.parametrize(
+    "record",
+    [
+        {
+            "_kind": "cloudtrail-event",
+            "eventName": "InvokeModel",
+            "eventTime": "2026-01-01",
+            "error": "AccessDenied",
+        },
+        {
+            "_kind": "audit-event",
+            "principal": "agent@example.test",
+            "timestamp": "2026-01-01",
+            "error": "AccessDenied",
+        },
+        {"_kind": "integration_log", "change_type": "enabled", "app_id": "A1", "error": "install-failed"},
+    ],
+)
 def test_known_native_error_event_is_preserved(record):
     assert list(BaseConnector._unwrap(record)) == [record]
     assert list(BaseConnector._unwrap([record])) == [record]
@@ -138,7 +204,9 @@ def test_known_native_error_event_is_preserved(record):
 
 def test_failed_nested_page_keeps_observed_items_but_marks_incomplete(tmp_path):
     another = {"_kind": "approved_app", "app": {"id": "A2", "name": "Claude"}, "scopes": []}
-    outcome, report = _cli_scan(tmp_path, "saas.slack", [_APP, {"id": "req1", "error": "denied", "items": [another]}])
+    outcome, report = _cli_scan(
+        tmp_path, "saas.slack", [_APP, {"id": "req1", "error": "denied", "items": [another]}]
+    )
     assert outcome.exit_code == 3, outcome.output
     assert report["summary"]["complete"] is False
     assert len(report["findings"]) == 2
@@ -160,13 +228,40 @@ def _slack_response(path: str, params=None):
     raise AssertionError(path)
 
 
-@pytest.mark.parametrize("path", [
-    "/team.info", "/users.list", "/admin.apps.approved.list",
-    "/admin.apps.restricted.list", "/admin.apps.requests.list", "/team.integrationLogs",
-])
-@pytest.mark.parametrize("broken", [{"ok": True}, {"ok": True, "members": None, "approved_apps": {}, "restricted_apps": 4, "app_requests": "", "logs": None, "team": []}])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/team.info",
+        "/users.list",
+        "/admin.apps.approved.list",
+        "/admin.apps.restricted.list",
+        "/admin.apps.requests.list",
+        "/team.integrationLogs",
+    ],
+)
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"ok": True},
+        {
+            "ok": True,
+            "members": None,
+            "approved_apps": {},
+            "restricted_apps": 4,
+            "app_requests": "",
+            "logs": None,
+            "team": [],
+        },
+    ],
+)
 def test_slack_missing_or_malformed_success_collection_is_incomplete(index, monkeypatch, path, broken):
-    http = Mock(get_json=Mock(side_effect=lambda requested, params=None: broken if requested == path else _slack_response(requested, params)))
+    http = Mock(
+        get_json=Mock(
+            side_effect=lambda requested, params=None: (
+                broken if requested == path else _slack_response(requested, params)
+            )
+        )
+    )
     monkeypatch.setattr("shadowscan.connectors.saas.slack.HttpClient", Mock(return_value=http))
     connector = SlackConnector(ConnectorContext({"token": "synthetic"}, index=index))
     findings = connector.run()
@@ -193,10 +288,14 @@ def test_slack_explicit_empty_collections_are_complete(index, monkeypatch):
     assert ScanResult(findings=findings, stats=[connector.ctx.stats]).complete
 
 
-@pytest.mark.parametrize("path,key", [
-    ("/users.list", "members"), ("/admin.apps.approved.list", "approved_apps"),
-    ("/team.integrationLogs", "logs"),
-])
+@pytest.mark.parametrize(
+    "path,key",
+    [
+        ("/users.list", "members"),
+        ("/admin.apps.approved.list", "approved_apps"),
+        ("/team.integrationLogs", "logs"),
+    ],
+)
 def test_slack_bad_item_marks_partial_coverage_but_keeps_other_apps(index, monkeypatch, path, key):
     def get(requested, params=None):
         response = _slack_response(requested, params)
@@ -210,12 +309,15 @@ def test_slack_bad_item_marks_partial_coverage_but_keeps_other_apps(index, monke
     assert len(findings) == 1 and connector.ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("path,field,value", [
-    ("/users.list", "response_metadata", []),
-    ("/users.list", "response_metadata", {"next_cursor": False}),
-    ("/team.integrationLogs", "paging", {}),
-    ("/team.integrationLogs", "paging", {"pages": "many"}),
-])
+@pytest.mark.parametrize(
+    "path,field,value",
+    [
+        ("/users.list", "response_metadata", []),
+        ("/users.list", "response_metadata", {"next_cursor": False}),
+        ("/team.integrationLogs", "paging", {}),
+        ("/team.integrationLogs", "paging", {"pages": "many"}),
+    ],
+)
 def test_slack_invalid_pagination_metadata_marks_incomplete(index, monkeypatch, path, field, value):
     def get(requested, params=None):
         response = _slack_response(requested, params)

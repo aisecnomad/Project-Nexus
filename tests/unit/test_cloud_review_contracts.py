@@ -45,10 +45,13 @@ def foundry_http(monkeypatch, pages):
 def test_foundry_classic_route_version_and_cursor_contract(index, monkeypatch):
     # Official azure-ai-agents_1.0.0 build_agents_list_agents_request:
     # GET /assistants, api-version=v1, limit and after query parameters.
-    calls = foundry_http(monkeypatch, [
-        {"object": "list", "data": [{"id": "asst_first"}], "has_more": True, "last_id": "asst_first"},
-        {"object": "list", "data": [{"id": "asst_second"}], "has_more": False, "last_id": "asst_second"},
-    ])
+    calls = foundry_http(
+        monkeypatch,
+        [
+            {"object": "list", "data": [{"id": "asst_first"}], "has_more": True, "last_id": "asst_first"},
+            {"object": "list", "data": [{"id": "asst_second"}], "has_more": False, "last_id": "asst_second"},
+        ],
+    )
     ctx = context(index)
     records = list(AzureConnector(ctx)._collect_agents({"id": "/account"}, PROJECT))
     assert [r["id"] for r in records] == ["asst_first", "asst_second"]
@@ -62,13 +65,21 @@ def test_foundry_classic_route_version_and_cursor_contract(index, monkeypatch):
     assert not ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("page", [
-    None, {}, [], {"error": {"code": "denied"}}, {"data": {}, "has_more": False},
-    {"data": [], "has_more": "false"}, {"data": []},
-    {"data": [], "has_more": True, "last_id": "a"},
-    {"data": [{"id": "a"}], "has_more": True, "last_id": []},
-    {"data": [{"id": "a"}], "has_more": True, "last_id": "other"},
-])
+@pytest.mark.parametrize(
+    "page",
+    [
+        None,
+        {},
+        [],
+        {"error": {"code": "denied"}},
+        {"data": {}, "has_more": False},
+        {"data": [], "has_more": "false"},
+        {"data": []},
+        {"data": [], "has_more": True, "last_id": "a"},
+        {"data": [{"id": "a"}], "has_more": True, "last_id": []},
+        {"data": [{"id": "a"}], "has_more": True, "last_id": "other"},
+    ],
+)
 def test_foundry_malformed_envelopes_are_incomplete(index, monkeypatch, page):
     foundry_http(monkeypatch, [page])
     ctx = context(index)
@@ -109,7 +120,8 @@ def oci_functions_client():
 
     image_kw = (
         {"source_details": models.ContainerImageFunctionSourceDetails(image="ollama/ollama:latest")}
-        if hasattr(models, "ContainerImageFunctionSourceDetails") else {"image": "ollama/ollama:latest"}
+        if hasattr(models, "ContainerImageFunctionSourceDetails")
+        else {"image": "ollama/ollama:latest"}
     )
     application = models.ApplicationSummary(id="app1", display_name="workflows")
     function = models.FunctionSummary(id="fn1", display_name="worker", application_id="app1", **image_kw)
@@ -118,9 +130,16 @@ def oci_functions_client():
     assert "config" not in function.swagger_types
     client.list_applications.return_value = response([application])
     client.list_functions.return_value = response([function])
-    client.get_application.return_value = response(models.Application(id="app1", config={
-        "OPENAI_API_KEY": "synthetic-application-secret", "SHARED": "application", "APP_ONLY": "present",
-    }))
+    client.get_application.return_value = response(
+        models.Application(
+            id="app1",
+            config={
+                "OPENAI_API_KEY": "synthetic-application-secret",
+                "SHARED": "application",
+                "APP_ONLY": "present",
+            },
+        )
+    )
     client.get_function.return_value = response(models.Function(id="fn1", config={"SHARED": "function"}))
     return client, response
 
@@ -133,8 +152,16 @@ def test_azure_app_settings_are_exported_as_redactable_environment(index, monkey
     monkeypatch.setattr(connector, "_list", lambda *args, **kwargs: [])
     connector.http = Mock()
     connector.http.post_json.side_effect = [
-        {"data": [{"id": "/subscriptions/sub1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
-                   "type": "microsoft.web/sites", "name": "worker", "kind": "app"}]},
+        {
+            "data": [
+                {
+                    "id": "/subscriptions/sub1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
+                    "type": "microsoft.web/sites",
+                    "name": "worker",
+                    "kind": "app",
+                }
+            ]
+        },
         {"properties": {"OPENAI_API_KEY": "synthetic-azure-app-secret"}},
     ]
 
@@ -169,10 +196,14 @@ def test_oci_reads_real_detail_models_inherits_config_and_preserves_image(index)
 
 def test_oci_handler_accepts_legacy_config_exports(index):
     connector = OciConnector(context(index))
-    finding = connector._h_function({
-        "id": "fn-legacy", "display_name": "legacy-worker", "image": "ollama/ollama:latest",
-        "config": {"OPENAI_API_KEY": "synthetic-legacy-secret"},
-    })
+    finding = connector._h_function(
+        {
+            "id": "fn-legacy",
+            "display_name": "legacy-worker",
+            "image": "ollama/ollama:latest",
+            "config": {"OPENAI_API_KEY": "synthetic-legacy-secret"},
+        }
+    )
     assert finding is not None
     assert "provider.openai" in finding.model_providers
     assert "OPENAI_API_KEY" in finding.metadata["config_keys"]
@@ -192,8 +223,18 @@ def test_oci_denied_detail_preserves_known_evidence_and_marks_incomplete(index, 
     assert "credential-bearing" not in str(ctx.stats.warnings)
 
 
-@pytest.mark.parametrize("detail", [None, [], {}, {"id": "wrong", "config": {}},
-    {"id": "fn1"}, {"id": "fn1", "config": []}, {"id": "fn1", "config": {"BAD": 12}}])
+@pytest.mark.parametrize(
+    "detail",
+    [
+        None,
+        [],
+        {},
+        {"id": "wrong", "config": {}},
+        {"id": "fn1"},
+        {"id": "fn1", "config": []},
+        {"id": "fn1", "config": {"BAD": 12}},
+    ],
+)
 def test_oci_invalid_function_detail_preserves_summary(index, detail):
     client, response = oci_functions_client()
     client.get_function.return_value = response(detail)
@@ -207,7 +248,9 @@ def test_oci_invalid_function_detail_preserves_summary(index, detail):
 
 def test_oci_legacy_image_shape_remains_supported(index):
     client, response = oci_functions_client()
-    client.list_functions.return_value = response([{"id": "fn1", "display_name": "worker", "image": "ollama/ollama:latest"}])
+    client.list_functions.return_value = response(
+        [{"id": "fn1", "display_name": "worker", "image": "ollama/ollama:latest"}]
+    )
     ctx = context(index)
     connector = OciConnector(ctx)
     record = list(connector._collect_functions(client, "region", "comp"))[0]
@@ -217,9 +260,13 @@ def test_oci_legacy_image_shape_remains_supported(index):
 
 def test_oci_non_ai_summary_is_detected_from_function_detail(index):
     client, response = oci_functions_client()
-    client.list_functions.return_value = response([{"id": "fn1", "display_name": "worker", "image": "registry.example/worker:v1"}])
+    client.list_functions.return_value = response(
+        [{"id": "fn1", "display_name": "worker", "image": "registry.example/worker:v1"}]
+    )
     client.get_application.return_value = response({"id": "app1", "config": {}})
-    client.get_function.return_value = response({"id": "fn1", "config": {"ANTHROPIC_API_KEY": "synthetic-function-secret"}})
+    client.get_function.return_value = response(
+        {"id": "fn1", "config": {"ANTHROPIC_API_KEY": "synthetic-function-secret"}}
+    )
     ctx = context(index)
     connector = OciConnector(ctx)
     record = list(connector._collect_functions(client, "region", "comp"))[0]

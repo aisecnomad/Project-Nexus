@@ -15,12 +15,23 @@ from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface
 
 def _report(*resources: str) -> dict:
     return ScanResult(
-        findings=[Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-                          title=resource, resource=resource, resource_type="repository")
-                  for resource in resources],
+        findings=[
+            Finding(
+                surface=Surface.CODE,
+                connector="code.filesystem",
+                kind=Kind.AGENT,
+                title=resource,
+                resource=resource,
+                resource_type="repository",
+            )
+            for resource in resources
+        ],
         stats=[ScanStats(connector="code.filesystem", started_at="2026-09-24")],
-        collection_scope={"schema": "shadowscan.collection-scope/v1", "comparable": True,
-                          "fingerprint": "a" * 64},
+        collection_scope={
+            "schema": "shadowscan.collection-scope/v1",
+            "comparable": True,
+            "fingerprint": "a" * 64,
+        },
     ).to_dict()
 
 
@@ -43,8 +54,13 @@ def test_comparison_sanitizes_all_published_records_without_mutating_inputs(rela
             # current model's export-time sanitization.
             finding["metadata"]["api_key"] = secret
             finding["title"] = f"Agent {secret}"
-            finding["evidence"] = [{"signal": "observed", "description": f"copy {secret}",
-                                    "location": f"https://example.com?token={provider_key}"}]
+            finding["evidence"] = [
+                {
+                    "signal": "observed",
+                    "description": f"copy {secret}",
+                    "location": f"https://example.com?token={provider_key}",
+                }
+            ]
             finding["untrusted_extension"] = "must-not-publish-arbitrary-columns"
     original = copy.deepcopy((before, after))
     result = compare_reports(before, after)
@@ -115,12 +131,17 @@ def test_unchanged_imported_record_is_validated_before_comparison_succeeds():
 def test_import_discovers_child_evidence_credentials_before_sanitizing_sibling_fields(secret):
     before, after = _report(), _report()
     # This identity has no 's' outside its protected generated id and schema.
-    finding = Finding(surface=Surface.CODE, connector="code", kind=Kind.AGENT,
-                      title="Agent", resource="repo", resource_type="repo").to_dict()
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code",
+        kind=Kind.AGENT,
+        title="Agent",
+        resource="repo",
+        resource_type="repo",
+    ).to_dict()
     finding["title"] = secret
     finding["metadata"] = {"copy": secret}
-    finding["evidence"] = [{"signal": "observed", "description": "safe",
-                            "attributes": {"api_key": secret}}]
+    finding["evidence"] = [{"signal": "observed", "description": "safe", "attributes": {"api_key": secret}}]
     original = copy.deepcopy(finding)
     after["findings"] = [finding]
     result = compare_reports(before, after)["new"][0]

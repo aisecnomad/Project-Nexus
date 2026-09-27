@@ -34,7 +34,9 @@ class GitHubAppsConnector(BaseConnector):
     name: ClassVar[str] = "saas.github-apps"
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "github"
-    description: ClassVar[str] = "GitHub Apps installed on an organisation (AI reviewers, coding agents), Copilot seats and approved fine-grained PATs."
+    description: ClassVar[str] = (
+        "GitHub Apps installed on an organisation (AI reviewers, coding agents), Copilot seats and approved fine-grained PATs."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "org": "organisation login (env GITHUB_ORG)",
         "token": "org admin token (env GITHUB_TOKEN)",
@@ -55,9 +57,19 @@ class GitHubAppsConnector(BaseConnector):
         token = self.ctx.get("token", env="GITHUB_TOKEN")
         if not (self.org and token):
             raise ConnectorError("saas.github-apps: org and token required")
-        http = HttpClient(self.api_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True))
+        http = HttpClient(
+            self.api_url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            on_warning=lambda msg: self.ctx.warn(msg, incomplete=True),
+        )
         try:
-            for inst in http.paginate_link(f"/orgs/{self.org}/installations", params={"per_page": 100}, item_key="installations"):
+            for inst in http.paginate_link(
+                f"/orgs/{self.org}/installations", params={"per_page": 100}, item_key="installations"
+            ):
                 yield {**inst, "_kind": "installation"}
         except (HttpError, RequestException, ValueError, RuntimeError) as exc:
             self._collection_warning("installation inventory", exc)
@@ -71,7 +83,9 @@ class GitHubAppsConnector(BaseConnector):
         except (HttpError, RequestException, ValueError, RuntimeError) as exc:
             self._collection_warning("Copilot billing", exc)
         try:
-            for pat in http.paginate_link(f"/orgs/{self.org}/personal-access-tokens", params={"per_page": 100}):
+            for pat in http.paginate_link(
+                f"/orgs/{self.org}/personal-access-tokens", params={"per_page": 100}
+            ):
                 yield {**pat, "_kind": "pat"}
         except (HttpError, RequestException, ValueError, RuntimeError) as exc:
             self._collection_warning("fine-grained PAT inventory", exc)
@@ -90,15 +104,27 @@ class GitHubAppsConnector(BaseConnector):
         if kind == "installation":
             if not self._record_fields_valid(
                 rec,
-                strings=("app_slug", "target_type", "html_url", "repository_selection", "created_at", "updated_at", "suspended_at"),
-                mappings=("permissions", "account"), arrays=("events",),
+                strings=(
+                    "app_slug",
+                    "target_type",
+                    "html_url",
+                    "repository_selection",
+                    "created_at",
+                    "updated_at",
+                    "suspended_at",
+                ),
+                mappings=("permissions", "account"),
+                arrays=("events",),
             ):
                 return False
             perms = rec.get("permissions") or {}
             account = rec.get("account") or {}
             return (
                 any(self._identifier(rec.get(key)) for key in ("id", "app_id", "app_slug"))
-                and all(rec.get(key) is None or self._identifier(rec[key]) for key in ("id", "app_id", "client_id"))
+                and all(
+                    rec.get(key) is None or self._identifier(rec[key])
+                    for key in ("id", "app_id", "client_id")
+                )
                 and self._record_fields_valid(account, strings=("login",))
                 and all(isinstance(k, str) and isinstance(v, str) for k, v in perms.items())
                 and all(isinstance(event, str) for event in (rec.get("events") or []))
@@ -106,7 +132,13 @@ class GitHubAppsConnector(BaseConnector):
         if kind == "pat":
             if not self._record_fields_valid(
                 rec,
-                strings=("token_name", "repository_selection", "access_granted_at", "token_last_used_at", "token_expires_at"),
+                strings=(
+                    "token_name",
+                    "repository_selection",
+                    "access_granted_at",
+                    "token_last_used_at",
+                    "token_expires_at",
+                ),
                 mappings=("owner", "permissions"),
             ):
                 return False
@@ -115,19 +147,37 @@ class GitHubAppsConnector(BaseConnector):
                 and (rec.get("token_id") is None or self._identifier(rec["token_id"]))
                 and self._record_fields_valid(rec.get("owner") or {}, strings=("login",))
                 and all(
-                    isinstance(group, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in group.items())
+                    isinstance(group, dict)
+                    and all(isinstance(k, str) and isinstance(v, str) for k, v in group.items())
                     for group in (rec.get("permissions") or {}).values()
                 )
             )
         if kind == "copilot_billing":
-            return self._record_fields_valid(rec, strings=("plan_type",), mappings=("seat_breakdown",)) and isinstance(rec.get("seat_breakdown"), dict)
+            return self._record_fields_valid(
+                rec, strings=("plan_type",), mappings=("seat_breakdown",)
+            ) and isinstance(rec.get("seat_breakdown"), dict)
         return False
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:
-            kind = (rec.get("_kind") or ("copilot_billing" if "seat_breakdown" in rec else "pat" if "token_id" in rec else "installation")) if isinstance(rec, dict) else None
+            kind = (
+                (
+                    rec.get("_kind")
+                    or (
+                        "copilot_billing"
+                        if "seat_breakdown" in rec
+                        else "pat"
+                        if "token_id" in rec
+                        else "installation"
+                    )
+                )
+                if isinstance(rec, dict)
+                else None
+            )
             if not self._valid_provider_record(rec, kind):
-                self.ctx.warn("saas.github-apps: unsupported or malformed provider record; coverage incomplete")
+                self.ctx.warn(
+                    "saas.github-apps: unsupported or malformed provider record; coverage incomplete"
+                )
                 continue
             self.ctx.examined()
             if kind == "installation":
@@ -160,8 +210,16 @@ class GitHubAppsConnector(BaseConnector):
         )
         # Slugs join words with hyphens ("amazon-q-developer"); name signatures
         # are written for display names, so the words are matched as well.
-        assess_app(self.index, f, name=slug, aliases=[_SLUG_SEPARATORS.sub(" ", slug)], description=str(inst.get("target_type")),
-                   urls=[inst.get("html_url")], scopes=scopes, client_id=str(inst.get("client_id") or ""))
+        assess_app(
+            self.index,
+            f,
+            name=slug,
+            aliases=[_SLUG_SEPARATORS.sub(" ", slug)],
+            description=str(inst.get("target_type")),
+            urls=[inst.get("html_url")],
+            scopes=scopes,
+            client_id=str(inst.get("client_id") or ""),
+        )
         write_perms = [k for k, v in perms.items() if v in {"write", "admin"}]
         # Permissions describe what an app may do, not whether it is an AI
         # agent. Dependency, deploy and CI bots hold the same scopes, so an
@@ -169,7 +227,14 @@ class GitHubAppsConnector(BaseConnector):
         recognised = bool(f.frameworks) or "ai-name-hint" in f.tags
         if not recognised and not (self.include_unrecognized and write_perms):
             return None
-        f.add_evidence(Evidence(signal="github:installation", description=f"App '{slug}' on {inst.get('repository_selection')} repositories; permissions {', '.join(scopes)[:300]}; events {', '.join(events)[:200]}", location=inst.get("html_url"), weight=0.3))
+        f.add_evidence(
+            Evidence(
+                signal="github:installation",
+                description=f"App '{slug}' on {inst.get('repository_selection')} repositories; permissions {', '.join(scopes)[:300]}; events {', '.join(events)[:200]}",
+                location=inst.get("html_url"),
+                weight=0.3,
+            )
+        )
         if inst.get("repository_selection") == "all":
             f.add_tag("all-repositories")
         if write_perms:
@@ -182,7 +247,17 @@ class GitHubAppsConnector(BaseConnector):
             f.add_capability("code-exec")
         if inst.get("suspended_at"):
             f.add_tag("suspended")
-        f.metadata.update({"app_id": inst.get("app_id"), "app_slug": slug, "repository_selection": inst.get("repository_selection"), "permissions": perms, "write_permissions": write_perms, "events": events[:30], "suspended_at": inst.get("suspended_at")})
+        f.metadata.update(
+            {
+                "app_id": inst.get("app_id"),
+                "app_slug": slug,
+                "repository_selection": inst.get("repository_selection"),
+                "permissions": perms,
+                "write_permissions": write_perms,
+                "events": events[:30],
+                "suspended_at": inst.get("suspended_at"),
+            }
+        )
         finalize(f, self.index)
         if not recognised:
             f.add_tag("unrecognized-app")
@@ -204,7 +279,14 @@ class GitHubAppsConnector(BaseConnector):
         )
         f.add_framework("coding-agent.github-copilot")
         f.add_capability("code-exec")
-        f.add_evidence(Evidence(signal="github:copilot", description=f"Copilot plan {rec.get('plan_type')}, {seats.get('total', 0)} seats ({seats.get('active_this_cycle', 0)} active); seat management {rec.get('seat_management_setting')}; public code suggestions {rec.get('public_code_suggestions')}; IDE chat {rec.get('ide_chat')}; platform chat {rec.get('platform_chat')}; CLI {rec.get('cli')}", weight=0.9, signature="coding-agent.github-copilot"))
+        f.add_evidence(
+            Evidence(
+                signal="github:copilot",
+                description=f"Copilot plan {rec.get('plan_type')}, {seats.get('total', 0)} seats ({seats.get('active_this_cycle', 0)} active); seat management {rec.get('seat_management_setting')}; public code suggestions {rec.get('public_code_suggestions')}; IDE chat {rec.get('ide_chat')}; platform chat {rec.get('platform_chat')}; CLI {rec.get('cli')}",
+                weight=0.9,
+                signature="coding-agent.github-copilot",
+            )
+        )
         f.metadata.update({k: v for k, v in rec.items() if not k.startswith("_")})
         finalize(f, self.index)
         f.kind = Kind.AGENT_CONFIG
@@ -213,7 +295,9 @@ class GitHubAppsConnector(BaseConnector):
     def _pat_finding(self, pat: dict[str, Any]) -> Finding | None:
         owner = (pat.get("owner") or {}).get("login")
         perms = pat.get("permissions") or {}
-        scopes = [f"{scope}/{k}:{v}" for scope, d in perms.items() if isinstance(d, dict) for k, v in d.items()]
+        scopes = [
+            f"{scope}/{k}:{v}" for scope, d in perms.items() if isinstance(d, dict) for k, v in d.items()
+        ]
         name = pat.get("token_name") or f"pat-{pat.get('token_id')}"
         f = Finding(
             surface=Surface.SAAS,
@@ -231,8 +315,21 @@ class GitHubAppsConnector(BaseConnector):
         assess_app(self.index, f, name=name, scopes=[s.split("/", 1)[-1] for s in scopes])
         if not f.frameworks and not any(t.startswith("policy.") for t in f.tags):
             return None
-        f.add_evidence(Evidence(signal="github:pat", description=f"Fine-grained PAT '{name}' owned by {owner}; {pat.get('repository_selection')} repositories; expires {pat.get('token_expires_at') or 'never'}", weight=0.25))
-        f.metadata.update({"token_id": pat.get("token_id"), "repository_selection": pat.get("repository_selection"), "expires_at": pat.get("token_expires_at"), "permissions": summarize_scopes(scopes)})
+        f.add_evidence(
+            Evidence(
+                signal="github:pat",
+                description=f"Fine-grained PAT '{name}' owned by {owner}; {pat.get('repository_selection')} repositories; expires {pat.get('token_expires_at') or 'never'}",
+                weight=0.25,
+            )
+        )
+        f.metadata.update(
+            {
+                "token_id": pat.get("token_id"),
+                "repository_selection": pat.get("repository_selection"),
+                "expires_at": pat.get("token_expires_at"),
+                "permissions": summarize_scopes(scopes),
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.SERVICE_IDENTITY
         return f

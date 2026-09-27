@@ -43,12 +43,16 @@ XML_BOMB = (
 )
 
 
-@pytest.mark.parametrize(("rel", "text"), [
-    ("flows/workflow.json", DEEP_JSON),
-    ("flows/workflow.yaml", "a: " + "[" * 3000 + "]" * 3000),
-    ("flows/workflow.toml", "x = " + "[" * 5000 + "]" * 5000),
-    ("force-app/agent.genAiPlanner-meta.xml", XML_BOMB),
-], ids=["json-depth", "yaml-depth", "toml-depth", "xml-expansion"])
+@pytest.mark.parametrize(
+    ("rel", "text"),
+    [
+        ("flows/workflow.json", DEEP_JSON),
+        ("flows/workflow.yaml", "a: " + "[" * 3000 + "]" * 3000),
+        ("flows/workflow.toml", "x = " + "[" * 5000 + "]" * 5000),
+        ("force-app/agent.genAiPlanner-meta.xml", XML_BOMB),
+    ],
+    ids=["json-depth", "yaml-depth", "toml-depth", "xml-expansion"],
+)
 def test_parser_limits_are_not_syntax_errors(index, rel, text):
     errors: list[str] = []
     limits: list[str] = []
@@ -102,12 +106,25 @@ def test_statement_cache_keeps_only_short_statements_within_a_text_budget(index,
 # ---------------------------------------------------------------- GitHub Apps
 def _installations(index, tmp_path, slugs):
     path = tmp_path / "installations.json"
-    path.write_text(json.dumps({"installations": [
-        {"id": number, "app_id": number, "app_slug": slug, "repository_selection": "all",
-         "permissions": {"contents": "write", "pull_requests": "write"}, "events": ["push"],
-         "html_url": f"https://github.com/apps/{slug}", "target_type": "Organization"}
-        for number, slug in enumerate(slugs, 1)
-    ]}))
+    path.write_text(
+        json.dumps(
+            {
+                "installations": [
+                    {
+                        "id": number,
+                        "app_id": number,
+                        "app_slug": slug,
+                        "repository_selection": "all",
+                        "permissions": {"contents": "write", "pull_requests": "write"},
+                        "events": ["push"],
+                        "html_url": f"https://github.com/apps/{slug}",
+                        "target_type": "Organization",
+                    }
+                    for number, slug in enumerate(slugs, 1)
+                ]
+            }
+        )
+    )
     ctx = ConnectorContext(config={"input": str(path)}, index=index)
     return {f.metadata["app_slug"]: f for f in GitHubAppsConnector(ctx).run()}
 
@@ -120,30 +137,42 @@ def test_ai_coding_agents_are_recognised_by_their_app_slug(index, tmp_path, slug
 
 
 # --------------------------------------------------------------------- Bedrock
-@pytest.mark.parametrize("client", [
-    'boto3.client("bedrock-agent-runtime", region_name="us-east-1")',
-    'boto3.client(service_name="bedrock-agent-runtime", region_name="us-east-1")',
-    'boto3.client(region_name="us-east-1", service_name="bedrock-agent-runtime")',
-])
+@pytest.mark.parametrize(
+    "client",
+    [
+        'boto3.client("bedrock-agent-runtime", region_name="us-east-1")',
+        'boto3.client(service_name="bedrock-agent-runtime", region_name="us-east-1")',
+        'boto3.client(region_name="us-east-1", service_name="bedrock-agent-runtime")',
+    ],
+)
 def test_bedrock_agent_clients_corroborate_invoke_agent(tmp_path, index, client):
-    findings, _ = _scan(index, tmp_path, {"agent.py": (
-        "import boto3\n\n"
-        f"client = {client}\n"
-        'response = client.invoke_agent(agentId="A1", agentAliasId="B1", sessionId="s", inputText="hi")\n'
-    )})
+    findings, _ = _scan(
+        index,
+        tmp_path,
+        {
+            "agent.py": (
+                "import boto3\n\n"
+                f"client = {client}\n"
+                'response = client.invoke_agent(agentId="A1", agentAliasId="B1", sessionId="s", inputText="hi")\n'
+            )
+        },
+    )
     assert any("cloud.aws-bedrock-agents" in f.frameworks for f in findings)
 
 
-@pytest.mark.parametrize("text", [
-    'boto3.client(service_name="bedrock-agentcore", region_name="us-east-1")',
-    "session.client(region_name=region, service_name='bedrock-agentcore-control')",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        'boto3.client(service_name="bedrock-agentcore", region_name="us-east-1")',
+        "session.client(region_name=region, service_name='bedrock-agentcore-control')",
+    ],
+)
 def test_agentcore_clients_match_by_keyword(index, text):
     assert any(m.signature_id == "cloud.aws-bedrock-agents" for m in index.match_code(text, "python"))
 
 
 # ------------------------------------------------------------------------- MCP
-SHELL_SERVER = '''import subprocess
+SHELL_SERVER = """import subprocess
 
 from mcp.server.fastmcp import FastMCP
 
@@ -153,7 +182,7 @@ mcp = FastMCP("ops")
 @mcp.tool(description="Run a shell command on the host")
 def run(cmd: str) -> str:
     return subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout
-'''
+"""
 
 
 def test_mcp_server_without_recognised_tools_keeps_code_execution(tmp_path, index):
@@ -164,18 +193,24 @@ def test_mcp_server_without_recognised_tools_keeps_code_execution(tmp_path, inde
 
 
 def test_mcp_tools_registered_only_in_tests_imply_no_capabilities(tmp_path, index):
-    findings, _ = _scan(index, tmp_path, {
-        "server.py": 'from mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP("notes")\n\n\n@mcp.tool()\ndef list_notes() -> list[str]:\n    return []\n',
-        "tests/test_server.py": 'from mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP("t")\n\n\n@mcp.tool()\ndef run_command(cmd: str) -> str:\n    return cmd\n',
-    })
+    findings, _ = _scan(
+        index,
+        tmp_path,
+        {
+            "server.py": 'from mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP("notes")\n\n\n@mcp.tool()\ndef list_notes() -> list[str]:\n    return []\n',
+            "tests/test_server.py": 'from mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP("t")\n\n\n@mcp.tool()\ndef run_command(cmd: str) -> str:\n    return cmd\n',
+        },
+    )
     server = next(f for f in findings if "protocol.mcp" in f.frameworks)
     assert server.metadata["mcp_tools"] == ["list_notes"]
     assert "code-exec" not in server.capabilities
 
 
 def test_mcp_enum_tool_names_are_found_in_one_pass():
-    enums = "".join(f"class Unused{n}(str, Enum):\n    VALUE = \"value_{n}\"\n\n" for n in range(5_000))
-    text = enums + 'class Tools(str, Enum):\n    READ = "read_file"\n\nTool(name=Tools.READ, description="x")\n'
+    enums = "".join(f'class Unused{n}(str, Enum):\n    VALUE = "value_{n}"\n\n' for n in range(5_000))
+    text = (
+        enums + 'class Tools(str, Enum):\n    READ = "read_file"\n\nTool(name=Tools.READ, description="x")\n'
+    )
     started = time.perf_counter()
     assert mcp_tool_names(text) == ["read_file"]
     assert time.perf_counter() - started < 1

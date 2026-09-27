@@ -1,4 +1,5 @@
 """Cross-layer checks for retained trust boundaries and failed cloud records."""
+
 from __future__ import annotations
 
 import json
@@ -16,7 +17,9 @@ from shadowscan.reporters.sarif import render_sarif
 
 def test_plugin_entrypoint_cannot_replace_builtin(monkeypatch):
     entries = [
-        EntryPoint(name="code.filesystem", value="untrusted_plugin:Replacement", group="shadowscan.connectors"),
+        EntryPoint(
+            name="code.filesystem", value="untrusted_plugin:Replacement", group="shadowscan.connectors"
+        ),
         EntryPoint(name="code.extension", value="custom_plugin:Extension", group="shadowscan.connectors"),
     ]
     monkeypatch.setattr(registry, "entry_points", lambda **kwargs: entries)
@@ -27,18 +30,25 @@ def test_plugin_entrypoint_cannot_replace_builtin(monkeypatch):
     assert registry.get_connector_class("code.filesystem") is FilesystemConnector
 
 
-@pytest.mark.parametrize("connector,record", [
-    ("cloud.aws", {"_kind": "bedrock-agent"}),
-    ("cloud.gcp", {"_kind": "reasoning-engine"}),
-    ("cloud.azure", {"_kind": "resource", "type": "Microsoft.CognitiveServices/accounts", "kind": "OpenAI"}),
-    ("cloud.oci", {"_kind": "genai-agent"}),
-])
+@pytest.mark.parametrize(
+    "connector,record",
+    [
+        ("cloud.aws", {"_kind": "bedrock-agent"}),
+        ("cloud.gcp", {"_kind": "reasoning-engine"}),
+        (
+            "cloud.azure",
+            {"_kind": "resource", "type": "Microsoft.CognitiveServices/accounts", "kind": "OpenAI"},
+        ),
+        ("cloud.oci", {"_kind": "genai-agent"}),
+    ],
+)
 def test_missing_cloud_resource_cannot_pass_or_enter_cache(tmp_path, index, connector, record):
     source = tmp_path / "records.json"
     source.write_text(json.dumps([record]))
     config = ScanConfig(
         connectors=[ConnectorSpec(connector, {"input": str(source)})],
-        incremental=True, state_dir=str(tmp_path / "state"),
+        incremental=True,
+        state_dir=str(tmp_path / "state"),
     )
     for _ in range(2):
         result = Engine(config, index=index).run()

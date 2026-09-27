@@ -47,7 +47,9 @@ class _ModuleReads:
 
 def _is_ctx(node: ast.AST) -> bool:
     """``ctx`` or ``<receiver>.ctx`` (``self.ctx``, ``conn.ctx``)."""
-    return (isinstance(node, ast.Name) and node.id == "ctx") or (isinstance(node, ast.Attribute) and node.attr == "ctx")
+    return (isinstance(node, ast.Name) and node.id == "ctx") or (
+        isinstance(node, ast.Attribute) and node.attr == "ctx"
+    )
 
 
 def _is_ctx_config(node: ast.AST) -> bool:
@@ -55,7 +57,9 @@ def _is_ctx_config(node: ast.AST) -> bool:
 
 
 def _string_constants(node: ast.AST) -> set[str]:
-    return {sub.value for sub in ast.walk(node) if isinstance(sub, ast.Constant) and isinstance(sub.value, str)}
+    return {
+        sub.value for sub in ast.walk(node) if isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+    }
 
 
 def _collect(node: ast.AST, keys: set[str], non_literal: list[str]) -> None:
@@ -77,7 +81,12 @@ def _collect(node: ast.AST, keys: set[str], non_literal: list[str]) -> None:
         elif isinstance(sub, ast.comprehension):
             # {k: v for k, v in ctx.config.items() if k in {"a", "b"}}
             it = sub.iter
-            if isinstance(it, ast.Call) and isinstance(it.func, ast.Attribute) and it.func.attr == "items" and _is_ctx_config(it.func.value):
+            if (
+                isinstance(it, ast.Call)
+                and isinstance(it.func, ast.Attribute)
+                and it.func.attr == "items"
+                and _is_ctx_config(it.func.value)
+            ):
                 for condition in sub.ifs:
                     keys |= _string_constants(condition)
 
@@ -138,7 +147,9 @@ def test_every_connector_source_is_scanned_with_literal_keys():
     for path in sorted(PACKAGE.rglob("*.py")):
         reads = _scan(path)
         problems.extend(f"{path.relative_to(PACKAGE)}: {entry}" for entry in reads.non_literal)
-    assert not problems, "config keys must be string literals so the listing stays complete:\n" + "\n".join(problems)
+    assert not problems, "config keys must be string literals so the listing stays complete:\n" + "\n".join(
+        problems
+    )
 
 
 def test_helper_modules_do_not_read_undeclared_config():
@@ -149,7 +160,9 @@ def test_helper_modules_do_not_read_undeclared_config():
             continue
         reads = _scan(path)
         stray = reads.module_level | set().union(*reads.classes.values())
-        assert not stray, f"{path.relative_to(PACKAGE)} reads config keys {sorted(stray)} outside a connector class"
+        assert not stray, (
+            f"{path.relative_to(PACKAGE)} reads config keys {sorted(stray)} outside a connector class"
+        )
 
 
 @pytest.mark.parametrize("name", CONNECTORS)
@@ -157,7 +170,9 @@ def test_read_keys_are_declared(name):
     cls = get_connector_class(name)
     read = _keys_read_by(cls)
     private = {key for key in read if key.startswith("_")}
-    assert private <= ENGINE_PRIVATE_KEYS, f"{name} reads unknown private keys {sorted(private - ENGINE_PRIVATE_KEYS)}"
+    assert private <= ENGINE_PRIVATE_KEYS, (
+        f"{name} reads unknown private keys {sorted(private - ENGINE_PRIVATE_KEYS)}"
+    )
     undeclared = read - private - _declared(cls)
     assert not undeclared, f"{name} reads {sorted(undeclared)} but does not document them in config_keys"
 
@@ -198,7 +213,7 @@ def test_connectors_listing_merges_shared_keys():
     shared = BaseConnector.shared_config_keys
     okta = rows["identity.okta"]["config"]
     assert "bearer" in okta
-    assert list(okta)[-len(shared):] == list(shared), "shared keys follow the connector's own keys"
+    assert list(okta)[-len(shared) :] == list(shared), "shared keys follow the connector's own keys"
     assert all(okta[key] == text for key, text in shared.items())
     gateway = rows["gateway.logs"]["config"]
     assert {"label", "gateway_name", *shared} <= set(gateway)

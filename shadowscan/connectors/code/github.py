@@ -44,7 +44,30 @@ from shadowscan.utils.git import (
 )
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 
-INTERESTING_DIRS = (".github/", ".claude/", ".cursor/", ".vscode/", ".windsurf/", ".codex/", ".gemini/", ".kiro/", ".amazonq/", ".continue/", ".roo/", ".well-known/", "config/", "infra/", "terraform/", "deploy/", "k8s/", "helm/", "flows/", "workflows/", "agents/", "prompts/")
+INTERESTING_DIRS = (
+    ".github/",
+    ".claude/",
+    ".cursor/",
+    ".vscode/",
+    ".windsurf/",
+    ".codex/",
+    ".gemini/",
+    ".kiro/",
+    ".amazonq/",
+    ".continue/",
+    ".roo/",
+    ".well-known/",
+    "config/",
+    "infra/",
+    "terraform/",
+    "deploy/",
+    "k8s/",
+    "helm/",
+    "flows/",
+    "workflows/",
+    "agents/",
+    "prompts/",
+)
 API_MODE_MAX_FILES = 400
 SOURCE_SAMPLE = 150
 
@@ -112,7 +135,9 @@ class GitHubConnector(BaseConnector):
     name: ClassVar[str] = "code.github"
     surface: ClassVar[Surface] = Surface.CODE
     provider: ClassVar[str | None] = "github"
-    description: ClassVar[str] = "Enumerate GitHub org/user repositories and scan their contents (clone or API mode)."
+    description: ClassVar[str] = (
+        "Enumerate GitHub org/user repositories and scan their contents (clone or API mode)."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "org": "organisation login to enumerate (env GITHUB_ORG); or `user`, or `repos`",
         "user": "user login to enumerate instead of `org`",
@@ -153,7 +178,8 @@ class GitHubConnector(BaseConnector):
             raise ConnectorError("code.github: max_repos must be positive")
         self.depth = int(ctx.get("clone_depth", 1))
         self.clone_max_bytes, self.clone_timeout_seconds = clone_limits(
-            ctx.get("clone_max_bytes", 256 * 1024 * 1024), ctx.get("clone_timeout_seconds", 120),
+            ctx.get("clone_max_bytes", 256 * 1024 * 1024),
+            ctx.get("clone_timeout_seconds", 120),
         )
         self.include_archived = bool(ctx.get("include_archived", False))
         self.include_forks = bool(ctx.get("include_forks", False))
@@ -161,7 +187,9 @@ class GitHubConnector(BaseConnector):
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
-        self.http = HttpClient(self.api_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True))
+        self.http = HttpClient(
+            self.api_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True)
+        )
 
     # --------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -199,7 +227,9 @@ class GitHubConnector(BaseConnector):
                     seen.add(name)
                     yield _remote_record(data)
         if org:
-            for r in self.http.paginate_link(f"/orgs/{org}/repos", params={"per_page": 100, "type": "all", "sort": "pushed"}):
+            for r in self.http.paginate_link(
+                f"/orgs/{org}/repos", params={"per_page": 100, "type": "all", "sort": "pushed"}
+            ):
                 if r["full_name"] not in seen and self._wanted(r):
                     if len(seen) >= self.max_repos:
                         self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
@@ -207,7 +237,9 @@ class GitHubConnector(BaseConnector):
                     seen.add(r["full_name"])
                     yield _remote_record(r)
         if user:
-            for r in self.http.paginate_link(f"/users/{user}/repos", params={"per_page": 100, "sort": "pushed"}):
+            for r in self.http.paginate_link(
+                f"/users/{user}/repos", params={"per_page": 100, "sort": "pushed"}
+            ):
                 if r["full_name"] not in seen and self._wanted(r):
                     if len(seen) >= self.max_repos:
                         self.ctx.warn(f"code.github: max_repos ({self.max_repos}) reached", incomplete=True)
@@ -246,7 +278,13 @@ class GitHubConnector(BaseConnector):
                     self.ctx.warn("code.github: offline clone path escaped its input directory")
                     continue
                 count += 1
-                yield _OfflineRepository({"full_name": child.name, "owner": {"login": child.name.split("__")[0] if "__" in child.name else child.name}}, str(child))
+                yield _OfflineRepository(
+                    {
+                        "full_name": child.name,
+                        "owner": {"login": child.name.split("__")[0] if "__" in child.name else child.name},
+                    },
+                    str(child),
+                )
         except OSError:
             self.ctx.warn("code.github: could not enumerate offline clones")
             return
@@ -285,7 +323,21 @@ class GitHubConnector(BaseConnector):
         full = repo.get("full_name") or Path(local).name
         owner_login = (repo.get("owner") or {}).get("login")
         cfg = {
-            **{k: v for k, v in self.ctx.config.items() if k in {"exclude", "max_file_size", "max_files", "scan_timeout", "scan_secrets", "use_git", "strict_coverage", "include_tests"}},
+            **{
+                k: v
+                for k, v in self.ctx.config.items()
+                if k
+                in {
+                    "exclude",
+                    "max_file_size",
+                    "max_files",
+                    "scan_timeout",
+                    "scan_secrets",
+                    "use_git",
+                    "strict_coverage",
+                    "include_tests",
+                }
+            },
             "path": local,
             "label": f"github:{full}",
             "account": owner_login,
@@ -299,14 +351,24 @@ class GitHubConnector(BaseConnector):
                 "pushed_at": repo.get("pushed_at"),
                 "language": repo.get("language"),
                 "topics": repo.get("topics"),
-                **({"source_snapshot": repo["source_snapshot"]} if isinstance(repo.get("source_snapshot"), dict) else {}),
+                **(
+                    {"source_snapshot": repo["source_snapshot"]}
+                    if isinstance(repo.get("source_snapshot"), dict)
+                    else {}
+                ),
             },
         }
-        fs = FilesystemConnector(ConnectorContext(
-            config=cfg, index=self.index, logger=self.log, workdir=self.ctx.workdir,
-            deadline=self.ctx.deadline, cancelled=self.ctx.cancelled,
-            publication_lock=self.ctx.publication_lock,
-        ))
+        fs = FilesystemConnector(
+            ConnectorContext(
+                config=cfg,
+                index=self.index,
+                logger=self.log,
+                workdir=self.ctx.workdir,
+                deadline=self.ctx.deadline,
+                cancelled=self.ctx.cancelled,
+                publication_lock=self.ctx.publication_lock,
+            )
+        )
         fs.ctx.stats = self.ctx.stats
         # Share the diagnostic budget so repositories cannot each fill 1000 entries.
         fs.ctx._diagnostic_counts = self.ctx._diagnostic_counts
@@ -333,7 +395,10 @@ class GitHubConnector(BaseConnector):
             dest = os.path.join(tmp, "repo")
             size = repo.get("size")
             if exceeds_clone_size(size, 1024, self.clone_max_bytes):
-                self.ctx.warn(f"code.github: repository {full} exceeds clone_max_bytes; using sampled API mode", incomplete=True)
+                self.ctx.warn(
+                    f"code.github: repository {full} exceeds clone_max_bytes; using sampled API mode",
+                    incomplete=True,
+                )
             elif not has_clone_size_estimate(size):
                 self.ctx.warn(
                     f"code.github: size metadata unavailable for {full}; using sampled API mode",
@@ -343,14 +408,18 @@ class GitHubConnector(BaseConnector):
                 if self._clone(repo, dest):
                     self._set_clone_snapshot(repo, dest)
                     return dest
-                self.ctx.warn(f"code.github: clone failed for {full}; using sampled API mode", incomplete=True)
+                self.ctx.warn(
+                    f"code.github: clone failed for {full}; using sampled API mode", incomplete=True
+                )
                 # Never mix bytes from a partial clone into the API checkout.
                 if os.path.lexists(dest):
                     if os.path.islink(dest):
                         raise ConnectorError("code.github: partial clone destination is a symlink")
                     shutil.rmtree(dest)
         elif self.mode == "clone":
-            self.ctx.warn(f"code.github: git is unavailable for {full}; using sampled API mode", incomplete=True)
+            self.ctx.warn(
+                f"code.github: git is unavailable for {full}; using sampled API mode", incomplete=True
+            )
         self.ctx.check_deadline()
         return self._fetch_via_api(repo, tmp)
 
@@ -375,12 +444,23 @@ class GitHubConnector(BaseConnector):
         origin = "https://github.com" if api.hostname == "api.github.com" else f"{api.scheme}://{api.netloc}"
         url = validate_url(repo.get("clone_url") or f"{origin}/{repo['full_name']}.git", origin)
         env = clone_environment(origin, self.token, "x-access-token")
-        cmd = [*git_argv_prefix(), "clone", "--quiet", "--depth", str(self.depth), "--no-tags", "--single-branch"]
+        cmd = [
+            *git_argv_prefix(),
+            "clone",
+            "--quiet",
+            "--depth",
+            str(self.depth),
+            "--no-tags",
+            "--single-branch",
+        ]
         branch = validate_git_ref(repo.get("default_branch"))
         if branch:
             cmd += ["--branch", branch]
         elif repo.get("default_branch"):
-            self.ctx.warn("code.github: unsupported default branch; cloned remote HEAD, requested branch coverage unknown", incomplete=True)
+            self.ctx.warn(
+                "code.github: unsupported default branch; cloned remote HEAD, requested branch coverage unknown",
+                incomplete=True,
+            )
         cmd += ["--", url, dest]
         try:
             return run_bounded_clone(cmd, env, self.ctx, self.clone_timeout_seconds)
@@ -393,16 +473,23 @@ class GitHubConnector(BaseConnector):
         repo.pop("source_snapshot", None)
         branch = validate_git_ref(repo.get("default_branch") or "main")
         if branch is None:
-            self.ctx.warn("code.github: unsupported default branch; repository content skipped", incomplete=True)
+            self.ctx.warn(
+                "code.github: unsupported default branch; repository content skipped", incomplete=True
+            )
             return None
-        tree = self.http.try_get_json(f"/repos/{full}/git/trees/{quote(branch, safe='')}", params={"recursive": "1"})
+        tree = self.http.try_get_json(
+            f"/repos/{full}/git/trees/{quote(branch, safe='')}", params={"recursive": "1"}
+        )
         if not isinstance(tree, dict) or not isinstance(tree.get("tree"), list):
             self.ctx.warn(f"code.github: cannot read tree of {full}", incomplete=True)
             return None
         try:
             tree_sha = repository_blob_id(tree.get("sha"))
         except ConnectorError:
-            self.ctx.warn(f"code.github: cannot identify immutable tree snapshot for {full}; source provenance unknown", incomplete=True)
+            self.ctx.warn(
+                f"code.github: cannot identify immutable tree snapshot for {full}; source provenance unknown",
+                incomplete=True,
+            )
         else:
             repo["source_snapshot"] = {
                 "provider": "github",
@@ -417,20 +504,35 @@ class GitHubConnector(BaseConnector):
         # same confinement and partial-coverage behavior as a local checkout.
         entries = [t for t in tree["tree"] if isinstance(t, dict) and isinstance(t.get("path"), str)]
         if len(entries) != len(tree["tree"]):
-            self.ctx.warn(f"code.github: malformed tree entries in {full}; source coverage partial", incomplete=True)
+            self.ctx.warn(
+                f"code.github: malformed tree entries in {full}; source coverage partial", incomplete=True
+            )
         if any(t.get("type") == "commit" or t.get("mode") in {"120000", "160000"} for t in entries):
-            self.ctx.warn(f"code.github: symbolic links or submodules in {full} skipped; source coverage partial", incomplete=True)
+            self.ctx.warn(
+                f"code.github: symbolic links or submodules in {full} skipped; source coverage partial",
+                incomplete=True,
+            )
         blobs = {
-            t["path"]: t for t in entries
-            if t.get("type") == "blob" and t.get("mode") not in {"120000", "160000"}
-            and isinstance(t.get("size", 0), int) and 0 <= t.get("size", 0) <= 512_000
+            t["path"]: t
+            for t in entries
+            if t.get("type") == "blob"
+            and t.get("mode") not in {"120000", "160000"}
+            and isinstance(t.get("size", 0), int)
+            and 0 <= t.get("size", 0) <= 512_000
         }
-        if any(t.get("type") == "blob" and (not isinstance(t.get("size", 0), int) or t.get("size", 0) < 0) for t in entries):
-            self.ctx.warn(f"code.github: invalid blob size metadata in {full}; source coverage partial", incomplete=True)
+        if any(
+            t.get("type") == "blob" and (not isinstance(t.get("size", 0), int) or t.get("size", 0) < 0)
+            for t in entries
+        ):
+            self.ctx.warn(
+                f"code.github: invalid blob size metadata in {full}; source coverage partial", incomplete=True
+            )
         paths = list(blobs)
         selected = self._select_paths(paths)
         if len(selected) < sum(t.get("type") == "blob" for t in entries):
-            self.ctx.warn(f"code.github: API mode samples repository {full}; source coverage partial", incomplete=True)
+            self.ctx.warn(
+                f"code.github: API mode samples repository {full}; source coverage partial", incomplete=True
+            )
         dest = os.path.join(tmp, "repo")
         os.makedirs(dest, exist_ok=True)
         fetched = 0
@@ -440,12 +542,17 @@ class GitHubConnector(BaseConnector):
             except UnusualRepositoryPath:
                 # Traversal still aborts the repository; an unusual but legal
                 # path only costs that file.
-                self.ctx.warn("code.github: unusual repository tree path skipped; source coverage partial", incomplete=True)
+                self.ctx.warn(
+                    "code.github: unusual repository tree path skipped; source coverage partial",
+                    incomplete=True,
+                )
                 continue
             try:
                 blob_id = repository_blob_id(blobs[p].get("sha"))
             except ConnectorError:
-                self.ctx.warn(f"code.github: invalid blob object ID in {full}; content skipped", incomplete=True)
+                self.ctx.warn(
+                    f"code.github: invalid blob object ID in {full}; content skipped", incomplete=True
+                )
                 continue
             # A branch can advance after enumeration. Download the enumerated
             # object directly so findings always describe that tree's bytes.
@@ -467,7 +574,10 @@ class GitHubConnector(BaseConnector):
                 self.ctx.warn(f"code.github: oversized API content in {full}", incomplete=True)
                 continue
             if not repository_blob_matches(blob_id, content):
-                self.ctx.warn(f"code.github: API content does not match its immutable blob ID in {full}; content skipped", incomplete=True)
+                self.ctx.warn(
+                    f"code.github: API content does not match its immutable blob ID in {full}; content skipped",
+                    incomplete=True,
+                )
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
@@ -482,24 +592,62 @@ class GitHubConnector(BaseConnector):
         for p in paths:
             name = p.rsplit("/", 1)[-1]
             depth = p.count("/")
-            if is_manifest_name(name) or p.startswith(INTERESTING_DIRS) or any(f"/{d}" in p for d in INTERESTING_DIRS) or name.lower() in {"claude.md", "agents.md", "gemini.md", "codex.md", "warp.md", ".cursorrules", ".windsurfrules", ".clinerules", ".mcp.json", "mcp.json", "langgraph.json", "agent.json", "agent-card.json", "declarativeagent.json", "modelfile"} or name.endswith((".tf", ".bicep", ".yml", ".yaml", ".ipynb")):
+            if (
+                is_manifest_name(name)
+                or p.startswith(INTERESTING_DIRS)
+                or any(f"/{d}" in p for d in INTERESTING_DIRS)
+                or name.lower()
+                in {
+                    "claude.md",
+                    "agents.md",
+                    "gemini.md",
+                    "codex.md",
+                    "warp.md",
+                    ".cursorrules",
+                    ".windsurfrules",
+                    ".clinerules",
+                    ".mcp.json",
+                    "mcp.json",
+                    "langgraph.json",
+                    "agent.json",
+                    "agent-card.json",
+                    "declarativeagent.json",
+                    "modelfile",
+                }
+                or name.endswith((".tf", ".bicep", ".yml", ".yaml", ".ipynb"))
+            ):
                 must.append(p)
-            elif depth <= 3 and name.endswith((".py", ".ts", ".tsx", ".js", ".mjs", ".go", ".rs", ".java", ".kt", ".cs", ".rb", ".php")):
+            elif depth <= 3 and name.endswith(
+                (".py", ".ts", ".tsx", ".js", ".mjs", ".go", ".rs", ".java", ".kt", ".cs", ".rb", ".php")
+            ):
                 sample.append(p)
         sample.sort(key=lambda x: (x.count("/"), len(x)))
-        return must[:API_MODE_MAX_FILES] + sample[: max(0, min(SOURCE_SAMPLE, API_MODE_MAX_FILES - len(must)))]
+        return (
+            must[:API_MODE_MAX_FILES] + sample[: max(0, min(SOURCE_SAMPLE, API_MODE_MAX_FILES - len(must)))]
+        )
 
     # ------------------------------------------------------ repo-level extra
     def _repo_level_findings(self, repo: dict[str, Any]) -> Iterable[Finding]:
         full = repo["full_name"]
         names: list[str] = []
-        for path in (f"/repos/{full}/actions/secrets", f"/repos/{full}/actions/variables", f"/repos/{full}/codespaces/secrets", f"/repos/{full}/dependabot/secrets"):
+        for path in (
+            f"/repos/{full}/actions/secrets",
+            f"/repos/{full}/actions/variables",
+            f"/repos/{full}/codespaces/secrets",
+            f"/repos/{full}/dependabot/secrets",
+        ):
             try:
-                for item in self.http.paginate_link(path, params={"per_page": 100}, item_key="variables" if path.endswith("variables") else "secrets"):
+                for item in self.http.paginate_link(
+                    path,
+                    params={"per_page": 100},
+                    item_key="variables" if path.endswith("variables") else "secrets",
+                ):
                     if item.get("name"):
                         names.append(item["name"])
             except HttpError as exc:
-                self.ctx.warn(f"code.github: repository metadata HTTP {exc.status}; coverage unknown", incomplete=True)
+                self.ctx.warn(
+                    f"code.github: repository metadata HTTP {exc.status}; coverage unknown", incomplete=True
+                )
         if not names:
             return
         matches = []
@@ -517,7 +665,14 @@ class GitHubConnector(BaseConnector):
             provider="github",
             account=(repo.get("owner") or {}).get("login"),
         )
-        f.add_evidence(Evidence(signal="ci:secret-names", description=f"Actions/Codespaces/Dependabot secret or variable names: {', '.join(sorted(set(names)))[:400]}", location=f"{repo.get('html_url')}/settings/secrets/actions", weight=0.3))
+        f.add_evidence(
+            Evidence(
+                signal="ci:secret-names",
+                description=f"Actions/Codespaces/Dependabot secret or variable names: {', '.join(sorted(set(names)))[:400]}",
+                location=f"{repo.get('html_url')}/settings/secrets/actions",
+                weight=0.3,
+            )
+        )
         apply_matches(f, matches, location=f"{full} (repository secrets)", weight_scale=0.8)
         f.metadata["secret_names"] = sorted(set(names))
         f.add_tag("ci-credentials")

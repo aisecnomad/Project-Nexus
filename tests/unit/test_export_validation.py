@@ -1,4 +1,5 @@
 """Export shape and filesystem failures must never become a clean cached scan."""
+
 from __future__ import annotations
 
 import json
@@ -23,9 +24,13 @@ class RecordConnector(BaseConnector):
         for rec in records:
             self.ctx.examined()
             yield Finding(
-                surface=Surface.CLOUD, connector=self.name, kind=Kind.AGENT,
-                title=str(rec.get("name", "record")), resource=str(rec.get("id", "record")),
-                resource_type="test", metadata=rec,
+                surface=Surface.CLOUD,
+                connector=self.name,
+                kind=Kind.AGENT,
+                title=str(rec.get("name", "record")),
+                resource=str(rec.get("id", "record")),
+                resource_type="test",
+                metadata=rec,
             )
 
 
@@ -35,16 +40,24 @@ def scan(path: Path, index):
     return findings, connector.ctx.stats
 
 
-@pytest.mark.parametrize("suffix,body", [
-    (".json", 'true'), (".yaml", 'true'), (".json", 'null'),
-    (".json", '[1, "broken"]'), (".json", '{}'),
-    (".json", '{"records": null}'), (".json", '{"data": {}}'),
-    (".json", '{"records": "not-a-list"}'),
-    (".json", '{"records": [], "items": []}'),
-    (".yaml", 'records: [1, nope]'), (".yaml", '42: nope'),
-    (".yaml", '&cycle {name: bad, items: [*cycle]}'),
-    (".jsonl", '123\nnull\n[]'),
-])
+@pytest.mark.parametrize(
+    "suffix,body",
+    [
+        (".json", "true"),
+        (".yaml", "true"),
+        (".json", "null"),
+        (".json", '[1, "broken"]'),
+        (".json", "{}"),
+        (".json", '{"records": null}'),
+        (".json", '{"data": {}}'),
+        (".json", '{"records": "not-a-list"}'),
+        (".json", '{"records": [], "items": []}'),
+        (".yaml", "records: [1, nope]"),
+        (".yaml", "42: nope"),
+        (".yaml", "&cycle {name: bad, items: [*cycle]}"),
+        (".jsonl", "123\nnull\n[]"),
+    ],
+)
 def test_invalid_exports_mark_incomplete(tmp_path, index, suffix, body):
     path = tmp_path / f"export{suffix}"
     path.write_text(body)
@@ -53,14 +66,17 @@ def test_invalid_exports_mark_incomplete(tmp_path, index, suffix, body):
     assert stats.incomplete and stats.errors
 
 
-@pytest.mark.parametrize("suffix,body", [
-    (".json", '[{"id":"one"}, 1, {"id":"two"}]'),
-    (".json", '{"records":[{"id":"one"},null,{"id":"two"}]}'),
-    (".yaml", '- id: one\n- 1\n- id: two\n'),
-    (".jsonl", '{"id":"one"}\n{bad-json}\nfalse\n{"id":"two"}\n'),
-    (".json", '{"id":"one"}\n{bad-json}\n{"id":"two"}\n'),
-    (".csv", 'id,name\none,One\nwrong,column,extra\nshort\ntwo,Two\n'),
-])
+@pytest.mark.parametrize(
+    "suffix,body",
+    [
+        (".json", '[{"id":"one"}, 1, {"id":"two"}]'),
+        (".json", '{"records":[{"id":"one"},null,{"id":"two"}]}'),
+        (".yaml", "- id: one\n- 1\n- id: two\n"),
+        (".jsonl", '{"id":"one"}\n{bad-json}\nfalse\n{"id":"two"}\n'),
+        (".json", '{"id":"one"}\n{bad-json}\n{"id":"two"}\n'),
+        (".csv", "id,name\none,One\nwrong,column,extra\nshort\ntwo,Two\n"),
+    ],
+)
 def test_valid_neighbors_survive_malformed_records(tmp_path, index, suffix, body):
     path = tmp_path / f"export{suffix}"
     path.write_text(body)
@@ -70,7 +86,7 @@ def test_valid_neighbors_survive_malformed_records(tmp_path, index, suffix, body
     assert stats.objects_examined == 2
 
 
-@pytest.mark.parametrize("body", ['[]', '{"items":[]}'])
+@pytest.mark.parametrize("body", ["[]", '{"items":[]}'])
 def test_explicit_empty_inventory_is_complete(tmp_path, index, body):
     path = tmp_path / "export.json"
     path.write_text(body)
@@ -78,11 +94,18 @@ def test_explicit_empty_inventory_is_complete(tmp_path, index, body):
     assert not findings and not stats.incomplete and not stats.errors
 
 
-@pytest.mark.parametrize("suffix,body", [
-    (".json", ''), (".yaml", ' \n'), (".jsonl", '\n'), (".csv", ''),
-    (".csv", 'id,id\na,b\n'), (".csv", 'id,\na,b\n'),
-    (".csv", 'id,name\na,"unterminated\n'),
-])
+@pytest.mark.parametrize(
+    "suffix,body",
+    [
+        (".json", ""),
+        (".yaml", " \n"),
+        (".jsonl", "\n"),
+        (".csv", ""),
+        (".csv", "id,id\na,b\n"),
+        (".csv", "id,\na,b\n"),
+        (".csv", 'id,name\na,"unterminated\n'),
+    ],
+)
 def test_empty_and_malformed_csv_exports_fail(tmp_path, index, suffix, body):
     path = tmp_path / f"export{suffix}"
     path.write_text(body)
@@ -112,7 +135,7 @@ def test_unwrap_without_context_fails_explicitly():
 def test_errors_never_echo_malformed_secret_contents(tmp_path, index, caplog):
     secret = "opaque-SENSITIVE-secret-value"
     path = tmp_path / "export.yaml"
-    path.write_text('password: [' + secret + '\n')
+    path.write_text("password: [" + secret + "\n")
     findings, stats = scan(path, index)
     assert not findings and stats.incomplete
     assert secret not in repr(stats) + caplog.text
@@ -128,7 +151,7 @@ def test_unreadable_and_invalid_utf8_files_fail(tmp_path, index, monkeypatch):
     path.write_bytes(b'[{"id":"one"}, "\xff"]')
     _, stats = scan(path, index)
     assert stats.incomplete
-    path.write_text('[]')
+    path.write_text("[]")
     original = os.open
 
     def denied(name, *args, **kwargs):
@@ -206,13 +229,15 @@ def test_size_and_total_limits_mark_incomplete(tmp_path, index, monkeypatch):
     assert len(findings) == 1 and stats.incomplete
 
 
-@pytest.mark.parametrize("body", ['true', '[1,"broken"]', '{"records":null}'])
+@pytest.mark.parametrize("body", ["true", '[1,"broken"]', '{"records":null}'])
 def test_malformed_cloud_exports_are_never_cached(tmp_path, index, body):
     path = tmp_path / "export.json"
     path.write_text(body)
     config = ScanConfig(
         connectors=[ConnectorSpec("cloud.aws", {"input": str(path)})],
-        incremental=True, state_dir=str(tmp_path / "state"), parallel=1,
+        incremental=True,
+        state_dir=str(tmp_path / "state"),
+        parallel=1,
     )
     for _ in range(2):
         result = Engine(config, index).run()
@@ -220,10 +245,14 @@ def test_malformed_cloud_exports_are_never_cached(tmp_path, index, body):
     assert not list((tmp_path / "state").glob("*.json"))
 
 
-@pytest.mark.parametrize("marker", [
-    {"has_more": True}, {"next_page": "opaque-pagination-secret"},
-    {"@odata.nextLink": "https://example.test?token=secret"},
-])
+@pytest.mark.parametrize(
+    "marker",
+    [
+        {"has_more": True},
+        {"next_page": "opaque-pagination-secret"},
+        {"@odata.nextLink": "https://example.test?token=secret"},
+    ],
+)
 def test_paginated_export_preserves_records_but_marks_incomplete(tmp_path, index, marker):
     path = tmp_path / "export.json"
     path.write_text(json.dumps({"records": [{"id": "one"}], **marker}))
@@ -235,15 +264,25 @@ def test_paginated_export_preserves_records_but_marks_incomplete(tmp_path, index
 def _token():
     import jwt
 
-    return jwt.encode({"sub": "agent", "agent_id": "example"}, "synthetic-signing-key-at-least-32-bytes", algorithm="HS256")
+    return jwt.encode(
+        {"sub": "agent", "agent_id": "example"}, "synthetic-signing-key-at-least-32-bytes", algorithm="HS256"
+    )
 
 
-@pytest.mark.parametrize("suffix,body", [
-    (".json", 'true'), (".json", '{}'), (".json", '[null,123]'),
-    (".json", '{"token":false}'), (".json", '{"token":"malformed"}'),
-    (".json", '{bad'), (".txt", '{bad'), (".txt", ''),
-    (".txt", 'opaque-token-must-not-appear-in-diagnostics'),
-])
+@pytest.mark.parametrize(
+    "suffix,body",
+    [
+        (".json", "true"),
+        (".json", "{}"),
+        (".json", "[null,123]"),
+        (".json", '{"token":false}'),
+        (".json", '{"token":"malformed"}'),
+        (".json", "{bad"),
+        (".txt", "{bad"),
+        (".txt", ""),
+        (".txt", "opaque-token-must-not-appear-in-diagnostics"),
+    ],
+)
 def test_jwt_invalid_inputs_are_incomplete(tmp_path, index, suffix, body, caplog):
     from shadowscan.connectors.identity.jwt import JwtConnector
 
@@ -264,9 +303,9 @@ def test_jwt_valid_neighbors_survive_invalid_records(tmp_path, index, suffix):
     if suffix == ".json":
         body = json.dumps([token, None, {"context": "missing-token"}, {"access_token": token}])
     elif suffix == ".jsonl":
-        body = json.dumps({"token": token}) + '\n{bad-json}\n' + json.dumps(token)
+        body = json.dumps({"token": token}) + "\n{bad-json}\n" + json.dumps(token)
     else:
-        body = token + '\nbad-token\nBearer ' + token
+        body = token + "\nbad-token\nBearer " + token
     path.write_text(body)
     connector = JwtConnector(ConnectorContext({"input": str(path)}, index=index))
     findings = connector.run()

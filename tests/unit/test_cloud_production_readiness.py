@@ -27,12 +27,21 @@ def context(index, **config):
 
 
 def definition(revision, *, family="worker", status="ACTIVE"):
-    return {"taskDefinition": {
-        "taskDefinitionArn": f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/{family}:{revision}",
-        "family": family, "revision": revision, "status": status,
-        "containerDefinitions": [{"name": "worker", "image": "app:latest",
-                                  "environment": [{"name": "OPENAI_API_KEY", "value": "${SECRET}"}]}],
-    }}
+    return {
+        "taskDefinition": {
+            "taskDefinitionArn": f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/{family}:{revision}",
+            "family": family,
+            "revision": revision,
+            "status": status,
+            "containerDefinitions": [
+                {
+                    "name": "worker",
+                    "image": "app:latest",
+                    "environment": [{"name": "OPENAI_API_KEY", "value": "${SECRET}"}],
+                }
+            ],
+        }
+    }
 
 
 def ecs_connector(index, **config):
@@ -58,8 +67,9 @@ def test_aws_authenticates_before_account_record_without_account_override(index,
     connector = AwsConnector(ctx)
     connector._collect_ecs = Mock(return_value=[])
     records = list(connector.collect())
-    assert records == [{"_kind": "account", "account": ACCOUNT,
-                        "regions": DEFAULT_REGIONS if regions is None else [REGION]}]
+    assert records == [
+        {"_kind": "account", "account": ACCOUNT, "regions": DEFAULT_REGIONS if regions is None else [REGION]}
+    ]
     assert list(connector.analyze(records)) == []
     session.client.return_value.get_caller_identity.assert_called_once_with()
     assert not ctx.stats.incomplete
@@ -86,13 +96,26 @@ def test_ecs_finds_exact_old_inactive_revision_and_keeps_latest_registered_defin
     old_arn = old["taskDefinition"]["taskDefinitionArn"]
     latest_arn = latest["taskDefinition"]["taskDefinitionArn"]
     client.list_tasks.return_value = {"taskArns": [TASK]}
-    client.describe_tasks.return_value = {"tasks": [{"taskArn": TASK, "taskDefinitionArn": old_arn,
-                                                      "lastStatus": "RUNNING", "desiredStatus": "RUNNING"}]}
+    client.describe_tasks.return_value = {
+        "tasks": [
+            {
+                "taskArn": TASK,
+                "taskDefinitionArn": old_arn,
+                "lastStatus": "RUNNING",
+                "desiredStatus": "RUNNING",
+            }
+        ]
+    }
     client.list_services.return_value = {"serviceArns": [SERVICE]}
-    client.describe_services.return_value = {"services": [{"serviceArn": SERVICE, "status": "ACTIVE",
-                                                           "taskDefinition": old_arn, "runningCount": 1}]}
+    client.describe_services.return_value = {
+        "services": [
+            {"serviceArn": SERVICE, "status": "ACTIVE", "taskDefinition": old_arn, "runningCount": 1}
+        ]
+    }
     client.list_task_definition_families.return_value = {"families": ["worker"]}
-    client.describe_task_definition.side_effect = lambda *, taskDefinition: old if taskDefinition == old_arn else latest
+    client.describe_task_definition.side_effect = lambda *, taskDefinition: (
+        old if taskDefinition == old_arn else latest
+    )
     records = {record["taskDefinitionArn"]: record for record in connector._collect_ecs(REGION)}
     assert set(records) == {old_arn, latest_arn}
     assert records[old_arn]["status"] == "INACTIVE"
@@ -100,7 +123,9 @@ def test_ecs_finds_exact_old_inactive_revision_and_keeps_latest_registered_defin
     assert set(records[old_arn]["discovery_sources"]) == {"task", "service"}
     assert records[latest_arn]["deployment_state"] == "registered-only"
     assert records[latest_arn]["workload_references"] == []
-    client.describe_task_definition.assert_has_calls([call(taskDefinition=old_arn), call(taskDefinition="worker")])
+    client.describe_task_definition.assert_has_calls(
+        [call(taskDefinition=old_arn), call(taskDefinition="worker")]
+    )
     assert client.describe_task_definition.call_count == 2
     finding = connector._h_ecs_task_definition(records[old_arn])
     assert finding.kind == Kind.CLOUD_RESOURCE
@@ -117,14 +142,29 @@ def test_ecs_scans_service_rollouts_task_sets_and_pending_tasks_without_claiming
     revisions = {definition(n)["taskDefinition"]["taskDefinitionArn"]: definition(n) for n in range(1, 5)}
     arns = list(revisions)
     client.list_tasks.return_value = {"taskArns": [TASK]}
-    client.describe_tasks.return_value = {"tasks": [{"taskArn": TASK, "taskDefinitionArn": arns[0],
-                                                      "lastStatus": "PENDING", "desiredStatus": "RUNNING"}]}
+    client.describe_tasks.return_value = {
+        "tasks": [
+            {
+                "taskArn": TASK,
+                "taskDefinitionArn": arns[0],
+                "lastStatus": "PENDING",
+                "desiredStatus": "RUNNING",
+            }
+        ]
+    }
     client.list_services.return_value = {"serviceArns": [SERVICE]}
-    client.describe_services.return_value = {"services": [{
-        "serviceArn": SERVICE, "status": "ACTIVE", "taskDefinition": arns[1], "desiredCount": 0,
-        "deployments": [{"id": "old-rollout", "taskDefinition": arns[2], "runningCount": 0}],
-        "taskSets": [{"id": "external", "taskDefinition": arns[3]}],
-    }]}
+    client.describe_services.return_value = {
+        "services": [
+            {
+                "serviceArn": SERVICE,
+                "status": "ACTIVE",
+                "taskDefinition": arns[1],
+                "desiredCount": 0,
+                "deployments": [{"id": "old-rollout", "taskDefinition": arns[2], "runningCount": 0}],
+                "taskSets": [{"id": "external", "taskDefinition": arns[3]}],
+            }
+        ]
+    }
     client.describe_task_definition.side_effect = lambda *, taskDefinition: revisions[taskDefinition]
     records = list(connector._collect_ecs(REGION))
     assert {record["taskDefinitionArn"] for record in records} == set(arns)
@@ -139,24 +179,42 @@ def test_ecs_paginates_clusters_tasks_services_and_families_and_batches_descript
     cluster2 = CLUSTER + "-2"
     tasks = [TASK + str(i) for i in range(101)]
     services = [SERVICE + str(i) for i in range(11)]
-    client.list_clusters.side_effect = [{"clusterArns": [CLUSTER], "nextToken": "c2"}, {"clusterArns": [cluster2]}]
+    client.list_clusters.side_effect = [
+        {"clusterArns": [CLUSTER], "nextToken": "c2"},
+        {"clusterArns": [cluster2]},
+    ]
 
     def list_tasks(**kwargs):
         if kwargs["cluster"] == cluster2:
             return {"taskArns": []}
-        return {"taskArns": tasks[100:]} if "nextToken" in kwargs else {"taskArns": tasks[:100], "nextToken": "t2"}
+        return (
+            {"taskArns": tasks[100:]}
+            if "nextToken" in kwargs
+            else {"taskArns": tasks[:100], "nextToken": "t2"}
+        )
 
     def list_services(**kwargs):
         if kwargs["cluster"] == cluster2:
             return {"serviceArns": []}
-        return {"serviceArns": services[10:]} if "nextToken" in kwargs else {"serviceArns": services[:10], "nextToken": "s2"}
+        return (
+            {"serviceArns": services[10:]}
+            if "nextToken" in kwargs
+            else {"serviceArns": services[:10], "nextToken": "s2"}
+        )
 
     client.list_tasks.side_effect = list_tasks
     client.list_services.side_effect = list_services
-    client.describe_tasks.side_effect = lambda **kw: {"tasks": [{"taskArn": task, "taskDefinitionArn": arn} for task in kw["tasks"]]}
-    client.describe_services.side_effect = lambda **kw: {"services": [{"serviceArn": service, "taskDefinition": arn} for service in kw["services"]]}
+    client.describe_tasks.side_effect = lambda **kw: {
+        "tasks": [{"taskArn": task, "taskDefinitionArn": arn} for task in kw["tasks"]]
+    }
+    client.describe_services.side_effect = lambda **kw: {
+        "services": [{"serviceArn": service, "taskDefinition": arn} for service in kw["services"]]
+    }
     client.describe_task_definition.return_value = definition(1)
-    client.list_task_definition_families.side_effect = [{"families": [], "nextToken": "f2"}, {"families": ["worker"]}]
+    client.list_task_definition_families.side_effect = [
+        {"families": [], "nextToken": "f2"},
+        {"families": ["worker"]},
+    ]
     records = list(connector._collect_ecs(REGION))
     assert len(records) == 1
     assert len(records[0]["workload_references"]) == 100
@@ -177,7 +235,10 @@ def test_ecs_collection_failures_mark_incomplete_and_preserve_registered_results
     if failure == "denied":
         client.describe_services.side_effect = RuntimeError("AccessDenied")
     elif failure == "partial":
-        client.describe_services.return_value = {"services": [], "failures": [{"arn": SERVICE, "reason": "MISSING"}]}
+        client.describe_services.return_value = {
+            "services": [],
+            "failures": [{"arn": SERVICE, "reason": "MISSING"}],
+        }
     else:
         client.describe_services.return_value = {"services": []}
     client.list_task_definition_families.return_value = {"families": ["worker"]}
@@ -210,10 +271,14 @@ def test_ecs_repeated_pagination_token_marks_incomplete_without_looping(index):
 
 
 @pytest.mark.parametrize("role", ["roles/owner", "roles/editor"])
-@pytest.mark.parametrize("member", ["user:owner@example.com", "serviceAccount:worker@test.iam.gserviceaccount.com"])
+@pytest.mark.parametrize(
+    "member", ["user:owner@example.com", "serviceAccount:worker@test.iam.gserviceaccount.com"]
+)
 def test_gcp_broad_roles_are_access_evidence_without_agent_execution_claim(index, role, member):
     connector = GcpConnector(context(index))
-    findings = list(connector._h_iam_policy({"_project": "project", "bindings": [{"role": role, "members": [member]}]}))
+    findings = list(
+        connector._h_iam_policy({"_project": "project", "bindings": [{"role": role, "members": [member]}]})
+    )
     assert len(findings) == 1
     finding = findings[0]
     assert finding.kind == Kind.IAM_GRANT
@@ -228,11 +293,28 @@ def test_gcp_broad_roles_are_access_evidence_without_agent_execution_claim(index
 
 def test_gcp_combines_broad_and_ai_specific_roles_once_per_member_and_ignores_viewer(index):
     connector = GcpConnector(context(index))
-    findings = list(connector._h_iam_policy({"_project": "project", "bindings": [
-        {"role": role, "members": ["serviceAccount:worker@example.com"]}
-        for role in ["roles/editor", "roles/editor", "roles/aiplatform.user", "roles/viewer"]
-    ]}))
+    findings = list(
+        connector._h_iam_policy(
+            {
+                "_project": "project",
+                "bindings": [
+                    {"role": role, "members": ["serviceAccount:worker@example.com"]}
+                    for role in ["roles/editor", "roles/editor", "roles/aiplatform.user", "roles/viewer"]
+                ],
+            }
+        )
+    )
     assert len(findings) == 1
     assert findings[0].permissions == ["roles/aiplatform.user", "roles/editor", "roles/viewer"]
     assert "service-account" in findings[0].tags
-    assert list(connector._h_iam_policy({"_project": "project", "bindings": [{"role": "roles/viewer", "members": ["user:viewer@example.com"]}]})) == []
+    assert (
+        list(
+            connector._h_iam_policy(
+                {
+                    "_project": "project",
+                    "bindings": [{"role": "roles/viewer", "members": ["user:viewer@example.com"]}],
+                }
+            )
+        )
+        == []
+    )

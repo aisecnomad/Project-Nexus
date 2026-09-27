@@ -26,7 +26,9 @@ class AtlassianConnector(BaseConnector):
     name: ClassVar[str] = "saas.atlassian"
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "atlassian"
-    description: ClassVar[str] = "Marketplace / Forge apps installed on Jira & Confluence Cloud (AI assistants, Rovo agents, automation bots)."
+    description: ClassVar[str] = (
+        "Marketplace / Forge apps installed on Jira & Confluence Cloud (AI assistants, Rovo agents, automation bots)."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "site": "https://<org>.atlassian.net (env ATLASSIAN_SITE)",
         "email": "site admin email (env ATLASSIAN_EMAIL)",
@@ -42,7 +44,11 @@ class AtlassianConnector(BaseConnector):
         if isinstance(products, str):
             # A bare string would otherwise be iterated character by character.
             products = [item.strip() for item in products.split(",") if item.strip()]
-        if not isinstance(products, list) or not products or any(item not in {"jira", "confluence"} for item in products):
+        if (
+            not isinstance(products, list)
+            or not products
+            or any(item not in {"jira", "confluence"} for item in products)
+        ):
             raise ConnectorError("saas.atlassian: products must list only 'jira' and/or 'confluence'")
         self.products: list[str] = list(dict.fromkeys(products))
 
@@ -84,17 +90,26 @@ class AtlassianConnector(BaseConnector):
 
     def _valid_provider_record(self, p: Any) -> bool:
         if not self._record_fields_valid(
-            p, strings=("name", "key", "description", "version", "_product"),
-            mappings=("links",), arrays=("scopes",),
+            p,
+            strings=("name", "key", "description", "version", "_product"),
+            mappings=("links",),
+            arrays=("scopes",),
         ):
             return False
         vendor = p.get("vendor")
         return (
             bool((p.get("key") or p.get("name") or "").strip())
-            and (vendor is None or isinstance(vendor, str) or self._record_fields_valid(vendor, strings=("name", "link")))
+            and (
+                vendor is None
+                or isinstance(vendor, str)
+                or self._record_fields_valid(vendor, strings=("name", "link"))
+            )
             and self._record_fields_valid(p.get("links") or {}, strings=("self",))
             and all(isinstance(scope, str) for scope in (p.get("scopes") or []))
-            and all(p.get(key) is None or isinstance(p[key], bool) for key in ("userInstalled", "enabled", "_force"))
+            and all(
+                p.get(key) is None or isinstance(p[key], bool)
+                for key in ("userInstalled", "enabled", "_force")
+            )
         )
 
     def _app_finding(self, p: dict[str, Any]) -> Finding | None:
@@ -111,13 +126,36 @@ class AtlassianConnector(BaseConnector):
             provider="atlassian",
             account=self.site or None,
         )
-        assess_app(self.index, f, name=name, publisher=str(vendor) if vendor else None, description=" ".join(x for x in [p.get("description"), p.get("key")] if x), urls=[get_path(p, "vendor.link"), get_path(p, "links.self")], scopes=[s for s in (p.get("scopes") or []) if isinstance(s, str)])
+        assess_app(
+            self.index,
+            f,
+            name=name,
+            publisher=str(vendor) if vendor else None,
+            description=" ".join(x for x in [p.get("description"), p.get("key")] if x),
+            urls=[get_path(p, "vendor.link"), get_path(p, "links.self")],
+            scopes=[s for s in (p.get("scopes") or []) if isinstance(s, str)],
+        )
         if not f.frameworks:
             return None
-        f.add_evidence(Evidence(signal="atlassian:app", description=f"{'Enabled' if p.get('enabled', True) else 'Disabled'} {'user-installed ' if p.get('userInstalled') else ''}app '{name}' ({p.get('key')}) by {vendor or 'unknown vendor'} v{p.get('version') or '?'}", weight=0.3))
+        f.add_evidence(
+            Evidence(
+                signal="atlassian:app",
+                description=f"{'Enabled' if p.get('enabled', True) else 'Disabled'} {'user-installed ' if p.get('userInstalled') else ''}app '{name}' ({p.get('key')}) by {vendor or 'unknown vendor'} v{p.get('version') or '?'}",
+                weight=0.3,
+            )
+        )
         if p.get("enabled") is False:
             f.add_tag("disabled")
-        f.metadata.update({"key": p.get("key"), "vendor": vendor, "version": p.get("version"), "enabled": p.get("enabled"), "user_installed": p.get("userInstalled"), "product": product})
+        f.metadata.update(
+            {
+                "key": p.get("key"),
+                "vendor": vendor,
+                "version": p.get("version"),
+                "enabled": p.get("enabled"),
+                "user_installed": p.get("userInstalled"),
+                "product": product,
+            }
+        )
         finalize(f, self.index)
         f.kind = Kind.BOT_APP
         return f

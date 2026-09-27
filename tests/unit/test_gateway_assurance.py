@@ -1,4 +1,5 @@
 """Regression coverage for gateway ingestion and cross-export attribution."""
+
 from __future__ import annotations
 
 import gzip
@@ -17,21 +18,36 @@ from shadowscan.models import Finding, Kind, Surface
 
 
 def usage_result(count=10_000, **extra):
-    return {"object": "organization.usage.completions.result", "num_model_requests": count,
-            "input_tokens": 80_000, "output_tokens": 20_000, "api_key_id": "key-usage-id",
-            "project_id": "project-a", "user_id": None, "model": "gpt-4o", **extra}
+    return {
+        "object": "organization.usage.completions.result",
+        "num_model_requests": count,
+        "input_tokens": 80_000,
+        "output_tokens": 20_000,
+        "api_key_id": "key-usage-id",
+        "project_id": "project-a",
+        "user_id": None,
+        "model": "gpt-4o",
+        **extra,
+    }
 
 
 def usage_page(*results):
-    return {"object": "page", "has_more": False, "next_page": None, "data": [
-        {"object": "bucket", "start_time": 1735689600, "end_time": 1735776000,
-         "results": list(results)}]}
+    return {
+        "object": "page",
+        "has_more": False,
+        "next_page": None,
+        "data": [
+            {"object": "bucket", "start_time": 1735689600, "end_time": 1735776000, "results": list(results)}
+        ],
+    }
 
 
 def test_native_openai_usage_preserves_requests_interval_scope_and_tokens(tmp_path, index):
     path = tmp_path / "usage.json"
     path.write_text(json.dumps(usage_page(usage_result())))
-    result = Engine(ScanConfig(connectors=[ConnectorSpec(name="gateway.logs", config={"input": str(path)})]), index=index).run()
+    result = Engine(
+        ScanConfig(connectors=[ConnectorSpec(name="gateway.logs", config={"input": str(path)})]), index=index
+    ).run()
     assert result.complete
     assert len(result.findings) == 1
     finding = result.findings[0]
@@ -42,7 +58,8 @@ def test_native_openai_usage_preserves_requests_interval_scope_and_tokens(tmp_pa
     assert finding.first_seen == "2025-01-01T00:00:00+00:00"
     assert finding.last_seen == "2025-01-02T00:00:00+00:00"
     assert finding.metadata["usage_intervals"] == [
-        {"start": finding.first_seen, "end": finding.last_seen, "requests": 10_000, "model": "gpt-4o"}]
+        {"start": finding.first_seen, "end": finding.last_seen, "requests": 10_000, "model": "gpt-4o"}
+    ]
     assert "always-on" not in finding.tags  # a daily aggregate is not 10,000 events at midnight
     assert finding.metadata["runtime_observations"][0]["timestamped_events"] == 0
 
@@ -64,7 +81,9 @@ def test_bad_aggregate_counts_mark_incomplete_but_keep_valid_results(tmp_path, r
     assert len(findings) == 1 and findings[0].metadata["events"] == 7
 
 
-@pytest.mark.parametrize("change", [{"results": {}}, {"results": [1]}, {"start_time": None}, {"end_time": 1735689600}])
+@pytest.mark.parametrize(
+    "change", [{"results": {}}, {"results": [1]}, {"start_time": None}, {"end_time": 1735689600}]
+)
 def test_malformed_native_usage_bucket_cannot_report_complete(tmp_path, run_connector, change):
     page = usage_page(usage_result())
     page["data"][0].update(change)
@@ -75,20 +94,45 @@ def test_malformed_native_usage_bucket_cannot_report_complete(tmp_path, run_conn
 
 
 def static():
-    return Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.FRAMEWORK_USAGE,
-                   title="Static LangChain", resource="github:acme/agent", resource_type="project",
-                   frameworks=["framework.langchain"])
+    return Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.FRAMEWORK_USAGE,
+        title="Static LangChain",
+        resource="github:acme/agent",
+        resource_type="project",
+        frameworks=["framework.langchain"],
+    )
 
 
 def event(environment="production"):
-    return {"service": "agent", "model": "gpt-4o", "provider": "openai", "user_agent": "langchain/0.3",
-            "environment": environment, "timestamp": "2026-01-01T00:00:00Z", "tenant_id": "tenant-a"}
+    return {
+        "service": "agent",
+        "model": "gpt-4o",
+        "provider": "openai",
+        "user_agent": "langchain/0.3",
+        "environment": environment,
+        "timestamp": "2026-01-01T00:00:00Z",
+        "tenant_id": "tenant-a",
+    }
 
 
 def source(index, path, environment="production", *, gateway_identity_key=None, **config):
-    ctx = ConnectorContext(config={"input": str(path), "correlation_bindings": [
-        {"code_resource": "github:acme/agent", "caller": "principal:agent", "scope": {"tenant": "tenant-a"}}
-    ], **config}, index=index, gateway_identity_key=gateway_identity_key)
+    ctx = ConnectorContext(
+        config={
+            "input": str(path),
+            "correlation_bindings": [
+                {
+                    "code_resource": "github:acme/agent",
+                    "caller": "principal:agent",
+                    "scope": {"tenant": "tenant-a"},
+                }
+            ],
+            **config,
+        },
+        index=index,
+        gateway_identity_key=gateway_identity_key,
+    )
     return list(GatewayLogConnector(ctx).analyze([event(environment)]))[0]
 
 
@@ -135,37 +179,61 @@ def test_engine_shares_gateway_identity_within_run_and_rotates_between_runs(tmp_
     assert first.findings[0].metadata["events"] == second.findings[0].metadata["events"] == 1
     assert first.findings[0].id != second.findings[0].id
     assert first.findings[0].resource != second.findings[0].resource
-    assert first.findings[0].metadata["runtime_source"]["id"] != second.findings[0].metadata["runtime_source"]["id"]
-    guessable_source = json.dumps([str(path.resolve()), "t1", "generic", 1, True, 5_000_000, []], sort_keys=True)
-    assert first.findings[0].metadata["runtime_source"]["id"] != hashlib.sha256(guessable_source.encode()).hexdigest()
+    assert (
+        first.findings[0].metadata["runtime_source"]["id"]
+        != second.findings[0].metadata["runtime_source"]["id"]
+    )
+    guessable_source = json.dumps(
+        [str(path.resolve()), "t1", "generic", 1, True, 5_000_000, []], sort_keys=True
+    )
+    assert (
+        first.findings[0].metadata["runtime_source"]["id"]
+        != hashlib.sha256(guessable_source.encode()).hexdigest()
+    )
 
 
 def test_same_source_different_bindings_do_not_drop_workload_provenance(tmp_path, index):
     shared_key = b"one-private-key-per-scan-test-only"
     first = source(index, tmp_path / "one.jsonl", gateway_identity_key=shared_key)
-    other = source(index, tmp_path / "one.jsonl", gateway_identity_key=shared_key, correlation_bindings=[
-        {"code_resource": "github:acme/other", "caller": "principal:agent", "scope": {"tenant": "tenant-a"}}])
+    other = source(
+        index,
+        tmp_path / "one.jsonl",
+        gateway_identity_key=shared_key,
+        correlation_bindings=[
+            {
+                "code_resource": "github:acme/other",
+                "caller": "principal:agent",
+                "scope": {"tenant": "tenant-a"},
+            }
+        ],
+    )
     assert first.id != other.id
     assert len(merge([first, other])) == 2
 
 
-@pytest.mark.parametrize("response", [
-    {"choices": [{"message": {"tool_calls": None, "function_call": None}}]},
-    {"tool_calls": [], "function_call": {}, "functionCall": None},
-    {"content": 'Documentation mentions "tool_calls" and "function_call"'},
-    {"choices": [{"message": {"content": "normal reply"}, "finish_reason": "stop"}]},
-])
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"choices": [{"message": {"tool_calls": None, "function_call": None}}]},
+        {"tool_calls": [], "function_call": {}, "functionCall": None},
+        {"content": 'Documentation mentions "tool_calls" and "function_call"'},
+        {"choices": [{"message": {"content": "normal reply"}, "finish_reason": "stop"}]},
+    ],
+)
 def test_empty_tool_fields_and_text_mentions_do_not_indicate_tool_invocation(response):
     assert _has_tool_calls(response) is False
     assert _has_tool_calls(json.dumps(response)) is False
 
 
-@pytest.mark.parametrize("response", [
-    {"choices": [{"message": {"tool_calls": [{"id": "call-1", "function": {"name": "lookup"}}]}}]},
-    {"content": [{"type": "tool_use", "name": "lookup", "input": {}}]},
-    {"function_call": {"name": "lookup"}},
-    {"candidates": [{"content": {"parts": [{"functionCall": {"name": "lookup"}}]}}]},
-])
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"choices": [{"message": {"tool_calls": [{"id": "call-1", "function": {"name": "lookup"}}]}}]},
+        {"content": [{"type": "tool_use", "name": "lookup", "input": {}}]},
+        {"function_call": {"name": "lookup"}},
+        {"candidates": [{"content": {"parts": [{"functionCall": {"name": "lookup"}}]}}]},
+    ],
+)
 def test_actual_structured_tool_invocations_are_detected(response):
     assert _has_tool_calls(response) is True
 
@@ -173,7 +241,7 @@ def test_actual_structured_tool_invocations_are_detected(response):
 @pytest.mark.parametrize("suffix", [".log", ".txt", ".gz"])
 def test_malformed_json_in_text_is_incomplete_and_preserves_good_events(tmp_path, run_connector, suffix):
     path = tmp_path / ("gateway" + suffix)
-    content = '{"service": invalid}\n' + json.dumps(event()) + '\n'
+    content = '{"service": invalid}\n' + json.dumps(event()) + "\n"
     if suffix == ".gz":
         with gzip.open(path, "wt") as fh:
             fh.write(content)
@@ -186,7 +254,9 @@ def test_malformed_json_in_text_is_incomplete_and_preserves_good_events(tmp_path
 
 def test_valid_non_llm_access_traffic_is_filtered_without_incompleteness(tmp_path, run_connector):
     path = tmp_path / "access.log"
-    path.write_text('10.0.0.1 - - [10/Sep/2025:10:00:00 +0000] "GET /health HTTP/1.1" 200 12 "-" "curl/8" host=internal.example.com\n')
+    path.write_text(
+        '10.0.0.1 - - [10/Sep/2025:10:00:00 +0000] "GET /health HTTP/1.1" 200 12 "-" "curl/8" host=internal.example.com\n'
+    )
     findings, ctx = run_connector("gateway.logs", input=str(path))
     assert not findings and not ctx.stats.incomplete
 
@@ -227,13 +297,20 @@ def test_invalid_result_type_never_degrades_aggregate_count_to_one(tmp_path, run
     assert not findings and ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("bad", [
-    {"category": "RequestResponse", "resourceId": "/subscriptions/sub-1/accounts/a", "properties": "[]"},
-    {"category": "RequestResponse", "resourceId": "/subscriptions/sub-1/accounts/a", "properties": "{broken"},
-    {"request_properties": ["not-an-object"], "helicone": True},
-    {"service": "agent", "model": "gpt-4o", "user_agent": ["not-a-header"]},
-    {"spend": 1, "api_key": "opaque-key", "status": ["not-a-status"]},
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"category": "RequestResponse", "resourceId": "/subscriptions/sub-1/accounts/a", "properties": "[]"},
+        {
+            "category": "RequestResponse",
+            "resourceId": "/subscriptions/sub-1/accounts/a",
+            "properties": "{broken",
+        },
+        {"request_properties": ["not-an-object"], "helicone": True},
+        {"service": "agent", "model": "gpt-4o", "user_agent": ["not-a-header"]},
+        {"spend": 1, "api_key": "opaque-key", "status": ["not-a-status"]},
+    ],
+)
 def test_malformed_nested_records_preserve_valid_neighbors(tmp_path, run_connector, bad):
     path = tmp_path / "gateway.jsonl"
     path.write_text("\n".join(json.dumps(record) for record in [event(), bad, event()]))
@@ -253,7 +330,7 @@ def test_numeric_http_status_is_normalized_before_aggregation(tmp_path, run_conn
 
 def test_deep_invalid_json_text_line_preserves_neighbor(tmp_path, run_connector):
     path = tmp_path / "gateway.log"
-    path.write_text('{"nested":' + '[' * 2000 + '0' + ']' * 2000 + '}\n' + json.dumps(event()))
+    path.write_text('{"nested":' + "[" * 2000 + "0" + "]" * 2000 + "}\n" + json.dumps(event()))
     findings, ctx = run_connector("gateway.logs", input=str(path))
     assert ctx.stats.incomplete
     assert len(findings) == 1 and findings[0].metadata["events"] == 1

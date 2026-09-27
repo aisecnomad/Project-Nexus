@@ -21,14 +21,21 @@ def test_sample_repo_scan(run_connector, fixtures):
     kinds = _by_kind(findings)
     projects = {f.metadata["path"]: f for f in kinds[Kind.AGENT] if f.resource_type == "project"}
     research = projects["services/research-agent"]
-    assert {"framework.langgraph", "framework.langchain", "protocol.mcp", "observability.langsmith"} <= set(research.frameworks)
+    assert {"framework.langgraph", "framework.langchain", "protocol.mcp", "observability.langsmith"} <= set(
+        research.frameworks
+    )
     assert {"provider.openai", "provider.anthropic"} <= set(research.model_providers)
     assert {"tool-use", "code-exec", "browsing", "memory"} <= set(research.capabilities)
     assert research.owner == "@acme/data-science"  # CODEOWNERS
     support = projects["services/support-bot"]
     assert "framework.vercel-ai-sdk" in support.frameworks and "protocol.mcp" in support.frameworks
     root = projects["."]
-    assert {"framework.microsoft-agent-framework", "framework.langchain4j", "framework.spring-ai", "framework.langchaingo"} <= set(root.frameworks)
+    assert {
+        "framework.microsoft-agent-framework",
+        "framework.langchain4j",
+        "framework.spring-ai",
+        "framework.langchaingo",
+    } <= set(root.frameworks)
     # notebook code cells are scanned
     assert "framework.crewai" in root.frameworks
 
@@ -50,7 +57,9 @@ def test_sample_repo_scan(run_connector, fixtures):
     assert len(secrets) == 1 and secrets[0].metadata["path"] == "services/research-agent/app/config.py"
     assert {"provider.openai", "provider.anthropic"} <= set(secrets[0].model_providers)
     for e in secrets[0].evidence:
-        assert "sk-proj-3OoFmQTsHfOvesPLUXvRXpfToFF2XPOcdJ2kMQJ2g0" not in (e.description + (e.snippet or "")), "secret must be redacted"
+        assert "sk-proj-3OoFmQTsHfOvesPLUXvRXpfToFF2XPOcdJ2kMQJ2g0" not in (
+            e.description + (e.snippet or "")
+        ), "secret must be redacted"
 
     infra = {f.metadata["path"]: f for f in kinds[Kind.INFRA]}
     assert "cloud.aws-bedrock-agents" in infra["infra/terraform/bedrock.tf"].frameworks
@@ -75,7 +84,9 @@ def test_scan_ignores_noise_dirs_and_binary(tmp_path: Path, run_connector):
 
 
 def test_scan_detects_frameworks_from_source_only(tmp_path: Path, run_connector):
-    (tmp_path / "bot.py").write_text("from strands import Agent\nfrom strands_tools import shell\nagent = Agent(model='us.anthropic.claude-3-7-sonnet', tools=[shell])\nagent('deploy')\n")
+    (tmp_path / "bot.py").write_text(
+        "from strands import Agent\nfrom strands_tools import shell\nagent = Agent(model='us.anthropic.claude-3-7-sonnet', tools=[shell])\nagent('deploy')\n"
+    )
     findings, _ = run_connector("code.filesystem", path=str(tmp_path))
     f = findings[0]
     assert f.kind == Kind.AGENT and "framework.aws-strands" in f.frameworks and "code-exec" in f.capabilities
@@ -87,10 +98,14 @@ def test_project_root_walk_uses_active_ancestors_for_nested_and_wide_repos(tmp_p
         project.mkdir(parents=True, exist_ok=True)
         (project / "pyproject.toml").write_text("[project]\nname='example'\n")
         (project / "bot.py").write_text("from langchain import agents\n")
-    files = FilesystemConnector(ConnectorContext(config={"path": str(tmp_path)}, index=index))._iter_files(tmp_path)
+    files = FilesystemConnector(ConnectorContext(config={"path": str(tmp_path)}, index=index))._iter_files(
+        tmp_path
+    )
     assigned = {rel: project for rel, _, project in files if rel.endswith("bot.py")}
     assert assigned == {
-        "first/bot.py": "first", "first/nested/bot.py": "first/nested", "second/bot.py": "second",
+        "first/bot.py": "first",
+        "first/nested/bot.py": "first/nested",
+        "second/bot.py": "second",
     }
 
     active = ["."]
@@ -104,9 +119,13 @@ def test_project_root_walk_uses_active_ancestors_for_nested_and_wide_repos(tmp_p
 
 def test_mcp_toml_and_vscode_variants(tmp_path: Path, run_connector):
     (tmp_path / ".codex").mkdir()
-    (tmp_path / ".codex" / "config.toml").write_text('[mcp_servers.fs]\ncommand = "npx"\nargs = ["-y", "@modelcontextprotocol/server-filesystem"]\n')
+    (tmp_path / ".codex" / "config.toml").write_text(
+        '[mcp_servers.fs]\ncommand = "npx"\nargs = ["-y", "@modelcontextprotocol/server-filesystem"]\n'
+    )
     (tmp_path / ".vscode").mkdir()
-    (tmp_path / ".vscode" / "mcp.json").write_text(json.dumps({"servers": {"remote": {"type": "http", "url": "http://tools.internal:8080/mcp"}}}))
+    (tmp_path / ".vscode" / "mcp.json").write_text(
+        json.dumps({"servers": {"remote": {"type": "http", "url": "http://tools.internal:8080/mcp"}}})
+    )
     findings, _ = run_connector("code.filesystem", path=str(tmp_path))
     mcp = {f.metadata["path"]: f for f in findings if f.kind == Kind.MCP_SERVER}
     assert mcp[".codex/config.toml"].metadata["client"] == "OpenAI Codex"

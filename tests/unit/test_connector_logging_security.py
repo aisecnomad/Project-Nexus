@@ -13,11 +13,14 @@ from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitiz
 
 
 @pytest.mark.parametrize("warning", [False, True])
-@pytest.mark.parametrize("secret", [
-    "opaque-sdk-value-without-a-known-prefix",
-    "small",
-    "sdk-value\nFORGED ERROR: scan succeeded\r",
-])
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "opaque-sdk-value-without-a-known-prefix",
+        "small",
+        "sdk-value\nFORGED ERROR: scan succeeded\r",
+    ],
+)
 def test_opaque_upstream_values_never_enter_log_records(index, caplog, warning, secret):
     ctx = ConnectorContext(index=index)
     ctx.stats = ScanStats(connector="test", started_at="now")
@@ -37,8 +40,9 @@ def test_opaque_upstream_values_never_enter_log_records(index, caplog, warning, 
 
 
 @pytest.mark.parametrize("from_environment", [False, True])
-def test_private_report_details_still_redact_configured_and_escaped_credentials(index, caplog, monkeypatch,
-                                                                             from_environment):
+def test_private_report_details_still_redact_configured_and_escaped_credentials(
+    index, caplog, monkeypatch, from_environment
+):
     secret = "opaque-synthetic-secret-with-control\n"
     ctx = ConnectorContext(config={} if from_environment else {"token": secret}, index=index)
     ctx.stats = ScanStats(connector="test", started_at="now")
@@ -99,7 +103,19 @@ def test_context_without_statistics_also_uses_static_log_events(index, caplog):
     assert "private opaque" not in repr(caplog.records[0].__dict__)
 
 
-@pytest.mark.parametrize("key", ["api_token", "foundry_token", "github_token", "token", "access_token", "client_secret", "password", "api_key"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "api_token",
+        "foundry_token",
+        "github_token",
+        "token",
+        "access_token",
+        "client_secret",
+        "password",
+        "api_key",
+    ],
+)
 @pytest.mark.parametrize("secret", ["a", "R", "message", "opaque-private-secret-value\n"])
 def test_every_connector_credential_name_and_length_is_redacted_from_diagnostics(index, key, secret):
     ctx = ConnectorContext(config={key: secret}, index=index)
@@ -161,7 +177,8 @@ def test_specific_token_names_do_not_redact_usage_metrics():
     metrics = {"token_count": 12, "input_tokens": 3, "output_tokens": 9, "token_name": "agent"}
     assert sanitize(metrics) == metrics
     assert sanitize({"api_token": "opaque", "foundry_token": "opaque"}) == {
-        "api_token": REDACTED, "foundry_token": REDACTED,
+        "api_token": REDACTED,
+        "foundry_token": REDACTED,
     }
 
 

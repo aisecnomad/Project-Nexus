@@ -29,17 +29,28 @@ def _collect(self: BaseConnector) -> Any:
 
 def _analyze(self: BaseConnector, records: Any) -> Any:
     for record in records:
-        yield Finding(surface=self.surface, connector=self.name, kind=Kind.AGENT, title=f"Hub agent: {record['name']}",
-                      resource=f"acme-hub:agent:{record['id']}", resource_type="hub-agent",
-                      provider=self.provider, confidence=0.9)
+        yield Finding(
+            surface=self.surface,
+            connector=self.name,
+            kind=Kind.AGENT,
+            title=f"Hub agent: {record['name']}",
+            resource=f"acme-hub:agent:{record['id']}",
+            resource_type="hub-agent",
+            provider=self.provider,
+            confidence=0.9,
+        )
 
 
 def _connector(**overrides: Any) -> type:
     """Build a plugin class that satisfies every identity rule unless ``overrides`` says otherwise."""
     attributes: dict[str, Any] = {
-        "name": ENTRY, "surface": Surface.SAAS, "provider": "acme-hub",
-        "description": "Agents registered in Acme's hub.", "config_keys": {"input": "offline export"},
-        "collect": _collect, "analyze": _analyze,
+        "name": ENTRY,
+        "surface": Surface.SAAS,
+        "provider": "acme-hub",
+        "description": "Agents registered in Acme's hub.",
+        "config_keys": {"input": "offline export"},
+        "collect": _collect,
+        "analyze": _analyze,
     }
     for key, value in overrides.items():
         if value is INHERIT:
@@ -49,7 +60,9 @@ def _connector(**overrides: Any) -> type:
     return type("AcmeHubConnector", (BaseConnector,), attributes)
 
 
-def _publish(monkeypatch: pytest.MonkeyPatch, *plugins: tuple[str, object], extra: tuple[EntryPoint, ...] = ()) -> None:
+def _publish(
+    monkeypatch: pytest.MonkeyPatch, *plugins: tuple[str, object], extra: tuple[EntryPoint, ...] = ()
+) -> None:
     """Expose ``plugins`` as (entry-point name, target) pairs of a fake installed distribution."""
     module = types.ModuleType(MODULE)
     entries = []
@@ -115,17 +128,26 @@ def test_builtin_name_or_namespace_entry_point_is_never_listed(monkeypatch, name
 
 def test_duplicate_entry_points_are_reported_once_and_never_loaded(monkeypatch):
     first, second, twice = _connector(), _connector(), _connector(name="saas.acme-twice")
-    _publish(monkeypatch, (ENTRY, first), (ENTRY, second), (ENTRY, first),
-             ("saas.acme-twice", twice), ("saas.acme-twice", twice))
+    _publish(
+        monkeypatch,
+        (ENTRY, first),
+        (ENTRY, second),
+        (ENTRY, first),
+        ("saas.acme-twice", twice),
+        ("saas.acme-twice", twice),
+    )
     listed = registry.available_connectors()
     assert ENTRY not in listed
     assert listed["saas.acme-twice"] == f"{MODULE}:Target2"  # the same target twice is not ambiguous
     with pytest.raises(KeyError, match="unknown connector"):
         registry.get_connector_class(ENTRY, allowed_plugins=[ENTRY])
-    assert registry.plugin_registry_errors() == (PluginDiagnostic(
-        ENTRY, "duplicate-name",
-        f"plugin '{ENTRY}' is registered by 3 entry points with different targets; none of them is loaded",
-    ),)
+    assert registry.plugin_registry_errors() == (
+        PluginDiagnostic(
+            ENTRY,
+            "duplicate-name",
+            f"plugin '{ENTRY}' is registered by 3 entry points with different targets; none of them is loaded",
+        ),
+    )
     assert registry.get_connector_class("saas.acme-twice", allowed_plugins=["saas.acme-twice"]) is twice
 
 
@@ -165,7 +187,9 @@ def test_mismatched_plugin_yields_no_findings_and_an_incomplete_scan(monkeypatch
 
 
 def test_listing_and_diagnostics_never_import_plugin_code(monkeypatch):
-    entry = EntryPoint(name="custom.unloaded", value="must_never_import:Connector", group="shadowscan.connectors")
+    entry = EntryPoint(
+        name="custom.unloaded", value="must_never_import:Connector", group="shadowscan.connectors"
+    )
     monkeypatch.setattr(registry, "entry_points", lambda **kwargs: [entry])
     monkeypatch.delitem(sys.modules, "must_never_import", raising=False)
     assert registry.available_connectors()["custom.unloaded"] == "must_never_import:Connector"
@@ -177,23 +201,26 @@ def test_listing_and_diagnostics_never_import_plugin_code(monkeypatch):
     assert "custom.unloaded" not in registry._cache
 
 
-@pytest.mark.parametrize("rule,overrides", [
-    ("identity-mismatch", {"name": 42}),
-    ("reserved-name", {"name": "Saas.Slack"}),
-    ("reserved-name", {"name": "saas"}),
-    ("missing-attribute", {"name": INHERIT}),
-    ("missing-attribute", {"surface": INHERIT}),
-    ("missing-attribute", {"description": INHERIT}),
-    ("missing-attribute", {"config_keys": INHERIT}),
-    ("invalid-attribute", {"description": "   "}),
-    ("invalid-attribute", {"surface": "saas"}),
-    ("invalid-attribute", {"config_keys": ["input"]}),
-    ("invalid-attribute", {"config_keys": {"input": None}}),
-    ("invalid-attribute", {"provider": 3}),
-    ("invalid-attribute", {"requires": "requests"}),
-    ("surface-mismatch", {"surface": Surface.CLOUD}),
-    ("abstract-class", {"analyze": INHERIT}),
-])
+@pytest.mark.parametrize(
+    "rule,overrides",
+    [
+        ("identity-mismatch", {"name": 42}),
+        ("reserved-name", {"name": "Saas.Slack"}),
+        ("reserved-name", {"name": "saas"}),
+        ("missing-attribute", {"name": INHERIT}),
+        ("missing-attribute", {"surface": INHERIT}),
+        ("missing-attribute", {"description": INHERIT}),
+        ("missing-attribute", {"config_keys": INHERIT}),
+        ("invalid-attribute", {"description": "   "}),
+        ("invalid-attribute", {"surface": "saas"}),
+        ("invalid-attribute", {"config_keys": ["input"]}),
+        ("invalid-attribute", {"config_keys": {"input": None}}),
+        ("invalid-attribute", {"provider": 3}),
+        ("invalid-attribute", {"requires": "requests"}),
+        ("surface-mismatch", {"surface": Surface.CLOUD}),
+        ("abstract-class", {"analyze": INHERIT}),
+    ],
+)
 def test_incomplete_or_inconsistent_plugin_class_is_refused(monkeypatch, rule, overrides):
     _publish(monkeypatch, (ENTRY, _connector(**overrides)))
     error = _refusal(ENTRY)
@@ -209,10 +236,13 @@ def test_new_namespace_plugin_may_use_any_surface(monkeypatch):
     assert registry.plugin_registry_errors() == ()
 
 
-@pytest.mark.parametrize("target,rule,detail", [
-    (object(), "not-a-connector", "is not a BaseConnector subclass"),
-    (type("Loose", (), {"name": ENTRY}), "not-a-connector", "is not a BaseConnector subclass"),
-])
+@pytest.mark.parametrize(
+    "target,rule,detail",
+    [
+        (object(), "not-a-connector", "is not a BaseConnector subclass"),
+        (type("Loose", (), {"name": ENTRY}), "not-a-connector", "is not a BaseConnector subclass"),
+    ],
+)
 def test_target_that_is_not_a_connector_is_refused(monkeypatch, target, rule, detail):
     _publish(monkeypatch, (ENTRY, target))
     error = _refusal(ENTRY)
@@ -220,23 +250,36 @@ def test_target_that_is_not_a_connector_is_refused(monkeypatch, target, rule, de
 
 
 def test_import_failures_are_refused_with_a_bounded_diagnostic(monkeypatch):
-    _publish(monkeypatch, extra=(
-        EntryPoint(name="saas.missing-attribute", value=f"{MODULE}:Missing", group="shadowscan.connectors"),
-        EntryPoint(name="saas.missing-module", value="no_such_shadowscan_module:Connector", group="shadowscan.connectors"),
-    ))
+    _publish(
+        monkeypatch,
+        extra=(
+            EntryPoint(
+                name="saas.missing-attribute", value=f"{MODULE}:Missing", group="shadowscan.connectors"
+            ),
+            EntryPoint(
+                name="saas.missing-module",
+                value="no_such_shadowscan_module:Connector",
+                group="shadowscan.connectors",
+            ),
+        ),
+    )
     for name in ("saas.missing-attribute", "saas.missing-module"):
         error = _refusal(name)
         assert error.diagnostic.rule == "load-failed" and error.diagnostic.entry == name
         assert "could not be imported" in str(error)
     assert {diagnostic.entry for diagnostic in registry.plugin_registry_errors()} == {
-        "saas.missing-attribute", "saas.missing-module",
+        "saas.missing-attribute",
+        "saas.missing-module",
     }
 
 
 def test_diagnostics_are_credential_free_and_bounded(monkeypatch):
     token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij0123"
-    _publish(monkeypatch, ("saas.leaky", _connector(name=f"saas.leaky?token={token}")),
-             ("saas.verbose", _connector(name="saas.verbose-" + "x" * 500)))
+    _publish(
+        monkeypatch,
+        ("saas.leaky", _connector(name=f"saas.leaky?token={token}")),
+        ("saas.verbose", _connector(name="saas.verbose-" + "x" * 500)),
+    )
     leaky = _refusal("saas.leaky")
     assert token not in str(leaky) and REDACTED in str(leaky)
     verbose = _refusal("saas.verbose")
@@ -245,9 +288,14 @@ def test_diagnostics_are_credential_free_and_bounded(monkeypatch):
         assert token not in diagnostic.message and "xxxx" not in diagnostic.message
 
 
-@pytest.mark.parametrize("name,rule", [
-    (" saas.acme-hub", "invalid-name"), ("saas.acme hub", "invalid-name"), ("saas.acme\thub", "invalid-name"),
-])
+@pytest.mark.parametrize(
+    "name,rule",
+    [
+        (" saas.acme-hub", "invalid-name"),
+        ("saas.acme hub", "invalid-name"),
+        ("saas.acme\thub", "invalid-name"),
+    ],
+)
 def test_malformed_entry_point_names_are_not_listed(monkeypatch, name, rule):
     _publish(monkeypatch, (name, _connector(name=name)))
     assert name not in registry.available_connectors()

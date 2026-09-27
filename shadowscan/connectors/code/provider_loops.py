@@ -30,10 +30,19 @@ MAX_FLOW_STEPS = 100_000
 
 # Calls that execute whatever the model selected: its tool input reaches a
 # shell, a process or an interpreter. Names resolve through the module's imports.
-EXECUTION_SINKS = frozenset({
-    "subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_output",
-    "subprocess.check_call", "os.system", "os.popen", "builtins.exec", "builtins.eval",
-})
+EXECUTION_SINKS = frozenset(
+    {
+        "subprocess.run",
+        "subprocess.Popen",
+        "subprocess.call",
+        "subprocess.check_output",
+        "subprocess.check_call",
+        "os.system",
+        "os.popen",
+        "builtins.exec",
+        "builtins.eval",
+    }
+)
 
 
 class _Budget:
@@ -53,10 +62,19 @@ class _Budget:
             item = pending.pop()
             self.tick()
             yield item
-            if not nested_scopes and isinstance(item, (
-                ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda,
-                ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp,
-            )):
+            if not nested_scopes and isinstance(
+                item,
+                (
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.ClassDef,
+                    ast.Lambda,
+                    ast.ListComp,
+                    ast.SetComp,
+                    ast.DictComp,
+                    ast.GeneratorExp,
+                ),
+            ):
                 continue
             pending.extend(ast.iter_child_nodes(item))
 
@@ -73,17 +91,28 @@ def _root(node: ast.AST) -> str | None:
 
 def _value(node: ast.AST, values: dict[str, str]) -> str | None:
     node = _unwrap(node)
-    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "parse"
-            and not node.args and not node.keywords and _value(node.func.value, values) == "raw-response"):
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "parse"
+        and not node.args
+        and not node.keywords
+        and _value(node.func.value, values) == "raw-response"
+    ):
         return "response"  # raw_response.parse() is the provider message
     if isinstance(node, ast.Name):
         return values.get(node.id)
     if isinstance(node, ast.Attribute):
         base = node.value
         if node.attr == "message" and isinstance(base, ast.Subscript):
-            if (isinstance(base.slice, ast.Constant) and type(base.slice.value) is int
-                    and base.slice.value == 0 and isinstance(base.value, ast.Attribute)
-                    and base.value.attr == "choices" and _value(base.value.value, values) == "response"):
+            if (
+                isinstance(base.slice, ast.Constant)
+                and type(base.slice.value) is int
+                and base.slice.value == 0
+                and isinstance(base.value, ast.Attribute)
+                and base.value.attr == "choices"
+                and _value(base.value.value, values) == "response"
+            ):
                 return "message"
         parent = _value(base, values)
         if node.attr == "tool_calls" and parent == "message":
@@ -203,7 +232,11 @@ def _schema_variables(tree: ast.AST, budget: _Budget) -> dict[str, ast.expr]:
             for alias in node.names:
                 bound(alias.asname or alias.name.split(".", 1)[0])
         targets, value = _assignment(node)
-        if len(targets) == 1 and isinstance(targets[0], ast.Name) and isinstance(value, (ast.List, ast.Tuple)):
+        if (
+            len(targets) == 1
+            and isinstance(targets[0], ast.Name)
+            and isinstance(value, (ast.List, ast.Tuple))
+        ):
             literals[targets[0].id] = value
     return {name: value for name, value in literals.items() if bindings.get(name) == 1}
 
@@ -212,7 +245,9 @@ def _invalidate(statement: ast.AST, values: dict[str, str], budget: _Budget) -> 
     # Unknown branches/reassignments destroy proof instead of assuming that
     # related-looking names still refer to the selected response/tool/result.
     for item in budget.walk(statement):
-        if isinstance(item, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(item.ctx, (ast.Store, ast.Del)):
+        if isinstance(item, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(
+            item.ctx, (ast.Store, ast.Del)
+        ):
             if root := _root(item):
                 values.pop(root, None)
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -220,8 +255,13 @@ def _invalidate(statement: ast.AST, values: dict[str, str], budget: _Budget) -> 
 
 
 def _assign(
-    statement: ast.stmt, values: dict[str, str], budget: _Budget, *,
-    dispatch: bool, declared_tools: set[str], imports: dict[str, str],
+    statement: ast.stmt,
+    values: dict[str, str],
+    budget: _Budget,
+    *,
+    dispatch: bool,
+    declared_tools: set[str],
+    imports: dict[str, str],
 ) -> None:
     targets, expression = _assignment(statement)
     kind = _value(expression, values) if expression is not None else None
@@ -229,11 +269,18 @@ def _assign(
     while isinstance(call, ast.Attribute):
         call = call.value  # ``subprocess.run(...).stdout`` is still the sink's result
     if isinstance(call, ast.Call):
-        name = call.func.id if isinstance(call.func, ast.Name) else call.func.attr if isinstance(call.func, ast.Attribute) else ""
+        name = (
+            call.func.id
+            if isinstance(call.func, ast.Name)
+            else call.func.attr
+            if isinstance(call.func, ast.Attribute)
+            else ""
+        )
         arguments = [*call.args, *(keyword.value for keyword in call.keywords)]
         if any(_depends(argument, values, "arguments", budget) for argument in arguments):
             target_is_tool = (
-                isinstance(call.func, ast.Name) and call.func.id in declared_tools
+                isinstance(call.func, ast.Name)
+                and call.func.id in declared_tools
                 or _value(call.func, values) == "dispatcher"
                 or _execution_sink(call.func, imports)
             )
@@ -241,7 +288,11 @@ def _assign(
                 kind = "result"
             elif name in {"loads", "str", "bytes", "dict"}:
                 kind = "arguments"
-        elif any(_depends(argument, values, "result", budget) for argument in arguments) and name in {"dumps", "str", "repr"}:
+        elif any(_depends(argument, values, "result", budget) for argument in arguments) and name in {
+            "dumps",
+            "str",
+            "repr",
+        }:
             kind = "result"
     _invalidate(statement, values, budget)
     for target in targets:
@@ -254,9 +305,14 @@ def _history_call(statement: ast.stmt, history: str) -> tuple[str, ast.expr] | N
     if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
         return None
     call = statement.value
-    if (isinstance(call.func, ast.Attribute) and call.func.attr in {"append", "extend"}
-            and isinstance(call.func.value, ast.Name) and call.func.value.id == history
-            and len(call.args) == 1 and not call.keywords):
+    if (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr in {"append", "extend"}
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == history
+        and len(call.args) == 1
+        and not call.keywords
+    ):
         return call.func.attr, call.args[0]
     return None
 
@@ -265,9 +321,12 @@ def _tool_message(pairs: dict[str, ast.expr], values: dict[str, str], budget: _B
     """OpenAI feedback: ``{"role": "tool", "tool_call_id": <selected call>, "content": <its result>}``."""
     role = pairs.get("role")
     return (
-        isinstance(role, ast.Constant) and role.value == "tool"
-        and "tool_call_id" in pairs and _value(pairs["tool_call_id"], values) == "tool-id"
-        and "content" in pairs and _depends(pairs["content"], values, "result", budget)
+        isinstance(role, ast.Constant)
+        and role.value == "tool"
+        and "tool_call_id" in pairs
+        and _value(pairs["tool_call_id"], values) == "tool-id"
+        and "content" in pairs
+        and _depends(pairs["content"], values, "result", budget)
     )
 
 
@@ -275,9 +334,12 @@ def _tool_result_block(pairs: dict[str, ast.expr], values: dict[str, str], budge
     """Anthropic feedback block: ``{"type": "tool_result", "tool_use_id": <block>, "content": <result>}``."""
     block_type = pairs.get("type")
     return (
-        isinstance(block_type, ast.Constant) and block_type.value == "tool_result"
-        and "tool_use_id" in pairs and _value(pairs["tool_use_id"], values) == "tool-id"
-        and "content" in pairs and _depends(pairs["content"], values, "result", budget)
+        isinstance(block_type, ast.Constant)
+        and block_type.value == "tool_result"
+        and "tool_use_id" in pairs
+        and _value(pairs["tool_use_id"], values) == "tool-id"
+        and "content" in pairs
+        and _depends(pairs["content"], values, "result", budget)
     )
 
 
@@ -315,23 +377,38 @@ def _collected(statement: ast.stmt, history: str, values: dict[str, str], budget
     if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
         return None
     call = statement.value
-    if not (isinstance(call.func, ast.Attribute) and call.func.attr == "append"
-            and isinstance(call.func.value, ast.Name) and call.func.value.id != history
-            and len(call.args) == 1 and not call.keywords):
+    if not (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "append"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id != history
+        and len(call.args) == 1
+        and not call.keywords
+    ):
         return None
     pairs = _pairs(call.args[0])
-    if pairs is not None and (_tool_message(pairs, values, budget) or _tool_result_block(pairs, values, budget)):
+    if pairs is not None and (
+        _tool_message(pairs, values, budget) or _tool_result_block(pairs, values, budget)
+    ):
         return call.func.value.id
     return None
 
 
 def _history_rebound(loop: ast.For | ast.While, history: str, budget: _Budget) -> bool:
     for node in budget.walk(loop):
-        if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)) and _root(node) == history:
+        if (
+            isinstance(node, (ast.Name, ast.Attribute, ast.Subscript))
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and _root(node) == history
+        ):
             return True
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name) and node.func.value.id == history
-                and node.func.attr not in {"append", "extend"}):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == history
+            and node.func.attr not in {"append", "extend"}
+        ):
             return True
     return False
 
@@ -355,8 +432,13 @@ def _declared_tools(expression: ast.expr, budget: _Budget) -> set[str]:
 
 
 def _tool_iteration(
-    body: list[ast.stmt], local: dict[str, str], history: str, budget: _Budget,
-    declared_tools: set[str], imports: dict[str, str], collected: set[str],
+    body: list[ast.stmt],
+    local: dict[str, str],
+    history: str,
+    budget: _Budget,
+    declared_tools: set[str],
+    imports: dict[str, str],
+    collected: set[str],
 ) -> bool:
     for number, action in enumerate(body):
         budget.tick()
@@ -368,11 +450,20 @@ def _tool_iteration(
                 # following statements on that same path so a guaranteed
                 # break/return cannot turn later feedback into loop evidence.
                 selected = action.body if bool(action.test.value) else action.orelse
-                return _tool_iteration([*selected, *body[number + 1:]], local, history, budget,
-                                       declared_tools, imports, collected)
+                return _tool_iteration(
+                    [*selected, *body[number + 1 :]],
+                    local,
+                    history,
+                    budget,
+                    declared_tools,
+                    imports,
+                    collected,
+                )
             # Branch-local proof: nothing bound inside a branch is trusted after it.
-            if any(_tool_iteration(branch, local.copy(), history, budget, declared_tools, imports, collected)
-                   for branch in (action.body, action.orelse)):
+            if any(
+                _tool_iteration(branch, local.copy(), history, budget, declared_tools, imports, collected)
+                for branch in (action.body, action.orelse)
+            ):
                 return True
         elif _feedback(action, history, local, budget):
             return True
@@ -383,8 +474,12 @@ def _tool_iteration(
 
 
 def _statements(
-    statements: list[ast.stmt], values: dict[str, str], history: str, budget: _Budget,
-    declared_tools: set[str], imports: dict[str, str],
+    statements: list[ast.stmt],
+    values: dict[str, str],
+    history: str,
+    budget: _Budget,
+    declared_tools: set[str],
+    imports: dict[str, str],
 ) -> bool:
     for number, statement in enumerate(statements):
         budget.tick()
@@ -393,13 +488,19 @@ def _statements(
         if isinstance(statement, ast.If):
             if isinstance(statement.test, ast.Constant):
                 selected = statement.body if bool(statement.test.value) else statement.orelse
-                return _statements([*selected, *statements[number + 1:]], values, history, budget,
-                                   declared_tools, imports)
-            if any(_statements(branch, values.copy(), history, budget, declared_tools, imports)
-                   for branch in (statement.body, statement.orelse)):
+                return _statements(
+                    [*selected, *statements[number + 1 :]], values, history, budget, declared_tools, imports
+                )
+            if any(
+                _statements(branch, values.copy(), history, budget, declared_tools, imports)
+                for branch in (statement.body, statement.orelse)
+            ):
                 return True
-        elif (isinstance(statement, ast.For) and isinstance(statement.target, ast.Name)
-                and _value(statement.iter, values) == "calls"):
+        elif (
+            isinstance(statement, ast.For)
+            and isinstance(statement.target, ast.Name)
+            and _value(statement.iter, values) == "calls"
+        ):
             local = values.copy()
             local[statement.target.id] = "tool"
             collected: set[str] = set()
@@ -416,8 +517,14 @@ def _statements(
 
 
 def _request_loop(
-    loop: ast.For | ast.While, following: list[ast.stmt], response: str, kind: str, history: str,
-    budget: _Budget, declared_tools: set[str], imports: dict[str, str],
+    loop: ast.For | ast.While,
+    following: list[ast.stmt],
+    response: str,
+    kind: str,
+    history: str,
+    budget: _Budget,
+    declared_tools: set[str],
+    imports: dict[str, str],
 ) -> bool:
     values = {response: kind}
     if _history_rebound(loop, history, budget):
@@ -429,7 +536,9 @@ _RAW_METHOD = "with_raw_response"
 _FINAL_MESSAGE = frozenset({"get_final_message", "get_final_completion"})
 
 
-def _request_helpers(tree: ast.AST, request_calls: set[int], budget: _Budget) -> dict[str, tuple[int | None, str, ast.expr, bool]]:
+def _request_helpers(
+    tree: ast.AST, request_calls: set[int], budget: _Budget
+) -> dict[str, tuple[int | None, str, ast.expr, bool]]:
     """Functions defined once whose body returns a bound request.
 
     ``def call(messages): return client.messages.create(..., messages=messages, tools=TOOLS)``
@@ -441,7 +550,11 @@ def _request_helpers(tree: ast.AST, request_calls: set[int], budget: _Budget) ->
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         defined[node.name] = defined.get(node.name, 0) + 1
-        returned = [statement.value for statement in node.body if isinstance(statement, ast.Return) and statement.value is not None]
+        returned = [
+            statement.value
+            for statement in node.body
+            if isinstance(statement, ast.Return) and statement.value is not None
+        ]
         if len(returned) != 1:
             continue
         call = _unwrap(returned[0])
@@ -450,30 +563,53 @@ def _request_helpers(tree: ast.AST, request_calls: set[int], budget: _Budget) ->
         options = {keyword.arg: keyword.value for keyword in call.keywords if keyword.arg}
         history, tools = options.get("messages"), options.get("tools")
         parameters = [argument.arg for argument in (*node.args.posonlyargs, *node.args.args)]
-        if isinstance(history, ast.Name) and tools is not None and (history.id in parameters or history.id in {a.arg for a in node.args.kwonlyargs}):
+        if (
+            isinstance(history, ast.Name)
+            and tools is not None
+            and (history.id in parameters or history.id in {a.arg for a in node.args.kwonlyargs})
+        ):
             position = parameters.index(history.id) if history.id in parameters else None
             helpers[node.name] = (position, history.id, tools, _RAW_METHOD in ast.unparse(call.func))
     return {name: helper for name, helper in helpers.items() if defined[name] == 1}
 
 
 def _loop_request(
-    statement: ast.stmt, request_calls: set[int], helpers: dict[str, tuple[int | None, str, ast.expr, bool]],
+    statement: ast.stmt,
+    request_calls: set[int],
+    helpers: dict[str, tuple[int | None, str, ast.expr, bool]],
 ) -> tuple[ast.Call, str, str, ast.expr | None, ast.expr | None, list[ast.stmt]] | None:
     """(request call, response name, kind, history, tools, statements following in the same block)."""
     if isinstance(statement, (ast.With, ast.AsyncWith)) and len(statement.items) == 1:
         item = statement.items[0]
         opened = _unwrap(item.context_expr)
-        if not (isinstance(opened, ast.Call) and id(opened) in request_calls and isinstance(item.optional_vars, ast.Name)):
+        if not (
+            isinstance(opened, ast.Call)
+            and id(opened) in request_calls
+            and isinstance(item.optional_vars, ast.Name)
+        ):
             return None
         stream = item.optional_vars.id
         for number, inner in enumerate(statement.body):
             targets, expression = _assignment(inner)
             final = _unwrap(expression) if expression is not None else None
-            if (len(targets) == 1 and isinstance(targets[0], ast.Name) and isinstance(final, ast.Call)
-                    and isinstance(final.func, ast.Attribute) and final.func.attr in _FINAL_MESSAGE
-                    and isinstance(final.func.value, ast.Name) and final.func.value.id == stream):
+            if (
+                len(targets) == 1
+                and isinstance(targets[0], ast.Name)
+                and isinstance(final, ast.Call)
+                and isinstance(final.func, ast.Attribute)
+                and final.func.attr in _FINAL_MESSAGE
+                and isinstance(final.func.value, ast.Name)
+                and final.func.value.id == stream
+            ):
                 options = {keyword.arg: keyword.value for keyword in opened.keywords if keyword.arg}
-                return opened, targets[0].id, "response", options.get("messages"), options.get("tools"), statement.body[number + 1:]
+                return (
+                    opened,
+                    targets[0].id,
+                    "response",
+                    options.get("messages"),
+                    options.get("tools"),
+                    statement.body[number + 1 :],
+                )
         return None
     targets, expression = _assignment(statement)
     call = _unwrap(expression) if expression is not None else None
@@ -485,7 +621,9 @@ def _loop_request(
         return call, targets[0].id, kind, options.get("messages"), options.get("tools"), []
     if isinstance(call.func, ast.Name) and call.func.id in helpers:
         position, parameter, tools, raw = helpers[call.func.id]
-        history: ast.expr | None = next((keyword.value for keyword in call.keywords if keyword.arg == parameter), None)
+        history: ast.expr | None = next(
+            (keyword.value for keyword in call.keywords if keyword.arg == parameter), None
+        )
         if history is None and position is not None and position < len(call.args):
             history = call.args[position]
         return call, targets[0].id, "raw-response" if raw else "response", history, tools, []
@@ -523,9 +661,15 @@ def provider_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[int
                 continue
             if isinstance(tools, ast.Name):
                 tools = schemas.get(tools.id, tools)  # unresolved names prove no tool names
-            if isinstance(tools, ast.Constant) or isinstance(tools, (ast.List, ast.Tuple, ast.Dict)) and not (tools.keys if isinstance(tools, ast.Dict) else tools.elts):
+            if (
+                isinstance(tools, ast.Constant)
+                or isinstance(tools, (ast.List, ast.Tuple, ast.Dict))
+                and not (tools.keys if isinstance(tools, ast.Dict) else tools.elts)
+            ):
                 continue
-            following = [*inner, *loop.body[number + 1:]]
-            if _request_loop(loop, following, response, kind, history.id, budget, _declared_tools(tools, budget), imports):
+            following = [*inner, *loop.body[number + 1 :]]
+            if _request_loop(
+                loop, following, response, kind, history.id, budget, _declared_tools(tools, budget), imports
+            ):
                 lines.add(call.lineno)
     return sorted(lines)

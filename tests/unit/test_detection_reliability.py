@@ -46,7 +46,10 @@ def project(findings):
 
 # ------------------------------------------------------------------ raw SDK agents
 def test_raw_anthropic_tool_loop_is_agent_with_code_execution(run_connector, tmp_path):
-    write(tmp_path, "bot.py", '''
+    write(
+        tmp_path,
+        "bot.py",
+        """
         import anthropic, subprocess
         client = anthropic.Anthropic()
         tools = [{"name": "bash", "description": "run bash", "input_schema": {"type": "object"}}]
@@ -59,7 +62,8 @@ def test_raw_anthropic_tool_loop_is_agent_with_code_execution(run_connector, tmp
                 if block.type == "tool_use":
                     out = subprocess.run(block.input["cmd"], shell=True, capture_output=True, text=True).stdout
                     messages.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": block.id, "content": out}]})
-    ''')
+    """,
+    )
     findings, stats = scan(run_connector, tmp_path)
     finding = project(findings)
     assert finding.kind == Kind.AGENT
@@ -69,7 +73,10 @@ def test_raw_anthropic_tool_loop_is_agent_with_code_execution(run_connector, tmp
 
 
 def test_raw_openai_tool_loop_is_agent(run_connector, tmp_path):
-    write(tmp_path, "agent.py", '''
+    write(
+        tmp_path,
+        "agent.py",
+        """
         import json
         from openai import OpenAI
         client = OpenAI()
@@ -84,7 +91,8 @@ def test_raw_openai_tool_loop_is_agent(run_connector, tmp_path):
             for call in message.tool_calls:
                 result = lookup(**json.loads(call.function.arguments))
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
-    ''')
+    """,
+    )
     findings, _ = scan(run_connector, tmp_path)
     finding = project(findings)
     assert finding.kind == Kind.AGENT
@@ -92,25 +100,36 @@ def test_raw_openai_tool_loop_is_agent(run_connector, tmp_path):
     assert "provider.openai" in finding.model_providers
 
 
-@pytest.mark.parametrize(("source", "provider"), [
-    ('''
+@pytest.mark.parametrize(
+    ("source", "provider"),
+    [
+        (
+            """
         from openai import OpenAI
         client = OpenAI()
         tools = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
         response = client.chat.completions.create(model="gpt-4o", messages=[], tools=tools)
         for call in response.choices[0].message.tool_calls or []:
             print(call.function.name)
-    ''', "provider.openai"),
-    ('''
+    """,
+            "provider.openai",
+        ),
+        (
+            """
         import anthropic
         client = anthropic.Anthropic()
         tools = [{"name": "bash", "description": "run bash", "input_schema": {"type": "object"}}]
         response = client.messages.create(model="claude-sonnet-4-5", max_tokens=1024, tools=tools, messages=[])
         for block in response.content:
             print(block.type, block.input)
-    ''', "provider.anthropic"),
-])
-def test_tool_schema_without_dispatch_is_tool_enabled_usage_not_agent(run_connector, tmp_path, source, provider):
+    """,
+            "provider.anthropic",
+        ),
+    ],
+)
+def test_tool_schema_without_dispatch_is_tool_enabled_usage_not_agent(
+    run_connector, tmp_path, source, provider
+):
     # Offering tools proves tool-use capability and the provider, not that the
     # program executes what the model selects (see provider_loops).
     write(tmp_path, "app.py", source)
@@ -122,12 +141,16 @@ def test_tool_schema_without_dispatch_is_tool_enabled_usage_not_agent(run_connec
 
 
 def test_single_completion_without_tools_is_llm_usage_not_agent(run_connector, tmp_path):
-    write(tmp_path, "summarize.py", '''
+    write(
+        tmp_path,
+        "summarize.py",
+        """
         from openai import OpenAI
         client = OpenAI()
         def summarize(text):
             return client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": text}])
-    ''')
+    """,
+    )
     findings, _ = scan(run_connector, tmp_path)
     finding = project(findings)
     assert finding.kind == Kind.FRAMEWORK_USAGE
@@ -135,63 +158,99 @@ def test_single_completion_without_tools_is_llm_usage_not_agent(run_connector, t
 
 
 def test_execution_sink_counts_only_beside_model_calls(run_connector, tmp_path):
-    write(tmp_path, "summarize.py", '''
+    write(
+        tmp_path,
+        "summarize.py",
+        """
         from openai import OpenAI
         client = OpenAI()
         reply = client.chat.completions.create(model="gpt-4o-mini", messages=[])
-    ''')
+    """,
+    )
     # Generic sinks in build tooling are not model-driven execution.
-    write(tmp_path, "build.py", '''
+    write(
+        tmp_path,
+        "build.py",
+        """
         import os, subprocess
         subprocess.run(args, shell=True)
         os.system(build_cmd)
-    ''')
+    """,
+    )
     findings, _ = scan(run_connector, tmp_path)
     assert "code-exec" not in project(findings).capabilities
 
 
 # ------------------------------------------------------------ attribution & capabilities
 def test_integration_packages_attribute_model_providers(run_connector, tmp_path):
-    write(tmp_path, "py/agent.py", '''
+    write(
+        tmp_path,
+        "py/agent.py",
+        """
         from langchain_openai import ChatOpenAI
         from langgraph.prebuilt import create_react_agent
         agent = create_react_agent(ChatOpenAI(model="gpt-4o"), tools=[])
-    ''')
-    write(tmp_path, "ts/package.json", '{"name": "t", "dependencies": {"ai": "^4.0.0", "@ai-sdk/anthropic": "^1.0.0"}}')
-    write(tmp_path, "ts/agent.ts", '''
+    """,
+    )
+    write(
+        tmp_path,
+        "ts/package.json",
+        '{"name": "t", "dependencies": {"ai": "^4.0.0", "@ai-sdk/anthropic": "^1.0.0"}}',
+    )
+    write(
+        tmp_path,
+        "ts/agent.ts",
+        """
         import { generateText, tool } from 'ai';
         import { anthropic } from '@ai-sdk/anthropic';
         const r = await generateText({ model: anthropic('claude-sonnet-4-5'), tools: { t: tool({}) }, prompt: 'x' });
-    ''')
+    """,
+    )
     findings, _ = scan(run_connector, tmp_path)
     providers = {p for f in findings for p in f.model_providers}
     assert {"provider.openai", "provider.anthropic"} <= providers
 
 
 def test_capabilities_require_specific_evidence(run_connector, tmp_path):
-    write(tmp_path, "a/agent.py", '''
+    write(
+        tmp_path,
+        "a/agent.py",
+        """
         from langgraph.prebuilt import create_react_agent
         agent = create_react_agent(model, tools=[])
-    ''')
+    """,
+    )
     write(tmp_path, "a/requirements.txt", "langgraph\n")
-    write(tmp_path, "b/agent.py", '''
+    write(
+        tmp_path,
+        "b/agent.py",
+        """
         from langgraph.checkpoint.memory import MemorySaver
         from langgraph.prebuilt import create_react_agent
         agent = create_react_agent(model, tools=[], checkpointer=MemorySaver())
-    ''')
+    """,
+    )
     write(tmp_path, "b/requirements.txt", "langgraph\n")
-    write(tmp_path, "c/main.py", '''
+    write(
+        tmp_path,
+        "c/main.py",
+        """
         from agents import Agent, Runner
         support = Agent(name="Support", instructions="Help")
         Runner.run_sync(support, "hi")
-    ''')
+    """,
+    )
     write(tmp_path, "c/requirements.txt", "openai-agents\n")
-    write(tmp_path, "d/main.py", '''
+    write(
+        tmp_path,
+        "d/main.py",
+        """
         from agents import Agent, Runner
         billing = Agent(name="Billing", instructions="Bill")
         triage = Agent(name="Triage", instructions="Route", handoffs=[billing])
         Runner.run_sync(triage, "hi")
-    ''')
+    """,
+    )
     write(tmp_path, "d/requirements.txt", "openai-agents\n")
     findings, _ = scan(run_connector, tmp_path)
     by_path = {f.metadata["path"]: f for f in findings if f.resource_type == "project"}
@@ -202,17 +261,25 @@ def test_capabilities_require_specific_evidence(run_connector, tmp_path):
 
 
 def test_terraform_agent_reports_wildcard_iam_and_declared_model(run_connector, tmp_path):
-    write(tmp_path, "main.tf", '''
+    write(
+        tmp_path,
+        "main.tf",
+        """
         resource "aws_bedrockagent_agent" "ops" {
           agent_name       = "ops-agent"
           foundation_model = "anthropic.claude-3-5-sonnet-20240620-v1:0"
         }
-    ''')
-    write(tmp_path, "iam.tf", '''
+    """,
+    )
+    write(
+        tmp_path,
+        "iam.tf",
+        """
         resource "aws_iam_role_policy" "p" {
           policy = jsonencode({Statement=[{Effect="Allow",Action="*",Resource="*"}]})
         }
-    ''')
+    """,
+    )
     findings, _ = scan(run_connector, tmp_path)
     infra = [f for f in findings if f.kind == Kind.INFRA]
     assert len(infra) == 1 and len(findings) == 1
@@ -222,13 +289,34 @@ def test_terraform_agent_reports_wildcard_iam_and_declared_model(run_connector, 
 
 
 # ------------------------------------------------------------------ duplicates
-@pytest.mark.parametrize(("rel", "text", "kind"), [
-    (".well-known/agent-card.json", json.dumps({
-        "name": "Travel Agent", "description": "Books travel", "url": "https://agents.example.com/travel",
-        "version": "1.0.0", "capabilities": {}, "defaultInputModes": ["text"], "defaultOutputModes": ["text"],
-        "skills": [{"id": "book", "name": "Book", "description": "Books flights", "tags": ["travel"]}]}), Kind.AGENT),
-    (".mcp.json", json.dumps({"mcpServers": {"remote": {"type": "http", "url": "https://mcp.example.com/mcp"}}}), Kind.MCP_SERVER),
-])
+@pytest.mark.parametrize(
+    ("rel", "text", "kind"),
+    [
+        (
+            ".well-known/agent-card.json",
+            json.dumps(
+                {
+                    "name": "Travel Agent",
+                    "description": "Books travel",
+                    "url": "https://agents.example.com/travel",
+                    "version": "1.0.0",
+                    "capabilities": {},
+                    "defaultInputModes": ["text"],
+                    "defaultOutputModes": ["text"],
+                    "skills": [
+                        {"id": "book", "name": "Book", "description": "Books flights", "tags": ["travel"]}
+                    ],
+                }
+            ),
+            Kind.AGENT,
+        ),
+        (
+            ".mcp.json",
+            json.dumps({"mcpServers": {"remote": {"type": "http", "url": "https://mcp.example.com/mcp"}}}),
+            Kind.MCP_SERVER,
+        ),
+    ],
+)
 def test_artifact_only_repositories_report_one_finding(run_connector, tmp_path, rel, text, kind):
     write(tmp_path, rel, text)
     findings, _ = scan(run_connector, tmp_path)
@@ -236,10 +324,32 @@ def test_artifact_only_repositories_report_one_finding(run_connector, tmp_path, 
 
 
 def test_n8n_export_is_one_workflow_with_its_model_provider(run_connector, tmp_path):
-    write(tmp_path, "workflow.json", json.dumps({"name": "triage", "nodes": [
-        {"parameters": {}, "name": "AI Agent", "type": "@n8n/n8n-nodes-langchain.agent", "typeVersion": 1.7, "position": [0, 0]},
-        {"parameters": {}, "name": "Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi", "typeVersion": 1, "position": [0, 1]},
-    ], "connections": {}}))
+    write(
+        tmp_path,
+        "workflow.json",
+        json.dumps(
+            {
+                "name": "triage",
+                "nodes": [
+                    {
+                        "parameters": {},
+                        "name": "AI Agent",
+                        "type": "@n8n/n8n-nodes-langchain.agent",
+                        "typeVersion": 1.7,
+                        "position": [0, 0],
+                    },
+                    {
+                        "parameters": {},
+                        "name": "Model",
+                        "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+                        "typeVersion": 1,
+                        "position": [0, 1],
+                    },
+                ],
+                "connections": {},
+            }
+        ),
+    )
     findings, _ = scan(run_connector, tmp_path)
     assert [f.kind for f in findings] == [Kind.WORKFLOW]
     assert "provider.openai" in findings[0].model_providers
@@ -249,11 +359,15 @@ def test_n8n_export_is_one_workflow_with_its_model_provider(run_connector, tmp_p
 # ------------------------------------------------------------ test code & fake credentials
 def test_agents_only_in_tests_do_not_establish_an_agent(run_connector, tmp_path):
     write(tmp_path, "src/wrapper.py", "import crewai\n")
-    write(tmp_path, "tests/test_crew.py", '''
+    write(
+        tmp_path,
+        "tests/test_crew.py",
+        """
         from crewai import Agent, Crew, Task
         researcher = Agent(role="Researcher", goal="g", backstory="b")
         Crew(agents=[researcher], tasks=[Task(description="d", agent=researcher, expected_output="o")]).kickoff()
-    ''')
+    """,
+    )
     write(tmp_path, "requirements.txt", "crewai\n")
     findings, _ = scan(run_connector, tmp_path)
     assert project(findings).kind == Kind.FRAMEWORK_USAGE
@@ -262,18 +376,28 @@ def test_agents_only_in_tests_do_not_establish_an_agent(run_connector, tmp_path)
 
 
 def test_test_only_evidence_is_tagged(run_connector, tmp_path):
-    write(tmp_path, "tests/test_agent.py", '''
+    write(
+        tmp_path,
+        "tests/test_agent.py",
+        """
         from crewai import Agent
         Agent(role="r", goal="g", backstory="b")
-    ''')
+    """,
+    )
     findings, _ = scan(run_connector, tmp_path)
     assert "test-code-only" in project(findings).tags
 
 
-@pytest.mark.parametrize("value", [
-    "sk-test-" + "0" * 40, "AKIA" + "IOSFODNN7EXAMPLE", "your-api-key-here", "sk-proj-" + "A" * 48,
-    "AZURE_OPENAI_KEY=" + "0" * 32,
-])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "sk-test-" + "0" * 40,
+        "AKIA" + "IOSFODNN7EXAMPLE",
+        "your-api-key-here",
+        "sk-proj-" + "A" * 48,
+        "AZURE_OPENAI_KEY=" + "0" * 32,
+    ],
+)
 def test_placeholder_credentials(value):
     assert looks_like_placeholder(value)
 
@@ -303,8 +427,21 @@ def test_azure_openai_key_is_bound_to_its_variable_name(run_connector, tmp_path)
 
 def test_mcp_inline_secret_evidence_names_its_location(run_connector, tmp_path):
     header = "Bearer " + "q8Zr1mNvB4tYc7Hs0pWe"
-    write(tmp_path, ".mcp.json", json.dumps({"mcpServers": {"linear": {
-        "type": "http", "url": "https://mcp.linear.app/mcp", "headers": {"Authorization": header}}}}))
+    write(
+        tmp_path,
+        ".mcp.json",
+        json.dumps(
+            {
+                "mcpServers": {
+                    "linear": {
+                        "type": "http",
+                        "url": "https://mcp.linear.app/mcp",
+                        "headers": {"Authorization": header},
+                    }
+                }
+            }
+        ),
+    )
     findings, _ = scan(run_connector, tmp_path)
     descriptions = [e.description for e in findings[0].evidence if e.signal == "secret:inline"]
     assert descriptions and "headers" in descriptions[0]
@@ -367,17 +504,27 @@ def test_cli_incomplete_coverage_has_exit_code_three_by_default(tmp_path):
 
 # ------------------------------------------------------------------------ risk
 def finding(**kwargs) -> Finding:
-    base = dict(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT, title="t", resource="r",
-                resource_type="project", confidence=1.0)
+    base = dict(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="t",
+        resource="r",
+        resource_type="project",
+        confidence=1.0,
+    )
     base.update(kwargs)
     return Finding(**base)
 
 
 @pytest.mark.parametrize("confidence", [1.0, 0.55, 0.0])
 def test_risk_factors_always_sum_to_the_score(confidence):
-    heavy = finding(capabilities=["code-exec", "autonomous", "saas-actions", "browsing"],
-                    tags=["policy.privileged-scopes", "hardcoded-credential", "wildcard-permissions", "public-principal"],
-                    confidence=confidence, shadow=True)
+    heavy = finding(
+        capabilities=["code-exec", "autonomous", "saas-actions", "browsing"],
+        tags=["policy.privileged-scopes", "hardcoded-credential", "wildcard-permissions", "public-principal"],
+        confidence=confidence,
+        shadow=True,
+    )
     risk = assess(heavy, inventory_present=True)
     assert sum(f.weight for f in risk.factors) == risk.score
     if confidence == 1.0:
@@ -394,15 +541,28 @@ def test_danger_score_excludes_governance_and_basis_controls_level():
 
 
 def test_risk_weights_override_defaults():
-    policy = RiskPolicy.from_options({"capabilities": {"code-exec": 40}, "governance": {"shadow": 0}, "kinds": {"agent": 0}})
-    risk = assess(finding(capabilities=["code-exec"], shadow=True, owner="team"), inventory_present=True, policy=policy)
+    policy = RiskPolicy.from_options(
+        {"capabilities": {"code-exec": 40}, "governance": {"shadow": 0}, "kinds": {"agent": 0}}
+    )
+    risk = assess(
+        finding(capabilities=["code-exec"], shadow=True, owner="team"), inventory_present=True, policy=policy
+    )
     assert risk.score == 40
 
 
-@pytest.mark.parametrize("weights", [
-    {"unknown": {}}, {"tags": {"Bad Key": 1}}, {"tags": {"x": 1.5}}, {"tags": {"x": True}}, {"tags": {"x": 101}},
-    {"kinds": {"not-a-kind": 1}}, {"governance": {"owner": 1}}, {"tags": []},
-])
+@pytest.mark.parametrize(
+    "weights",
+    [
+        {"unknown": {}},
+        {"tags": {"Bad Key": 1}},
+        {"tags": {"x": 1.5}},
+        {"tags": {"x": True}},
+        {"tags": {"x": 101}},
+        {"kinds": {"not-a-kind": 1}},
+        {"governance": {"owner": 1}},
+        {"tags": []},
+    ],
+)
 def test_invalid_risk_weights_fail_closed(weights):
     with pytest.raises(ValueError):
         RiskPolicy.from_options(weights)

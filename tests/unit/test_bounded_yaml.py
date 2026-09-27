@@ -42,14 +42,18 @@ def test_alias_amplification_rejected_before_object_construction(merge):
         loader.dispose()
 
 
-@pytest.mark.parametrize("text", ["root: &root [*root]", "root: &root {<<: *root}", "[" * 70 + "0" + "]" * 70])
+@pytest.mark.parametrize(
+    "text", ["root: &root [*root]", "root: &root {<<: *root}", "[" * 70 + "0" + "]" * 70]
+)
 def test_cycles_and_excessive_nesting_rejected(text):
     with pytest.raises(YAMLResourceLimitError):
         bounded_safe_load(text)
 
 
 def test_ordinary_aliases_and_merges_preserve_values():
-    data = bounded_safe_load("defaults: &base {model: gpt-4o, region: eu}\nagent: {<<: *base, region: us}\ncopy: *base")
+    data = bounded_safe_load(
+        "defaults: &base {model: gpt-4o, region: eu}\nagent: {<<: *base, region: us}\ncopy: *base"
+    )
     assert data["agent"] == {"model": "gpt-4o", "region": "us"}
     assert json.loads(json.dumps(sanitize(data))) == data
 
@@ -245,6 +249,12 @@ else:
     raise AssertionError('unbounded sanitizer accepted')
 """
     pytest.importorskip("resource")
-    result = subprocess.run([sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[2],
-                            capture_output=True, text=True, timeout=15, check=False)
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
     assert result.returncode == 0, result.stdout + result.stderr

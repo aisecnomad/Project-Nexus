@@ -41,38 +41,50 @@ def test_github_fallback_token_is_registered_for_diagnostic_redaction(index, mon
     assert ctx.sanitize_message(f"provider rejected {secret}") == f"provider rejected {REDACTED}"
 
 
-@pytest.mark.parametrize("claim", [
-    "kubernetes.io/serviceaccount/namespace",
-    "kubernetes.io/serviceaccount/secret.name",
-    "kubernetes.io/serviceaccount/service-account.name",
-    "kubernetes.io/serviceaccount/service-account.uid",
-])
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "kubernetes.io/serviceaccount/namespace",
+        "kubernetes.io/serviceaccount/secret.name",
+        "kubernetes.io/serviceaccount/service-account.name",
+        "kubernetes.io/serviceaccount/service-account.uid",
+    ],
+)
 def test_exact_legacy_kubernetes_claims_identify_the_issuer_family(claim):
     assert _issuer_family("https://issuer.example", {claim: "default"}) == "kubernetes"
 
 
-@pytest.mark.parametrize("claim", [
-    "kubernetes.io/arbitrary",
-    "kubernetes.io/serviceaccount/namespace/extra",
-    "kubernetes.io.evil/serviceaccount/namespace",
-    "kubernetes.io%2Fserviceaccount%2Fnamespace",
-])
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "kubernetes.io/arbitrary",
+        "kubernetes.io/serviceaccount/namespace/extra",
+        "kubernetes.io.evil/serviceaccount/namespace",
+        "kubernetes.io%2Fserviceaccount%2Fnamespace",
+    ],
+)
 def test_kubernetes_claim_lookalikes_do_not_identify_the_issuer_family(claim):
     assert _issuer_family("https://issuer.example", {claim: "default"}) == "custom"
 
 
-@pytest.mark.parametrize("claims", [
-    {"kubernetes.io": {"namespace": "default"}},
-    {"kubernetes.io/serviceaccount/namespace": "default"},
-])
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"kubernetes.io": {"namespace": "default"}},
+        {"kubernetes.io/serviceaccount/namespace": "default"},
+    ],
+)
 def test_structured_and_legacy_kubernetes_claims_keep_the_display_label(claims):
     assert _issuer_family("https://issuer.example", claims) == "kubernetes"
 
 
-@pytest.mark.parametrize("claims", [
-    {"kubernetes.io": {}},
-    {"kubernetes.io": "not a structured claim"},
-    {"kubernetes.io/serviceaccount/namespace": "  "},
-])
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"kubernetes.io": {}},
+        {"kubernetes.io": "not a structured claim"},
+        {"kubernetes.io/serviceaccount/namespace": "  "},
+    ],
+)
 def test_malformed_kubernetes_claims_do_not_set_the_display_label(claims):
     assert _issuer_family("https://issuer.example", claims) == "custom"

@@ -21,7 +21,13 @@ def terminal_text(value: object) -> str:
     out = []
     for char in str(value):
         code = ord(char)
-        if code < 32 or 0x7F <= code <= 0x9F or 0x202A <= code <= 0x202E or 0x2066 <= code <= 0x2069 or code in (0x061C, 0x200E, 0x200F, 0x2028, 0x2029):
+        if (
+            code < 32
+            or 0x7F <= code <= 0x9F
+            or 0x202A <= code <= 0x202E
+            or 0x2066 <= code <= 0x2069
+            or code in (0x061C, 0x200E, 0x200F, 0x2028, 0x2029)
+        ):
             out.append(f"\\u{code:04x}")
         else:
             out.append(char)
@@ -67,7 +73,11 @@ def _write_in_place(target: Path, data: bytes) -> None:
     instead of hanging; the descriptor is made blocking again for the write.
     """
     flags = (
-        os.O_WRONLY | os.O_NONBLOCK | getattr(os, "O_NOCTTY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        os.O_WRONLY
+        | os.O_NONBLOCK
+        | getattr(os, "O_NOCTTY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
     )
     fd = os.open(target, flags)
     try:
@@ -79,7 +89,7 @@ def _write_in_place(target: Path, data: bytes) -> None:
         os.set_blocking(fd, True)
         view = memoryview(data)
         while view:
-            view = view[os.write(fd, view):]
+            view = view[os.write(fd, view) :]
     finally:
         os.close(fd)
 

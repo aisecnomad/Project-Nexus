@@ -51,17 +51,27 @@ def test_output_failure_preserves_previous_report(tmp_path, monkeypatch):
 
 
 def test_html_escapes_external_finding_identifier():
-    finding = Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-                      title="Agent", resource="repo", resource_type="repository", id="<b>external-id</b>")
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="Agent",
+        resource="repo",
+        resource_type="repository",
+        id="<b>external-id</b>",
+    )
     html = render_html(ScanResult(findings=[finding]))
     assert "<b>external-id</b>" not in html
     assert "&lt;b&gt;external-id&lt;/b&gt;" in html
 
 
 def test_listing_plugins_does_not_import_plugin_code(monkeypatch):
-    monkeypatch.setattr("shadowscan.connectors.entry_points", lambda **kwargs: [
-        SimpleNamespace(name="custom.unloaded", value="must_never_import:Connector"),
-    ])
+    monkeypatch.setattr(
+        "shadowscan.connectors.entry_points",
+        lambda **kwargs: [
+            SimpleNamespace(name="custom.unloaded", value="must_never_import:Connector"),
+        ],
+    )
     result = CliRunner().invoke(main, ["connectors", "--json"])
     assert result.exit_code == 0, result.output
     entry = next(row for row in json.loads(result.output) if row["name"] == "custom.unloaded")
@@ -74,16 +84,27 @@ def test_cli_security_options_and_private_report(tmp_path):
     repo.mkdir()
     (repo / "requirements.txt").write_text("langchain\n")
     output = tmp_path / "scan.json"
-    result = CliRunner().invoke(main, [
-        "code", str(repo), "--deny-private-origin", "--deny-signature-override",
-        "--format", "json", "--output", str(output),
-    ])
+    result = CliRunner().invoke(
+        main,
+        [
+            "code",
+            str(repo),
+            "--deny-private-origin",
+            "--deny-signature-override",
+            "--format",
+            "json",
+            "--output",
+            str(output),
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert output.stat().st_mode & 0o777 == 0o600
     assert json.loads(output.read_text())["summary"]["complete"] is True
 
 
-@pytest.mark.parametrize("option,value", [("--expected-issuer", "https://issuer.example"), ("--jwt-algorithm", "RS256")])
+@pytest.mark.parametrize(
+    "option,value", [("--expected-issuer", "https://issuer.example"), ("--jwt-algorithm", "RS256")]
+)
 def test_cli_verification_policy_requires_jwks(option, value):
     result = CliRunner().invoke(main, ["jwt", "synthetic", option, value])
     assert result.exit_code == 2

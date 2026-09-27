@@ -22,10 +22,13 @@ from shadowscan.utils.git import CloneTimeoutError, run_bounded_clone
 from shadowscan.utils.http import HttpError
 
 
-@pytest.mark.parametrize("cls,record", [
-    (GitHubConnector, {"full_name": "org/repo", "size": 2}),
-    (GitLabConnector, {"path_with_namespace": "org/repo", "statistics": {"repository_size": 2048}}),
-])
+@pytest.mark.parametrize(
+    "cls,record",
+    [
+        (GitHubConnector, {"full_name": "org/repo", "size": 2}),
+        (GitLabConnector, {"path_with_namespace": "org/repo", "statistics": {"repository_size": 2048}}),
+    ],
+)
 def test_oversized_repository_uses_incomplete_api_fallback(tmp_path, monkeypatch, index, cls, record):
     ctx = ConnectorContext(config={"clone_max_bytes": 1024}, index=index)
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
@@ -54,10 +57,13 @@ def test_gitlab_requests_size_when_group_listing_omits_statistics(tmp_path, monk
     clone.assert_not_called()
 
 
-@pytest.mark.parametrize("cls,record", [
-    (GitHubConnector, {"full_name": "org/repo", "size": 1}),
-    (GitLabConnector, {"path_with_namespace": "org/repo", "statistics": {"repository_size": 1024}}),
-])
+@pytest.mark.parametrize(
+    "cls,record",
+    [
+        (GitHubConnector, {"full_name": "org/repo", "size": 1}),
+        (GitLabConnector, {"path_with_namespace": "org/repo", "statistics": {"repository_size": 1024}}),
+    ],
+)
 def test_known_size_below_cap_can_complete(tmp_path, monkeypatch, index, cls, record):
     ctx = ConnectorContext(index=index)
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
@@ -73,10 +79,13 @@ def test_known_size_below_cap_can_complete(tmp_path, monkeypatch, index, cls, re
     assert record["source_snapshot"]["commit_sha"] == "a" * 40
 
 
-@pytest.mark.parametrize("cls,record", [
-    (GitHubConnector, {"full_name": "org/repo", "size": 1}),
-    (GitLabConnector, {"path_with_namespace": "org/repo", "id": 123}),
-])
+@pytest.mark.parametrize(
+    "cls,record",
+    [
+        (GitHubConnector, {"full_name": "org/repo", "size": 1}),
+        (GitLabConnector, {"path_with_namespace": "org/repo", "id": 123}),
+    ],
+)
 def test_requested_clone_without_git_uses_incomplete_api_fallback(tmp_path, monkeypatch, index, cls, record):
     ctx = ConnectorContext(config={"mode": "clone"}, index=index)
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
@@ -98,10 +107,13 @@ def test_unknown_code_provider_mode_is_rejected(index):
             cls(ConnectorContext(config={"mode": "unknown"}, index=index))
 
 
-@pytest.mark.parametrize("cls,record", [
-    (GitHubConnector, {"full_name": "org/repo"}),
-    (GitLabConnector, {"path_with_namespace": "org/repo", "id": 123}),
-])
+@pytest.mark.parametrize(
+    "cls,record",
+    [
+        (GitHubConnector, {"full_name": "org/repo"}),
+        (GitLabConnector, {"path_with_namespace": "org/repo", "id": 123}),
+    ],
+)
 def test_unknown_size_uses_api_without_cloning(tmp_path, monkeypatch, index, cls, record):
     ctx = ConnectorContext(index=index)
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
@@ -118,16 +130,21 @@ def test_unknown_size_uses_api_without_cloning(tmp_path, monkeypatch, index, cls
     clone.assert_not_called()
 
 
-@pytest.mark.parametrize("cls,record", [
-    (GitHubConnector, {"full_name": "org/repo", "size": 0}),
-    (GitLabConnector, {"path_with_namespace": "org/repo", "statistics": {"repository_size": 0}}),
-])
+@pytest.mark.parametrize(
+    "cls,record",
+    [
+        (GitHubConnector, {"full_name": "org/repo", "size": 0}),
+        (GitLabConnector, {"path_with_namespace": "org/repo", "statistics": {"repository_size": 0}}),
+    ],
+)
 def test_zero_size_is_a_valid_estimate(tmp_path, monkeypatch, index, cls, record):
     ctx = ConnectorContext(index=index)
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
     connector = cls(ctx)
     if cls is GitLabConnector:
-        connector.http.try_get_json = Mock(side_effect=AssertionError("valid zero size needs no detail lookup"))
+        connector.http.try_get_json = Mock(
+            side_effect=AssertionError("valid zero size needs no detail lookup")
+        )
     monkeypatch.setattr(connector, "_clone", lambda repo, dest: True)
     monkeypatch.setattr(
         f"{cls.__module__}.read_git_snapshot",
@@ -138,10 +155,13 @@ def test_zero_size_is_a_valid_estimate(tmp_path, monkeypatch, index, cls, record
     assert not ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("cls,record", [
-    (GitHubConnector, {"full_name": "org/repo", "size": 1}),
-    (GitLabConnector, {"path_with_namespace": "org/repo", "statistics": {"repository_size": 1}}),
-])
+@pytest.mark.parametrize(
+    "cls,record",
+    [
+        (GitHubConnector, {"full_name": "org/repo", "size": 1}),
+        (GitLabConnector, {"path_with_namespace": "org/repo", "statistics": {"repository_size": 1}}),
+    ],
+)
 def test_failed_partial_clone_is_removed_before_api_fallback(tmp_path, monkeypatch, index, cls, record):
     ctx = ConnectorContext(index=index)
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
@@ -191,11 +211,20 @@ def test_github_api_fallback_keeps_valid_blob_and_marks_partial_tree_incomplete(
     connector = GitHubConnector(ctx)
     source = b"from crewai import Agent\n"
     blob_id = hashlib.sha1(f"blob {len(source)}\0".encode() + source).hexdigest()
-    tree = {"truncated": True, "tree": [
-        {"type": "blob", "mode": "100644", "path": "agents/valid.py", "sha": blob_id, "size": len(source)},
-        {"type": "blob", "mode": "100644", "path": "agents/invalid.py", "sha": "invalid", "size": 24},
-        {"type": "blob", "mode": "120000", "path": "agents/link.py", "sha": "b" * 40},
-    ]}
+    tree = {
+        "truncated": True,
+        "tree": [
+            {
+                "type": "blob",
+                "mode": "100644",
+                "path": "agents/valid.py",
+                "sha": blob_id,
+                "size": len(source),
+            },
+            {"type": "blob", "mode": "100644", "path": "agents/invalid.py", "sha": "invalid", "size": 24},
+            {"type": "blob", "mode": "120000", "path": "agents/link.py", "sha": "b" * 40},
+        ],
+    }
 
     def response(path, **kwargs):
         if "/git/trees/" in path:
@@ -226,9 +255,15 @@ def test_github_repo_secrets_preserve_valid_names_when_optional_endpoint_is_deni
         return iter([])
 
     connector.http.paginate_link = Mock(side_effect=list_names)
-    findings = list(connector._repo_level_findings({
-        "full_name": "org/repo", "owner": {"login": "org"}, "html_url": "https://github.com/org/repo",
-    }))
+    findings = list(
+        connector._repo_level_findings(
+            {
+                "full_name": "org/repo",
+                "owner": {"login": "org"},
+                "html_url": "https://github.com/org/repo",
+            }
+        )
+    )
     assert len(findings) == 1
     assert findings[0].kind is Kind.SECRET
     assert findings[0].metadata["secret_names"] == ["OPENAI_API_KEY"]
@@ -236,27 +271,47 @@ def test_github_repo_secrets_preserve_valid_names_when_optional_endpoint_is_deni
     assert any("metadata HTTP 403" in warning for warning in ctx.stats.warnings)
 
 
-@pytest.mark.parametrize("cls,record", [
-    (GitHubConnector, {"full_name": "org/repo", "size": 1, "clone_url": "https://github.com/org/repo.git"}),
-    (GitLabConnector, {"path_with_namespace": "org/repo", "statistics": {"repository_size": 1},
-                       "http_url_to_repo": "https://gitlab.com/org/repo.git"}),
-])
+@pytest.mark.parametrize(
+    "cls,record",
+    [
+        (
+            GitHubConnector,
+            {"full_name": "org/repo", "size": 1, "clone_url": "https://github.com/org/repo.git"},
+        ),
+        (
+            GitLabConnector,
+            {
+                "path_with_namespace": "org/repo",
+                "statistics": {"repository_size": 1},
+                "http_url_to_repo": "https://gitlab.com/org/repo.git",
+            },
+        ),
+    ],
+)
 def test_clone_timeout_marks_api_fallback_incomplete(tmp_path, monkeypatch, index, cls, record):
     ctx = ConnectorContext(index=index)
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
     connector = cls(ctx)
-    monkeypatch.setattr(f"{cls.__module__}.run_bounded_clone", Mock(side_effect=CloneTimeoutError("timed out")))
+    monkeypatch.setattr(
+        f"{cls.__module__}.run_bounded_clone", Mock(side_effect=CloneTimeoutError("timed out"))
+    )
     monkeypatch.setattr(connector, "_fetch_via_api", lambda repo, tmp: tmp)
     fetch = connector._fetch_repo if cls is GitHubConnector else connector._fetch
     assert fetch(record, str(tmp_path)) == str(tmp_path)
     assert ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("setting,value", [
-    ("clone_max_bytes", 0), ("clone_max_bytes", True), ("clone_max_bytes", 1.25),
-    ("clone_timeout_seconds", 0), ("clone_timeout_seconds", float("inf")),
-    ("clone_timeout_seconds", float("nan")),
-])
+@pytest.mark.parametrize(
+    "setting,value",
+    [
+        ("clone_max_bytes", 0),
+        ("clone_max_bytes", True),
+        ("clone_max_bytes", 1.25),
+        ("clone_timeout_seconds", 0),
+        ("clone_timeout_seconds", float("inf")),
+        ("clone_timeout_seconds", float("nan")),
+    ],
+)
 def test_invalid_clone_limits_rejected(index, setting, value):
     for cls in (GitHubConnector, GitLabConnector):
         with pytest.raises(ValueError, match=setting):
@@ -299,8 +354,9 @@ def test_clone_timeout_kills_git_transport_subprocess(tmp_path, index):
     ctx = ConnectorContext(index=index)
     started = time.monotonic()
     with pytest.raises(CloneTimeoutError):
-        run_bounded_clone([sys.executable, "-c", code, str(marker), str(survivor)],
-                          os.environ.copy(), ctx, timeout=0.4)
+        run_bounded_clone(
+            [sys.executable, "-c", code, str(marker), str(survivor)], os.environ.copy(), ctx, timeout=0.4
+        )
     assert time.monotonic() - started < 3
     assert marker.exists(), "the descendant should have launched before the deadline"
     time.sleep(1)
@@ -311,7 +367,12 @@ def test_clone_timeout_kills_git_transport_subprocess(tmp_path, index):
 def test_clone_cancellation_kills_child_process(tmp_path, index):
     pidfile = tmp_path / "pid"
     ctx = ConnectorContext(index=index, cancelled=Event())
-    command = [sys.executable, "-c", "import os,pathlib,sys,time;pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(10)", str(pidfile)]
+    command = [
+        sys.executable,
+        "-c",
+        "import os,pathlib,sys,time;pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(10)",
+        str(pidfile),
+    ]
     timer = Timer(0.35, ctx.cancelled.set)
     timer.start()
     try:

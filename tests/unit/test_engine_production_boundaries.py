@@ -39,8 +39,9 @@ def _warm_engine_prelude() -> None:
     take longer than a short deadline and expire it before the fake connector
     ever runs. The caller must already have patched the connector lookup.
     """
-    result = Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem", label="warm-up")]),
-                    SignatureIndex([])).run()
+    result = Engine(
+        ScanConfig(connectors=[ConnectorSpec("code.filesystem", label="warm-up")]), SignatureIndex([])
+    ).run()
     assert result.complete, result.stats
 
 
@@ -84,9 +85,12 @@ def test_credential_isolation_is_applied_to_selected_connectors(monkeypatch):
 
 
 def test_offline_exports_do_not_require_credential_mixing_approval():
-    offline = ScanConfig(connectors=[
-        ConnectorSpec("code.filesystem"), ConnectorSpec("cloud.aws", {"input": "aws.json"}),
-    ])
+    offline = ScanConfig(
+        connectors=[
+            ConnectorSpec("code.filesystem"),
+            ConnectorSpec("cloud.aws", {"input": "aws.json"}),
+        ]
+    )
     assert offline.validate_connector_isolation(offline.connectors) is None
     provider = ScanConfig(connectors=[ConnectorSpec("code.github")])
     assert provider.validate_connector_isolation(provider.connectors) is None
@@ -110,8 +114,10 @@ def test_instance_credentials_approval_comes_from_scan_options(monkeypatch, appr
             return []
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: EmptyConnector)
-    cfg = ScanConfig(connectors=[ConnectorSpec("cloud.aws", {"allow_instance_credentials": not approved})],
-                     allow_instance_credentials=approved)
+    cfg = ScanConfig(
+        connectors=[ConnectorSpec("cloud.aws", {"allow_instance_credentials": not approved})],
+        allow_instance_credentials=approved,
+    )
     assert Engine(cfg, SignatureIndex([])).run().complete
     assert seen == [approved]
 
@@ -134,14 +140,27 @@ def test_connector_deadline_returns_incomplete_and_discards_late_results(monkeyp
                 finally:
                     finished.set()
             self.ctx.stats = ScanStats(connector="test", started_at=now_iso(), finished_at=now_iso())
-            return [Finding(Surface.CODE, "code.filesystem", Kind.AGENT,
-                            self.ctx.config["label"], self.ctx.config["label"], "agent")]
+            return [
+                Finding(
+                    Surface.CODE,
+                    "code.filesystem",
+                    Kind.AGENT,
+                    self.ctx.config["label"],
+                    self.ctx.config["label"],
+                    "agent",
+                )
+            ]
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
     _warm_engine_prelude()
-    cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem", label="blocked"),
-                                 ConnectorSpec("code.filesystem", label="healthy")],
-                     parallel=workers, connector_timeout_seconds=CONNECTOR_DEADLINE)
+    cfg = ScanConfig(
+        connectors=[
+            ConnectorSpec("code.filesystem", label="blocked"),
+            ConnectorSpec("code.filesystem", label="healthy"),
+        ],
+        parallel=workers,
+        connector_timeout_seconds=CONNECTOR_DEADLINE,
+    )
     try:
         result = Engine(cfg, SignatureIndex([])).run()
         # Sampled before the release: the engine must return while the worker is still held.
@@ -197,9 +216,14 @@ def test_timed_out_connector_preserves_queued_siblings_when_a_worker_remains(mon
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
     _warm_engine_prelude()
-    cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem", label=label) for label in
-                                 ("blocked", "stagger", "in-flight", "queued")],
-                     parallel=2, connector_timeout_seconds=deadline)
+    cfg = ScanConfig(
+        connectors=[
+            ConnectorSpec("code.filesystem", label=label)
+            for label in ("blocked", "stagger", "in-flight", "queued")
+        ],
+        parallel=2,
+        connector_timeout_seconds=deadline,
+    )
     try:
         result = Engine(cfg, SignatureIndex([])).run()
     finally:
@@ -210,8 +234,10 @@ def test_timed_out_connector_preserves_queued_siblings_when_a_worker_remains(mon
     by_connector = {stat.connector: stat for stat in result.stats}
     assert set(by_connector) == {"blocked", "stagger", "in-flight", "queued"}
     assert "deadline" in by_connector["blocked"].errors[0]
-    assert all(not by_connector[name].skipped and not by_connector[name].incomplete for name in
-               ("stagger", "in-flight", "queued"))
+    assert all(
+        not by_connector[name].skipped and not by_connector[name].incomplete
+        for name in ("stagger", "in-flight", "queued")
+    )
 
 
 def test_queued_siblings_are_incomplete_if_all_workers_remain_stuck(monkeypatch):
@@ -237,9 +263,13 @@ def test_queued_siblings_are_incomplete_if_all_workers_remain_stuck(monkeypatch)
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
     _warm_engine_prelude()
-    cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem", label=label) for label in
-                                 ("blocked-1", "blocked-2", "queued")],
-                     parallel=2, connector_timeout_seconds=CONNECTOR_DEADLINE)
+    cfg = ScanConfig(
+        connectors=[
+            ConnectorSpec("code.filesystem", label=label) for label in ("blocked-1", "blocked-2", "queued")
+        ],
+        parallel=2,
+        connector_timeout_seconds=CONNECTOR_DEADLINE,
+    )
     try:
         result = Engine(cfg, SignatureIndex([])).run()
         # Sampled before the release: the engine must not wait for either held worker.
@@ -285,8 +315,10 @@ def test_broken_plugin_metadata_does_not_hide_later_plugins(monkeypatch):
 
 
 def test_ambiguous_plugin_names_never_depend_on_installation_order(monkeypatch):
-    entries = [SimpleNamespace(name="cloud.reviewed", value=value) for value in
-               ["reviewed:Connector", "other:Connector", "reviewed:Connector"]]
+    entries = [
+        SimpleNamespace(name="cloud.reviewed", value=value)
+        for value in ["reviewed:Connector", "other:Connector", "reviewed:Connector"]
+    ]
     monkeypatch.setattr(registry, "entry_points", lambda **kwargs: entries)
     assert "cloud.reviewed" not in registry.available_connectors()
     assert "code.filesystem" in registry.available_connectors()
@@ -307,11 +339,18 @@ def test_incremental_lock_contention_does_not_wait_or_replace_cache(tmp_path):
     cache_path = cache.directory / f"{snapshot.slot}.json"
     original = cache_path.read_bytes()
     lock_path = cache.directory / f"{snapshot.slot}.lock"
-    process = subprocess.Popen([
-        sys.executable, "-c",
-        "import fcntl,sys; f=open(sys.argv[1],'r+'); fcntl.flock(f,fcntl.LOCK_EX); "
-        "print('locked',flush=True); sys.stdin.read(1)", str(lock_path),
-    ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import fcntl,sys; f=open(sys.argv[1],'r+'); fcntl.flock(f,fcntl.LOCK_EX); "
+            "print('locked',flush=True); sys.stdin.read(1)",
+            str(lock_path),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
     try:
         assert process.stdout.readline().strip() == "locked"
         before = time.monotonic()
@@ -330,6 +369,7 @@ def test_incremental_lock_symlink_is_rejected(tmp_path):
     cfg = ScanConfig(incremental=True, state_dir=str(tmp_path / "state"))
     cache = IncrementalCache(cfg, SignatureIndex([]))
     from shadowscan.incremental import Snapshot
+
     snapshot = Snapshot("a" * 64, "b" * 64)
     target = tmp_path / "target"
     target.write_text("unchanged")
@@ -362,6 +402,7 @@ def test_completed_future_after_deadline_cannot_report_success(monkeypatch):
 
 def test_cache_cannot_publish_after_deadline(tmp_path):
     from shadowscan.incremental import Snapshot
+
     cfg = ScanConfig(incremental=True, state_dir=str(tmp_path / "state"))
     cache = IncrementalCache(cfg, SignatureIndex([]))
     snapshot = Snapshot("a" * 64, "b" * 64)
@@ -374,25 +415,36 @@ def test_cache_cannot_publish_after_deadline(tmp_path):
             raise ConnectorError("connector completion deadline exceeded")
 
     with pytest.raises(ConnectorError, match="deadline"):
-        cache.save(snapshot, [], ScanStats(connector="test", started_at=now_iso()), check_deadline=check_deadline)
+        cache.save(
+            snapshot, [], ScanStats(connector="test", started_at=now_iso()), check_deadline=check_deadline
+        )
     assert calls == 2
     assert not (cache.directory / f"{snapshot.slot}.json").exists()
     assert not list(cache.directory.glob(".pending-*"))
 
 
 def test_gcp_credentials_file_is_relative_to_scan_config(tmp_path):
-    config = ScanConfig.from_dict({"connectors": [{"name": "cloud.gcp", "credentials_file": "adc.json"}]},
-                                  source=str(tmp_path / "scan.yaml"))
+    config = ScanConfig.from_dict(
+        {"connectors": [{"name": "cloud.gcp", "credentials_file": "adc.json"}]},
+        source=str(tmp_path / "scan.yaml"),
+    )
     assert config.connectors[0].config["credentials_file"] == str(tmp_path / "adc.json")
 
 
 def test_cli_applies_explicit_credential_and_deadline_options(monkeypatch):
     received = []
     monkeypatch.setattr("shadowscan.cli._run_and_emit", lambda cfg, *args, **kwargs: received.append(cfg))
-    result = CliRunner().invoke(main, [
-        "run", "cloud.aws", "--allow-instance-credentials", "--allow-credential-mixing",
-        "--connector-timeout-seconds", "2.5",
-    ])
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "cloud.aws",
+            "--allow-instance-credentials",
+            "--allow-credential-mixing",
+            "--connector-timeout-seconds",
+            "2.5",
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert received[0].allow_instance_credentials is True
     assert received[0].allow_credential_mixing is True
@@ -403,21 +455,28 @@ def test_cli_retains_yaml_approvals_unless_explicitly_denied(monkeypatch, tmp_pa
     received = []
     monkeypatch.setattr("shadowscan.cli._run_and_emit", lambda cfg, *args, **kwargs: received.append(cfg))
     path = tmp_path / "scan.yaml"
-    path.write_text("options:\n  allow_instance_credentials: true\n  allow_credential_mixing: true\n"
-                    "  connector_timeout_seconds: 600\nconnectors: [cloud.aws]\n")
+    path.write_text(
+        "options:\n  allow_instance_credentials: true\n  allow_credential_mixing: true\n"
+        "  connector_timeout_seconds: 600\nconnectors: [cloud.aws]\n"
+    )
     runner = CliRunner()
     assert runner.invoke(main, ["scan", "--config", str(path)]).exit_code == 0
     assert received[-1].allow_instance_credentials and received[-1].allow_credential_mixing
     assert received[-1].connector_timeout_seconds == 600
-    assert runner.invoke(main, ["scan", "--config", str(path), "--deny-instance-credentials",
-                                "--deny-credential-mixing"]).exit_code == 0
+    assert (
+        runner.invoke(
+            main, ["scan", "--config", str(path), "--deny-instance-credentials", "--deny-credential-mixing"]
+        ).exit_code
+        == 0
+    )
     assert not received[-1].allow_instance_credentials and not received[-1].allow_credential_mixing
 
 
 @pytest.mark.parametrize("account_id", ["012345678901", "123456789012"])
 def test_set_preserves_account_id_lexical_form(account_id):
     assert parse_set_options([f"account_id={account_id}", "cloudtrail_days=3"]) == {
-        "account_id": account_id, "cloudtrail_days": 3,
+        "account_id": account_id,
+        "cloudtrail_days": 3,
     }
 
 

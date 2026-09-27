@@ -107,9 +107,7 @@ def test_realistic_corpus_has_multi_file_cases_and_documented_gaps():
             assert "Known gap:" in case.description
         if case.family == "secret" and not case.present:
             assert case.assertions.get("max_secret_findings") == 0
-    assert {"readme-key-rotation-tutorial"} <= {
-        c.id for c in cases if c.known_gap
-    }
+    assert {"readme-key-rotation-tutorial"} <= {c.id for c in cases if c.known_gap}
 
 
 def test_counts_have_explicit_undefined_denominators():
@@ -341,7 +339,9 @@ def _acceptance_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
             "id": "active-graph",
             "family": "agent",
             "description": "Active graph construction",
-            "files": {"agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# separately selected acceptance case\n"},
+            "files": {
+                "agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# separately selected acceptance case\n"
+            },
             "target": {"kind": "agent", "signature": "framework.langgraph"},
             "present": True,
         }
@@ -373,7 +373,11 @@ def _acceptance_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
                 {
                     "id": reviewer,
                     "labels": [
-                        {"case_id": case["id"], "present": case["present"], "reason": "Reviewed the source fixture before scoring."}
+                        {
+                            "case_id": case["id"],
+                            "present": case["present"],
+                            "reason": "Reviewed the source fixture before scoring.",
+                        }
                         for case in data["cases"]
                     ],
                 }
@@ -399,7 +403,16 @@ def test_external_adjudicated_acceptance_gate_and_private_summary(tmp_path: Path
     assert report["groups"]["agent"]["counts"]["tn"] == 2
     assert report["groups"]["all"]["lower95"]["recall"] > 0.2
     output = tmp_path / "private.json"
-    args = ["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations), "--output", str(output)]
+    args = [
+        "--corpus",
+        str(corpus),
+        "--policy",
+        str(policy),
+        "--annotations",
+        str(annotations),
+        "--output",
+        str(output),
+    ]
     assert acceptance_main(args) == 0
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
     assert acceptance_main(args) == 2  # refuse to overwrite an audit artifact
@@ -410,16 +423,25 @@ def test_acceptance_rejects_mismatched_digest_synthetic_labels_and_missing_group
     data = json.loads(policy.read_text())
     data["corpus_sha256"] = "0" * 64
     _write(policy, data)
-    assert acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)]) == 2
+    assert (
+        acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)])
+        == 2
+    )
     data["corpus_sha256"] = hashlib.sha256(corpus.read_bytes()).hexdigest()
     del data["groups"]["agent"]
     _write(policy, data)
-    assert acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)]) == 2
+    assert (
+        acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)])
+        == 2
+    )
     _write(policy, {**data, "groups": {"all": data["groups"]["all"], "agent": data["groups"]["all"]}})
     labels = json.loads(corpus.read_text())
     labels["metadata"]["type"] = "synthetic"
     _write(corpus, labels)
-    assert acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)]) == 2
+    assert (
+        acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)])
+        == 2
+    )
 
 
 def test_acceptance_fails_when_bound_or_case_floor_is_not_met(tmp_path: Path):
@@ -433,7 +455,10 @@ def test_acceptance_fails_when_bound_or_case_floor_is_not_met(tmp_path: Path):
     assert report["passed"] is False
     assert any("recall lower95" in item for item in report["groups"]["agent"]["failures"])
     assert any("positive_cases" in item for item in report["groups"]["agent"]["failures"])
-    assert acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)]) == 1
+    assert (
+        acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)])
+        == 1
+    )
 
 
 def test_acceptance_uses_predeclared_error_budget_instead_of_perfect_labels(tmp_path: Path, monkeypatch):
@@ -444,7 +469,9 @@ def test_acceptance_uses_predeclared_error_budget_instead_of_perfect_labels(tmp_
             "id": "missed-graph",
             "family": "agent",
             "description": "Active graph construction with simulated missed observation",
-            "files": {"missed.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# distinct missed acceptance case\n"},
+            "files": {
+                "missed.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# distinct missed acceptance case\n"
+            },
             "target": {"kind": "agent", "signature": "framework.langgraph"},
             "present": True,
         }
@@ -454,7 +481,11 @@ def test_acceptance_uses_predeclared_error_budget_instead_of_perfect_labels(tmp_
     ledger["corpus_sha256"] = hashlib.sha256(corpus.read_bytes()).hexdigest()
     for reviewer in ledger["reviewers"]:
         reviewer["labels"].append(
-            {"case_id": "missed-graph", "present": True, "reason": "Reviewed the source fixture before scoring."}
+            {
+                "case_id": "missed-graph",
+                "present": True,
+                "reason": "Reviewed the source fixture before scoring.",
+            }
         )
     _write(annotations, ledger)
     data = json.loads(policy.read_text())
@@ -483,7 +514,10 @@ def test_acceptance_rejects_nonpositive_or_ambiguous_bounds(tmp_path: Path, bad_
     data = json.loads(policy.read_text())
     data["groups"]["all"]["min_precision_lower95"] = bad_value
     _write(policy, data)
-    assert acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)]) == 2
+    assert (
+        acceptance_main(["--corpus", str(corpus), "--policy", str(policy), "--annotations", str(annotations)])
+        == 2
+    )
 
 
 def test_acceptance_checks_method_on_the_evaluated_ledger(tmp_path: Path, monkeypatch):
@@ -493,10 +527,14 @@ def test_acceptance_checks_method_on_the_evaluated_ledger(tmp_path: Path, monkey
     module = importlib.import_module("tools.evaluation.accept")
     digest = hashlib.sha256(corpus.read_bytes()).hexdigest()
     # A ledger replaced after human-method preflight must not get human status.
-    monkeypatch.setattr(module, "evaluate", lambda *args, **kwargs: {
-        "corpus": {"sha256": digest},
-        "annotation_validation": {"method": "independent-ai-double-label-before-scan"},
-    })
+    monkeypatch.setattr(
+        module,
+        "evaluate",
+        lambda *args, **kwargs: {
+            "corpus": {"sha256": digest},
+            "annotation_validation": {"method": "independent-ai-double-label-before-scan"},
+        },
+    )
     with pytest.raises(CorpusError, match="evaluated ledger"):
         accept(corpus, policy, annotations)
 
@@ -505,7 +543,10 @@ def test_acceptance_annotation_preflight_is_bounded(tmp_path: Path):
     from tools.evaluation.annotations import MAX_ANNOTATION_BYTES
 
     corpus, policy, annotations = _acceptance_inputs(tmp_path)
-    annotations.write_text('{"method":"independent-human-double-label-before-scan","padding":"' +
-                           'x' * MAX_ANNOTATION_BYTES + '"}')
+    annotations.write_text(
+        '{"method":"independent-human-double-label-before-scan","padding":"'
+        + "x" * MAX_ANNOTATION_BYTES
+        + '"}'
+    )
     with pytest.raises(CorpusError, match="annotations"):
         accept(corpus, policy, annotations)

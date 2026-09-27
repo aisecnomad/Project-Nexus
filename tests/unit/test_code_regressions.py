@@ -17,14 +17,18 @@ from shadowscan.models import Kind, ScanStats
 
 
 def test_generic_server_urls_are_not_mcp_configs(tmp_path: Path, run_connector):
-    (tmp_path / "settings.json").write_text(json.dumps({"servers": {"prod": {"url": "https://api.example.test"}}}))
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"servers": {"prod": {"url": "https://api.example.test"}}})
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert not [f for f in findings if f.kind == Kind.MCP_SERVER or "protocol.mcp" in f.frameworks]
 
 
 def test_explicit_mcp_servers_remain_detected(tmp_path: Path, run_connector):
-    (tmp_path / "mcp.json").write_text(json.dumps({"servers": {"prod": {"url": "https://api.example.test/mcp"}}}))
+    (tmp_path / "mcp.json").write_text(
+        json.dumps({"servers": {"prod": {"url": "https://api.example.test/mcp"}}})
+    )
     findings, _ = run_connector("code.filesystem", path=str(tmp_path))
     assert [f.metadata["servers"][0]["name"] for f in findings if f.kind == Kind.MCP_SERVER] == ["prod"]
 
@@ -36,7 +40,9 @@ def test_vcs_egg_fragments_and_editable_dependencies():
         "langchain>=0.3 # explanatory comment\n"
     )
     assert {(dep.name, dep.line) for dep in result.deps} == {
-        ("crewai", 1), ("langgraph", 2), ("langchain", 3)
+        ("crewai", 1),
+        ("langgraph", 2),
+        ("langchain", 3),
     }
 
 
@@ -94,27 +100,47 @@ def test_codeowners_later_ownerless_rule_clears_owner(tmp_path: Path, run_connec
 
 def test_group_variables_keep_all_names_in_one_finding(index):
     connector = GitLabConnector(ConnectorContext(index=index))
-    findings = list(connector.analyze([
-        _GitLabMetadata("group_variable", {"group": "team", "key": "OPENAI_API_KEY", "masked": True}),
-        _GitLabMetadata("group_variable", {"group": "team", "key": "ANTHROPIC_API_KEY", "masked": False}),
-        _GitLabMetadata("group_variables", {"group": "team", "variables": [
-            {"key": "GEMINI_API_KEY", "masked": True},
-            {"key": 42, "masked": False},
-        ]}),
-    ]))
+    findings = list(
+        connector.analyze(
+            [
+                _GitLabMetadata("group_variable", {"group": "team", "key": "OPENAI_API_KEY", "masked": True}),
+                _GitLabMetadata(
+                    "group_variable", {"group": "team", "key": "ANTHROPIC_API_KEY", "masked": False}
+                ),
+                _GitLabMetadata(
+                    "group_variables",
+                    {
+                        "group": "team",
+                        "variables": [
+                            {"key": "GEMINI_API_KEY", "masked": True},
+                            {"key": 42, "masked": False},
+                        ],
+                    },
+                ),
+            ]
+        )
+    )
     assert len(findings) == 1
     assert set(findings[0].metadata["variable_names"]) == {
-        "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
     }
     assert "unmasked-ci-variable" in findings[0].tags
 
 
 def test_group_collection_redacts_all_variable_values(index):
     connector = GitLabConnector(ConnectorContext(index=index))
-    connector._optional_list = Mock(side_effect=[[], [], [
-        {"key": "OPENAI_API_KEY", "value": "synthetic-secret-1"},
-        {"key": "ANTHROPIC_API_KEY", "value": "synthetic-secret-2"},
-    ]])
+    connector._optional_list = Mock(
+        side_effect=[
+            [],
+            [],
+            [
+                {"key": "OPENAI_API_KEY", "value": "synthetic-secret-1"},
+                {"key": "ANTHROPIC_API_KEY", "value": "synthetic-secret-2"},
+            ],
+        ]
+    )
     connector.http = Mock()
     connector.http.try_get_json.return_value = {}
     records = list(connector._group_identities("team"))
@@ -137,8 +163,7 @@ def test_explicit_repository_caps_are_enforced(cls, key, records, identity, inde
     connector = cls(ctx)
     connector.http = Mock()
     connector.http.try_get_json.return_value = (
-        {identity: "acme/one"} if cls is GitHubConnector
-        else {identity: 1, "path_with_namespace": "acme/one"}
+        {identity: "acme/one"} if cls is GitHubConnector else {identity: 1, "path_with_namespace": "acme/one"}
     )
     assert len(list(connector.collect())) == 1
     assert connector.http.try_get_json.call_count == 1
@@ -148,10 +173,12 @@ def test_explicit_repository_caps_are_enforced(cls, key, records, identity, inde
 def test_github_wrong_explicit_repository_does_not_hide_valid_neighbor(index, fixtures, monkeypatch):
     ctx = ConnectorContext(config={"repos": ["acme/agent", "acme/valid"], "use_git": False}, index=index)
     connector = GitHubConnector(ctx)
-    connector.http.try_get_json = Mock(side_effect=[
-        {"full_name": "acme/other"},
-        {"full_name": "acme/valid", "owner": {"login": "acme"}},
-    ])
+    connector.http.try_get_json = Mock(
+        side_effect=[
+            {"full_name": "acme/other"},
+            {"full_name": "acme/valid", "owner": {"login": "acme"}},
+        ]
+    )
     fetch = Mock(return_value=str(fixtures / "sample_repo"))
     monkeypatch.setattr(connector, "_fetch_repo", fetch)
     monkeypatch.setattr(connector, "_repo_level_findings", lambda _repo: iter(()))
@@ -165,10 +192,16 @@ def test_github_wrong_explicit_repository_does_not_hide_valid_neighbor(index, fi
     assert any("does not match the requested name" in warning for warning in ctx.stats.warnings)
 
 
-@pytest.mark.parametrize("response", [
-    {"full_name": "acme/other"}, {"full_name": "acme/agent/extra"},
-    {"full_name": []}, {"name": "agent"}, ["acme/agent"],
-])
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"full_name": "acme/other"},
+        {"full_name": "acme/agent/extra"},
+        {"full_name": []},
+        {"name": "agent"},
+        ["acme/agent"],
+    ],
+)
 def test_github_invalid_explicit_repository_response_marks_incomplete(response, index):
     ctx = ConnectorContext(config={"repos": ["acme/agent"]}, index=index)
     ctx.stats = ScanStats(connector="code.github", started_at="2026-01-01T00:00:00Z")
@@ -191,10 +224,18 @@ def test_github_explicit_repository_accepts_case_insensitive_identity(index):
     assert not ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("response", [
-    {}, None, [], {"id": 7}, {"id": 0, "path_with_namespace": "acme/agent"},
-    {"id": 7, "path_with_namespace": " "}, {"id": True, "path_with_namespace": "acme/agent"},
-])
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        None,
+        [],
+        {"id": 7},
+        {"id": 0, "path_with_namespace": "acme/agent"},
+        {"id": 7, "path_with_namespace": " "},
+        {"id": True, "path_with_namespace": "acme/agent"},
+    ],
+)
 def test_gitlab_malformed_explicit_project_response_marks_scan_incomplete(response, index):
     ctx = ConnectorContext(config={"projects": ["acme/agent"]}, index=index)
     ctx.stats = ScanStats(connector="code.gitlab", started_at="2026-01-01T00:00:00Z")
@@ -228,10 +269,12 @@ def test_gitlab_invalid_explicit_response_does_not_hide_valid_project(index, fix
 def test_gitlab_wrong_explicit_project_does_not_hide_valid_neighbor(index, fixtures, monkeypatch):
     ctx = ConnectorContext(config={"projects": ["acme/agent", "acme/valid"], "use_git": False}, index=index)
     connector = GitLabConnector(ctx)
-    connector.http.try_get_json = Mock(side_effect=[
-        {"id": 7, "path_with_namespace": "acme/other"},
-        {"id": 8, "path_with_namespace": "acme/valid"},
-    ])
+    connector.http.try_get_json = Mock(
+        side_effect=[
+            {"id": 7, "path_with_namespace": "acme/other"},
+            {"id": 8, "path_with_namespace": "acme/valid"},
+        ]
+    )
     fetch = Mock(return_value=str(fixtures / "sample_repo"))
     monkeypatch.setattr(connector, "_fetch", fetch)
     monkeypatch.setattr(connector, "_project_level", lambda _project: iter(()))
@@ -245,11 +288,14 @@ def test_gitlab_wrong_explicit_project_does_not_hide_valid_neighbor(index, fixtu
     assert any("does not match the requested path or id" in warning for warning in ctx.stats.warnings)
 
 
-@pytest.mark.parametrize("requested,response", [
-    ("Acme/Agent", {"id": 7, "path_with_namespace": "acme/agent"}),
-    ("7", {"id": 7, "path_with_namespace": "acme/agent"}),
-    ("007", {"id": 7, "path_with_namespace": "acme/agent"}),
-])
+@pytest.mark.parametrize(
+    "requested,response",
+    [
+        ("Acme/Agent", {"id": 7, "path_with_namespace": "acme/agent"}),
+        ("7", {"id": 7, "path_with_namespace": "acme/agent"}),
+        ("007", {"id": 7, "path_with_namespace": "acme/agent"}),
+    ],
+)
 def test_gitlab_explicit_project_accepts_case_and_numeric_id(requested, response, index):
     ctx = ConnectorContext(config={"projects": [requested]}, index=index)
     ctx.stats = ScanStats(connector="code.gitlab", started_at="2026-01-01T00:00:00Z")
@@ -294,7 +340,9 @@ def test_offline_repo_caps_mark_partial_coverage(tmp_path: Path, connector: str,
 
 @pytest.mark.parametrize("connector", ["code.github", "code.gitlab"])
 @pytest.mark.parametrize("file_only", [False, True], ids=["empty-root", "files-without-clones"])
-def test_empty_offline_clone_input_marks_scan_incomplete(tmp_path: Path, connector: str, file_only: bool, run_connector):
+def test_empty_offline_clone_input_marks_scan_incomplete(
+    tmp_path: Path, connector: str, file_only: bool, run_connector
+):
     if file_only:
         (tmp_path / "README.md").write_text("No checkout was exported here.\n")
     findings, ctx = run_connector(connector, input=str(tmp_path), use_git=False)

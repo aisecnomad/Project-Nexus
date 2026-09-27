@@ -22,6 +22,14 @@ install-hooks: ## Install pre-commit hooks
 lint: ## Run ruff linter
 	ruff check shadowscan tests tools
 
+.PHONY: format
+format: ## Run ruff formatter
+	ruff format shadowscan tests tools
+
+.PHONY: format-check
+format-check: ## Check ruff formatting without changes
+	ruff format --check shadowscan tests tools
+
 .PHONY: typecheck
 typecheck: ## Run mypy type checker
 	mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
@@ -59,7 +67,7 @@ evaluate: ## Run the bundled detection regression corpora
 
 .PHONY: check
 .NOTPARALLEL: check
-check: lint typecheck signatures audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
+check: lint format-check typecheck signatures audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
 
 # --- Build -----------------------------------------------------------------

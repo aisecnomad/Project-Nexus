@@ -21,14 +21,27 @@ from shadowscan.signatures.loader import load_signature_file, load_signatures
 
 
 def _finding(resource: str) -> Finding:
-    return Finding(Surface.CLOUD, "cloud.aws", Kind.AGENT, "Agent", resource, "agent",
-                   provider="aws", account="123456789012")
+    return Finding(
+        Surface.CLOUD,
+        "cloud.aws",
+        Kind.AGENT,
+        "Agent",
+        resource,
+        "agent",
+        provider="aws",
+        account="123456789012",
+    )
 
 
-@pytest.mark.parametrize("resource,other", [
-    ("agent[12]", "agent1"), ("agent*", "agent-anything"),
-    ("agent?", "agent1"), ("agent[*?]", "agent*"),
-])
+@pytest.mark.parametrize(
+    "resource,other",
+    [
+        ("agent[12]", "agent1"),
+        ("agent*", "agent-anything"),
+        ("agent?", "agent1"),
+        ("agent[*?]", "agent*"),
+    ],
+)
 def test_generated_card_approves_only_literal_resource(tmp_path, resource, other):
     path = tmp_path / "card.yaml"
     path.write_text(yaml.safe_dump(card_stub_for(_finding(resource))))
@@ -77,10 +90,16 @@ def test_plugin_requires_approval_even_after_cached_import(monkeypatch):
         registry.get_connector_class("code.extension", allowed_plugins="code.extension")
 
 
-@pytest.mark.parametrize("name,value", [
-    ("plugins", "code.plugin"), ("plugins", [1]), ("plugins", [""]),
-    ("allow_signature_override", "false"), ("allow_private_origin", 1),
-])
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("plugins", "code.plugin"),
+        ("plugins", [1]),
+        ("plugins", [""]),
+        ("allow_signature_override", "false"),
+        ("allow_private_origin", 1),
+    ],
+)
 def test_security_options_require_explicit_types(name, value):
     with pytest.raises(ValueError, match=name):
         ScanConfig.from_dict({"options": {name: value}})
@@ -90,9 +109,13 @@ def test_security_options_require_explicit_types(name, value):
 
 def test_index_override_authorization_does_not_leak_across_calls(tmp_path):
     path = tmp_path / "override.yaml"
-    path.write_text("id: framework.langchain\nname: Override\ncategory: framework\n"
-                    "signals:\n  - type: dependency\n    names: [custom]\n")
-    assert get_index([str(tmp_path)], allow_override=True).signatures["framework.langchain"].name == "Override"
+    path.write_text(
+        "id: framework.langchain\nname: Override\ncategory: framework\n"
+        "signals:\n  - type: dependency\n    names: [custom]\n"
+    )
+    assert (
+        get_index([str(tmp_path)], allow_override=True).signatures["framework.langchain"].name == "Override"
+    )
     with pytest.raises(ValueError, match="reserved by a built-in"):
         get_index([str(tmp_path)])
 
@@ -128,10 +151,18 @@ def _export_config(tmp_path: Path, *, parallel: int = 2) -> ScanConfig:
     specs = []
     for agent_id in ("FIRST", "SECOND"):
         source = tmp_path / f"{agent_id}.json"
-        source.write_text(json.dumps([{
-            "_kind": "bedrock-agent", "agentId": agent_id, "agentName": agent_id,
-            "agentArn": f"arn:aws:bedrock:us-east-1:123456789012:agent/{agent_id}",
-        }]))
+        source.write_text(
+            json.dumps(
+                [
+                    {
+                        "_kind": "bedrock-agent",
+                        "agentId": agent_id,
+                        "agentName": agent_id,
+                        "agentArn": f"arn:aws:bedrock:us-east-1:123456789012:agent/{agent_id}",
+                    }
+                ]
+            )
+        )
         specs.append(ConnectorSpec("cloud.aws", {"input": str(source)}, label="same/label"))
     return ScanConfig(connectors=specs, dump_records=str(tmp_path / "exports"), parallel=parallel)
 
@@ -156,7 +187,9 @@ def test_repeated_connector_exports_are_distinct_and_private(tmp_path, index, pa
 def test_manifest_does_not_claim_stale_export_after_failure(tmp_path, index):
     config = _export_config(tmp_path, parallel=1)
     assert Engine(config, index).run().complete
-    config.connectors[0].config["max_input_bytes"] = 0  # constructor fails before replacing its previous export
+    config.connectors[0].config["max_input_bytes"] = (
+        0  # constructor fails before replacing its previous export
+    )
     assert not Engine(config, index).run().complete
     manifest = json.loads((Path(config.dump_records) / "manifest.json").read_text())
     failed = manifest["exports"][0]
@@ -189,9 +222,13 @@ def test_manifest_write_failure_marks_scan_incomplete(tmp_path, index, monkeypat
 def test_no_dump_connector_manifest_never_claims_an_export(tmp_path, index):
     import jwt
 
-    token = jwt.encode({"sub": "agent", "agent_id": "agent-one"}, "synthetic-signing-key-only-32-bytes", algorithm="HS256")
-    config = ScanConfig(connectors=[ConnectorSpec("identity.jwt", {"tokens": [token]})],
-                        dump_records=str(tmp_path / "exports"))
+    token = jwt.encode(
+        {"sub": "agent", "agent_id": "agent-one"}, "synthetic-signing-key-only-32-bytes", algorithm="HS256"
+    )
+    config = ScanConfig(
+        connectors=[ConnectorSpec("identity.jwt", {"tokens": [token]})],
+        dump_records=str(tmp_path / "exports"),
+    )
     assert Engine(config, index).run().complete
     manifest = json.loads((Path(config.dump_records) / "manifest.json").read_text())
     assert manifest["exports"][0]["filename"] is None
@@ -214,8 +251,11 @@ def test_engine_propagates_and_restores_private_origin_policy(index, monkeypatch
             yield from ()
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda *args, **kwargs: Probe)
-    config = ScanConfig(connectors=[ConnectorSpec("probe.one"), ConnectorSpec("probe.two")],
-                        allow_private_origin=True, parallel=parallel)
+    config = ScanConfig(
+        connectors=[ConnectorSpec("probe.one"), ConnectorSpec("probe.two")],
+        allow_private_origin=True,
+        parallel=parallel,
+    )
     result = Engine(config, index).run()
     assert not result.complete and observed == [True, True]
     assert http._allow_private_origin.get() is False

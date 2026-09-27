@@ -31,7 +31,7 @@ repos:
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
-      # ruff-format is not adopted yet; most files would be reformatted.
+      - id: ruff-format
 
   # Keep the ruff and mypy revs equal to the pins in requirements-ci-constraints.txt
   # so the hooks run the same versions as CI (tests/test_repository_policy.py checks).

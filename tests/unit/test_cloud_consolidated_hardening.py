@@ -47,15 +47,24 @@ def test_aws_scalar_settings_are_single_items_and_unknown_services_are_rejected(
 
 def test_aws_layer_name_and_ssm_parameter_arn(index):
     connector = AwsConnector(context(index, account_id="123456789012"))
-    finding = connector._h_lambda({
-        "FunctionArn": "arn:aws:lambda:us-east-1:123456789012:function:f", "FunctionName": "f", "_region": "us-east-1",
-        "Layers": ["arn:aws:lambda:us-east-1:123456789012:layer:langchain-deps:4"],
-    })
+    finding = connector._h_lambda(
+        {
+            "FunctionArn": "arn:aws:lambda:us-east-1:123456789012:function:f",
+            "FunctionName": "f",
+            "_region": "us-east-1",
+            "Layers": ["arn:aws:lambda:us-east-1:123456789012:layer:langchain-deps:4"],
+        }
+    )
     assert finding is not None and "framework.langchain" in finding.frameworks
     plain = connector._h_ssm_parameter({"Name": "OPENAI_API_KEY", "_region": "us-east-1"})
     nested = connector._h_ssm_parameter({"Name": "/prod/OPENAI_API_KEY", "_region": "us-east-1"})
-    assert plain is not None and plain.resource == "arn:aws:ssm:us-east-1:123456789012:parameter/OPENAI_API_KEY"
-    assert nested is not None and nested.resource == "arn:aws:ssm:us-east-1:123456789012:parameter/prod/OPENAI_API_KEY"
+    assert (
+        plain is not None and plain.resource == "arn:aws:ssm:us-east-1:123456789012:parameter/OPENAI_API_KEY"
+    )
+    assert (
+        nested is not None
+        and nested.resource == "arn:aws:ssm:us-east-1:123456789012:parameter/prod/OPENAI_API_KEY"
+    )
 
 
 def test_aws_clients_carry_explicit_timeouts(index, monkeypatch):
@@ -89,9 +98,14 @@ def test_azure_scalar_subscription_is_one_subscription(index):
 
 def test_azure_app_settings_are_redacted_in_dumps_but_analyzed_live(index):
     record = {
-        "_kind": "appsettings", "id": "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
-        "name": "app", "kind": "functionapp",
-        "environment": {"OPENAI_API_KEY": "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h", "SENDGRID_KEY": "SG.opaque-value-1234567890"},
+        "_kind": "appsettings",
+        "id": "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
+        "name": "app",
+        "kind": "functionapp",
+        "environment": {
+            "OPENAI_API_KEY": "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h",
+            "SENDGRID_KEY": "SG.opaque-value-1234567890",
+        },
     }
     dumped = sanitize(record)
     assert set(dumped["environment"].values()) == {REDACTED}
@@ -108,13 +122,26 @@ def test_azure_foundry_projects_inherit_subscription_and_location(index, monkeyp
     connector = AzureConnector(context(index, subscriptions="s1"))
     account_id = "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/acc"
     http = Mock()
-    http.post_json.return_value = {"data": [{
-        "id": account_id, "name": "acc", "type": "microsoft.cognitiveservices/accounts", "kind": "AIServices",
-        "location": "eastus", "subscriptionId": "s1", "properties": {},
-    }]}
+    http.post_json.return_value = {
+        "data": [
+            {
+                "id": account_id,
+                "name": "acc",
+                "type": "microsoft.cognitiveservices/accounts",
+                "kind": "AIServices",
+                "location": "eastus",
+                "subscriptionId": "s1",
+                "properties": {},
+            }
+        ]
+    }
 
     def fake_list(path, api, *, allow_partial=False):
-        return [{"id": f"{account_id}/projects/p1", "name": "p1", "properties": {}}] if path.endswith("/projects") else []
+        return (
+            [{"id": f"{account_id}/projects/p1", "name": "p1", "properties": {}}]
+            if path.endswith("/projects")
+            else []
+        )
 
     monkeypatch.setattr(connector, "_auth", lambda: setattr(connector, "http", http))
     monkeypatch.setattr(connector, "_list", fake_list)
@@ -145,7 +172,14 @@ def test_oci_clients_are_cached_per_region_with_timeouts(index):
 
 def test_oci_function_reads_environment_and_legacy_config_keys(index):
     connector = OciConnector(context(index))
-    base = {"id": "ocid1.fnfunc.oc1..fn1", "display_name": "fn", "_region": "r", "_compartment": "c", "_application": "app", "image": "ollama/ollama:latest"}
+    base = {
+        "id": "ocid1.fnfunc.oc1..fn1",
+        "display_name": "fn",
+        "_region": "r",
+        "_compartment": "c",
+        "_application": "app",
+        "image": "ollama/ollama:latest",
+    }
     current = connector._h_function({**base, "environment": {"OPENAI_API_KEY": "x"}})
     legacy = connector._h_function({**base, "config": {"OPENAI_API_KEY": "x"}})
     assert current is not None and legacy is not None
@@ -164,12 +198,15 @@ def test_gcp_and_oci_scalar_scope_does_not_expand_to_characters(index):
     assert oci.regions == ["us-ashburn-1"]
 
 
-@pytest.mark.parametrize("connector,config", [
-    (GcpConnector, {"locations": "evil.example/path"}),
-    (GcpConnector, {"projects": "project/../../elsewhere"}),
-    (OciConnector, {"regions": 42}),
-    (AwsConnector, {"regions": ["all", "us-east-1"]}),
-])
+@pytest.mark.parametrize(
+    "connector,config",
+    [
+        (GcpConnector, {"locations": "evil.example/path"}),
+        (GcpConnector, {"projects": "project/../../elsewhere"}),
+        (OciConnector, {"regions": 42}),
+        (AwsConnector, {"regions": ["all", "us-east-1"]}),
+    ],
+)
 def test_malformed_cloud_scope_is_rejected_before_authentication(index, connector, config):
     with pytest.raises(ConnectorError):
         connector(context(index, **config))
@@ -185,10 +222,17 @@ def test_azure_invalid_or_failed_appsettings_preserves_later_resources(index, fa
     connector._auth = Mock()
     connector._list = Mock(return_value=[])
     connector.http = Mock()
-    rows = [{"id": f"/subscriptions/s1/providers/Microsoft.Web/sites/{name}", "type": "microsoft.web/sites", "name": name}
-            for name in ("failed", "good")]
+    rows = [
+        {
+            "id": f"/subscriptions/s1/providers/Microsoft.Web/sites/{name}",
+            "type": "microsoft.web/sites",
+            "name": name,
+        }
+        for name in ("failed", "good")
+    ]
     connector.http.post_json.side_effect = [
-        {"data": rows}, failed,
+        {"data": rows},
+        failed,
         {"properties": {"OPENAI_API_KEY": "sk-proj-" + "b" * 40, "CUSTOM": "opaque-secret-value"}},
     ]
     records = list(connector.collect())
@@ -205,11 +249,19 @@ def test_oci_function_collection_dumps_withhold_opaque_config_values(index):
     connector = OciConnector(context(index))
     connector._d = lambda obj: obj
     client = Mock()
-    client.list_applications.return_value = SimpleNamespace(data=[{"id": "app", "display_name": "app"}], has_next_page=False)
-    client.list_functions.return_value = SimpleNamespace(data=[{"id": "fn", "display_name": "fn"}], has_next_page=False)
-    client.get_application.return_value = SimpleNamespace(data={"id": "app", "config": {"INHERITED": "opaque-app-secret"}})
-    client.get_function.return_value = SimpleNamespace(data={"id": "fn", "config": {"ARBITRARY": "opaque-function-secret"}})
-    record, = connector._collect_functions(client, "r", "c")
+    client.list_applications.return_value = SimpleNamespace(
+        data=[{"id": "app", "display_name": "app"}], has_next_page=False
+    )
+    client.list_functions.return_value = SimpleNamespace(
+        data=[{"id": "fn", "display_name": "fn"}], has_next_page=False
+    )
+    client.get_application.return_value = SimpleNamespace(
+        data={"id": "app", "config": {"INHERITED": "opaque-app-secret"}}
+    )
+    client.get_function.return_value = SimpleNamespace(
+        data={"id": "fn", "config": {"ARBITRARY": "opaque-function-secret"}}
+    )
+    (record,) = connector._collect_functions(client, "r", "c")
     assert "config" not in record
     assert set(sanitize(record)["environment"].values()) == {REDACTED}
     assert not connector.ctx.stats.incomplete
@@ -218,7 +270,11 @@ def test_oci_function_collection_dumps_withhold_opaque_config_values(index):
 @pytest.mark.parametrize("keys", [None, [], {"error": {}}, {"keys": None}, {"keys": [1]}])
 def test_gcp_unknown_key_inventory_is_not_zero_keys(index, keys):
     connector = GcpConnector(context(index, projects="project-one"))
-    account = {"name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com", "email": "crew@project-one.iam.gserviceaccount.com", "displayName": "n8n agent runner"}
+    account = {
+        "name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com",
+        "email": "crew@project-one.iam.gserviceaccount.com",
+        "displayName": "n8n agent runner",
+    }
     connector._pages = lambda url, *a, **kw: iter([account]) if url.endswith("/serviceAccounts") else iter([])
     connector._get = Mock(return_value=keys)
     connector.http = Mock()
@@ -236,7 +292,10 @@ def test_gcp_unknown_key_inventory_is_not_zero_keys(index, keys):
 @pytest.mark.parametrize("keys,count", [({}, 0), ({"keys": []}, 0), ({"keys": [{"name": "key-one"}]}, 1)])
 def test_gcp_observed_key_inventory_keeps_true_count(index, keys, count):
     connector = GcpConnector(context(index))
-    account = {"name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com", "displayName": "CrewAI agent runner"}
+    account = {
+        "name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com",
+        "displayName": "CrewAI agent runner",
+    }
     connector._pages = lambda url, *a, **kw: iter([account]) if url.endswith("/serviceAccounts") else iter([])
     connector._get = Mock(return_value=keys)
     connector.http = Mock()

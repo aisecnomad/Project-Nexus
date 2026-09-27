@@ -116,7 +116,7 @@ def test_gateway_overflow_is_atomic_and_keeps_later_callers(index):
 
 def test_gateway_json_lines_recover_after_corrupt_first_row(index, tmp_path):
     source = tmp_path / "gateway.json"
-    source.write_text('{broken\n' + json.dumps({"api_key": "a", "model": "gpt-4o", "spend": 1}) + '\n')
+    source.write_text("{broken\n" + json.dumps({"api_key": "a", "model": "gpt-4o", "spend": 1}) + "\n")
     ctx = context(index, input=str(source), format="litellm")
     findings = GatewayLogConnector(ctx).run()
     assert len(findings) == 1 and findings[0].metadata["events"] == 1
@@ -143,7 +143,7 @@ def test_gateway_distribution_limit_reports_lost_classification_and_owner(index,
     # Previously retained labels must keep accumulating after the limit.
     values.append(("unknown-a", "a"))
     records = [{"api_key": "one", "model": model, "user": user} for model, user in values]
-    finding, = list(GatewayLogConnector(ctx).analyze(records))
+    (finding,) = list(GatewayLogConnector(ctx).analyze(records))
     assert finding.metadata["events"] == 8
     assert finding.metadata["distribution_events_dropped"] == {"models": 5, "end_users": 5}
     assert finding.metadata["models"] == {"unknown-a": 2, "unknown-b": 1}
@@ -161,22 +161,53 @@ def test_gateway_all_distribution_limits_count_omitted_requests_without_labels(i
     callers = {}
     for n in range(5):
         event = Event(
-            "principal:worker", "principal", "worker", request_count=10,
-            model=f"model-{n}", provider=f"provider-{n}", host=f"host-{n}.example",
-            user_agent=f"agent-{n}", ip=f"10.0.0.{n}", user=f"user-{n}",
-            team=f"team-{n}", path=f"/operation-{n}",
+            "principal:worker",
+            "principal",
+            "worker",
+            request_count=10,
+            model=f"model-{n}",
+            provider=f"provider-{n}",
+            host=f"host-{n}.example",
+            user_agent=f"agent-{n}",
+            ip=f"10.0.0.{n}",
+            user=f"user-{n}",
+            team=f"team-{n}",
+            path=f"/operation-{n}",
         )
         GatewayLogConnector._accumulate(callers, event)
     caller = next(iter(callers.values()))
     finding = GatewayLogConnector(context(index))._finding(caller)
-    dimensions = ("models", "providers", "hosts", "user_agents", "source_ips", "end_users", "teams", "operations")
+    dimensions = (
+        "models",
+        "providers",
+        "hosts",
+        "user_agents",
+        "source_ips",
+        "end_users",
+        "teams",
+        "operations",
+    )
     assert finding.metadata["distribution_events_dropped"] == dict.fromkeys(dimensions, 30)
     assert finding.metadata["events"] == 50
-    assert all(len(getattr(caller, attr)) == 2 for attr in (
-        "models", "providers", "hosts", "user_agents", "ips", "users", "teams", "paths",
-    ))
+    assert all(
+        len(getattr(caller, attr)) == 2
+        for attr in (
+            "models",
+            "providers",
+            "hosts",
+            "user_agents",
+            "ips",
+            "users",
+            "teams",
+            "paths",
+        )
+    )
     for dimension in dimensions:
-        assert sum(finding.metadata[dimension].values()) + finding.metadata["distribution_events_dropped"][dimension] == 50
+        assert (
+            sum(finding.metadata[dimension].values())
+            + finding.metadata["distribution_events_dropped"][dimension]
+            == 50
+        )
     assert finding.owner is None
     assert finding.metadata["classification_incomplete"] is True
 
@@ -191,19 +222,41 @@ def test_gateway_final_matching_timeout_preserves_other_callers(index, monkeypat
 
     monkeypatch.setattr(index, "match_model", match)
     ctx = context(index, format="generic")
-    findings = list(GatewayLogConnector(ctx).analyze([
-        {"service": "a", "model": "bad-model"},
-        {"service": "b", "model": "gpt-4o"},
-    ]))
+    findings = list(
+        GatewayLogConnector(ctx).analyze(
+            [
+                {"service": "a", "model": "bad-model"},
+                {"service": "b", "model": "gpt-4o"},
+            ]
+        )
+    )
     assert len(findings) == 1 and findings[0].metadata["caller"] == "b"
     assert ctx.stats.incomplete
     assert any("custom.pattern" in warning for warning in ctx.stats.warnings)
 
 
-@pytest.mark.parametrize("connector_class,method,records", [
-    (Auth0Connector, "_client_finding", [{"client_id": "a"}, {"client_id": "b", "app_type": "non_interactive"}]),
-    (OktaConnector, "_app_finding", [{"id": "a"}, {"id": "b", "signOnMode": "OPENID_CONNECT", "settings": {"oauthClient": {"application_type": "service"}}}]),
-])
+@pytest.mark.parametrize(
+    "connector_class,method,records",
+    [
+        (
+            Auth0Connector,
+            "_client_finding",
+            [{"client_id": "a"}, {"client_id": "b", "app_type": "non_interactive"}],
+        ),
+        (
+            OktaConnector,
+            "_app_finding",
+            [
+                {"id": "a"},
+                {
+                    "id": "b",
+                    "signOnMode": "OPENID_CONNECT",
+                    "settings": {"oauthClient": {"application_type": "service"}},
+                },
+            ],
+        ),
+    ],
+)
 def test_identity_match_timeout_is_isolated(index, monkeypatch, connector_class, method, records):
     ctx = context(index)
     connector = connector_class(ctx)

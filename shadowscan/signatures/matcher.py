@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from bisect import bisect_left, bisect_right
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
@@ -38,7 +38,9 @@ class MatchTimeoutError(RuntimeError):
 
 def _remaining_timeout() -> float:
     deadline = _SCAN_DEADLINE.get()
-    remaining = REGEX_TIMEOUT_SECONDS if deadline is None else min(REGEX_TIMEOUT_SECONDS, deadline - time.monotonic())
+    remaining = (
+        REGEX_TIMEOUT_SECONDS if deadline is None else min(REGEX_TIMEOUT_SECONDS, deadline - time.monotonic())
+    )
     if remaining <= 0:
         raise MatchTimeoutError("signature matching exceeded the input execution budget")
     return remaining
@@ -65,6 +67,7 @@ def _run_regex(operation: Callable[[float], Any], context: str, *, max_seconds: 
     subject to the same cumulative CPU and active per-input wall deadlines.
     Genuine expensive matching and repeated contention still fail closed.
     """
+
     def remaining_timeout() -> float:
         return _remaining_timeout() if max_seconds is None else pattern_timeout(max_seconds)
 
@@ -83,11 +86,16 @@ def _run_regex(operation: Callable[[float], Any], context: str, *, max_seconds: 
             return result
         except TimeoutError as exc:
             if attempt == _MAX_CONTENTION_RETRIES or time.thread_time() - started >= budget / 2:
-                raise MatchTimeoutError(f"signature matching timed out ({context}); input scan is incomplete") from exc
+                raise MatchTimeoutError(
+                    f"signature matching timed out ({context}); input scan is incomplete"
+                ) from exc
 
 
 def _finditer(
-    rx: Any, text: str, context: str, limit: int,
+    rx: Any,
+    text: str,
+    context: str,
+    limit: int,
     excluded: Callable[[int], bool] | None = None,
 ) -> list[Any]:
     def collect(timeout: float) -> list[Any]:
@@ -108,7 +116,7 @@ def _finditer(
     return result
 
 
-def _search(rx: Any, text: str, context: str):
+def _search(rx: Any, text: str, context: str) -> Any:
     return _run_regex(lambda timeout: rx.search(text, timeout=timeout, concurrent=False), context)
 
 
@@ -183,18 +191,18 @@ def _plain_shape(pattern: str) -> bool:
         elif in_class:
             if c == "]":
                 in_class = False
-            elif c == "[" and pattern[i + 1:i + 2] in {":", ".", "="}:
+            elif c == "[" and pattern[i + 1 : i + 2] in {":", ".", "="}:
                 return False
             i += 1
         elif c == "[":
             in_class = True
             i += 1
-            if pattern[i:i + 1] == "^":
+            if pattern[i : i + 1] == "^":
                 i += 1
-            if pattern[i:i + 1] == "]":
+            if pattern[i : i + 1] == "]":
                 i += 1
         elif c == "(":
-            if pattern[i + 1:i + 2] == "?":
+            if pattern[i + 1 : i + 2] == "?":
                 opener = _GROUP_OPENER_RX.match(pattern, i)
                 if opener is None:
                     return False
@@ -228,7 +236,7 @@ def _anchored_prefix(pattern: str) -> str | None:
     i = 1
     while i < len(pattern) and pattern[i] in _LABEL_CHARS:
         i += 1
-    if i == 1 or pattern[i:i + 2] != "\\." or pattern[i + 2:i + 3] in {"?", "*", "+", "{"}:
+    if i == 1 or pattern[i : i + 2] != "\\." or pattern[i + 2 : i + 3] in {"?", "*", "+", "{"}:
         return None
     return pattern[1:i].lower()
 
@@ -297,6 +305,8 @@ def _fold(text: str) -> str:
     sound for every text the engine would match.
     """
     return text.casefold().replace("i\u0307", "i").replace("\u0131", "i")
+
+
 _LEADING_FLAGS_RX = re.compile(r"\(\?([ims]+)\)")
 _QUANTIFIER_STARTS = frozenset("*+?{")
 _GROUP_STOP_CHARS = frozenset("()[].^$*+?{")
@@ -323,14 +333,14 @@ def _literal_alternatives(pattern: str, start: int) -> tuple[tuple[str, ...], in
     i = start + 1
     if pattern.startswith("?:", i):
         i += 2
-    elif pattern[i:i + 1] == "?":
+    elif pattern[i : i + 1] == "?":
         return None
     alternatives: list[str] = []
     current: list[str] = []
     while i < len(pattern):
         c = pattern[i]
         if c == "\\":
-            following = pattern[i + 1:i + 2]
+            following = pattern[i + 1 : i + 2]
             literal = following if following in _PUNCT_ESCAPES else _CONTROL_ESCAPES.get(following)
             if literal is None:
                 return None
@@ -396,7 +406,7 @@ def required_literals(pattern: str) -> _LiteralHints:
 
     def require(alternatives: tuple[str, ...], position: int) -> int:
         """Record a group's alternatives unless its quantifier makes it optional; return the next index."""
-        after = pattern[position:position + 1]
+        after = pattern[position : position + 1]
         if after in {"?", "*"}:
             return skip_quantifier(position)
         if after == "{":
@@ -415,15 +425,15 @@ def required_literals(pattern: str) -> _LiteralHints:
             position = brace.end() if brace is not None else position + 1
         else:
             position += 1
-        if pattern[position:position + 1] in {"?", "+"}:
+        if pattern[position : position + 1] in {"?", "+"}:
             position += 1
         return position
 
     def open_class(position: int) -> int:
         position += 1
-        if pattern[position:position + 1] == "^":
+        if pattern[position : position + 1] == "^":
             position += 1
-        if pattern[position:position + 1] == "]":
+        if pattern[position : position + 1] == "]":
             position += 1
         return position
 
@@ -486,7 +496,7 @@ def required_literals(pattern: str) -> _LiteralHints:
             flush()
             i += width
             continue
-        after = pattern[i + width:i + width + 1]
+        after = pattern[i + width : i + width + 1]
         if after in {"?", "*"}:
             flush()
             i = skip_quantifier(i + width)
@@ -514,7 +524,9 @@ def required_literals(pattern: str) -> _LiteralHints:
 
 def _ordered_hints(source: Any) -> _LiteralHints:
     hints = required_literals(source) if isinstance(source, str) else _LiteralHints()
-    ordered = sorted(hints.groups, key=lambda group: (len(group), -max(len(alternative) for alternative in group)))
+    ordered = sorted(
+        hints.groups, key=lambda group: (len(group), -max(len(alternative) for alternative in group))
+    )
     return _LiteralHints(hints.fold, tuple(ordered))
 
 
@@ -576,7 +588,9 @@ class _PlainHostCandidates:
     __slots__ = ("regex_by_first", "regex_by_key", "regex_unkeyed", "suffix_by_key", "suffix_unkeyed")
 
     def __init__(
-        self, suffixes: list[tuple[str, Signature, Signal]], regexes: list[tuple[Any, Signature, Signal]],
+        self,
+        suffixes: list[tuple[str, Signature, Signal]],
+        regexes: list[tuple[Any, Signature, Signal]],
     ) -> None:
         self.suffix_by_key: dict[str, list[tuple[int, str, str, Signature, Signal]]] = {}
         self.suffix_unkeyed: list[tuple[int, str, str, Signature, Signal]] = []
@@ -616,6 +630,7 @@ class _PlainHostCandidates:
         if len(merged) > 1:
             merged.sort(key=_ORDER)
         return merged
+
 
 _LANG_ALIASES = {
     "py": "python",
@@ -745,7 +760,9 @@ class SignatureIndex:
             for s in sig.signals:
                 self._by_type.setdefault(s.type, []).append((sig, s))
                 if s.bounded_compiled:
-                    self._literals[id(s)] = [_ordered_hints(getattr(rx, "pattern", None)) for rx in s.bounded_compiled]
+                    self._literals[id(s)] = [
+                        _ordered_hints(getattr(rx, "pattern", None)) for rx in s.bounded_compiled
+                    ]
                 if s.type == "dependency":
                     eco = (s.ecosystem or "any").lower()
                     for n in s.names:
@@ -764,7 +781,9 @@ class SignatureIndex:
                     for v in s.values:
                         v = v.strip()
                         if v.startswith("re:"):
-                            self._domain_regex.append((regex.compile(v[3:], regex.IGNORECASE | regex.VERSION0), sig, s))
+                            self._domain_regex.append(
+                                (regex.compile(v[3:], regex.IGNORECASE | regex.VERSION0), sig, s)
+                            )
                             continue
                         v = v.lower()
                         if v.startswith("*."):
@@ -784,7 +803,9 @@ class SignatureIndex:
         self._plain_hosts = _PlainHostCandidates(self._domain_suffixes, self._domain_regex)
         # fnmatch semantics, precompiled: normcase both sides, translate, match.
         # One alternation of every glob rejects the typical file in one pass.
-        self._file_globs: list[tuple[Signature, Signal, list[tuple[re.Pattern[str], re.Pattern[str] | None]]]] = []
+        self._file_globs: list[
+            tuple[Signature, Signal, list[tuple[re.Pattern[str], re.Pattern[str] | None]]]
+        ] = []
         translated: list[str] = []
         for sig, s in self._files:
             compiled = []
@@ -814,14 +835,20 @@ class SignatureIndex:
         for sig in sorted(self.signatures.values(), key=lambda item: item.id):
             value = {f.name: getattr(sig, f.name) for f in fields(sig) if f.name not in {"source", "signals"}}
             value["signals"] = [
-                {f.name: getattr(signal, f.name) for f in fields(signal) if f.name not in {"compiled", "bounded_compiled"}}
+                {
+                    f.name: getattr(signal, f.name)
+                    for f in fields(signal)
+                    if f.name not in {"compiled", "bounded_compiled"}
+                }
                 for signal in sig.signals
             ]
             values.append(value)
-        return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        return hashlib.sha256(
+            json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        ).hexdigest()
 
     @contextmanager
-    def scan_budget(self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS):
+    def scan_budget(self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS) -> Iterator[None]:
         """Share one deadline across all signature operations for an input file.
 
         Individual regex executions are also preempted by the regex engine. An
@@ -858,7 +885,7 @@ class SignatureIndex:
         return out
 
     @contextmanager
-    def _input_budget(self):
+    def _input_budget(self) -> Iterator[None]:
         """Preserve a caller's explicit budget or open the default input budget."""
         if _SCAN_DEADLINE.get() is not None:
             _remaining_timeout()
@@ -869,15 +896,25 @@ class SignatureIndex:
             yield
 
     def _match_regex_signals(
-        self, signal_type: str, text: str, language: str | None = None, max_per_signal: int = 3,
+        self,
+        signal_type: str,
+        text: str,
+        language: str | None = None,
+        max_per_signal: int = 3,
         ignore_spans: Sequence[tuple[int, int]] = (),
     ) -> list[Match]:
         # One deadline covers the whole signal class even outside filesystem scans.
         with self._input_budget():
-            return self._match_regex_signals_with_budget(signal_type, text, language, max_per_signal, ignore_spans)
+            return self._match_regex_signals_with_budget(
+                signal_type, text, language, max_per_signal, ignore_spans
+            )
 
     def _match_regex_signals_with_budget(
-        self, signal_type: str, text: str, language: str | None, max_per_signal: int,
+        self,
+        signal_type: str,
+        text: str,
+        language: str | None,
+        max_per_signal: int,
         ignore_spans: Sequence[tuple[int, int]],
     ) -> list[Match]:
         out: list[Match] = []
@@ -932,7 +969,9 @@ class SignatureIndex:
                 # redaction. Dedicated secret detectors need the raw match
                 # to create their redacted evidence/fingerprint downstream.
                 value = excerpt if signal_type == "secret" else sanitize_text(excerpt)[:200]
-                out.append(Match(sig, s, value, s.weight, line=line, extra={"start": m.start(), "end": m.end()}))
+                out.append(
+                    Match(sig, s, value, s.weight, line=line, extra={"start": m.start(), "end": m.end()})
+                )
                 hits += 1
                 if hits >= max_per_signal:
                     break
@@ -952,8 +991,10 @@ class SignatureIndex:
         # process: keep only short statements, within a total text budget.
         if len(statement) <= _STATEMENT_CACHE_MAX_LENGTH:
             with self._statement_lock:
-                if (len(self._statement_imports) >= _STATEMENT_CACHE_LIMIT
-                        or self._statement_chars + len(statement) > _STATEMENT_CACHE_MAX_CHARS):
+                if (
+                    len(self._statement_imports) >= _STATEMENT_CACHE_LIMIT
+                    or self._statement_chars + len(statement) > _STATEMENT_CACHE_MAX_CHARS
+                ):
                     self._statement_imports.clear()
                     self._statement_chars = 0
                 if key not in self._statement_imports:
@@ -962,12 +1003,18 @@ class SignatureIndex:
         return cached
 
     def match_imports(
-        self, text: str, language: str | None, ignore_spans: Sequence[tuple[int, int]] = (),
+        self,
+        text: str,
+        language: str | None,
+        ignore_spans: Sequence[tuple[int, int]] = (),
     ) -> list[Match]:
         return self._match_regex_signals("import", text, language, ignore_spans=ignore_spans)
 
     def match_code(
-        self, text: str, language: str | None = None, ignore_spans: Sequence[tuple[int, int]] = (),
+        self,
+        text: str,
+        language: str | None = None,
+        ignore_spans: Sequence[tuple[int, int]] = (),
     ) -> list[Match]:
         return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans)
 
@@ -1095,18 +1142,27 @@ class SignatureIndex:
                 continue
             seen.add(key)
             labels = host.split(".")
-            if len(labels[-1]) < 2 or not labels[-1].isalpha() or any(
-                not label or len(label) > 63 or not label[0].isalnum() or not label[-1].isalnum()
-                for label in labels
+            if (
+                len(labels[-1]) < 2
+                or not labels[-1].isalpha()
+                or any(
+                    not label or len(label) > 63 or not label[0].isalnum() or not label[-1].isalnum()
+                    for label in labels
+                )
             ):
                 continue
             # Tokens never carry a port, path or newline; only case folding of
             # non-ASCII letters needs the exhaustive path.
-            matches = self._match_plain_host(host, _plain_search) if host.isascii() else self.match_domain(host)
+            matches = (
+                self._match_plain_host(host, _plain_search) if host.isascii() else self.match_domain(host)
+            )
             if not matches:
                 continue
-            if (len({match.signature_id for match in matches}) > 1 and not any("mcp" in label for label in labels)
-                    and any(match.signature_id == _MCP_SIGNATURE for match in matches)):
+            if (
+                len({match.signature_id for match in matches}) > 1
+                and not any("mcp" in label for label in labels)
+                and any(match.signature_id == _MCP_SIGNATURE for match in matches)
+            ):
                 # A host shared with another product (and not named for MCP,
                 # like mcp.zapier.com) is MCP only on an MCP path.
                 matches = [match for match in matches if (match.signature_id == _MCP_SIGNATURE) == mcp_path]
@@ -1173,7 +1229,9 @@ _index_lock = threading.Lock()
 _default_index: SignatureIndex | None = None
 
 
-def get_index(extra_dirs: list[str] | None = None, reload: bool = False, *, allow_override: bool = False) -> SignatureIndex:
+def get_index(
+    extra_dirs: list[str] | None = None, reload: bool = False, *, allow_override: bool = False
+) -> SignatureIndex:
     """Return the process-wide signature index (built lazily)."""
     global _default_index
     with _index_lock:

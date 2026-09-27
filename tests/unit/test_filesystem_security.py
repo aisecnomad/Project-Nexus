@@ -19,44 +19,67 @@ from shadowscan.utils.text import read_text
 
 
 def test_malformed_manifest_preserves_same_file_and_neighbor_findings(tmp_path, run_connector):
-    (tmp_path / "package.json").write_text(json.dumps({
-        "dependencies": [1], "devDependencies": {"@langchain/langgraph": "^0.2"},
-    }))
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "dependencies": [1],
+                "devDependencies": {"@langchain/langgraph": "^0.2"},
+            }
+        )
+    )
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     frameworks = {framework for finding in findings for framework in finding.frameworks}
     assert {"framework.langgraph", "framework.crewai"} <= frameworks
-    assert any("package.json" in issue and "dependencies must be an object" in issue for issue in ctx.stats.errors)
+    assert any(
+        "package.json" in issue and "dependencies must be an object" in issue for issue in ctx.stats.errors
+    )
 
 
-@pytest.mark.parametrize(("name", "text"), [
-    ("package.json", "null"),
-    ("composer.json", "[]"),
-    ("pyproject.toml", 'project = "invalid"'),
-    ("Pipfile", 'packages = ["langchain"]'),
-    ("Cargo.toml", 'dependencies = ["rig-core"]'),
-    ("environment.yml", "dependencies: 42"),
-])
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("package.json", "null"),
+        ("composer.json", "[]"),
+        ("pyproject.toml", 'project = "invalid"'),
+        ("Pipfile", 'packages = ["langchain"]'),
+        ("Cargo.toml", 'dependencies = ["rig-core"]'),
+        ("environment.yml", "dependencies: 42"),
+    ],
+)
 def test_invalid_manifest_shapes_are_explicit(name, text):
     result = manifests.parse_manifest(name, text)
     assert result is not None and result.errors
 
 
 def test_invalid_notebook_cells_do_not_hide_valid_code(tmp_path, run_connector):
-    (tmp_path / "research.ipynb").write_text(json.dumps({"cells": [
-        1, {"cell_type": "code", "source": [42]},
-        {"cell_type": "code", "source": ["from crewai import Agent\n"]},
-    ]}))
+    (tmp_path / "research.ipynb").write_text(
+        json.dumps(
+            {
+                "cells": [
+                    1,
+                    {"cell_type": "code", "source": [42]},
+                    {"cell_type": "code", "source": ["from crewai import Agent\n"]},
+                ]
+            }
+        )
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert any("framework.crewai" in finding.frameworks for finding in findings)
     assert ctx.stats.errors
 
 
 def test_bad_mcp_shapes_are_isolated_and_other_servers_survive(tmp_path, run_connector):
-    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {
-        "invalid": {"env": 7, "headers": [1], "args": 2, "remotes": [1]},
-        "valid": {"command": "npx", "args": ["@modelcontextprotocol/server-filesystem"]},
-    }}))
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "invalid": {"env": 7, "headers": [1], "args": 2, "remotes": [1]},
+                    "valid": {"command": "npx", "args": ["@modelcontextprotocol/server-filesystem"]},
+                }
+            }
+        )
+    )
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     mcp = next(finding for finding in findings if finding.kind == Kind.MCP_SERVER)
@@ -68,7 +91,7 @@ def test_bad_mcp_shapes_are_isolated_and_other_servers_survive(tmp_path, run_con
 def test_bad_agent_card_does_not_suppress_later_secret_findings(tmp_path, run_connector):
     (tmp_path / "agent-card.json").write_text('{"name": "invalid", "skills": 42}')
     (tmp_path / "agent.py").write_text(
-        'from langgraph.graph import StateGraph\n'
+        "from langgraph.graph import StateGraph\n"
         'OPENAI_API_KEY = "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h"\n'
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
@@ -78,10 +101,14 @@ def test_bad_agent_card_does_not_suppress_later_secret_findings(tmp_path, run_co
 
 def test_mcp_json_comments_do_not_rewrite_url_strings():
     errors = []
-    servers = _parse_mcp_servers(".mcp.json", '''{
+    servers = _parse_mcp_servers(
+        ".mcp.json",
+        """{
       // This client permits JSONC.
       "mcpServers": {"remote": {"url": "https://example.test/a/*literal*/b",},},
-    }''', errors)
+    }""",
+        errors,
+    )
     assert not errors
     assert servers[0]["url"] == "https://example.test/a/*literal*/b"
 
@@ -94,14 +121,28 @@ def test_credentials_removed_before_truncated_snippets_and_metadata(tmp_path, ru
     (tmp_path / "agent.py").write_text(
         'from langgraph.graph import StateGraph; API_KEY = "' + source_secret + '"\n'
     )
-    (tmp_path / "langgraph.json").write_text(json.dumps({
-        "graphs": {"agent": "./agent.py:graph"}, "env": {"PRIVATE_SETTING": env_secret},
-    }))
-    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"remote": {
-        "command": "tools", "args": ["--token", argv_secret],
-        "url": "https://example.test/mcp?api_key=" + url_secret,
-        "env": {"PRIVATE_SETTING": env_secret},
-    }}}))
+    (tmp_path / "langgraph.json").write_text(
+        json.dumps(
+            {
+                "graphs": {"agent": "./agent.py:graph"},
+                "env": {"PRIVATE_SETTING": env_secret},
+            }
+        )
+    )
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "remote": {
+                        "command": "tools",
+                        "args": ["--token", argv_secret],
+                        "url": "https://example.test/mcp?api_key=" + url_secret,
+                        "env": {"PRIVATE_SETTING": env_secret},
+                    }
+                }
+            }
+        )
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
     serialized = json.dumps([finding.to_dict() for finding in findings])
     assert not ctx.stats.errors
@@ -114,11 +155,23 @@ def test_credentials_removed_before_truncated_snippets_and_metadata(tmp_path, ru
 def test_mcp_projection_retains_sibling_credential_context(tmp_path, run_connector):
     secret = "SYNTHETIC_DUPLICATE_MCP_12345678"
     shared_secret = "SYNTHETIC_SHARED_MCP_12345678"
-    (tmp_path / ".mcp.json").write_text(json.dumps({"api_key": shared_secret, "mcpServers": {"remote": {
-        "command": "tool-" + secret, "args": ["connect", secret],
-        "url": "https://example.test/" + secret,
-        "env": {"API_KEY": secret}, "autoApprove": [secret],
-    }, "sibling": {"command": "tool", "args": ["connect", shared_secret, secret]}}}))
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "api_key": shared_secret,
+                "mcpServers": {
+                    "remote": {
+                        "command": "tool-" + secret,
+                        "args": ["connect", secret],
+                        "url": "https://example.test/" + secret,
+                        "env": {"API_KEY": secret},
+                        "autoApprove": [secret],
+                    },
+                    "sibling": {"command": "tool", "args": ["connect", shared_secret, secret]},
+                },
+            }
+        )
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     serialized = json.dumps([finding.to_dict() for finding in findings])
@@ -131,13 +184,20 @@ def test_mcp_projection_retains_sibling_credential_context(tmp_path, run_connect
 @pytest.mark.parametrize("filename", ["agent-card.json", "declarativeAgent.json"])
 def test_agent_manifest_projection_retains_sibling_credential_context(tmp_path, run_connector, filename):
     secret = "SYNTHETIC_DUPLICATE_MANIFEST_12345678"
-    (tmp_path / filename).write_text(json.dumps({
-        "name": "agent " + secret, "api_key": secret,
-        "description": "Credential copied here: " + secret,
-        "instructions": "Use " + secret, "url": "https://example.test/" + secret,
-        "version": "1.0", "capabilities": [] if filename == "declarativeAgent.json" else {},
-        "skills": [{"id": "summary", "name": "Summarize"}],
-    }))
+    (tmp_path / filename).write_text(
+        json.dumps(
+            {
+                "name": "agent " + secret,
+                "api_key": secret,
+                "description": "Credential copied here: " + secret,
+                "instructions": "Use " + secret,
+                "url": "https://example.test/" + secret,
+                "version": "1.0",
+                "capabilities": [] if filename == "declarativeAgent.json" else {},
+                "skills": [{"id": "summary", "name": "Summarize"}],
+            }
+        )
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert any(finding.resource_type == "agent-manifest" for finding in findings)
@@ -207,7 +267,9 @@ def test_explicitly_excluded_symlink_is_outside_scan_scope(tmp_path, run_connect
     assert not ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("kind", ["excluded-directory", "excluded-file", "unsupported-target", "broken-target"])
+@pytest.mark.parametrize(
+    "kind", ["excluded-directory", "excluded-file", "unsupported-target", "broken-target"]
+)
 @pytest.mark.parametrize("strict", [False, True])
 def test_in_root_link_to_unscanned_target_marks_incomplete(tmp_path, run_connector, kind, strict):
     repo = tmp_path / "repo"
@@ -228,8 +290,9 @@ def test_in_root_link_to_unscanned_target_marks_incomplete(tmp_path, run_connect
         target.write_text("from crewai import Agent\n")
     (repo / "agent.py").symlink_to(target)
 
-    findings, ctx = run_connector("code.filesystem", path=str(repo), exclude=extra,
-                                  use_git=False, strict_coverage=strict)
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(repo), exclude=extra, use_git=False, strict_coverage=strict
+    )
     assert findings == []
     assert ctx.stats.incomplete
     diagnostics = ctx.stats.errors if strict else ctx.stats.warnings
@@ -380,8 +443,8 @@ def test_manifest_regex_execution_has_timeout(monkeypatch):
 def test_pom_entity_expansion_is_rejected_without_parsing():
     pom = (
         '<!DOCTYPE project [<!ENTITY large "' + "a" * 100_000 + '">]>'
-        '<project><dependencies><dependency><groupId>&large;</groupId>'
-        '<artifactId>langchain4j</artifactId></dependency></dependencies></project>'
+        "<project><dependencies><dependency><groupId>&large;</groupId>"
+        "<artifactId>langchain4j</artifactId></dependency></dependencies></project>"
     )
     started = time.monotonic()
     result = manifests.parse_manifest("pom.xml", pom)
@@ -430,12 +493,15 @@ def test_source_alias_into_another_project_marks_incomplete(tmp_path, run_connec
     assert any("symbolic link packages/app/agent.py" in issue for issue in ctx.stats.warnings)
 
 
-@pytest.mark.parametrize(("link", "target"), [
-    ("package-lock.json", "sub/package-lock.json"),       # hoisted lockfile
-    ("pnpm-lock.yaml", "node_modules/.pnpm/lock.yaml"),   # into an excluded directory
-    ("dist/app.min.js", "build/app.min.js"),              # generated bundle
-    ("logo.png", "node_modules/pkg/logo.png"),            # a type the walker never reads
-])
+@pytest.mark.parametrize(
+    ("link", "target"),
+    [
+        ("package-lock.json", "sub/package-lock.json"),  # hoisted lockfile
+        ("pnpm-lock.yaml", "node_modules/.pnpm/lock.yaml"),  # into an excluded directory
+        ("dist/app.min.js", "build/app.min.js"),  # generated bundle
+        ("logo.png", "node_modules/pkg/logo.png"),  # a type the walker never reads
+    ],
+)
 def test_alias_whose_own_name_is_never_read_keeps_complete(tmp_path, run_connector, link, target):
     # The walker skips these names silently even as regular files, so the
     # alias path hides nothing whatever the link points at.
