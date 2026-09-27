@@ -188,7 +188,10 @@ class _Parser:
         client = self.declaration()
         self.take("new")
         constructor = self.token()
-        if constructor.literal or constructor.value not in constructors or constructor.line not in constructor_lines:
+        if (
+            constructor.literal or constructor.value not in constructors
+            or constructor.line not in constructor_lines
+        ):
             raise _Unsupported
         self.take("(")
         if self.peek("{"):
@@ -203,7 +206,10 @@ class _Parser:
             self.take(value)
         options = self.options()
         tools = options.get("tools")
-        if tools is None or tools.literal or not _IDENTIFIER.fullmatch(tools.value) or tools.value in _RESERVED:
+        if (
+            tools is None or tools.literal or not _IDENTIFIER.fullmatch(tools.value)
+            or tools.value in _RESERVED
+        ):
             raise _Unsupported
         self.take(")")
         self.take(";")

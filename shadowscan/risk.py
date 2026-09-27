@@ -187,7 +187,9 @@ class RiskPolicy:
                 raise ValueError(f"risk_weights.governance.{key} must be one of shadow, registered, no-owner")
             governance[key] = value
 
-        def described(defaults: Mapping[str, tuple[int, str]], overrides: dict[str, int], noun: str) -> dict[str, tuple[int, str]]:
+        def described(
+            defaults: Mapping[str, tuple[int, str]], overrides: dict[str, int], noun: str
+        ) -> dict[str, tuple[int, str]]:
             merged = dict(defaults)
             for key, value in overrides.items():
                 merged[key] = (value, defaults[key][1] if key in defaults else f"{noun} {key}")
@@ -257,18 +259,65 @@ def assess(
     factors: list[RiskFactor] = []
     raw = policy.kinds.get(finding.kind, 5)
     factors.append(RiskFactor("kind", f"{finding.kind.value} finding", raw))
+    factors.extend(_governance_factors(finding, inventory_present, policy))
+    factors.extend(_weighted_factors(finding, index, policy))
+    factors.extend(_metadata_factors(finding))
+
+    total = sum(f.weight for f in factors)
+    danger_total = sum(f.weight for f in factors if f.id not in GOVERNANCE_FACTORS)
+    # scale by confidence that this is really an agent / agent enabler
+    scale = 0.6 + 0.4 * max(0.0, min(1.0, finding.confidence))
+    scaled = int(round(total * scale))
+    score = max(0, min(100, scaled))
+    if scale < 1.0:
+        # Scaling lowers a positive subtotal. A subtotal at or below zero is
+        # already floored at 0, so the adjustment must never read as added risk.
+        adjustment = min(0, scaled - total)
+        factors.append(RiskFactor(
+            "confidence-scaling",
+            f"score multiplied by {scale:.2f} because confidence is {finding.confidence:.2f}; "
+            "this only ever lowers risk",
+            adjustment,
+        ))
+    else:
+        adjustment = 0
+    explained = total + adjustment
+    if score != explained:
+        # Keep the explanation exact: listed factors always sum to the score.
+        factors.append(RiskFactor(
+            "bounds", "score floored at 0" if explained < 0 else "score capped at 100", score - explained
+        ))
+    danger_score = max(0, min(100, int(round(danger_total * scale))))
+    return Risk(score=score, level=RiskLevel.from_score(score), factors=factors, danger_score=danger_score)
+
+
+def _governance_factors(finding: Finding, inventory_present: bool, policy: RiskPolicy) -> list[RiskFactor]:
+    """Inventory approval and ownership factors."""
+    factors: list[RiskFactor] = []
     # Governance factors describe approval and ownership, not capability. Under
     # the "danger" basis they are reported with zero weight.
     governance_scale = 0 if policy.basis == "danger" else 1
-
     if inventory_present:
         if finding.shadow:
-            factors.append(RiskFactor("shadow", "not present in the sanctioned agent inventory", policy.governance["shadow"] * governance_scale))
+            factors.append(RiskFactor(
+                "shadow", "not present in the sanctioned agent inventory",
+                policy.governance["shadow"] * governance_scale,
+            ))
         elif finding.shadow is False:
-            factors.append(RiskFactor("registered", f"registered as {finding.registry_match}", policy.governance["registered"] * governance_scale))
+            factors.append(RiskFactor(
+                "registered", f"registered as {finding.registry_match}",
+                policy.governance["registered"] * governance_scale,
+            ))
     if not finding.owner:
-        factors.append(RiskFactor("no-owner", "no identifiable owner", policy.governance["no-owner"] * governance_scale))
+        factors.append(RiskFactor(
+            "no-owner", "no identifiable owner", policy.governance["no-owner"] * governance_scale
+        ))
+    return factors
 
+
+def _weighted_factors(finding: Finding, index: SignatureIndex | None, policy: RiskPolicy) -> list[RiskFactor]:
+    """Capability, tag and provider weights, then the signatures' vendor risk notes."""
+    factors: list[RiskFactor] = []
     seen_caps = set()
     for cap in _strings(finding.capabilities):
         if cap in policy.capabilities and cap not in seen_caps:
@@ -295,7 +344,12 @@ def assess(
                 notes.extend(sig.risk_notes)
         if notes:
             factors.append(RiskFactor("vendor-notes", "; ".join(dict.fromkeys(notes))[:300], 5))
+    return factors
 
+
+def _metadata_factors(finding: Finding) -> list[RiskFactor]:
+    """Kind-specific factors read from loosely typed metadata."""
+    factors: list[RiskFactor] = []
     metadata: dict[str, Any] = finding.metadata if isinstance(finding.metadata, dict) else {}
     if finding.kind == Kind.SECRET:
         count = _as_int(metadata.get("count", 1), 1)
@@ -304,7 +358,9 @@ def assess(
     if finding.kind == Kind.MCP_SERVER:
         servers = _records(metadata.get("servers"))
         if any(s.get("transport") == "stdio" for s in servers):
-            factors.append(RiskFactor("mcp-stdio", "local stdio MCP servers run with the user's full privileges", 5))
+            factors.append(
+                RiskFactor("mcp-stdio", "local stdio MCP servers run with the user's full privileges", 5)
+            )
         if any(s.get("auto_approve") for s in servers):
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
         if any(s.get("url") and str(s.get("url")).startswith("http://") for s in servers):
@@ -322,34 +378,12 @@ def assess(
             factors.append(RiskFactor("volume", f"high call volume ({events})", 5))
     if finding.kind in {Kind.OAUTH_GRANT, Kind.BOT_APP}:
         users = _as_int(
-            metadata.get("user_count") or metadata.get("consenting_users") or metadata.get("users") or metadata.get("install_count") or 0,
+            metadata.get("user_count") or metadata.get("consenting_users") or metadata.get("users")
+            or metadata.get("install_count") or 0,
             0,
         )
         if users >= 100:
             factors.append(RiskFactor("blast-radius", f"{users} users / installations", 10))
         elif users >= 10:
             factors.append(RiskFactor("blast-radius", f"{users} users / installations", 5))
-
-    total = sum(f.weight for f in factors)
-    danger_total = sum(f.weight for f in factors if f.id not in GOVERNANCE_FACTORS)
-    # scale by confidence that this is really an agent / agent enabler
-    scale = 0.6 + 0.4 * max(0.0, min(1.0, finding.confidence))
-    scaled = int(round(total * scale))
-    score = max(0, min(100, scaled))
-    if scale < 1.0:
-        # Scaling lowers a positive subtotal. A subtotal at or below zero is
-        # already floored at 0, so the adjustment must never read as added risk.
-        adjustment = min(0, scaled - total)
-        factors.append(RiskFactor(
-            "confidence-scaling",
-            f"score multiplied by {scale:.2f} because confidence is {finding.confidence:.2f}; this only ever lowers risk",
-            adjustment,
-        ))
-    else:
-        adjustment = 0
-    explained = total + adjustment
-    if score != explained:
-        # Keep the explanation exact: listed factors always sum to the score.
-        factors.append(RiskFactor("bounds", "score floored at 0" if explained < 0 else "score capped at 100", score - explained))
-    danger_score = max(0, min(100, int(round(danger_total * scale))))
-    return Risk(score=score, level=RiskLevel.from_score(score), factors=factors, danger_score=danger_score)
+    return factors

@@ -13,7 +13,9 @@ from pathlib import Path
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False, ensure_ascii=True).encode()
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False, ensure_ascii=True
+    ).encode()
 
 
 def scanner_source_digest(package: Path | None = None) -> str:
