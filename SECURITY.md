@@ -94,9 +94,27 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   Dump directories must be private (0700); record files use 0600 and unique
   per-instance filenames. An export manifest records provenance/completion without
   raw connector configuration. JWT records are never exported. No `--dump-raw`
-  option exists. Redaction handles recognized secrets and sensitive Python
-  assignments, including annotated and multiline expressions, but arbitrary
-  credentials and sensitive business data may remain.
+  option exists.
+* Report evidence is redacted before it is shortened. Redaction withholds
+  recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
+  `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-` and `dop_v1_`),
+  JWTs, PEM private keys, URL userinfo and credential query or webhook path
+  segments. It also withholds values that their context names as credentials:
+  assignments, including annotated and multiline expressions; mappings, YAML
+  block scalars, properties and INI entries; `getenv`-style calls; name/value
+  records such as Kubernetes `env` lists; XML elements and `key`/`value`
+  attributes; Dockerfile `ENV NAME value`, `setx` and `setenv`; command-line
+  options such as `--api-key`, `--token`, `--password`, `curl -u user:secret`
+  and `-H "X-Api-Key:value"`; and string literals passed to credential
+  constructors and helpers such as `AzureKeyCredential("...")`,
+  `HTTPBasicAuth("user", "...")`, `auth=("user", "...")` and
+  `setBearerToken("...")`. Variable references (`$VAR`, `${{ secrets.X }}`),
+  environment variable names and placeholders stay visible. A credential
+  without such context can remain: an unprefixed literal passed to an ordinary
+  function or assigned to a generic name such as `key`, a lowercase word after
+  a space-separated option, an option this list does not name (`-p`), a value
+  split across concatenated strings, and sensitive business data. Treat reports
+  as confidential.
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
   provider and account restrictions still apply; ambiguous matches do not approve.

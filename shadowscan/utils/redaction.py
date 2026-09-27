@@ -32,6 +32,8 @@ _SENSITIVE_SUFFIXES = (
     "accountkey", "sharedaccesskey", "sastoken",
     # Capability URLs: whoever holds a webhook URL can post through it.
     "webhookurl", "webhookuri", "webhookid", "hookurl",
+    # Azure API Management and AI services (Ocp-Apim-Subscription-Key).
+    "subscriptionkey",
 )
 _SENSITIVE_NAMES = {"token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie"}
 # Keep this backstop aligned with detectable credential formats regardless of
@@ -39,13 +41,25 @@ _SENSITIVE_NAMES = {"token", "jwt", "secret", "bearer", "passwd", "password", "a
 _SECRET_TOKEN = re.compile(
     r"\b(?:sk-(?:proj-|ant-|live-|or-v1-|lf-|litellm-|svcacct-|admin-)?[A-Za-z0-9_-]{8,}"
     r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
-    r"|glpat-[A-Za-z0-9_-]{8,}"
-    r"|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{16,}"
+    # GitLab personal/runner/trigger/deploy/feed/SCIM/CI/mail/OAuth/agent tokens.
+    r"|gl(?:pat|rt|ptt|dt|ft|soat|cbt|imt|oas|agent|ffct)-[A-Za-z0-9_-]{8,}|GR1348941[A-Za-z0-9_-]{20,}"
+    r"|xox[abeprs]-[A-Za-z0-9-]{8,}|xoxe\.xox[bp]-[A-Za-z0-9-]{8,}|xapp-[A-Za-z0-9-]{8,}"
+    # Google API keys, OAuth access/refresh tokens and OAuth client secrets.
+    r"|AIza[A-Za-z0-9_-]{16,}|ya29\.[A-Za-z0-9_-]{20,}|1//0[A-Za-z0-9_-]{30,}|GOCSPX-[A-Za-z0-9_-]{20,}"
     r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,}"
     r"|gsk_[A-Za-z0-9]{40,}|pcsk_[A-Za-z0-9_]{20,}|e2b_[a-f0-9]{40}|tgp_v1_[A-Za-z0-9_-]{30,}"
     r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}"
     r"|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}"
-    r"|r8_[A-Za-z0-9]{30,}|fc-[a-f0-9]{32}|app-[A-Za-z0-9]{24})\b"
+    r"|r8_[A-Za-z0-9]{30,}|fc-[a-f0-9]{32}|app-[A-Za-z0-9]{24}|sk_[a-f0-9]{40,}"
+    # Package registries, cloud platforms and developer SaaS.
+    r"|npm_[A-Za-z0-9]{30,}|pypi-AgE[A-Za-z0-9_-]{40,}|do[opr]_v1_[a-f0-9]{64}"
+    r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}"
+    r"|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|dapi[a-f0-9]{32}|shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}"
+    r"|ATATT3[A-Za-z0-9_=-]{40,}|lin_api_[A-Za-z0-9]{32,}|ntn_[A-Za-z0-9]{40,}"
+    r"|PMAK-[a-f0-9]{24}-[a-f0-9]{34}|dp\.(?:pt|st|sa|ct|scim|audit)\.[A-Za-z0-9]{40,}"
+    r"|sbp_[a-f0-9]{40}|sb_secret_[A-Za-z0-9_-]{20,}|glsa_[A-Za-z0-9]{32}_[a-f0-9]{8}|glc_[A-Za-z0-9+/]{32,}"
+    r"|sntry[su]_[A-Za-z0-9+/=_-]{30,}|hv[sbr]\.[A-Za-z0-9_-]{24,}"
+    r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,})\b"
 )
 # Webhook and bot endpoints whose *path* is the credential. The scheme, host
 # and a fixed prefix are kept for context; the remainder of the path is
@@ -71,10 +85,12 @@ _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 # can leave an opaque credential in evidence when the sensitive suffix follows
 # that limit. The left boundary includes every character accepted by the key
 # lexer (including '.' and '-'), preventing retries at interior key segments.
-# Text size and redaction work are bounded separately below.
+# Text size and redaction work are bounded separately below. An unquoted
+# key's colon stays on its line: a YAML parent ('openai:') must not consume the
+# nested sensitive key on the next line as its own value.
 _ASSIGNMENT = re.compile(
     r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
-    r"(?P<sep>[\"']\s*:\s*|\s*=\s*|:\s+|:\s*(?=[\"']))"
+    r"(?P<sep>[\"']\s*:\s*|\s*=\s*|:[ \t]+|:[ \t]*(?=[\"']))"
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;\}\]\)\"']+)"
 )
 _QUERY_SEPARATOR = re.compile(r"[&#]")
@@ -830,38 +846,518 @@ def _redact_credential_calls(text: str) -> str:
     ``int(size // 2)`` and ``this.#field`` stay ordinary. A call past the nesting
     or length bound fails closed only when it pairs a credential key with a
     value; otherwise it is left alone.
+
+    Independently, a callee named for a credential (AzureKeyCredential,
+    HTTPBasicAuth, setBearerToken) has its credential string literals withheld;
+    see ``_credential_literals``.
     """
     if '"' not in text and "'" not in text:
         return text
     lexer = _CallLexer(text)
-    pieces: list[str] = []
-    cursor = 0
+    values: list[tuple[int, int]] = []
+    literals: list[tuple[int, int]] = []
+    skip_until = 0
     for call in _CALL_START.finditer(text):
-        if call.start() < cursor:
+        if call.start() < skip_until:
             continue
         spans, state, skipped_comment = lexer.arguments(call.end(), comments=True)
         if state != "closed" and skipped_comment:
             retry = lexer.arguments(call.end(), comments=False)
             if retry[1] == "closed":
                 spans, state, _ = retry
-        sensitive, values = _credential_call_values(text, spans, state == "closed")
+        # Prose puts a space before a parenthesis ("Login ('log|n')"); code rarely does.
+        level = 0 if call.group()[-2:-1].isspace() else _credential_callee(call.group()[:-1])
+        if level:
+            # Literal credentials do not skip nested calls: a call inside
+            # another argument can still pair a credential key with a value.
+            literals.extend(_credential_literals(lexer, spans, state == "closed", level))
+        sensitive, call_values = _credential_call_values(text, spans, state == "closed")
         if not sensitive:
             continue
         if state in {"nesting", "length"}:
             raise SanitizationLimitError(f"credential call {state} limit exceeded")
-        for start, end in sorted(values):
-            raw = text[start:end]
-            if not raw.strip():
+        for start, end in sorted(call_values):
+            if text[start:end].strip():
+                values.append((start, end))
+                skip_until = end
+    if not values and not literals:
+        return text
+    pieces: list[str] = []
+    cursor = 0
+    # Containers first, so a literal inside a withheld value is not repeated.
+    for start, end in sorted({*values, *literals}, key=lambda span: (span[0], -span[1])):
+        if start < cursor:
+            continue
+        raw = text[start:end]
+        pieces.append(text[cursor:start])
+        # Preserve physical line numbers and surrounding call arguments.
+        spaces = raw[:len(raw) - len(raw.lstrip(" \t"))]
+        pieces.append(spaces + '"' + REDACTED + '"' + "\n" * raw.count("\n"))
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+# Credential-named callees. A name ending in a constructor word builds or
+# presents a credential (AzureKeyCredential, HTTPBasicAuth, smtp.login): its
+# positional string literals are credentials, except the first of several,
+# which names a user, account or tenant. Other names with a credential word
+# (setBearerToken, WithAPIKey, get_secret) and SDK client constructors
+# (openai.NewClient, cohere.Client) only lose literals that look like opaque
+# keys, because lookups take a credential's name rather than its value.
+_CALLEE_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+_CALLEE_HINT = re.compile(r"(?i)key|token|secret|passw|cred|auth|bearer|client|login")
+_CREDENTIAL_CALLEE_WORDS = frozenset({
+    "apikey", "auth", "bearer", "client", "credential", "credentials", "key", "passwd", "password", "secret",
+    "token",
+})
+_CREDENTIAL_CONSTRUCTOR_WORDS = frozenset({
+    "auth", "authenticate", "authentication", "credential", "credentials", "login", "passwd", "password",
+})
+_LOOKUP_VERBS = frozenset({
+    "count", "del", "delete", "describe", "fetch", "find", "get", "has", "is", "list", "load", "log",
+    "lookup", "pop", "print", "read", "remove", "show",
+})
+# One whole call argument that is a string literal, optionally named
+# (Python/Kotlin 'key=', C#/Swift 'key:'). C# verbatim and interpolated
+# prefixes are accepted; interpolated text is never an opaque literal.
+_CALL_ARGUMENT_LITERAL = re.compile(
+    r"(?:(?P<label>[A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:=(?!=)|:(?![:=]))[ \t]*)?"
+    r"(?P<prefix>[rRbBuU]{1,2}|@\$?|\$@?)?(?P<quote>[\"'`])"
+)
+# Java's "secret".toCharArray() and similar conversions keep a literal whole.
+_LITERAL_CONVERSION = re.compile(r"(?:[ \t]*\.[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\))*")
+# Values that name, locate or stand in for a credential instead of being one.
+_REFERENCE = re.compile(
+    r"\$\{\{[^{}\r\n]*\}\}|\{\{[^{}\r\n]*\}\}|\$\{[A-Za-z_][A-Za-z0-9_.]*\}|\$\([^()\r\n]*\)"
+    r"|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%|<[A-Za-z][A-Za-z0-9 _.-]*>|#\{[^{}\r\n]*\}"
+)
+_ALPHANUMERIC = re.compile(r"[A-Za-z0-9]")
+_ENVIRONMENT_NAME = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+")
+_FILE_PATH = re.compile(r"(?:[\w.~-]*[/\\])+[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,5}")
+_PLACEHOLDER_WORDS = frozenset({
+    "changeme", "dummy", "example", "fake", "insert", "placeholder", "redacted", "replace", "replaceme",
+    "sample", "todo", "your",
+})
+_PLACEHOLDER_FILL = re.compile(r"(?i)x{4,}|\*{4,}|\.{3,}")
+# Random keys change character class (digit, lower, upper) often inside one
+# long alphanumeric run; names, words and model identifiers rarely do.
+_OPAQUE_RUN = re.compile(r"[A-Za-z0-9]{8,}")
+
+
+def _kept_value(value: str) -> bool:
+    """Empty, already withheld, or only variable references and placeholders."""
+    value = value.strip()
+    return (
+        _FINGERPRINT.fullmatch(value) is not None
+        or _ALPHANUMERIC.search(_REFERENCE.sub("", value.replace(REDACTED, ""))) is None
+    )
+
+
+def _opaque(value: str) -> bool:
+    for run in _OPAQUE_RUN.finditer(value):
+        classes = ["d" if char.isdigit() else "u" if char.isupper() else "l" for char in run.group()]
+        # An upper-to-lower change starts a capitalized word, not a new class.
+        changes = sum(a != b and (a, b) != ("u", "l") for a, b in zip(classes, classes[1:], strict=False))
+        if changes >= 3:
+            return True
+    return False
+
+
+def _placeholder(value: str) -> bool:
+    words = {word.lower() for word in _CALLEE_WORD.findall(value)}
+    return not _PLACEHOLDER_WORDS.isdisjoint(words) or _PLACEHOLDER_FILL.search(value) is not None
+
+
+def _credential_literal(value: str, *, positional: bool) -> bool:
+    """Whether a string literal passed to a credential-named callee is a credential."""
+    if _kept_value(value) or any(char.isspace() for char in value) or "://" in value:
+        return False
+    if _ENVIRONMENT_NAME.fullmatch(value) or _FILE_PATH.fullmatch(value) or _placeholder(value):
+        return False
+    return positional or _opaque(value)
+
+
+def _credential_callee(name: str) -> int:
+    """0 for an ordinary callee, 1 for a credential-named one, 2 for a credential constructor."""
+    if _CALLEE_HINT.search(name) is None:
+        return 0  # the common case, decided without splitting the name into words
+    words = [word.lower() for word in _CALLEE_WORD.findall(name.rsplit(".", 1)[-1]) if not word.isdigit()]
+    if words[-1] in _CREDENTIAL_CONSTRUCTOR_WORDS and words[0] not in _LOOKUP_VERBS:
+        return 2
+    return 1 if not _CREDENTIAL_CALLEE_WORDS.isdisjoint(words) else 0
+
+
+def _credential_literals(
+    lexer: _CallLexer, spans: list[tuple[int, int]], closed: bool, level: int,
+) -> list[tuple[int, int]]:
+    """Spans of credential string literals among one credential-named call's arguments.
+
+    A literal that starts a longer expression ("key" + suffix) withholds the
+    whole argument. An unterminated literal is withheld to its line end. The
+    argument after an unclosed call runs to the end of the text, so there only
+    the literal itself is withheld.
+    """
+    text = lexer.text
+    arguments: list[tuple[int, re.Match[str] | None, bool, bool]] = []
+    for number, (start, end) in enumerate(spans):
+        begin = _call_argument_start(text, start, end)
+        if begin >= end:
+            continue
+        literal = _CALL_ARGUMENT_LITERAL.match(text, begin, end)
+        named = bool(literal and literal.group("label")) or _CALL_KEYWORD.match(text, begin, end) is not None
+        arguments.append((end, literal, named, closed or number < len(spans) - 1))
+    positional_count = sum(1 for _, _, named, _ in arguments if not named)
+    found: list[tuple[int, int]] = []
+    position = 0
+    for end, literal, named, bounded in arguments:
+        index = position
+        position += not named
+        if literal is None:
+            continue
+        opening = literal.start("quote")
+        char = text[opening]
+        delimiter = char * 3 if char != "`" and text.startswith(char * 3, opening) else char
+        stop = lexer.string_end(opening)
+        closing = stop - len(delimiter)
+        terminated = closing >= opening + len(delimiter) and text.startswith(delimiter, closing)
+        value = text[opening + len(delimiter):closing if terminated else stop]
+        if "$" in (literal.group("prefix") or "") or (char == "`" and "${" in value):
+            continue  # interpolated text is assembled elsewhere
+        positional = level == 2 and not named and not (index == 0 and positional_count > 1)
+        if not _credential_literal(value, positional=positional):
+            continue
+        conversion = _LITERAL_CONVERSION.match(text, stop, end)
+        whole = conversion is not None and _call_argument_start(text, conversion.end(), end) >= end
+        literal_start = literal.start("prefix") if literal.group("prefix") else opening
+        found.append((literal_start, stop if whole or not (bounded and terminated) else end))
+    return found
+
+
+# Command-line options that take a credential: '--api-key=v', '--token v', an
+# argv list '"--password", "v"' or a YAML list item; user:password options
+# (curl -u/--user, httpie -a/--auth); and headers written without a space
+# after the colon ('-H "X-Api-Key:v"'), which the assignment rules skip.
+# The leading literal dash lets the regex engine skip ahead quickly.
+_CLI_OPTION = re.compile(r"-(?<![\w./\\\]-]-)-?[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za-z0-9]+)*")
+_CLI_BOUNDARY = re.compile(r"[\w./\\\]-]")
+_CLI_USER_OPTIONS = frozenset({"a", "u", "U", "auth", "basic-auth", "proxy-user", "user"})
+_CLI_HEADER_OPTIONS = frozenset({"H", "header", "headers"})
+_CLI_SPACE = re.compile(r"[ \t]*\\\r?\n[ \t]*|[ \t]*\r?\n[ \t]*-[ \t]+|[ \t]+")
+_CLI_LIST_GAP = re.compile(r"[ \t]*,[ \t]*|[ \t]*\r?\n[ \t]*-[ \t]+|[ \t]+")
+_CLI_VALUE = re.compile(
+    r"\"(?P<double>[^\"\r\n]*)\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>(){}\[\],\\]+)"
+)
+_CLI_METAVAR = re.compile(r"[A-Z]+(?:[_-][A-Z0-9]+)*")
+_CLI_VALUE_LIMIT = 4096
+_CLI_WORD = re.compile(r"[a-z][a-z_-]*")
+_HEADER_VALUE = re.compile(
+    r"(?P<name>[A-Za-z][A-Za-z0-9-]*):(?:(?:Bearer|Basic|Token|Bot|Digest|SSWS|ApiKey|Api-Key|token)[ \t]+)?"
+    r"(?P<secret>\S[^\r\n]*)"
+)
+
+
+def _cli_option_mode(option: str) -> str:
+    name = option.lstrip("-")
+    if name in _CLI_USER_OPTIONS:
+        return "user"
+    if name in _CLI_HEADER_OPTIONS:
+        return "header"
+    if not name.lower().startswith(("no-", "no_")) and _sensitive_assignment_key(re.sub(r"[-.]", "_", name)):
+        return "secret"
+    return ""
+
+
+def _cli_secret_span(mode: str, value: str, start: int, strict: bool) -> tuple[int, int] | None:
+    """The part of an option value ``value`` (at ``start``) that is a credential."""
+    if value.startswith("-"):
+        return None  # the next option, not a value
+    if mode == "user":
+        user, colon, password = value.partition(":")
+        if not colon or "=" in user or not password or password.isdigit() or _kept_value(password):
+            return None
+        return start + len(user) + 1, start + len(value)
+    if mode == "header":
+        header = _HEADER_VALUE.fullmatch(value)
+        if header is None or not _sensitive_key(header.group("name")) or _kept_value(header.group("secret")):
+            return None
+        return start + header.start("secret"), start + len(value)
+    if _kept_value(value) or _CLI_METAVAR.fullmatch(value):
+        return None
+    if not strict and _CLI_WORD.fullmatch(value):
+        return None  # prose ('--token to authenticate') or an argparse dest name
+    return start, start + len(value)
+
+
+def _cli_value_span(mode: str, text: str, position: int, strict: bool) -> tuple[int, int] | None:
+    if text.startswith("-", position):
+        return None  # the next option: checked first so chained options are not rescanned
+    value = _CLI_VALUE.match(text, position)
+    if value is None:
+        return None
+    group = next(name for name in ("double", "single", "bare") if value.group(name) is not None)
+    return _cli_secret_span(mode, value.group(group), value.start(group), strict)
+
+
+def _redact_command_credentials(text: str) -> str:
+    """Withhold credentials passed as command-line option values."""
+    if "-" not in text:
+        return text
+    pieces: list[str] = []
+    cursor = 0
+    for match in _CLI_OPTION.finditer(text):
+        mode = _cli_option_mode(match.group())
+        if not mode:
+            continue
+        start = match.start()
+        # An opening quote belongs to the option unless it closes a preceding word.
+        quote = text[start - 1] if start and text[start - 1] in "\"'" else ""
+        if quote and start > 1 and _CLI_BOUNDARY.match(text, start - 2):
+            quote = ""
+        if start - len(quote) < cursor:
+            continue
+        position = match.end()
+        strict = text.startswith("=", position)
+        span: tuple[int, int] | None = None
+        closing = -1
+        if quote and strict:
+            # '"--api-key=value"' as one argv element.
+            limit = text.find("\n", position, position + _CLI_VALUE_LIMIT)
+            closing = text.find(quote, position + 1, position + _CLI_VALUE_LIMIT if limit < 0 else limit)
+            if closing >= 0:
+                span = _cli_secret_span(mode, text[position + 1:closing], position + 1, True)
+        elif quote and text.startswith(quote, position):
+            # An argv list or a quoted shell word names its value in quotes.
+            gap = _CLI_LIST_GAP.match(text, position + 1)
+            if gap is None or not text.startswith(("\"", "'"), gap.end()):
                 continue
-            pieces.append(text[cursor:start])
-            # Preserve physical line numbers and surrounding call arguments.
-            spaces = raw[:len(raw) - len(raw.lstrip(" \t"))]
-            pieces.append(spaces + '"' + REDACTED + '"' + "\n" * raw.count("\n"))
-            cursor = end
+            closing = position
+            span = _cli_value_span(mode, text, gap.end(), False)
+        if closing < 0:
+            # Plain text, or a quote that does not delimit this option.
+            if strict:
+                span = _cli_value_span(mode, text, position + 1, True)
+            else:
+                gap = _CLI_SPACE.match(text, position)
+                span = None if gap is None else _cli_value_span(mode, text, gap.end(), False)
+        if span is None:
+            continue
+        pieces.append(text[cursor:span[0]])
+        pieces.append(REDACTED)
+        cursor = span[1]
     if not pieces:
         return text
     pieces.append(text[cursor:])
     return "".join(pieces)
+
+
+# Dockerfile's legacy 'ENV NAME value' and csh/Windows 'setenv NAME value' and
+# 'setx NAME value' set a variable without '='. 'ENV A=b C=d' is an assignment.
+_ENVIRONMENT_COMMAND = re.compile(
+    r"(?m)^[ \t]*(?P<command>ENV|[Ee]nv|setenv|setx)[ \t]+(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)"
+    r"(?P<gap>[ \t]+(?:\\\r?\n[ \t]*)?)(?P<value>[^\r\n]*)"
+)
+
+
+def _redact_environment_commands(text: str) -> str:
+    """Withhold values set by space-separated environment commands."""
+    pieces: list[str] = []
+    cursor = 0
+    for match in _ENVIRONMENT_COMMAND.finditer(text):
+        if match.start() < cursor or not _sensitive_assignment_key(match.group("name")):
+            continue
+        start = match.start("value")
+        raw = match.group("value").rstrip()
+        if raw.startswith(("\"", "'")) and raw.find(raw[0], 1) > 0:
+            start, raw = start + 1, raw[1:raw.find(raw[0], 1)]
+        elif match.group("command").upper() == "ENV":
+            raw = raw.removesuffix("\\").rstrip()  # the legacy form's value is the rest of the line
+        else:
+            raw = raw.split()[0] if raw.split() else ""
+        if _kept_value(raw):
+            continue
+        pieces.append(text[cursor:start])
+        pieces.append(REDACTED)
+        cursor = start + len(raw)
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+# XML and .NET configuration: a sensitive element (<password>v</password>,
+# <apiKey>v</apiKey>) or a key/name attribute naming a credential beside a
+# value attribute or element content (<add key="OpenAIApiKey" value="v"/>,
+# <entry key="api.key">v</entry>, <setting name="ApiKey"><value>v</value>).
+_XML_TAG = re.compile(
+    r"<(?P<tag>[A-Za-z_][\w.:-]*)(?P<attributes>(?:[^<>\"']|\"[^\"<>\r\n]*\"|'[^'<>\r\n]*')*)>"
+)
+_XML_ATTRIBUTE = re.compile(
+    r"(?<![\w.:-])(?P<name>[A-Za-z_][\w.:-]*)[ \t\r\n]*=[ \t\r\n]*"
+    r"(?:\"(?P<double>[^\"<>\r\n]*)\"|'(?P<single>[^'<>\r\n]*)')"
+)
+_XML_CONTENT = re.compile(r"(?:[^<]|<!\[CDATA\[(?:[^\]]|\](?!\]>))*\]\]>)*")
+_XML_VALUE_ELEMENT = re.compile(r"[ \t\r\n]*<(?P<tag>[Vv]alue)>")
+
+
+def _redact_markup_credentials(text: str) -> str:
+    """Withhold credentials in XML elements and key/value attribute pairs."""
+    if "<" not in text:
+        return text
+    spans: list[tuple[int, int]] = []
+    for tag in _XML_TAG.finditer(text):
+        attributes = tag.group("attributes")
+        self_closing = attributes.rstrip().endswith("/")
+        local = tag.group("tag").rsplit(":", 1)[-1]
+        named = False
+        values: list[tuple[int, int]] = []
+        for attribute in _XML_ATTRIBUTE.finditer(attributes):
+            group = "double" if attribute.group("double") is not None else "single"
+            name = attribute.group("name").rsplit(":", 1)[-1].lower()
+            if name in {"key", "name"} and _sensitive_assignment_key(attribute.group(group)):
+                named = True
+            elif name == "value":
+                offset = tag.start("attributes")
+                values.append((offset + attribute.start(group), offset + attribute.end(group)))
+        if named and values:
+            spans.extend(values)
+            continue
+        if self_closing or not (named or _sensitive_assignment_key(local)):
+            continue
+        start = tag.end()
+        inner = _XML_VALUE_ELEMENT.match(text, start) if named else None
+        closing_tag = tag.group("tag") if inner is None else inner.group("tag")
+        if inner is not None:
+            start = inner.end()
+        content = _XML_CONTENT.match(text, start)
+        assert content is not None
+        if text.startswith("</" + closing_tag, content.end()):
+            spans.append((start, content.end()))
+    pieces: list[str] = []
+    cursor = 0
+    for start, end in sorted(spans):
+        if start < cursor or _kept_value(text[start:end]):
+            continue
+        pieces.append(text[cursor:start])
+        pieces.append(REDACTED + "\n" * text.count("\n", start, end))
+        cursor = end
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+# Name/value records in YAML, JSON, HCL and JavaScript text: Kubernetes and
+# ECS container environments, CloudFormation parameters and similar lists
+# pair a credential's name with its value in a sibling field.
+_RECORD_NAME = re.compile(
+    r"(?<![\w.-])(?P<quote>[\"']?)(?:name|key|Name|Key|NAME|KEY)(?P=quote)[ \t]*[:=][ \t]*"
+    r"(?P<value_quote>[\"']?)(?P<name>[A-Za-z_][A-Za-z0-9_.:-]*)(?P=value_quote)"
+)
+# Found first (a literal alternation scans quickly), then matched in full.
+_RECORD_WORD = re.compile(r"name|key|Name|Key|NAME|KEY")
+_RECORD_VALUE = re.compile(r"(?<![\w.-])(?P<quote>[\"']?)(?:value|Value|VALUE)(?P=quote)[ \t]*[:=][ \t]*")
+_RECORD_INLINE_VALUE = re.compile(r"\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;}\])]+")
+_RECORD_LINE_VALUE = re.compile(r"\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\r\n]*?(?=[ \t]+#|[ \t]*$)", re.MULTILINE)
+_RECORD_LINES = 16
+
+
+def _record_value_span(text: str, match: re.Match[str]) -> tuple[int, int] | None:
+    """The value paired with a record's credential name, on its line or a sibling line."""
+    line_start = text.rfind("\n", 0, match.start()) + 1
+    line_end = text.find("\n", match.end())
+    line_end = len(text) if line_end < 0 else line_end
+    brace = text.find("}", match.end(), line_end)
+    stop = line_end if brace < 0 else brace
+    inline = _RECORD_VALUE.search(text, match.end(), stop)
+    if inline is not None:
+        value = _RECORD_INLINE_VALUE.match(text, inline.end(), stop)
+        return (value.start(), value.end()) if value else None
+    column = match.start() - line_start
+    position = line_end + 1
+    for _ in range(_RECORD_LINES):
+        if position >= len(text):
+            return None
+        end = text.find("\n", position)
+        end = len(text) if end < 0 else end
+        line = text[position:end].rstrip("\r")
+        content = line.lstrip(" \t")
+        indent = len(line) - len(content)
+        if content and not content.startswith("#"):
+            if indent < column or (indent == column and content.startswith("-")):
+                return None
+            sibling = _RECORD_VALUE.match(text, position + indent) if indent == column else None
+            if sibling is not None:
+                value = _RECORD_LINE_VALUE.match(text, sibling.end(), end)
+                if value is None or value.group().strip() in {"", "|", ">", "|-", ">-", "|+", ">+"}:
+                    return sibling.end(), _block_end(text, end, column)
+                return value.start(), value.end()
+        position = end + 1
+    return None
+
+
+def _block_end(text: str, line_end: int, column: int) -> int:
+    """End of the lines after ``line_end`` indented deeper than ``column`` (a block value)."""
+    end = line_end
+    position = line_end + 1
+    while position < len(text):
+        following = text.find("\n", position)
+        following = len(text) if following < 0 else following
+        line = text[position:following].rstrip("\r")
+        content = line.lstrip(" \t")
+        if content and len(line) - len(content) <= column:
+            break
+        end = following
+        position = following + 1
+    return end
+
+
+def _redact_name_value_pairs(text: str) -> str:
+    """Withhold values that sibling name/key fields identify as credentials."""
+    pieces: list[str] = []
+    cursor = 0
+    for word in _RECORD_WORD.finditer(text):
+        start = word.start()
+        match = _RECORD_NAME.match(text, start - 1) if start and text[start - 1] in "\"'" else None
+        match = match or _RECORD_NAME.match(text, start)
+        if match is None or match.start() < cursor or not _sensitive_assignment_key(match.group("name")):
+            continue
+        span = _record_value_span(text, match)
+        if span is None:
+            continue
+        start, end = span
+        raw = text[start:end]
+        if raw[:1] in {"\"", "'"} and raw.endswith(raw[0]) and len(raw) > 1:
+            start, end, raw = start + 1, end - 1, raw[1:-1]
+        if start < cursor or _kept_value(raw):
+            continue
+        pieces.append(text[cursor:start])
+        pieces.append(REDACTED + "\n" * raw.count("\n"))
+        cursor = end
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+# requests/httpx/Elasticsearch basic authentication tuples: auth=("user", "v").
+_AUTH_PAIR_HINT = re.compile(r"(?i)auth[\"']?[ \t]*[:=][ \t]*[\(\[]")
+_AUTH_PAIR = re.compile(
+    r"(?i)(?<![\w.-])[\"']?[a-z_]*auth[\"']?[ \t]*[:=][ \t]*[\(\[][ \t]*"
+    r"(?:[rbu]?\"[^\"\r\n]*\"|[rbu]?'[^'\r\n]*'|[A-Za-z_][\w.]*)[ \t]*,[ \t]*"
+    r"[rbu]?(?P<quote>[\"'])(?P<password>[^\"'\r\n]*)(?P=quote)"
+)
+
+
+def _redact_auth_pairs(text: str) -> str:
+    """Withhold the password of a literal (user, password) authentication pair."""
+    def replace(match: re.Match[str]) -> str:
+        if _kept_value(match.group("password")):
+            return match.group()
+        start = match.start("password") - match.start()
+        return match.group()[:start] + REDACTED + match.group()[match.end("password") - match.start():]
+
+    return _AUTH_PAIR.sub(replace, text) if _AUTH_PAIR_HINT.search(text) else text
 
 
 def _sensitive_key(key: str) -> bool:
@@ -957,20 +1453,31 @@ def _sanitize_url(match: re.Match[str]) -> str:
 
 
 def sanitize_text(text: str) -> str:
-    """Redact recognizable credentials, assignments, auth headers and URL secrets."""
+    """Redact recognizable credentials, assignments, auth headers and URL secrets.
+
+    Context-named values are also withheld: XML elements and attributes,
+    name/value records, command-line options, environment commands, basic
+    authentication pairs and literals passed to credential-named callees.
+    """
     if not isinstance(text, str):
         text = str(text)  # type: ignore[unreachable]  # untyped callers still pass bytes-like values
     if len(text) > _MAX_SANITIZATION_CHARS:
         raise SanitizationLimitError("text sanitization size limit exceeded")
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
+    text = _redact_markup_credentials(text)
+    text = _redact_name_value_pairs(text)
+    text = _redact_command_credentials(text)
+    text = _redact_environment_commands(text)
+    text = _redact_auth_pairs(text)
     text = _redact_credential_calls(text)
     text = _redact_python_assignments(text)
     text = _redact_yaml_multiline_values(text)
     text = _redact_mapping_values(text)
     text = _JWT.sub(REDACTED, text)
     text = _SECRET_TOKEN.sub(REDACTED, text)
-    text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED, text)
+    # The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
+    text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED + "\n" * m.group().count("\n"), text)
 
     def assignments(value: str, depth: int = 0) -> str:
         def assignment(m: re.Match[str]) -> str:
