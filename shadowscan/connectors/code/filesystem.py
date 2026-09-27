@@ -43,7 +43,8 @@ import stat
 import subprocess
 import time
 import tomllib
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
@@ -378,6 +379,20 @@ _IAC_MODEL_RE = re.compile(
     r"""(?i)\b(?:foundation_?model(?:_?(?:id|arn))?|model_?id|model_?name|model)\b["']?\s*[:=]\s*["']([A-Za-z0-9][A-Za-z0-9._:/@-]{2,199})["']"""
 )
 _IAC_EXTENSIONS = frozenset({".tf", ".hcl", ".bicep", ".json", ".yaml", ".yml"})
+
+
+def _exception_name(exc: Exception) -> str:
+    return type(exc).__name__
+
+
+def _file_failure_reason(exc: Exception) -> str:
+    """Describe why one file's analysis stopped without echoing hostile input.
+
+    Only the scanner's own limit messages are static text; never echo
+    exception text that could be derived from hostile input.
+    """
+    reason = f"{type(exc).__name__}: {exc}" if isinstance(exc, MatchTimeoutError) else type(exc).__name__
+    return sanitize_text(reason)[:200]
 
 
 def _is_test_path(rel: str) -> bool:
@@ -815,6 +830,23 @@ class FilesystemConnector(BaseConnector):
         )
 
     # ------------------------------------------------------------------ scan
+    @contextmanager
+    def _isolated(
+        self, rel: str, analysis: str, reason: Callable[[Exception], str] = _exception_name,
+    ) -> Iterator[None]:
+        """Contain a failure while analyzing ``rel`` to one diagnostic so other findings survive.
+
+        A ConnectorError always propagates: cancellation or an exhausted
+        deadline ends the walk and must not become one "incomplete" error per
+        file, project or finding.
+        """
+        try:
+            yield
+        except ConnectorError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - isolate hostile input and retain other findings
+            self.ctx.error(f"code.filesystem: {rel}: {analysis} incomplete ({reason(exc)})")
+
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         label = self.label or str(root)
         if self.label and self._shared_label_roots:
@@ -862,343 +894,332 @@ class FilesystemConnector(BaseConnector):
                     self._stop_at_deadline(root, examined, entries, deadline, margin)
                     break
             examined += 1
-            try:
-                with self.index.scan_budget(seconds=budget):
-                    proj = projects.setdefault(proj_root, _Project(proj_root))
-                    proj.files += 1
-                    self.ctx.examined()
-                    name = path.name
-                    lower = name.lower()
-                    ext = path.suffix.lower()
-                    lang = language_for_path(rel)
-                    if lang:
-                        proj.languages.add(lang)
+            with (
+                self._isolated(rel, "file analysis", _file_failure_reason),
+                self.index.scan_budget(seconds=budget),
+            ):
+                proj = projects.setdefault(proj_root, _Project(proj_root))
+                proj.files += 1
+                self.ctx.examined()
+                name = path.name
+                lower = name.lower()
+                ext = path.suffix.lower()
+                lang = language_for_path(rel)
+                if lang:
+                    proj.languages.add(lang)
 
-                    # 1. file-name signals (config files of agents / MCP / A2A ...)
-                    file_matches = self.index.match_file(rel)
+                # 1. file-name signals (config files of agents / MCP / A2A ...)
+                file_matches = self.index.match_file(rel)
 
-                    is_source = ext in SOURCE_EXTENSIONS
-                    is_text_cfg = ext in TEXT_CONFIG_EXTENSIONS or lower.startswith(".env") or is_manifest_name(name) or "." not in name
-                    if not (is_source or is_text_cfg or file_matches):
-                        continue
-                    read_errors: list[str] = []
-                    text = read_text(path, self._size_limit(name), read_errors)
-                    for issue in read_errors:
-                        if issue == "file exceeds max_file_size" and not self.strict_coverage:
-                            self.ctx.warn(f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete", incomplete=True)
+                is_source = ext in SOURCE_EXTENSIONS
+                is_text_cfg = ext in TEXT_CONFIG_EXTENSIONS or lower.startswith(".env") or is_manifest_name(name) or "." not in name
+                if not (is_source or is_text_cfg or file_matches):
+                    continue
+                read_errors: list[str] = []
+                text = read_text(path, self._size_limit(name), read_errors)
+                for issue in read_errors:
+                    if issue == "file exceeds max_file_size" and not self.strict_coverage:
+                        self.ctx.warn(f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete", incomplete=True)
+                    else:
+                        self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                if text is None:
+                    continue
+                raw_notebook: str | None = None
+                if ext == ".ipynb":
+                    notebook_errors: list[str] = []
+                    oversized_notebook = len(text) > self.max_file_size
+                    raw_notebook = None if oversized_notebook else text
+                    text = notebook_to_source(text, notebook_errors)
+                    for issue in dict.fromkeys(notebook_errors):
+                        self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                    lang = "python"
+                    # Unread analyzable content leaves coverage incomplete, as
+                    # for any oversize file; strict_coverage only raises the
+                    # diagnostic from a warning to an error.
+                    gap: str | None = None
+                    if len(text) > self.max_file_size:
+                        gap = f"code.filesystem: {rel}: skipped, notebook code cells exceed max_file_size"
+                    elif oversized_notebook and self.scan_secrets:
+                        # Code cells are analyzed as usual. Saved outputs are
+                        # read only for credentials, and not at this size.
+                        gap = (f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
+                               "saved outputs not scanned for credentials")
+                    if gap is not None:
+                        if self.strict_coverage:
+                            self.ctx.error(gap)
                         else:
-                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
-                    if text is None:
+                            self.ctx.warn(f"{gap}; coverage incomplete", incomplete=True)
+                    if len(text) > self.max_file_size:
                         continue
-                    raw_notebook: str | None = None
-                    if ext == ".ipynb":
-                        notebook_errors: list[str] = []
-                        oversized_notebook = len(text) > self.max_file_size
-                        raw_notebook = None if oversized_notebook else text
-                        text = notebook_to_source(text, notebook_errors)
-                        for issue in dict.fromkeys(notebook_errors):
-                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
-                        lang = "python"
-                        # Unread analyzable content leaves coverage incomplete, as
-                        # for any oversize file; strict_coverage only raises the
-                        # diagnostic from a warning to an error.
-                        gap: str | None = None
-                        if len(text) > self.max_file_size:
-                            gap = f"code.filesystem: {rel}: skipped, notebook code cells exceed max_file_size"
-                        elif oversized_notebook and self.scan_secrets:
-                            # Code cells are analyzed as usual. Saved outputs are
-                            # read only for credentials, and not at this size.
-                            gap = (f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
-                                   "saved outputs not scanned for credentials")
-                        if gap is not None:
-                            if self.strict_coverage:
-                                self.ctx.error(gap)
-                            else:
-                                self.ctx.warn(f"{gap}; coverage incomplete", incomplete=True)
-                        if len(text) > self.max_file_size:
-                            continue
-                    # Structured files are parsed now so a resource-limit
-                    # failure reaches the per-file boundary. Redacting the
-                    # text for excerpts waits until a match needs one, which
-                    # most files never do.
-                    try:
-                        structure = _structured_context(rel, text)
-                    except (YAMLResourceLimitError, SanitizationLimitError) as exc:
-                        # Detection still runs, but without an established
-                        # structured context none of this file's excerpts can
-                        # safely be emitted.
-                        self.ctx.error(f"code.filesystem: {rel}: structured sanitization incomplete ({type(exc).__name__}); excerpts withheld")
-                        structure = None
-                    source: str = text
-                    safe_lines: list[str] | None = [] if structure is None else None
+                # Structured files are parsed now so a resource-limit
+                # failure reaches the per-file boundary. Redacting the
+                # text for excerpts waits until a match needs one, which
+                # most files never do.
+                try:
+                    structure = _structured_context(rel, text)
+                except (YAMLResourceLimitError, SanitizationLimitError) as exc:
+                    # Detection still runs, but without an established
+                    # structured context none of this file's excerpts can
+                    # safely be emitted.
+                    self.ctx.error(f"code.filesystem: {rel}: structured sanitization incomplete ({type(exc).__name__}); excerpts withheld")
+                    structure = None
+                source: str = text
+                safe_lines: list[str] | None = [] if structure is None else None
 
-                    card_kind = agent_manifest_kind(rel)
-                    card_valid = False
-                    if card_kind:
-                        validation = parse_agent_manifest(rel, text, card_kind)
-                        for issue in validation.errors:
-                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
-                        card_valid = validation.valid
-                    for m in file_matches:
-                        if m.signature_id == "protocol.mcp":
-                            continue
-                        # A suggestive filename establishes neither a valid
-                        # manifest nor an agent. Keep coding-agent file evidence
-                        # and validated product schemas; do not invent agents.
-                        if card_kind and not card_valid:
-                            continue
-                        m.extra["verified_agent"] = card_valid
+                card_kind = agent_manifest_kind(rel)
+                card_valid = False
+                if card_kind:
+                    validation = parse_agent_manifest(rel, text, card_kind)
+                    for issue in validation.errors:
+                        self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                    card_valid = validation.valid
+                for m in file_matches:
+                    if m.signature_id == "protocol.mcp":
+                        continue
+                    # A suggestive filename establishes neither a valid
+                    # manifest nor an agent. Keep coding-agent file evidence
+                    # and validated product schemas; do not invent agents.
+                    if card_kind and not card_valid:
+                        continue
+                    m.extra["verified_agent"] = card_valid
+                    self._record(proj, m, rel, None)
+
+                def redacted_lines() -> list[str]:
+                    nonlocal safe_lines, structure
+                    if structure is None:
+                        return []
+                    if safe_lines is None:
+                        try:
+                            safe_lines = _redacted_source(source, structure).splitlines()
+                        except (YAMLResourceLimitError, SanitizationLimitError) as exc:
+                            self.ctx.error(f"code.filesystem: {rel}: structured sanitization incomplete ({type(exc).__name__}); excerpts withheld")
+                            structure = None
+                            safe_lines = []
+                    return safe_lines
+
+                def excerpt(line_number: int | None, secret: str | None = None) -> str:
+                    return _excerpt(redacted_lines(), line_number or 1, secret)
+
+                # Credential detection runs first and in its own isolation so a
+                # slow or over-budget content pass cannot hide a real key. Notebook
+                # outputs and markdown cells are scanned from the raw document.
+                if self.scan_secrets:
+                    with self._isolated(rel, "credential detection"):
+                        seen_secrets: set[tuple[str, str, int | None]] = set()
+                        for raw in (text, raw_notebook):
+                            if raw is None or (raw == text and seen_secrets):
+                                continue
+                            raw_lines: list[str] | None = None
+                            if raw is raw_notebook and raw_notebook != text and structure is not None:
+                                try:
+                                    raw_lines = sanitize_text(raw).splitlines()
+                                except SanitizationLimitError:
+                                    self.ctx.error(f"code.filesystem: {rel}: notebook excerpt sanitization incomplete; excerpts withheld")
+                            for m in self.index.match_secrets(raw):
+                                key = (m.signature_id, m.value, m.line)
+                                if key in seen_secrets:
+                                    continue
+                                seen_secrets.add(key)
+                                reason = placeholder_reason(m.value)
+                                if reason:
+                                    self._record_example_credential(proj, m, rel, reason)
+                                    continue
+                                if raw is raw_notebook and raw_notebook != text:
+                                    snippet = _excerpt(raw_lines, m.line or 1, m.value) if raw_lines is not None else ""
+                                else:
+                                    snippet = excerpt(m.line, m.value)
+                                secret_hits.setdefault(rel, []).append((m, snippet))
+                                self._record(proj, m, rel, None)
+
+                is_mcp = self._looks_like_mcp_config(rel, name, text) or (
+                    lower == "server.json" and '"mcpServers"' in text
+                )
+                mcp_servers: list[dict[str, Any]] = []
+                if is_mcp:
+                    mcp_errors: list[str] = []
+                    mcp_servers = _parse_mcp_servers(rel, text, mcp_errors)
+                    for issue in dict.fromkeys(mcp_errors):
+                        self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                active_mcp = [server for server in mcp_servers if not server["disabled"]]
+                for m in file_matches:
+                    if m.signature_id == "protocol.mcp" and active_mcp:
                         self._record(proj, m, rel, None)
 
-                    def redacted_lines() -> list[str]:
-                        nonlocal safe_lines, structure
-                        if structure is None:
-                            return []
-                        if safe_lines is None:
-                            try:
-                                safe_lines = _redacted_source(source, structure).splitlines()
-                            except (YAMLResourceLimitError, SanitizationLimitError) as exc:
-                                self.ctx.error(f"code.filesystem: {rel}: structured sanitization incomplete ({type(exc).__name__}); excerpts withheld")
-                                structure = None
-                                safe_lines = []
-                        return safe_lines
+                def record_content_match(m: Match, snippet: str | None) -> None:
+                    # A bare key or matching filename is not evidence of a
+                    # configured server when all entries are empty/disabled.
+                    if m.signature_id != "protocol.mcp" or not is_mcp or active_mcp:
+                        self._record(proj, m, rel, snippet)
 
-                    def excerpt(line_number: int | None, secret: str | None = None) -> str:
-                        return _excerpt(redacted_lines(), line_number or 1, secret)
+                # 2. manifests (dependencies, images, env names, IaC types)
+                manifest = parse_manifest(rel, text) if (is_manifest_name(name) or ext in {".tf", ".bicep", ".yml", ".yaml", ".json", ".hcl"} or ".github/workflows" in rel) else None
+                if manifest:
+                    for issue in dict.fromkeys(manifest.errors):
+                        self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                    for dep in manifest.deps:
+                        proj.deps.append(dep)
+                        for m in self.index.match_dependency(dep.ecosystem, dep.name):
+                            m.line = dep.line
+                            self._record(proj, m, rel, f"{dep.ecosystem}: {dep.name} {dep.spec or ''}".strip())
+                    for art in manifest.artifacts:
+                        self._handle_artifact(proj, art, rel, text, infra_files, secret_hits, infra_names)
+                if ext in _IAC_EXTENSIONS and not is_mcp:
+                    # Excerpts come from the redacted source, which is only
+                    # produced for files that actually contain a wildcard.
+                    if _IAM_WILDCARD_RE.search(text):
+                        for number, line_text in enumerate(redacted_lines(), start=1):
+                            if _IAM_WILDCARD_RE.search(line_text):
+                                wildcard_hits = iam_wildcards.setdefault(proj_root, [])
+                                if len(wildcard_hits) < 20:
+                                    wildcard_hits.append((rel, number, truncate(line_text.strip(), 160) or ""))
+                    if rel in infra_files:
+                        infra_project[rel] = proj_root
+                        for model in _IAC_MODEL_RE.finditer(text):
+                            for mm in self.index.match_model(model.group(1)):
+                                mm.line = text.count("\n", 0, model.start()) + 1
+                                infra_models.setdefault(rel, []).append(mm)
 
-                    # Credential detection runs first and in its own isolation so a
-                    # slow or over-budget content pass cannot hide a real key. Notebook
-                    # outputs and markdown cells are scanned from the raw document.
-                    if self.scan_secrets:
-                        try:
-                            seen_secrets: set[tuple[str, str, int | None]] = set()
-                            for raw in (text, raw_notebook):
-                                if raw is None or (raw == text and seen_secrets):
-                                    continue
-                                raw_lines: list[str] | None = None
-                                if raw is raw_notebook and raw_notebook != text and structure is not None:
-                                    try:
-                                        raw_lines = sanitize_text(raw).splitlines()
-                                    except SanitizationLimitError:
-                                        self.ctx.error(f"code.filesystem: {rel}: notebook excerpt sanitization incomplete; excerpts withheld")
-                                for m in self.index.match_secrets(raw):
-                                    key = (m.signature_id, m.value, m.line)
-                                    if key in seen_secrets:
-                                        continue
-                                    seen_secrets.add(key)
-                                    reason = placeholder_reason(m.value)
-                                    if reason:
-                                        self._record_example_credential(proj, m, rel, reason)
-                                        continue
-                                    if raw is raw_notebook and raw_notebook != text:
-                                        snippet = _excerpt(raw_lines, m.line or 1, m.value) if raw_lines is not None else ""
-                                    else:
-                                        snippet = excerpt(m.line, m.value)
-                                    secret_hits.setdefault(rel, []).append((m, snippet))
-                                    self._record(proj, m, rel, None)
-                        except ConnectorError:
-                            raise
-                        except Exception as exc:  # noqa: BLE001 - keep the content passes and other files
-                            self.ctx.error(f"code.filesystem: {rel}: credential detection incomplete ({type(exc).__name__})")
+                # 3. source & config content
+                # Match prose documentation by its dedicated filenames only.
+                # Invocations in a README, even in fenced examples, do not
+                # establish executable agent code in this repository.
+                is_documentation = ext in {".md", ".mdc", ".mdx", ".txt"} and not is_manifest_name(name)
+                # Maven's XML parser above extracts dependency declarations.
+                # Generic regex matching over the raw POM would promote
+                # examples in descriptions or CDATA to executable agents.
+                is_nonexecutable = is_documentation or lower == "pom.xml"
+                # XML comments are examples/disabled declarations. Preserve
+                # offsets for match line numbers and the original redacted
+                # excerpts; the manifest parser handles active XML itself.
+                content_text = _without_xml_comments(text) if ext in {".xml", ".props", ".targets", ".csproj", ".fsproj", ".vbproj"} else text
+                if is_source:
+                    local_modules: dict[str, bool] = {}
 
-                    is_mcp = self._looks_like_mcp_config(rel, name, text) or (
-                        lower == "server.json" and '"mcpServers"' in text
+                    def is_local_module(module: str) -> bool:
+                        # Resolve only within the supplied directory scope.
+                        # A standalone file has no sibling/module inventory.
+                        if root.is_file():
+                            return False
+                        name = module.split(".", 1)[0]
+                        if name not in local_modules:
+                            local_modules[name] = local_module_conflict(
+                                module, scan_root=root, source_path=path,
+                                project_root=root if proj_root == "." else root / proj_root,
+                            )
+                        return local_modules[name]
+
+                    # Malformed trailing literals are masked through EOF;
+                    # preceding valid imports/code remain inspectable.
+                    ignored, ambiguous = noncode_ranges(
+                        content_text, lang, ext, jsx=ext in {".jsx", ".tsx"},
                     )
-                    mcp_servers: list[dict[str, Any]] = []
-                    if is_mcp:
-                        mcp_errors: list[str] = []
-                        mcp_servers = _parse_mcp_servers(rel, text, mcp_errors)
-                        for issue in dict.fromkeys(mcp_errors):
-                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
-                    active_mcp = [server for server in mcp_servers if not server["disabled"]]
-                    for m in file_matches:
-                        if m.signature_id == "protocol.mcp" and active_mcp:
-                            self._record(proj, m, rel, None)
-
-                    def record_content_match(m: Match, snippet: str | None) -> None:
-                        # A bare key or matching filename is not evidence of a
-                        # configured server when all entries are empty/disabled.
-                        if m.signature_id != "protocol.mcp" or not is_mcp or active_mcp:
-                            self._record(proj, m, rel, snippet)
-
-                    # 2. manifests (dependencies, images, env names, IaC types)
-                    manifest = parse_manifest(rel, text) if (is_manifest_name(name) or ext in {".tf", ".bicep", ".yml", ".yaml", ".json", ".hcl"} or ".github/workflows" in rel) else None
-                    if manifest:
-                        for issue in dict.fromkeys(manifest.errors):
-                            self.ctx.error(f"code.filesystem: {rel}: {issue}")
-                        for dep in manifest.deps:
-                            proj.deps.append(dep)
-                            for m in self.index.match_dependency(dep.ecosystem, dep.name):
-                                m.line = dep.line
-                                self._record(proj, m, rel, f"{dep.ecosystem}: {dep.name} {dep.spec or ''}".strip())
-                        for art in manifest.artifacts:
-                            self._handle_artifact(proj, art, rel, text, infra_files, secret_hits, infra_names)
-                    if ext in _IAC_EXTENSIONS and not is_mcp:
-                        # Excerpts come from the redacted source, which is only
-                        # produced for files that actually contain a wildcard.
-                        if _IAM_WILDCARD_RE.search(text):
-                            for number, line_text in enumerate(redacted_lines(), start=1):
-                                if _IAM_WILDCARD_RE.search(line_text):
-                                    wildcard_hits = iam_wildcards.setdefault(proj_root, [])
-                                    if len(wildcard_hits) < 20:
-                                        wildcard_hits.append((rel, number, truncate(line_text.strip(), 160) or ""))
-                        if rel in infra_files:
-                            infra_project[rel] = proj_root
-                            for model in _IAC_MODEL_RE.finditer(text):
-                                for mm in self.index.match_model(model.group(1)):
-                                    mm.line = text.count("\n", 0, model.start()) + 1
-                                    infra_models.setdefault(rel, []).append(mm)
-
-                    # 3. source & config content
-                    # Match prose documentation by its dedicated filenames only.
-                    # Invocations in a README, even in fenced examples, do not
-                    # establish executable agent code in this repository.
-                    is_documentation = ext in {".md", ".mdc", ".mdx", ".txt"} and not is_manifest_name(name)
-                    # Maven's XML parser above extracts dependency declarations.
-                    # Generic regex matching over the raw POM would promote
-                    # examples in descriptions or CDATA to executable agents.
-                    is_nonexecutable = is_documentation or lower == "pom.xml"
-                    # XML comments are examples/disabled declarations. Preserve
-                    # offsets for match line numbers and the original redacted
-                    # excerpts; the manifest parser handles active XML itself.
-                    content_text = _without_xml_comments(text) if ext in {".xml", ".props", ".targets", ".csproj", ".fsproj", ".vbproj"} else text
-                    if is_source:
-                        local_modules: dict[str, bool] = {}
-
-                        def is_local_module(module: str) -> bool:
-                            # Resolve only within the supplied directory scope.
-                            # A standalone file has no sibling/module inventory.
-                            if root.is_file():
-                                return False
-                            name = module.split(".", 1)[0]
-                            if name not in local_modules:
-                                local_modules[name] = local_module_conflict(
-                                    module, scan_root=root, source_path=path,
-                                    project_root=root if proj_root == "." else root / proj_root,
-                                )
-                            return local_modules[name]
-
-                        # Malformed trailing literals are masked through EOF;
-                        # preceding valid imports/code remain inspectable.
-                        ignored, ambiguous = noncode_ranges(
-                            content_text, lang, ext, jsx=ext in {".jsx", ".tsx"},
-                        )
-                        if ambiguous:
-                            self.ctx.error(f"code.filesystem: {rel}: incomplete source lexical analysis")
-                        imports = (
-                            self.index.match_imports(content_text, lang, ignore_spans=ignored)
-                            if ignored else self.index.match_imports(content_text, lang)
-                        )
-                        for m in imports:
-                            if lang == "python":
-                                imported = re.match(r"\s*(?:from|import)\s+([A-Za-z_]\w*(?:\.\w+)*)", m.value)
-                                if imported and is_local_module(imported.group(1)):
-                                    continue
-                            record_content_match(m, excerpt(m.line))
-                        code_matches = (
-                            self.index.match_code(content_text, lang, ignore_spans=ignored)
-                            if ignored else self.index.match_code(content_text, lang)
-                        )
-                        bound: list[Match] = []
+                    if ambiguous:
+                        self.ctx.error(f"code.filesystem: {rel}: incomplete source lexical analysis")
+                    imports = (
+                        self.index.match_imports(content_text, lang, ignore_spans=ignored)
+                        if ignored else self.index.match_imports(content_text, lang)
+                    )
+                    for m in imports:
+                        if lang == "python":
+                            imported = re.match(r"\s*(?:from|import)\s+([A-Za-z_]\w*(?:\.\w+)*)", m.value)
+                            if imported and is_local_module(imported.group(1)):
+                                continue
+                        record_content_match(m, excerpt(m.line))
+                    code_matches = (
+                        self.index.match_code(content_text, lang, ignore_spans=ignored)
+                        if ignored else self.index.match_code(content_text, lang)
+                    )
+                    bound: list[Match] = []
+                    if lang in {"python", "javascript"}:
+                        try:
+                            bound = bound_source_matches(
+                                self.index, content_text, lang, ignored,
+                                is_local_module=is_local_module if lang == "python" else None,
+                                max_ast_nodes=self.max_ast_nodes,
+                            )
+                        except SourceBudgetExceeded as exc:
+                            # The budget is a property of the file, not of
+                            # the scan: keep its lexical evidence. Test code
+                            # is discounted evidence, so it only warns.
+                            message = f"code.filesystem: {rel}: import-bound analysis skipped ({exc}); lexical evidence retained"
+                            if not self.include_tests and _is_test_path(rel):
+                                self.ctx.warn(message, incomplete=self.strict_coverage)
+                            else:
+                                self.ctx.error(message)
+                    # Execution sinks describe a model-driven capability only
+                    # when this same file invokes a model, framework or
+                    # tool-calling protocol; elsewhere they are build tooling.
+                    file_uses_llm = any(
+                        m.signature.category in _LLM_CATEGORIES for m in (*imports, *code_matches, *bound)
+                    )
+                    for m in code_matches:
+                        if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
+                            continue
                         if lang in {"python", "javascript"}:
-                            try:
-                                bound = bound_source_matches(
-                                    self.index, content_text, lang, ignored,
-                                    is_local_module=is_local_module if lang == "python" else None,
-                                    max_ast_nodes=self.max_ast_nodes,
-                                )
-                            except SourceBudgetExceeded as exc:
-                                # The budget is a property of the file, not of
-                                # the scan: keep its lexical evidence. Test code
-                                # is discounted evidence, so it only warns.
-                                message = f"code.filesystem: {rel}: import-bound analysis skipped ({exc}); lexical evidence retained"
-                                if not self.include_tests and _is_test_path(rel):
-                                    self.ctx.warn(message, incomplete=self.strict_coverage)
-                                else:
-                                    self.ctx.error(message)
-                        # Execution sinks describe a model-driven capability only
-                        # when this same file invokes a model, framework or
-                        # tool-calling protocol; elsewhere they are build tooling.
-                        file_uses_llm = any(
-                            m.signature.category in _LLM_CATEGORIES for m in (*imports, *code_matches, *bound)
-                        )
-                        for m in code_matches:
-                            if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
-                                continue
-                            if lang in {"python", "javascript"}:
-                                if m.signature.category == "framework":
-                                    continue  # bound calls below establish the library
-                                m.extra["verified_agent"] = False
-                            else:
-                                # Other languages have lexical filtering but
-                                # no import binder. Their code signatures need
-                                # corroborating library evidence at emit time.
-                                m.extra["lexical_source"] = lang
-                            record_content_match(m, excerpt(m.line))
-                        for m in bound:
-                            record_content_match(m, excerpt(m.line))
-                        if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
-                            for tool in mcp_tool_names(text):
-                                known = proj.mcp_tools.get(tool)
-                                if known is None:
-                                    if len(proj.mcp_tools) < _MAX_MCP_TOOLS:
-                                        proj.mcp_tools[tool] = rel
-                                elif _is_test_path(known) and not _is_test_path(rel):
-                                    proj.mcp_tools[tool] = rel  # prefer where deployed code registers it
-                    elif not is_nonexecutable:
-                        config_errors: list[str] = []
-                        config_limits: list[str] = []
-                        structured = [] if is_mcp else structured_code_matches(
-                            self.index, rel, content_text, errors=config_errors, limit_errors=config_limits,
-                        )
-                        for issue in config_limits:
-                            # Unknown content, not a syntax error: fail closed.
+                            if m.signature.category == "framework":
+                                continue  # bound calls below establish the library
+                            m.extra["verified_agent"] = False
+                        else:
+                            # Other languages have lexical filtering but
+                            # no import binder. Their code signatures need
+                            # corroborating library evidence at emit time.
+                            m.extra["lexical_source"] = lang
+                        record_content_match(m, excerpt(m.line))
+                    for m in bound:
+                        record_content_match(m, excerpt(m.line))
+                    if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
+                        for tool in mcp_tool_names(text):
+                            known = proj.mcp_tools.get(tool)
+                            if known is None:
+                                if len(proj.mcp_tools) < _MAX_MCP_TOOLS:
+                                    proj.mcp_tools[tool] = rel
+                            elif _is_test_path(known) and not _is_test_path(rel):
+                                proj.mcp_tools[tool] = rel  # prefer where deployed code registers it
+                elif not is_nonexecutable:
+                    config_errors: list[str] = []
+                    config_limits: list[str] = []
+                    structured = [] if is_mcp else structured_code_matches(
+                        self.index, rel, content_text, errors=config_errors, limit_errors=config_limits,
+                    )
+                    for issue in config_limits:
+                        # Unknown content, not a syntax error: fail closed.
+                        self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                    for issue in config_errors:
+                        if is_agent_config_path(rel):
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
-                        for issue in config_errors:
-                            if is_agent_config_path(rel):
-                                self.ctx.error(f"code.filesystem: {rel}: {issue}")
-                            else:
-                                # Only the structured projection is lost; the
-                                # lexical passes below still read this text.
-                                self.ctx.warn(f"code.filesystem: {rel}: {issue}; structured checks skipped", incomplete=self.strict_coverage)
-                        for m in structured:
-                            # MCP configs are structured data. A disabled server
-                            # may contain sample commands that look like agent
-                            # code; only the parsed protocol marker is relevant.
-                            if is_mcp and m.signature_id != "protocol.mcp":
-                                continue
-                            record_content_match(m, None)
-                            if m.signature.category in {"platform", "cloud-service"} and m.agent_indicator and ext in {".json", ".yaml", ".yml"} and not is_mcp:
-                                workflow_files.setdefault(rel, []).append((m, ""))
-                            elif m.signature.category == "provider" and m.extra.get("structured_config") and not is_mcp:
-                                workflow_providers.setdefault(rel, []).append((m, ""))
-                    if not is_nonexecutable and not is_mcp:
-                        for m in self.index.match_envs_in_text(content_text):
-                            record_content_match(m, excerpt(m.line))
-                        for m in self.index.match_domains_in_text(content_text):
-                            record_content_match(m, excerpt(m.line))
-                    # 4. special files
-                    if active_mcp:
-                        mcp_files.append((rel, mcp_servers))
-                    if card_kind and card_valid:
-                        if len(card_files) >= _MAX_CARD_FILES:
-                            self.ctx.error(f"code.filesystem: {rel}: agent manifest limit ({_MAX_CARD_FILES}) reached; manifest skipped")
                         else:
-                            card_files.append((rel, text, card_kind, proj_root))
-                    if ext in {".md", ".mdc"} and (".claude/agents/" in rel or ".github/agents/" in rel or ".cursor/rules/" in rel or ".windsurf/rules/" in rel):
-                        if len(proj.agent_defs) >= _MAX_AGENT_DEFINITIONS:
-                            self.ctx.error(f"code.filesystem: {rel}: agent definition limit ({_MAX_AGENT_DEFINITIONS}) reached; definition skipped")
-                        else:
-                            proj.agent_defs.append(self._parse_agent_definition(rel, text))
-            except ConnectorError:
-                # Cancellation or an exhausted deadline ends the walk; it must
-                # not become one "file analysis incomplete" error per file.
-                raise
-            except Exception as exc:  # noqa: BLE001 - isolate hostile files and retain other findings
-                # Only the scanner's own limit messages are static text; never
-                # echo exception text that could be derived from hostile input.
-                reason = f"{type(exc).__name__}: {exc}" if isinstance(exc, MatchTimeoutError) else type(exc).__name__
-                self.ctx.error(f"code.filesystem: {rel}: file analysis incomplete ({sanitize_text(reason)[:200]})")
+                            # Only the structured projection is lost; the
+                            # lexical passes below still read this text.
+                            self.ctx.warn(f"code.filesystem: {rel}: {issue}; structured checks skipped", incomplete=self.strict_coverage)
+                    for m in structured:
+                        # MCP configs are structured data. A disabled server
+                        # may contain sample commands that look like agent
+                        # code; only the parsed protocol marker is relevant.
+                        if is_mcp and m.signature_id != "protocol.mcp":
+                            continue
+                        record_content_match(m, None)
+                        if m.signature.category in {"platform", "cloud-service"} and m.agent_indicator and ext in {".json", ".yaml", ".yml"} and not is_mcp:
+                            workflow_files.setdefault(rel, []).append((m, ""))
+                        elif m.signature.category == "provider" and m.extra.get("structured_config") and not is_mcp:
+                            workflow_providers.setdefault(rel, []).append((m, ""))
+                if not is_nonexecutable and not is_mcp:
+                    for m in self.index.match_envs_in_text(content_text):
+                        record_content_match(m, excerpt(m.line))
+                    for m in self.index.match_domains_in_text(content_text):
+                        record_content_match(m, excerpt(m.line))
+                # 4. special files
+                if active_mcp:
+                    mcp_files.append((rel, mcp_servers))
+                if card_kind and card_valid:
+                    if len(card_files) >= _MAX_CARD_FILES:
+                        self.ctx.error(f"code.filesystem: {rel}: agent manifest limit ({_MAX_CARD_FILES}) reached; manifest skipped")
+                    else:
+                        card_files.append((rel, text, card_kind, proj_root))
+                if ext in {".md", ".mdc"} and (".claude/agents/" in rel or ".github/agents/" in rel or ".cursor/rules/" in rel or ".windsurf/rules/" in rel):
+                    if len(proj.agent_defs) >= _MAX_AGENT_DEFINITIONS:
+                        self.ctx.error(f"code.filesystem: {rel}: agent definition limit ({_MAX_AGENT_DEFINITIONS}) reached; definition skipped")
+                    else:
+                        proj.agent_defs.append(self._parse_agent_definition(rel, text))
 
         # ------------------------------------------------------------ emit
         # MCP configs, agent manifests, exported workflows and IaC produce their
@@ -1211,64 +1232,45 @@ class FilesystemConnector(BaseConnector):
         # and is folded into its finding instead of counting it twice.
         project_findings: dict[str, Finding] = {}
         for proj in projects.values():
-            try:
+            with self._isolated(proj.root, "project analysis"):
                 for finding in self._emit_project(label, root, proj, covered_files):
                     if finding.resource_type == "project":
                         project_findings[proj.root] = finding
                     else:
                         yield finding
-            except ConnectorError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - retain findings from other projects
-                self.ctx.error(f"code.filesystem: {proj.root}: project analysis incomplete ({type(exc).__name__})")
         for rel, servers in mcp_files:
-            try:
-                with self.index.scan_budget(seconds=self.scan_timeout):
-                    yield self._mcp_finding(label, root, rel, servers)
-            except ConnectorError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - retain findings from other configurations
-                self.ctx.error(f"code.filesystem: {rel}: MCP analysis incomplete ({type(exc).__name__})")
+            with self._isolated(rel, "MCP analysis"), self.index.scan_budget(seconds=self.scan_timeout):
+                yield self._mcp_finding(label, root, rel, servers)
         for rel, text, kind, proj_root in card_files:
-            try:
-                with self.index.scan_budget(seconds=self.scan_timeout):
-                    f = self._card_finding(label, root, rel, text, kind)
-                    if f is None:
-                        continue
-                    owner = project_findings.get(proj_root) if kind in _PROJECT_MANIFESTS else None
-                    if owner is None:
-                        yield f
-                    else:
-                        self._fold_manifest(owner, f, projects[proj_root])
-            except ConnectorError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - retain findings from other manifests
-                self.ctx.error(f"code.filesystem: {rel}: agent manifest analysis incomplete ({type(exc).__name__})")
+            with (
+                self._isolated(rel, "agent manifest analysis"),
+                self.index.scan_budget(seconds=self.scan_timeout),
+            ):
+                f = self._card_finding(label, root, rel, text, kind)
+                if f is None:
+                    continue
+                owner = project_findings.get(proj_root) if kind in _PROJECT_MANIFESTS else None
+                if owner is None:
+                    yield f
+                else:
+                    self._fold_manifest(owner, f, projects[proj_root])
         yield from project_findings.values()
         for rel, hits in workflow_files.items():
-            try:
+            with self._isolated(rel, "workflow analysis"):
                 yield self._workflow_finding(label, root, rel, [*hits, *workflow_providers.get(rel, [])])
-            except ConnectorError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - retain findings from other files
-                self.ctx.error(f"code.filesystem: {rel}: workflow analysis incomplete ({type(exc).__name__})")
         for rel, infra_hits in infra_files.items():
-            try:
+            with self._isolated(rel, "infrastructure analysis"):
                 yield self._infra_finding(
                     label, root, rel, infra_hits, infra_names.get(rel, []),
                     wildcards=iam_wildcards.get(infra_project.get(rel, ""), []), models=infra_models.get(rel, []),
                 )
-            except ConnectorError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - retain findings from other files
-                self.ctx.error(f"code.filesystem: {rel}: infrastructure analysis incomplete ({type(exc).__name__})")
+        # Credential findings are isolated like every other finding; a
+        # ConnectorError raised while building one still ends the scan.
         for rel, hits in secret_hits.items():
-            try:
+            with self._isolated(rel, "credential analysis"):
                 f = self._secret_finding(label, root, rel, hits)
                 if f:
                     yield f
-            except Exception as exc:  # noqa: BLE001 - retain findings from other files
-                self.ctx.error(f"code.filesystem: {rel}: credential analysis incomplete ({type(exc).__name__})")
 
     # --------------------------------------------------------------- helpers
     def _record_example_credential(self, proj: _Project, m: Match, rel: str, reason: str) -> None:
