@@ -7,6 +7,7 @@ import os
 import pytest
 
 from shadowscan.connectors.code import github as github_mod
+from shadowscan.connectors.code import remote as remote_mod
 from shadowscan.registry import Inventory
 from shadowscan.signatures.loader import load_signatures
 from shadowscan.utils.git import clone_environment, git_argv_prefix, validate_git_ref
@@ -68,7 +69,7 @@ def test_github_clone_skips_hostile_branch(index, monkeypatch):
         captured["cmd"] = list(cmd)
         return True
 
-    monkeypatch.setattr(github_mod, "run_bounded_clone", fake_clone)
+    monkeypatch.setattr(remote_mod, "run_bounded_clone", fake_clone)
     monkeypatch.setattr(github_mod.shutil, "which", lambda _: "/usr/bin/git")
     assert connector._clone(
         {"full_name": "acme/app", "clone_url": "https://github.com/acme/app.git", "default_branch": "--upload-pack=evil"},
