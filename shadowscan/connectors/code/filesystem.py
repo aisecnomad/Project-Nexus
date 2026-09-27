@@ -436,6 +436,76 @@ class _SourceFile:
         return self.path.suffix.lower()
 
 
+_Observation = tuple[Match, str, str | None]  # match, relpath, snippet
+
+
+class _ProjectEvidence:
+    """How a project's observations count toward its finding (see the module docstring)."""
+
+    def __init__(
+        self, observations: list[_Observation], *, discount_tests: bool, mcp_tools: dict[str, str],
+    ) -> None:
+        self.discount_tests = discount_tests
+        # Environment-variable and display-name references are weak
+        # anchors, so they are judged before heuristics join: an agent
+        # loop or subprocess.run next to a .env.example must not promote
+        # the project to a confirmed agent with autonomous or code-exec
+        # capabilities. Such a finding is built from the name references
+        # alone. A live credential is not a name: it keeps full weights
+        # and lets the heuristics count. Every anchor is non-heuristic,
+        # so the judgement below is never vacuous.
+        self.env_only = all(
+            m.signal.type in {"env", "name"}
+            for m, _, _ in observations if m.signature.category != "heuristic"
+        )
+        self.matches = (
+            [t for t in observations if t[0].signal.type in {"env", "name"}]
+            if self.env_only else observations
+        )
+        self.library_evidence = {
+            m.signature_id for m, _, _ in self.matches if m.signal.type in {"import", "dependency"}
+        }
+        self.uncorroborated = {
+            m.signature_id for m, _, _ in self.matches
+            if m.extra.get("lexical_source") and m.signature.category != "heuristic"
+            and m.signature_id not in self.library_evidence
+        }
+        # Capabilities describe what the deployed code can do. Evidence
+        # from tests (unless the project is only tests) and vendor-neutral
+        # idioms in an MCP tool server (whose tools are read below) is
+        # kept as evidence but implies no capability.
+        self.test_only = discount_tests and all(_is_test_path(rel) for _, rel, _ in self.matches)
+        # Tools registered only in tests imply nothing, like other test evidence.
+        self.server_tools = {
+            tool: rel for tool, rel in mcp_tools.items() if self.test_only or not self.in_tests(rel)
+        }
+        # A tool server's capabilities come from its tools. When none were
+        # recognised, its other evidence still implies what the code can do.
+        self.mcp_server = bool(self.server_tools) and {
+            m.signature_id for m, _, _ in self.matches if m.signature.category != "heuristic"
+        } == {"protocol.mcp"}
+
+    def in_tests(self, rel: str) -> bool:
+        return self.discount_tests and _is_test_path(rel)
+
+    def verified_indicator(self, match: Match) -> bool:
+        if match.signature.category == "heuristic" or match.signature_id == "protocol.mcp":
+            return False
+        if "verified_agent" in match.extra:
+            return bool(match.extra["verified_agent"])
+        if match.extra.get("lexical_source"):
+            return match.agent_indicator and match.signature_id in self.library_evidence
+        return match.agent_indicator
+
+    def implies_capabilities(self, match: Match, rel: str) -> bool:
+        if self.in_tests(rel) and not self.test_only:
+            return False
+        return not (self.mcp_server and match.signature.category == "heuristic")
+
+    def weight_scale(self, rel: str) -> float:
+        return (ENV_ONLY_WEIGHT_SCALE if self.env_only else 1.0) * (0.5 if self.in_tests(rel) else 1.0)
+
+
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 
 # Test suites routinely construct agents to exercise a library. Evidence found
@@ -1755,6 +1825,23 @@ class FilesystemConnector(BaseConnector):
     def _emit_project(
         self, label: str, root: Path, proj: _Project, covered_files: frozenset[str] = frozenset(),
     ) -> Iterator[Finding]:
+        observations = self._project_observations(proj)
+        # Anchors establish LLM / agent technology on their own. A credential
+        # alone is already a SECRET finding, evidence that an MCP, manifest,
+        # workflow or IaC finding already reports is not a project anchor, and
+        # a vendor-neutral heuristic alone (a retry loop, subprocess.run)
+        # describes ordinary automation.
+        if any(
+            m.signature.category != "heuristic" and rel not in covered_files and m.signal.type != "secret"
+            for m, rel, _ in observations
+        ):
+            yield self._project_finding(label, root, proj, observations)
+        for sig_id, files in proj.coding_agent_files.items():
+            yield self._coding_agent_finding(label, root, proj, sig_id, files)
+
+    @staticmethod
+    def _project_observations(proj: _Project) -> list[_Observation]:
+        """Return a project's technology evidence without policy or uncorroborated ambiguous matches."""
         observations = [(m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}]
         # An ambiguous pattern is a common identifier outside the product
         # (aiohttp's ClientSession, a UI component named AgentCard). It counts
@@ -1764,147 +1851,112 @@ class FilesystemConnector(BaseConnector):
             m.signature_id for m, _, _ in observations
             if m.signal.type in _LIBRARY_SIGNALS and not m.signal.ambiguous
         }
-        observations = [t for t in observations if not t[0].signal.ambiguous or t[0].signature_id in independent]
-        discount_tests = not self.include_tests
+        return [t for t in observations if not t[0].signal.ambiguous or t[0].signature_id in independent]
 
-        def in_tests(rel: str) -> bool:
-            return discount_tests and _is_test_path(rel)
+    def _project_finding(
+        self, label: str, root: Path, proj: _Project, observations: list[_Observation],
+    ) -> Finding:
+        """Build the finding that summarizes a project's frameworks, providers and capabilities."""
+        evidence = _ProjectEvidence(
+            observations, discount_tests=not self.include_tests, mcp_tools=proj.mcp_tools,
+        )
+        f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
+        self._apply_project_evidence(f, evidence)
+        if evidence.env_only:
+            f.add_tag("env-names-only")
+        self._attach_example_credentials(f, proj)
+        self._attach_project_metadata(f, root, proj, evidence)
+        if evidence.test_only:
+            f.add_tag("test-code-only")
+        finalize(f, self.index)
+        if evidence.env_only:
+            cap_confidence(f, ENV_ONLY_MAX_CONFIDENCE)
+            f.metadata["confidence_cap"] = {"reason": "env-names-only", "maximum": ENV_ONLY_MAX_CONFIDENCE}
+        f.title = self._project_title(f, proj)
+        return f
 
-        def covered(m: Match, rel: str) -> bool:
-            # Credential and artifact findings already report this evidence.
-            return rel in covered_files or m.signal.type == "secret"
-
-        # Anchors establish LLM / agent technology on their own. A credential
-        # alone is already a SECRET finding, evidence that an MCP, manifest,
-        # workflow or IaC finding already reports is not a project anchor, and
-        # a vendor-neutral heuristic alone (a retry loop, subprocess.run)
-        # describes ordinary automation.
-        anchors = [t for t in observations if t[0].signature.category != "heuristic" and not covered(t[0], t[1])]
-        tech_matches = observations if anchors else []
-        if tech_matches:
-            # Environment-variable and display-name references are weak
-            # anchors, so they are judged before heuristics join: an agent
-            # loop or subprocess.run next to a .env.example must not promote
-            # the project to a confirmed agent with autonomous or code-exec
-            # capabilities. Such a finding is built from the name references
-            # alone. A live credential is not a name: it keeps full weights
-            # and lets the heuristics count. Every anchor is non-heuristic,
-            # so the judgement below is never vacuous.
-            env_only = all(
-                m.signal.type in {"env", "name"}
-                for m, _, _ in tech_matches if m.signature.category != "heuristic"
+    def _apply_project_evidence(self, f: Finding, evidence: _ProjectEvidence) -> None:
+        # Decisive evidence must survive the per-signature report quota.
+        decisive_first = sorted(evidence.matches, key=lambda item: not evidence.verified_indicator(item[0]))
+        for m, rel, snip in decisive_first:
+            if m.signature_id in evidence.uncorroborated and m.extra.get("lexical_source"):
+                m.weight = min(m.weight, 0.6)
+            apply_matches(
+                f, [m], location=rel, snippet=snip, weight_scale=evidence.weight_scale(rel),
+                capabilities=evidence.implies_capabilities(m, rel),
             )
-            if env_only:
-                tech_matches = [t for t in tech_matches if t[0].signal.type in {"env", "name"}]
-            library_evidence = {m.signature_id for m, _, _ in tech_matches if m.signal.type in {"import", "dependency"}}
-
-            def verified_indicator(match: Match) -> bool:
-                if match.signature.category == "heuristic" or match.signature_id == "protocol.mcp":
-                    return False
-                if "verified_agent" in match.extra:
-                    return bool(match.extra["verified_agent"])
-                if match.extra.get("lexical_source"):
-                    return match.agent_indicator and match.signature_id in library_evidence
-                return match.agent_indicator
-
-            f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
-            uncorroborated = {m.signature_id for m, _, _ in tech_matches
-                              if m.extra.get("lexical_source") and m.signature.category != "heuristic"
-                              and m.signature_id not in library_evidence}
-            # Capabilities describe what the deployed code can do. Evidence
-            # from tests (unless the project is only tests) and vendor-neutral
-            # idioms in an MCP tool server (whose tools are read below) is
-            # kept as evidence but implies no capability.
-            test_only = discount_tests and all(_is_test_path(rel) for _, rel, _ in tech_matches)
-            # Tools registered only in tests imply nothing, like other test evidence.
-            server_tools = {tool: rel for tool, rel in proj.mcp_tools.items() if test_only or not in_tests(rel)}
-            # A tool server's capabilities come from its tools. When none were
-            # recognised, its other evidence still implies what the code can do.
-            mcp_server = bool(server_tools) and {
-                m.signature_id for m, _, _ in tech_matches if m.signature.category != "heuristic"
-            } == {"protocol.mcp"}
-
-            def implies_capabilities(match: Match, rel: str) -> bool:
-                if in_tests(rel) and not test_only:
-                    return False
-                return not (mcp_server and match.signature.category == "heuristic")
-
-            # Decisive evidence must survive the per-signature report quota.
-            for m, rel, snip in sorted(tech_matches, key=lambda item: not verified_indicator(item[0])):
-                if m.signature_id in uncorroborated and m.extra.get("lexical_source"):
-                    m.weight = min(m.weight, 0.6)
-                apply_matches(f, [m], location=rel, snippet=snip, weight_scale=(ENV_ONLY_WEIGHT_SCALE if env_only else 1.0) * (0.5 if in_tests(rel) else 1.0),
-                              capabilities=implies_capabilities(m, rel))
-            if "protocol.mcp" in f.frameworks and server_tools:
-                self._apply_mcp_tools(f, server_tools)
-            # Repeated observations of one technology are correlated evidence.
-            # Generic idioms share a single supporting group; loops in several
-            # worker files must never accumulate into a confirmed AI agent.
-            for evidence in f.evidence:
-                category = evidence.attributes.get("category")
-                evidence.attributes["confidence_group"] = (
-                    "heuristic-support" if category == "heuristic" else
-                    "uncorroborated-lexical" if evidence.signature in uncorroborated else
-                    evidence.signature or evidence.signal
-                )
-            if env_only:
-                f.add_tag("env-names-only")
-            self._attach_example_credentials(f, proj)
-            git = self._git_info(root, proj.root)
-            f.metadata.update(git)
-            if git.get("last_commit"):
-                f.last_seen = git["last_commit"]
-            f.owner, by_file = self._owners_for_files(root, (rel for _, rel, _ in tech_matches))
-            f.owner = f.owner or (git.get("last_author_email") if not by_file else None) or self.owner
-            if by_file:
-                f.metadata["codeowners_by_file"] = by_file
-            f.metadata["files_scanned"] = proj.files
-            f.metadata["languages"] = sorted(proj.languages)
-            f.metadata["dependencies_matched"] = sorted({f"{m.signal.ecosystem or 'any'}:{m.value}" for m, _, _ in tech_matches if m.signal.type == "dependency"})
-            f.metadata["models"] = sorted({m.value for m, _, _ in tech_matches if m.signal.type == "model"})
-            f.models = f.metadata["models"]
-            if proj.agent_defs:
-                f.metadata["agent_definitions"] = proj.agent_defs
-            # Installed SDKs, imports and endpoint strings establish framework
-            # use. MCP code/config alone establishes a tool server/client, not
-            # an agent capable of choosing actions or planning.
-            f.metadata["agent_indicators"] = sum(
-                verified_indicator(m) and m.signal.type in {"code", "file"} and not in_tests(rel)
-                for m, rel, _ in tech_matches
+        if "protocol.mcp" in f.frameworks and evidence.server_tools:
+            self._apply_mcp_tools(f, evidence.server_tools)
+        # Repeated observations of one technology are correlated evidence.
+        # Generic idioms share a single supporting group; loops in several
+        # worker files must never accumulate into a confirmed AI agent.
+        for item in f.evidence:
+            category = item.attributes.get("category")
+            item.attributes["confidence_group"] = (
+                "heuristic-support" if category == "heuristic" else
+                "uncorroborated-lexical" if item.signature in evidence.uncorroborated else
+                item.signature or item.signal
             )
-            if any(m.extra.get("agent_classification") == "openai-responses-tool-dispatch"
-                   and verified_indicator(m) and not in_tests(rel) for m, rel, _ in tech_matches):
-                f.metadata["agent_classification"] = "openai-responses-tool-dispatch"
-            if discount_tests and all(_is_test_path(rel) for _, rel, _ in tech_matches):
-                f.add_tag("test-code-only")
-            finalize(f, self.index)
-            if env_only:
-                cap_confidence(f, ENV_ONLY_MAX_CONFIDENCE)
-                f.metadata["confidence_cap"] = {"reason": "env-names-only", "maximum": ENV_ONLY_MAX_CONFIDENCE}
-            f.title = self._project_title(f, proj)
-            yield f
-        for sig_id, files in proj.coding_agent_files.items():
-            sig = self.index.get(sig_id)
-            f = self._base(
-                label, root, proj.root, Kind.AGENT_CONFIG,
-                f"{sig.name if sig else sig_id} configured in {proj.root if proj.root != '.' else 'repository root'}",
-                "coding-agent-config", identity_discriminator=f"coding-agent-config:{sig_id}",
-            )
-            for m, rel, snip in proj.coding_agent_matches.get(sig_id, []):
-                apply_matches(f, [m], location=rel, snippet=snip)
-            f.metadata["files"] = sorted(files)
-            defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
-            if defs:
-                f.metadata["agent_definitions"] = defs
-                f.add_capability("multi-agent")
-            f.kind = Kind.AGENT_CONFIG
-            f.owner, by_file = self._owners_for_files(root, files)
-            f.owner = f.owner or self.owner
-            if by_file:
-                f.metadata["codeowners_by_file"] = by_file
-            finalize(f, self.index)
-            f.kind = Kind.AGENT_CONFIG
-            yield f
+
+    def _attach_project_metadata(
+        self, f: Finding, root: Path, proj: _Project, evidence: _ProjectEvidence,
+    ) -> None:
+        """Record a project's owner, history, inventory and agent indicators."""
+        matches = evidence.matches
+        git = self._git_info(root, proj.root)
+        f.metadata.update(git)
+        if git.get("last_commit"):
+            f.last_seen = git["last_commit"]
+        f.owner, by_file = self._owners_for_files(root, (rel for _, rel, _ in matches))
+        f.owner = f.owner or (git.get("last_author_email") if not by_file else None) or self.owner
+        if by_file:
+            f.metadata["codeowners_by_file"] = by_file
+        f.metadata["files_scanned"] = proj.files
+        f.metadata["languages"] = sorted(proj.languages)
+        f.metadata["dependencies_matched"] = sorted({
+            f"{m.signal.ecosystem or 'any'}:{m.value}" for m, _, _ in matches if m.signal.type == "dependency"
+        })
+        f.metadata["models"] = sorted({m.value for m, _, _ in matches if m.signal.type == "model"})
+        f.models = f.metadata["models"]
+        if proj.agent_defs:
+            f.metadata["agent_definitions"] = proj.agent_defs
+        # Installed SDKs, imports and endpoint strings establish framework
+        # use. MCP code/config alone establishes a tool server/client, not
+        # an agent capable of choosing actions or planning.
+        f.metadata["agent_indicators"] = sum(
+            evidence.verified_indicator(m) and m.signal.type in {"code", "file"}
+            and not evidence.in_tests(rel)
+            for m, rel, _ in matches
+        )
+        if any(m.extra.get("agent_classification") == "openai-responses-tool-dispatch"
+               and evidence.verified_indicator(m) and not evidence.in_tests(rel) for m, rel, _ in matches):
+            f.metadata["agent_classification"] = "openai-responses-tool-dispatch"
+
+    def _coding_agent_finding(
+        self, label: str, root: Path, proj: _Project, sig_id: str, files: list[str],
+    ) -> Finding:
+        """Build the finding for one coding-agent product configured in a project."""
+        sig = self.index.get(sig_id)
+        where = proj.root if proj.root != "." else "repository root"
+        f = self._base(
+            label, root, proj.root, Kind.AGENT_CONFIG, f"{sig.name if sig else sig_id} configured in {where}",
+            "coding-agent-config", identity_discriminator=f"coding-agent-config:{sig_id}",
+        )
+        for m, rel, snip in proj.coding_agent_matches.get(sig_id, []):
+            apply_matches(f, [m], location=rel, snippet=snip)
+        f.metadata["files"] = sorted(files)
+        defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
+        if defs:
+            f.metadata["agent_definitions"] = defs
+            f.add_capability("multi-agent")
+        f.kind = Kind.AGENT_CONFIG
+        f.owner, by_file = self._owners_for_files(root, files)
+        f.owner = f.owner or self.owner
+        if by_file:
+            f.metadata["codeowners_by_file"] = by_file
+        finalize(f, self.index)
+        f.kind = Kind.AGENT_CONFIG
+        return f
 
     @staticmethod
     def _apply_mcp_tools(f: Finding, server_tools: dict[str, str]) -> None:
@@ -2342,6 +2394,26 @@ def _safe_source_text(rel: str, text: str) -> str:
 
 def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:
     errors = errors if errors is not None else []
+    data = _load_mcp_document(rel, text, errors)
+    if data is None:
+        return []
+    servers = _mcp_server_entries(data, errors)
+    if servers is None:
+        return []
+    out: list[dict[str, Any]] = []
+    for name, cfg in servers.items():
+        server = _mcp_server_record(name, cfg, errors)
+        if server is not None:
+            out.append(server)
+    # Each output key is generated by this parser. Preserve its schema while
+    # sanitizing all values in the context of the entire source document.
+    names = [tuple(server) for server in out]
+    projected = [[server[key] for key in keys] for server, keys in zip(out, names, strict=True)]
+    cleaned = sanitize((data, projected))[1]
+    return [dict(zip(keys, values, strict=True)) for keys, values in zip(names, cleaned, strict=True)]
+
+
+def _load_mcp_document(rel: str, text: str, errors: list[str]) -> dict[str, Any] | None:
     data: Any  # untrusted repository content; every shape is checked below
     try:
         if rel.endswith(".toml"):
@@ -2352,10 +2424,15 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
             data = _load_json_lenient(text)
     except (ValueError, RecursionError, yaml.YAMLError):
         errors.append("invalid MCP configuration syntax")
-        return []
+        return None
     if not isinstance(data, dict):
         errors.append("MCP configuration must be an object")
-        return []
+        return None
+    return data
+
+
+def _mcp_server_entries(data: dict[str, Any], errors: list[str]) -> dict[Any, Any] | None:
+    """Return the server table of a client configuration or registry manifest, keyed by name."""
     mcp = data.get("mcp", {})
     if not isinstance(mcp, dict):
         errors.append("MCP mcp field must be an object")
@@ -2366,100 +2443,124 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
     if isinstance(servers, list):
         if any(not isinstance(server, dict) for server in servers):
             errors.append("MCP server entries must be objects")
-        servers = {str(server.get("name", i)): server for i, server in enumerate(servers) if isinstance(server, dict)}
+        servers = {
+            str(server.get("name", i)): server for i, server in enumerate(servers) if isinstance(server, dict)
+        }
     if not servers and isinstance(data.get("name"), str) and (data.get("packages") or data.get("remotes")):
         servers = {data["name"]: data}
     if not isinstance(servers, dict):
         errors.append("MCP servers must be an object or array")
-        return []
-    out: list[dict[str, Any]] = []
-    for name, cfg in servers.items():
-        if not isinstance(cfg, dict):
-            errors.append("MCP server entry must be an object")
-            continue
-        env = cfg.get("env", cfg.get("environment", {}))
-        headers = cfg.get("headers", {})
-        env = {} if env is None else env
-        headers = {} if headers is None else headers
-        if not isinstance(env, dict):
-            errors.append("MCP env must be an object")
-            env = {}
-        if not isinstance(headers, dict):
-            errors.append("MCP headers must be an object")
-            headers = {}
-        url = cfg.get("url") or cfg.get("serverUrl") or cfg.get("endpoint")
-        remotes = cfg.get("remotes")
-        if not url and isinstance(remotes, list) and remotes:
-            if isinstance(remotes[0], dict):
-                url = remotes[0].get("url")
-            else:
-                errors.append("MCP remote entry must be an object")
-        if url is not None and not isinstance(url, str):
-            errors.append("MCP url must be a string")
-            url = None
-        command = cfg.get("command")
-        if command is not None and not isinstance(command, str):
-            errors.append("MCP command must be a string")
-            command = None
-        packages = cfg.get("packages")
-        valid_package = isinstance(packages, list) and any(
-            isinstance(package, dict)
-            and isinstance(package.get("registryType"), str)
-            and isinstance(package.get("identifier"), str)
-            and package["identifier"].strip()
-            for package in packages
-        )
-        if not (command and command.strip()) and not (url and url.strip()) and not valid_package:
-            if cfg.get("disabled") is not True and cfg.get("enabled") is not False:
-                errors.append("MCP server entry has no command, URL, or valid package")
-            continue
-        args = cfg.get("args", [])
-        args = [] if args is None else args
-        if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
-            errors.append("MCP args must be an array of strings")
-            args = []
-        inline_locations = [
-            location for location, items in (("env", env.items()), ("headers", headers.items()))
-            if any(
-                isinstance(value, str) and value and not value.startswith("${")
-                and not looks_like_placeholder(value) and _SECRETISH.search(str(key)) and len(value) >= 12
-                for key, value in items
-            )
-        ]
-        transport = cfg.get("type") or cfg.get("transport") or ("stdio" if command else ("http" if url else "unknown"))
-        if not isinstance(transport, str):
-            errors.append("MCP transport must be a string")
-            transport = "unknown"
-        # Project only after sanitizing with the entire config: a credential in
-        # env/headers may be repeated as an otherwise unrecognizable argument.
-        field_names = ("name", "transport", "command", "args", "url", "env_names", "headers", "auto_approve")
-        clean_values = sanitize((cfg, [
-            str(name), transport, command, args, url,
-            sorted(str(key) for key in env), sorted(str(key) for key in headers),
-            cfg.get("autoApprove") or cfg.get("alwaysAllow"),
-        ]))[1]
-        safe = dict(zip(field_names, clean_values, strict=True))
-        inline_locations += [
-            location for location, changed in (
-                ("args", safe["args"] != args), ("url", safe["url"] != url), ("command", safe["command"] != command),
-            ) if changed
-        ]
-        inline = bool(inline_locations)
-        safe["args"] = safe["args"][:12]
-        safe["secrets_inline"] = bool(inline)
-        if inline_locations:
-            safe["secret_locations"] = inline_locations
-        disabled = cfg.get("disabled", False)
-        enabled = cfg.get("enabled", True)
-        if not isinstance(disabled, bool) or not isinstance(enabled, bool):
-            errors.append("MCP enabled/disabled flags must be booleans")
-            # Unknown activation state cannot substantiate an active server.
-            safe["disabled"] = True
+        return None
+    return servers
+
+
+def _mcp_server_record(name: Any, cfg: Any, errors: list[str]) -> dict[str, Any] | None:
+    """Project one configured server to its reported fields; None when it is not a usable entry."""
+    if not isinstance(cfg, dict):
+        errors.append("MCP server entry must be an object")
+        return None
+    env = _mcp_mapping(cfg.get("env", cfg.get("environment", {})), "env", errors)
+    headers = _mcp_mapping(cfg.get("headers", {}), "headers", errors)
+    url = _mcp_url(cfg, errors)
+    command = cfg.get("command")
+    if command is not None and not isinstance(command, str):
+        errors.append("MCP command must be a string")
+        command = None
+    if not (command and command.strip()) and not (url and url.strip()) and not _has_mcp_package(cfg):
+        if cfg.get("disabled") is not True and cfg.get("enabled") is not False:
+            errors.append("MCP server entry has no command, URL, or valid package")
+        return None
+    args = cfg.get("args", [])
+    args = [] if args is None else args
+    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+        errors.append("MCP args must be an array of strings")
+        args = []
+    inline_locations = _inline_secret_locations(env, headers)
+    transport = (
+        cfg.get("type") or cfg.get("transport") or ("stdio" if command else ("http" if url else "unknown"))
+    )
+    if not isinstance(transport, str):
+        errors.append("MCP transport must be a string")
+        transport = "unknown"
+    # Project only after sanitizing with the entire config: a credential in
+    # env/headers may be repeated as an otherwise unrecognizable argument.
+    field_names = ("name", "transport", "command", "args", "url", "env_names", "headers", "auto_approve")
+    clean_values = sanitize((cfg, [
+        str(name), transport, command, args, url,
+        sorted(str(key) for key in env), sorted(str(key) for key in headers),
+        cfg.get("autoApprove") or cfg.get("alwaysAllow"),
+    ]))[1]
+    safe = dict(zip(field_names, clean_values, strict=True))
+    inline_locations += [
+        location for location, changed in (
+            ("args", safe["args"] != args),
+            ("url", safe["url"] != url),
+            ("command", safe["command"] != command),
+        ) if changed
+    ]
+    safe["args"] = safe["args"][:12]
+    safe["secrets_inline"] = bool(inline_locations)
+    if inline_locations:
+        safe["secret_locations"] = inline_locations
+    safe["disabled"] = _mcp_disabled(cfg, errors)
+    return safe
+
+
+def _mcp_mapping(value: Any, section: str, errors: list[str]) -> dict[Any, Any]:
+    """Return an ``env``/``headers`` table; an absent one is empty and a malformed one is reported."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        errors.append(f"MCP {section} must be an object")
+        return {}
+    return value
+
+
+def _mcp_url(cfg: dict[str, Any], errors: list[str]) -> str | None:
+    """Return a server's endpoint, from its own URL fields or its first registry remote."""
+    url = cfg.get("url") or cfg.get("serverUrl") or cfg.get("endpoint")
+    remotes = cfg.get("remotes")
+    if not url and isinstance(remotes, list) and remotes:
+        if isinstance(remotes[0], dict):
+            url = remotes[0].get("url")
         else:
-            safe["disabled"] = disabled or not enabled
-        out.append(safe)
-    # Each output key is generated by this parser. Preserve its schema while
-    # sanitizing all values in the context of the entire source document.
-    names = [tuple(server) for server in out]
-    cleaned = sanitize((data, [[server[key] for key in keys] for server, keys in zip(out, names, strict=True)]))[1]
-    return [dict(zip(keys, values, strict=True)) for keys, values in zip(names, cleaned, strict=True)]
+            errors.append("MCP remote entry must be an object")
+    if url is not None and not isinstance(url, str):
+        errors.append("MCP url must be a string")
+        return None
+    return url
+
+
+def _has_mcp_package(cfg: dict[str, Any]) -> bool:
+    """Whether a registry entry names at least one installable package."""
+    packages = cfg.get("packages")
+    return isinstance(packages, list) and any(
+        isinstance(package, dict)
+        and isinstance(package.get("registryType"), str)
+        and isinstance(package.get("identifier"), str)
+        and package["identifier"].strip()
+        for package in packages
+    )
+
+
+def _inline_secret_locations(env: dict[Any, Any], headers: dict[Any, Any]) -> list[str]:
+    """Name the tables that hold a credential-looking literal rather than a reference."""
+    return [
+        location for location, items in (("env", env.items()), ("headers", headers.items()))
+        if any(
+            isinstance(value, str) and value and not value.startswith("${")
+            and not looks_like_placeholder(value) and _SECRETISH.search(str(key)) and len(value) >= 12
+            for key, value in items
+        )
+    ]
+
+
+def _mcp_disabled(cfg: dict[str, Any], errors: list[str]) -> bool:
+    """Whether a server is switched off; malformed activation flags count as disabled."""
+    disabled = cfg.get("disabled", False)
+    enabled = cfg.get("enabled", True)
+    if not isinstance(disabled, bool) or not isinstance(enabled, bool):
+        errors.append("MCP enabled/disabled flags must be booleans")
+        # Unknown activation state cannot substantiate an active server.
+        return True
+    return disabled or not enabled
