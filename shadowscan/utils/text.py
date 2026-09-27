@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from shadowscan.utils.redaction import credential_id, sanitize
+from shadowscan.utils.redaction import credential_id
 
 _BINARY_SNIFF = 8192
 # Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
@@ -28,15 +28,6 @@ def redact(value: str, keep: int = 4) -> str:
     if not value:
         return value
     return credential_id(value)
-
-
-def sanitize_record(obj: Any, *, _depth: int = 0) -> Any:
-    """Compatibility alias for the shared bounded evidence sanitizer.
-
-    ``_depth`` is ignored. New code should call ``sanitize`` directly.
-    """
-    del _depth
-    return sanitize(obj)
 
 
 def read_text(path: Path, max_bytes: int, errors: list[str] | None = None) -> str | None:

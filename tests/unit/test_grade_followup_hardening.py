@@ -12,8 +12,8 @@ from shadowscan.utils.platform import (
     UnsupportedPlatformError,
     require_supported_platform,
 )
-from shadowscan.utils.redaction import credential_id
-from shadowscan.utils.text import redact, sanitize_record
+from shadowscan.utils.redaction import credential_id, sanitize
+from shadowscan.utils.text import redact
 
 
 def test_require_supported_platform_accepts_the_validated_host():
@@ -56,7 +56,7 @@ def test_cli_commands_fail_closed_without_nofollow(monkeypatch, tmp_path):
     assert MISSING_NOFOLLOW_MESSAGE in result.output
 
 
-def test_text_shims_remain_compatibility_aliases():
+def test_redact_shim_remains_a_compatibility_alias():
     token = "sk-proj-exampletokenvalue"
     assert redact(token, keep=8) == credential_id(token)
-    assert sanitize_record({"token": token})["token"] != token
+    assert sanitize({"token": token})["token"] != token
