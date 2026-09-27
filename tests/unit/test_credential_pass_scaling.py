@@ -47,6 +47,11 @@ def _best_time(source: str, repeats: int) -> float:
     'X::new("a"), ',
     "{name: API_KEY, value: [REDACTED",  # a record value that is not a whole marker
     '{name: API_KEY, value: "}',       # a quoted record value read past a brace
+    "tool --key a8f3c91d7e2b4f6a ",    # an option whose last word names a credential
+    "--key=#",                         # options inside one word whose kept values run to its end
+    "-u=#",
+    "-H=#",
+    "--key=[REDACTED]#",
 ])
 def test_context_named_credential_passes_scale_linearly(unit):
     small, large = unit * 1000, unit * 4000
@@ -99,6 +104,18 @@ def test_a_long_line_of_record_names_completes_in_a_full_scan(tmp_path, index):
     assert elapsed < 20, elapsed  # generous for slow CI runners
     assert result.complete, [error for stats in result.stats for error in stats.errors]
     assert any("OpenAI" in finding.title for finding in result.findings)
+
+
+def test_a_word_of_many_options_is_withheld_past_the_limit():
+    # Each kept option value is read to the end of its word, so a word of
+    # option after option was quadratic ('--key=#' * 8000 took seconds). Past
+    # the limit the rest of the word is withheld, never shown.
+    secret = "a8f3c91d7e2b4f6a9d0c"
+    source = "tool " + "--key=#" * 40 + f"--key={secret} --model gpt-4o"
+    safe = sanitize_text(source)
+    assert secret not in safe and safe.endswith(f"{REDACTED} --model gpt-4o")
+    assert safe.count("--key=#") == redaction._CLI_WORD_OPTIONS
+    assert sanitize_text(safe) == safe
 
 
 def test_linear_record_and_markup_passes_still_withhold_values():

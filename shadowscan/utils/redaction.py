@@ -41,7 +41,11 @@ from shadowscan.utils.redaction_assignments import (
     _redact_yaml_multiline_values,
 )
 from shadowscan.utils.redaction_calls import _redact_auth_pairs, _redact_credential_calls
-from shadowscan.utils.redaction_commands import _redact_command_credentials, _redact_environment_commands
+from shadowscan.utils.redaction_commands import (
+    _redact_command_credentials,
+    _redact_environment_commands,
+    _redact_opaque_options,
+)
 from shadowscan.utils.redaction_formats import _AUTH, _JWT, _PEM, _SECRET_TOKEN, _URL, _sanitize_url
 from shadowscan.utils.redaction_markup import _redact_markup_credentials, _redact_name_value_pairs
 from shadowscan.utils.redaction_rules import (
@@ -105,7 +109,11 @@ def sanitize_text(text: str) -> str:
     # can introduce a bracketed marker after a mapping colon (including
     # annotations). Normalize those expressions in this same pass so repeated
     # sanitization does not change the result.
-    return _redact_mapping_values(_redact_fallback_defaults(_redact_plain_assignments(text)))
+    text = _redact_mapping_values(_redact_fallback_defaults(_redact_plain_assignments(text)))
+    # Opaque values of options named for a credential ('--key v') come last:
+    # withheld earlier, a value glued to a following name ('v#password = ...',
+    # 'v#process.env.TOKEN || "..."') hid that name from the rules that read it.
+    return _redact_opaque_options(text)
 
 
 def _opaque_option(option: str) -> bool:

@@ -40,8 +40,15 @@ _CLI_LIST_GAP = re.compile(r"[ \t]*,[ \t]*|[ \t]*\r?\n[ \t]*-[ \t]+|[ \t]+")
 _CLI_VALUE = re.compile(
     r"\"(?P<double>[^\"\r\n]*)\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>(){}\[\],\\]+)"
 )
+# An unquoted value that holds a marker an earlier pass left in it.
+_CLI_MARKED_VALUE = re.compile(r"(?:\[REDACTED\]|[^\s\"'`;|&<>(){}\[\],\\])+")
 _CLI_METAVAR = re.compile(r"[A-Z]+(?:[_-][A-Z0-9]+)*")
 _CLI_VALUE_LIMIT = 4096
+# An option value that is kept is read to the end of its unquoted word, and
+# every later option in that word reads it again ('-u=#-u=#-u=#...'). Past
+# this many options in one word the rest of the word is withheld instead,
+# which keeps the pass linear; command lines separate their options.
+_CLI_WORD_OPTIONS = 16
 _HEADER_VALUE = re.compile(
     r"(?P<name>[A-Za-z][A-Za-z0-9-]*):(?:(?:Bearer|Basic|Token|Bot|Digest|SSWS|ApiKey|Api-Key|token)[ \t]+)?"
     r"(?P<secret>\S[^\r\n]*)"
@@ -146,6 +153,14 @@ def _cli_value_span(mode: str, text: str, position: int, strict: bool) -> tuple[
     if text.startswith("-", position):
         return None  # the next option: checked first so chained options are not rescanned
     value = _CLI_VALUE.match(text, position)
+    if mode == "opaque" and (value is None or value.group("bare") is not None):
+        # These options are read last, after an earlier pass may have withheld
+        # part of an unquoted value ('--key sk-...:rest'): the rest decides.
+        if text.startswith(REDACTED, position if value is None else value.end()):
+            marked = _CLI_MARKED_VALUE.match(text, position)
+            assert marked is not None
+            rest = marked.group().replace(REDACTED, "")
+            return marked.span() if rest and _cli_secret_span(mode, rest, position, strict) else None
     if value is None:
         return None
     group = next(name for name in ("double", "single", "bare") if value.group(name) is not None)
@@ -175,22 +190,51 @@ def _redact_user_secrets(text: str) -> str:
 
 
 def _redact_command_credentials(text: str) -> str:
-    """Withhold credentials passed as command-line option values."""
+    """Withhold credentials passed as command-line option values.
+
+    Opaque values of options whose last word names a credential are left to
+    ``_redact_opaque_options``, which runs after every pass that reads a name.
+    """
     if "-" not in text:
         return text
     if "--password-stdin" in text:
         text = _redact_piped_passwords(text)
     if "user-secrets" in text:
         text = _redact_user_secrets(text)
-    pieces: list[str] = []
+    return _redact_options(text, opaque=False)
+
+
+def _redact_opaque_options(text: str) -> str:
+    """Withhold opaque values of options whose last word names a credential ('--key v').
+
+    This runs after every pass that reads a name: an opaque value glued to a
+    following assignment ('--key v#password = "p"') would otherwise hide that
+    assignment's name from them.
+    """
+    return text if "-" not in text else _redact_options(text, opaque=True)
+
+
+def _redact_options(text: str, *, opaque: bool) -> str:
+    """Withhold values of 'opaque' options ('--key v') when ``opaque``, else of all other options.
+
+    A login's '-p' and a MySQL client's '-pValue' are read first, so
+    '-pS3cretKey' after 'mysql' is an attached password, not an 'opaque' option.
+    """
+    spans: list[tuple[int, int]] = []
     cursor = 0
     logins = "login" in text or "sshpass" in text
     mysql = "mysql" in text or "mariadb" in text
+    # The unquoted word the last kept option value was read in, and how many
+    # options start in it: see _CLI_WORD_OPTIONS.
+    word_end = word_options = 0
     for match in _CLI_OPTION.finditer(text):
-        mode = _cli_option_mode(match.group()) or (
-            _cli_password_mode(text, match, logins, mysql) if logins or mysql else ""
-        )
-        if not mode:
+        mode = _cli_option_mode(match.group())
+        if opaque and mode != "opaque":
+            continue
+        if mode in {"", "opaque"} and (logins or mysql):
+            # A login's '-p' and a MySQL client's '-pValue' ('-pSecret') come first.
+            mode = _cli_password_mode(text, match, logins, mysql) or mode
+        if not mode or (mode == "opaque") != opaque:
             continue
         start = match.start()
         # An opening quote belongs to the option unless it closes a preceding word.
@@ -199,42 +243,49 @@ def _redact_command_credentials(text: str) -> str:
             quote = ""
         if start - len(quote) < cursor:
             continue
-        position = match.end()
-        strict = text.startswith("=", position)
-        span: tuple[int, int] | None = None
-        closing = -1
-        if mode == "attached":
-            closing = position
-            span = _cli_value_span("secret", text, start + 2, True)
-        elif quote and strict:
-            # '"--api-key=value"' as one argv element.
-            limit = text.find("\n", position, position + _CLI_VALUE_LIMIT)
-            closing = text.find(quote, position + 1, position + _CLI_VALUE_LIMIT if limit < 0 else limit)
-            if closing >= 0:
-                span = _cli_secret_span(mode, text[position + 1:closing], position + 1, True)
-        elif quote and text.startswith(quote, position):
-            # An argv list or a quoted shell word names its value in quotes.
-            gap = _CLI_LIST_GAP.match(text, position + 1)
-            if gap is None or not text.startswith(("\"", "'"), gap.end()):
+        if start < word_end:
+            word_options += 1
+            if word_options > _CLI_WORD_OPTIONS:
+                spans.append((start, word_end))
+                cursor = word_end
                 continue
-            closing = position
-            span = _cli_value_span(mode, text, gap.end(), False)
-        if closing < 0:
-            # Plain text, or a quote that does not delimit this option.
-            if strict:
-                span = _cli_value_span(mode, text, position + 1, True)
-            else:
-                gap = _CLI_SPACE.match(text, position)
-                span = None if gap is None else _cli_value_span(mode, text, gap.end(), False)
+        span = _option_value_span(text, match, mode, quote)
         if span is None:
+            if start >= word_end:
+                word = _CLI_MARKED_VALUE.match(text, start)
+                word_end, word_options = (start + 1 if word is None else word.end()), 1
             continue
-        pieces.append(text[cursor:span[0]])
-        pieces.append(REDACTED)
+        spans.append(span)
         cursor = span[1]
-    if not pieces:
-        return text
-    pieces.append(text[cursor:])
-    return "".join(pieces)
+    return _withhold_spans(text, spans)
+
+
+def _option_value_span(text: str, match: re.Match[str], mode: str, quote: str) -> tuple[int, int] | None:
+    """The credential that the option ``match`` of ``mode`` passes, if any.
+
+    ``quote`` is the quote that opens the option ('"--api-key=v"'), or ''.
+    """
+    start, position = match.start(), match.end()
+    strict = text.startswith("=", position)
+    if mode == "attached":
+        return _cli_value_span("secret", text, start + 2, True)
+    if quote and strict:
+        # '"--api-key=value"' as one argv element.
+        limit = text.find("\n", position, position + _CLI_VALUE_LIMIT)
+        closing = text.find(quote, position + 1, position + _CLI_VALUE_LIMIT if limit < 0 else limit)
+        if closing >= 0:
+            return _cli_secret_span(mode, text[position + 1:closing], position + 1, True)
+    elif quote and text.startswith(quote, position):
+        # An argv list or a quoted shell word names its value in quotes.
+        gap = _CLI_LIST_GAP.match(text, position + 1)
+        if gap is None or not text.startswith(("\"", "'"), gap.end()):
+            return None
+        return _cli_value_span(mode, text, gap.end(), False)
+    # Plain text, or a quote that does not delimit this option.
+    if strict:
+        return _cli_value_span(mode, text, position + 1, True)
+    gap = _CLI_SPACE.match(text, position)
+    return None if gap is None else _cli_value_span(mode, text, gap.end(), False)
 
 
 # Dockerfile's legacy 'ENV NAME value', csh/Windows 'setenv NAME value' and

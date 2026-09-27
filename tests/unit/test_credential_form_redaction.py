@@ -198,6 +198,9 @@ FORMS: list[tuple[str, str, str]] = [
     (f"tool --key a.api_key={HEX}", HEX, "tool --key a.api_key="),
     (f"KEY1={HEX}\n", HEX, "KEY1="),
     (f'azure_openai_key2 = "{BASE62}"', BASE62, "azure_openai_key2 = "),
+    # A MySQL client's '-pVALUE' is a password even when it ends in a credential word.
+    ("mysql -u root -pS3cretKey2024 app", "S3cretKey2024", "mysql -u root -p"),
+    ("mysqldump -u root -pdbPass2024 shop > shop.sql", "dbPass2024", " shop > shop.sql"),
     (f'<add key="AzureOpenAI:Key2" value="{HEX}"/>', HEX, 'key="AzureOpenAI:Key2"'),
     (f'dotnet user-secrets set "AzureOpenAI:Key" "{HEX}"', HEX, 'set "AzureOpenAI:Key" '),
     (f"dotnet user-secrets set AzureOpenAI:ApiKey {BASE62} --project src/Api", BASE62, "--project src/Api"),
@@ -434,6 +437,17 @@ def test_argv_options_named_for_a_credential_lose_opaque_values_everywhere():
     assert safe == {"args": ["--key", REDACTED, "--model", "gpt-4o"], "note": f"started with {REDACTED}"}
     ordinary = {"args": ["--key", "users", "--sort-key", "name", "--no-key", HEX]}
     assert sanitize(ordinary) == ordinary
+
+
+@pytest.mark.parametrize("separator", ["#", "/", " ", ";"])
+def test_an_opaque_option_value_never_hides_a_following_assignment(separator):
+    # The option's value and the assignment glued to it are both withheld:
+    # withholding '--key' values first swallowed the name 'password', and the
+    # assignment rules no longer saw it.
+    source = f'tool --key {HEX}{separator}password = "{PASSWORD}"'
+    safe = sanitize_text(source)
+    assert HEX not in safe and PASSWORD not in safe
+    assert safe.startswith("tool --key ") and sanitize_text(safe) == safe
 
 
 # Forms SECURITY.md lists as not withheld: nothing in them names a credential

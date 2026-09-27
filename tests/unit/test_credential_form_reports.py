@@ -140,6 +140,9 @@ CASES = {
         f"<configuration><openai><endpoint>{AZURE}</endpoint>"
         f'<token key="openai.token" value="">{HEX}</token></openai></configuration>\n'
     ), HEX),
+    "mysql-attached-password": ("migrate.sh", (
+        f"mysql -h db -u root -pS3cretKey2024 app < schema.sql && curl {AZURE}openai/deployments\n"
+    ), "S3cretKey2024"),
     "xml-password-element": ("settings.xml", (
         f"<server><url>https://api.openai.com/v1</url><password>{PASSWORD}</password></server>\n"
     ), PASSWORD),
