@@ -52,9 +52,11 @@ ChangeCheck = Callable[[os.stat_result, int], bool]
 DEFAULT_MAX_INPUT_BYTES = 256 * 1024 * 1024
 DEFAULT_MAX_INPUT_FILE_BYTES = 32 * 1024 * 1024
 DEFAULT_MAX_INPUT_FILES = 10_000
-# Hard ceilings: configured limits are clamped to these.
+# Hard ceilings the configured byte limits are clamped to.
 MAX_OFFLINE_FILE_BYTES = 64 * 1024 * 1024
 MAX_OFFLINE_TOTAL_BYTES = 512 * 1024 * 1024
+# Fixed caps: one line, one directory walk, and the invalid records one
+# export lists individually before summarising the rest.
 MAX_OFFLINE_LINE_BYTES = 4 * 1024 * 1024
 MAX_OFFLINE_ENTRIES = 200_000
 MAX_INVALID_LINE_ERRORS = 20
