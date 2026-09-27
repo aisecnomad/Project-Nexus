@@ -467,6 +467,15 @@ def validate_root_ids(paths: Any, root_ids: Any) -> list[str]:
 
 
 class FilesystemConnector(BaseConnector):
+    @classmethod
+    def cache_roots_separately(cls, roots: list[Any], root_ids: Any, *, labelled: bool) -> bool:
+        # Engine hook: each repository root is an independent incremental-cache unit.
+        if labelled:
+            validate_distinct_paths(roots)
+        if root_ids is not None:
+            validate_root_ids(roots, root_ids)
+        return True
+
     name: ClassVar[str] = "code.filesystem"
     surface: ClassVar[Surface] = Surface.CODE
     provider: ClassVar[str | None] = "filesystem"

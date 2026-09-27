@@ -14,6 +14,11 @@ Every connector supports two execution modes:
 Reading and validating offline exports is implemented in
 :mod:`shadowscan.connectors.offline`; ``BaseConnector`` keeps thin methods
 under the names connectors override.
+
+``BaseConnector`` also declares the *engine hooks*: class-level capabilities
+the engine consults instead of special-casing connector names (per-root
+incremental caching, the scan-wide instance-credential approval, and the
+per-run identity key). Their defaults describe an ordinary connector.
 """
 
 from __future__ import annotations
@@ -230,6 +235,36 @@ class BaseConnector(ABC):
     # sibling fields such as ARNs. Tool/agent configuration parsers keep the
     # default: their env blocks are where secrets live.
     _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = False
+
+    # ------------------------------------------------------------ engine hooks
+    # Capabilities the engine consults instead of special-casing connector
+    # names; the defaults describe an ordinary connector.
+
+    # Jobs of a connector that sets this share one private key per scan run
+    # (ConnectorContext.gateway_identity_key): identical sources in a report
+    # get the same opaque identities, which separate runs cannot link.
+    uses_run_identity_key: ClassVar[bool] = False
+
+    @classmethod
+    def inherits_instance_credentials_approval(cls) -> bool:
+        """Whether the engine sets ``allow_instance_credentials`` from the scan options.
+
+        True for a connector that documents the key in ``config_keys`` (the
+        cloud connectors). The scan-wide approval then replaces any value in
+        the connector's own configuration.
+        """
+        return "allow_instance_credentials" in cls.config_keys
+
+    @classmethod
+    def cache_roots_separately(cls, roots: list[Any], root_ids: Any, *, labelled: bool) -> bool:
+        """Whether an incremental multi-root ``paths`` scan may run and be cached per root.
+
+        The engine then runs one job per root, so an unchanged repository is
+        reused while its sibling is rescanned. Raise ConnectorError for roots
+        that cannot be split: the engine runs the connector once instead, so
+        its own validation reports the scan as incomplete.
+        """
+        return False
 
     def __init__(self, ctx: ConnectorContext) -> None:
         self.ctx = ctx

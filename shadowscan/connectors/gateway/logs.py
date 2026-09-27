@@ -584,6 +584,9 @@ def _assign_owner(f: Finding, c: _Caller) -> None:
 
 
 class GatewayLogConnector(BaseConnector, _NoDump):
+    # Engine hook: identical sources in one report share opaque caller/scope IDs.
+    uses_run_identity_key: ClassVar[bool] = True
+
     name: ClassVar[str] = "gateway.logs"
     surface: ClassVar[Surface] = Surface.GATEWAY
     provider: ClassVar[str | None] = "gateway"
