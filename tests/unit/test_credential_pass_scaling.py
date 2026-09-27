@@ -46,6 +46,7 @@ def _best_time(source: str, repeats: int) -> float:
     'AzureKeyCredential a = new("a8f3c91d7e2b"); ',  # a declared type, read backwards
     'X::new("a"), ',
     "{name: API_KEY, value: [REDACTED",  # a record value that is not a whole marker
+    '{name: API_KEY, value: "}',       # a quoted record value read past a brace
 ])
 def test_context_named_credential_passes_scale_linearly(unit):
     small, large = unit * 1000, unit * 4000

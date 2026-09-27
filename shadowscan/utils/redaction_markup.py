@@ -161,6 +161,8 @@ _RECORD_VALUE = re.compile(r"(?<![\w.-])(?P<quote>[\"']?)(?:value|Value|VALUE)(?
 _RECORD_INLINE_VALUE = re.compile(
     r"\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;}\])]+(?:(?<=\[REDACTED)\][^\s,;}\])]*)*"
 )
+# A quoted value runs to its closing quote, past a '}' inside it ('"p}v"').
+_RECORD_QUOTED_VALUE = re.compile(r"\"[^\"\r\n]*\"|'[^'\r\n]*'")
 _RECORD_BRACE = re.compile(r"\}")
 _RECORD_COMMENT = re.compile(r"[ \t]#")
 _RECORD_BLOCK_MARKERS = frozenset({"", "|", ">", "|-", ">-", "|+", ">+"})
@@ -309,7 +311,9 @@ def _redact_name_value_pairs(text: str) -> str:
         field, stop, column = located
         decided[field.start()] = level
         if column < 0:
-            value = _RECORD_INLINE_VALUE.match(text, field.end(), stop)
+            value = _RECORD_QUOTED_VALUE.match(text, field.end()) or _RECORD_INLINE_VALUE.match(
+                text, field.end(), stop,
+            )
             if value is None:
                 continue
             start, end = value.span()

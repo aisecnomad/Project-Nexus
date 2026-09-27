@@ -175,7 +175,7 @@ FORMS: list[tuple[str, str, str]] = [
     (f'<apiKey name="OpenAI:Secret" value="">{HEX}</apiKey>', HEX, '<apiKey name="OpenAI:Secret" value="">'),
     (f'<token key="openai.token" value="ignored">{HEX}</token>', HEX, '<token key="openai.token" value="'),
     (f'<Secret key="OpenAI:Secret" value="x">{HEX}</Secret>', HEX, "</Secret>"),
-    (f'<apiKey name="AzureOpenAI__Token" value="${{X}}">{HEX}</apiKey>', HEX, "</apiKey>"),
+    (f'<apiKey name="AzureOpenAI__Token" value="${{X}}">{HEX}</apiKey>', HEX, 'value="${X}">'),
     (f'<apiKey name="api_key" value="">{HEX}</apiKey>', HEX, '<apiKey name="api_key" value="">'),
     (f'<password key="Token" value="users">{PASSWORD}</password>', PASSWORD, "</password>"),
     (f'<add key="Password" value="">{PASSWORD}</add>', PASSWORD, '<add key="Password" value="">'),
@@ -229,6 +229,9 @@ FORMS: list[tuple[str, str, str]] = [
     (f'<add key="api_key" value="{HEX}', HEX, '<add key="api_key" value='),
     (f"{{name: OPENAI_API_KEY, value: https://svc:{BASE62}@api.openai.com/v1}}", BASE62,
      "{name: OPENAI_API_KEY"),
+    # A quoted record value runs to its closing quote, past a '}' inside it.
+    (f'{{"name": "Password", "value": "p}}{HEX}"}}', HEX, '{"name": "Password", "value": "'),
+    (f'- {{name: DB_PASSWORD, value: "p}}{PASSWORD}"}}', PASSWORD, "- {name: DB_PASSWORD, value: "),
 ]
 
 
@@ -405,10 +408,12 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
     '<input name="key" value="enter">',
     "{name: pageToken, value: next}",
     "{name: OpenAIKey, value: ${OPENAI_KEY}}",
+    '{name: OPENAI_API_KEY, value: "${OPENAI_API_KEY}"}',
     "- name: cacheKey\n  value: users\n",
     "- name: OpenAIKey\n  value: |\n    first line\n    second line\n",
     '<add key="CacheKey" value="users">users-by-id</add>',
     '<OpenAIKey key="Region" value="eu">users</OpenAIKey>',
+    '<apiKey name="api_key" value="${OPENAI_API_KEY}">${OPENAI_API_KEY}</apiKey>',
     # Options and numbered names keep ordinary values.
     "tool --key users --sort-key name --cache-key users-by-id",
     "curl -k https://example.com --key client.pem --key-file ~/.ssh/id_ed25519",
