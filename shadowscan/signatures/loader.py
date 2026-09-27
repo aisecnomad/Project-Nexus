@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
@@ -80,8 +80,9 @@ class Signal:
     languages: list[str] = field(default_factory=list)  # import / code
     names: list[str] = field(default_factory=list)  # dependency / env / client_id
     prefixes: list[str] = field(default_factory=list)  # dependency
-    exclude_names: list[str] = field(default_factory=list)  # dependency: exact names a prefix must not claim
-    exclude_prefixes: list[str] = field(default_factory=list)  # dependency: name prefixes a prefix must not claim
+    # dependency: exact names and name prefixes that a prefix must not claim
+    exclude_names: list[str] = field(default_factory=list)
+    exclude_prefixes: list[str] = field(default_factory=list)
     patterns: list[str] = field(default_factory=list)  # regexes
     globs: list[str] = field(default_factory=list)  # file
     values: list[str] = field(default_factory=list)  # domain / scope / iac
@@ -153,7 +154,8 @@ class Signature:
                 raise ValueError(f"{self.source}: {self.id}: signal weight out of range")
             if s.type == "dependency" and not (s.names or s.prefixes):
                 raise ValueError(f"{self.source}: {self.id}: dependency signal needs names/prefixes")
-            if s.type in {"import", "code", "user_agent", "name", "model", "secret", "image"} and not s.patterns:
+            pattern_types = {"import", "code", "user_agent", "name", "model", "secret", "image"}
+            if s.type in pattern_types and not s.patterns:
                 raise ValueError(f"{self.source}: {self.id}: {s.type} signal needs patterns")
             if s.type == "file" and not s.globs:
                 raise ValueError(f"{self.source}: {self.id}: file signal needs globs")
@@ -205,7 +207,7 @@ def signature_from_dict(d: dict[str, Any], source: str | None = None) -> Signatu
     return sig
 
 
-def _iter_yaml_files(root: Path):
+def _iter_yaml_files(root: Path) -> Iterator[Path]:
     yield from policy_files(root, {".yaml", ".yml"})
 
 
@@ -213,8 +215,8 @@ class _UniqueKeyLoader(BoundedSafeLoader):
     """Reject duplicate YAML keys instead of silently retaining the last value."""
 
 
-def _unique_mapping(loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False):
-    out = {}
+def _unique_mapping(loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False) -> dict[str, Any]:
+    out: dict[str, Any] = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)
         # Marks render a source excerpt when printed; report numbers only.
@@ -269,7 +271,9 @@ def load_signature_file(path: Path) -> list[Signature]:
                 for item in require_list(doc, context, nonempty=True):
                     out.append(signature_from_dict(item, source=context))
             else:
-                raise SignaturePackError(f"{context}: expected a signature, signature list, or signatures pack")
+                raise SignaturePackError(
+                    f"{context}: expected a signature, signature list, or signatures pack"
+                )
     except SignaturePackError:
         raise
     except ValueError as exc:
@@ -350,7 +354,10 @@ def load_signatures(
                 if sig.id in pack_ids:
                     raise SignaturePackError(f"{f}: duplicate signature id {sig.id!r} in {d}")
                 if sig.id in reserved and not allow_override:
-                    raise SignaturePackError(f"{f}: signature id {sig.id!r} is reserved by a built-in; explicitly enable signature overrides")
+                    raise SignaturePackError(
+                        f"{f}: signature id {sig.id!r} is reserved by a built-in; explicitly enable signature"
+                        " overrides"
+                    )
                 pack_ids.add(sig.id)
                 by_id[sig.id] = sig
         if include_builtin and number == 0:
