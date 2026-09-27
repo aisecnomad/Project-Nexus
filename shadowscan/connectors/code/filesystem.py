@@ -8,7 +8,8 @@ Produces:
 * one ``agent-config`` finding per coding-agent product per project
   (Claude Code, Copilot, Cursor, Codex... including sub-agent definitions);
 * one ``agent`` finding per A2A agent card / declarative agent manifest;
-* one ``workflow`` finding per exported low-code flow (n8n, Flowise, Langflow, Dify, Make, Power Automate, Logic Apps);
+* one ``workflow`` finding per exported low-code flow (n8n, Flowise, Langflow,
+  Dify, Make, Power Automate, Logic Apps);
 * one ``infra`` finding per IaC / container file provisioning agent platforms;
 * one ``secret`` finding per file containing LLM-provider credentials (redacted).
 
@@ -525,10 +526,12 @@ _LLM_CATEGORIES = frozenset({"provider", "framework", "protocol", "platform", "c
 _COLOCATED_SIGNATURES = frozenset({"heuristic.llm-command-execution"})
 # IAM statements granting every action (Terraform, CloudFormation, ARM/Bicep JSON).
 _IAM_WILDCARD_RE = re.compile(
-    r"""(?i)["']?\bActions?["']?\s*[:=]\s*\[?\s*["']\*["']|["'](?:bedrock|iam|sts|lambda|s3|secretsmanager|kms):\*["']"""
+    r"""(?i)["']?\bActions?["']?\s*[:=]\s*\[?\s*["']\*["']"""
+    r"""|["'](?:bedrock|iam|sts|lambda|s3|secretsmanager|kms):\*["']"""
 )
 _IAC_MODEL_RE = re.compile(
-    r"""(?i)\b(?:foundation_?model(?:_?(?:id|arn))?|model_?id|model_?name|model)\b["']?\s*[:=]\s*["']([A-Za-z0-9][A-Za-z0-9._:/@-]{2,199})["']"""
+    r"""(?i)\b(?:foundation_?model(?:_?(?:id|arn))?|model_?id|model_?name|model)\b"""
+    r"""["']?\s*[:=]\s*["']([A-Za-z0-9][A-Za-z0-9._:/@-]{2,199})["']"""
 )
 _IAC_EXTENSIONS = frozenset({".tf", ".hcl", ".bicep", ".json", ".yaml", ".yml"})
 
@@ -649,7 +652,9 @@ def validate_root_ids(paths: Any, root_ids: Any) -> list[str]:
     if not isinstance(root_ids, list) or len(root_ids) != len(paths):
         raise ConnectorError("code.filesystem: root_ids must contain exactly one ID per path")
     if not all(isinstance(root_id, str) and _ROOT_ID_RE.fullmatch(root_id) for root_id in root_ids):
-        raise ConnectorError("code.filesystem: root_ids must be 1-80 characters of letters, digits, '.', '_' or '-'")
+        raise ConnectorError(
+            "code.filesystem: root_ids must be 1-80 characters of letters, digits, '.', '_' or '-'"
+        )
     if len(set(root_ids)) != len(root_ids):
         raise ConnectorError("code.filesystem: root_ids must be unique within paths")
     return root_ids
@@ -659,25 +664,55 @@ class FilesystemConnector(BaseConnector):
     name: ClassVar[str] = "code.filesystem"
     surface: ClassVar[Surface] = Surface.CODE
     provider: ClassVar[str | None] = "filesystem"
-    description: ClassVar[str] = "Scan a local directory / repository checkout for agent frameworks, MCP, coding agents, IaC and secrets."
+    description: ClassVar[str] = (
+        "Scan a local directory / repository checkout for agent frameworks, MCP, coding agents, IaC "
+        "and secrets."
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "extra directory names / glob patterns to skip",
-        "max_file_size": "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs matches it (default 1,000,000 bytes)",
-        "oversize_skip_globs": "case-insensitive file name globs; a file over max_file_size matching one is skipped with a warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts)",
+        "max_file_size": (
+            "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs "
+            "matches it (default 1,000,000 bytes)"
+        ),
+        "oversize_skip_globs": (
+            "case-insensitive file name globs; a file over max_file_size matching one is skipped with a "
+            "warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, "
+            "fonts, archives and compiled artifacts)"
+        ),
         "max_files": "stop after this many files (default 100000)",
-        "max_notebook_size": "bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even when saved outputs make the file larger than max_file_size (default 20 MiB); outputs of such a notebook are not scanned for credentials",
-        "max_ast_nodes": "Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger file keeps its lexical evidence and is reported as partially analyzed: a warning under test paths, an error elsewhere",
-        "scan_timeout": "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan_timeout when higher",
+        "max_notebook_size": (
+            "bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even "
+            "when saved outputs make the file larger than max_file_size (default 20 MiB); outputs of such a "
+            "notebook are not scanned for credentials"
+        ),
+        "max_ast_nodes": (
+            "Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger "
+            "file keeps its lexical evidence and is reported as partially analyzed: a warning under test "
+            "paths, an error elsewhere"
+        ),
+        "scan_timeout": (
+            "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further "
+            "256 KiB, capped at 10 seconds or scan_timeout when higher"
+        ),
         "scan_secrets": "detect provider credentials (default true)",
-        "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
-        "strict_coverage": "report coverage gaps (unread analyzable oversize files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false)",
+        "use_git": (
+            "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ "
+            "(default false)"
+        ),
+        "strict_coverage": (
+            "report coverage gaps (unread analyzable oversize files, symbolic links whose alias path is not "
+            "covered) as errors instead of warnings; either way the scan is incomplete (default false)"
+        ),
         "include_tests": "let test and fixture code establish agents at full weight (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
         "account": "account label recorded on every finding (default none)",
-        "owner": "owner recorded on every finding; overrides CODEOWNERS and inventory attribution (default: CODEOWNERS, then git author when use_git, then inventory)",
+        "owner": (
+            "owner recorded on every finding; overrides CODEOWNERS and inventory attribution "
+            "(default: CODEOWNERS, then git author when use_git, then inventory)"
+        ),
         "provider": "provider label recorded on findings (default filesystem)",
         "metadata": "mapping merged into every finding's metadata",
     }
@@ -689,15 +724,22 @@ class FilesystemConnector(BaseConnector):
         self.max_file_size = int(ctx.get("max_file_size", 1_000_000))
         self.max_files = int(ctx.get("max_files", 100_000))
         self.scan_timeout = float(ctx.get("scan_timeout", 2.0))
-        self.max_ast_nodes: int | None = ctx.get("max_ast_nodes")  # validated below
-        self.max_notebook_size: int = ctx.get("max_notebook_size", DEFAULT_MAX_NOTEBOOK_SIZE)  # validated below
+        # max_ast_nodes and max_notebook_size are validated below.
+        self.max_ast_nodes: int | None = ctx.get("max_ast_nodes")
+        self.max_notebook_size: int = ctx.get("max_notebook_size", DEFAULT_MAX_NOTEBOOK_SIZE)
         if type(self.max_notebook_size) is not int or self.max_notebook_size < 1:
             raise ConnectorError("code.filesystem: max_notebook_size must be a positive integer")
         if self.max_file_size < 1 or self.max_files < 1 or not 0 < self.scan_timeout <= 60:
-            raise ConnectorError("code.filesystem: limits must be positive; scan_timeout must be at most 60 seconds")
-        if self.max_ast_nodes is not None and (type(self.max_ast_nodes) is not int or not 1_000 <= self.max_ast_nodes <= 2_000_000):
+            raise ConnectorError(
+                "code.filesystem: limits must be positive; scan_timeout must be at most 60 seconds"
+            )
+        if self.max_ast_nodes is not None and (
+            type(self.max_ast_nodes) is not int or not 1_000 <= self.max_ast_nodes <= 2_000_000
+        ):
             raise ConnectorError("code.filesystem: max_ast_nodes must be an integer between 1000 and 2000000")
-        self.oversize_skip_globs = _validated_globs(ctx.get("oversize_skip_globs", list(DEFAULT_OVERSIZE_SKIP_GLOBS)))
+        self.oversize_skip_globs = _validated_globs(
+            ctx.get("oversize_skip_globs", list(DEFAULT_OVERSIZE_SKIP_GLOBS))
+        )
         self.scan_secrets = bool(ctx.get("scan_secrets", True))
         self.use_git = ctx.get("use_git", False)
         if not isinstance(self.use_git, bool):
@@ -730,7 +772,10 @@ class FilesystemConnector(BaseConnector):
             }
         elif split_root_id is not None:
             path = ctx.get("path")
-            if not self.label or not isinstance(path, str) or not isinstance(split_root_id, str) or not _ROOT_ID_RE.fullmatch(split_root_id):
+            if (
+                not self.label or not isinstance(path, str) or not isinstance(split_root_id, str)
+                or not _ROOT_ID_RE.fullmatch(split_root_id)
+            ):
                 raise ConnectorError("code.filesystem: invalid split root identity")
             self._root_ids[Path(path).expanduser().resolve()] = split_root_id
         self.account: str | None = ctx.get("account")
@@ -889,7 +934,9 @@ class FilesystemConnector(BaseConnector):
             # from filling the report with thousands of link names.
             if root not in self._symlink_warnings:
                 self._symlink_warnings.add(root)
-                message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
+                message = (
+                    f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
+                )
                 if self.strict_coverage:
                     self.ctx.error(f"{message}; coverage incomplete")
                 else:
@@ -973,7 +1020,8 @@ class FilesystemConnector(BaseConnector):
         return budget if will_read else 0.0
 
     def _stop_at_deadline(
-        self, root: Path, examined: int, entries: Iterator[tuple[str, Path, str, int]], deadline: float, margin: float,
+        self, root: Path, examined: int, entries: Iterator[tuple[str, Path, str, int]],
+        deadline: float, margin: float,
     ) -> None:
         """Record one error naming how much of the tree the connector deadline left unread.
 
@@ -986,7 +1034,9 @@ class FilesystemConnector(BaseConnector):
         count_until = deadline - margin / 2
         for _ in entries:
             remaining += 1
-            if examined + remaining >= self.max_files or (not (remaining & 63) and time.monotonic() >= count_until):
+            if examined + remaining >= self.max_files or (
+                not (remaining & 63) and time.monotonic() >= count_until
+            ):
                 truncated = True
                 break
         total = f"at least {examined + remaining}" if truncated else str(examined + remaining)
@@ -1666,7 +1716,10 @@ class FilesystemConnector(BaseConnector):
                     for r in remotes
                 )
             )
-        if lower in {".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json", "claude_desktop_config.json", "cline_mcp_settings.json", "mcp_settings.json", "smithery.yaml"}:
+        if lower in {
+            ".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json",
+            "claude_desktop_config.json", "cline_mcp_settings.json", "mcp_settings.json", "smithery.yaml",
+        }:
             return True
         if lower in MCP_CONFIG_NAMES or rel.endswith((".json", ".toml", ".yaml", ".yml")):
             head = text[:200_000]
@@ -1695,7 +1748,11 @@ class FilesystemConnector(BaseConnector):
         target = "." if rel_root == "." else rel_root
         try:
             out = subprocess.run(
-                [*metadata_git_argv_prefix(), "-C", str(root), "log", "--no-show-signature", "--no-ext-diff", "--no-textconv", "-1", "--format=%an%x00%ae%x00%cI", "--", target],
+                [
+                    *metadata_git_argv_prefix(), "-C", str(root), "log",
+                    "--no-show-signature", "--no-ext-diff", "--no-textconv",
+                    "-1", "--format=%an%x00%ae%x00%cI", "--", target,
+                ],
                 capture_output=True,
                 # Author bytes follow the repository's i18n.logOutputEncoding;
                 # a strict decode would abort the whole project's findings.
@@ -1709,14 +1766,20 @@ class FilesystemConnector(BaseConnector):
                 # NUL separators: an author name may itself contain "|".
                 an, ae, ci = (out.stdout.strip("\r\n").split("\x00") + ["", "", ""])[:3]
                 if parse_timestamp(ci) is None:
-                    self.ctx.warn("code.filesystem: git metadata has an unparseable commit timestamp; enrichment skipped")
+                    self.ctx.warn(
+                        "code.filesystem: git metadata has an unparseable commit timestamp; "
+                        "enrichment skipped"
+                    )
                     return {}
                 return {"last_author": an, "last_author_email": ae, "last_commit": ci}
             if out.returncode == 0:
                 return {}
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
-        self.ctx.warn("code.filesystem: offline git enrichment failed; Git 2.45+ and locally available history are required")
+        self.ctx.warn(
+            "code.filesystem: offline git enrichment failed; Git 2.45+ and locally available history "
+            "are required"
+        )
         return {}
 
     def _codeowners(self, root: Path) -> list[tuple[str, list[str]]]:
@@ -1744,7 +1807,9 @@ class FilesystemConnector(BaseConnector):
                         parts = line.split()
                         if parts:
                             if len(rules) >= MAX_RULES or len(parts[0]) > MAX_PATTERN_LENGTH:
-                                self.ctx.error("code.filesystem: CODEOWNERS rule limit exceeded; ownership incomplete")
+                                self.ctx.error(
+                                    "code.filesystem: CODEOWNERS rule limit exceeded; ownership incomplete"
+                                )
                                 rules = []
                                 self._ownership_exhausted.add(root)
                                 break
@@ -1786,7 +1851,9 @@ class FilesystemConnector(BaseConnector):
             self._ownership_steps_remaining[root] = remaining
             if remaining == 0 and root not in self._ownership_exhausted:
                 self._ownership_exhausted.add(root)
-                self.ctx.error("code.filesystem: CODEOWNERS aggregate processing budget exceeded; ownership incomplete")
+                self.ctx.error(
+                    "code.filesystem: CODEOWNERS aggregate processing budget exceeded; ownership incomplete"
+                )
         self._owner_cache[key] = None
         return None
 
@@ -1842,7 +1909,9 @@ class FilesystemConnector(BaseConnector):
     @staticmethod
     def _project_observations(proj: _Project) -> list[_Observation]:
         """Return a project's technology evidence without policy or uncorroborated ambiguous matches."""
-        observations = [(m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}]
+        observations = [
+            (m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}
+        ]
         # An ambiguous pattern is a common identifier outside the product
         # (aiohttp's ClientSession, a UI component named AgentCard). It counts
         # only when the same signature has library evidence in this project:
@@ -1971,7 +2040,10 @@ class FilesystemConnector(BaseConnector):
             f.add_capability(capability)
             f.add_evidence(Evidence(
                 signal=f"mcp-tool:{capability}",
-                description=f"registers MCP tools implying {capability}: {', '.join(names[:5])}{' …' if len(names) > 5 else ''}",
+                description=(
+                    f"registers MCP tools implying {capability}: "
+                    f"{', '.join(names[:5])}{' …' if len(names) > 5 else ''}"
+                ),
                 location=server_tools[names[0]],
                 weight=0.5,
                 signature="protocol.mcp",
@@ -2000,9 +2072,13 @@ class FilesystemConnector(BaseConnector):
         for model in manifest.models:
             if model not in project.models:
                 project.models.append(model)
-        details = {k: v for k, v in manifest.metadata.items() if k not in {"path", "scan_root", "technologies", "evidence_counts"}}
+        details = {
+            k: v for k, v in manifest.metadata.items()
+            if k not in {"path", "scan_root", "technologies", "evidence_counts"}
+        }
         project.metadata.setdefault("manifests", []).append({
-            "path": manifest.metadata.get("path"), "title": manifest.title, "resource": manifest.resource, **details,
+            "path": manifest.metadata.get("path"), "title": manifest.title, "resource": manifest.resource,
+            **details,
         })
         project.metadata["agent_indicators"] = max(1, int(project.metadata.get("agent_indicators") or 0))
         project.kind = Kind.AGENT
@@ -2029,12 +2105,16 @@ class FilesystemConnector(BaseConnector):
                     location=f"{rel}:{m.line}" if m.line else rel,
                     weight=EXAMPLE_CREDENTIAL_WEIGHT,
                     signature=m.signature_id,
-                    attributes={"category": m.signature.category, "value": redact(m.value), "placeholder": reason},
+                    attributes={
+                        "category": m.signature.category, "value": redact(m.value), "placeholder": reason,
+                    },
                 )
             )
         # The key name must not read as a credential field, or the report
         # sanitizer withholds the file list itself.
-        f.metadata["placeholder_samples"] = {"count": len(proj.example_credentials), "files": sorted(files)[:MAX_EXAMPLE_CREDENTIAL_EVIDENCE]}
+        f.metadata["placeholder_samples"] = {
+            "count": len(proj.example_credentials), "files": sorted(files)[:MAX_EXAMPLE_CREDENTIAL_EVIDENCE],
+        }
 
     def _project_title(self, f: Finding, proj: _Project) -> str:
         order = {"framework": 0, "cloud-service": 1, "platform": 2, "protocol": 3}
@@ -2043,7 +2123,10 @@ class FilesystemConnector(BaseConnector):
             key=lambda s: order[s.category],
         )
         names = [s.name for s in ranked[:4]]
-        provs = [self.index.get(sid).name for sid in f.model_providers[:3] if self.index.get(sid)]  # type: ignore[union-attr]
+        provs = [
+            self.index.get(sid).name  # type: ignore[union-attr]
+            for sid in f.model_providers[:3] if self.index.get(sid)
+        ]
         where = "repository root" if proj.root == "." else proj.root
         what = "Agent" if f.kind == Kind.AGENT else "LLM usage"
         detail = ", ".join(names) or ", ".join(provs)
@@ -2062,7 +2145,10 @@ class FilesystemConnector(BaseConnector):
         sig = self.index.get("protocol.mcp")
         f.add_framework("protocol.mcp")
         f.add_capability("tool-use")
-        f.add_evidence(Evidence(signal="file:protocol.mcp", description=f"MCP client/server configuration file {rel}", location=rel, weight=0.95, signature="protocol.mcp"))
+        f.add_evidence(Evidence(
+            signal="file:protocol.mcp", description=f"MCP client/server configuration file {rel}",
+            location=rel, weight=0.95, signature="protocol.mcp",
+        ))
         remote_hosts: list[str] = []
         for s in enabled:
             if s.get("url"):
@@ -2075,7 +2161,14 @@ class FilesystemConnector(BaseConnector):
                     apply_matches(f, [m], location=rel, weight_scale=0.5)
             if s.get("secrets_inline"):
                 f.add_tag("inline-secrets")
-                f.add_evidence(Evidence(signal="secret:inline", description=f"MCP server '{s['name']}' has credential-looking values inline ({', '.join(s.get('secret_locations') or ['configuration'])})", location=rel, weight=0.3))
+                f.add_evidence(Evidence(
+                    signal="secret:inline",
+                    description=(
+                        f"MCP server '{s['name']}' has credential-looking values inline "
+                        f"({', '.join(s.get('secret_locations') or ['configuration'])})"
+                    ),
+                    location=rel, weight=0.3,
+                ))
             cmd = " ".join([str(s.get("command") or "")] + [str(a) for a in s.get("args", [])]).lower()
             for capability, keywords in _MCP_CAPABILITY_KEYWORDS:
                 if any(k in cmd for k in keywords):
@@ -2108,16 +2201,24 @@ class FilesystemConnector(BaseConnector):
             f.title = f"A2A agent card: {data.get('name') or rel}"
             f.add_framework("protocol.a2a")
             f.add_capability("multi-agent")
-            f.add_evidence(Evidence(signal="file:protocol.a2a", description="A2A Agent Card", location=rel, weight=0.95, signature="protocol.a2a"))
+            f.add_evidence(Evidence(
+                signal="file:protocol.a2a", description="A2A Agent Card", location=rel, weight=0.95,
+                signature="protocol.a2a",
+            ))
             f.metadata["agent_card"] = {
                 "name": data.get("name"),
                 "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
                 "url": data.get("url"),
                 "version": data.get("version"),
                 "protocol_version": data.get("protocolVersion"),
-                "skills": [s.get("name") or s.get("id") for s in data.get("skills", []) or [] if isinstance(s, dict)],
+                "skills": [
+                    s.get("name") or s.get("id") for s in data.get("skills", []) or [] if isinstance(s, dict)
+                ],
                 "capabilities": _clip(data.get("capabilities")),
-                "security_schemes": _clip(list((data.get("securitySchemes") or {}).keys()) if isinstance(data.get("securitySchemes"), dict) else data.get("authentication")),
+                "security_schemes": _clip(
+                    list((data.get("securitySchemes") or {}).keys())
+                    if isinstance(data.get("securitySchemes"), dict) else data.get("authentication")
+                ),
             }
             if data.get("url"):
                 apply_matches(f, self.index.match_domains_in_text(str(data["url"])), location=rel)
@@ -2126,13 +2227,21 @@ class FilesystemConnector(BaseConnector):
         elif kind == "m365":
             f.title = f"M365 Copilot declarative agent: {data.get('name') or rel}"
             f.add_framework("platform.m365-declarative-agent")
-            f.add_evidence(Evidence(signal="file:platform.m365-declarative-agent", description="Microsoft 365 declarative agent manifest", location=rel, weight=0.95, signature="platform.m365-declarative-agent"))
+            f.add_evidence(Evidence(
+                signal="file:platform.m365-declarative-agent",
+                description="Microsoft 365 declarative agent manifest", location=rel, weight=0.95,
+                signature="platform.m365-declarative-agent",
+            ))
             f.metadata["declarative_agent"] = {
                 "name": data.get("name"),
                 "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
                 "instructions": truncate(sanitize_text(str(data.get("instructions", ""))), 300),
-                "capabilities": [c.get("name") for c in data.get("capabilities", []) or [] if isinstance(c, dict)],
-                "actions": [a.get("id") or a.get("file") for a in data.get("actions", []) or [] if isinstance(a, dict)],
+                "capabilities": [
+                    c.get("name") for c in data.get("capabilities", []) or [] if isinstance(c, dict)
+                ],
+                "actions": [
+                    a.get("id") or a.get("file") for a in data.get("actions", []) or [] if isinstance(a, dict)
+                ],
                 "conversation_starters": len(data.get("conversation_starters", []) or []),
             }
             if data.get("actions"):
@@ -2140,7 +2249,10 @@ class FilesystemConnector(BaseConnector):
         elif kind == "langgraph":
             f.title = f"LangGraph deployment manifest: {rel}"
             f.add_framework("framework.langgraph")
-            f.add_evidence(Evidence(signal="file:framework.langgraph", description="langgraph.json deployment manifest", location=rel, weight=0.95, signature="framework.langgraph"))
+            f.add_evidence(Evidence(
+                signal="file:framework.langgraph", description="langgraph.json deployment manifest",
+                location=rel, weight=0.95, signature="framework.langgraph",
+            ))
             graphs = data.get("graphs", {}) or {}
             f.metadata["graphs"] = _clip(list(graphs.keys()) if isinstance(graphs, dict) else graphs)
             f.metadata["dependencies"] = _clip(data.get("dependencies"))
@@ -2153,13 +2265,24 @@ class FilesystemConnector(BaseConnector):
             f.title = f"CrewAI agent definitions: {rel}"
             f.add_framework("framework.crewai")
             f.add_capability("multi-agent")
-            f.add_evidence(Evidence(signal="file:framework.crewai", description="CrewAI agents.yaml", location=rel, weight=0.9, signature="framework.crewai"))
+            f.add_evidence(Evidence(
+                signal="file:framework.crewai", description="CrewAI agents.yaml", location=rel, weight=0.9,
+                signature="framework.crewai",
+            ))
             f.metadata["agents"] = [
-                {"name": k, "role": truncate(sanitize_text(str((v or {}).get("role", ""))), 120), "llm": (v or {}).get("llm")} for k, v in data.items() if isinstance(v, dict)
+                {
+                    "name": k,
+                    "role": truncate(sanitize_text(str((v or {}).get("role", ""))), 120),
+                    "llm": (v or {}).get("llm"),
+                }
+                for k, v in data.items() if isinstance(v, dict)
             ]
             for v in data.values():
                 if isinstance(v, dict) and v.get("llm"):
-                    apply_matches(f, self.index.match_model(str(v["llm"]).split("/")[-1]), location=rel, weight_scale=0.6)
+                    apply_matches(
+                        f, self.index.match_model(str(v["llm"]).split("/")[-1]),
+                        location=rel, weight_scale=0.6,
+                    )
         f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.AGENT
@@ -2169,7 +2292,10 @@ class FilesystemConnector(BaseConnector):
         f = self._base(label, root, rel, Kind.WORKFLOW, "", "workflow-export")
         for m, snip in hits:
             apply_matches(f, [m], location=rel, snippet=snip)
-        names = {self.index.get(m.signature_id).name for m, _ in hits if m.signature.category != "provider" and self.index.get(m.signature_id)}  # type: ignore[union-attr]
+        names = {
+            self.index.get(m.signature_id).name  # type: ignore[union-attr]
+            for m, _ in hits if m.signature.category != "provider" and self.index.get(m.signature_id)
+        }
         f.title = f"Exported AI workflow ({', '.join(sorted(names))}): {rel}"
         f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
@@ -2177,7 +2303,8 @@ class FilesystemConnector(BaseConnector):
         return f
 
     def _infra_finding(
-        self, label: str, root: Path, rel: str, hits: list[tuple[Match, str, str]], names_found: list[str] | None = None,
+        self, label: str, root: Path, rel: str, hits: list[tuple[Match, str, str]],
+        names_found: list[str] | None = None,
         *, wildcards: list[tuple[str, int, str]] | None = None, models: list[Match] | None = None,
     ) -> Finding:
         f = self._base(label, root, rel, Kind.INFRA, "", "iac")
@@ -2190,10 +2317,14 @@ class FilesystemConnector(BaseConnector):
         for source, line, snip in (wildcards or [])[:5]:
             f.add_tag("wildcard-permissions")
             f.add_evidence(Evidence(
-                signal="iac:iam-wildcard", description="IAM statement in the same project grants wildcard actions",
+                signal="iac:iam-wildcard",
+                description="IAM statement in the same project grants wildcard actions",
                 location=f"{source}:{line}", snippet=snip, weight=0.5,
             ))
-        names = {self.index.get(m.signature_id).name for m, _, _ in hits if self.index.get(m.signature_id)}  # type: ignore[union-attr]
+        names = {
+            self.index.get(m.signature_id).name  # type: ignore[union-attr]
+            for m, _, _ in hits if self.index.get(m.signature_id)
+        }
         resources = sorted({v for _, v, _ in hits})
         f.title = f"Infrastructure provisions {', '.join(sorted(names))}: {rel}"
         f.metadata["resources"] = resources
@@ -2204,7 +2335,9 @@ class FilesystemConnector(BaseConnector):
         f.kind = Kind.INFRA
         return f
 
-    def _secret_finding(self, label: str, root: Path, rel: str, hits: list[tuple[Match, str]]) -> Finding | None:
+    def _secret_finding(
+        self, label: str, root: Path, rel: str, hits: list[tuple[Match, str]],
+    ) -> Finding | None:
         # A structured value (e.g. a .env assignment) and the raw text pass can
         # both observe the same credential on the same line; count it once.
         # Placeholders are filtered again here so every caller shares the rule.
@@ -2237,10 +2370,14 @@ class FilesystemConnector(BaseConnector):
                 fm = {}
             if isinstance(fm, dict):
                 fm = sanitize(fm)
-                for k in ("name", "description", "tools", "model", "permissionMode", "mode", "globs", "alwaysApply"):
+                for k in (
+                    "name", "description", "tools", "model", "permissionMode", "mode", "globs", "alwaysApply",
+                ):
                     if k in fm:
                         v = fm[k]
-                        info[k] = truncate(sanitize_text(v), 200) if isinstance(v, str) else _clip(sanitize(v))
+                        info[k] = (
+                            truncate(sanitize_text(v), 200) if isinstance(v, str) else _clip(sanitize(v))
+                        )
         return info
 
 
