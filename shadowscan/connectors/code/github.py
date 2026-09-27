@@ -17,9 +17,10 @@ Offline mode: ``input`` pointing at a directory of already-cloned repositories
 from __future__ import annotations
 
 import base64
+import re
 import shutil
 from collections.abc import Iterable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeGuard
 from urllib.parse import quote, urlsplit
 
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
@@ -43,6 +44,31 @@ from shadowscan.utils.http import HttpError, validate_url
 
 # Repository-level endpoints listing credential *names* (never values).
 _SECRET_NAME_ENDPOINTS = ("actions/secrets", "actions/variables", "codespaces/secrets", "dependabot/secrets")
+# One part of ``owner/name``: the characters GitHub allows in logins (EMU
+# logins add an underscore suffix) and repository names, never a separator,
+# query, fragment or percent-escape.
+_FULL_NAME_PART = re.compile(r"[A-Za-z0-9_.-]{1,100}")
+
+
+def _is_full_name(value: Any) -> TypeGuard[str]:
+    if not isinstance(value, str) or value.count("/") != 1:
+        return False
+    return all(_FULL_NAME_PART.fullmatch(part) and part not in {".", ".."} for part in value.split("/"))
+
+
+def repository_full_name(value: Any) -> str:
+    """Return a repository ``full_name`` as the ``owner/name`` segments of an API path.
+
+    The value comes from provider JSON and is interpolated into every request
+    about the repository and into the fallback clone URL. Anything but two
+    plain path segments (``..``, extra separators, a query or an escape) could
+    address a different endpoint, so it is refused before any request is built.
+    """
+    if not _is_full_name(value):
+        raise ConnectorError(
+            "GitHub repository full_name is not a plain owner/name; repository requests refused"
+        )
+    return value
 
 
 class GitHubConnector(RemoteRepositoryConnector):
@@ -133,12 +159,7 @@ class GitHubConnector(RemoteRepositoryConnector):
                 self.ctx.warn(f"code.github: cannot access {full}", incomplete=True)
                 continue
             name = data.get("full_name") if isinstance(data, dict) else None
-            if (
-                not isinstance(name, str)
-                or name.count("/") != 1
-                or not all(name.split("/"))
-                or name.casefold() != str(full).casefold()
-            ):
+            if not _is_full_name(name) or name.casefold() != str(full).casefold():
                 returned = name if isinstance(name, str) and len(name) <= 200 else "an invalid name"
                 self.ctx.warn(
                     f"code.github: explicit repository response ({returned}) does not match the "
@@ -155,11 +176,19 @@ class GitHubConnector(RemoteRepositoryConnector):
             listings.append((f"/users/{user}/repos", {"per_page": 100, "sort": "pushed"}))
         for path, params in listings:
             for r in self.http.paginate_link(path, params=params):
-                if r["full_name"] not in seen and self._wanted(r):
+                name = r.get("full_name") if isinstance(r, dict) else None
+                if not _is_full_name(name):
+                    # The name addresses every later request about the repository
+                    # and its clone URL; skip the entry rather than send it elsewhere.
+                    self.ctx.error(
+                        "code.github: repository listing entry has no valid owner/name; repository skipped"
+                    )
+                    continue
+                if name not in seen and self._wanted(r):
                     if len(seen) >= self.max_records:
                         self._cap_reached()
                         return
-                    seen.add(r["full_name"])
+                    seen.add(name)
                     yield remote_record(r)
 
     def _wanted(self, r: dict[str, Any]) -> bool:
@@ -218,10 +247,11 @@ class GitHubConnector(RemoteRepositoryConnector):
         api = urlsplit(validate_url(self.api_url))
         # github.com serves its API from a separate host; GHES serves both from one origin.
         origin = "https://github.com" if api.hostname == "api.github.com" else f"{api.scheme}://{api.netloc}"
-        return origin, repo.get("clone_url") or f"{origin}/{repo['full_name']}.git"
+        full = repository_full_name(repo.get("full_name"))
+        return origin, repo.get("clone_url") or f"{origin}/{full}.git"
 
     def _fetch_via_api(self, repo: dict[str, Any], tmp: str) -> str | None:
-        full = repo["full_name"]
+        full = repository_full_name(repo.get("full_name"))
         repo.pop("source_snapshot", None)
         branch = self._api_ref(repo)
         if branch is None:
@@ -285,7 +315,7 @@ class GitHubConnector(RemoteRepositoryConnector):
         return dest
 
     def _download_blob(self, repo: dict[str, Any], blob_id: str) -> bytes | None:
-        full = repo["full_name"]
+        full = repository_full_name(repo.get("full_name"))
         data = self.http.try_get_json(f"/repos/{full}/git/blobs/{blob_id}")
         if not isinstance(data, dict) or data.get("encoding") != "base64":
             self.ctx.warn(f"code.github: cannot read content in {full}", incomplete=True)
@@ -307,7 +337,7 @@ class GitHubConnector(RemoteRepositoryConnector):
 
     # ------------------------------------------------------ repo-level extra
     def _repo_level_findings(self, repo: dict[str, Any]) -> Iterable[Finding]:
-        full = repo["full_name"]
+        full = repository_full_name(repo.get("full_name"))
         names: list[str] = []
         for endpoint in _SECRET_NAME_ENDPOINTS:
             path = f"/repos/{full}/{endpoint}"

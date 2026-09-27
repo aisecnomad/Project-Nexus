@@ -101,6 +101,9 @@ enumerated Git object IDs.
 An offline input with no clone directories is incomplete.
 An explicit `repos:` response whose repository identity does not match the
 requested name is incomplete, and that response is not scanned.
+An org or user listing entry whose `full_name` is not a plain `owner/name`
+(letters, digits, `.`, `_` and `-`, never a `.` or `..` segment) is an error
+that makes the scan incomplete; that repository is never requested or cloned.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 
