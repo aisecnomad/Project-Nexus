@@ -94,9 +94,42 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   Dump directories must be private (0700); record files use 0600 and unique
   per-instance filenames. An export manifest records provenance/completion without
   raw connector configuration. JWT records are never exported. No `--dump-raw`
-  option exists. Redaction handles recognized secrets and sensitive Python
-  assignments, including annotated and multiline expressions, but arbitrary
-  credentials and sensitive business data may remain.
+  option exists.
+* Report evidence is redacted before it is shortened. Redaction withholds
+  recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
+  `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-` and `dop_v1_`),
+  JWTs, PEM private keys, URL userinfo and credential query or webhook path
+  segments. It also withholds values that their context names as credentials:
+  assignments, including annotated, multiline and R (`<-`) expressions;
+  mappings, YAML block scalars, properties and INI entries; `getenv`-style
+  calls; name/value records such as Kubernetes `env` lists; XML elements and
+  `key`/`value` attributes; Dockerfile `ENV NAME value`, `setx`, `setenv` and
+  C `#define`; command-line options such as `--api-key`, `--token`,
+  `--password`, `curl -u user:secret`, `-H "X-Api-Key:value"`, `-p` after
+  `docker login` and other registry or cloud logins (`az`, `az acr`, `oc`,
+  `cf`), `sshpass -p`, MySQL's `-pVALUE` and a literal echoed into
+  `--password-stdin`; literal defaults of credentials read from the
+  environment (`process.env.OPENAI_API_KEY || "..."`, `?? "..."`,
+  `or "..."`, `?: "..."`, `${OPENAI_API_KEY:-...}`); and string literals,
+  including Python f-strings without replacement fields and backtick
+  strings, passed to credential constructors and helpers such as
+  `AzureKeyCredential("...")`, Rust's `AzureKeyCredential::new("...")`, C#'s
+  target-typed `AzureKeyCredential credential = new("...")`,
+  `HTTPBasicAuth("user", "...")`, `Credentials.basic("user", "...")`,
+  `auth=("user", "...")` and `setBearerToken("...")`, including methods down a
+  builder chain (`builder().apiKey("...")`). A literal that looks like an
+  opaque key is also withheld from a name whose last word names a credential
+  (`openaiKey = "..."`, `key = "..."`) and from a lone unindented line after a
+  sensitive key such as `token:`. Variable references (`$VAR`,
+  `${{ secrets.X }}`), environment variable names and placeholders stay
+  visible. A credential without such context can remain: an unprefixed literal
+  passed to an ordinary function or nested in another call inside a
+  credential constructor (`AzureKeyCredential(str("..."))`), a word-like or
+  short value under a name that is not itself sensitive, a lowercase word
+  after a space-separated option or as a fallback default, an option this list
+  does not name, the part of an unquoted option value after a bracket, brace
+  or comma, a value split across concatenated strings, and sensitive business
+  data. Treat reports as confidential.
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
   provider and account restrictions still apply; ambiguous matches do not approve.
