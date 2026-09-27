@@ -9,7 +9,7 @@
     {
       "id": "py-langgraph-agent",
       "family": "agent",
-      "description": "A Python LangGraph import and active StateGraph construction",
+      "description": "A generic StateGraph constructor without a model is framework usage, not an agent",
       "files": {
         "agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n"
       },
@@ -17,7 +17,10 @@
         "kind": "agent",
         "signature": "framework.langgraph"
       },
-      "present": true
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "py-langchain-agent",
@@ -35,7 +38,7 @@
     {
       "id": "py-fstring-interpolated-agent",
       "family": "agent",
-      "description": "A StateGraph call inside a Python f-string interpolation is executable",
+      "description": "An executable generic StateGraph constructor in an f-string does not establish an agent",
       "files": {
         "agent.py": "from langgraph.graph import StateGraph\nmessage = f'graph: {StateGraph(dict)}'\n"
       },
@@ -43,12 +46,15 @@
         "kind": "agent",
         "signature": "framework.langgraph"
       },
-      "present": true
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "ts-langgraph-agent",
       "family": "agent",
-      "description": "A TypeScript LangGraph import and active StateGraph construction",
+      "description": "A generic TypeScript StateGraph constructor without model-directed behavior is not an agent",
       "files": {
         "agent.ts": "import { StateGraph } from '@langchain/langgraph';\nconst graph = new StateGraph();\n"
       },
@@ -56,12 +62,15 @@
         "kind": "agent",
         "signature": "framework.langgraph"
       },
-      "present": true
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "js-regex-then-agent",
       "family": "agent",
-      "description": "A JavaScript regex literal does not hide a subsequent real StateGraph invocation",
+      "description": "A JavaScript regex followed by generic StateGraph construction is not agent evidence",
       "files": {
         "agent.js": "import { StateGraph } from '@langchain/langgraph';\nconst pattern = /StateGraph\\(/;\nconst graph = new StateGraph();\n"
       },
@@ -69,7 +78,10 @@
         "kind": "agent",
         "signature": "framework.langgraph"
       },
-      "present": true
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "py-comment-agent",
@@ -657,7 +669,7 @@
     {
       "id": "vercel-ai-sdk-anthropic-provider",
       "family": "agent",
-      "description": "Provider attributed through @ai-sdk/anthropic",
+      "description": "A Vercel request with schema-only tools has provider attribution but no tool execution",
       "files": {
         "package.json": "{\"name\": \"t\", \"dependencies\": {\"ai\": \"^4.0.0\", \"@ai-sdk/anthropic\": \"^1.0.0\"}}\n",
         "agent.ts": "import { generateText, tool } from 'ai';\nimport { anthropic } from '@ai-sdk/anthropic';\nconst r = await generateText({ model: anthropic('m'), tools: { t: tool({}) }, prompt: 'x' });\n"
@@ -666,7 +678,10 @@
         "kind": "agent",
         "signature": "provider.anthropic"
       },
-      "present": true
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "agent-only-in-library-tests",
@@ -878,7 +893,7 @@
     {
       "id": "py-langgraph-agent-with-heuristics",
       "family": "agent",
-      "description": "The same automation idioms next to a LangGraph import describe a real agent",
+      "description": "Generic StateGraph construction and unrelated worker execution cannot establish model-directed actions",
       "files": {
         "agent.py": "import subprocess\nfrom langgraph.graph import StateGraph\n\ngraph = StateGraph(dict)\nwhile True:\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"
       },
@@ -886,7 +901,10 @@
         "kind": "agent",
         "signature": "framework.langgraph"
       },
-      "present": true
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
     },
     {
       "id": "env-names-with-heuristics-agent",
@@ -1006,6 +1024,133 @@
       "target": {
         "kind": "agent",
         "signature": "provider.openai"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "py-langgraph-react-factory",
+      "family": "agent",
+      "description": "A bound LangGraph agent factory constructs a model-directed agent",
+      "files": {
+        "agent.py": "from langgraph.prebuilt import create_react_agent\ngraph = create_react_agent(model, tools)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
+      "present": true
+    },
+    {
+      "id": "py-fstring-interpolated-react-factory",
+      "family": "agent",
+      "description": "An import-bound agent factory remains executable inside an f-string",
+      "files": {
+        "agent.py": "from langgraph.prebuilt import create_react_agent\nmessage = f'graph: {create_react_agent(model, tools)}'\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
+      "present": true
+    },
+    {
+      "id": "ts-langgraph-react-factory",
+      "family": "agent",
+      "description": "A bound TypeScript LangGraph agent factory constructs an agent",
+      "files": {
+        "agent.ts": "import { createReactAgent } from '@langchain/langgraph/prebuilt';\nconst graph = createReactAgent({ model, tools });\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
+      "present": true
+    },
+    {
+      "id": "js-regex-then-react-factory",
+      "family": "agent",
+      "description": "A JavaScript regex does not hide the subsequent imported agent factory call",
+      "files": {
+        "agent.js": "import { createReactAgent } from '@langchain/langgraph/prebuilt';\nconst pattern = /createReactAgent\\(/;\nconst graph = createReactAgent({ model, tools });\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
+      "present": true
+    },
+    {
+      "id": "vercel-ai-sdk-anthropic-tool-execution",
+      "family": "agent",
+      "description": "A Vercel request with an enabled executable tool establishes model-selected dispatch",
+      "files": {
+        "package.json": "{\"name\": \"t\", \"dependencies\": {\"ai\": \"^4.0.0\", \"@ai-sdk/anthropic\": \"^1.0.0\"}}\n",
+        "agent.ts": "import { generateText, tool } from 'ai';\nimport { anthropic } from '@ai-sdk/anthropic';\nconst r = await generateText({ model: anthropic('m'), tools: { t: tool({ execute: async () => 1 }) }, prompt: 'x' });\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.anthropic"
+      },
+      "present": true
+    },
+    {
+      "id": "py-langgraph-react-factory-with-heuristics",
+      "family": "agent",
+      "description": "Explicit agent factory construction remains detectable alongside worker execution idioms",
+      "files": {
+        "agent.py": "import subprocess\nfrom langgraph.prebuilt import create_react_agent\n\ngraph = create_react_agent(model, tools)\nwhile True:\n    subprocess.run(cmd, check=True)\n    execute_command(handoff, dry_run=False, unattended=True)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
+      "present": true
+    },
+    {
+      "id": "crewai-flow-without-model",
+      "family": "agent",
+      "description": "CrewAI Flow without any agent or model remains ordinary framework usage",
+      "files": {
+        "flow.py": "from crewai.flow.flow import Flow\nflow = Flow()\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.crewai"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "vercel-empty-disabled-tools",
+      "family": "agent",
+      "description": "Empty tools with explicit toolChoice none cannot dispatch model-selected actions",
+      "files": {
+        "app.ts": "import { generateText } from 'ai';\nconst result = await generateText({model, tools: {}, toolChoice: 'none'});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.vercel-ai-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "vercel-executable-but-disabled-tools",
+      "family": "agent",
+      "description": "An execution callback does not establish agent behavior when tool selection is disabled",
+      "files": {
+        "app.ts": "import { generateText, tool } from 'ai';\nconst result = await generateText({model, tools: {lookup: tool({execute: async () => 1})}, toolChoice: 'none'});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.vercel-ai-sdk"
       },
       "present": false,
       "assertions": {

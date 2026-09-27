@@ -1617,6 +1617,8 @@ class FilesystemConnector(BaseConnector):
             } == {"protocol.mcp"}
 
             def implies_capabilities(match: Match, rel: str) -> bool:
+                if match.signal.type in {"import", "dependency", "env", "name"}:
+                    return False
                 if in_tests(rel) and not test_only:
                     return False
                 return not (mcp_server and match.signature.category == "heuristic")
@@ -1626,9 +1628,13 @@ class FilesystemConnector(BaseConnector):
                 if m.signature_id in uncorroborated and m.extra.get("lexical_source"):
                     m.weight = min(m.weight, 0.6)
                 apply_matches(f, [m], location=rel, snippet=snip, weight_scale=(ENV_ONLY_WEIGHT_SCALE if env_only else 1.0) * (0.5 if in_tests(rel) else 1.0),
-                              capabilities=implies_capabilities(m, rel))
+                              capabilities=implies_capabilities(m, rel),
+                              signature_capabilities=verified_indicator(m) or m.signature.category != "framework")
             if "protocol.mcp" in f.frameworks and server_tools:
                 self._apply_mcp_tools(f, server_tools)
+            potential = {cap for m, _, _ in tech_matches for cap in m.capabilities()} - set(f.capabilities)
+            if potential:
+                f.metadata["potential_capabilities"] = sorted(potential)
             # Repeated observations of one technology are correlated evidence.
             # Generic idioms share a single supporting group; loops in several
             # worker files must never accumulate into a confirmed AI agent.

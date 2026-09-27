@@ -10,6 +10,44 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## September 27 migration and acceptance
+
+The distribution metadata now names `project-nexus-shadowscan`. Install a wheel
+from the reviewed revision into a fresh virtual environment; do not overlay it
+on a previous `shadowscan` distribution, because both use the same Python import
+and command paths. The CLI, Python imports, connector entry-point group and
+report schemas retain the `shadowscan` name. This rename does not publish a
+package or reserve the package-index namespace.
+
+Offline exports with duplicate fields now fail validation and make the scan
+incomplete. Obtain an unambiguous export from its source and rerun collection;
+do not treat its empty findings as evidence that an earlier finding resolved.
+Ordinary deterministic graph/flow construction and text generation without
+enabled tool execution no longer establish agent behavior. Source capabilities
+also stop inheriting unsupported features solely from framework membership.
+Review changed kinds, capabilities and risk scores, then collect a fresh baseline
+before using these reports in an enforcement decision.
+
+The `CI gate` job combines documentation, the full Python matrix (including the
+container checks in Python 3.13), and DCO for pull requests. Add `CI gate` to the
+live required checks while retaining existing checks and independent approval.
+Verify the platform setting before claiming it is enforced: a workflow cannot
+change a branch ruleset by declaring a job.
+
+The revised synthetic cases remain regression data. Freeze a fresh population,
+human labels and acceptance policy using [the holdout procedure](evaluation.md#gate-a-frozen-holdout),
+then run the [scope-specific evidence gate](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+For AWS or Slack deployments, retain complete and separately credentialed
+permission-denied receipts from [approved tenant canaries](canaries.md).
+Other connectors need their own acceptance evidence. The existing bundled
+corpora, replays and mocked transports do not meet these live requirements.
+
+After independent review, merge and successful exact-commit CI and CodeQL,
+exercise the manual release-evidence workflow described below. Retain its wheel,
+SBOM, checksums and both attestation bundles. Evidence from an earlier main
+commit does not cover these source or package changes, and local wheel checks
+do not establish GitHub-hosted provenance.
+
 ## September 25 migration and acceptance
 
 Rebuild finding and comparison baselines after adopting the scanner-boundary
@@ -118,7 +156,7 @@ From the reviewed checkout, in a clean virtual environment:
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-python -m pip install --no-deps dist/shadowscan-0.1.1-*.whl
+python -m pip install --no-deps dist/project_nexus_shadowscan-0.1.1-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
 shadowscan --help
@@ -568,9 +606,11 @@ lost user attribution before using their counts as governance evidence.
 
 Ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
-is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an up-to-date
-branch, and one approving review from a reviewer with write access, alongside
-`Protect main`. Its enforcement state has changed more than once during 2026-09:
+was observed on 2026-09-27 requiring `test (3.11)`, `test (3.12)` and `analyze`,
+an up-to-date branch, and one approving review from a reviewer with write access,
+alongside `Protect main`. Add the new aggregate `CI gate` to that required-check
+list without removing the existing checks or approval rule. Its enforcement
+state has changed more than once during 2026-09:
 the 2026-09-24 review recorded it disabled, and on 2026-09-25 (13:10 UTC) a merge
 attempted without an approving review was refused with "Repository rule
 violations found", so it was enforced at that moment. Treat neither observation
@@ -614,10 +654,11 @@ outside the source checkout and offline SARIF output. All three matrix jobs
 (Python 3.11, 3.12 and 3.13) enforce a 75% statement-coverage floor for each
 built-in connector module, so a well-tested engine cannot conceal an untested
 provider. Coverage proves execution of code paths in tests; it does not prove
-provider compatibility or complete tenant inventory. The Python 3.13 job has
-passed on hosted runners; the ruleset above names only `test (3.11)`,
-`test (3.12)` and `analyze` as required checks, so verify its inclusion in the
-live branch rules before treating it as a required gate. The 3.13 job also
+provider compatibility or complete tenant inventory. The aggregate `CI gate`
+requires every matrix job and documentation to succeed; it also requires DCO
+on pull requests. It fails if a required prerequisite fails, is cancelled or is
+unexpectedly skipped. Verify that the live ruleset requires `CI gate` before
+treating the full matrix as an enforced merge gate. The Python 3.13 job also
 builds the Docker image and checks its non-root UID, signature assets and
 network-isolated scan with a read-only root filesystem and resource limits.
 Focused regressions cover the review findings, private-address enforcement,

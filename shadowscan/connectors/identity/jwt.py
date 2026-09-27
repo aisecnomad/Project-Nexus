@@ -42,6 +42,7 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.jwks import fetch_jwks, verification_algorithms, verify_against_jwks
 from shadowscan.utils.redaction import sanitize_text
+from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import parse_timestamp, to_iso
 
 _JWT_RX = re.compile(r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*$")
@@ -97,14 +98,14 @@ class JwtConnector(BaseConnector, _NoDump):
                     if not line.strip():
                         continue
                     try:
-                        data = json.loads(line)
+                        data = strict_json_loads(line)
                     except (json.JSONDecodeError, RecursionError, ValueError):
                         self.ctx.error(f"identity.jwt: invalid JSON record at line {number}")
                         continue
                     yield from self._token_records(data)
             elif source.suffix.lower() == ".json" or stripped.startswith(("[", "{")):
                 try:
-                    data = json.loads(stripped)
+                    data = strict_json_loads(stripped)
                 except (json.JSONDecodeError, RecursionError, ValueError):
                     self.ctx.error("identity.jwt: invalid JSON token export")
                     continue
@@ -181,6 +182,10 @@ class JwtConnector(BaseConnector, _NoDump):
             self.ctx.warn("identity.jwt: token exceeds analysis byte limit")
             return None
         try:
+            # PyJWT uses permissive JSON decoding. Reject ambiguous signed
+            # fields before either classification or signature verification.
+            for segment in token.split(".")[:2]:
+                strict_json_loads(pyjwt.utils.base64url_decode(segment))
             header = pyjwt.get_unverified_header(token)
             claims = pyjwt.decode(token, options={"verify_signature": False, "verify_exp": False, "verify_aud": False})
         except (pyjwt.PyJWTError, RecursionError, ValueError) as exc:

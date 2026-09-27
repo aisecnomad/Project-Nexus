@@ -104,8 +104,8 @@ def test_typescript_comments_literals_and_templates_do_not_confirm_agent(tmp_pat
 
 def test_typescript_live_import_and_template_interpolation_remain_detected(tmp_path: Path, run_connector):
     (tmp_path / "agent.ts").write_text(
-        'import { StateGraph } from "@langchain/langgraph";\n'
-        "const graph = `${StateGraph({})}`;\n"
+        'import { createReactAgent } from "@langchain/langgraph/prebuilt";\n'
+        "const graph = `${createReactAgent({})}`;\n"
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
@@ -116,12 +116,12 @@ def test_typescript_live_import_and_template_interpolation_remain_detected(tmp_p
 
 def test_typescript_regex_quotes_do_not_hide_live_agent(tmp_path: Path, run_connector):
     (tmp_path / "agent.ts").write_text(
-        'import { StateGraph } from "@langchain/langgraph";\n'
+        'import { createReactAgent } from "@langchain/langgraph/prebuilt";\n'
         "const single = /'/;\n"
         'const double = /"/;\n'
         "const escaped = /a\\/'b/;\n"
         'const klass = /[\\/"\']+/;\n'
-        "const graph = StateGraph({});\n"
+        "const graph = createReactAgent({});\n"
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
@@ -140,10 +140,10 @@ def test_typescript_regex_body_does_not_confirm_agent(tmp_path: Path, run_connec
 
 def test_typescript_division_does_not_swallow_following_code(tmp_path: Path, run_connector):
     (tmp_path / "agent.ts").write_text(
-        'import { StateGraph } from "@langchain/langgraph";\n'
+        'import { createReactAgent } from "@langchain/langgraph/prebuilt";\n'
         "const ratio = numerator / denominator;\n"
         "const quotient = value / 'example';\n"
-        "const graph = StateGraph({});\n"
+        "const graph = createReactAgent({});\n"
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
@@ -151,19 +151,19 @@ def test_typescript_division_does_not_swallow_following_code(tmp_path: Path, run
 
 
 def test_typescript_regex_after_control_header_and_in_interpolation():
-    text = 'if (ready) /"/ .test(value); const v = `${/\'/ .test(input) ? StateGraph({}) : ""}`;'
+    text = 'if (ready) /"/ .test(value); const v = `${/\'/ .test(input) ? createReactAgent({}) : ""}`;'
     ignored, incomplete = noncode_ranges(text, "javascript")
     assert not incomplete
     assert any(text[start:end] == '/"/' for start, end in ignored)
     assert any(text[start:end] == "/'/" for start, end in ignored)
-    assert not any(start <= text.index("StateGraph(") < end for start, end in ignored)
+    assert not any(start <= text.index("createReactAgent(") < end for start, end in ignored)
 
 
 def test_unterminated_javascript_regex_reports_incomplete_and_retains_next_line():
-    text = 'const pattern = /"unterminated\nconst graph = StateGraph({});'
+    text = 'const pattern = /"unterminated\nconst graph = createReactAgent({});'
     ignored, incomplete = noncode_ranges(text, "javascript")
     assert incomplete
-    assert not any(start <= text.index("StateGraph(") < end for start, end in ignored)
+    assert not any(start <= text.index("createReactAgent(") < end for start, end in ignored)
 
 
 def test_jsx_nested_text_nodes_do_not_confirm_agent(tmp_path: Path, run_connector):
@@ -181,9 +181,9 @@ def test_jsx_nested_text_nodes_do_not_confirm_agent(tmp_path: Path, run_connecto
 
 def test_jsx_attribute_and_child_expressions_remain_detected(tmp_path: Path, run_connector):
     (tmp_path / "Agent.jsx").write_text(
-        'import { StateGraph } from "@langchain/langgraph";\n'
-        "const view = <main>StateGraph( <span data-graph={StateGraph({})}>\n"
-        "  create_react_agent( {StateGraph({})}\n"
+        'import { createReactAgent } from "@langchain/langgraph/prebuilt";\n'
+        "const view = <main>StateGraph( <span data-graph={createReactAgent({})}>\n"
+        "  create_react_agent( {createReactAgent({})}\n"
         "</span></main>;\n"
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
@@ -196,11 +196,11 @@ def test_jsx_attribute_and_child_expressions_remain_detected(tmp_path: Path, run
 
 def test_tsx_generic_arrow_does_not_swallow_following_agent(tmp_path: Path, run_connector):
     (tmp_path / "Agent.tsx").write_text(
-        'import { StateGraph } from "@langchain/langgraph";\n'
+        'import { createReactAgent } from "@langchain/langgraph/prebuilt";\n'
         "const identity = <T>(value: T): T => value;\n"
         "const constrained = <T extends object>(value: T): T => value;\n"
         "const defaulted = <T = string>(value: T): T => value;\n"
-        "const graph = StateGraph({});\n"
+        "const graph = createReactAgent({});\n"
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors

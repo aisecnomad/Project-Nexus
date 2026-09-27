@@ -18,11 +18,17 @@ python -m pip install --upgrade --only-binary=:all: pip==26.2.1
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-python -m pip install --no-deps dist/shadowscan-*.whl
+python -m pip install --no-deps dist/project_nexus_shadowscan-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
 shadowscan --help
 ```
+
+The distribution is named `project-nexus-shadowscan`; the command and Python
+import remain `shadowscan`. This candidate is not published to PyPI. Install
+from the reviewed checkout as above, not from the unrelated PyPI package named
+`shadowscan`. Use a fresh virtual environment when migrating from earlier
+Project Nexus builds to avoid overlapping files from the old distribution.
 
 The runtime lock includes core and all cloud SDK dependencies, even for a
 code-only worker. Retain the selected commit and built wheel hash. Other

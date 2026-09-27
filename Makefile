@@ -73,7 +73,7 @@ build: ## Build distributable wheel
 wheel-validate: build ## Validate the wheel installs and works outside checkout
 	python -m venv /tmp/shadowscan-wheel-test
 	/tmp/shadowscan-wheel-test/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-	/tmp/shadowscan-wheel-test/bin/python -m pip install --no-deps dist/*.whl
+	/tmp/shadowscan-wheel-test/bin/python -m pip install --no-deps dist/project_nexus_shadowscan-*.whl
 	/tmp/shadowscan-wheel-test/bin/python -m pip check
 	cd /tmp && /tmp/shadowscan-wheel-test/bin/python -m shadowscan.signatures.validate
 	cd /tmp && /tmp/shadowscan-wheel-test/bin/shadowscan --help

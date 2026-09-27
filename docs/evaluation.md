@@ -80,6 +80,15 @@ that score means "no regression on the rules we already know about", not
 "accurate on real repositories". Its precision/recall values are **synthetic
 regression scores**, not independently measured field accuracy.
 
+The September 27 classification correction keeps the original generic
+StateGraph and schema-only Vercel examples as negative agent cases, and adds
+actual agent factories and executable-tool examples as positives. New negatives
+cover generic CrewAI Flow and disabled tools. These 77 authored cases (29
+positives, 48 negatives) describe the intended boundary; they are not a new
+holdout. The frozen public, realistic and independently AI-labeled sources and
+labels are unchanged. Review capabilities separately from binary agent labels:
+an available framework feature is not an observed workload capability.
+
 Source masking is a bounded lexical filter. Ruby `%q` strings with supported
 delimiters are masked; `%Q` interpolation and unterminated percent strings mark
 the scan incomplete. Ruby regular expressions, PHP heredoc interpolation, C#

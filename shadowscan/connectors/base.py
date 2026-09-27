@@ -39,7 +39,8 @@ from shadowscan.models import Finding, ScanStats, Surface, now_iso
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.utils.files import NotRegularFileError, changed_since, open_confined_file
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize
-from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
+from shadowscan.utils.safe_json import strict_json_loads
+from shadowscan.utils.safe_yaml import YAMLResourceLimitError, strict_bounded_safe_load
 
 
 class ConnectorError(RuntimeError):
@@ -272,7 +273,7 @@ class BaseConnector(ABC):
         if missing:
             raise ConnectorError(
                 f"{self.name}: live mode needs python packages {missing}; install the matching extra "
-                f"(e.g. pip install 'shadowscan[cloud]') or use offline input"
+                f"(install '.[cloud]' from the reviewed Project Nexus checkout) or use offline input"
             )
 
     @abstractmethod
@@ -478,7 +479,7 @@ class BaseConnector(ABC):
                     continue
                 saw_record = True
                 try:
-                    data = json.loads(line)
+                    data = strict_json_loads(line)
                 except (json.JSONDecodeError, RecursionError, ValueError):
                     report(f"invalid JSON record at line {number}")
                     continue
@@ -512,7 +513,7 @@ class BaseConnector(ABC):
             return
         if suffix in {".yaml", ".yml"}:
             try:
-                data = bounded_safe_load(text)
+                data = strict_bounded_safe_load(text)
             except YAMLResourceLimitError:
                 report("YAML safety limit exceeded")
                 return
@@ -522,7 +523,7 @@ class BaseConnector(ABC):
             yield from self._unwrap(data, report)
             return
         try:
-            data = json.loads(text)
+            data = strict_json_loads(text)
         except json.JSONDecodeError:
             yield from self._json_lines(text, report)
         except (RecursionError, ValueError):
@@ -561,7 +562,7 @@ class BaseConnector(ABC):
             if not line.strip():
                 continue
             try:
-                data = json.loads(line)
+                data = strict_json_loads(line)
             except (json.JSONDecodeError, RecursionError, ValueError):
                 report(f"invalid JSON record at line {number}")
                 continue

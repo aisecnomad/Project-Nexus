@@ -57,8 +57,8 @@ def test_supporting_heuristics_require_ai_evidence_and_repetition_is_grouped(tmp
 
 @pytest.mark.parametrize(("source", "signature"), [
     ('from langgraph.prebuilt import create_react_agent as build\napp = build(model, tools)\napp.invoke({})\n', "framework.langgraph"),
-    ('import langgraph.graph as graph\napp = graph.StateGraph(dict)\n', "framework.langgraph"),
-    ('import langgraph.graph\napp = langgraph.graph.StateGraph(dict)\n', "framework.langgraph"),
+    ('import langgraph.prebuilt as graph\napp = graph.create_react_agent(model, tools)\n', "framework.langgraph"),
+    ('import langgraph.prebuilt\napp = langgraph.prebuilt.create_react_agent(model, tools)\n', "framework.langgraph"),
     ('from langchain.agents import create_agent as construct\napp = construct(model, tools)\n', "framework.langchain"),
     ('from crewai import Crew as Team\napp = Team(agents=[], tasks=[])\n', "framework.crewai"),
     ('from agents import Agent as Worker\napp = Worker(instructions="Help", name="worker")\n', "framework.openai-agents-sdk"),
@@ -68,7 +68,7 @@ def test_supporting_heuristics_require_ai_evidence_and_repetition_is_grouped(tmp
     ('from pydantic_ai import Agent as Worker\napp = Worker[Dependencies, Result](model)\n', "framework.pydantic-ai"),
     ('import pydantic_ai as ai\napp = ai.Agent[Dependencies, Result](model)\n', "framework.pydantic-ai"),
     ('from strands import Agent as Worker\napp = Worker(model=model)\n', "framework.aws-strands"),
-    ('from langgraph.graph import StateGraph\nmessage = f"{StateGraph(dict)}"\n', "framework.langgraph"),
+    ('from langgraph.prebuilt import create_react_agent\nmessage = f"{create_react_agent(model, tools)}"\n', "framework.langgraph"),
 ])
 def test_python_import_aliases_bind_real_construction(tmp_path, run_connector, source, signature):
     findings = _scan(tmp_path, run_connector, source)
@@ -104,7 +104,7 @@ def test_python_shadowed_or_unreachable_construction_is_not_attributed(tmp_path,
 
 def test_python_namespace_reassignment_is_not_sdk_construction(tmp_path, run_connector):
     findings = _scan(tmp_path, run_connector,
-                     "import langgraph.graph as graph\ngraph.StateGraph = local_factory\ngraph.StateGraph(dict)\n")
+                     "import langgraph.prebuilt as graph\ngraph.create_react_agent = local_factory\ngraph.create_react_agent(model, tools)\n")
     assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
 
 
@@ -116,18 +116,18 @@ def test_shadowed_generic_constructor_does_not_recover_sdk_binding(tmp_path, run
 
 def test_python_class_import_is_not_in_a_methods_lexical_scope(tmp_path, run_connector):
     findings = _scan(tmp_path, run_connector,
-                     "class Local:\n    from langgraph.graph import StateGraph\n    def build(self):\n        return StateGraph(dict)\n")
+                     "class Local:\n    from langgraph.prebuilt import create_react_agent\n    def build(self):\n        return create_react_agent(model, tools)\n")
     assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
 
 
 def test_python_comprehension_target_does_not_shadow_the_enclosing_function(tmp_path, run_connector):
     findings = _scan(tmp_path, run_connector,
-                     "from langgraph.graph import StateGraph\ndef build():\n    values = [StateGraph for StateGraph in factories]\n    return StateGraph(dict)\n")
+                     "from langgraph.prebuilt import create_react_agent\ndef build():\n    values = [create_react_agent for create_react_agent in factories]\n    return create_react_agent(model, tools)\n")
     assert any(f.kind == Kind.AGENT and "framework.langgraph" in f.frameworks for f in findings)
 
 
 @pytest.mark.parametrize("source", [
-    "from langgraph.graph import StateGraph\n",
+    "from langgraph.prebuilt import create_react_agent\n",
     "from langgraph.checkpoint.memory import MemorySaver\ncache = MemorySaver()\n",
     "from smolagents import InferenceClientModel\nmodel = InferenceClientModel()\n",
 ])
@@ -137,10 +137,10 @@ def test_import_and_framework_utilities_are_not_agents(tmp_path, run_connector, 
 
 
 @pytest.mark.parametrize("source", [
-    'import { StateGraph as Graph } from "@langchain/langgraph";\nconst app = new Graph();\n',
-    'import * as lg from "@langchain/langgraph";\nconst app = new lg.StateGraph();\n',
-    'const lg = require("@langchain/langgraph");\nconst app = new lg.StateGraph();\n',
-    'const { StateGraph: Graph } = require("@langchain/langgraph");\nconst app = new Graph();\n',
+    'import { createReactAgent as Graph } from "@langchain/langgraph/prebuilt";\nconst app = Graph({});\n',
+    'import * as lg from "@langchain/langgraph/prebuilt";\nconst app = lg.createReactAgent({});\n',
+    'const lg = require("@langchain/langgraph/prebuilt");\nconst app = lg.createReactAgent({});\n',
+    'const { createReactAgent: Graph } = require("@langchain/langgraph/prebuilt");\nconst app = Graph({});\n',
     'import { createReactAgent as build } from "@langchain/langgraph/prebuilt";\nconst app = build({});\n',
 ])
 @pytest.mark.parametrize("suffix", [".js", ".ts"])
@@ -150,17 +150,17 @@ def test_javascript_aliases_and_namespaces_bind_construction(tmp_path, run_conne
 
 
 @pytest.mark.parametrize("body", [
-    "function build(Graph) { return new Graph(); }\n",
-    "const build = (Graph) => new Graph();\n",
-    "const build = Graph => new Graph();\n",
-    "Graph = custom; new Graph();\n",
-    "function Graph() {}\nnew Graph();\n",
-    "try { process(); } catch (Graph) { new Graph(); }\n",
-    "class Local { build(Graph) { return new Graph(); } }\n",
+    "function build(Graph) { return Graph({}); }\n",
+    "const build = (Graph) => Graph({});\n",
+    "const build = Graph => Graph({});\n",
+    "Graph = custom; Graph({});\n",
+    "function Graph() {}\nGraph({});\n",
+    "try { process(); } catch (Graph) { Graph({}); }\n",
+    "class Local { build(Graph) { return Graph({}); } }\n",
 ])
 def test_javascript_shadowed_bindings_remain_supporting(tmp_path, run_connector, body):
     findings = _scan(tmp_path, run_connector,
-                     'import { StateGraph as Graph } from "@langchain/langgraph";\n' + body, ".js")
+                     'import { createReactAgent as Graph } from "@langchain/langgraph/prebuilt";\n' + body, ".js")
     assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
 
 
@@ -172,7 +172,7 @@ def test_javascript_prose_options_do_not_create_an_agent(tmp_path, run_connector
 
 def test_javascript_bound_tool_call_remains_detectable(tmp_path, run_connector):
     findings = _scan(tmp_path, run_connector,
-                     'import { generateText as answer, tool } from "ai";\nanswer({tools: {foo: tool({})}, maxSteps: 3});\n', ".ts")
+                     'import { generateText as answer, tool } from "ai";\nanswer({tools: {foo: tool({execute: async () => 1})}, maxSteps: 3});\n', ".ts")
     assert any(f.kind == Kind.AGENT and "framework.vercel-ai-sdk" in f.frameworks for f in findings)
 
 
@@ -186,7 +186,7 @@ def test_typescript_generic_imported_constructor(tmp_path, run_connector):
 def test_source_binding_budget_exhaustion_marks_scan_incomplete(tmp_path, run_connector, monkeypatch, limit, value):
     monkeypatch.setattr(source_semantics, limit, value)
     (tmp_path / "app.py").write_text(
-        "from langgraph.graph import StateGraph\nfirst = StateGraph(dict)\nsecond = StateGraph(dict)\n"
+        "from langgraph.prebuilt import create_react_agent\nfirst = create_react_agent(model, tools)\nsecond = create_react_agent(model, tools)\n"
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete

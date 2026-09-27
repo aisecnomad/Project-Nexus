@@ -69,17 +69,17 @@ def test_lexer_and_toml_layout_cases_have_distinct_narrow_labels():
     _, cases, _ = load_corpus(DEFAULT_CORPUS)
     by_id = {case.id: case for case in cases}
     for case_id in (
-        "py-fstring-interpolated-agent",
-        "js-regex-then-agent",
+        "py-fstring-interpolated-react-factory",
+        "js-regex-then-react-factory",
         "mcp-toml-table-active",
         "mcp-toml-dotted-active",
     ):
         assert by_id[case_id].present
-    for case_id in ("py-fstring-literal-agent", "jsx-text-agent"):
+    for case_id in ("py-fstring-literal-agent", "jsx-text-agent", "py-fstring-interpolated-agent", "js-regex-then-agent"):
         assert not by_id[case_id].present
-    assert "{StateGraph(dict)}" in by_id["py-fstring-interpolated-agent"].files["agent.py"]
+    assert "{create_react_agent(model, tools)}" in by_id["py-fstring-interpolated-react-factory"].files["agent.py"]
     assert "{{StateGraph(dict)}}" in by_id["py-fstring-literal-agent"].files["agent.py"]
-    assert "const graph = new StateGraph()" in by_id["js-regex-then-agent"].files["agent.js"]
+    assert "const graph = createReactAgent({ model, tools })" in by_id["js-regex-then-react-factory"].files["agent.js"]
     for case_id in ("mcp-toml-table-active", "mcp-toml-dotted-active"):
         assert by_id[case_id].assertions == {"server_count": 1, "server_names": ["active"]}
 
@@ -341,7 +341,7 @@ def _acceptance_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
             "id": "active-graph",
             "family": "agent",
             "description": "Active graph construction",
-            "files": {"agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# separately selected acceptance case\n"},
+            "files": {"agent.py": "from langgraph.prebuilt import create_react_agent\ngraph = create_react_agent(model, tools)\n# separately selected acceptance case\n"},
             "target": {"kind": "agent", "signature": "framework.langgraph"},
             "present": True,
         }
@@ -444,7 +444,7 @@ def test_acceptance_uses_predeclared_error_budget_instead_of_perfect_labels(tmp_
             "id": "missed-graph",
             "family": "agent",
             "description": "Active graph construction with simulated missed observation",
-            "files": {"missed.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# distinct missed acceptance case\n"},
+            "files": {"missed.py": "from langgraph.prebuilt import create_react_agent\ngraph = create_react_agent(model, tools)\n# distinct missed acceptance case\n"},
             "target": {"kind": "agent", "signature": "framework.langgraph"},
             "present": True,
         }

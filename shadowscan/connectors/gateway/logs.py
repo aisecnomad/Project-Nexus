@@ -63,6 +63,7 @@ from shadowscan.connectors.gateway.normalise import (  # noqa: F401 - re-exporte
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError, SignatureIndex
 from shadowscan.utils.redaction import REDACTED, credential_id, sanitize
+from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import get_path, parse_timestamp, to_iso
 
 _MAX_CACHED_USER_AGENTS = 256
@@ -275,7 +276,7 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
     if not line:
         return None
     if line.startswith(("{", "[")):
-        rec = json.loads(line)
+        rec = strict_json_loads(line)
         if not isinstance(rec, dict):
             raise ValueError("gateway text log JSON must be an object")
         return rec
@@ -753,7 +754,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                         continue
                     saw_record = True
                     try:
-                        data = json.loads(line)
+                        data = strict_json_loads(line)
                     except (json.JSONDecodeError, RecursionError, ValueError):
                         self.ctx.error(f"gateway.logs: invalid JSON record at line {number}")
                         continue
@@ -788,7 +789,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             self.ctx.error("gateway.logs: empty offline export; use [] for an empty inventory")
             return
         try:
-            data = json.loads(text)
+            data = strict_json_loads(text)
         except json.JSONDecodeError:
             # A .json export may contain one JSON object per line. A
             # corrupted pretty-printed document is not one: reporting
@@ -830,13 +831,13 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 self.ctx.warn(f"gateway.logs: max_input_line_bytes ({_MAX_OFFLINE_LINE_BYTES}) reached")
                 return
             try:
-                data = json.loads(line)
+                data = strict_json_loads(line)
                 if not isinstance(data, dict):
-                    raise ValueError("JSONL records must be objects")
-            except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+                    raise TypeError("JSONL records must be objects")
+            except (json.JSONDecodeError, RecursionError, ValueError, TypeError) as exc:
                 invalid += 1
                 if invalid <= _MAX_INVALID_LINE_ERRORS:
-                    detail = "JSONL records must be objects" if isinstance(exc, ValueError) and not isinstance(exc, json.JSONDecodeError) else "invalid JSON record"
+                    detail = "JSONL records must be objects" if isinstance(exc, TypeError) else "invalid JSON record"
                     self.ctx.error(f"gateway.logs: line {number}: {detail}")
                 elif invalid == _MAX_INVALID_LINE_ERRORS + 1:
                     self.ctx.error("gateway.logs: further invalid records in this export are not listed individually")

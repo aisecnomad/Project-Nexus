@@ -130,7 +130,7 @@ def test_release_cli_writes_only_verified_run_and_refuses_failed_run(
 
 @pytest.fixture
 def candidate(tmp_path: Path) -> Path:
-    (tmp_path / "shadowscan-0.1.1-py3-none-any.whl").write_bytes(b"wheel bytes")
+    (tmp_path / "project_nexus_shadowscan-0.1.1-py3-none-any.whl").write_bytes(b"wheel bytes")
     (tmp_path / "requirements.lock").write_text("click==8.1\n", encoding="utf-8")
     (tmp_path / "requirements-build.lock").write_text("setuptools==84.0.0\n", encoding="utf-8")
     (tmp_path / "requirements-ci-constraints.txt").write_text("pip-audit==2.10.1\n", encoding="utf-8")

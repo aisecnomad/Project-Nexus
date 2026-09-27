@@ -2,6 +2,26 @@
 
 ## 0.1.1 — Unreleased
 
+### September 27 review corrections
+
+- Offline exports reject ambiguous duplicate fields in JSON, JSONL and YAML;
+  rejected input makes collection incomplete instead of establishing absence.
+- Generic graph and flow construction no longer establishes an agent by itself.
+  Disabled, empty or schema-only tool options do not establish model-directed
+  action execution. Source capabilities require corresponding evidence rather
+  than inheriting every feature of an imported framework.
+- CI exposes a single `CI gate` covering documentation, every supported Python
+  version, the container checks, and DCO on pull requests. The repository ruleset
+  must require that check; workflow code alone does not configure branch rules.
+- The Python distribution is now `project-nexus-shadowscan` to distinguish it
+  from the unrelated PyPI package. The `shadowscan` command, import namespace,
+  entry-point group and report schemas retain their names. No package is
+  published or namespace reserved by this change.
+- Regenerate discovery baselines after adopting these classification and
+  capability corrections. Fresh human-labeled holdouts, live tenant acceptance,
+  independent release review and hosted artifact attestations remain separate
+  release requirements; regression results do not supply that evidence.
+
 ### Field-review follow-up
 
 Fixes from the review of the field-review series; each has a regression test.

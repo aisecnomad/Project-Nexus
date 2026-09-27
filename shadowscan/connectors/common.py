@@ -80,6 +80,7 @@ def apply_matches(
     max_evidence_per_signature: int = 12,
     weight_scale: float = 1.0,
     capabilities: bool = True,
+    signature_capabilities: bool = True,
 ) -> int:
     """Attach matches to a finding as evidence, tags, frameworks and capabilities.
 
@@ -99,7 +100,9 @@ def apply_matches(
         elif sig.category == "policy":
             finding.add_tag(sig.id)
         if capabilities:
-            for cap in m.capabilities():
+            # Static source analysis can retain library-wide features as
+            # potential metadata while scoring only the matched code signal.
+            for cap in m.capabilities() if signature_capabilities else m.signal.capabilities:
                 finding.add_capability(cap)
         for t in sig.tags:
             finding.add_tag(t)

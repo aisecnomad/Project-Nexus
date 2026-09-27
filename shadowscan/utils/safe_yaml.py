@@ -136,3 +136,36 @@ def bounded_safe_load(stream: Any) -> Any:
 def bounded_safe_load_all(stream: Any) -> list[Any]:
     """Load a bounded stream of YAML documents with the same limits as ``bounded_safe_load``."""
     return list(yaml.load_all(stream, Loader=BoundedSafeLoader))
+
+
+class YAMLIntegrityError(yaml.YAMLError):
+    """An offline mapping has ambiguous or unsupported keys, without source text."""
+
+
+class StrictBoundedSafeLoader(BoundedSafeLoader):
+    """Bounded offline YAML with unique string keys in every source mapping.
+
+    Validate before merge flattening: ordinary YAML merge inheritance and an
+    explicit override remain supported, but repeated keys in a source mapping
+    (including a merged anchor) cannot silently discard earlier observations.
+    """
+
+    def flatten_mapping(self, node: MappingNode) -> None:
+        if node not in self._flattened:
+            keys: set[str] = set()
+            for key_node, _ in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    key = "<<"
+                else:
+                    key = self.construct_object(key_node)
+                    if not isinstance(key, str):
+                        raise YAMLIntegrityError("Offline YAML mapping keys must be strings")
+                if key in keys:
+                    raise YAMLIntegrityError("Duplicate YAML field")
+                keys.add(key)
+        super().flatten_mapping(node)
+
+
+def strict_bounded_safe_load(stream: Any) -> Any:
+    """Load one bounded offline YAML document with unambiguous mapping keys."""
+    return yaml.load(stream, Loader=StrictBoundedSafeLoader)

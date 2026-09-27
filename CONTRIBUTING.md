@@ -257,10 +257,11 @@ the work under the Apache-2.0 license and that you agree to the
 [Developer Certificate of Origin](https://developercertificate.org/) (DCO).
 
 You can sign off your commits with `git commit -s`, which adds a
-`Signed-off-by` line. The [`DCO` workflow](.github/workflows/dco.yml) checks
-every commit in a pull request for a matching sign-off and reports the result
-as a status check; whether it is configured to block merges follows the same
-repository rules as any other check (see
+`Signed-off-by` line. CI calls the reusable [`DCO` workflow](.github/workflows/dco.yml)
+to check every non-merge commit in a pull request for a matching sign-off.
+The `CI gate` check requires successful DCO, documentation, and every Python
+matrix job, including the container smoke test. Whether that check is configured
+to block merges follows the live repository rules (see
 [review and merge policy](#review-and-merge-policy)).
 
 ## License

@@ -101,10 +101,11 @@ jobs:
           python -m venv "$RUNNER_TEMP/release-wheel"
           "$RUNNER_TEMP/release-wheel/bin/python" -m pip install \
             --require-hashes --only-binary=:all: -r requirements.lock
-          "$RUNNER_TEMP/release-wheel/bin/python" -m pip install --no-deps candidate/*.whl
+          "$RUNNER_TEMP/release-wheel/bin/python" -m pip install --no-deps candidate/project_nexus_shadowscan-*.whl
           "$RUNNER_TEMP/release-wheel/bin/python" -m pip check
           cp tests/fixtures/sample_repo/services/research-agent/app/agent.py "$RUNNER_TEMP/release-smoke.py"
           cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/release-wheel/bin/python" -c 'from importlib.metadata import distribution; import shadowscan; package = distribution("project-nexus-shadowscan"); assert package.version == shadowscan.__version__; assert any(ep.name == "shadowscan" and ep.value == "shadowscan.cli:main" for ep in package.entry_points)'
           "$RUNNER_TEMP/release-wheel/bin/python" -m shadowscan.signatures.validate
           "$RUNNER_TEMP/release-wheel/bin/shadowscan" --help
           mkdir release-input

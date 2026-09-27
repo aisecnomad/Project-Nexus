@@ -14,7 +14,7 @@ from tools.evaluation import accept as legacy
 from tools.evaluation.evaluate import Case, CorpusError
 from tools.evaluation.sources import SourceIndex, SourceOverlapError
 
-POSITIVE = "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# source independence regression\n"
+POSITIVE = "from langgraph.prebuilt import create_react_agent\ngraph = create_react_agent(model, tools)\n# source independence regression\n"
 NEGATIVE = "def local_calculation():\n    return 'source independence regression'\n"
 
 

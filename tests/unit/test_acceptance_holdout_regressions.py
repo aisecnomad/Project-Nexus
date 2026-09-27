@@ -15,7 +15,7 @@ from tools.evaluation.evaluate import DEFAULT_CORPUS, CorpusError, load_corpus
 def _inputs(root: Path) -> tuple[Path, Path, Path, dict]:
     cases = [
         {"id": "positive", "family": "agent", "description": "Positive holdout",
-         "files": {"agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# private fixture\n"},
+         "files": {"agent.py": "from langgraph.prebuilt import create_react_agent\ngraph = create_react_agent(model, tools)\n# private fixture\n"},
          "target": {"kind": "agent"}, "present": True},
         {"id": "negative", "family": "agent", "description": "Negative holdout",
          "files": {"plain.py": "def quiet():\n    return 'private fixture'\n"},

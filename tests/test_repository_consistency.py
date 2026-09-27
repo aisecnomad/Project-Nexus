@@ -318,6 +318,19 @@ def test_ci_matrix_covers_every_classified_python_version() -> None:
     assert matrix == classified, f"CI tests {sorted(matrix)} but pyproject classifies {sorted(classified)}"
 
 
+def test_distribution_rename_preserves_cli_and_plugin_contract() -> None:
+    project = _pyproject()["project"]
+    assert project["name"] == "project-nexus-shadowscan"
+    assert project["scripts"] == {"shadowscan": "shadowscan.cli:main"}
+    assert "shadowscan.connectors" in project["entry-points"]
+    assert project["optional-dependencies"]["all"] == [f"{project['name']}[cloud,dev,docs]"]
+    for path in (ROOT / "docs/getting-started/install.md", ROOT / "examples/github-action-code-scan.yml",
+                 ROOT / "Makefile", GITHUB / "workflows/ci.yml", GITHUB / "workflows/release.yml"):
+        text = _read(path)
+        assert "project_nexus_shadowscan-*.whl" in text
+        assert "/shadowscan-*.whl" not in text
+
+
 def test_makefile_lint_and_typecheck_paths_match_ci() -> None:
     ci = _ci_run_lines()
     makefile = [line.strip() for line in _read(ROOT / "Makefile").splitlines()]

@@ -111,7 +111,7 @@ class AzureConnector(BaseConnector):
             try:
                 from azure.identity import DefaultAzureCredential
             except ImportError as exc:
-                raise ConnectorError("cloud.azure: install azure-identity (pip install 'shadowscan[azure]') or provide access_token") from exc
+                raise ConnectorError("cloud.azure: install azure-identity (install '.[azure]' from the reviewed Project Nexus checkout) or provide access_token") from exc
             self._cred = DefaultAzureCredential(
                 exclude_managed_identity_credential=self.ctx.get("allow_instance_credentials", False) is not True,
                 connection_timeout=10,

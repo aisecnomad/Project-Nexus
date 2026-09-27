@@ -23,8 +23,10 @@ from dataclasses import dataclass
 import regex
 
 from shadowscan.connectors.code.javascript_dispatch import javascript_responses_dispatch_lines
+from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
+from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
@@ -56,15 +58,16 @@ class _Call:
     line: int
     structural_arguments: str = ""
     node: ast.Call | None = None
+    tool_factories: tuple[str, ...] = ()
 
 
 # These APIs construct agents even when their arguments have a different order
 # from older lexical signatures. Names have meaning only after import binding.
 _FACTORIES = {
     "framework.langchain": r"(?:AgentExecutor|initialize_agent|create_\w*agent|createReactAgent|createToolCallingAgent)",
-    "framework.langgraph": r"(?:StateGraph|create_react_agent|createReactAgent|create_supervisor|create_swarm)",
+    "framework.langgraph": r"(?:create_react_agent|createReactAgent|create_supervisor|create_swarm)",
     "framework.llamaindex": r"(?:ReActAgent|FunctionAgent|FunctionCallingAgent|OpenAIAgent|AgentWorkflow|CodeActAgent|AgentRunner)(?:\.from_tools)?",
-    "framework.crewai": r"(?:Agent|Crew|Flow)",
+    "framework.crewai": r"(?:Agent|Crew)",
     "framework.google-adk": r"(?:Agent|LlmAgent|SequentialAgent|ParallelAgent|LoopAgent|Runner|InMemoryRunner)",
     "framework.aws-strands": r"(?:Agent|GraphBuilder|Swarm)",
     "framework.microsoft-agent-framework": r"(?:ChatAgent|WorkflowBuilder|MagenticBuilder|HandoffBuilder)",
@@ -479,6 +482,11 @@ def _javascript_bindings(
             del bindings[name]
 
     calls: list[_Call] = []
+    tool_factories = tuple(
+        name if binding.symbol == "tool" else f"{name}.tool"
+        for name, binding in bindings.items()
+        if binding.module == "ai" and binding.symbol in {"tool", ""}
+    )
     rx = regex.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?:<[^;(){}]{1,1000}>)?\s*\(")
     for match in rx.finditer(masked, timeout=pattern_timeout(), concurrent=False):
         parts = re.split(r"\s*\.\s*", match.group(1))
@@ -498,7 +506,7 @@ def _javascript_bindings(
             continue
         symbol = ".".join(filter(None, (binding.symbol, *parts[1:])))
         calls.append(_Call(_Binding(binding.module, symbol), text[opening:end], text.count("\n", 0, match.start()) + 1,
-                           masked[opening:end]))
+                           masked[opening:end], tool_factories=tool_factories))
     return calls, imports
 
 
@@ -563,6 +571,13 @@ def bound_source_matches(
     provider_requests: set[int] = set()
     responses_requests: set[int] = set()
     javascript_constructors: set[int] = set()
+    graph_lines = (
+        langgraph_agent_lines(tree, [(call.node, call.binding.module, call.binding.symbol)
+                                    for call in calls if call.node is not None])
+        if tree is not None and any(call.binding.module.startswith("langgraph")
+                                    and _symbol_tail(call.binding.symbol) == "StateGraph" for call in calls)
+        else set()
+    )
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
         if (language == "javascript" and "provider.openai" in signatures and call.binding.module == "openai"
@@ -584,9 +599,12 @@ def bound_source_matches(
         for signature in signatures.values():
             factory = _FACTORIES.get(signature.id)
             verified = bool(factory and re.fullmatch(factory, symbol))
+            if signature.id == "framework.langgraph" and symbol == "StateGraph":
+                verified = call.line in graph_lines
             if signature.id == "framework.vercel-ai-sdk" and symbol in {"generateText", "streamText"}:
-                # Options belong to a resolved SDK call, not unrelated config.
-                verified = bool(re.search(r"\btools\s*:\s*\{", call.structural_arguments))
+                # A schema alone does not dispatch tools, and toolChoice/activeTools
+                # can explicitly disable them. Preserve SDK usage on unknown shapes.
+                verified = has_executable_vercel_tools(call.arguments, call.structural_arguments, call.tool_factories)
             if (
                 signature.category == "provider" and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
                 and _TOOL_ARGUMENTS.search(call.structural_arguments)

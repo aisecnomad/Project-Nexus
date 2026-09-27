@@ -341,7 +341,7 @@ and privileged/data scopes (`keep_all: true` to emit everything).
 
 ## Cloud
 
-All cloud connectors need the matching extra (`shadowscan[aws|gcp|azure|oci]`)
+All cloud connectors need the matching extra (`aws`, `gcp`, `azure` or `oci`)
 for live mode, or a JSONL record dump for offline mode. They use read-only
 list/describe/get calls only.
 
