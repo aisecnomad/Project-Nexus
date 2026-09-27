@@ -134,6 +134,12 @@ CASES = {
         f"parameters: [{{name: AzureOpenAI__Endpoint, value: {AZURE}}}, "
         f"{{name: AzureOpenAI__Key, value: {HEX}}}]\n"
     ), HEX),
+    # An element's own name decides its content beside a key attribute that
+    # names a setting ('openai.token' counts by its last segment).
+    "xml-element-with-setting-key": ("openai-token.xml", (
+        f"<configuration><openai><endpoint>{AZURE}</endpoint>"
+        f'<token key="openai.token" value="">{HEX}</token></openai></configuration>\n'
+    ), HEX),
     "xml-password-element": ("settings.xml", (
         f"<server><url>https://api.openai.com/v1</url><password>{PASSWORD}</password></server>\n"
     ), PASSWORD),

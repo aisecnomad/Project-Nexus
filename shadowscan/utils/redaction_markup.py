@@ -94,7 +94,10 @@ def _redact_markup_credentials(text: str) -> str:
 
     Key/name attributes and element names are read as settings (see
     ``_setting_level``): a sensitive one withholds any value, one whose last
-    word names a credential only an opaque literal.
+    word names a credential only an opaque literal. A key/name attribute
+    decides the element's value attributes, its <value> child and its
+    content; the element's own name decides its content as well, whatever
+    the attributes decided.
     """
     if "<" not in text:
         return text
@@ -112,19 +115,15 @@ def _redact_markup_credentials(text: str) -> str:
             elif name == "value":
                 offset = tag.start("attributes")
                 values.append((offset + attribute.start(group), offset + attribute.end(group)))
-        if named and values:
+        if named:
             spans.extend(span for span in values if _setting_value_withheld(named, text[span[0]:span[1]]))
-            if named == 2:
-                continue
         if attributes.rstrip().endswith("/"):
             continue  # a self-closing element has no content
-        if named and not values:
+        if named:
             content = _markup_content(text, contents, tag, inner_value=True)
             if content is not None and _setting_value_withheld(named, text[content[0]:content[1]]):
                 spans.append(content)
-            if named == 2:
-                continue
-        # A weakly named key attribute leaves the element's own name to decide.
+        # Overlapping spans (the same content decided twice) are dropped below.
         level = _setting_level(tag.group("tag").rsplit(":", 1)[-1])
         if level:
             content = _markup_content(text, contents, tag, inner_value=False)

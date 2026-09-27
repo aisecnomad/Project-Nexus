@@ -169,6 +169,17 @@ FORMS: list[tuple[str, str, str]] = [
     (f'<entry key="openai.key">{BASE64}</entry>', BASE64, "</entry>"),
     (f'<setting name="AzureOpenAI:Key"><value>{HEX}</value></setting>', HEX, "</setting>"),
     (f'<password key="CacheKey">{PASSWORD}</password>', PASSWORD, "</password>"),
+    # An element's own name decides its content however strongly a key/name
+    # attribute decided its value attributes, and a key/name attribute also
+    # names the content beside them.
+    (f'<apiKey name="OpenAI:Secret" value="">{HEX}</apiKey>', HEX, '<apiKey name="OpenAI:Secret" value="">'),
+    (f'<token key="openai.token" value="ignored">{HEX}</token>', HEX, '<token key="openai.token" value="'),
+    (f'<Secret key="OpenAI:Secret" value="x">{HEX}</Secret>', HEX, "</Secret>"),
+    (f'<apiKey name="AzureOpenAI__Token" value="${{X}}">{HEX}</apiKey>', HEX, "</apiKey>"),
+    (f'<apiKey name="api_key" value="">{HEX}</apiKey>', HEX, '<apiKey name="api_key" value="">'),
+    (f'<password key="Token" value="users">{PASSWORD}</password>', PASSWORD, "</password>"),
+    (f'<add key="Password" value="">{PASSWORD}</add>', PASSWORD, '<add key="Password" value="">'),
+    (f'<add key="OpenAIKey" value="">{HEX}</add>', HEX, '<add key="OpenAIKey" value="">'),
     (f"{{name: OpenAIKey, value: {HEX}}}", HEX, "{name: OpenAIKey, value: "),
     (f"- name: AzureOpenAI__Key\n  value: {HEX}\n", HEX, "- name: AzureOpenAI__Key\n"),
     (f"- name: AzureOpenAI:Secret\n  value: {PASSWORD}\n", PASSWORD, "- name: AzureOpenAI:Secret\n"),
@@ -396,6 +407,8 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
     "{name: OpenAIKey, value: ${OPENAI_KEY}}",
     "- name: cacheKey\n  value: users\n",
     "- name: OpenAIKey\n  value: |\n    first line\n    second line\n",
+    '<add key="CacheKey" value="users">users-by-id</add>',
+    '<OpenAIKey key="Region" value="eu">users</OpenAIKey>',
     # Options and numbered names keep ordinary values.
     "tool --key users --sort-key name --cache-key users-by-id",
     "curl -k https://example.com --key client.pem --key-file ~/.ssh/id_ed25519",
