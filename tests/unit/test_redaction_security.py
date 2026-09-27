@@ -32,7 +32,8 @@ def _index():
 
 def _finding(**kwargs):
     return Finding(surface=Surface.CODE, connector="test", kind=Kind.AGENT,
-                   title=kwargs.pop("title", "Agent"), resource="repo:example", resource_type="repository", **kwargs)
+                   title=kwargs.pop("title", "Agent"), resource="repo:example", resource_type="repository",
+                   **kwargs)
 
 
 def test_sanitizes_structured_credentials_urls_argv_and_copies():
@@ -119,7 +120,8 @@ def test_credential_fingerprint_is_stable_nonsecret_and_survives_sanitization():
 
 def test_finding_and_serialization_sanitize_sibling_evidence():
     f = _finding(title=f"Agent {PROVIDER_KEY}", metadata={"api_key": SECRET, "repository": "org/repo"},
-                 evidence=[Evidence(signal="import", description=f"copy {SECRET}", snippet=f"import langchain; KEY='{PROVIDER_KEY}'")],
+                 evidence=[Evidence(signal="import", description=f"copy {SECRET}",
+                                    snippet=f"import langchain; KEY='{PROVIDER_KEY}'")],
                  capabilities=["tool-use"])
     assert SECRET not in str(f.evidence)
     assert PROVIDER_KEY not in f.title
@@ -160,8 +162,13 @@ def test_export_is_sanitized_atomic_and_owner_only(tmp_path):
 
 def test_jwt_dump_never_writes_token_records(tmp_path):
     target = tmp_path / "jwt.jsonl"
-    token = jwt.encode({"sub": "agent", "agent_id": "agent-1"}, "synthetic-test-signing-key-only-32-bytes", algorithm="HS256")
-    connector = JwtConnector(ConnectorContext(config={"tokens": [token], "_dump_path": str(target)}, index=_index()))
+    token = jwt.encode(
+        {"sub": "agent", "agent_id": "agent-1"}, "synthetic-test-signing-key-only-32-bytes",
+        algorithm="HS256",
+    )
+    connector = JwtConnector(ConnectorContext(
+        config={"tokens": [token], "_dump_path": str(target)}, index=_index(),
+    ))
     findings = connector.run()
     assert len(findings) == 1 and not connector.ctx.stats.errors
     assert not target.exists()
@@ -171,7 +178,9 @@ def test_jwt_dump_never_writes_token_records(tmp_path):
 
 def test_generic_saas_does_not_copy_arbitrary_export_columns():
     connector = GenericSaaSConnector(ConnectorContext(config={"keep_all": True}, index=_index()))
-    result = list(connector.analyze([{"name": "Agent", "id": "app-1", "users": 4, "custom_private_column": SECRET}]))
+    result = list(connector.analyze([
+        {"name": "Agent", "id": "app-1", "users": 4, "custom_private_column": SECRET},
+    ]))
     assert len(result) == 1
     assert SECRET not in json.dumps(result[0].to_dict())
     assert result[0].metadata["users"] == 4
