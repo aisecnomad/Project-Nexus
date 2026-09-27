@@ -184,7 +184,10 @@ class SlackConnector(BaseConnector):
         record_teams: set[str] = set()
         invalid_scope = False
         bots: dict[str, dict[str, Any]] = {}
+        conflicting_bots: set[str] = set()
         apps: dict[str, dict[str, Any]] = {}
+        app_records: dict[str, dict[str, Any]] = {}
+        conflicting_apps: set[str] = set()
         logs: dict[str, list[dict[str, Any]]] = {}
         requests: list[dict[str, Any]] = []
         for rec in records:
@@ -204,12 +207,26 @@ class SlackConnector(BaseConnector):
                 teams[rec["id"]] = rec.get("name") or rec.get("domain")
             elif kind == "bot_user":
                 app_id = get_path(rec, "profile.api_app_id") or rec.get("id")
-                bots[str(app_id)] = rec
+                app_key = str(app_id)
+                existing = bots.get(app_key)
+                if existing is None:
+                    bots[app_key] = rec
+                elif existing != rec and app_key not in conflicting_bots:
+                    conflicting_bots.add(app_key)
+                    self.ctx.warn("saas.slack: conflicting bot records; app identity coverage incomplete")
             elif kind in {"approved_app", "restricted_app"}:
                 app = rec.get("app") or rec
                 app_id = app.get("id") or app.get("app_id")
+                app_key = str(app_id)
+                previous = app_records.get(app_key)
+                if previous is not None:
+                    if previous != rec and app_key not in conflicting_apps:
+                        conflicting_apps.add(app_key)
+                        self.ctx.warn("saas.slack: conflicting app records; app identity coverage incomplete")
+                    continue
+                app_records[app_key] = rec
                 entry = apps.setdefault(
-                    str(app_id),
+                    app_key,
                     {
                         "app": app,
                         "scopes": [],
@@ -257,8 +274,10 @@ class SlackConnector(BaseConnector):
             )
             return
         team_name = teams.get(team_id)
-        seen: set[str] = set()
+        seen: set[str] = set(conflicting_apps)
         for app_id, entry in apps.items():
+            if app_id in conflicting_apps:
+                continue
             self.ctx.examined()
             seen.add(app_id)
             f = self._app_finding(
@@ -266,7 +285,7 @@ class SlackConnector(BaseConnector):
                 entry["app"],
                 entry["scopes"],
                 entry["status"],
-                bots.get(app_id),
+                None if app_id in conflicting_bots else bots.get(app_id),
                 logs.get(app_id, []),
                 team_id,
             )
@@ -274,7 +293,7 @@ class SlackConnector(BaseConnector):
                 f.metadata.update(workspace_name=team_name, workspace_scope_source=scope_source)
                 yield f
         for app_id, bot in bots.items():
-            if app_id in seen:
+            if app_id in seen or app_id in conflicting_bots:
                 continue
             self.ctx.examined()
             app = {

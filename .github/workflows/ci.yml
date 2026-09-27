@@ -9,6 +9,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  dco:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/dco.yml
+    permissions:
+      contents: read
   docs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -38,10 +43,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-      - name: Install without hash-locked supply chain (macOS wheels differ)
+      - name: Install the hash-locked core and development toolchain
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock
+          python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
@@ -71,7 +76,8 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.lock
-            requirements-ci-constraints.txt
+            requirements-build.lock
+            requirements-ci.lock
       - name: Check requirements-build.lock matches the pyproject build-system pins
         run: |
           python - <<'PY'
@@ -86,34 +92,14 @@ jobs:
           missing = sorted(set(declared) - set(locked))
           assert not missing, f'requirements-build.lock is missing pyproject.toml build-system pins {missing} (locked: {locked})'
           PY
-      - name: Install pinned build tools, runtime and development checks
+      - name: Install hash-locked build, runtime and development tools
         run: |
-          # pip stays version-pinned rather than hash-locked: it is the tool that
-          # enforces --require-hashes, so a hash it checks cannot vouch for it, and
-          # keeping it out of requirements-build.lock lets the Dockerfile share that
-          # lock without upgrading the image's pip. requirements-ci-constraints.txt
-          # carries the same pip pin for the [dev] install below.
-          python -m pip install --upgrade --only-binary=:all: pip==26.2.1
-          # The build backend from pyproject.toml [build-system] comes from its hash
-          # lock; every build in this job then runs with --no-build-isolation.
-          python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
-          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-          # pip treats hashes in a constraint file as a global hash requirement;
-          # extract exact runtime and build-backend pins so the local editable
-          # install is permitted and cannot move the locked backend.
-          python - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-          pins = [line.split()[0]
-                  for lock in ('requirements.lock', 'requirements-build.lock')
-                  for line in Path(lock).read_text().splitlines()
-                  if re.match(r'^[A-Za-z0-9_.-]+==[^\s]+', line)]
-          assert pins, 'locks have no version pins'
-          (Path(os.environ['RUNNER_TEMP']) / 'runtime-constraints.txt').write_text('\n'.join(pins) + '\n')
-          PY
-          python -m pip install --no-build-isolation --only-binary=:all: \
-            -c "$RUNNER_TEMP/runtime-constraints.txt" -c requirements-ci-constraints.txt -e ".[dev]"
+          # The runner's bootstrap pip verifies the pinned pip wheel before it
+          # replaces itself. Every subsequently executed Python tool comes from
+          # one of these reviewed SHA-256 locks.
+          python -m pip install --require-hashes --only-binary=:all: \
+            -r requirements-ci.lock -r requirements-build.lock -r requirements.lock
+          python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
@@ -123,14 +109,14 @@ jobs:
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off
-      - name: Audit hash-locked runtime and build dependencies
+      - name: Audit every hash-locked dependency set
         run: |
           # Fail if a locked package cannot be checked, even when an installed
           # environment audit permits an intentionally skipped editable package.
-          pip-audit --require-hashes --strict --progress-spinner off \
-            --disable-pip --no-deps -r requirements.lock
-          pip-audit --require-hashes --strict --progress-spinner off \
-            --disable-pip --no-deps -r requirements-build.lock
+          for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do
+            pip-audit --require-hashes --strict --progress-spinner off \
+              --disable-pip --no-deps -r "$lock"
+          done
       - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
         run: |
@@ -154,16 +140,17 @@ jobs:
       - name: Build distributable wheel
         run: |
           # Re-assert the hash-locked backend so the wheel generator matches
-          # pyproject.toml [build-system] whatever the [dev] install resolved.
+          # pyproject.toml [build-system] after the combined locked install.
           python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
           python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
       - name: Validate installed wheel outside the checkout
         run: |
           python -m venv "$RUNNER_TEMP/shadowscan-wheel"
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m pip install --no-deps dist/*.whl
+          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m pip install --no-deps dist/project_nexus_shadowscan-*.whl
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m pip check
           cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -c 'from importlib.metadata import distribution; import shadowscan; package = distribution("project-nexus-shadowscan"); assert package.version == shadowscan.__version__; assert any(ep.name == "shadowscan" and ep.value == "shadowscan.cli:main" for ep in package.entry_points)'
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m shadowscan.signatures.validate
           "$RUNNER_TEMP/shadowscan-wheel/bin/shadowscan" --help
       - name: Build and validate disposable worker
@@ -196,3 +183,40 @@ jobs:
           name: shadowscan-sarif-${{ matrix.python }}
           path: shadowscan.sarif
           retention-days: 1
+  gate:
+    name: CI gate
+    if: always()
+    needs: [dco, docs, test-macos, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every applicable CI job
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+          MACOS_RESULT: ${{ needs.test-macos.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          DCO_RESULT: ${{ needs.dco.result }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          event = os.environ['EVENT_NAME']
+          expected = {
+              'DOCS_RESULT': 'success',
+              'MACOS_RESULT': 'success',
+              'TEST_RESULT': 'success',
+          }
+          if event == 'pull_request':
+              expected['DCO_RESULT'] = 'success'
+          elif event == 'push':
+              expected['DCO_RESULT'] = 'skipped'
+          else:
+              sys.exit(f'unsupported CI event: {event}')
+          failed = [f'{name}={os.environ.get(name)!r} (expected {value})'
+                    for name, value in expected.items() if os.environ.get(name) != value]
+          if failed:
+              sys.exit('CI gate failed: ' + ', '.join(failed))
+          print('All applicable CI jobs passed, including the complete Python matrix.')
+          PY

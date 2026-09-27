@@ -31,7 +31,8 @@ from shadowscan.connectors.cloud.common import (
     scan_iam_actions,
     string_list,
 )
-from shadowscan.connectors.common import apply_matches, model_matches
+from shadowscan.connectors.cloud.credentials import allow_instance_credentials
+from shadowscan.connectors.common import apply_matches, config_boolean, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
@@ -98,7 +99,9 @@ class AzureConnector(BaseConnector):
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
-        self.include_app_settings = bool(ctx.get("include_app_settings", True))
+        self.include_app_settings = config_boolean(
+            ctx.get("include_app_settings", True), "include_app_settings"
+        )
         try:
             self.subscriptions = string_list(
                 ctx.get("subscriptions"), "subscriptions", pattern=r"[A-Za-z0-9-]+"
@@ -116,11 +119,13 @@ class AzureConnector(BaseConnector):
                 from azure.identity import DefaultAzureCredential
             except ImportError as exc:
                 raise ConnectorError(
-                    "cloud.azure: install azure-identity (pip install 'shadowscan[azure]') or provide access_token"
+                    "cloud.azure: install azure-identity (install '.[azure]' from the "
+                    "reviewed Project Nexus checkout) or provide access_token"
                 ) from exc
             self._cred = DefaultAzureCredential(
-                exclude_managed_identity_credential=self.ctx.get("allow_instance_credentials", False)
-                is not True,
+                exclude_managed_identity_credential=not allow_instance_credentials(
+                    self.ctx.get("allow_instance_credentials", False)
+                ),
                 connection_timeout=10,
                 read_timeout=30,
                 retry_total=2,
@@ -181,7 +186,13 @@ class AzureConnector(BaseConnector):
                     malformed = True
                     continue
                 items.append(item)
-            next_path = data.get("nextLink", data.get("@odata.nextLink"))
+            continuation_values = [data[key] for key in ("nextLink", "@odata.nextLink") if key in data]
+            if len(continuation_values) == 2 and continuation_values[0] != continuation_values[1]:
+                self.ctx.warn(
+                    "cloud.azure: conflicting list continuations; coverage unknown", incomplete=True
+                )
+                break
+            next_path = continuation_values[0] if continuation_values else None
             if next_path is None or next_path == "":
                 return None if malformed and not allow_partial else items
             if not isinstance(next_path, str):

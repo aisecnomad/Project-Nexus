@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -86,7 +87,7 @@ def _safe_name(name: Any) -> bool:
     )
 
 
-def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
+def load_corpus(path: Path) -> tuple[dict[str, Any], list[Case], str]:
     """Parse a bounded, declarative corpus. Case files are text and never run."""
     try:
         # Use the same descriptor-based read as other policy inputs: checking a
@@ -98,11 +99,34 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
     data = _keys(data, {"schema", "metadata", "cases"}, set(), "corpus")
     if type(data["schema"]) is not int or data["schema"] != 1:
         raise CorpusError("unsupported corpus schema; expected 1")
-    meta = _keys(data["metadata"], {"name", "type", "provenance"}, set(), "metadata")
-    if not all(isinstance(value, str) and 0 < len(value) <= 500 for value in meta.values()) or meta[
-        "type"
-    ] not in {"synthetic", "public-pinned", "adjudicated"}:
+    meta = _keys(
+        data["metadata"],
+        {"name", "type", "provenance"},
+        {"known_gap_policy"},
+        "metadata",
+    )
+    if not all(
+        isinstance(meta[key], str) and 0 < len(meta[key]) <= 500 for key in ("name", "type", "provenance")
+    ) or meta["type"] not in {"synthetic", "public-pinned", "adjudicated"}:
         raise CorpusError("metadata requires a name, type and provenance")
+    gap_policy = meta.get("known_gap_policy")
+    if gap_policy is not None:
+        gap_policy = _keys(
+            gap_policy,
+            {"max_count", "expires_on"},
+            set(),
+            "metadata known_gap_policy",
+        )
+        if type(gap_policy["max_count"]) is not int or not 0 <= gap_policy["max_count"] <= 20:
+            raise CorpusError("metadata known_gap_policy max_count must be an integer from 0 to 20")
+        try:
+            expiry = date.fromisoformat(gap_policy["expires_on"])
+        except (TypeError, ValueError) as exc:
+            raise CorpusError("metadata known_gap_policy expires_on must be an ISO date") from exc
+        if expiry.isoformat() != gap_policy["expires_on"]:
+            raise CorpusError("metadata known_gap_policy expires_on must be an ISO date")
+        if expiry < date.today():
+            raise CorpusError("metadata known_gap_policy has expired; review or remove every known gap")
     items = data["cases"]
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_CASES:
         raise CorpusError("corpus must contain 1 to 500 cases")
@@ -143,7 +167,13 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
         assertions = _keys(
             obj.get("assertions", {}),
             set(),
-            {"max_agent_findings", "max_secret_findings", "server_count", "server_names"},
+            {
+                "forbidden_signatures",
+                "max_agent_findings",
+                "max_secret_findings",
+                "server_count",
+                "server_names",
+            },
             f"{where} assertions",
         )
         for key in ("max_agent_findings", "max_secret_findings", "server_count"):
@@ -159,6 +189,16 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
             or len(set(assertions["server_names"])) != len(assertions["server_names"])
         ):
             raise CorpusError(f"{where}: server_names must contain up to 20 unique names")
+        if "forbidden_signatures" in assertions and (
+            not isinstance(assertions["forbidden_signatures"], list)
+            or len(assertions["forbidden_signatures"]) > 20
+            or any(
+                not isinstance(signature, str) or not _SIGNATURE.fullmatch(signature)
+                for signature in assertions["forbidden_signatures"]
+            )
+            or len(set(assertions["forbidden_signatures"])) != len(assertions["forbidden_signatures"])
+        ):
+            raise CorpusError(f"{where}: forbidden_signatures must contain up to 20 unique signature IDs")
         files = obj["files"]
         if not isinstance(files, dict) or not 1 <= len(files) <= MAX_FILES_PER_CASE:
             raise CorpusError(f"{where}: files must contain 1 to 20 entries")
@@ -197,6 +237,13 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
             raise CorpusError(f"{where}: public pinned cases require source attribution")
         cases.append(
             Case(case_id, family, desc, files, kind, sig, obj["present"], assertions, source, known_gap)
+        )
+    gap_count = sum(case.known_gap for case in cases)
+    if gap_count and gap_policy is None:
+        raise CorpusError("known_gap cases require a bounded metadata known_gap_policy")
+    if gap_policy is not None and gap_count > gap_policy["max_count"]:
+        raise CorpusError(
+            f"known_gap count {gap_count} exceeds the declared maximum {gap_policy['max_count']}"
         )
     return meta, cases, hashlib.sha256(raw).hexdigest()
 
@@ -266,6 +313,11 @@ def _assertions(case: Case, findings: list[dict[str, Any]]) -> list[str]:
             failures.append(
                 f"active MCP server names: expected {sorted(case.assertions['server_names'])}; got {observed_names}"
             )
+    forbidden = set(case.assertions.get("forbidden_signatures", []))
+    if forbidden:
+        observed = sorted(forbidden & {signature for f in findings for signature in f["signatures"]})
+        if observed:
+            failures.append(f"forbidden signature attributions observed: {observed}")
     return failures
 
 
@@ -422,6 +474,7 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
                     "median_ms": round(statistics.median(duration for duration, _ in iterations) * 1000, 3),
                 }
             )
+    gap_report = known_gaps(rows)
     return {
         "schema": 1,
         "corpus": {**metadata, "sha256": corpus_digest},
@@ -435,7 +488,7 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
         },
         "cases": rows,
         "metrics": summarize(rows),
-        "known_gaps": known_gaps(rows),
+        "known_gaps": gap_report,
         "calibration": calibration(rows),
         "performance": {
             "repeats": repeats,
@@ -446,8 +499,10 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
             "p95_scan_ms": round(_percentile(durations, 0.95) * 1000, 3),
             "total_scan_s": round(sum(durations), 3),
         },
-        # Known gaps are counted in the metrics above but never fail the run.
-        "passed": all(row["correct"] or row["known_gap"] for row in rows),
+        # Open gaps are temporarily waived only inside the bounded, unexpired
+        # corpus policy validated above. A passing flagged case fails the gate
+        # until its obsolete waiver is removed, preventing permanent bypasses.
+        "passed": all(row["correct"] or row["known_gap"] for row in rows) and not gap_report["passing"],
     }
 
 

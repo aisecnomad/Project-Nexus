@@ -47,6 +47,7 @@ from shadowscan.connectors.cloud.credentials import (
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.identity import has_aws_account_scope
+from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import truncate
 
 DEFAULT_REGIONS = ["us-east-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"]
@@ -1023,9 +1024,10 @@ class AwsConnector(BaseConnector):
             )
             for ev in events or []:
                 try:
-                    detail = json.loads(ev.get("CloudTrailEvent") or "{}")
-                except json.JSONDecodeError:
-                    detail = {}
+                    detail = strict_json_loads(ev.get("CloudTrailEvent") or "{}")
+                except (ValueError, RecursionError):
+                    self.ctx.warn("cloud.aws: invalid CloudTrail event JSON; event coverage incomplete")
+                    continue
                 ident = detail.get("userIdentity") or {}
                 yield {
                     "_kind": "cloudtrail-event",
@@ -2136,8 +2138,8 @@ def _iam_policy_signals(docs: list[Any]) -> tuple[set[str], set[str], set[str], 
     for doc in docs:
         if isinstance(doc, str):
             try:
-                doc = json.loads(doc)
-            except json.JSONDecodeError:
+                doc = strict_json_loads(doc)
+            except (ValueError, RecursionError):
                 limitations.add("malformed-policy")
                 continue
         if not isinstance(doc, dict):

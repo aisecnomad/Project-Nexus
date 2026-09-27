@@ -3,19 +3,21 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig
-from shadowscan.connectors.base import BaseConnector
+from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.engine import Engine
 from shadowscan.incremental import IncrementalCache, Snapshot
 from shadowscan.models import Finding, Kind, ScanStats, Surface
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.loader import signature_from_dict
+from shadowscan.utils import digest as digest_module
 
 
 def config(tmp_path: Path, **overrides) -> ScanConfig:
@@ -137,7 +139,9 @@ def test_signature_fingerprint_is_reused_within_one_cache_lifecycle(tmp_path, mo
 
 def test_config_credential_cache_fingerprint_stays_private_on_miss_and_hit(tmp_path, index, monkeypatch):
     cfg = config(tmp_path)
-    cfg.connectors[0].config["token"] = "t1"
+    # Use a supported filesystem option so strict programmatic configuration
+    # validation remains in force while exercising a nested sensitive value.
+    cfg.connectors[0].config["metadata"] = {"token": "t1"}
     calls = count_runs(monkeypatch)
     cache = IncrementalCache(cfg, index)
     snapshot = cache.snapshot(cfg.connectors[0])
@@ -235,7 +239,16 @@ def test_inventory_and_confidence_are_reapplied_even_with_same_engine(tmp_path, 
 
 
 @pytest.mark.parametrize(
-    "damage", ["garbage", "missing", "unsafe_permissions", "payload_modified", "deep_json"]
+    "damage",
+    [
+        "garbage",
+        "missing",
+        "unsafe_permissions",
+        "payload_modified",
+        "deep_json",
+        "duplicate_json",
+        "nonfinite_json",
+    ],
 )
 def test_unusable_cache_falls_back_to_scan(tmp_path, index, monkeypatch, damage):
     cfg = config(tmp_path)
@@ -252,6 +265,12 @@ def test_unusable_cache_falls_back_to_scan(tmp_path, index, monkeypatch, damage)
         entry.write_text(json.dumps(data))
     elif damage == "deep_json":
         entry.write_text("[" * 2000 + "0" + "]" * 2000)
+    elif damage == "duplicate_json":
+        encoded = entry.read_text()
+        entry.write_text('{"format":3,' + encoded[1:])
+    elif damage == "nonfinite_json":
+        encoded = entry.read_text()
+        entry.write_text('{"nonfinite":1e999,' + encoded[1:])
     else:
         entry.write_text("invalid json")
     result = Engine(cfg, index).run()
@@ -567,6 +586,277 @@ def test_fingerprint_work_limits_fall_back_to_full_scan(tmp_path, index, monkeyp
     result = Engine(cfg, index).run()
     assert result.complete and result.findings and not result.stats[0].cached
     assert not list((tmp_path / "state").glob("*.json"))
+
+
+def test_fingerprint_depth_limit_precedes_recursive_descent(tmp_path, index, monkeypatch):
+    cfg = config(tmp_path)
+    directory = tmp_path / "repo"
+    for number in range(4):
+        directory = directory / f"level-{number}"
+        directory.mkdir()
+    monkeypatch.setattr("shadowscan.incremental._MAX_HASH_DEPTH", 2)
+    assert IncrementalCache(cfg, index).snapshot(cfg.connectors[0]) is None
+
+
+def test_runtime_semantics_are_part_of_shared_scanner_digest(tmp_path, monkeypatch):
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "scanner.py").write_text("value = 1\n")
+    first = digest_module.scanner_source_digest(package)
+    monkeypatch.setattr(digest_module, "runtime_semantics", lambda: {"python": "different"})
+    assert digest_module.scanner_source_digest(package) != first
+
+
+def test_gitfile_checkout_is_not_eligible_for_git_aware_reuse(tmp_path, index):
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["use_git"] = True
+    external = tmp_path / "external.git"
+    external.mkdir()
+    (tmp_path / "repo" / ".git").write_text(f"gitdir: {external}\n")
+    cache = IncrementalCache(cfg, index)
+    assert cache.snapshot(cfg.connectors[0]) is None
+
+
+def test_fingerprinting_propagates_connector_cancellation(tmp_path, index):
+    cfg = config(tmp_path)
+    cache = IncrementalCache(cfg, index)
+    checks = 0
+
+    def check_deadline():
+        nonlocal checks
+        checks += 1
+        if checks == 3:
+            raise ConnectorError("connector completion deadline exceeded")
+
+    with pytest.raises(ConnectorError, match="deadline"):
+        cache.snapshot(cfg.connectors[0], check_deadline=check_deadline, deadline=time.monotonic() + 30)
+    assert checks == 3
+
+
+def test_git_fingerprint_command_is_bounded_by_connector_deadline(tmp_path, index, monkeypatch):
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["use_git"] = True
+    (tmp_path / "repo" / ".git").mkdir()
+    cache = IncrementalCache(cfg, index)
+    timeouts = []
+
+    def timeout(*args, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr("shadowscan.incremental.subprocess.run", timeout)
+    connector_deadline = time.monotonic() + 0.5
+    assert cache.snapshot(cfg.connectors[0], deadline=connector_deadline) is None
+    assert len(timeouts) == 1 and 0 < timeouts[0] <= 0.5
+
+
+def test_engine_passes_connector_deadline_to_all_fingerprint_work(tmp_path, index, monkeypatch):
+    cfg = config(tmp_path)
+    observed = []
+    original = IncrementalCache.snapshot
+
+    def snapshot(self, spec, **kwargs):
+        observed.append(kwargs)
+        return original(self, spec, **kwargs)
+
+    monkeypatch.setattr(IncrementalCache, "snapshot", snapshot)
+    assert Engine(cfg, index).run().complete
+    assert observed
+    assert all(callable(item.get("check_deadline")) for item in observed)
+    assert all(isinstance(item.get("deadline"), float) for item in observed)
+
+
+def test_startup_maintenance_deadline_disables_cache_and_runs_full_scan(tmp_path, index, monkeypatch):
+    cfg = config(tmp_path)
+    monkeypatch.setattr("shadowscan.incremental._MAX_CACHE_MAINTENANCE_SECONDS", 0.0)
+
+    assert not IncrementalCache(cfg, index).enabled
+    result = Engine(cfg, index).run()
+
+    assert result.complete and result.findings
+    assert not result.stats[0].cached
+    assert not list((tmp_path / "state").glob("*.json"))
+
+
+def test_cache_load_propagates_connector_cancellation(tmp_path, index):
+    cfg = config(tmp_path)
+    cache = IncrementalCache(cfg, index)
+    snapshot = Snapshot("a" * 64, "b" * 64)
+    cache.save(snapshot, [], ScanStats(connector="test", started_at="2026-09-27T00:00:00Z"))
+
+    checks = 0
+
+    def cancelled():
+        nonlocal checks
+        checks += 1
+        if checks == 3:
+            raise ConnectorError("connector completion deadline exceeded")
+
+    with pytest.raises(ConnectorError, match="deadline"):
+        cache.load(cfg.connectors[0], snapshot, check_deadline=cancelled)
+    assert checks == 3
+
+
+def test_cache_enforces_lru_entry_cap_and_refreshes_successful_reads(tmp_path, index, monkeypatch):
+    monkeypatch.setattr("shadowscan.incremental._MAX_CACHE_ENTRIES", 2)
+    cfg = ScanConfig(incremental=True, state_dir=str(tmp_path / "state"))
+    cache = IncrementalCache(cfg, index)
+    stats = ScanStats(connector="test", started_at="2026-09-27T00:00:00Z")
+    first = Snapshot("1" * 64, "a" * 64)
+    second = Snapshot("2" * 64, "b" * 64)
+    third = Snapshot("3" * 64, "c" * 64)
+    cache.save(first, [], stats)
+    cache.save(second, [], stats)
+    now = time.time_ns()
+    os.utime(cache.directory / f"{first.slot}.json", ns=(now - 3_000_000_000, now - 3_000_000_000))
+    os.utime(cache.directory / f"{second.slot}.json", ns=(now - 2_000_000_000, now - 2_000_000_000))
+    assert cache.load(ConnectorSpec("code.filesystem"), first) is not None
+    cache.save(third, [], stats)
+    assert (cache.directory / f"{first.slot}.json").exists()
+    assert not (cache.directory / f"{second.slot}.json").exists()
+    assert (cache.directory / f"{third.slot}.json").exists()
+    assert (cache.directory / f"{second.slot}.lock").exists()
+    assert IncrementalCache(cfg, index).enabled
+    assert not (cache.directory / f"{second.slot}.lock").exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX flock is required for incremental state")
+def test_orphan_slot_locks_are_reclaimed_before_directory_ceiling(tmp_path, index, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    for number in range(5):
+        lock = state / f"{number:064x}.lock"
+        lock.write_text("")
+        lock.chmod(0o600)
+    monkeypatch.setattr("shadowscan.incremental._MAX_CACHE_DIRECTORY_ENTRIES", 1)
+    cache = IncrementalCache(ScanConfig(incremental=True, state_dir=str(state)), index)
+    assert cache.enabled
+    assert not list(state.glob("*.lock"))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX flock is required for incremental state")
+def test_startup_budget_check_reaches_orphan_lock_cleanup(tmp_path, index, monkeypatch):
+    state = tmp_path / "state"
+    cfg = ScanConfig(incremental=True, state_dir=str(state))
+    cache = IncrementalCache(cfg, index)
+    lock = state / f"{'a' * 64}.lock"
+    lock.touch(mode=0o600)
+    cleanup_started = False
+    original = IncrementalCache._remove_orphan_lock
+
+    def tracked_cleanup(self, slot, *, check_deadline=None):
+        nonlocal cleanup_started
+        cleanup_started = True
+        return original(self, slot, check_deadline=check_deadline)
+
+    def expired():
+        if cleanup_started:
+            raise RuntimeError("maintenance deadline exceeded")
+
+    monkeypatch.setattr(IncrementalCache, "_remove_orphan_lock", tracked_cleanup)
+    with pytest.raises(RuntimeError, match="maintenance deadline exceeded"):
+        cache._cache_inventory(check_deadline=expired)
+    assert lock.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX flock is required for incremental state")
+def test_active_orphan_slot_lock_is_preserved_until_released(tmp_path, index):
+    import fcntl
+
+    cfg = ScanConfig(incremental=True, state_dir=str(tmp_path / "state"))
+    cache = IncrementalCache(cfg, index)
+    lock = cache.directory / f"{'a' * 64}.lock"
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert IncrementalCache(cfg, index).enabled
+        assert lock.exists()
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+    assert IncrementalCache(cfg, index).enabled
+    assert not lock.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX flock is required for incremental state")
+def test_slot_lock_rejects_inode_unlinked_between_open_and_flock(tmp_path, index, monkeypatch):
+    cfg = ScanConfig(incremental=True, state_dir=str(tmp_path / "state"))
+    cache = IncrementalCache(cfg, index)
+    snapshot = Snapshot("b" * 64, "c" * 64)
+    lock = cache.directory / f"{snapshot.slot}.lock"
+    original_open = os.open
+    stale_fd = original_open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+    lock.unlink()
+    lock.touch(mode=0o600)
+    lock.chmod(0o600)
+
+    def open_stale(path, *args, **kwargs):
+        if Path(path) == lock:
+            return os.dup(stale_fd)
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("shadowscan.incremental.os.open", open_stale)
+    try:
+        with pytest.raises(ValueError, match="pathname changed"), cache._slot_lock(snapshot, exclusive=True):
+            pytest.fail("stale lock inode entered the critical section")
+    finally:
+        os.close(stale_fd)
+
+
+def test_cache_cleans_expired_entries_and_abandoned_pending_files(tmp_path, index, monkeypatch):
+    monkeypatch.setattr("shadowscan.incremental._CACHE_TTL_SECONDS", 1)
+    monkeypatch.setattr("shadowscan.incremental._PENDING_TTL_SECONDS", 1)
+    cfg = ScanConfig(incremental=True, state_dir=str(tmp_path / "state"))
+    cache = IncrementalCache(cfg, index)
+    snapshot = Snapshot("4" * 64, "d" * 64)
+    cache.save(snapshot, [], ScanStats(connector="test", started_at="2026-09-27T00:00:00Z"))
+    entry = cache.directory / f"{snapshot.slot}.json"
+    pending = cache.directory / ".pending-abandoned"
+    pending.write_text("partial")
+    old = time.time_ns() - 2_000_000_000
+    os.utime(entry, ns=(old, old))
+    os.utime(pending, ns=(old, old))
+
+    assert IncrementalCache(cfg, index).enabled
+    assert not entry.exists()
+    assert not pending.exists()
+
+
+def test_startup_budget_check_reaches_expired_entry_cleanup(tmp_path, index, monkeypatch):
+    monkeypatch.setattr("shadowscan.incremental._CACHE_TTL_SECONDS", 1)
+    cfg = ScanConfig(incremental=True, state_dir=str(tmp_path / "state"))
+    cache = IncrementalCache(cfg, index)
+    snapshot = Snapshot("6" * 64, "f" * 64)
+    cache.save(snapshot, [], ScanStats(connector="test", started_at="2026-09-27T00:00:00Z"))
+    entry = cache.directory / f"{snapshot.slot}.json"
+    old = time.time_ns() - 2_000_000_000
+    os.utime(entry, ns=(old, old))
+    cleanup_started = False
+    original = IncrementalCache._remove_entry
+
+    def tracked_cleanup(self, candidate, *, check_deadline=None):
+        nonlocal cleanup_started
+        cleanup_started = True
+        return original(self, candidate, check_deadline=check_deadline)
+
+    def expired():
+        if cleanup_started:
+            raise RuntimeError("maintenance deadline exceeded")
+
+    monkeypatch.setattr(IncrementalCache, "_remove_entry", tracked_cleanup)
+    with pytest.raises(RuntimeError, match="maintenance deadline exceeded"):
+        cache._maintain_cache(check_deadline=expired)
+    assert entry.exists()
+
+
+def test_new_entry_is_discarded_when_aggregate_byte_quota_cannot_hold_it(tmp_path, index, monkeypatch):
+    monkeypatch.setattr("shadowscan.incremental._MAX_CACHE_TOTAL_BYTES", 1)
+    cfg = ScanConfig(incremental=True, state_dir=str(tmp_path / "state"))
+    cache = IncrementalCache(cfg, index)
+    snapshot = Snapshot("5" * 64, "e" * 64)
+    cache.save(snapshot, [], ScanStats(connector="test", started_at="2026-09-27T00:00:00Z"))
+    assert not (cache.directory / f"{snapshot.slot}.json").exists()
 
 
 def test_plugin_overriding_builtin_name_is_not_cached(tmp_path, index, monkeypatch):

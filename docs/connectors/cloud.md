@@ -7,9 +7,10 @@ and IAM roles with AI-related permissions across major cloud providers.
     Cloud connectors support live SDK collection (requires optional cloud
     extras) and offline record dump analysis.
 
-    Install cloud extras: `pip install "shadowscan[cloud]"`
+    From a reviewed checkout, install cloud extras with `pip install ".[cloud]"`.
+    For deployment, follow the [hash-locked install](../getting-started/install.md).
 
-All cloud connectors need the matching extra (`shadowscan[aws|gcp|azure|oci]`)
+All cloud connectors need the matching extra (`aws`, `gcp`, `azure` or `oci`)
 for live mode, or a JSONL record dump for offline mode. They use read-only
 list/describe/get calls only.
 

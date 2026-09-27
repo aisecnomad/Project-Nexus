@@ -11,6 +11,13 @@ It is computed as a **noisy-OR** of evidence weights. A project that merely
 imports `openai` is not the same as a Bedrock Agent with a confirmed runtime
 status. Each piece of evidence (a dependency match, an import pattern, a
 running process, an API response) contributes a weight between 0 and 1.
+This score is heuristic, not a calibrated probability of agent execution.
+
+Static findings retain framework features supported only by imports or
+dependencies under `metadata.potential_capabilities`. Those features are not
+scored as observed capabilities. Stronger source evidence, such as an agent
+factory or an enabled executable tool definition, can support a capability;
+source evidence still does not prove that the code ran in production.
 
 ## Risk
 

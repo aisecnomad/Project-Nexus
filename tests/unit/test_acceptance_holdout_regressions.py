@@ -19,7 +19,9 @@ def _inputs(root: Path) -> tuple[Path, Path, Path, dict]:
             "family": "agent",
             "description": "Positive holdout",
             "files": {
-                "agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# private fixture\n"
+                "agent.py": "from langgraph.prebuilt import create_react_agent\n"
+                "graph = create_react_agent(model, tools)\n"
+                "# private fixture\n"
             },
             "target": {"kind": "agent"},
             "present": True,
@@ -119,11 +121,16 @@ def test_ai_labeled_adjudicated_corpus_is_rejected_before_scan(tmp_path: Path) -
 def test_known_gap_and_bundled_source_cannot_pass_acceptance(tmp_path: Path) -> None:
     corpus, policy, annotations, data = _inputs(tmp_path)
     data["cases"][0]["known_gap"] = True
+    data["metadata"]["known_gap_policy"] = {
+        "max_count": 1,
+        "expires_on": "2099-12-31",
+    }
     _freeze(corpus, policy, annotations, data)
     with pytest.raises(CorpusError, match="known gaps"):
         accept(corpus, policy, annotations)
 
     data["cases"][0].pop("known_gap")
+    data["metadata"].pop("known_gap_policy")
     _, cases, _ = load_corpus(DEFAULT_CORPUS)
     reused = next(case.files["agent.py"] for case in cases if case.id == "py-langgraph-agent")
     data["cases"][0]["files"] = {"agent.py": reused}

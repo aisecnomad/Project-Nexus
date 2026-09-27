@@ -1,9 +1,9 @@
 # Pre-commit hooks for ShadowScan development.
-# Install: pip install pre-commit && pre-commit install
+# Install the hash-locked toolchain and hooks: make install-hooks
 # Run manually: pre-commit run --all-files
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
     hooks:
       # Fixtures reproduce foreign files byte for byte and the retained licence
       # texts are digest-bound to their upstream copies; never rewrite them.
@@ -27,22 +27,23 @@ repos:
         args: [--branch=main]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.8
+    rev: 2eeb5678de71a00c0902cbda7105d328432f72cb # v0.16.8
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
-  # Keep the ruff and mypy revs equal to the pins in requirements-ci-constraints.txt
-  # so the hooks run the same versions as CI (tests/test_repository_policy.py checks).
+  # Keep the ruff and mypy version comments equal to the pins in
+  # requirements-ci-constraints.txt so the hooks run the same versions as CI.
+  # The immutable revs are the commits to which those reviewed tags resolve.
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.3.1
+    rev: 7ff8d35ae36a7d2b968f2f90b4c723e292e594ee # v2.3.1
     hooks:
       - id: mypy
         files: ^shadowscan/
         additional_dependencies:
-          - types-PyYAML
-          - types-requests
+          - types-PyYAML==6.0.12.20260906
+          - types-requests==2.33.0.20260906
         args: [--ignore-missing-imports]
 
   - repo: local

@@ -10,6 +10,93 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## September 27 migration and acceptance
+
+The distribution metadata now names `project-nexus-shadowscan`. Install a wheel
+from the reviewed revision into a fresh virtual environment; do not overlay it
+on a previous `shadowscan` distribution, because both use the same Python import
+and command paths. The CLI, Python imports, connector entry-point group and
+report schemas retain the `shadowscan` name. This rename does not publish a
+package or reserve the package-index namespace.
+
+Offline exports, approval inventories, imported reports, dependency manifests,
+notebooks and agent/MCP configuration with duplicate or non-finite data now fail
+validation. Affected scans are incomplete while valid neighboring evidence is
+retained. JSON readers and writers also reject `NaN`, infinities and exponent
+overflow rather than accepting non-standard values. Obtain an unambiguous,
+standards-compliant source and rerun collection; do not treat empty findings
+from rejected input as evidence that an earlier finding resolved.
+Conflicting schema aliases, case-folded CSV headers, pagination cursors and
+multiple records for one provider identity also make coverage incomplete. The
+scanner quarantines only the ambiguous identity where the format permits it and
+continues to retain findings from unambiguous neighboring records.
+Ordinary deterministic graph/flow construction and text generation without
+enabled tool execution no longer establish agent behavior. Source capabilities
+also stop inheriting unsupported features solely from framework membership.
+Review changed kinds, capabilities and risk scores, then collect a fresh baseline
+before using these reports in an enforcement decision.
+
+Built-in connector options now apply the same schema to YAML-loaded and
+programmatically constructed configurations. Connector option booleans accept
+explicit case-insensitive true/false forms; the connector `enabled` field also
+retains its documented aliases. Ambiguous values, unknown built-in keys and
+reserved keys fail before collection. Plugin keys remain plugin-defined, while
+cycles, excessive nesting and non-finite values still fail at the scanner
+boundary. Mutable risk and deadline settings are revalidated before every run.
+Configured inventory is reloaded for every run, including the first run after
+engine construction, so an approval file changed between construction and
+execution cannot supply a stale match.
+
+When HTML or CSV is sent to stdout, terminal control and bidirectional-formatting
+characters are rendered visibly; artifacts explicitly written with `-o` retain
+their serialized data. Reporter boundaries sanitize copied diagnostics without
+mutating in-memory scan state, ignore malformed related-finding metadata, preserve
+valid SARIF source paths and reject non-finite JSON. Serialization failures stop
+before stdout or an existing output file is changed; table output preflights
+diagnostics before emitting its header. Continue to treat reports as sensitive:
+these controls do not authorize publication of tenant or source data.
+
+Incremental scans now bind cache fingerprints to Python/platform, parser/regex
+and Git runtime versions. Git-aware reuse refuses `.git` indirection, and tree
+hashing, Git metadata, cache reads and post-scan maintenance cooperate with
+cancellation and connector deadlines. Startup maintenance has its own two-second
+monotonic budget; exceeding it disables cache reuse for that run so collection
+continues as a full scan. Enumeration is bounded by entries, depth, time and
+bytes. Cache maintenance applies a 30-day TTL, 256-entry and 512 MiB aggregate
+limits, deterministic oldest-access eviction and removal of stale pending and
+orphan-lock files. Post-lock inode checks prevent cleanup from splitting a slot
+across stale and replacement lock files. These are implementation defaults, not
+evidence of field accuracy; rebuild the incremental state when changing rollout
+baselines.
+
+Google Workspace domain-wide delegation pins the signed assertion audience and
+token exchange to `https://oauth2.googleapis.com/token`; a service-account
+document's `token_uri` cannot redirect the credential exchange.
+
+The `CI gate` job combines documentation, Linux Python 3.11–3.13 (including the
+container checks in Python 3.13), macOS Python 3.11 and 3.13, and DCO for pull
+requests. Core/development, runtime, build and documentation dependency sets are
+hash-locked, and CI audits all four. Add `CI gate` to the live required checks
+while retaining existing checks and independent approval. Verify the platform
+setting before claiming it is enforced: a workflow cannot change a branch
+ruleset by declaring a job.
+
+The revised synthetic cases remain regression data. Freeze a fresh population,
+human labels and acceptance policy using [the holdout procedure](evaluation.md#gate-a-frozen-holdout),
+then run the [scope-specific evidence gate](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+For AWS or Slack deployments, retain complete and separately credentialed
+permission-denied receipts from [approved tenant canaries](canaries.md).
+Other connectors need their own acceptance evidence. The existing bundled
+corpora, replays and mocked transports do not meet these live requirements.
+
+After independent review, merge and successful exact-commit CI and CodeQL,
+exercise the manual release-evidence workflow described below. Retain its
+candidate, attestation and `release-publication-input-<SHA>` artifacts together.
+The latter contains the exact attested wheel bytes and is an input to a possible
+future OIDC trusted-publishing job; it does not publish anything or approve a
+release. Evidence from an earlier main commit does not cover these source or
+package changes, and local wheel checks do not establish GitHub-hosted provenance.
+
 ## September 25 migration and acceptance
 
 Rebuild finding and comparison baselines after adopting the scanner-boundary
@@ -66,20 +153,31 @@ audit storage and review their origin. Unsupported live connectors still require
 their own acceptance work; they cannot inherit an AWS or Slack result.
 
 The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
-requires successful main-branch CI and CodeQL runs for the exact selected commit. It builds
-and checks the wheel, retains a runtime dependency SBOM and hashes, and produces
-GitHub artifact provenance. It does not publish to PyPI, create a release, or
-declare tenant acceptance. Review and retain its artifacts before a separate
-maintainer publication decision.
+requires successful main-branch CI and CodeQL runs for the exact selected commit.
+It rejects modified, untracked and ignored checkout files, builds from a clean
+`git archive`, checks the wheel, retains a runtime dependency SBOM and hashes,
+and produces GitHub artifact provenance. It then assembles the candidate and
+attestation bundles without rebuilding the wheel. It does not publish to PyPI,
+create a release, or declare tenant acceptance. Review and retain its artifacts
+before a separate maintainer publication decision.
 
 After merge and successful push CI, dispatch **Release candidate evidence** on
 `main` with `expected_commit` set to the full current main SHA, `ci_run_id`
 set to that commit's successful CI run ID, and `codeql_run_id` set to its
 successful CodeQL run ID. The workflow rejects stale commits, PR-only runs,
-failed checks and other workflows. Retain `release-candidate-<SHA>` and
-`release-attestations-<SHA>` together; hosted retention is 90 days. Verify the
-candidate's `SHA256SUMS` and GitHub attestations before publication. The runtime
-SBOM covers locked Python core/cloud dependencies, not operating-system packages.
+failed checks and other workflows. Retain `release-candidate-<SHA>`,
+`release-attestations-<SHA>` and `release-publication-input-<SHA>` together;
+hosted retention is 90 days. Verify the candidate's `SHA256SUMS` and GitHub
+attestations before publication. A future publisher must use the wheel in that
+publication-input artifact, not rebuild from a tag. Configure an environment-
+protected PyPI trusted publisher and grant `id-token: write` only in that future,
+isolated publication job. The current workflow deliberately has no package-index
+permission or upload action.
+
+The runtime SBOM covers locked Python core/cloud dependencies. It is not a
+container or operating-system SBOM and does not cover the base image, Git,
+CA certificates or other Debian packages. Generate and review a container/OS
+SBOM for the exact deployed image digest as a separate release control.
 
 ## Install from a reviewed revision
 
@@ -103,10 +201,12 @@ lock and built wheel hash for each worker deployment.
 
 The runtime lock covers the core scanner and all cloud SDK extras on CPython
 3.11, 3.12 and 3.13, Linux x86_64. It contains exact versions and permitted
-SHA-256 hashes; CI checks installation and dependency consistency on all three
-interpreters. Linux x86_64 is the only validated target. Other POSIX systems
-such as macOS may run the scanner but are unvalidated and need their own lock;
-Windows is not supported at all, because the confined file reader
+SHA-256 hashes; Linux CI checks installation and dependency consistency on all
+three interpreters. Linux x86_64 is the only validated deployment target for
+this full runtime/cloud lock. macOS 3.11 and 3.13 are CI-validated development
+and core-test targets using `requirements-ci.lock`, but a macOS deployment still
+needs its own full runtime/cloud lock and acceptance evidence. Windows is not
+supported at all, because the confined file reader
 (`O_NOFOLLOW`, `O_DIRECTORY`, `dir_fd`) is unavailable there and the scanner
 refuses to read any input rather than weaken that policy. The lock is not
 universal for ARM or every future Python release either. Resolve and validate a
@@ -118,15 +218,17 @@ From the reviewed checkout, in a clean virtual environment:
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-python -m pip install --no-deps dist/shadowscan-0.1.1-*.whl
+python -m pip install --no-deps dist/project_nexus_shadowscan-0.1.1-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
 shadowscan --help
 ```
 
 The runtime lock deliberately includes all cloud extras, even for a code-only
-worker. Development tools are not part of it; CI uses a separate exact-version
-constraints file for them. The build backend is locked separately:
+worker. Development tools are not part of it; CI and `make install-dev` use
+`requirements-ci.lock`, which hash-locks the core and development environment.
+`requirements-ci-constraints.txt` is a reviewed version input for regenerating
+that lock and is never installed by CI. The build backend is locked separately:
 `requirements-build.lock` carries the exact `[build-system]` requirements from
 `pyproject.toml` (setuptools and wheel) with the SHA-256 hash of every artifact
 PyPI publishes for those releases. Install it under `--require-hashes` and build
@@ -148,9 +250,17 @@ CI matrix job verify the result:
 pip-compile --extra cloud --generate-hashes --strip-extras \
   --no-emit-index-url --no-emit-trusted-host --no-annotate \
   --output-file requirements.lock pyproject.toml
+
+uv pip compile pyproject.toml --extra dev --universal --generate-hashes \
+  --no-emit-index-url --no-annotate --no-header \
+  --constraint requirements-ci-constraints.txt \
+  --constraint requirements.lock --constraint requirements-build.lock \
+  --output-file requirements-ci.lock
 ```
 
-Use `--upgrade` only for an intentional dependency refresh. Preserve the lock's
+The current CI lock records the reviewed `uv` version in its header. Use a
+different resolver version only as an intentional toolchain change. Use
+`--upgrade` only for an intentional dependency refresh. Preserve each lock's
 supported-platform comment when regenerating. Do not bypass failed hash checks.
 
 The Dockerfile installs the runtime and build locks under `--require-hashes`,
@@ -165,11 +275,12 @@ docker build --tag shadowscan:reviewed .
 
 Retain the reviewed base and built image digests. The build context is an
 allowlist (`.dockerignore`) of package sources, signature data, packaging
-inputs and the two locks. Distribution packages from `apt-get` and image
+inputs and the runtime/build locks. Distribution packages from `apt-get` and image
 metadata remain mutable, so the Dockerfile does not promise byte-for-byte
-reproducible images. CI smoke-tests a non-root, read-only and network-isolated
-image; build and test the deployment image, including resource limits and
-output-directory permissions, before rollout.
+reproducible images. There is no claim of a hermetic apt snapshot. CI
+smoke-tests a non-root, read-only and network-isolated image; build and test the
+deployment image, generate its container/OS SBOM, and validate resource limits
+and output-directory permissions before rollout.
 
 The [Kubernetes offline Job example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-job.yaml) has a 20-minute
 active deadline, a placeholder for a reviewed image digest, and a matching
@@ -568,9 +679,11 @@ lost user attribution before using their counts as governance evidence.
 
 Ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
-is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an up-to-date
-branch, and one approving review from a reviewer with write access, alongside
-`Protect main`. Its enforcement state has changed more than once during 2026-09:
+was observed on 2026-09-27 requiring `test (3.11)`, `test (3.12)` and `analyze`,
+an up-to-date branch, and one approving review from a reviewer with write access,
+alongside `Protect main`. Add the new aggregate `CI gate` to that required-check
+list without removing the existing checks or approval rule. Its enforcement
+state has changed more than once during 2026-09:
 the 2026-09-24 review recorded it disabled, and on 2026-09-25 (13:10 UTC) a merge
 attempted without an approving review was refused with "Repository rule
 violations found", so it was enforced at that moment. Treat neither observation
@@ -608,16 +721,20 @@ workflow run is necessary but does not supply that approval. Recheck the live
 ruleset and pull request status at release time. Do not weaken the rules to
 self-merge.
 
-The CI workflow installs the hash-locked core/cloud runtime dependency set and validates signatures, lint, typing, dependency advisories, tests
-with a minimum 80% statement coverage, wheel creation, installed-wheel validation
-outside the source checkout and offline SARIF output. All three matrix jobs
+The CI workflow installs hash-locked runtime, build and core/development
+dependency sets and validates signatures, lint, typing, dependency advisories
+(including the documentation lock), tests with a minimum 80% statement coverage,
+wheel creation, installed-wheel validation outside the source checkout and
+offline SARIF output. All three Linux matrix jobs
 (Python 3.11, 3.12 and 3.13) enforce a 75% statement-coverage floor for each
 built-in connector module, so a well-tested engine cannot conceal an untested
 provider. Coverage proves execution of code paths in tests; it does not prove
-provider compatibility or complete tenant inventory. The Python 3.13 job has
-passed on hosted runners; the ruleset above names only `test (3.11)`,
-`test (3.12)` and `analyze` as required checks, so verify its inclusion in the
-live branch rules before treating it as a required gate. The 3.13 job also
+provider compatibility or complete tenant inventory. The aggregate `CI gate`
+requires every Linux and macOS matrix job and documentation to succeed; it also
+requires DCO on pull requests. It fails if a required prerequisite fails, is
+cancelled or is unexpectedly skipped. Verify that the live ruleset requires
+`CI gate` before treating the full matrix as an enforced merge gate. The Linux
+Python 3.13 job also
 builds the Docker image and checks its non-root UID, signature assets and
 network-isolated scan with a read-only root filesystem and resource limits.
 Focused regressions cover the review findings, private-address enforcement,

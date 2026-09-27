@@ -427,6 +427,10 @@ def test_actual_evaluator_known_gap_report_cannot_pass_holdout(evidence):
     root, manifest, _ = evidence
     corpus = json.loads((root / "corpus.json").read_text())
     corpus["cases"][0]["known_gap"] = True
+    corpus["metadata"]["known_gap_policy"] = {
+        "max_count": 1,
+        "expires_on": "2099-12-31",
+    }
     corpus_ref = write_artifact(root, "corpus.json", corpus)
     manifest["evaluation"]["corpus"] = corpus_ref
     annotations = json.loads((root / "annotations.json").read_text())

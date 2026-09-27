@@ -46,16 +46,19 @@ python -m tools.evaluation.benchmark --files 1000 --runs 3 \
 
 Use distinct output filenames: reports are created as private mode `0600` files
 and will not overwrite existing ones. Exit 0 means all labels and structural
-assertions passed, or that every failing case carries `known_gap: true`; exit 1
-means at least one regression on a case without that flag; exit 2 means an
-invalid corpus, incomplete scan, nondeterministic observations, or output
-error. A `known_gap` case is a documented miss or false positive. It stays in
-the metrics, so precision and recall report the scanner as it is, and the
-report's `known_gaps` section lists the flagged count, the flagged cases that
-still fail, the flagged cases that now pass (remove the flag so they guard
-against regression) and any unflagged regressions. The flag is never a reason
-to change the scanner to fit a case; the case description records why the
-scanner gets it wrong. Pin the
+assertions passed, or that every failing case carries `known_gap: true` within
+the corpus's valid waiver budget; exit 1 means at least one unwaived regression,
+an over-budget or expired waiver, or a stale waiver whose case now passes; exit
+2 means an invalid corpus, incomplete scan, nondeterministic observations, or
+output error. A corpus containing a `known_gap` must declare
+`known_gap_policy.max_count` and `known_gap_policy.expires_on`. The evaluator
+rejects a missing or expired policy and fails when the number of flags exceeds
+the cap. A `known_gap` case is a temporary, documented miss or false positive.
+It stays in the metrics, so precision and recall report the scanner as it is,
+and the report's `known_gaps` section lists the flagged count, cases that still
+fail, stale flags and unflagged regressions. The flag is never a reason to
+change the scanner to fit a case; the case description records why the scanner
+gets it wrong. Pin the
 scanner commit, signature pack, corpus SHA-256 (included in each report), Python
 version and platform beside the report before comparing runs. Timing includes
 connector analysis only; fixture creation, index loading and report writing
@@ -79,6 +82,15 @@ written to exercise one rule, so the scanner is expected to score 1.0 on them;
 that score means "no regression on the rules we already know about", not
 "accurate on real repositories". Its precision/recall values are **synthetic
 regression scores**, not independently measured field accuracy.
+
+The September 27 classification correction keeps the original generic
+StateGraph and schema-only Vercel examples as negative agent cases, and adds
+actual agent factories and executable-tool examples as positives. New negatives
+cover generic CrewAI Flow and disabled tools. These 77 authored cases (29
+positives, 48 negatives) describe the intended boundary; they are not a new
+holdout. The frozen public, realistic and independently AI-labeled sources and
+labels are unchanged. Review capabilities separately from binary agent labels:
+an available framework feature is not an observed workload capability.
 
 Source masking is a bounded lexical filter. Ruby `%q` strings with supported
 delimiters are masked; `%Q` interpolation and unterminated percent strings mark
@@ -187,9 +199,12 @@ be used as a case's family. `TP` means the target is present in the case and det
 means absent but detected; `FN` means present and missed; `TN` means absent and
 not detected. Precision is `TP/(TP+FP)`, recall is `TP/(TP+FN)`, specificity
 is `TN/(TN+FP)`. Undefined denominators are JSON `null`. Additional assertions
-(`max_agent_findings`, `max_secret_findings`, `server_count`, `server_names`)
-appear separately as `assertion_failures` and cause a failing exit even if
-target classification matches, unless the case is a flagged known gap. A finding's displayed confidence is a heuristic
+(`max_agent_findings`, `max_secret_findings`, `server_count`, `server_names`,
+`forbidden_signatures`) appear separately as `assertion_failures` and cause a
+failing exit even if target classification matches, unless the case is a valid,
+unexpired known gap. `forbidden_signatures` guards attribution independently of
+the binary target—for example, detecting Spring AI must not silently add a
+LangChain4j attribution. A finding's displayed confidence is a heuristic
 score, not an estimated probability. The report's Brier/ECE proxies use the
 maximum target finding confidence or zero for absence, and reliability bins;
 the tiny selected sample does not calibrate that score.

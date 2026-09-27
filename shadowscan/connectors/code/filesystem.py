@@ -75,6 +75,7 @@ from shadowscan.connectors.code.source_semantics import SourceBudgetExceeded, bo
 from shadowscan.connectors.common import (
     apply_matches,
     cap_confidence,
+    config_boolean,
     finalize,
     looks_like_placeholder,
     placeholder_reason,
@@ -86,7 +87,12 @@ from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
-from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
+from shadowscan.utils.safe_json import JSONIntegrityError
+from shadowscan.utils.safe_yaml import (
+    YAMLIntegrityError,
+    YAMLResourceLimitError,
+    strict_bounded_safe_load,
+)
 from shadowscan.utils.text import notebook_to_source, parse_timestamp, read_text, redact, truncate
 
 # Manifests that configure the code of the project containing them. A2A cards
@@ -211,8 +217,12 @@ DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
 _IGNORED_STAT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
 # Per-file matching budget: `scan_timeout` covers the first 256 KiB and one
 # more budget is added per further 256 KiB, capped so a hostile file still
-# fails fast. A 971 KB JSON index gets four default budgets (8 s).
+# fails fast. The final 64 KiB of the first band receives the next budget
+# early; this avoids a sharp, scheduler-sensitive timeout cliff for the
+# mid-sized source files most likely to sit just below the first boundary.
+# A 971 KB JSON index still gets four default budgets (8 s).
 SCAN_TIMEOUT_STEP_BYTES = 256 * 1024
+SCAN_TIMEOUT_BAND_HEADROOM_BYTES = 64 * 1024
 SCAN_TIMEOUT_CAP_SECONDS = 10.0
 # Stop the walk this far before the connector deadline so the findings
 # collected so far are emitted, sanitized and accepted by the engine, which
@@ -415,10 +425,14 @@ def scan_timeout_for_size(base: float, size: int) -> float:
     """Return the matching budget in seconds for one file of ``size`` bytes.
 
     ``base`` is the configured ``scan_timeout``. Each further 256 KiB adds
-    one more ``base`` so ordinary large text files finish on an idle core;
-    the result is capped at 10 seconds, or at ``base`` when that is higher.
+    one more ``base`` so ordinary large text files finish on an idle core; the
+    final 64 KiB of the first band receives that next slice early. The result
+    is capped at 10 seconds, or at ``base`` when that is higher.
     """
-    steps = max(size, 0) // SCAN_TIMEOUT_STEP_BYTES
+    size = max(size, 0)
+    steps = size // SCAN_TIMEOUT_STEP_BYTES
+    if steps == 0 and size >= SCAN_TIMEOUT_STEP_BYTES - SCAN_TIMEOUT_BAND_HEADROOM_BYTES:
+        steps = 1
     return min(base * (1 + steps), max(base, SCAN_TIMEOUT_CAP_SECONDS))
 
 
@@ -537,15 +551,10 @@ class FilesystemConnector(BaseConnector):
         self.oversize_skip_globs = _validated_globs(
             ctx.get("oversize_skip_globs", list(DEFAULT_OVERSIZE_SKIP_GLOBS))
         )
-        self.scan_secrets = bool(ctx.get("scan_secrets", True))
-        self.use_git = ctx.get("use_git", False)
-        if not isinstance(self.use_git, bool):
-            raise ConnectorError("code.filesystem: use_git must be a boolean")
-        self.strict_coverage = ctx.get("strict_coverage", False)
-        self.include_tests = ctx.get("include_tests", False)
-        for key, value in (("strict_coverage", self.strict_coverage), ("include_tests", self.include_tests)):
-            if not isinstance(value, bool):
-                raise ConnectorError(f"code.filesystem: {key} must be a boolean")
+        self.scan_secrets = config_boolean(ctx.get("scan_secrets", True), "scan_secrets")
+        self.use_git = config_boolean(ctx.get("use_git", False), "use_git")
+        self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
+        self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
         extra = ctx.get("exclude", []) or []
         self.exclude_names = set(DEFAULT_EXCLUDES) | {e for e in extra if "*" not in e and "/" not in e}
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
@@ -987,12 +996,17 @@ class FilesystemConnector(BaseConnector):
                     # most files never do.
                     try:
                         structure = _structured_context(rel, text)
-                    except (YAMLResourceLimitError, SanitizationLimitError) as exc:
+                    except (
+                        JSONIntegrityError,
+                        YAMLIntegrityError,
+                        YAMLResourceLimitError,
+                        SanitizationLimitError,
+                    ) as exc:
                         # Detection still runs, but without an established
                         # structured context none of this file's excerpts can
                         # safely be emitted.
                         self.ctx.error(
-                            f"code.filesystem: {rel}: structured sanitization incomplete ({type(exc).__name__}); excerpts withheld"
+                            f"code.filesystem: {rel}: structured parsing incomplete ({type(exc).__name__}); excerpts withheld"
                         )
                         structure = None
                     source: str = text
@@ -1835,6 +1849,8 @@ class FilesystemConnector(BaseConnector):
             } == {"protocol.mcp"}
 
             def implies_capabilities(match: Match, rel: str) -> bool:
+                if match.signal.type in {"import", "dependency", "env", "name"}:
+                    return False
                 if in_tests(rel) and not test_only:
                     return False
                 return not (mcp_server and match.signature.category == "heuristic")
@@ -1851,9 +1867,13 @@ class FilesystemConnector(BaseConnector):
                     weight_scale=(ENV_ONLY_WEIGHT_SCALE if env_only else 1.0)
                     * (0.5 if in_tests(rel) else 1.0),
                     capabilities=implies_capabilities(m, rel),
+                    signature_capabilities=verified_indicator(m) or m.signature.category != "framework",
                 )
             if "protocol.mcp" in f.frameworks and server_tools:
                 self._apply_mcp_tools(f, server_tools)
+            potential = {cap for m, _, _ in tech_matches for cap in m.capabilities()} - set(f.capabilities)
+            if potential:
+                f.metadata["potential_capabilities"] = sorted(potential)
             # Repeated observations of one technology are correlated evidence.
             # Generic idioms share a single supporting group; loops in several
             # worker files must never accumulate into a confirmed AI agent.
@@ -2075,11 +2095,17 @@ class FilesystemConnector(BaseConnector):
         )
         remote_hosts: list[str] = []
         for s in enabled:
-            if s.get("url"):
-                for m in self.index.match_domains_in_text(s["url"]):
+            urls = s.get("urls")
+            if not isinstance(urls, list):
+                urls = [s["url"]] if s.get("url") else []
+            for url in urls:
+                if not isinstance(url, str):
+                    continue
+                for m in self.index.match_domains_in_text(url):
                     if m.signature.category != "identity-app":
                         apply_matches(f, [m], location=rel)
-                remote_hosts.append(s["url"])
+                if url not in remote_hosts:
+                    remote_hosts.append(url)
             for env_name in s.get("env_names", []):
                 for m in self.index.match_env(env_name):
                     apply_matches(f, [m], location=rel, weight_scale=0.5)
@@ -2319,7 +2345,7 @@ class FilesystemConnector(BaseConnector):
         m = _FRONTMATTER.match(text)
         if m:
             try:
-                fm = bounded_safe_load(m.group(1)) or {}
+                fm = strict_bounded_safe_load(m.group(1)) or {}
             except yaml.YAMLError:
                 self.ctx.error(f"code.filesystem: {rel}: invalid agent definition YAML")
                 fm = {}
@@ -2461,8 +2487,8 @@ def _structured_context(rel: str, text: str) -> Any:
         if rel.endswith(".toml"):
             return tomllib.loads(text)
         if rel.endswith(_YAML_SUFFIXES):
-            return bounded_safe_load(text)
-    except (YAMLResourceLimitError, SanitizationLimitError):
+            return strict_bounded_safe_load(text, require_string_keys=False)
+    except (JSONIntegrityError, YAMLIntegrityError, YAMLResourceLimitError, SanitizationLimitError):
         raise
     except (ValueError, RecursionError, yaml.YAMLError):
         return _NO_STRUCTURE
@@ -2498,7 +2524,7 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
         if rel.endswith(".toml"):
             data = tomllib.loads(text)
         elif rel.endswith((".yaml", ".yml")):
-            data = bounded_safe_load(text)
+            data = strict_bounded_safe_load(text)
         else:
             data = _load_json_lenient(text)
     except (ValueError, RecursionError, yaml.YAMLError):
@@ -2511,25 +2537,31 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
     if not isinstance(mcp, dict):
         errors.append("MCP mcp field must be an object")
         mcp = {}
-    servers: Any = next(
-        (
-            value
-            for value in (
-                data.get("mcp_servers"),
-                data.get("mcpServers"),
-                mcp.get("servers"),
-                data.get("servers"),
-            )
-            if value is not None
-        ),
-        {},
-    )
+    containers: list[Any] = []
+    for key in ("mcp_servers", "mcpServers", "servers"):
+        if key in data:
+            containers.append(data[key])
+    if "servers" in mcp:
+        containers.append(mcp["servers"])
+    if len(containers) > 1:
+        errors.append("multiple MCP server containers are ambiguous")
+        return []
+    servers: Any = containers[0] if containers else {}
+    if servers is None:
+        servers = {}
     if isinstance(servers, list):
         if any(not isinstance(server, dict) for server in servers):
             errors.append("MCP server entries must be objects")
-        servers = {
-            str(server.get("name", i)): server for i, server in enumerate(servers) if isinstance(server, dict)
-        }
+        named_servers: dict[str, dict[str, Any]] = {}
+        for i, server in enumerate(servers):
+            if not isinstance(server, dict):
+                continue
+            name = str(server.get("name", i))
+            if name in named_servers:
+                errors.append("duplicate MCP server names are ambiguous")
+                return []
+            named_servers[name] = server
+        servers = named_servers
     if not servers and isinstance(data.get("name"), str) and (data.get("packages") or data.get("remotes")):
         servers = {data["name"]: data}
     if not isinstance(servers, dict):
@@ -2540,7 +2572,18 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
         if not isinstance(cfg, dict):
             errors.append("MCP server entry must be an object")
             continue
-        env = cfg.get("env", cfg.get("environment", {}))
+        if any(
+            sum(alias in cfg for alias in aliases) > 1
+            for aliases in (
+                ("env", "environment"),
+                ("url", "serverUrl", "endpoint"),
+                ("type", "transport"),
+                ("autoApprove", "alwaysAllow"),
+            )
+        ):
+            errors.append("MCP server entry contains ambiguous field aliases")
+            continue
+        env = cfg["env"] if "env" in cfg else cfg.get("environment", {})
         headers = cfg.get("headers", {})
         env = {} if env is None else env
         headers = {} if headers is None else headers
@@ -2550,16 +2593,32 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
         if not isinstance(headers, dict):
             errors.append("MCP headers must be an object")
             headers = {}
-        url = cfg.get("url") or cfg.get("serverUrl") or cfg.get("endpoint")
+        direct_url = next(
+            (cfg[key] for key in ("url", "serverUrl", "endpoint") if key in cfg),
+            None,
+        )
+        urls: list[str] = []
+        if direct_url is not None:
+            if not isinstance(direct_url, str):
+                errors.append("MCP url must be a string")
+            elif direct_url.strip():
+                urls.append(direct_url)
         remotes = cfg.get("remotes")
-        if not url and isinstance(remotes, list) and remotes:
-            if isinstance(remotes[0], dict):
-                url = remotes[0].get("url")
+        if remotes is not None:
+            if not isinstance(remotes, list):
+                errors.append("MCP remotes must be an array")
             else:
-                errors.append("MCP remote entry must be an object")
-        if url is not None and not isinstance(url, str):
-            errors.append("MCP url must be a string")
-            url = None
+                for remote in remotes:
+                    if not isinstance(remote, dict):
+                        errors.append("MCP remote entry must be an object")
+                        continue
+                    remote_url = remote.get("url")
+                    if remote_url is not None and not isinstance(remote_url, str):
+                        errors.append("MCP remote url must be a string")
+                    elif isinstance(remote_url, str) and remote_url.strip():
+                        urls.append(remote_url)
+        urls = list(dict.fromkeys(urls))
+        url = urls[0] if urls else None
         command = cfg.get("command")
         if command is not None and not isinstance(command, str):
             errors.append("MCP command must be a string")
@@ -2594,17 +2653,26 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
                 for key, value in items
             )
         ]
-        transport = (
-            cfg.get("type")
-            or cfg.get("transport")
-            or ("stdio" if command else ("http" if url else "unknown"))
+        transport = next(
+            (cfg[key] for key in ("type", "transport") if key in cfg),
+            "stdio" if command else ("http" if url else "unknown"),
         )
         if not isinstance(transport, str):
             errors.append("MCP transport must be a string")
             transport = "unknown"
         # Project only after sanitizing with the entire config: a credential in
         # env/headers may be repeated as an otherwise unrecognizable argument.
-        field_names = ("name", "transport", "command", "args", "url", "env_names", "headers", "auto_approve")
+        field_names = (
+            "name",
+            "transport",
+            "command",
+            "args",
+            "url",
+            "urls",
+            "env_names",
+            "headers",
+            "auto_approve",
+        )
         clean_values = sanitize(
             (
                 cfg,
@@ -2614,9 +2682,13 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
                     command,
                     args,
                     url,
+                    urls,
                     sorted(str(key) for key in env),
                     sorted(str(key) for key in headers),
-                    cfg.get("autoApprove") or cfg.get("alwaysAllow"),
+                    next(
+                        (cfg[key] for key in ("autoApprove", "alwaysAllow") if key in cfg),
+                        None,
+                    ),
                 ],
             )
         )[1]
@@ -2625,7 +2697,7 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
             location
             for location, changed in (
                 ("args", safe["args"] != args),
-                ("url", safe["url"] != url),
+                ("url", safe["url"] != url or safe["urls"] != urls),
                 ("command", safe["command"] != command),
             )
             if changed

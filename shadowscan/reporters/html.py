@@ -8,6 +8,7 @@ import html
 import json
 
 from shadowscan.models import ScanResult
+from shadowscan.reporters._publication import publication_stats, related_finding_ids
 
 _CSS = """
 :root{--bg:#0f1117;--card:#171a23;--fg:#e6e6e6;--muted:#9aa0ad;--line:#262a36;--critical:#ff4d4f;--critical-text:#ff4d4f;--high:#ff9c2b;--medium:#f5d90a;--low:#3ddc84;--info:#8c8c8c;--accent:#7aa2f7}
@@ -159,11 +160,10 @@ def render_html(result: ScanResult) -> str:
             parts.append(
                 f"<div><b>Permissions</b> {_e(', '.join(f.permissions[:20]))}{' …' if len(f.permissions) > 20 else ''}</div>"
             )
-        if f.metadata.get("related"):
+        related = related_finding_ids(f.metadata)
+        if related:
             parts.append(
-                "<div><b>Related</b> "
-                + " ".join(f"<code>{_e(r)}</code>" for r in f.metadata["related"][:8])
-                + "</div>"
+                "<div><b>Related</b> " + " ".join(f"<code>{_e(r)}</code>" for r in related) + "</div>"
             )
         activity = f.metadata.get("runtime_activity")
         if isinstance(activity, dict):
@@ -200,20 +200,24 @@ def render_html(result: ScanResult) -> str:
         parts.append("</td></tr>")
     parts.append("</tbody></table>")
     parts.append("<footer><b>Connector statistics</b><ul>")
-    for st in result.stats:
+    for st in publication_stats(result):
         status = (
             "skipped"
-            if st.skipped
+            if st["skipped"]
             else "incomplete"
-            if st.incomplete or st.errors
+            if st["incomplete"] or st["errors"]
             else "cached"
-            if st.cached
+            if st["cached"]
             else "complete"
         )
         parts.append(
-            f"<li>{_e(st.connector)}: {_e(status)}, {_e(st.objects_examined)} examined, {_e(st.findings)} findings"
+            f"<li>{_e(st['connector'])}: {_e(status)}, {_e(st['objects_examined'])} examined, {_e(st['findings'])} findings"
         )
-        diagnostics = [*st.errors, *st.warnings, *([st.skip_reason] if st.skip_reason else [])]
+        diagnostics = [
+            *st["errors"],
+            *st["warnings"],
+            *([st["skip_reason"]] if st["skip_reason"] else []),
+        ]
         if diagnostics:
             parts.append("<ul>" + "".join(f"<li>{_e(message)}</li>" for message in diagnostics) + "</ul>")
         parts.append("</li>")

@@ -7,7 +7,9 @@ before constructing any Python objects and account for its *expanded* size.
 
 from __future__ import annotations
 
-from typing import Any
+import math
+from collections.abc import Iterable
+from typing import Any, ClassVar
 
 import yaml
 from yaml.events import AliasEvent
@@ -136,3 +138,106 @@ def bounded_safe_load(stream: Any) -> Any:
 def bounded_safe_load_all(stream: Any) -> list[Any]:
     """Load a bounded stream of YAML documents with the same limits as ``bounded_safe_load``."""
     return list(yaml.load_all(stream, Loader=BoundedSafeLoader))
+
+
+class YAMLIntegrityError(yaml.YAMLError):
+    """An offline mapping has ambiguous or unsupported keys, without source text."""
+
+
+_MERGE_KEY = object()
+
+
+class StrictBoundedSafeLoader(BoundedSafeLoader):
+    """Bounded offline YAML with unique string keys in every source mapping.
+
+    Validate before merge flattening: ordinary YAML merge inheritance and an
+    explicit override remain supported, but repeated keys in a source mapping
+    (including a merged anchor) cannot silently discard earlier observations.
+    """
+
+    REQUIRE_STRING_KEYS: ClassVar[bool] = True
+
+    def flatten_mapping(self, node: MappingNode) -> None:
+        if node not in self._flattened:
+            keys: set[Any] = set()
+            for key_node, _ in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    key = _MERGE_KEY
+                else:
+                    key = self.construct_object(key_node)
+                    if self.REQUIRE_STRING_KEYS and not isinstance(key, str):
+                        raise YAMLIntegrityError("Offline YAML mapping keys must be strings")
+                    try:
+                        hash(key)
+                    except TypeError:
+                        raise YAMLIntegrityError("YAML mapping keys must be scalar") from None
+                if key in keys:
+                    raise YAMLIntegrityError("Duplicate YAML field")
+                keys.add(key)
+        super().flatten_mapping(node)
+
+
+class StrictBoundedConfigLoader(StrictBoundedSafeLoader):
+    """Strict repository YAML retaining SafeLoader's standard typed keys.
+
+    PyYAML follows YAML 1.1 and resolves common configuration keys such as
+    unquoted ``on`` to booleans. Repository formats such as GitHub Actions use
+    that spelling as a key, so code scanning must accept it while still
+    rejecting fields that collide after construction.
+    """
+
+    REQUIRE_STRING_KEYS: ClassVar[bool] = False
+
+
+def _validate_strict_yaml_values(values: list[Any], *, max_depth: int) -> None:
+    """Reject non-finite values in one already bounded YAML stream."""
+    remaining = 100_000
+    active: set[int] = set()
+
+    def validate(item: Any, depth: int = 0) -> None:
+        nonlocal remaining
+        remaining -= 1
+        if remaining < 0 or depth > max_depth:
+            raise YAMLResourceLimitError("YAML validation limit exceeded")
+        if isinstance(item, float) and not math.isfinite(item):
+            raise YAMLIntegrityError("Nonfinite YAML number")
+        if not isinstance(item, (dict, list, tuple, set, frozenset)):
+            return
+        identity = id(item)
+        if identity in active:
+            raise YAMLResourceLimitError("YAML cyclic alias is not supported")
+        active.add(identity)
+        try:
+            children: Iterable[Any]
+            if isinstance(item, dict):
+                children = (child for pair in item.items() for child in pair)
+            else:
+                children = item
+            for child in children:
+                validate(child, depth + 1)
+        finally:
+            active.remove(identity)
+
+    for value in values:
+        validate(value)
+
+
+def strict_bounded_safe_load(stream: Any, *, require_string_keys: bool = True) -> Any:
+    """Load bounded offline YAML without ambiguous or non-finite values.
+
+    PyYAML deliberately accepts ``.nan`` and infinities, but those values have
+    no interoperable JSON representation and can poison later risk arithmetic.
+    Validate the fully constructed graph here so aliases receive the same rule.
+    """
+    loader = StrictBoundedSafeLoader if require_string_keys else StrictBoundedConfigLoader
+    value = yaml.load(stream, Loader=loader)
+    _validate_strict_yaml_values([value], max_depth=loader.MAX_DEPTH)
+    return value
+
+
+def strict_bounded_safe_load_all(stream: Any, *, require_string_keys: bool = True) -> list[Any]:
+    """Load a bounded YAML stream with strict integrity checks on every document."""
+    loader = StrictBoundedSafeLoader if require_string_keys else StrictBoundedConfigLoader
+    values = list(yaml.load_all(stream, Loader=loader))
+    _validate_strict_yaml_values(values, max_depth=loader.MAX_DEPTH)
+    return values

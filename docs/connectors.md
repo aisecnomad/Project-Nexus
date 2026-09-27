@@ -219,6 +219,9 @@ domain-wide delegation impersonating an admin (`service_account_file` +
 customer through the read-only Admin SDK `customers.get` endpoint, including when
 the customer has no users. A configured concrete `customer` must match that ID;
 user email domains and the alias `my_customer` do not establish tenant identity.
+For service-account authentication, the signed assertion audience and token
+exchange are fixed to `https://oauth2.googleapis.com/token`; a `token_uri` in
+the key document cannot redirect the credential exchange.
 Offline exports may contain individual token records or per-user objects such
 as `{"user":"user@example.com","tokens":[...]}`. The latter retains user
 attribution whether supplied as one object or inside an array. Set `customer` to
@@ -362,7 +365,7 @@ and privileged/data scopes (`keep_all: true` to emit everything).
 
 ## Cloud
 
-All cloud connectors need the matching extra (`shadowscan[aws|gcp|azure|oci]`)
+All cloud connectors need the matching extra (`aws`, `gcp`, `azure` or `oci`)
 for live mode, or a JSONL record dump for offline mode. They use read-only
 list/describe/get calls only.
 

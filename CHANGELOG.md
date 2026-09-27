@@ -2,6 +2,70 @@
 
 ## 0.1.1 — Unreleased
 
+### September 27 review corrections
+
+- Offline exports, approval inventories, imported reports, repository manifests,
+  notebooks, agent/MCP configuration and other scanned JSON, JSONC and YAML
+  reject duplicate or non-finite data. Rejected input makes collection
+  incomplete instead of establishing absence; valid neighboring evidence is
+  still retained.
+- Structured projections reject conflicting schema aliases; CSV headers reject
+  case-folded collisions; and conflicting provider records for the same logical
+  Teams, Slack, Entra, Power Platform or Salesforce identity are quarantined
+  without discarding valid neighbors. Azure pagination likewise refuses
+  disagreeing continuation aliases.
+- Generic graph and flow construction no longer establishes an agent by itself.
+  Disabled, empty or schema-only tool options do not establish model-directed
+  action execution. Source capabilities require corresponding evidence rather
+  than inheriting every feature of an imported framework.
+- CI exposes a single `CI gate` covering documentation, every supported Python
+  version, the container checks, and DCO on pull requests. The repository ruleset
+  must require that check; workflow code alone does not configure branch rules.
+- Size-scaled source matching gives files near a 256 KiB budget boundary the
+  next bounded time slice, avoiding scheduler-sensitive false incompleteness
+  without weakening the fail-closed timeout behavior.
+- The Python distribution is now `project-nexus-shadowscan` to distinguish it
+  from the unrelated PyPI package. The `shadowscan` command, import namespace,
+  entry-point group and report schemas retain their names. No package is
+  published or namespace reserved by this change.
+- Built-in connector options now use one fail-closed schema for YAML and
+  programmatic configuration. Boolean aliases are normalized explicitly,
+  ambiguous values and unknown/reserved built-in keys are rejected, later
+  mutations and nested risk policy are revalidated before collection, and
+  plugin-owned configuration stays schema-opaque while still rejecting cycles,
+  excessive nesting and non-finite values.
+  Configured inventory is reloaded on every run so the first execution cannot
+  reuse an approval snapshot captured during engine construction.
+- Shared JSON input rejects duplicate keys and non-finite values. JSON and
+  SARIF publication refuses `NaN`/infinities. HTML/CSV sent to a terminal makes
+  control and bidirectional-formatting characters visible, while explicit
+  output files retain their serialized values. Reporter boundaries sanitize
+  copied diagnostics, tolerate malformed related-finding metadata and preserve
+  valid SARIF paths without treating provider resources as source locations.
+- Incremental cache work now observes connector cancellation/deadlines, refuses
+  `.git` indirection for Git-aware reuse, binds fingerprints to runtime/parser/
+  Git versions, bounds tree traversal, and applies TTL, aggregate size/count,
+  deterministic eviction and stale-pending/orphan-lock cleanup policies. Startup
+  maintenance has a fixed two-second monotonic budget and disables reuse for the
+  run when it expires. Lock acquisition verifies pathname identity after `flock`
+  so cleanup cannot split one cache slot across stale and replacement lock inodes.
+- Google Workspace domain-wide delegation strictly parses service-account JSON
+  and pins both the signed assertion audience and token exchange to Google's
+  HTTPS token endpoint; a key file cannot redirect the assertion.
+- CI core/development tooling is now exact-versioned and SHA-256 hash-locked on
+  Linux and macOS. All runtime, build, CI and documentation locks are audited.
+  Pre-commit repositories use immutable commit SHAs and their additional type
+  stubs are exact-pinned. Supported Python is explicitly 3.11 through 3.13.
+- Release evidence now refuses a dirty checkout, builds from a clean archive,
+  and assembles the exact attested wheel and bundles as a non-publishing
+  `release-publication-input-<SHA>` artifact. The runtime SBOM remains a Python
+  dependency SBOM, not a container/operating-system SBOM; no hermetic apt or
+  package-index publication claim is made.
+- Regenerate discovery baselines after adopting these classification and
+  capability corrections. Fresh human-labeled holdouts, live tenant acceptance,
+  independent release review and hosted artifact attestations remain separate
+  release requirements; regression results do not supply that evidence.
+
 ### Field-review follow-up
 
 Fixes from the review of the field-review series; each has a regression test.

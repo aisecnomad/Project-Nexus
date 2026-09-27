@@ -180,9 +180,12 @@ media in other formats, are skipped silently as before.
 
 The per-file matching budget also grows with size. `scan_timeout` (default 2
 seconds) covers files up to 256 KiB; each further 256 KiB adds one more budget,
-capped at 10 seconds or at `scan_timeout` when that is higher, so a 900 KB JSON
-index gets 8 seconds by default and a pathological file still fails fast. An
-exhausted budget marks the file's analysis incomplete and the scan incomplete.
+with the final 64 KiB of the first band receiving the next budget early. This
+avoids a sharp timeout cliff for mid-sized source files just below the first
+boundary while remaining capped at 10 seconds, or at `scan_timeout` when that
+is higher. A 900 KB JSON index gets 8 seconds by default and a pathological
+file still fails fast. An exhausted budget marks the file's analysis incomplete
+and the scan incomplete.
 
 ## Connector deadlines and parallelism
 

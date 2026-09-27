@@ -242,6 +242,15 @@ def _strings(values: Any) -> list[str]:
     return []
 
 
+def _mcp_server_urls(server: dict[str, Any]) -> list[str]:
+    """Return every projected MCP endpoint, retaining legacy single-URL reports."""
+    urls = _strings(server.get("urls"))
+    url = server.get("url")
+    if isinstance(url, str) and url not in urls:
+        urls.append(url)
+    return urls
+
+
 def assess(
     finding: Finding,
     index: SignatureIndex | None = None,
@@ -326,7 +335,7 @@ def assess(
             )
         if any(s.get("auto_approve") for s in servers):
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
-        if any(s.get("url") and str(s.get("url")).startswith("http://") for s in servers):
+        if any(url.startswith("http://") for server in servers for url in _mcp_server_urls(server)):
             factors.append(RiskFactor("mcp-plain-http", "remote MCP server over plain HTTP", 10))
     if finding.kind == Kind.AGENT_CONFIG:
         definitions = metadata.get("agent_definitions")

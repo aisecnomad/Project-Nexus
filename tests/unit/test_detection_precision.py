@@ -311,7 +311,9 @@ def test_vendor_neutral_heuristics_alone_are_not_an_agent(tmp_path: Path, run_co
     (tmp_path / "deploy.py").write_text(HEURISTIC_ONLY_SOURCE)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
     assert not ctx.stats.errors and findings == []
-    (tmp_path / "agent.py").write_text("from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n")
+    (tmp_path / "agent.py").write_text(
+        "from langgraph.prebuilt import create_react_agent\ngraph = create_react_agent(model, tools)\n"
+    )
     findings, _ = run_connector("code.filesystem", path=str(tmp_path))
     project = _project(findings)
     assert project is not None and project.kind == Kind.AGENT and "framework.langgraph" in project.frameworks
@@ -509,7 +511,8 @@ def test_bundled_corpus_covers_precision_regressions():
         "env-names-only-usage": True,
         "devops-heuristics-only-agent": False,
         "devops-heuristics-only-usage": False,
-        "py-langgraph-agent-with-heuristics": True,
+        "py-langgraph-agent-with-heuristics": False,
+        "py-langgraph-react-factory-with-heuristics": True,
         "env-names-with-heuristics-agent": False,
         "env-names-import-with-heuristics-agent": True,
     }

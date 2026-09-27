@@ -43,7 +43,8 @@ from shadowscan.models import Finding, Surface
 from shadowscan.utils.files import policy_files, policy_glob, read_policy_text, require_no_symlinks
 from shadowscan.utils.identity import has_aws_account_scope, has_google_workspace_account_scope
 from shadowscan.utils.redaction import REDACTED, sanitize_text
-from shadowscan.utils.safe_yaml import BoundedSafeLoader
+from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
+from shadowscan.utils.safe_yaml import strict_bounded_safe_load_all
 
 NAME_FIELDS = (
     "agent_name",
@@ -174,10 +175,10 @@ class Inventory:
             return cls._load_csv(text, path)
         try:
             if path.suffix.lower() == ".json":
-                docs = [json.loads(text, object_pairs_hook=_unique_json_object)]
+                docs = [strict_json_loads(text)]
             else:
-                docs = list(yaml.load_all(_strip_cite_markers(text), Loader=_InventoryLoader))
-        except (json.JSONDecodeError, yaml.YAMLError, _DuplicateKeyError):
+                docs = strict_bounded_safe_load_all(_strip_cite_markers(text))
+        except (json.JSONDecodeError, JSONIntegrityError, yaml.YAMLError, RecursionError):
             # Parser errors include source excerpts, which can contain credentials.
             raise _invalid(path, "document", "invalid syntax or duplicate mapping key") from None
         if not docs:
@@ -457,33 +458,6 @@ def _string_list(value: dict, name: str, path: Path, location: str) -> list[str]
     ):
         raise _invalid(path, f"{location}.{name}", "contains an unknown discovery surface")
     return [item.strip() for item in items]
-
-
-class _DuplicateKeyError(ValueError):
-    pass
-
-
-def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise _DuplicateKeyError("duplicate inventory key")
-        result[key] = value
-    return result
-
-
-class _InventoryLoader(BoundedSafeLoader):
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
-        self.flatten_mapping(node)
-        mapping: dict = {}
-        for key_node, value_node in node.value:
-            key = self.construct_object(key_node, deep=deep)
-            if not isinstance(key, str):
-                raise _DuplicateKeyError("inventory mapping keys must be strings")
-            if key in mapping:
-                raise _DuplicateKeyError("duplicate inventory key")
-            mapping[key] = self.construct_object(value_node, deep=deep)
-        return mapping
 
 
 _CITE = re.compile(r"\[cite(?:_start)?(?::[^\]]*)?\]")
