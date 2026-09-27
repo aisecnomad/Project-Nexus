@@ -34,6 +34,10 @@ connector. Consistent, high-quality work is how reviewer access is earned.
 Open a [usage question issue](https://github.com/aisecnomad/Project-Nexus/issues/new?template=question.yml)
 titled `Maintainer interest` if you want to help share the load.
 
+See [GOVERNANCE.md](GOVERNANCE.md#path-to-additional-maintainers) for the path to
+reviewer and co-maintainer roles, and [Maintainer Onboarding](docs/maintainer-onboarding.md)
+for the checklist when joining the team.
+
 ## Contact
 
 - Public: GitHub issues and pull requests
