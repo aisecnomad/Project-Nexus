@@ -148,13 +148,14 @@ def test_cli_scan_config_diff_and_stubs(tmp_path: Path, fixtures):
     )
     a = tmp_path / "a.json"
     b = tmp_path / "b.json"
-    assert (
-        runner.invoke(
-            main, ["scan", "-c", str(cfg), "--only", "cloud.aws", "--format", "json", "-o", str(a)]
-        ).exit_code
-        == 0
+    # Keep the CLI output in the assertion message: an incomplete scan (exit 3)
+    # names its connector diagnostics there, which a bare exit code hides.
+    res = runner.invoke(
+        main, ["scan", "-c", str(cfg), "--only", "cloud.aws", "--format", "json", "-o", str(a)]
     )
-    assert runner.invoke(main, ["scan", "-c", str(cfg), "--format", "json", "-o", str(b)]).exit_code == 0
+    assert res.exit_code == 0, res.output
+    res = runner.invoke(main, ["scan", "-c", str(cfg), "--format", "json", "-o", str(b)])
+    assert res.exit_code == 0, res.output
     res = runner.invoke(main, ["diff", str(a), str(b)])
     assert res.exit_code == 3 and "new" in res.output and "Slack" in res.output
     assert "scope differs" in res.output

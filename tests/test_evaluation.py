@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import json
 import stat
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -628,3 +629,35 @@ def test_acceptance_annotation_preflight_is_bounded(tmp_path: Path):
     )
     with pytest.raises(CorpusError, match="annotations"):
         accept(corpus, policy, annotations)
+
+
+def _symlinked_temporary_directory(tmp_path: Path, monkeypatch) -> Path:
+    """Point tempfile at a symlink, as macOS does with /var -> /private/var."""
+    real = tmp_path / "real-temp"
+    real.mkdir()
+    link = tmp_path / "temp-link"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (NotImplementedError, OSError):
+        pytest.skip("symlinks are unavailable")
+    monkeypatch.setattr(tempfile, "tempdir", str(link))
+    assert tempfile.gettempdir() == str(link)
+    return link
+
+
+def test_evaluation_resolves_a_symlinked_temporary_directory(tmp_path: Path, monkeypatch):
+    # The scanner refuses a scan root that traverses a symbolic link. macOS keeps
+    # $TMPDIR under /var, a symlink to /private/var, so an unresolved case root
+    # turned every evaluation case into an incomplete scan there.
+    _symlinked_temporary_directory(tmp_path, monkeypatch)
+    corpus = _write(tmp_path / "data.json", _corpus({"plain.py": "def hello():\n    return 1\n"}))
+    report = evaluate(corpus)
+    assert report["passed"] is True
+    assert report["metrics"]["all"]["tn"] == 1
+
+
+def test_benchmark_resolves_a_symlinked_temporary_directory(tmp_path: Path, monkeypatch):
+    _symlinked_temporary_directory(tmp_path, monkeypatch)
+    report = benchmark(files=3, runs=1)
+    assert report["files"] == 3
+    assert report["runs"] == 1

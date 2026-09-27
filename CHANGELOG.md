@@ -65,6 +65,7 @@
   capability corrections. Fresh human-labeled holdouts, live tenant acceptance,
   independent release review and hosted artifact attestations remain separate
   release requirements; regression results do not supply that evidence.
+
 ### Self-graded audit follow-up
 
 Fixes from an internal, AI-assisted grading pass over the repository; each

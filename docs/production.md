@@ -679,16 +679,18 @@ lost user attribution before using their counts as governance evidence.
 
 Ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
-was observed on 2026-09-27 requiring `test (3.11)`, `test (3.12)` and `analyze`,
-an up-to-date branch, and one approving review from a reviewer with write access,
+is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an
+up-to-date branch, and one approving review from a reviewer with write access,
 alongside `Protect main`. Add the new aggregate `CI gate` to that required-check
 list without removing the existing checks or approval rule. Its enforcement
-state has changed more than once during 2026-09:
-the 2026-09-24 review recorded it disabled, and on 2026-09-25 (13:10 UTC) a merge
-attempted without an approving review was refused with "Repository rule
-violations found", so it was enforced at that moment. Treat neither observation
-as permanent; only the live commands below describe the current state. Keep the
-CodeQL job's displayed name `analyze` consistent with the required check.
+state has changed more than once during 2026-09: the 2026-09-24 review recorded
+it disabled; on 2026-09-25 (13:10 UTC) a merge attempted without an approving
+review was refused with "Repository rule violations found", so it was enforced
+at that moment; and on 2026-09-27 (10:40 UTC) both rulesets were read back with
+`enforcement: disabled`, so nothing was enforced on `main` at that time. Treat
+no observation as permanent; only the live commands below describe the current
+state. Keep the CodeQL job's displayed name `analyze` consistent with the
+required check.
 
 Whatever the ruleset's state, the history is unchanged: the repository has a
 single maintainer, and no change merged to `main` through 2026-09-25 (including
