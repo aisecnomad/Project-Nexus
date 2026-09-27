@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from bisect import bisect_left
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import PurePosixPath
 from time import monotonic
 from typing import Any
@@ -520,6 +521,13 @@ _SECRETS_REF = re.compile(r"\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}")
 _GITLAB_IMAGE = re.compile(r"^[ \t]*image\s*:\s*(?:name\s*:\s*)?['\"]?([^'\"\s#]+)", re.M)
 
 
+def _chunk_matches(
+    pattern: re.Pattern[str], text: str, start: int, end: int, ceiling: float, timeout: float,
+) -> list[re.Match[str]]:
+    """Return every match in ``text[start:end]``, each attempt bounded by ``timeout`` and ``ceiling``."""
+    return list(pattern.finditer(text, start, end, timeout=min(timeout, ceiling), concurrent=False))
+
+
 def _yaml_line_matches(pattern: re.Pattern[str], text: str, deadline: float) -> Iterator[re.Match[str]]:
     """Keep each regex deadline short without charging a whole file's matches to it.
 
@@ -542,7 +550,7 @@ def _yaml_line_matches(pattern: re.Pattern[str], text: str, deadline: float) -> 
         # regex iterators otherwise charge artifact construction and unrelated
         # worker CPU to matching. Reuse the matcher contention retry budget.
         matches = _run_regex(
-            lambda timeout: list(pattern.finditer(text, start, end, timeout=min(timeout, remaining), concurrent=False)),
+            partial(_chunk_matches, pattern, text, start, end, remaining),
             "YAML manifest",
             max_seconds=remaining,
         )
