@@ -48,6 +48,7 @@ def _best_time(source: str, repeats: int) -> float:
     "{name: API_KEY, value: [REDACTED",  # a record value that is not a whole marker
     '{name: API_KEY, value: "}',       # a quoted record value read past a brace
     "tool --key a8f3c91d7e2b4f6a ",    # an option whose last word names a credential
+    "openaiKey: a8f3c91d7e2b4f6a ",    # an unquoted YAML value under a credential-like name
     "--key=#",                         # options inside one word whose kept values run to its end
     "-u=#",
     "-H=#",

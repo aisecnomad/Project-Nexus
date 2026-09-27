@@ -182,9 +182,10 @@ def _redact_mapping_values(text: str) -> str:
 # Names whose last word names a credential (openaiKey, OPENAI-KEY, dbPass,
 # stripe.secretKey, key) also name sort keys, page tokens and cache keys, so
 # only a literal that looks like an opaque key is withheld from them. An
-# unquoted value counts only after '=': after ':' it is usually a type. Both
-# patterns below start at the separator, which is rarer than a name, and the
-# name before it is read backwards.
+# unquoted value counts after '=' and, as a YAML value, after ': ' ('key:v' is
+# a scalar or a URL part); a word-like one is an identifier or a type
+# ('key: Ed25519PrivateKey'). Both patterns below start at the separator,
+# which is rarer than a name, and the name before it is read backwards.
 _OPAQUE_VALUE = re.compile(
     r"(?P<separator>:=|=(?![=>~])|:(?![:=]))[ \t]*"
     r"(?:(?P<prefix>[rRbBuUfF]{1,2}|@)?(?P<quote>[\"'`])(?P<quoted>[^\"'`\r\n]{8,})(?P=quote)"
@@ -226,7 +227,9 @@ def _redact_opaque_assignments(text: str) -> str:
             continue
         group = "quoted" if match.group("quoted") is not None else "bare"
         value = match.group(group)
-        if group == "bare" and (match.group("separator") == ":" or _WORDY.fullmatch(value)):
+        if group == "bare" and (_WORDY.fullmatch(value) or (
+            match.group("separator") == ":" and not text.startswith((" ", "\t"), match.end("separator"))
+        )):
             continue
         if match.group("quote") and _interpolated(match.group("prefix") or "", match.group("quote"), value):
             continue  # interpolated text is assembled elsewhere

@@ -198,6 +198,11 @@ FORMS: list[tuple[str, str, str]] = [
     (f"tool --key a.api_key={HEX}", HEX, "tool --key a.api_key="),
     (f"KEY1={HEX}\n", HEX, "KEY1="),
     (f'azure_openai_key2 = "{BASE62}"', BASE62, "azure_openai_key2 = "),
+    # Unquoted YAML values under the same names, as after '='.
+    (f"openaiKey: {HEX}\n", HEX, "openaiKey: "),
+    (f"key: {BASE62}\n", BASE62, "key: "),
+    (f"openai:\n  OPENAI_KEY2: {HEX}\n", HEX, "  OPENAI_KEY2: "),
+    (f"- TOKEN_2: {BASE62}  # rotated\n", BASE62, "  # rotated\n"),
     # A MySQL client's '-pVALUE' is a password even when it ends in a credential word.
     ("mysql -u root -pS3cretKey2024 app", "S3cretKey2024", "mysql -u root -p"),
     ("mysqldump -u root -pdbPass2024 shop > shop.sql", "dbPass2024", " shop > shop.sql"),
@@ -417,6 +422,10 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
     '<add key="CacheKey" value="users">users-by-id</add>',
     '<OpenAIKey key="Region" value="eu">users</OpenAIKey>',
     '<apiKey name="api_key" value="${OPENAI_API_KEY}">${OPENAI_API_KEY}</apiKey>',
+    # Unquoted YAML values that are words, paths or too short to be keys.
+    "cacheKey: users-by-id\nsortKey: createdAtDescending\npageToken: nextPage2\n",
+    "key: photos/2024/img.jpg\nkey: Ed25519PrivateKey\nopenaiKey: OpenAIKeyType;\nkey: a1b2c3\n",
+    "key:a1b2c3d4e5f6a7b8",
     # Options and numbered names keep ordinary values.
     "tool --key users --sort-key name --cache-key users-by-id",
     "curl -k https://example.com --key client.pem --key-file ~/.ssh/id_ed25519",
