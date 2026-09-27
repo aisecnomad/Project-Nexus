@@ -95,15 +95,19 @@ def test_a_name_replaced_through_the_public_module_is_replaced_in_every_binding(
         assert all(vars(module)[name] is original for module in binders), name
 
 
-def test_a_name_deleted_through_the_public_module_is_deleted_everywhere(monkeypatch):
-    binders = [module for module in MODULES if "_CLI_WORD" in vars(module)]
-    assert redaction_rules in binders and redaction_commands in binders
-    original = redaction._CLI_WORD
+@pytest.mark.parametrize("name", ["_CLI_WORD", "_MAX_REDACTION_WORK"])
+def test_a_name_deleted_through_the_public_module_is_deleted_everywhere(monkeypatch, name):
+    # '_MAX_REDACTION_WORK' is also bound by the public module itself.
+    binders = [module for module in MODULES if name in vars(module)]
+    assert len(binders) > 1
+    original = getattr(redaction, name)
     with monkeypatch.context() as patch:
-        patch.delattr(redaction, "_CLI_WORD")
-        assert not hasattr(redaction, "_CLI_WORD")
-        assert not any("_CLI_WORD" in vars(module) for module in MODULES)
-    assert all(vars(module)["_CLI_WORD"] is original for module in binders)
+        patch.delattr(redaction, name)
+        assert not hasattr(redaction, name)
+        assert not any(name in vars(module) for module in MODULES)
+    assert all(vars(module)[name] is original for module in binders)
+    with pytest.raises(AttributeError):
+        del redaction.no_such_redaction_rule
 
 
 # One form per pass module; each names 'newsecretformat', which is ordinary
