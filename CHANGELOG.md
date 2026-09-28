@@ -16,6 +16,11 @@ Behavior changes to review before upgrading (see
   `config_keys`; with the default `false` this only denies. Built-in
   connectors behave as before.
 - **New incomplete scans (exit 3):**
+  - A shared HTTP response body must arrive within twice the client timeout
+    (60 seconds by default), not only within the 30-second per-read timeout.
+    A slower body, for example from a slow-drip server, is aborted (`HTTP
+    response exceeds the read deadline`) and the connector's collection is
+    incomplete, never truncated.
   - `code.filesystem` opens each scan root once and reads every file, and
     `CODEOWNERS`, relative to it without following a link in any path
     component; before, only the final component was protected. A directory
@@ -125,9 +130,22 @@ Behavior changes to review before upgrading (see
   policy token changed, so findings verified clean under the old rules are
   sanitized again. Report sanitization takes about 28% longer (11 s to 14 s
   for 19 MB of library source).
+- **Reports:**
+  - CSV also inserts the `'` marker after a `,`, `;`, tab, `|` or line break
+    inside a value when a formula could start there (OWASP CSV injection), so
+    a report opened with another delimiter cannot create a formula cell.
+    Leading no-break spaces and double quotes no longer hide a trigger.
+    Consumers that strip only a leading `'` must strip these markers too, or
+    read `json`.
+  - Markdown writes `@` as `[@]` in untrusted text, like the existing
+    `hxxp://` and `www[.]` defanging, so a pasted report no longer
+    @-mentions users or teams or links e-mail addresses. Code spans stay
+    verbatim.
 - **Plugins and embedders:**
   - `shadowscan.utils.text.sanitize_record` is removed; call
     `shadowscan.utils.redaction.sanitize`.
+  - `HttpClient.paginate_cursor` is removed; paginate explicitly. The Slack
+    and Notion connectors keep their own cursor pagination.
   - The engine no longer names connectors. Per-root incremental caching, the
     instance-credential approval and the per-run gateway identity key are
     hooks a connector class declares (`cache_roots_separately`,
@@ -142,6 +160,31 @@ Behavior changes to review before upgrading (see
     `policy_token()` covers every module.
   - `SignatureIndex.signals_of_type(kind)` returns the (signature, signal)
     pairs of one signal type in pack order.
+
+Development:
+
+- The evaluation, benchmark, canary and acceptance tools resolve the temporary
+  directories they create before handing paths to the scanner, so they pass on
+  macOS, where `/var` and `/tmp` are links into `/private`. The symbolic-link
+  checks on untrusted input are unchanged.
+- `docs/testing.md` describes the development environment, the offline suite
+  and every `make` gate CI runs. `docs/maintainer-onboarding.md` is a reviewer
+  and co-maintainer checklist, and `GOVERNANCE.md` has reviewer,
+  co-maintainer and offboarding sections.
+- `code.github` and `code.gitlab` share one implementation
+  (`shadowscan/connectors/code/remote.py`), and the four cloud connectors
+  share one offline-record dispatcher and audit-caller aggregator. New
+  offline exports cover every GCP and OCI record kind, raising line coverage
+  of `cloud/gcp.py` from 78% to 99% and of `cloud/oci.py` from 88% to 99%.
+  The scanning commands share one option decorator; options, defaults and
+  help are unchanged.
+- Consistency tests check that documents describing CSV markers name every
+  separator the reporter marks, and that the documented HTTP read deadline
+  matches the client.
+- Documentation: ADR-003 has a dated amendment recording the implemented
+  confidence and risk formulas, and `docs/concepts/risk.md` matches the
+  code. The cloud connector guide lists each connector's offline `_kind`
+  values, and the architecture guide the engine hooks.
 
 ### September 27 review follow-up
 

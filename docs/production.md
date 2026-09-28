@@ -379,7 +379,8 @@ are ignored. Cloud SDK and Git transport behavior remains separate. Do not assum
 that the shared client's policy controls every network connection in the process.
 Inject only trusted `requests.Session` implementations. Calls to the shared
 client that explicitly request `stream=True` must read within a size limit and
-close the response; the default buffered response path enforces a 16 MiB limit.
+close the response; the default buffered response path enforces a 16 MiB limit
+and a whole-body [read deadline](#resource-limits-and-incomplete-scans).
 
 JWT verification is for analysis. The default scope is signature evidence;
 configuring `expected_issuer` also binds the issuer. Neither mode authorizes a
@@ -404,8 +405,22 @@ turn Git or the scanner into a process sandbox.
 
 ## Resource limits and incomplete scans
 
-Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded content by default. Pagination rejects missing or malformed collection arrays and records an incomplete scan when a response exceeds its limit. Review unusually large provider pages against their API contract before raising a per-client or per-request limit. GitLab file downloads remain capped at 512 KB (512,000 bytes) per file.
-
+Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded
+content by default. Each response body must also arrive within twice the
+client timeout (60 seconds by default). The 30-second client timeout bounds
+each connection attempt and each socket read, so without the deadline a server
+that sends a byte just inside every timeout could hold a worker until the
+connector deadline abandoned it. A body still being read at the deadline is
+aborted (`HTTP response exceeds the read deadline`) and the connector's
+collection is incomplete (exit 3); a partial body is never analyzed. The
+deadline follows the client's timeout, not a `timeout` passed with one
+request, and applies to each response separately:
+`connector_timeout_seconds` still bounds a connector's whole collection.
+Pagination rejects missing or malformed collection arrays and records an
+incomplete scan when a response exceeds its limit. Review unusually large
+provider pages against their API contract before raising a per-client or
+per-request limit. GitLab file downloads remain capped at 512 KB (512,000
+bytes) per file.
 
 YAML parsing checks input size, composed nodes, alias count, nesting, expanded
 nodes/content and merge work before object construction. Sanitization has a
@@ -522,9 +537,18 @@ record-export directories are created as 0700; existing non-private directories
 are rejected without changing their permissions. Use dedicated directories for
 these outputs.
 
-The Markdown reporter defangs bare HTTP(S) and `www.` strings in untrusted text
-fields. This keeps repository names, diagnostics and evidence descriptions from
-becoming automatically clickable when reports are pasted into a ticket or wiki.
+The Markdown reporter defangs bare HTTP(S) and `www.` strings and writes `@` as
+`[@]` in untrusted text fields, so repository names, owners, diagnostics and
+evidence descriptions do not become links, @-mentions or e-mail links when
+reports are pasted into a ticket, pull request or wiki. Code spans keep
+identifiers verbatim. The CSV reporter inserts a literal `'` at the start of a
+value, and after each `,`, `;`, tab, `|` or line break inside it, where the
+text that follows begins with `=`, `+`, `-` or `@` (also after whitespace,
+including no-break spaces, or double quotes) or with a tab or carriage
+return; a value that begins with a line feed is marked too. Other tabs and
+line breaks inside a value are left alone. A report opened with another
+delimiter therefore cannot create a formula cell. Strip every marker when
+consuming CSV programmatically, or consume `json`.
 
 Dump filenames include the original connector configuration ordinal and a safe
 label. Repeated names or normalization-colliding labels no longer overwrite each
@@ -597,6 +621,14 @@ The 2026-09-28 changes alter completeness, report text and credential policy.
 Compare a pinned baseline with a candidate before enforcing policy on the new
 output:
 
+- **Newly incomplete (exit 3).** A shared HTTP response body that misses the
+  [read deadline](#resource-limits-and-incomplete-scans); a `code.filesystem`
+  root that cannot be opened safely, or a directory replaced by a link during
+  the scan (see
+  [finding identity](#finding-identity-and-comparison-migration)); a
+  `code.gitlab` group listing entry without a positive integer project `id`;
+  and a `code.github` listing entry whose `full_name` is not a plain
+  `owner/name`.
 - **Changed diagnostics, still incomplete.** A YAML value PyYAML cannot
   construct, such as an impossible date or an integer over 4,300 digits,
   already made a scan incomplete; it is now reported as malformed YAML
@@ -621,6 +653,11 @@ output:
   `structured parsing incomplete`: it is not YAML until rendered, so its
   excerpts use lexical redaction. Plain YAML with duplicate or non-finite
   data still makes the scan incomplete.
+- **Reports.** CSV reports also carry `'` markers after a `,`, `;`, tab, `|`
+  or line break inside a value, not only at its start (see
+  [output migration](#output-and-inventory-migration)). Consumers that strip
+  only a leading marker must strip these too, or read `json`. Markdown writes
+  `@` as `[@]` in untrusted text, including owner e-mail addresses.
 - **Redaction.** Report excerpts and structured connector metadata withhold
   more credential forms: literals passed to credential constructors and
   builder chains, literal fallbacks of credential environment variables,
@@ -655,6 +692,15 @@ output:
   the demo, sample repository and evaluation corpora keep their IDs. The
   redaction policy token changed, so findings verified clean under the old
   rules are sanitized again automatically.
+- **Plugins and embedders.** `shadowscan.utils.text.sanitize_record` and
+  `HttpClient.paginate_cursor` are removed: call
+  `shadowscan.utils.redaction.sanitize`, and paginate explicitly. Patch
+  redaction rules only through `shadowscan.utils.redaction`. A plugin that
+  declares the cloud surface or documents `allow_instance_credentials`
+  receives the scan-wide approval (see
+  [explicit security policy](#explicit-security-policy)), and engine
+  behavior that differs by connector is a class hook (see
+  [architecture](architecture.md#engine-hooks)).
 
 ## Finding identity and comparison migration
 
