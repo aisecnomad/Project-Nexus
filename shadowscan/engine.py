@@ -59,22 +59,6 @@ class _JobState:
     publication_lock: Lock = field(default_factory=Lock)
 
 
-def _security_options(config: ScanConfig) -> tuple[Any, ...]:
-    """Snapshot the options ``ScanConfig.validate_security_options`` normalises."""
-    plugins = config.plugins
-    return (
-        tuple(plugins) if isinstance(plugins, list) else plugins,
-        config.allow_signature_override,
-        config.allow_private_origin,
-        config.allow_instance_credentials,
-        config.allow_credential_mixing,
-        config.connector_timeout_seconds,
-        config.incremental,
-        config.fail_on,
-        config.parallel,
-    )
-
-
 def _hooks(resolved: _Resolved) -> type[BaseConnector]:
     """The class whose declared engine hooks apply to a job.
 
@@ -346,12 +330,16 @@ class _ConnectorRunner:
         cls = resolved
         # Constructor validation still runs before a cached result is used.
         connector = cls(ctx)
-        snapshot = cache.snapshot(spec) if cache.supports_connector(spec, cls) else None
-        cached = cache.load(spec, snapshot) if snapshot else None
+        snapshot = (
+            cache.snapshot(spec, check_deadline=ctx.check_deadline, deadline=ctx.deadline)
+            if cache.supports_connector(spec, cls)
+            else None
+        )
+        cached = cache.load(spec, snapshot, check_deadline=ctx.check_deadline) if snapshot else None
         if cached is not None:
             cached_findings, st = cached
             fs.extend(cached_findings)
-            if cache.snapshot(spec) == snapshot:
+            if cache.snapshot(spec, check_deadline=ctx.check_deadline, deadline=ctx.deadline) == snapshot:
                 ctx.check_deadline()
                 self._engine._report_progress(spec.id, f"{len(fs)} findings (unchanged input; cached)")
                 return st, True
@@ -379,7 +367,7 @@ class _ConnectorRunner:
             # Do not attach a result to a digest computed before an input
             # changed during collection. Preserve the findings, mark the
             # scan incomplete and require a fresh scan for security gates.
-            if cache.snapshot(spec) == snapshot:
+            if cache.snapshot(spec, check_deadline=ctx.check_deadline, deadline=ctx.deadline) == snapshot:
                 ctx.check_deadline()
                 cache.save(
                     snapshot, fs, st, check_deadline=ctx.check_deadline, publish_replace=ctx.publish_replace
@@ -528,7 +516,7 @@ class Engine:
     ) -> None:
         self.config = config
         config.validate_security_options()
-        self._validated_options = _security_options(config)
+        config.validate_connector_specs()
         self._index_supplied = index is not None
         self._signature_digest: str | None = None
         self.index = index if index is not None else self._load_index()
@@ -538,10 +526,10 @@ class Engine:
         # a process that must exit promptly has to use ``os._exit``.
         self.abandoned_workers: list[str] = []
         self._abandoned_futures: list[Future[Any]] = []
-        # An invalid inventory fails at construction. The first run reuses
-        # this load; later runs of a reused Engine load it again.
+        # Validate eagerly so setup errors fail at construction. A run still
+        # reloads the inventory: approval can change after construction and a
+        # stale first-run snapshot must never authorize a finding.
         self.inventory: Inventory | None = Inventory.load(config.inventory) if config.inventory else None
-        self._inventory_paths: list[str] | None = list(config.inventory)
 
     def _report_progress(self, connector: str, message: str) -> None:
         """A failed output observer must not change collection or scan completeness."""
@@ -587,9 +575,7 @@ class Engine:
         # Registry approval can change independently of source inputs or an Engine
         # instance's lifetime. It is never persisted in connector cache entries.
         paths = list(self.config.inventory)
-        if self._inventory_paths is None or paths != self._inventory_paths:
-            self.inventory = Inventory.load(paths) if paths else None
-        self._inventory_paths = None
+        self.inventory = Inventory.load(paths) if paths else None
 
     def _prepare_run(self) -> None:
         if any(not future.done() for future in self._abandoned_futures):
@@ -599,9 +585,14 @@ class Engine:
         self._abandoned_futures.clear()
         self.abandoned_workers.clear()
         self.config.min_confidence = validate_min_confidence(self.config.min_confidence)
-        if _security_options(self.config) != self._validated_options:
-            self.config.validate_security_options()
-            self._validated_options = _security_options(self.config)
+        # ScanConfig is intentionally mutable for embedding callers and CLI
+        # overrides. Revalidate every security-relevant field, including
+        # nested risk weights, before any connector is constructed.
+        self.config.validate_security_options()
+        # Embedding callers can mutate ConnectorSpec instances between runs;
+        # re-establish the built-in schema and boolean boundary before any
+        # connector sees the configuration.
+        self.config.validate_connector_specs()
         self._refresh_index()
         self._refresh_inventory()
 

@@ -37,11 +37,15 @@ but cannot identify an exact reproducible implementation. The final report hashe
 the actual scanner sources, signatures and corpus. CI regenerates reports for the
 reviewed commit rather than trusting these recorded results.
 
-The separate authored synthetic suite passes 39 cases (16 positives, 23 negatives),
-and the earlier public-source sample passes five. One **synthetic** PHP fixture
-was corrected to a negative: a bare `create_agent(...)` call with no framework
-binding cannot establish AI-agent construction. This does not modify the frozen
-independent labels. Do not combine these three populations into a field score.
+At the time of this 2026-09-24 review, the separate authored synthetic suite
+passed 39 cases (16 positives, 23 negatives), and the earlier public-source
+sample passed five. The currently committed `tools/evaluation/corpus.json` has
+since grown to 77 authored synthetic cases (29 positives, 48 negatives); the
+case count alone does not establish that the current scanner passes them. Check
+the final commit's CI evaluation. One **synthetic** PHP fixture was corrected to
+a negative: a bare `create_agent(...)` call with no framework binding cannot
+establish AI-agent construction. This does not modify the frozen independent
+labels. Do not combine these populations into a field score.
 
 ## Read-only canary validation
 
@@ -66,8 +70,11 @@ acceptance before enabling enforcement.
 ## Reproduction
 
 Use the commands in [evaluation.md](evaluation.md) and [canaries.md](canaries.md).
-CI retains its existing Python 3.11/3.12 tests, overall coverage floor of 80%,
-per-connector floor of 75%, lint, types, dependency audit, installed-wheel and
-container checks. It additionally validates the annotation ledger and frozen
-corpus, and retains evaluation JSON artifacts with each run. Required checks
-apply to the final commit; recorded local reports do not replace them.
+When this dated result was recorded, CI covered Python 3.11/3.12. The current
+workflow covers Linux 3.11–3.13 and macOS 3.11/3.13 for lint, types, tests and
+the overall 80% and per-connector 75% coverage floors. Linux additionally runs
+the full runtime dependency audit, installed-wheel and container checks. It also
+validates the annotation ledger and frozen corpus, and retains evaluation JSON
+artifacts with each run.
+Required checks apply to the final commit; recorded local reports do not replace
+them.

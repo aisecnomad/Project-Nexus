@@ -5,15 +5,17 @@ SHELL := /bin/bash
 
 .PHONY: install
 install: ## Install in editable mode with dev + cloud + docs extras
-	python -m pip install -e ".[all]"
+	python -m pip install --require-hashes --only-binary=:all: \
+		-r requirements-ci.lock -r requirements.lock -r requirements-docs.lock
+	python -m pip install --no-deps --no-build-isolation -e .
 
 .PHONY: install-dev
 install-dev: ## Install with dev extras only (no cloud SDKs)
-	python -m pip install -e ".[dev]"
+	python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock
+	python -m pip install --no-deps --no-build-isolation -e .
 
 .PHONY: install-hooks
-install-hooks: ## Install pre-commit hooks
-	pip install pre-commit
+install-hooks: install-dev ## Install pinned pre-commit hooks
 	pre-commit install
 
 # --- Quality ---------------------------------------------------------------
@@ -62,6 +64,7 @@ evaluate: ## Run the bundled detection regression corpora
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/realistic_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/field_review_corpus.json
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/attribution_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
 		--annotations tools/evaluation/independent_annotations.json
 
@@ -81,7 +84,7 @@ build: ## Build distributable wheel
 wheel-validate: build ## Validate the wheel installs and works outside checkout
 	python -m venv /tmp/shadowscan-wheel-test
 	/tmp/shadowscan-wheel-test/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-	/tmp/shadowscan-wheel-test/bin/python -m pip install --no-deps dist/*.whl
+	/tmp/shadowscan-wheel-test/bin/python -m pip install --no-deps dist/project_nexus_shadowscan-*.whl
 	/tmp/shadowscan-wheel-test/bin/python -m pip check
 	cd /tmp && /tmp/shadowscan-wheel-test/bin/python -m shadowscan.signatures.validate
 	cd /tmp && /tmp/shadowscan-wheel-test/bin/shadowscan --help

@@ -170,11 +170,54 @@ def test_release_cli_writes_only_verified_run_and_refuses_failed_run(
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"id":123,"id":124}',
+        '{"id":123,"diagnostic":NaN}',
+        '{"id":123,"diagnostic":1e999}',
+    ],
+)
+def test_release_cli_rejects_ambiguous_or_nonfinite_api_json(tmp_path: Path, body: str) -> None:
+    source = tmp_path / "api-response.json"
+    output = tmp_path / "verified.json"
+    source.write_text(body, encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tools.release.evidence",
+            "verify-ci",
+            "--input",
+            str(source),
+            "--output",
+            str(output),
+            "--repository",
+            REPOSITORY,
+            "--expected-sha",
+            SHA,
+            "--current-sha",
+            SHA,
+            "--run-id",
+            "123",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "bounded, unambiguous JSON with finite numbers" in result.stderr
+    assert not output.exists()
+
+
 @pytest.fixture
 def candidate(tmp_path: Path) -> Path:
-    (tmp_path / "shadowscan-0.1.1-py3-none-any.whl").write_bytes(b"wheel bytes")
+    (tmp_path / "project_nexus_shadowscan-0.1.1-py3-none-any.whl").write_bytes(b"wheel bytes")
     (tmp_path / "requirements.lock").write_text("click==8.1\n", encoding="utf-8")
     (tmp_path / "requirements-build.lock").write_text("setuptools==84.0.0\n", encoding="utf-8")
+    (tmp_path / "requirements-ci.lock").write_text(
+        "pip-audit==2.10.1 --hash=sha256:" + "0" * 64 + "\n", encoding="utf-8"
+    )
     (tmp_path / "requirements-ci-constraints.txt").write_text("pip-audit==2.10.1\n", encoding="utf-8")
     (tmp_path / "ci-verification.json").write_text(json.dumps(_verify(_run())), encoding="utf-8")
     (tmp_path / "codeql-verification.json").write_text(
@@ -196,6 +239,7 @@ def test_release_manifest_covers_every_artifact_and_detects_changed_bytes(candid
     manifest = json.loads((candidate / "build-evidence.json").read_text())
     assert manifest["source"] == {"repository": REPOSITORY, "commit": SHA}
     assert "requirements-build.lock" in {item["name"] for item in manifest["files"]}
+    assert "requirements-ci.lock" in {item["name"] for item in manifest["files"]}
     assert manifest["ci"]["id"] == 123
     assert manifest["codeql"]["id"] == 456
     assert "not a claim" in manifest["scope"]["assurance"]
@@ -209,6 +253,34 @@ def test_release_manifest_covers_every_artifact_and_detects_changed_bytes(candid
     wheel = next(candidate.glob("*.whl"))
     wheel.write_bytes(b"tampered")
     assert hashlib.sha256(wheel.read_bytes()).hexdigest() != checksummed[wheel.name]
+
+
+@pytest.mark.parametrize(
+    ("filename", "body", "message"),
+    [
+        (
+            "ci-verification.json",
+            '{"repository":"wrong/repo","repository":"aisecnomad/Project-Nexus"}',
+            "saved ci evidence",
+        ),
+        (
+            "codeql-verification.json",
+            '{"repository":"aisecnomad/Project-Nexus","diagnostic":Infinity}',
+            "saved codeql evidence",
+        ),
+        (
+            "runtime-sbom.cdx.json",
+            '{"bomFormat":"CycloneDX","components":[],"components":[{}]}',
+            "runtime SBOM",
+        ),
+    ],
+)
+def test_release_manifest_rejects_ambiguous_or_nonfinite_json(
+    candidate: Path, filename: str, body: str, message: str
+) -> None:
+    (candidate / filename).write_text(body, encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        _manifest(candidate)
 
 
 def test_release_evidence_refuses_mismatched_ci(candidate: Path) -> None:
@@ -255,6 +327,7 @@ def test_release_evidence_refuses_mismatched_codeql(
         "missing-sbom",
         "missing-codeql",
         "missing-build-lock",
+        "missing-ci-lock",
         "empty-sbom",
         "no-wheel",
         "two-wheels",
@@ -269,6 +342,8 @@ def test_release_evidence_refuses_incomplete_or_unsafe_bundle(candidate: Path, c
         (candidate / "codeql-verification.json").unlink()
     elif case == "missing-build-lock":
         (candidate / "requirements-build.lock").unlink()
+    elif case == "missing-ci-lock":
+        (candidate / "requirements-ci.lock").unlink()
     elif case == "empty-sbom":
         (candidate / "runtime-sbom.cdx.json").write_text(
             '{"bomFormat":"CycloneDX","components":[]}', encoding="utf-8"
@@ -303,13 +378,27 @@ def test_release_workflow_limits_signing_to_artifacts_without_executing_source()
     attest = workflow["jobs"]["attest"]
     assert build["if"] == "github.ref == 'refs/heads/main'"
     assert all(value == "read" for value in build["permissions"].values())
+    assert build["env"] == {"PYTHONDONTWRITEBYTECODE": "1"}
+    initialize = next(step for step in build["steps"] if step.get("name", "").startswith("Initialize"))
+    assert 'candidate_dir="${RUNNER_TEMP:?}/release-candidate"' in initialize["run"]
+    assert '>> "$GITHUB_ENV"' in initialize["run"]
     gate = next(step for step in build["steps"] if step.get("name", "").startswith("Verify exact commit"))
     assert 'gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CODEQL_RUN_ID"' in gate["run"]
     assert "verify-codeql" in gate["run"]
-    assert "candidate/codeql-verification.json" in gate["run"]
+    assert '"$CANDIDATE_DIR/codeql-verification.json"' in gate["run"]
     assert attest["needs"] == "build"
     assert attest["permissions"] == {"contents": "read", "id-token": "write", "attestations": "write"}
     assert not any("checkout" in step.get("uses", "") for step in attest["steps"])
+    publication = workflow["jobs"]["publication-input"]
+    assert set(publication["needs"]) == {"build", "attest"}
+    assert publication["permissions"] == {}
+    assert not any("checkout" in step.get("uses", "") for step in publication["steps"])
+    publication_text = yaml.safe_dump(publication)
+    assert "project_nexus_shadowscan-*.whl" in publication_text
+    assert "sha256sum --check SHA256SUMS" in publication_text
+    build_text = "\n".join(step.get("run", "") for step in build["steps"])
+    assert "--untracked-files=all --ignored=matching" in build_text
+    assert "git archive --format=tar HEAD" in build_text
     for job in workflow["jobs"].values():
         for step in job["steps"]:
             if "uses" in step:

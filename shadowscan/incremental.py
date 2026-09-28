@@ -33,6 +33,7 @@ from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.redaction import sanitize
+from shadowscan.utils.safe_json import strict_json_loads
 
 fcntl: ModuleType | None
 try:
@@ -46,9 +47,17 @@ except ImportError:  # pragma: no cover - absent only where the confined reader 
 log = logging.getLogger("shadowscan.incremental")
 _FORMAT = 3  # v2 finding identities: older entries require a full rescan
 _MAX_CACHE_BYTES = 64 * 1024 * 1024
+_MAX_CACHE_TOTAL_BYTES = 512 * 1024 * 1024
+_MAX_CACHE_ENTRIES = 256
+_MAX_CACHE_DIRECTORY_ENTRIES = 4096
+_MAX_CACHE_SCAN_ENTRIES = 64 * 1024
+_MAX_CACHE_MAINTENANCE_SECONDS = 2.0
+_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60
+_PENDING_TTL_SECONDS = 60 * 60
 _MAX_HASH_FILE_BYTES = 64 * 1024 * 1024
 _MAX_HASH_BYTES = 512 * 1024 * 1024
 _MAX_HASH_ENTRIES = 200_000
+_MAX_HASH_DEPTH = 128
 _MAX_HASH_SECONDS = 30.0
 # Metadata tracked for every file, hashed or not: a fresh checkout at a new
 # inode, a touched file or a chmod all miss the cache.
@@ -60,8 +69,14 @@ _CODE = {"code.filesystem", "code.github", "code.gitlab"}
 _OWNERSHIP_DIRECTORIES = {".github", ".gitlab", "docs"}
 
 
+class _CacheMaintenanceDeadlineExceeded(RuntimeError):
+    """Raised when startup cache housekeeping exceeds its fixed budget."""
+
+
 def _json(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False, ensure_ascii=True
+    ).encode()
 
 
 def _paths(spec: ConnectorSpec) -> list[Path]:
@@ -108,18 +123,35 @@ class _HashBudget:
     bytes_left: int = field(default_factory=lambda: _MAX_HASH_BYTES)
     entries_left: int = field(default_factory=lambda: _MAX_HASH_ENTRIES)
     deadline: float = field(default_factory=lambda: time.monotonic() + _MAX_HASH_SECONDS)
+    check_cancelled: Callable[[], None] | None = None
+
+    def __post_init__(self) -> None:
+        self.deadline = min(self.deadline, time.monotonic() + _MAX_HASH_SECONDS)
 
     def check(self, *, entries: int = 0, size: int = 0) -> None:
+        if self.check_cancelled is not None:
+            self.check_cancelled()
         self.entries_left -= entries
         self.bytes_left -= size
         if self.entries_left < 0 or self.bytes_left < 0 or time.monotonic() > self.deadline:
             raise ValueError("static fingerprint budget exceeded")
+
+    def timeout(self, maximum: float) -> float:
+        """Return a subprocess timeout bounded by the fingerprint/deadline budget."""
+        self.check()
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            self.check()
+            raise ValueError("static fingerprint budget exceeded")
+        return min(maximum, remaining)
 
 
 def _file_digest(
     path: Path, *, max_bytes: int = _MAX_HASH_FILE_BYTES, budget: _HashBudget | None = None
 ) -> str:
     """Hash regular files only; fail rather than trust a moving or special input."""
+    if budget:
+        budget.check()
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     with os.fdopen(fd, "rb") as stream:
         before = os.fstat(stream.fileno())
@@ -129,7 +161,12 @@ def _file_digest(
             raise ValueError("fingerprint input exceeds byte limit")
         digest = hashlib.sha256()
         consumed = 0
-        while chunk := stream.read(1024 * 1024):
+        while True:
+            if budget:
+                budget.check()
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
             consumed += len(chunk)
             if consumed > max_bytes:
                 raise ValueError("fingerprint input exceeds byte limit")
@@ -137,6 +174,8 @@ def _file_digest(
                 budget.check(size=len(chunk))
             digest.update(chunk)
         after = os.fstat(stream.fileno())
+    if budget:
+        budget.check()
     current = path.stat()
     attrs = _FILE_STAT_ATTRS
     if any(
@@ -156,18 +195,29 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
         raise ValueError("symlink git metadata")
     if not marker.exists():
         return None
+    # Match the filesystem connector's trust boundary. A worktree/submodule
+    # gitfile can redirect metadata reads outside the requested scan root.
+    if not marker.is_dir():
+        raise ValueError("git metadata must be a local .git directory")
     if os.environ.get("GIT_REPLACE_REF_BASE") or os.environ.get("GIT_SHALLOW_FILE"):
         raise ValueError("external git history override")
 
     def git(*args: str) -> bytes:
         budget.check()
-        result = subprocess.run(
-            [*metadata_git_argv_prefix(), "-C", str(root), *args],
-            check=False,
-            capture_output=True,
-            timeout=10,
-            env=metadata_git_env(),
-        )
+        try:
+            result = subprocess.run(
+                [*metadata_git_argv_prefix(), "-C", str(root), *args],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=budget.timeout(10),
+                env=metadata_git_env(),
+            )
+        except subprocess.TimeoutExpired:
+            # A connector cancellation/deadline must propagate instead of
+            # degrading into an uncached scan that continues doing work.
+            budget.check()
+            raise
         budget.check(size=len(result.stdout))
         if result.returncode:
             raise ValueError("cannot resolve checkout metadata")
@@ -176,7 +226,7 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     # Author enrichment depends on effective history, not merely HEAD: replacement
     # refs and shallow boundaries can change git log output without moving HEAD.
     head = git("rev-parse", "--verify", "HEAD")
-    if git("for-each-ref", "--format=%(refname)", "refs/replace").strip():
+    if git("for-each-ref", "--count=1", "--format=%(refname)", "refs/replace").strip():
         raise ValueError("git history has replacement refs")
     history_paths = (
         git(
@@ -193,6 +243,9 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     if len(history_paths) != 2:
         raise ValueError("cannot resolve git history paths")
     shallow, grafts = [Path(p) for p in history_paths]
+    git_directory = marker.resolve()
+    if any(not path.resolve().is_relative_to(git_directory) for path in (shallow, grafts)):
+        raise ValueError("git history path escapes local metadata directory")
     if grafts.exists():
         raise ValueError("git history has grafts")
     shallow_digest = _file_digest(shallow, budget=budget) if shallow.exists() else None
@@ -218,28 +271,42 @@ def _tree_digest(
     fingerprint, which kept every tree with one oversize file out of the cache.
     """
     digest = hashlib.sha256()
-    budget.check(entries=1)
     if root.is_file():
+        budget.check(entries=1)
         return _file_digest(root, max_bytes=max_file_bytes, budget=budget)
     if not root.is_dir():
         raise ValueError("input missing or not a regular file/directory")
 
-    def failed(error: OSError) -> None:
-        raise error
-
-    for base, dirs, files in os.walk(root, followlinks=False, onerror=failed):
+    def visit(basepath: Path, depth: int) -> None:
+        if depth > _MAX_HASH_DEPTH:
+            raise ValueError("static fingerprint depth limit exceeded")
         budget.check(entries=1)
-        basepath = Path(base)
         rel = basepath.relative_to(root).as_posix()
         digest.update(_json(["directory", rel]))
         before = basepath.stat(follow_symlinks=False)
         attrs = ("st_dev", "st_ino", "st_mode", "st_mtime_ns", "st_ctime_ns")
         digest.update(_json([getattr(before, attr) for attr in attrs]))
-        if code and use_git and ".git" in dirs + files:
+
+        directories: list[str] = []
+        files: list[str] = []
+        marker_present = False
+        # os.walk allocates every name in a directory before the caller can
+        # enforce a budget. Count entries while scanning, then sort only the
+        # already-bounded names needed for a deterministic digest.
+        with os.scandir(basepath) as entries:
+            for entry in entries:
+                budget.check(entries=1)
+                marker_present = marker_present or entry.name == ".git"
+                if entry.is_dir(follow_symlinks=False):
+                    directories.append(entry.name)
+                else:
+                    files.append(entry.name)
+
+        if code and use_git and marker_present:
             digest.update(_json(["git", rel, _git_state(basepath, budget)]))
-        kept = []
-        for name in sorted(dirs):
-            budget.check(entries=1)
+
+        kept: list[Path] = []
+        for name in sorted(directories):
             path = basepath / name
             if code and (name in DEFAULT_EXCLUDES or name in excluded_dir_names):
                 continue
@@ -248,10 +315,8 @@ def _tree_digest(
                 # of a symlink even though the source walk skips traversal. A
                 # target change outside this tree must not hide a new error.
                 raise ValueError("symlink in static input")
-            kept.append(name)
-        dirs[:] = kept
+            kept.append(path)
         for name in sorted(files):
-            budget.check(entries=1)
             path = basepath / name
             if code and name == ".git":
                 # A worktree's gitdir pointer also affects its metadata.
@@ -273,6 +338,10 @@ def _tree_digest(
         after = basepath.stat(follow_symlinks=False)
         if any(getattr(before, attr) != getattr(after, attr) for attr in attrs):
             raise ValueError("input directory changed while hashing")
+        for directory in kept:
+            visit(directory, depth + 1)
+
+    visit(root, 0)
     return digest.hexdigest()
 
 
@@ -285,14 +354,19 @@ def _checkout_container_digest(
     unread_above: int | None = None,
 ) -> str:
     """Offline provider inputs contain repositories; their names are not exclusions."""
+    budget.check(entries=1)
     if not root.is_dir():
         raise ValueError("checkout container must be a directory")
     digest = hashlib.sha256()
     before = root.stat(follow_symlinks=False)
     attrs = ("st_dev", "st_ino", "st_mode", "st_mtime_ns", "st_ctime_ns")
     digest.update(_json([getattr(before, attr) for attr in attrs]))
-    for child in sorted(root.iterdir()):
-        budget.check(entries=1)
+    children: list[Path] = []
+    with os.scandir(root) as entries:
+        for entry in entries:
+            budget.check(entries=1)
+            children.append(root / entry.name)
+    for child in sorted(children):
         if child.is_symlink():
             raise ValueError("symlink in checkout container")
         if child.is_dir():
@@ -323,6 +397,20 @@ class Snapshot:
     fingerprint: str
 
 
+@dataclass(frozen=True)
+class _CacheEntry:
+    slot: str
+    path: Path
+    size: int
+    mtime_ns: int
+    device: int
+    inode: int
+
+
+def _valid_slot(value: str) -> bool:
+    return len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
 class IncrementalCache:
     def __init__(self, config: ScanConfig, index: SignatureIndex):
         self.config = config
@@ -348,7 +436,16 @@ class IncrementalCache:
             # The signature index is stable for this scan. Its semantic digest
             # need not be serialized again for every pre/post input snapshot.
             self.signature_digest = index.fingerprint()
-        except (OSError, ValueError, TypeError):
+            maintenance_deadline = time.monotonic() + _MAX_CACHE_MAINTENANCE_SECONDS
+
+            def check_maintenance_deadline() -> None:
+                if time.monotonic() >= maintenance_deadline:
+                    raise _CacheMaintenanceDeadlineExceeded(
+                        "incremental cache startup maintenance deadline exceeded"
+                    )
+
+            self._maintain_cache(check_deadline=check_maintenance_deadline)
+        except (OSError, ValueError, TypeError, _CacheMaintenanceDeadlineExceeded):
             self.enabled = False
             log.warning("incremental state is unavailable or unsafe; running full scans")
 
@@ -363,6 +460,188 @@ class IncrementalCache:
             raise ValueError("state directory must belong to the current user")
 
     @staticmethod
+    def _same_file(path: Path, expected: os.stat_result) -> bool:
+        try:
+            current = path.stat(follow_symlinks=False)
+        except OSError:
+            return False
+        return (
+            stat.S_ISREG(current.st_mode)
+            and current.st_dev == expected.st_dev
+            and current.st_ino == expected.st_ino
+        )
+
+    def _remove_orphan_lock(self, slot: str, *, check_deadline: Callable[[], None] | None = None) -> bool:
+        """Remove an unused slot lock without ever replacing an active inode.
+
+        Cache operations take non-blocking locks, so a process that opened the
+        old inode but has not locked it either wins first or fails without
+        publishing. Rechecking the paired JSON and pathname inode while the
+        exclusive lock is held prevents deleting a live slot or a replacement.
+        """
+        lock_path = self.directory / f"{slot}.lock"
+        entry_path = self.directory / f"{slot}.json"
+        if check_deadline is not None:
+            check_deadline()
+        try:
+            with self._slot_lock(Snapshot(slot, ""), exclusive=True) as fd:
+                if check_deadline is not None:
+                    check_deadline()
+                try:
+                    entry_path.stat(follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    return False
+                held = os.fstat(fd)
+                current = lock_path.stat(follow_symlinks=False)
+                if (
+                    not stat.S_ISREG(current.st_mode)
+                    or current.st_dev != held.st_dev
+                    or current.st_ino != held.st_ino
+                ):
+                    return False
+                if check_deadline is not None:
+                    check_deadline()
+                lock_path.unlink()
+                if check_deadline is not None:
+                    check_deadline()
+                return True
+        except FileNotFoundError:
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def _cache_inventory(self, *, check_deadline: Callable[[], None] | None = None) -> list[_CacheEntry]:
+        """Bound directory enumeration and reclaim abandoned state artifacts."""
+        if check_deadline is not None:
+            check_deadline()
+        now_ns = time.time_ns()
+        entries: list[_CacheEntry] = []
+        scanned = 0
+        retained = 0
+        with os.scandir(self.directory) as children:
+            for child in children:
+                if check_deadline is not None:
+                    check_deadline()
+                scanned += 1
+                if scanned > _MAX_CACHE_SCAN_ENTRIES:
+                    raise ValueError("incremental state directory scan limit exceeded")
+                try:
+                    info = child.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if check_deadline is not None:
+                    check_deadline()
+                path = self.directory / child.name
+                owned = not hasattr(os, "getuid") or info.st_uid == os.getuid()
+                if child.name.startswith(".pending-"):
+                    age_ns = max(0, now_ns - info.st_mtime_ns)
+                    if (
+                        owned
+                        and stat.S_ISREG(info.st_mode)
+                        and age_ns > int(_PENDING_TTL_SECONDS * 1_000_000_000)
+                        and self._same_file(path, info)
+                    ):
+                        if check_deadline is not None:
+                            check_deadline()
+                        try:
+                            path.unlink()
+                        except OSError:
+                            pass
+                        else:
+                            if check_deadline is not None:
+                                check_deadline()
+                            continue
+                elif child.name.endswith(".lock"):
+                    slot = child.name.removesuffix(".lock")
+                    if _valid_slot(slot) and owned and stat.S_ISREG(info.st_mode):
+                        if self._remove_orphan_lock(slot, check_deadline=check_deadline):
+                            continue
+                retained += 1
+                if retained > _MAX_CACHE_DIRECTORY_ENTRIES:
+                    raise ValueError("incremental state directory entry limit exceeded")
+                if not child.name.endswith(".json"):
+                    continue
+                slot = child.name.removesuffix(".json")
+                if not _valid_slot(slot) or not owned or not stat.S_ISREG(info.st_mode):
+                    continue
+                entries.append(
+                    _CacheEntry(
+                        slot=slot,
+                        path=path,
+                        size=info.st_size,
+                        mtime_ns=info.st_mtime_ns,
+                        device=info.st_dev,
+                        inode=info.st_ino,
+                    )
+                )
+        return entries
+
+    def _remove_entry(self, entry: _CacheEntry, *, check_deadline: Callable[[], None] | None = None) -> bool:
+        """Remove an unchanged cache entry only while holding its slot lock."""
+        snapshot = Snapshot(entry.slot, "")
+        if check_deadline is not None:
+            check_deadline()
+        try:
+            with self._slot_lock(snapshot, exclusive=True):
+                if check_deadline is not None:
+                    check_deadline()
+                try:
+                    current = entry.path.stat(follow_symlinks=False)
+                except OSError:
+                    return True
+                if (
+                    not stat.S_ISREG(current.st_mode)
+                    or current.st_dev != entry.device
+                    or current.st_ino != entry.inode
+                ):
+                    return False
+                if check_deadline is not None:
+                    check_deadline()
+                entry.path.unlink()
+                if check_deadline is not None:
+                    check_deadline()
+                return True
+        except (OSError, ValueError):
+            return False
+
+    def _maintain_cache(
+        self,
+        *,
+        protected_slots: frozenset[str] = frozenset(),
+        check_deadline: Callable[[], None] | None = None,
+    ) -> bool:
+        """Apply TTL plus deterministic oldest-first entry and byte limits."""
+        if check_deadline is not None:
+            check_deadline()
+        self._secure_directory()
+        if check_deadline is not None:
+            check_deadline()
+        entries = self._cache_inventory(check_deadline=check_deadline)
+        total_bytes = 0
+        for entry in entries:
+            if check_deadline is not None:
+                check_deadline()
+            total_bytes += entry.size
+        total_entries = len(entries)
+        cutoff_ns = time.time_ns() - int(_CACHE_TTL_SECONDS * 1_000_000_000)
+        for entry in sorted(entries, key=lambda item: (item.mtime_ns, item.slot)):
+            if check_deadline is not None:
+                check_deadline()
+            expired = entry.mtime_ns < cutoff_ns
+            over_limit = total_entries > _MAX_CACHE_ENTRIES or total_bytes > _MAX_CACHE_TOTAL_BYTES
+            if not expired and not over_limit:
+                continue
+            if entry.slot in protected_slots or not self._remove_entry(entry, check_deadline=check_deadline):
+                continue
+            total_entries -= 1
+            total_bytes -= entry.size
+        if check_deadline is not None:
+            check_deadline()
+        return total_entries <= _MAX_CACHE_ENTRIES and total_bytes <= _MAX_CACHE_TOTAL_BYTES
+
+    @staticmethod
     def supports_connector(spec: ConnectorSpec, connector_class: type) -> bool:
         """Plugin overrides may collect additional inputs unknown to this cache."""
         if not _eligible(spec):
@@ -370,16 +649,26 @@ class IncrementalCache:
         module, _, name = _BUILTIN[spec.name].partition(":")
         return connector_class is getattr(importlib.import_module(module), name)
 
-    def snapshot(self, spec: ConnectorSpec) -> Snapshot | None:
+    def snapshot(
+        self,
+        spec: ConnectorSpec,
+        *,
+        check_deadline: Callable[[], None] | None = None,
+        deadline: float | None = None,
+    ) -> Snapshot | None:
         if not self.enabled or not _eligible(spec):
             return None
         try:
+            if check_deadline is not None:
+                check_deadline()
             roots = _paths(spec)
             if not roots:
                 return None
             code = spec.name in _CODE
             use_git = bool(spec.config.get("use_git", False))
-            budget = _HashBudget()
+            budget = _HashBudget(check_cancelled=check_deadline)
+            if deadline is not None:
+                budget.deadline = min(budget.deadline, deadline)
             excluded_dir_names = _literal_excluded_directories(spec)
             # The code scanners never open a file over their max_file_size, so
             # such files are tracked by metadata; a hashed file stays capped.
@@ -423,20 +712,21 @@ class IncrementalCache:
                 )
             ).hexdigest()
             slot = hashlib.sha256(_json([spec.name, spec.id, [str(p) for p in roots]])).hexdigest()
+            budget.check()
             return Snapshot(slot, fingerprint)
         except (OSError, ValueError, TypeError, subprocess.SubprocessError):
             log.warning("could not fingerprint static input for %s; running a full scan", spec.id)
             return None
 
     @contextmanager
-    def _slot_lock(self, snapshot: Snapshot, *, exclusive: bool) -> Iterator[None]:
+    def _slot_lock(self, snapshot: Snapshot, *, exclusive: bool) -> Iterator[int]:
         """Use a stable per-slot inode; contention degrades to a full scan."""
-        valid_slot = len(snapshot.slot) == 64 and all(c in "0123456789abcdef" for c in snapshot.slot)
-        if fcntl is None or not valid_slot:
+        if fcntl is None or not _valid_slot(snapshot.slot):
             raise ValueError("invalid or unsupported incremental lock")
         self._secure_directory()
+        lock_path = self.directory / f"{snapshot.slot}.lock"
         fd = os.open(
-            self.directory / f"{snapshot.slot}.lock",
+            lock_path,
             os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
             0o600,
         )
@@ -448,24 +738,44 @@ class IncrementalCache:
                 raise ValueError("incremental lock must belong to the current user")
             fcntl.flock(fd, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
             try:
-                yield
+                # An orphan-lock cleaner can unlink this inode after we open
+                # it but before flock. Refuse a stale inode so two processes
+                # cannot lock different files for the same slot pathname.
+                current = lock_path.stat(follow_symlinks=False)
+                if current.st_dev != info.st_dev or current.st_ino != info.st_ino:
+                    raise ValueError("incremental lock pathname changed before acquisition")
+                yield fd
             finally:
                 fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
 
-    def load(self, spec: ConnectorSpec, snapshot: Snapshot) -> tuple[list[Finding], ScanStats] | None:
+    def load(
+        self,
+        spec: ConnectorSpec,
+        snapshot: Snapshot,
+        *,
+        check_deadline: Callable[[], None] | None = None,
+    ) -> tuple[list[Finding], ScanStats] | None:
         try:
+            if check_deadline is not None:
+                check_deadline()
             with self._slot_lock(snapshot, exclusive=False):
-                return self._load_unlocked(spec, snapshot)
+                return self._load_unlocked(spec, snapshot, check_deadline=check_deadline)
         except (OSError, ValueError):
             return None
 
     def _load_unlocked(
-        self, spec: ConnectorSpec, snapshot: Snapshot
+        self,
+        spec: ConnectorSpec,
+        snapshot: Snapshot,
+        *,
+        check_deadline: Callable[[], None] | None = None,
     ) -> tuple[list[Finding], ScanStats] | None:
         path = self.directory / f"{snapshot.slot}.json"
         try:
+            if check_deadline is not None:
+                check_deadline()
             fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
             with os.fdopen(fd, "rb") as stream:
                 info = os.fstat(stream.fileno())
@@ -473,7 +783,25 @@ class IncrementalCache:
                     return None
                 if hasattr(os, "getuid") and info.st_uid != os.getuid():
                     return None
-                data = json.loads(stream.read(_MAX_CACHE_BYTES + 1))
+                encoded = bytearray()
+                while len(encoded) <= info.st_size:
+                    if check_deadline is not None:
+                        check_deadline()
+                    chunk = stream.read(min(1024 * 1024, info.st_size + 1 - len(encoded)))
+                    if not chunk:
+                        break
+                    encoded.extend(chunk)
+                after = os.fstat(stream.fileno())
+                if len(encoded) != info.st_size or any(
+                    getattr(info, field) != getattr(after, field)
+                    for field in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+                ):
+                    return None
+                if check_deadline is not None:
+                    check_deadline()
+                data = strict_json_loads(encoded)
+                if check_deadline is not None:
+                    check_deadline()
             if data["format"] != _FORMAT or data["fingerprint"] != snapshot.fingerprint:
                 return None
             payload = data["payload"]
@@ -481,9 +809,15 @@ class IncrementalCache:
                 return None
             if not isinstance(payload["findings"], list) or not isinstance(payload["warnings"], list):
                 return None
-            findings = [Finding.from_dict(d) for d in payload["findings"]]
-            for finding in findings:
+            findings = []
+            for record in payload["findings"]:
+                if check_deadline is not None:
+                    check_deadline()
+                finding = Finding.from_dict(record)
                 finding.sanitize()
+                findings.append(finding)
+            if check_deadline is not None:
+                check_deadline()
             stats = ScanStats(
                 connector=spec.id,
                 started_at=now_iso(),
@@ -493,6 +827,10 @@ class IncrementalCache:
                 warnings=sanitize(payload["warnings"]),
                 cached=True,
             )
+            try:
+                os.utime(path, follow_symlinks=False)
+            except OSError:
+                pass
             return findings, stats
         except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
             return None
@@ -531,7 +869,11 @@ class IncrementalCache:
         try:
             self._secure_directory()
             for finding in findings:
+                if check_deadline is not None:
+                    check_deadline()
                 finding.sanitize()
+            if check_deadline is not None:
+                check_deadline()
             payload = {"findings": [f.to_dict() for f in findings], "warnings": sanitize(stats.warnings)}
             data = _json(
                 {
@@ -541,7 +883,7 @@ class IncrementalCache:
                     "payload_sha256": hashlib.sha256(_json(payload)).hexdigest(),
                 }
             )
-            if len(data) > _MAX_CACHE_BYTES:
+            if len(data) > min(_MAX_CACHE_BYTES, _MAX_CACHE_TOTAL_BYTES):
                 return
             if check_deadline is not None:
                 check_deadline()
@@ -558,6 +900,12 @@ class IncrementalCache:
                     check_deadline()
                 os.replace(temp, target)
             temp = None
+            if not self._maintain_cache(
+                protected_slots=frozenset({snapshot.slot}), check_deadline=check_deadline
+            ):
+                # Never let a new entry make an already constrained cache
+                # exceed its aggregate byte or entry quota.
+                target.unlink(missing_ok=True)
         except (OSError, ValueError, TypeError):
             log.warning("could not save incremental state; next scan will run in full")
         finally:

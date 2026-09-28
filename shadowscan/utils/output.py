@@ -34,6 +34,22 @@ def terminal_text(value: object) -> str:
     return "".join(out)
 
 
+def terminal_report_text(value: str, report_format: str) -> str:
+    """Neutralize controls in HTML/CSV only when publishing to a terminal.
+
+    JSON and SARIF encoders escape controls themselves, and the Markdown
+    renderer has context-specific escaping. HTML and CSV deliberately preserve
+    source text in saved artifacts, so applying this at the stdout boundary
+    prevents OSC/ANSI/C1 and bidi commands from reaching a terminal without
+    changing file output. Generated CSV row separators remain newlines; carriage
+    returns and every other control are rendered visibly.
+    """
+    if report_format not in {"csv", "html"}:
+        return value
+    normalized = value.replace("\r\n", "\n")
+    return "\n".join(terminal_text(line) for line in normalized.split("\n"))
+
+
 def prepare_private_directory(path: str | Path) -> Path:
     """Create private storage without changing permissions on an existing directory."""
     target = require_no_symlinks(Path(path).expanduser())

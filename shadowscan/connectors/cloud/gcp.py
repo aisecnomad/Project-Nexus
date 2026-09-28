@@ -183,7 +183,8 @@ class GcpConnector(BaseConnector):
                 import google.auth.transport.requests
             except ImportError as exc:
                 raise ConnectorError(
-                    "cloud.gcp: install google-auth (pip install 'shadowscan[gcp]') or provide access_token"
+                    "cloud.gcp: install google-auth (install '.[gcp]' from the "
+                    "reviewed Project Nexus checkout) or provide access_token"
                 ) from exc
             # google-auth otherwise uses its own 120-second transport default,
             # including discovery/refresh requests outside our HttpClient.

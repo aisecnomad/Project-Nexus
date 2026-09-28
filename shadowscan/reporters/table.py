@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from rich.console import Console, RenderableType
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from shadowscan.models import Finding, ScanResult, ScanStats
+from shadowscan.models import Finding, ScanResult
+from shadowscan.reporters._publication import publication_stats
 from shadowscan.utils.output import terminal_text
 
 _LEVEL_STYLE = {
@@ -26,12 +29,13 @@ def _level(f: Finding) -> Text:
     )
 
 
-def _stat_state(st: ScanStats) -> str:
-    if st.skipped:
+def _stat_state(st: dict[str, Any]) -> str:
+    """The totals-line suffix for one publication-sanitized connector statistics record."""
+    if st["skipped"]:
         return " (skipped)"
-    if st.incomplete or st.errors:
+    if st["incomplete"] or st["errors"]:
         return " (incomplete)"
-    return " (cached)" if st.cached else ""
+    return " (cached)" if st["cached"] else ""
 
 
 def _header(result: ScanResult) -> Text:
@@ -80,6 +84,10 @@ def _finding_cell(f: Finding, verbose: bool) -> Text:
 def print_table(
     result: ScanResult, console: Console | None = None, verbose: bool = False, max_rows: int | None = None
 ) -> None:
+    # Preflight every publication boundary before writing a single terminal
+    # byte. A cyclic or over-budget plugin diagnostic must not leave behind an
+    # apparently complete header and findings table followed by an exception.
+    stats = publication_stats(result)
     for finding in result.findings:
         finding.sanitize()
     console = console or Console()
@@ -127,18 +135,18 @@ def print_table(
         console.print(
             f"[dim]… {len(result.findings) - max_rows} more findings (use --output to export all)[/dim]"
         )
-    errs = [(st.connector, e) for st in result.stats for e in st.errors]
+    errs = [(st["connector"], error) for st in stats for error in st["errors"]]
     if errs:
         console.print("[bold red]Connector errors:[/bold red]")
         for c, error in errs[:20]:
             console.print(Text(terminal_text(f"  {c}: {error}"), style="red"))
-    warns = [(st.connector, w) for st in result.stats for w in st.warnings]
+    warns = [(st["connector"], warning) for st in stats for warning in st["warnings"]]
     if warns and (verbose or not result.complete):
         console.print("[bold yellow]Warnings:[/bold yellow]")
         for c, w in warns[:30]:
             console.print(Text(terminal_text(f"  {c}: {w}"), style="yellow"))
     totals = " · ".join(
-        f"{st.connector}: {st.objects_examined} objects, {st.findings} findings{_stat_state(st)}"
-        for st in result.stats
+        f"{st['connector']}: {st['objects_examined']} objects, {st['findings']} findings{_stat_state(st)}"
+        for st in stats
     )
     console.print(Text(terminal_text(totals), style="dim"))

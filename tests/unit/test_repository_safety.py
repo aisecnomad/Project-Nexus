@@ -118,8 +118,10 @@ def test_clone_callers_enforce_hooks_auth_and_branch_validation(provider, branch
     connector = cls(ctx)
     captured = {}
 
-    def fake_clone(cmd, env, ctx, timeout):
-        captured.update(cmd=cmd, env=env, ctx=ctx, timeout=timeout)
+    def fake_clone(cmd, env, ctx, timeout, *, destination, max_bytes):
+        captured.update(
+            cmd=cmd, env=env, ctx=ctx, timeout=timeout, destination=destination, max_bytes=max_bytes
+        )
         return True
 
     monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", fake_clone)
@@ -135,6 +137,8 @@ def test_clone_callers_enforce_hooks_auth_and_branch_validation(provider, branch
     assert ("--branch" in captured["cmd"]) is (branch == "release/1.2")
     assert ctx.stats.incomplete is (branch != "release/1.2")
     assert captured["env"]["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert captured["destination"] == "/tmp/dest"
+    assert captured["max_bytes"] == connector.clone_max_bytes
 
 
 @pytest.mark.parametrize("provider", ["github", "gitlab"])

@@ -36,7 +36,7 @@ signatures:
         weight: 0.85
       - type: import
         languages: [javascript]
-        patterns: ['from\s+["'']@?langchain(?!/textsplitters\b)(?:/[^"'']+)?["'']', 'require\(\s*["'']@?langchain(?!/textsplitters\b)']
+        patterns: ['from\s+["'']@?langchain(?!/(?:textsplitters|langgraph)\b)(?:/[^"'']+)?["'']', 'require\(\s*["'']@?langchain(?!/(?:textsplitters|langgraph)\b)']
         weight: 0.85
       - type: code
         patterns: ['\bAgentExecutor\s*\(', '\binitialize_agent\s*\(', '\bcreate_(?:react|tool_calling|openai_tools|openai_functions|structured_chat|json_chat|xml|self_ask_with_search|conversational_retrieval|sql)_agent\s*\(', '(?<!def )\bcreate_agent\s*\(', '\bcreateReactAgent\s*\(', '\bcreateToolCallingAgent\s*\(', '\bAgentType\.']

@@ -14,7 +14,7 @@ from collections.abc import Iterable
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.common import config_boolean, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -76,7 +76,7 @@ class GenericSaaSConnector(BaseConnector):
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.platform = str(ctx.get("platform") or "saas")
-        self.keep_all = bool(ctx.get("keep_all", False))
+        self.keep_all = config_boolean(ctx.get("keep_all", False), "keep_all")
         user_fields = ctx.get("fields") or {}
         self.fields = {
             k: ([user_fields[k]] if k in user_fields else []) + v for k, v in DEFAULT_FIELDS.items()
@@ -85,18 +85,36 @@ class GenericSaaSConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError("saas.generic: offline only; set 'input' to an export file")
 
+    def _candidate_values(self, rec: dict[str, Any], key: str) -> list[Any]:
+        aliases = {str(candidate).casefold() for candidate in self.fields[key]}
+        return [
+            value
+            for raw_key, value in rec.items()
+            if str(raw_key).casefold() in aliases and value not in (None, "")
+        ]
+
     def _get(self, rec: dict[str, Any], key: str) -> Any:
-        lower = {str(k).lower(): v for k, v in rec.items()}
-        for cand in self.fields[key]:
-            if cand in rec and rec[cand] not in (None, ""):
-                return rec[cand]
-            if cand.lower() in lower and lower[cand.lower()] not in (None, ""):
-                return lower[cand.lower()]
+        values = self._candidate_values(rec, key)
+        if values:
+            return values[0]
         return None
+
+    def _has_ambiguous_aliases(self, rec: dict[str, Any]) -> bool:
+        for key in self.fields:
+            values = self._candidate_values(rec, key)
+            if len(values) < 2:
+                continue
+            first = values[0]
+            if any(type(value) is not type(first) or value != first for value in values[1:]):
+                return True
+        return False
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:
             self.ctx.examined()
+            if self._has_ambiguous_aliases(rec):
+                self.ctx.warn("saas.generic: skipped a record with ambiguous field aliases")
+                continue
             try:
                 f = self._finding(rec)
             except (

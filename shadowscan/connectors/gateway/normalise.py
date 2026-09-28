@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Any
 
 from shadowscan.connectors.base import ConnectorError
+from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import get_path, host_of, parse_timestamp
 
 # ------------------------------------------------------------------ event
@@ -186,7 +187,7 @@ def _has_tools(obj: Any) -> bool | None:
         if not obj.strip().startswith(("{", "[")):
             return None
         try:
-            obj = json.loads(obj)
+            obj = strict_json_loads(obj)
         except json.JSONDecodeError:
             return None
     if isinstance(obj, dict):
@@ -202,7 +203,7 @@ def _declared_tools(obj: dict[str, Any]) -> bool:
         v = obj.get(key)
         if isinstance(v, str) and v.strip().startswith(("[", "{")):
             try:
-                v = json.loads(v)
+                v = strict_json_loads(v)
             except json.JSONDecodeError:
                 pass
         if v not in (None, [], {}, ""):
@@ -240,7 +241,7 @@ def _embedded_json(value: Any) -> Any:
     """Decode a JSON container serialised into a string field; None when it is not one."""
     if isinstance(value, str) and value.strip().startswith(("[", "{")):
         try:
-            return json.loads(value)
+            return strict_json_loads(value)
         except json.JSONDecodeError:
             return None
     return value
@@ -253,7 +254,7 @@ def _has_tool_calls(obj: Any) -> bool | None:
         if not obj.strip().startswith(("{", "[")):
             return None
         try:
-            obj = json.loads(obj)
+            obj = strict_json_loads(obj)
         except json.JSONDecodeError:
             return None
     if not isinstance(obj, (dict, list)):
@@ -662,7 +663,7 @@ def _azure_properties(rec: dict[str, Any]) -> dict[str, Any]:
     """The diagnostic ``properties`` object, which some exports serialise as a string."""
     props = rec.get("properties") or {}
     if isinstance(props, str):
-        props = json.loads(props)
+        props = strict_json_loads(props)
     if not isinstance(props, dict):
         raise ConnectorError("gateway.logs: Azure properties must be an object")
     return props

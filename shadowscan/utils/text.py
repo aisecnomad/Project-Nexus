@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 import re
 from datetime import UTC, datetime
@@ -11,6 +10,7 @@ from typing import Any
 
 from shadowscan.utils.files import NotRegularFileError, open_confined_file
 from shadowscan.utils.redaction import credential_id
+from shadowscan.utils.safe_json import strict_json_loads
 
 _BINARY_SNIFF = 8192
 # Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
@@ -75,8 +75,8 @@ def read_text(
 def notebook_to_source(text: str, errors: list[str] | None = None) -> str:
     """Extract code cells from a Jupyter notebook as a python source blob."""
     try:
-        nb = json.loads(text)
-    except (json.JSONDecodeError, RecursionError):
+        nb = strict_json_loads(text)
+    except (ValueError, RecursionError):
         if errors is not None:
             errors.append("notebook contains invalid JSON")
         return ""

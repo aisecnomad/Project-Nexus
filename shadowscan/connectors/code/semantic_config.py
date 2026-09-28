@@ -23,7 +23,13 @@ import yaml
 
 from shadowscan.signatures.matcher import Match, SignatureIndex
 from shadowscan.utils.jsonc import load_json_lenient
-from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load, bounded_safe_load_all
+from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
+from shadowscan.utils.safe_yaml import (
+    YAMLIntegrityError,
+    YAMLResourceLimitError,
+    strict_bounded_safe_load,
+    strict_bounded_safe_load_all,
+)
 
 
 @dataclass(slots=True)
@@ -34,6 +40,15 @@ class AgentManifestResult:
 
 
 _TEMPLATE_MARKER_RX = re.compile(r"\{\{-?\s*[.$a-zA-Z_\"']|\{%-?\s*[a-z]")
+
+
+def has_template_markers(text: str) -> bool:
+    """Return whether YAML ``text`` carries Helm, Jinja or Go-template markers.
+
+    Such manifests are not YAML until rendered, so a failure to parse or
+    validate the raw text is expected and must not mark the scan incomplete.
+    """
+    return _TEMPLATE_MARKER_RX.search(text) is not None
 
 
 def agent_manifest_kind(rel: str) -> str | None:
@@ -104,9 +119,9 @@ def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
     result = AgentManifestResult()
     try:
         data = (
-            bounded_safe_load(text)
+            strict_bounded_safe_load(text)
             if PurePosixPath(rel).suffix.lower() in {".yaml", ".yml"}
-            else json.loads(text)
+            else strict_json_loads(text)
         )
     except (ValueError, RecursionError, yaml.YAMLError):
         result.errors.append("invalid agent manifest syntax")
@@ -198,6 +213,37 @@ def _graph_entrypoint(value: Any) -> bool:
 def _objects(value: Any) -> Iterator[dict[str, Any]]:
     if isinstance(value, list):
         yield from (item for item in value if isinstance(item, dict))
+
+
+def _validate_projection_aliases(data: dict[str, Any]) -> None:
+    """Reject schema aliases whose precedence could discard executable data."""
+
+    def workato_steps(value: Any) -> Iterator[dict[str, Any]]:
+        yield from (
+            step
+            for step in _objects(value)
+            if _nonempty(step.get("provider"))
+            and (_nonempty(step.get("name")) or _nonempty(step.get("operation")))
+        )
+
+    if (
+        "code" in data
+        and "steps" in data
+        and any(any(workato_steps(value)) for value in (data["code"], data["steps"]))
+    ):
+        raise ValueError("ambiguous Workato step containers")
+    steps = data["code"] if "code" in data else data.get("steps")
+    for step in _objects(steps):
+        if (
+            _nonempty(step.get("provider"))
+            and "name" in step
+            and "operation" in step
+            and (_nonempty(step.get("name")) or _nonempty(step.get("operation")))
+        ):
+            raise ValueError("ambiguous Workato step operation")
+    properties = data.get("properties")
+    if "definition" in data and isinstance(properties, dict) and "definition" in properties:
+        raise ValueError("ambiguous Azure workflow definition")
 
 
 def _projected_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
@@ -440,14 +486,14 @@ def structured_code_matches(
     issues = errors if errors is not None else []
     limits = limit_errors if limit_errors is not None else issues
     extension = PurePosixPath(rel).suffix.lower()
-    if extension in {".yaml", ".yml"} and _TEMPLATE_MARKER_RX.search(text):
+    if extension in {".yaml", ".yml"} and has_template_markers(text):
         # Helm, Jinja and Go-template manifests are not YAML until rendered;
         # their syntax failure is expected and must not mark the scan
         # incomplete. Lexical signatures still run over the text elsewhere.
         return []
     try:
         if extension in {".yaml", ".yml"}:
-            documents = bounded_safe_load_all(text)
+            documents = strict_bounded_safe_load_all(text, require_string_keys=False)
         elif extension in {".json", ".jsonc"}:
             # VS Code settings, dev containers and tsconfig files are JSONC.
             documents = [load_json_lenient(text)]
@@ -470,6 +516,9 @@ def structured_code_matches(
             return []
         else:
             return []
+    except (JSONIntegrityError, YAMLIntegrityError):
+        limits.append("structured configuration contains ambiguous or non-finite data")
+        return []
     except (RecursionError, YAMLResourceLimitError):
         limits.append("structured configuration exceeds parser limits")
         return []
@@ -487,6 +536,11 @@ def structured_code_matches(
     for data in documents:
         if not isinstance(data, dict):
             continue
+        try:
+            _validate_projection_aliases(data)
+        except ValueError:
+            limits.append("structured configuration contains ambiguous field aliases")
+            return []
         for signature, projection in chain(_projected_signals(data), _coding_agent_signals(rel, data)):
             if (signature, projection) in seen:
                 continue

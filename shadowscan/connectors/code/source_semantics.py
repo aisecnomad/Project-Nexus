@@ -28,8 +28,10 @@ from dataclasses import dataclass, field
 import regex
 
 from shadowscan.connectors.code.javascript_dispatch import javascript_responses_dispatch_lines
+from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
+from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
@@ -66,6 +68,7 @@ class _Call:
     line: int
     structural_arguments: str = ""
     node: ast.Call | None = None
+    tool_factories: tuple[str, ...] = ()
 
 
 # These APIs construct agents even when their arguments have a different order
@@ -74,14 +77,14 @@ _FACTORIES = {
     "framework.langchain": (
         r"(?:AgentExecutor|initialize_agent|create_\w*agent|createReactAgent|createToolCallingAgent)"
     ),
-    "framework.langgraph": (
-        r"(?:StateGraph|create_react_agent|createReactAgent|create_supervisor|create_swarm)"
-    ),
+    # A StateGraph is an agent only with a static tool cycle (see
+    # langgraph_semantics); bound_source_matches verifies it separately.
+    "framework.langgraph": r"(?:create_react_agent|createReactAgent|create_supervisor|create_swarm)",
     "framework.llamaindex": (
         r"(?:ReActAgent|FunctionAgent|FunctionCallingAgent|OpenAIAgent|AgentWorkflow|"
         r"CodeActAgent|AgentRunner)(?:\.from_tools)?"
     ),
-    "framework.crewai": r"(?:Agent|Crew|Flow)",
+    "framework.crewai": r"(?:Agent|Crew)",
     "framework.google-adk": (
         r"(?:Agent|LlmAgent|SequentialAgent|ParallelAgent|LoopAgent|Runner|InMemoryRunner)"
     ),
@@ -596,13 +599,13 @@ def _python_bindable(index: SignatureIndex, tree: ast.AST) -> bool:
 
     False proves the binder yields no evidence for the file, whatever its size:
     every import and call it reports needs such a binding, and the provider
-    loop recognizers only follow those calls. Bindings originate in absolute
-    imports and resolve through ``_python_statement``. ``from M import A`` (A
-    and its attributes) and ``import M`` (M or its first component) are
-    checked exactly. Attributes of an ``import M`` binding give ``from M
-    import <attribute>`` for any attribute name in the file; only the
-    statements ``_attribute_statements`` returns can match, and those are
-    checked exactly. The work is linear in the tree plus at most
+    loop and LangGraph recognizers only follow those calls. Bindings
+    originate in absolute imports and resolve through ``_python_statement``.
+    ``from M import A`` (A and its attributes) and ``import M`` (M or its
+    first component) are checked exactly. Attributes of an ``import M``
+    binding give ``from M import <attribute>`` for any attribute name in the
+    file; only the statements ``_attribute_statements`` returns can match,
+    and those are checked exactly. The work is linear in the tree plus at most
     ``_MAX_PROOF_MATCHES`` distinct statement matches; beyond that, or with
     too many attribute statements, the answer is True. True may be
     conservative (repository-local modules are not excluded either); it never
@@ -725,8 +728,15 @@ def _javascript_bindings(
         else:
             bind(spec, module, "", line)
 
+    # Only imported roots that can resolve to a loaded signature can produce
+    # bound evidence. Narrow before the per-name shadow checks and call scan so
+    # large ordinary source files do not spend their input deadline matching
+    # thousands of unrelated calls. Keep ``imports`` intact: the caller still
+    # reports every relevant import through its own signature lookup.
+    if relevant is not None:
+        bindings = {name: binding for name, binding in bindings.items() if relevant(binding)}
     _drop_uncertain_bindings(bindings, masked, declaration_spans)
-    return _javascript_calls(text, masked, bindings, relevant), imports
+    return _javascript_calls(text, masked, bindings), imports
 
 
 def _drop_uncertain_bindings(
@@ -759,23 +769,30 @@ def _drop_uncertain_bindings(
             del bindings[name]
 
 
-def _javascript_calls(
-    text: str,
-    masked: str,
-    bindings: dict[str, _Binding],
-    relevant: Callable[[_Binding], bool] | None,
-) -> list[_Call]:
-    """Return the calls through ``bindings`` in code, each with its balanced argument text."""
+def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> list[_Call]:
+    """Return the calls through ``bindings`` in code, each with its balanced argument text.
+
+    Only calls rooted at a bound name are matched, so the scan's cost follows
+    the relevant imports rather than every call in a large source file.
+    """
     calls: list[_Call] = []
+    # Vercel AI SDK tool() factories, by the local name a call spells them with.
+    tool_factories = tuple(
+        name if binding.symbol == "tool" else f"{name}.tool"
+        for name, binding in bindings.items()
+        if binding.module == "ai" and binding.symbol in {"tool", ""}
+    )
+    if not bindings:
+        return calls
+    roots = "|".join(re.escape(name) for name in sorted(bindings, key=len, reverse=True))
     rx = regex.compile(
-        r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*(?:<[^;(){}]{1,1000}>)?\s*\("
+        rf"(?<![\w$.])((?:{roots})(?:\s*\.\s*[A-Za-z_$][\w$]*)*)"
+        rf"\s*(?:<[^;(){{}}]{{1,1000}}>)?\s*\("
     )
     for match in rx.finditer(masked, timeout=pattern_timeout(), concurrent=False):
         parts = re.split(r"\s*\.\s*", match.group(1))
         binding = bindings.get(parts[0])
         if binding is None:
-            continue
-        if relevant is not None and not relevant(binding):
             continue
         if len(calls) >= MAX_BOUND_CALLS:
             raise SourceBudgetExceeded("source binding call limit exceeded")
@@ -793,6 +810,7 @@ def _javascript_calls(
                 text[opening:end],
                 text.count("\n", 0, match.start()) + 1,
                 masked[opening:end],
+                tool_factories=tool_factories,
             )
         )
     return calls
@@ -922,12 +940,31 @@ def bound_source_matches(
 
     found = _import_evidence(index, language, imports, module_matches)
     requests = _LoopRequests()
+    graph_lines = _langgraph_agent_lines(tree, calls)
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
         requests.record(language, call, signatures, tree is not None)
-        found.extend(_call_evidence(language, call, signatures))
+        found.extend(_call_evidence(language, call, signatures, graph_lines))
     found.extend(_protocol_evidence(index, tree, text, ignored, requests))
     return found
+
+
+def _langgraph_agent_lines(tree: ast.AST | None, calls: list[_Call]) -> set[int]:
+    """Return the lines of import-bound StateGraph constructions with static tool-cycle evidence.
+
+    The graph pass runs only when a Python tree has a bound LangGraph
+    StateGraph call; it sees every bound call so it can follow tools and
+    models into the graph.
+    """
+    if tree is None or not any(
+        call.binding.module.startswith("langgraph") and _symbol_tail(call.binding.symbol) == "StateGraph"
+        for call in calls
+    ):
+        return set()
+    return langgraph_agent_lines(
+        tree,
+        [(call.node, call.binding.module, call.binding.symbol) for call in calls if call.node is not None],
+    )
 
 
 def _import_evidence(
@@ -969,17 +1006,31 @@ def _import_evidence(
     return found
 
 
-def _call_evidence(language: str, call: _Call, signatures: dict[str, Signature]) -> list[Match]:
-    """Return the evidence of one bound call for each signature its module resolves to."""
+def _call_evidence(
+    language: str,
+    call: _Call,
+    signatures: dict[str, Signature],
+    graph_lines: set[int],
+) -> list[Match]:
+    """Return the evidence of one bound call for each signature its module resolves to.
+
+    ``graph_lines`` holds the StateGraph construction lines that
+    ``_langgraph_agent_lines`` verified as agents.
+    """
     found: list[Match] = []
     symbol = _symbol_tail(call.binding.symbol)
     canonical = symbol + call.arguments
     for signature in signatures.values():
         factory = _FACTORIES.get(signature.id)
         verified = bool(factory and re.fullmatch(factory, symbol))
+        if signature.id == "framework.langgraph" and symbol == "StateGraph":
+            verified = call.line in graph_lines
         if signature.id == "framework.vercel-ai-sdk" and symbol in {"generateText", "streamText"}:
-            # Options belong to a resolved SDK call, not unrelated config.
-            verified = bool(re.search(r"\btools\s*:\s*\{", call.structural_arguments))
+            # A schema alone does not dispatch tools, and toolChoice/activeTools
+            # can explicitly disable them. Preserve SDK usage on unknown shapes.
+            verified = has_executable_vercel_tools(
+                call.arguments, call.structural_arguments, call.tool_factories
+            )
         if (
             signature.category == "provider"
             and _TOOL_REQUEST_METHODS.search(call.binding.symbol)

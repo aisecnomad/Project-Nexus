@@ -20,9 +20,9 @@ one framework in a project), so each group contributes only its strongest
 weight. A project that merely imports `openai` is not the same as a Bedrock
 Agent with a confirmed runtime status.
 
-Confidence is a heuristic evidence score, not a measured probability: the
-weights are authored in signature packs and connectors, not calibrated
-against observed outcomes. The `likelihood` label is derived from it:
+Confidence is a heuristic evidence score, not a calibrated probability of
+agent execution: the weights are authored in signature packs and connectors,
+not fitted to observed outcomes. The `likelihood` label is derived from it:
 
 | Likelihood | Confidence |
 |------------|------------|
@@ -30,6 +30,12 @@ against observed outcomes. The `likelihood` label is derived from it:
 | `likely` | ≥ 0.6 |
 | `possible` | ≥ 0.3 |
 | `weak` | < 0.3 |
+
+Static findings retain framework features supported only by imports or
+dependencies under `metadata.potential_capabilities`. Those features are not
+scored as observed capabilities. Stronger source evidence, such as an agent
+factory or an enabled executable tool definition, can support a capability;
+source evidence still does not prove that the code ran in production.
 
 ## Risk
 

@@ -2,8 +2,8 @@
 
 VS Code settings, dev container definitions, ``tsconfig.json`` and many MCP
 client configurations are JSON with comments and trailing commas. Standard
-JSON must not pay for the lenient path, so :func:`load_json_lenient` tries
-``json.loads`` first and strips comments only after a syntax error.
+JSON must not pay for the lenient path, so :func:`load_json_lenient` tries the
+shared strict decoder first and strips comments only after a syntax error.
 
 Stripping is a single regex pass per stage rather than a Python character
 loop: strings are matched first and returned unchanged, so ``//`` or a comma
@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+
+from shadowscan.utils.safe_json import strict_json_loads
 
 # A string literal, a line comment, a block comment, or an unterminated block
 # comment. Strings come first so comment markers inside them are preserved.
@@ -51,8 +53,14 @@ def strip_json_comments(text: str) -> str:
 
 
 def load_json_lenient(text: str) -> Any:
-    """Parse JSON, tolerating JSONC comments and trailing commas only when needed."""
+    """Parse unambiguous JSON, tolerating comments and trailing commas if needed.
+
+    Duplicate fields and non-finite numeric constants are integrity failures,
+    not syntax extensions. They therefore propagate without being retried via
+    the JSONC path, which must never turn ambiguous repository input into an
+    apparently valid configuration.
+    """
     try:
-        return json.loads(text)
-    except ValueError:
-        return json.loads(strip_json_comments(text))
+        return strict_json_loads(text)
+    except json.JSONDecodeError:
+        return strict_json_loads(strip_json_comments(text))

@@ -11,9 +11,9 @@ name: DCO
 # attacker-controlled author/committer email containing regex metacharacters
 # (for example `.*`) must not make an unrelated, forged Signed-off-by line
 # match.
+# Called from CI on pull requests so the required CI gate includes this result.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, edited]
+  workflow_call:
 
 permissions:
   contents: read
@@ -30,10 +30,29 @@ jobs:
 
       - name: Verify every commit is signed off
         env:
+          EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          if [ "${EVENT_NAME:-}" != "pull_request" ]; then
+            echo "DCO requires pull-request event context" >&2
+            exit 1
+          fi
+          if ! [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || ! [[ "${HEAD_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "DCO requires full lowercase base and head commit SHAs" >&2
+            exit 1
+          fi
+          git cat-file -e "${BASE_SHA}^{commit}"
+          git cat-file -e "${HEAD_SHA}^{commit}"
+          git merge-base "$BASE_SHA" "$HEAD_SHA" >/dev/null
+          # Capture first: failures inside process substitution do not propagate
+          # through the loop, even under set -e, and must never yield success.
+          commits="$(git rev-list "${BASE_SHA}..${HEAD_SHA}")"
+          if [ -z "$commits" ]; then
+            echo "DCO requires a nonempty pull-request commit range" >&2
+            exit 1
+          fi
           missing=0
           while IFS= read -r sha; do
             [ -z "$sha" ] && continue
@@ -60,7 +79,7 @@ jobs:
               echo "::error::Commit $sha is missing a Signed-off-by trailer matching $author_email"
               missing=1
             fi
-          done < <(git rev-list "${BASE_SHA}..${HEAD_SHA}")
+          done <<< "$commits"
           if [ "$missing" -ne 0 ]; then
             echo "One or more commits are not signed off. Rebase with sign-off:" >&2
             echo "  git rebase --signoff ${BASE_SHA}" >&2

@@ -28,6 +28,7 @@ from shadowscan.connectors.common import apply_matches, blob_matches, finalize, 
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import get_path, truncate
 
 
@@ -638,7 +639,7 @@ class WorkatoConnector(_AutomationBase):
         parsed: Any = {}
         if isinstance(code, str) and code.startswith("{"):
             try:
-                parsed = json.loads(code)
+                parsed = strict_json_loads(code)
             except (ValueError, RecursionError):
                 # A corrupt recipe body loses only its trigger attribution.
                 self.ctx.warn("lowcode.workato: recipe code is not valid JSON; trigger coverage incomplete")

@@ -18,7 +18,7 @@ from urllib.parse import quote
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.common import config_boolean, finalize
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -53,8 +53,8 @@ class OktaConnector(BaseConnector):
         elif token:
             headers["Authorization"] = f"SSWS {token}"
         self.http = HttpClient(self.org_url, headers=headers) if self.org_url else None
-        self.include_inactive = bool(ctx.get("include_inactive", False))
-        self.fetch_tokens = bool(ctx.get("fetch_tokens", True))
+        self.include_inactive = config_boolean(ctx.get("include_inactive", False), "include_inactive")
+        self.fetch_tokens = config_boolean(ctx.get("fetch_tokens", True), "fetch_tokens")
 
     def collect(self) -> Iterable[dict[str, Any]]:
         if not self.http or "Authorization" not in self.http.session.headers:

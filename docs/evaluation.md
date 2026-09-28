@@ -8,10 +8,10 @@ scanning enabled. A warning, partial scan, skipped connector, or unstable
 repeated scan stops evaluation instead of counting missing detections as true
 negatives.
 
-The six bundled corpora (synthetic, public, realistic, review, field review and
-independent)
-are regression checks on known inputs. The synthetic, realistic, review and
-public sets were written or selected by the maintainers; the independent corpus
+The seven bundled corpora (synthetic, public, realistic, review, field review,
+attribution and independent) are regression checks on known inputs. The
+synthetic, realistic, review, attribution and public sets were written or selected
+by the maintainers; the independent corpus
 was labeled separately, as described below. None of them is a random or
 representative sample of repositories, so none estimates field precision,
 recall or calibration; see the held-out procedure below for that.
@@ -35,6 +35,9 @@ python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/field_review_corpus.json \
   --output /tmp/nexus-field-review-eval.json
 python -m tools.evaluation.evaluate \
+  --corpus tools/evaluation/attribution_corpus.json \
+  --output /tmp/nexus-attribution-eval.json
+python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/independent_corpus.json \
   --annotations tools/evaluation/independent_annotations.json \
   --output /tmp/nexus-independent-eval.json
@@ -46,16 +49,19 @@ python -m tools.evaluation.benchmark --files 1000 --runs 3 \
 
 Use distinct output filenames: reports are created as private mode `0600` files
 and will not overwrite existing ones. Exit 0 means all labels and structural
-assertions passed, or that every failing case carries `known_gap: true`; exit 1
-means at least one regression on a case without that flag; exit 2 means an
-invalid corpus, incomplete scan, nondeterministic observations, or output
-error. A `known_gap` case is a documented miss or false positive. It stays in
-the metrics, so precision and recall report the scanner as it is, and the
-report's `known_gaps` section lists the flagged count, the flagged cases that
-still fail, the flagged cases that now pass (remove the flag so they guard
-against regression) and any unflagged regressions. The flag is never a reason
-to change the scanner to fit a case; the case description records why the
-scanner gets it wrong. Pin the
+assertions passed, or that every failing case carries `known_gap: true` within
+the corpus's valid waiver budget; exit 1 means at least one unwaived regression,
+an over-budget or expired waiver, or a stale waiver whose case now passes; exit
+2 means an invalid corpus, incomplete scan, nondeterministic observations, or
+output error. A corpus containing a `known_gap` must declare
+`known_gap_policy.max_count` and `known_gap_policy.expires_on`. The evaluator
+rejects a missing or expired policy and fails when the number of flags exceeds
+the cap. A `known_gap` case is a temporary, documented miss or false positive.
+It stays in the metrics, so precision and recall report the scanner as it is,
+and the report's `known_gaps` section lists the flagged count, cases that still
+fail, stale flags and unflagged regressions. The flag is never a reason to
+change the scanner to fit a case; the case description records why the scanner
+gets it wrong. Pin the
 scanner commit, signature pack, corpus SHA-256 (included in each report), Python
 version and platform beside the report before comparing runs. Timing includes
 connector analysis only; fixture creation, index loading and report writing
@@ -79,6 +85,15 @@ written to exercise one rule, so the scanner is expected to score 1.0 on them;
 that score means "no regression on the rules we already know about", not
 "accurate on real repositories". Its precision/recall values are **synthetic
 regression scores**, not independently measured field accuracy.
+
+The September 27 classification correction keeps the original generic
+StateGraph and schema-only Vercel examples as negative agent cases, and adds
+actual agent factories and executable-tool examples as positives. New negatives
+cover generic CrewAI Flow and disabled tools. These 77 authored cases (29
+positives, 48 negatives) describe the intended boundary; they are not a new
+holdout. The frozen public, realistic and independently AI-labeled sources and
+labels are unchanged. Review capabilities separately from binary agent labels:
+an available framework feature is not an observed workload capability.
 
 Source masking is a bounded lexical filter. Ruby `%q` strings with supported
 delimiters are masked; `%Q` interpolation and unterminated percent strings mark
@@ -115,21 +130,36 @@ promotes to an agent through C# code patterns for `Kernel.CreateBuilder()`,
 invocation, and a Flask view defined as `def create_agent():` no longer matches
 the LangChain `create_agent(` call pattern. At the time of writing the scanner
 scores 13 TP, 1 FP, 2 FN and 15 TN on it (precision 0.93, recall 0.87,
-specificity 0.94). The three failures carry `known_gap: true` and explain the
-cause in their description: the runbook's illustrative `sk-proj-` value is
+specificity 0.94). Three failures of the binary target carry `known_gap: true` and explain the
+cause in their description: the runbook's illustrative provider-shaped value is
 reported as a hardcoded credential because it is well formed and high entropy,
 a finding a secret scanner cannot rule out from the surrounding prose; and the
 OpenAI tool-calling script and the LiteLLM proxy worker are reported as LLM
 usage rather than agents because generic loops and subprocess idioms cannot
 confirm an agent without corroborating framework evidence, a deliberate
-precision rule documented in docs/scanning.md. Passing cases also show attribution noise that the
-binary target does not penalise: Java `@Tool(` is credited to LangChain4j next
-to Spring AI, `new Agent({ name:` is credited to Mastra next to the OpenAI
-Agents SDK, `docker-compose.yml` files raise a container workload infra
-finding, and the CrewAI `agents.yaml` model names add an Azure OpenAI
-provider. Like the other corpora, this one is author-written: the authors
-chose the frameworks, the file layouts and the distractors, so its rates
-describe these 31 cases only and are not a field precision estimate.
+precision rule documented in docs/scanning.md. Binary-correct cases can still
+contain off-target findings or vendor attribution. The separate authored
+attribution suite below checks those aspects. Like the other corpora, this one
+is author-written: the authors chose the frameworks, the file layouts and the
+distractors, so its rates describe these 31 cases only and are not a field
+precision estimate.
+
+`tools/evaluation/attribution_corpus.json` contains nine short, handwritten
+source cases without credential examples: a generic LangGraph graph
+construction that is framework usage rather than an agent, a LangGraph agent
+with an OpenAI model, an OpenAI Agents SDK agent, a framework dependency without
+an agent, Spring AI tool methods, an n8n workflow and Compose service, an
+ordinary insurance assignment service, an MCP config and a Bedrock agent
+definition. Each selected case checks expected and forbidden finding
+kind/product/provider combinations; all nine also declare an `exact_findings`
+list to compare the full emitted finding multiset. The binary target currently
+scores six TP and three TN, while one binary-correct case fails attribution
+checks: Docker Compose beside an n8n workflow is also credited to Kubernetes
+agent workloads. That case has explicit `known_gap: true` under the corpus's
+bounded `known_gap_policy`, remains in the case and assertion counts, and is
+listed as a failing gap. Eight of nine exact finding sets pass. These are
+intentionally selected development fixtures; their scores do not measure field
+error rates or human-labeled vendor accuracy.
 `field_review_corpus.json` holds eight synthetic cases written after a field
 review of public repositories: an aiohttp client, a UI component named
 `AgentCard` and a call-center `invoke_agent` function as hard negatives, and
@@ -181,15 +211,57 @@ scanner version and runtime; retain the reviewed source commit and CI run
 alongside them. [Assurance results](assurance-results.md) preserve the first
 observations and subsequent regression results.
 
-Metrics use **one binary target per case**, selected by finding kind and optional
+Binary metrics use **one target per case**, selected by finding kind and optional
 signature ID. The family name `all` is reserved for aggregate metrics and cannot
 be used as a case's family. `TP` means the target is present in the case and detected; `FP`
 means absent but detected; `FN` means present and missed; `TN` means absent and
 not detected. Precision is `TP/(TP+FP)`, recall is `TP/(TP+FN)`, specificity
 is `TN/(TN+FP)`. Undefined denominators are JSON `null`. Additional assertions
-(`max_agent_findings`, `max_secret_findings`, `server_count`, `server_names`)
-appear separately as `assertion_failures` and cause a failing exit even if
-target classification matches, unless the case is a flagged known gap. A finding's displayed confidence is a heuristic
+(`max_agent_findings`, `max_secret_findings`, `server_count`, `server_names`,
+`forbidden_signatures`) appear separately as `assertion_failures` and cause a
+failing exit even if target classification matches, unless the case is a valid,
+unexpired known gap. `forbidden_signatures` guards attribution independently of
+the binary target—for example, detecting Spring AI must not silently add a
+LangChain4j attribution.
+
+`assertions.expected_findings` and `assertions.forbidden_findings` each accept
+up to 20 selectors. A selector has `kind` and may include `product_signature`
+and `provider_signature`. The product signature matches the scanner finding's
+`frameworks` field (which also contains platform, cloud and protocol IDs),
+while the provider signature matches only its `model_providers` field. When both
+are specified, they must occur **on the same finding**. For example:
+
+```json
+{
+  "assertions": {
+    "expected_findings": [
+      {"kind": "agent", "product_signature": "framework.langgraph", "provider_signature": "provider.openai"}
+    ],
+    "forbidden_findings": [
+      {"kind": "agent", "product_signature": "framework.langchain4j"},
+      {"kind": "infra"}
+    ]
+  }
+}
+```
+
+Selectors cover **only** the listed assertions; an unexpected unlisted
+finding can still pass. Opt into `assertions.exact_findings` for exhaustive
+checks with up to 20 expected findings, each listing `kind`, the complete
+`product_signatures` array and the complete `provider_signatures` array.
+Use `[]` to assert that no findings at all are emitted. The list is compared
+as a multiset, so extra or duplicate findings and extra attribution IDs fail.
+It does not compare finding locations, metadata, evidence, confidence, or
+runtime execution. The report has per-case `finding_checks` and
+`exact_finding_set` results and an aggregate `finding_assertions` section with
+both case coverage and pass/fail counts. Product and provider counters can
+overlap; they must not be treated as independent samples. No selectors or
+exact finding sets were added to the frozen independent corpus, whose reviewers
+labeled only the primary binary target. A future human-labeled holdout must
+predeclare and review any added kind and attribution labels **before** scanning;
+the current annotation ledger validates only the binary `present` decisions.
+
+A finding's displayed confidence is a heuristic
 score, not an estimated probability. The report's Brier/ECE proxies use the
 maximum target finding confidence or zero for absence, and reliability bins;
 the tiny selected sample does not calibrate that score.
@@ -217,7 +289,9 @@ the tiny selected sample does not calibrate that score.
    separate offline scan and a repository-level annotation protocol. Keep the
    source and labels access controlled; the JSON report never prints file
    content or evidence snippets but may contain finding signature IDs and MCP
-   server names.
+   server names. If evaluating kind and attribution, freeze those labels and
+   their source-based reasons separately before scanning; the supplied two-vote
+   annotation ledger currently verifies the primary binary target only.
 4. Freeze the holdout before tuning. Report counts and precision/recall with
    confidence intervals and sample sizes by language, framework and kind;
    inspect each false positive and false negative. For confidence calibration,
@@ -297,7 +371,7 @@ restricted release record. Changing labels, exclusions, scanner signatures or
 sampling after seeing results requires a new blinded holdout and reviewed policy.
 
 The standalone command requires declared human labels, rejects known-gap waivers
-and exact source reuse from the six bundled evaluated corpora. It cannot find
+and exact source reuse from the seven bundled evaluated corpora. It cannot find
 undisclosed private prior evaluations or near duplicates. For a production
 rollout, run [`tools.acceptance.verify`](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) with
 declared `prior_corpora` and the separately reviewed tenant canary evidence.

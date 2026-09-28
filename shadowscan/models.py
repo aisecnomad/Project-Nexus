@@ -630,7 +630,9 @@ class ScanResult:
         }
 
     def to_json(self, indent: int | None = 2) -> str:
-        return json.dumps(self.to_dict(), indent=indent, default=str)
+        # RFC 8259 JSON has no representation for NaN or infinity.  Refuse to
+        # publish a report that downstream controls would parse inconsistently.
+        return json.dumps(self.to_dict(), indent=indent, default=str, allow_nan=False)
 
 
 def now_iso() -> str:

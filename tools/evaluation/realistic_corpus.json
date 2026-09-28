@@ -3,7 +3,11 @@
   "metadata": {
     "name": "Project Nexus realistic multi-file repository cases",
     "type": "synthetic",
-    "provenance": "Handwritten multi-file repository snapshots written from scratch by the maintainers to resemble real projects; no copied third party code, no live repositories, no independently adjudicated field sample"
+    "provenance": "Handwritten multi-file repository snapshots written from scratch by the maintainers to resemble real projects; no copied third party code, no live repositories, no independently adjudicated field sample",
+    "known_gap_policy": {
+      "max_count": 3,
+      "expires_on": "2026-12-31"
+    }
   },
   "cases": [
     {
@@ -199,7 +203,12 @@
         "kind": "agent",
         "signature": "framework.spring-ai"
       },
-      "present": true
+      "present": true,
+      "assertions": {
+        "forbidden_signatures": [
+          "framework.langchain4j"
+        ]
+      }
     },
     {
       "id": "python-openai-tool-loop-script",
@@ -288,7 +297,12 @@
         "kind": "agent",
         "signature": "framework.openai-agents-sdk"
       },
-      "present": true
+      "present": true,
+      "assertions": {
+        "forbidden_signatures": [
+          "framework.mastra"
+        ]
+      }
     },
     {
       "id": "flask-insurance-agents-crud",

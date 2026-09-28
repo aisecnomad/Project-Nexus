@@ -106,6 +106,16 @@ An org or user listing entry whose `full_name` is not a plain `owner/name`
 that makes the scan incomplete; that repository is never requested or cloned.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
+`clone_max_bytes` (default 256 MiB) first checks the provider's repository
+size estimate. During an eligible clone, it also measures the clone directory
+(including `.git`) and stops Git and its transport processes if the observed
+logical or allocated size exceeds the cap. It measures again after Git exits,
+before scanning. A size limit, unreadable clone directory, or more than 100,000
+entries triggers incomplete sampled API fallback; partial clone files are
+removed. Directory symlinks are not followed during measurement. Checks occur
+between Git writes, so brief overshoot is possible, and this is not a network
+transfer limit. Use a dedicated filesystem/container disk quota to enforce a
+strict disk ceiling; `clone_timeout_seconds` (default 120) bounds clone time.
 
 ### `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
@@ -121,6 +131,9 @@ input with no clone directories, make the scan incomplete.
 A group listing entry whose project `id` is not a positive integer is an error
 that makes the scan incomplete; that project is skipped before any request is
 made for it, and the other projects in the listing are still scanned.
+GitLab clones use the same observed `clone_max_bytes` and timeout behavior as
+GitHub clones above. GitLab's reported size is a preflight estimate in bytes;
+it does not replace a filesystem/container disk quota.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

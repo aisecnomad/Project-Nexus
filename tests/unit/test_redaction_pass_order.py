@@ -6,7 +6,8 @@ read: a value withheld together with the name, tag or scheme glued after it
 hid that context from the pass that withholds by it, and the credential
 behind it reached reports. The established passes therefore run first,
 exactly as before the rules were added, and the added passes read what they
-leave; ``sanitize`` runs its structured rules in the same two steps.
+leave; ``sanitize`` runs its structured rules in the same two steps, then
+removes the leaves nested in a withheld credential container last.
 
 The forms below are shrunk from a differential fuzz run. The established
 rules (bd16bd6) withhold each secret; the first fix round (94a52e2) showed it.
@@ -14,10 +15,15 @@ rules (bd16bd6) withhold each secret; the first fix round (94a52e2) showed it.
 
 from __future__ import annotations
 
+import json
 import random
+from typing import Any
 
 import pytest
 
+from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.engine import Engine
+from shadowscan.reporters import RENDERERS
 from shadowscan.utils import redaction
 from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
 
@@ -193,3 +199,146 @@ def test_structured_fields_withhold_what_the_established_rules_withhold(source):
     for short in (False, True):
         safe = sanitize({"excerpt": source, "items": [source]}, redact_short_secrets=short)
         assert SECRET not in repr(safe)
+
+
+# The leaves nested in a credential container that clean withholds whole are
+# credentials too, so their copies in other fields are removed. Such a leaf
+# can also be what another rule reads to withhold the value beside it: an
+# option name, a setting or record name, a tag, a command word. Removed in
+# the established pass, it hid that context from the added rules and the
+# value was shown (the merge of the nested discovery into bd4c8b3's passes).
+# The nested pass runs last, so it only adds markers.
+NESTED_VALUE = "0275d100d8d5d2092c3ca3fef21a7028"
+NESTED_CONTEXT: dict[str, tuple[dict[str, Any], str, str]] = {
+    "argv-min": (
+        {
+            "private_key": ["--webhook_secret", "a2a5c2a6c6bf1cd9c187d443bf208c0d"],
+            "args": ["--webhook_secret", NESTED_VALUE],
+        },
+        NESTED_VALUE,
+        "--webhook_secret",
+    ),
+    "argv-dict": (
+        {"api_key": {"flag": "--webhook_secret"}, "args": ["--webhook_secret", NESTED_VALUE]},
+        NESTED_VALUE,
+        "--webhook_secret",
+    ),
+    "cmd-string": (
+        {"secret": ["--webhook_secret"], "cmd": f"tool --webhook_secret {NESTED_VALUE}"},
+        NESTED_VALUE,
+        "--webhook_secret",
+    ),
+    "record": (
+        {"secret": ["PASSWORD_1"], "settings": [{"name": "PASSWORD_1", "value": "Hunter2Xyz77"}]},
+        "Hunter2Xyz77",
+        "PASSWORD_1",
+    ),
+    "xml": (
+        {"token": ["ConnectionPassword"], "doc": "<ConnectionPassword>Hunter2Xyz77</ConnectionPassword>"},
+        "Hunter2Xyz77",
+        "ConnectionPassword",
+    ),
+    "usersecrets": (
+        {"token": ["user-secrets"], "cmd": 'dotnet user-secrets set "Api:Key" "Hunter2Xyz77abc"'},
+        "Hunter2Xyz77abc",
+        "user-secrets",
+    ),
+}
+
+
+def _strings(value: Any) -> list[str]:
+    """Every key and string of a sanitized copy, in order."""
+    if isinstance(value, dict):
+        return [text for key, child in value.items() for text in (key, *_strings(child))]
+    if isinstance(value, (list, tuple)):
+        return [text for child in value for text in _strings(child)]
+    return [value] if isinstance(value, str) else []
+
+
+def _two_passes(value: Any, monkeypatch: pytest.MonkeyPatch, *, short: bool) -> Any:
+    """What the established and extended passes leave: ``sanitize`` with no nested leaf known."""
+    with monkeypatch.context() as patch:
+        patch.setattr(redaction._NestedSanitizer, "discover", lambda self, item, *args, **kwargs: None)
+        return sanitize(value, redact_short_secrets=short)
+
+
+@pytest.mark.parametrize("case", sorted(NESTED_CONTEXT))
+def test_a_nested_credential_leaf_never_hides_the_context_of_a_value(case, monkeypatch):
+    value, secret, leaf = NESTED_CONTEXT[case]
+    for short in (False, True):
+        safe = sanitize(value, redact_short_secrets=short)
+        assert secret not in repr(safe), short
+        # The leaf is withheld from every other field as well.
+        assert leaf not in repr(safe), short
+        assert sanitize(safe, redact_short_secrets=short) == safe
+        before = _strings(_two_passes(value, monkeypatch, short=short))
+        after = _strings(safe)
+        assert len(before) == len(after)
+        assert all(_only_adds_markers(old, new) for old, new in zip(before, after, strict=True)), short
+
+
+def test_a_nested_option_name_never_reveals_its_value_in_any_report(tmp_path, index):
+    server = {
+        "command": "npx",
+        "args": ["-y", "hook-server", "--webhook_secret", NESTED_VALUE],
+        "env": {"API_TOKEN": ["--webhook_secret"]},
+    }
+    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"hooks": server}}), encoding="utf-8")
+    spec = ConnectorSpec("code.filesystem", {"path": str(tmp_path), "use_git": False})
+    result = Engine(ScanConfig(connectors=[spec]), index).run()
+    assert result.complete, [error for stats in result.stats for error in stats.errors]
+    for name, render in RENDERERS.items():
+        assert NESTED_VALUE not in render(result), name
+    (finding,) = json.loads(RENDERERS["json"](result))["findings"]
+    assert finding["metadata"]["servers"][0]["args"] == ["-y", "hook-server", REDACTED, REDACTED]
+
+
+NESTED_SECRET = "opaque-nested-test-credential-271828"
+
+
+@pytest.mark.parametrize(
+    "container",
+    [
+        # A record named by the added rules withholds its value whole.
+        {"settings": [{"name": "OpenAI:Secret", "value": {"key": NESTED_SECRET}}]},
+        # So does a record's value under any casing.
+        {"settings": [{"name": "password", "VALUE": {"key": NESTED_SECRET}}]},
+        {"settings": [{"name": "password", "VALUE": NESTED_SECRET}]},
+        # A known value the text passes withheld only in part.
+        {"credentials": {"value": f"prefix sk-proj-{'x' * 40} {NESTED_SECRET}"}},
+    ],
+)
+def test_the_nested_pass_removes_what_the_first_two_leave_of_a_leaf(container):
+    note = f"prefix sk-proj-{'x' * 40} {NESTED_SECRET} rejected"
+    for short in (False, True):
+        safe = sanitize({**container, "note": note}, redact_short_secrets=short)
+        assert NESTED_SECRET not in repr(safe), short
+        assert safe["note"].endswith(f"{REDACTED} rejected"), short
+
+
+def test_a_short_nested_leaf_is_not_found_inside_a_marker():
+    # 'ACT' occurs in the marker the established pass left in the note, not
+    # in the note itself; a field that does contain it is withheld.
+    value = {"credentials": {"tier": "ACT"}, "note": "token=abc123xyz789", "other": "ACTIVE"}
+    assert sanitize(value) == {"credentials": REDACTED, "note": f"token={REDACTED}", "other": REDACTED}
+
+
+def test_a_value_without_a_credential_container_is_left_to_the_first_two_passes(monkeypatch):
+    # A record's value the established pass knew is not known again: it is
+    # already removed from every field. An 'id' names a key's identity.
+    def fail(self: object, item: Any, depth: int = 0) -> Any:
+        raise AssertionError("the nested pass copied a value it has nothing to remove from")
+
+    monkeypatch.setattr(redaction._NestedSanitizer, "clean", fail)
+    value = {
+        "password": "Hunter2Xyz77",
+        "args": ["--key", "a8f3c91d7e2b4f6a9d0c", "--token", NESTED_VALUE],
+        "settings": [{"name": "PASSWORD", "value": "b7e2c4d6f8a0b2c4d6e8"}],
+        "env": {"API_TOKEN": "c9d1e3f5a7b9c1d3e5f7"},
+        "api_key": {"id": "k"},
+        "note": f"token={NESTED_VALUE}",
+    }
+    for short in (False, True):
+        safe = sanitize(value, redact_short_secrets=short)
+        assert NESTED_VALUE not in repr(safe)
+        assert safe["api_key"] == REDACTED

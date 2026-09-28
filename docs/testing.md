@@ -1,0 +1,122 @@
+# Testing guide
+
+This page describes how to set up a reproducible development environment and
+run ShadowScan's test suites the way CI does. The gates themselves are defined
+in the [contributor guide](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#quality-gates);
+this page is the practical companion.
+
+## Environment
+
+ShadowScan supports CPython 3.11, 3.12 and 3.13 on Linux and macOS. On Windows
+use WSL: the confined file reader needs `O_NOFOLLOW` and `dir_fd`, and the
+Makefile assumes `/tmp` and a `.venv/bin` layout.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+make install          # hash-locked runtime, cloud, development and docs sets
+pre-commit install    # optional: run the lint, format and secret hooks on commit
+```
+
+`make install` installs `requirements-ci.lock`, `requirements.lock` and
+`requirements-docs.lock` under `--require-hashes --only-binary=:all:` and then
+the scanner itself in editable mode. `make install-dev` installs only the
+hash-locked core and development set, which is enough for lint, typing and the
+offline suite but leaves the cloud SDK code paths unexercised. Do not work
+around a hash mismatch: a lock that no longer installs is a signal to review,
+not to bypass.
+
+The development set already includes the `types-PyYAML` and `types-requests`
+stubs that `mypy` needs. The third-party packages that ship neither stubs nor
+a `py.typed` marker (`regex`, `boto3`, `botocore` and `oci`) are the only
+modules `pyproject.toml` allows to be imported untyped.
+
+## Run one test
+
+```bash
+python -m pytest -q tests/unit/test_signatures.py::test_all_signatures_load_and_validate
+```
+
+This loads and validates the bundled signature packs and needs no credentials.
+A single passing test says nothing about the rest of the suite.
+
+## The full suite
+
+Every test is offline. Connector tests use fixtures under `tests/fixtures/` and
+stubbed transports; nothing contacts a tenant, a cloud API or the network, and
+no test needs credentials. The `tests/test_canaries.py` cases exercise the
+canary tool against replay fixtures only; live canaries are a separate,
+operator-run procedure described in [Tenant canaries](canaries.md).
+
+```bash
+make test-fast      # stop at the first failure, no coverage
+make test           # full suite with the 80% aggregate coverage floor
+make coverage-gate  # 75% per-connector floor; run after make test
+```
+
+`make coverage-gate` exports the coverage data recorded by the preceding
+`make test`. The per-connector floor needs the cloud SDKs installed, so run it
+after `make install` rather than `make install-dev`.
+
+Useful pytest patterns:
+
+```bash
+python -m pytest -q tests/unit -k gateway      # tests whose id mentions gateway
+python -m pytest -q -x --tb=short              # stop early, short tracebacks
+python -m pytest -q --co tests/unit | head     # list collected tests
+```
+
+## Other gates
+
+```bash
+make lint            # ruff check
+make format-check    # ruff format --check
+make typecheck       # mypy on the scanner and tools
+make signatures      # signature schema and regex validation
+make audit           # pip-audit on the installed environment
+make evaluate        # every bundled detection corpus
+make policy          # workflow, issue-form and repository consistency checks
+make check           # all of the above, in order
+```
+
+`make evaluate` runs each corpus under `tools/evaluation/`; a corpus fails on
+an unwaived regression, an over-budget or expired known-gap waiver, or a waived
+case that now passes. See [Evaluation](evaluation.md) for the report format.
+`make policy` runs `tests/test_repository_policy.py` and
+`tests/test_repository_consistency.py`, which check action pins, permissions,
+Markdown links and heading anchors, and that the Makefile, hooks and locks
+match CI. Run it whenever you touch `.github/`, a top-level document or a docs
+page; `make docs` builds the site with `mkdocs build --strict` and catches the
+rest.
+
+## What CI runs
+
+The [CI workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/ci.yml)
+runs the same commands on Linux for Python 3.11, 3.12 and 3.13 and on macOS for
+3.11 and 3.13, installs the hash-locked dependency sets, audits every lock,
+builds and validates the wheel outside the checkout, and on Python 3.13 builds
+and smoke-tests the container image. The `CI gate` job requires every job,
+including DCO on pull requests, to succeed. [CI integration](operations/ci.md)
+describes running the scanner itself inside a pipeline.
+
+## Troubleshooting
+
+- **`ModuleNotFoundError` for a cloud SDK, or a skipped SDK test:** the
+  environment came from `make install-dev`. Run `make install`.
+- **`policy input must not traverse symbolic links` or `scan root must not
+  traverse a symbolic link`:** the scanner refuses symlinked input paths by
+  design. Pass a resolved path; the evaluation, benchmark, canary and
+  acceptance tools already resolve the temporary directories they create,
+  which matters on macOS, where `/tmp` and `/var` are symbolic links.
+- **The Unix-socket report test skips:** some sandboxes forbid `AF_UNIX`
+  sockets and the test skips on `EPERM`. Hosted CI runs it.
+- **`ValueError: current limit exceeds maximum limit` from `resource`:** the
+  bounded-YAML subprocess check falls back from `RLIMIT_AS` to `RLIMIT_DATA`;
+  report a platform where neither applies.
+- **Coverage below a floor:** `python -m coverage report --skip-empty` shows
+  the missing lines. Add offline tests rather than lowering the floor.
+
+Bug fixes need a regression test, and connector changes need offline fixtures
+and documentation, as the
+[pull request requirements](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#pull-requests)
+describe.

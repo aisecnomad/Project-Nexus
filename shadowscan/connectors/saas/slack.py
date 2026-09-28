@@ -35,7 +35,10 @@ class _SlackExport:
         self.record_teams: set[str] = set()
         self.invalid_scope = False
         self.bots: dict[str, dict[str, Any]] = {}
+        self.conflicting_bots: set[str] = set()
         self.apps: dict[str, dict[str, Any]] = {}
+        self.app_records: dict[str, dict[str, Any]] = {}
+        self.conflicting_apps: set[str] = set()
         self.logs: dict[str, list[dict[str, Any]]] = {}
         self.requests: list[dict[str, Any]] = []
 
@@ -203,8 +206,13 @@ class SlackConnector(BaseConnector):
         team_id, scope_source = workspace
         team_name = export.teams.get(team_id)
         bots, logs = export.bots, export.logs
-        seen: set[str] = set()
+        conflicting_apps, conflicting_bots = export.conflicting_apps, export.conflicting_bots
+        # A conflicting identity is withheld entirely: neither snapshot may
+        # describe the app, nor may its bot record stand in for it.
+        seen: set[str] = set(conflicting_apps)
         for app_id, entry in export.apps.items():
+            if app_id in conflicting_apps:
+                continue
             self.ctx.examined()
             seen.add(app_id)
             f = self._app_finding(
@@ -212,7 +220,7 @@ class SlackConnector(BaseConnector):
                 entry["app"],
                 entry["scopes"],
                 entry["status"],
-                bots.get(app_id),
+                None if app_id in conflicting_bots else bots.get(app_id),
                 logs.get(app_id, []),
                 team_id,
             )
@@ -220,7 +228,7 @@ class SlackConnector(BaseConnector):
                 f.metadata.update(workspace_name=team_name, workspace_scope_source=scope_source)
                 yield f
         for app_id, bot in bots.items():
-            if app_id in seen:
+            if app_id in seen or app_id in conflicting_bots:
                 continue
             self.ctx.examined()
             app = {
@@ -270,12 +278,26 @@ class SlackConnector(BaseConnector):
                 export.teams[rec["id"]] = rec.get("name") or rec.get("domain")
             elif kind == "bot_user":
                 app_id = get_path(rec, "profile.api_app_id") or rec.get("id")
-                export.bots[str(app_id)] = rec
+                app_key = str(app_id)
+                existing = export.bots.get(app_key)
+                if existing is None:
+                    export.bots[app_key] = rec
+                elif existing != rec and app_key not in export.conflicting_bots:
+                    export.conflicting_bots.add(app_key)
+                    self.ctx.warn("saas.slack: conflicting bot records; app identity coverage incomplete")
             elif kind in {"approved_app", "restricted_app"}:
                 app = rec.get("app") or rec
                 app_id = app.get("id") or app.get("app_id")
+                app_key = str(app_id)
+                previous = export.app_records.get(app_key)
+                if previous is not None:
+                    if previous != rec and app_key not in export.conflicting_apps:
+                        export.conflicting_apps.add(app_key)
+                        self.ctx.warn("saas.slack: conflicting app records; app identity coverage incomplete")
+                    continue
+                export.app_records[app_key] = rec
                 entry = export.apps.setdefault(
-                    str(app_id),
+                    app_key,
                     {
                         "app": app,
                         "scopes": [],

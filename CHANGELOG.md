@@ -63,6 +63,12 @@ Behavior changes to review before upgrading (see
     export files below a traverse-only directory (mode `0711`) now open:
     directories are opened for traversal only (`O_PATH` on Linux), not for
     reading.
+  - An unrendered Helm, Jinja or Go-template YAML file, whose placeholders
+    read as mapping keys (`image: {{ .Values.image }}`) or whose conditional
+    branches repeat a field, no longer reports `structured parsing incomplete
+    (YAMLIntegrityError)`. Such a file is not YAML until rendered, so its
+    excerpts use lexical redaction, as for any template the YAML parser
+    rejects. Plain YAML with duplicate or non-finite data still fails closed.
 - **Report redaction** withholds more credential forms, in excerpts and in
   structured connector metadata. Expect more `[REDACTED]` markers:
   - string literals passed to credential constructors, helpers and factories
@@ -118,10 +124,12 @@ Behavior changes to review before upgrading (see
   command-line options is withheld from its 17th option on.
 - **Finding identity:** IDs are computed from sanitized resource fields, so
   an ID changes only where such a field held a value that is now withheld.
-  The demo, the sample repository and every evaluation corpus keep their
-  findings and IDs. The redaction policy token changed, so findings verified
-  clean under the old rules are sanitized again. Report sanitization takes
-  about 28% longer (11 s to 14 s for 19 MB of library source).
+  These redaction rules leave the findings and IDs of the demo, the sample
+  repository and every evaluation corpus unchanged; the classification
+  corrections of September 27 below can still change findings. The redaction
+  policy token changed, so findings verified clean under the old rules are
+  sanitized again. Report sanitization takes about 28% longer (11 s to 14 s
+  for 19 MB of library source).
 - **Reports:**
   - CSV also inserts the `'` marker after a `,`, `;`, tab, `|` or line break
     inside a value when a formula could start there (OWASP CSV injection), so
@@ -158,9 +166,19 @@ Development:
 - ruff enforces line length (E501, 110 columns) outside `tests/` and
   loop-variable capture in closures (B023) everywhere. mypy requires
   annotated definitions (`disallow_untyped_defs`) and reports unused
-  `type: ignore` comments (`warn_unused_ignores`).
+  `type: ignore` comments (`warn_unused_ignores`). Only `regex`, `boto3`,
+  `botocore` and `oci`, which ship neither stubs nor a `py.typed` marker, may
+  be imported untyped.
 - Unit tests live in files named after the module or feature they exercise,
   not the review round that added them; test bodies are unchanged.
+- The evaluation, benchmark, canary and acceptance tools resolve the temporary
+  directories they create before handing paths to the scanner, so they pass on
+  macOS, where `/var` and `/tmp` are links into `/private`. The symbolic-link
+  checks on untrusted input are unchanged.
+- `docs/testing.md` describes the development environment, the offline suite
+  and every `make` gate CI runs. `docs/maintainer-onboarding.md` is a reviewer
+  and co-maintainer checklist, and `GOVERNANCE.md` has reviewer,
+  co-maintainer and offboarding sections.
 - `code.github` and `code.gitlab` share one implementation
   (`shadowscan/connectors/code/remote.py`), and the four cloud connectors
   share one offline-record dispatcher and audit-caller aggregator. New
@@ -175,6 +193,90 @@ Development:
   confidence and risk formulas, and `docs/concepts/risk.md` matches the
   code. The cloud connector guide lists each connector's offline `_kind`
   values, and the architecture guide the engine hooks.
+
+### September 27 review follow-up
+
+- Opaque values nested under a sensitive credential container are now remembered
+  before that container is redacted. Repeated values in sibling report fields
+  and optional record exports are redacted too; descriptive provider and status
+  fields remain available. Report and export regressions cover the boundary.
+- GitHub and GitLab clones now check observed local checkout size during the
+  clone and after Git exits, in addition to the provider size preflight. A
+  measurement failure or exceeded cap stops the Git process group and leaves
+  the scan incomplete with sampled API fallback. Sampling may overshoot and
+  does not limit network bytes; use a worker disk quota for a hard ceiling.
+- The evaluation runner supports explicit checks for expected and forbidden
+  finding kinds, product signatures and model providers, with counts separated
+  from the one-target binary accuracy result. Selected authored cases now
+  guard against attribution noise; they do not establish field accuracy.
+- Contributor and governance guidance now describes the configured pull-request
+  approval and required-status rules, with dated observations of their changing
+  enforcement state. The dated assurance report identifies its historical corpus
+  count separately from the current corpus.
+
+### September 27 review corrections
+
+- Offline exports, approval inventories, imported reports, repository manifests,
+  notebooks, agent/MCP configuration and other scanned JSON, JSONC and YAML
+  reject duplicate or non-finite data. Rejected input makes collection
+  incomplete instead of establishing absence; valid neighboring evidence is
+  still retained.
+- Structured projections reject conflicting schema aliases; CSV headers reject
+  case-folded collisions; and conflicting provider records for the same logical
+  Teams, Slack, Entra, Power Platform or Salesforce identity are quarantined
+  without discarding valid neighbors. Azure pagination likewise refuses
+  disagreeing continuation aliases.
+- Generic graph and flow construction no longer establishes an agent by itself.
+  Disabled, empty or schema-only tool options do not establish model-directed
+  action execution. Source capabilities require corresponding evidence rather
+  than inheriting every feature of an imported framework.
+- CI exposes a single `CI gate` covering documentation, every supported Python
+  version, the container checks, and DCO on pull requests. The repository ruleset
+  must require that check; workflow code alone does not configure branch rules.
+- Size-scaled source matching gives files near a 256 KiB budget boundary the
+  next bounded time slice, avoiding scheduler-sensitive false incompleteness
+  without weakening the fail-closed timeout behavior.
+- The Python distribution is now `project-nexus-shadowscan` to distinguish it
+  from the unrelated PyPI package. The `shadowscan` command, import namespace,
+  entry-point group and report schemas retain their names. No package is
+  published or namespace reserved by this change.
+- Built-in connector options now use one fail-closed schema for YAML and
+  programmatic configuration. Boolean aliases are normalized explicitly,
+  ambiguous values and unknown/reserved built-in keys are rejected, later
+  mutations and nested risk policy are revalidated before collection, and
+  plugin-owned configuration stays schema-opaque while still rejecting cycles,
+  excessive nesting and non-finite values.
+  Configured inventory is reloaded on every run so the first execution cannot
+  reuse an approval snapshot captured during engine construction.
+- Shared JSON input rejects duplicate keys and non-finite values. JSON and
+  SARIF publication refuses `NaN`/infinities. HTML/CSV sent to a terminal makes
+  control and bidirectional-formatting characters visible, while explicit
+  output files retain their serialized values. Reporter boundaries sanitize
+  copied diagnostics, tolerate malformed related-finding metadata and preserve
+  valid SARIF paths without treating provider resources as source locations.
+- Incremental cache work now observes connector cancellation/deadlines, refuses
+  `.git` indirection for Git-aware reuse, binds fingerprints to runtime/parser/
+  Git versions, bounds tree traversal, and applies TTL, aggregate size/count,
+  deterministic eviction and stale-pending/orphan-lock cleanup policies. Startup
+  maintenance has a fixed two-second monotonic budget and disables reuse for the
+  run when it expires. Lock acquisition verifies pathname identity after `flock`
+  so cleanup cannot split one cache slot across stale and replacement lock inodes.
+- Google Workspace domain-wide delegation strictly parses service-account JSON
+  and pins both the signed assertion audience and token exchange to Google's
+  HTTPS token endpoint; a key file cannot redirect the assertion.
+- CI core/development tooling is now exact-versioned and SHA-256 hash-locked on
+  Linux and macOS. All runtime, build, CI and documentation locks are audited.
+  Pre-commit repositories use immutable commit SHAs and their additional type
+  stubs are exact-pinned. Supported Python is explicitly 3.11 through 3.13.
+- Release evidence now refuses a dirty checkout, builds from a clean archive,
+  and assembles the exact attested wheel and bundles as a non-publishing
+  `release-publication-input-<SHA>` artifact. The runtime SBOM remains a Python
+  dependency SBOM, not a container/operating-system SBOM; no hermetic apt or
+  package-index publication claim is made.
+- Regenerate discovery baselines after adopting these classification and
+  capability corrections. Fresh human-labeled holdouts, live tenant acceptance,
+  independent release review and hosted artifact attestations remain separate
+  release requirements; regression results do not supply that evidence.
 
 ### Self-graded audit follow-up
 

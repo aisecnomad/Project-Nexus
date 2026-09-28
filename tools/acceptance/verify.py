@@ -31,7 +31,10 @@ from tools.evaluation.evaluate import (
 from tools.evaluation.evaluate import (
     Case,
     _assertions,
+    _exact_finding_set,
+    _finding_checks,
     _source_fingerprint,
+    finding_assertion_metrics,
     known_gaps,
     load_corpus,
     summarize,
@@ -106,6 +109,13 @@ def _identifier(value: Any) -> bool:
 
 def _sha(value: Any) -> bool:
     return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{64}", value))
+
+
+def _same_json(value: Any, expected: Any) -> bool:
+    """Compare report fields exactly, including JSON boolean versus integer types."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False) == json.dumps(
+        expected, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
 
 
 def _time(value: Any) -> datetime:
@@ -295,6 +305,7 @@ def _evaluation(
             "implementation",
             "cases",
             "metrics",
+            "finding_assertions",
             "known_gaps",
             "calibration",
             "performance",
@@ -324,6 +335,10 @@ def _evaluation(
     )
     metrics = summarize(rows)
     _require(report["metrics"] == metrics, "inconsistent_evaluation_metrics")
+    _require(
+        _same_json(report["finding_assertions"], finding_assertion_metrics(rows)),
+        "inconsistent_evaluation_finding_metrics",
+    )
     _require(report["known_gaps"] == known_gaps(rows), "inconsistent_evaluation_result")
     _require(report["known_gaps"]["count"] == 0, "known_gap_not_allowed_in_holdout")
     overall = metrics["all"]
@@ -365,6 +380,8 @@ def _evaluation_rows(rows: Any, cases: list[Case]) -> None:
                 "known_gap",
                 "correct",
                 "assertion_failures",
+                "finding_checks",
+                "exact_finding_set",
                 "findings",
                 "median_ms",
             },
@@ -391,16 +408,63 @@ def _evaluation_rows(rows: Any, cases: list[Case]) -> None:
         _require(isinstance(row["findings"], list), "invalid_evaluation_findings")
         matched = []
         for finding in row["findings"]:
+            _keys(
+                finding,
+                {"kind", "resource_type", "frameworks", "model_providers", "signatures", "confidence"},
+                {"server_count", "server_names"},
+            )
             _require(
-                isinstance(finding, dict) and isinstance(finding.get("signatures"), list),
+                isinstance(finding["kind"], str)
+                and finding["kind"] in {kind.value for kind in Kind}
+                and _identifier(finding["resource_type"])
+                and type(finding["confidence"]) in (int, float)
+                and 0 <= finding["confidence"] <= 1,
                 "invalid_evaluation_findings",
             )
+            for field in ("frameworks", "model_providers", "signatures"):
+                ids = finding[field]
+                _require(
+                    isinstance(ids, list)
+                    and all(_identifier(sig) for sig in ids)
+                    and ids == sorted(set(ids)),
+                    "invalid_evaluation_findings",
+                )
+            _require(
+                not any(sig.startswith("provider.") for sig in finding["frameworks"])
+                and all(sig.startswith("provider.") for sig in finding["model_providers"])
+                and finding["signatures"] == sorted(set(finding["frameworks"] + finding["model_providers"])),
+                "invalid_evaluation_findings",
+            )
+            if finding["kind"] == Kind.MCP_SERVER.value:
+                _require(
+                    type(finding.get("server_count")) is int
+                    and finding["server_count"] >= 0
+                    and isinstance(finding.get("server_names"), list)
+                    and all(isinstance(name, str) and bool(name) for name in finding["server_names"])
+                    and finding["server_names"] == sorted(finding["server_names"])
+                    and finding["server_count"] == len(finding["server_names"]),
+                    "invalid_evaluation_findings",
+                )
+            else:
+                _require(
+                    "server_count" not in finding and "server_names" not in finding,
+                    "invalid_evaluation_findings",
+                )
             if finding.get("kind") == case.kind.value and (
                 case.signature is None or case.signature in finding["signatures"]
             ):
                 matched.append(finding)
         _require(row["predicted"] == bool(matched), "inconsistent_evaluation_prediction")
-        _require(not _assertions(case, row["findings"]), "evaluation_assertion_failure")
+        finding_checks = _finding_checks(case, row["findings"])
+        exact_set = _exact_finding_set(case, row["findings"])
+        _require(
+            _same_json(row["finding_checks"], finding_checks)
+            and _same_json(row["exact_finding_set"], exact_set),
+            "inconsistent_evaluation_finding_checks",
+        )
+        _require(
+            not _assertions(case, row["findings"], finding_checks, exact_set), "evaluation_assertion_failure"
+        )
 
 
 def _kind_metrics(rows: list[dict[str, Any]], cases: list[Case], policy: dict[str, Any]) -> dict[str, Any]:

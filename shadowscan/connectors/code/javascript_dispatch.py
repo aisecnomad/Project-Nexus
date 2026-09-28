@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from shadowscan.signatures.matcher import pattern_timeout
 
 MAX_TOKENS = 50_000
+# This recognizer accepts one deliberately small, complete top-level program.
+# Larger files cannot match that grammar; reject them before token allocation
+# while the ordinary import/provider passes continue to analyze the source.
+MAX_SOURCE_CHARS = 64 * 1024
 _TOKEN = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*|[0-9]+(?:\.[0-9]+)?|===|==|[{}()\[\].,:;=]")
 _IDENTIFIER = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*\Z")
 _CONSTRUCTORS = frozenset({"default", "OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI"})
@@ -311,7 +315,7 @@ def javascript_responses_dispatch_lines(
     The complete source must match the supported grammar; no file-wide keyword
     co-occurrence can establish dispatch evidence.
     """
-    if not constructor_lines:
+    if not constructor_lines or len(text) > MAX_SOURCE_CHARS:
         return []
     tokens = _tokens(text, ignored)
     if tokens is None:

@@ -38,6 +38,8 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+from shadowscan.config import ConfigValidationError, connector_boolean
+from shadowscan.connectors.base import ConnectorError
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.utils.text import redact
@@ -72,6 +74,16 @@ _SIGNAL_LABEL = {
 }
 
 
+def config_boolean(value: Any, name: str) -> bool:
+    """Require the native boolean produced by the configuration boundary."""
+    if not isinstance(value, bool):
+        raise ConnectorError(f"{name} must be a boolean (true or false)")
+    try:
+        return connector_boolean(value, name)
+    except ConfigValidationError:
+        raise ConnectorError(f"{name} must be a boolean (true or false)") from None
+
+
 def describe_match(m: Match) -> str:
     label = _SIGNAL_LABEL.get(m.signal.type, m.signal.type)
     what = m.signal.description or m.signature.name
@@ -86,6 +98,7 @@ def apply_matches(
     max_evidence_per_signature: int = 12,
     weight_scale: float = 1.0,
     capabilities: bool = True,
+    signature_capabilities: bool = True,
 ) -> int:
     """Attach matches to a finding as evidence, tags, frameworks and capabilities.
 
@@ -105,7 +118,9 @@ def apply_matches(
         elif sig.category == "policy":
             finding.add_tag(sig.id)
         if capabilities:
-            for cap in m.capabilities():
+            # Static source analysis can retain library-wide features as
+            # potential metadata while scoring only the matched code signal.
+            for cap in m.capabilities() if signature_capabilities else m.signal.capabilities:
                 finding.add_capability(cap)
         for t in sig.tags:
             finding.add_tag(t)

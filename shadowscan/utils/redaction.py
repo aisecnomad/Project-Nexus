@@ -60,6 +60,7 @@ from shadowscan.utils.redaction_markup import (
 )
 from shadowscan.utils.redaction_rules import (
     _FINGERPRINT,
+    _KEY_NORMALISE,
     _MAX_REDACTION_WORK,
     _MAX_SANITIZATION_CHARS,
     _MAX_SANITIZATION_NODES,
@@ -77,6 +78,15 @@ from shadowscan.utils.redaction_statements import _redact_python_assignments
 
 # Keys whose mapping or list of name/value records holds environment variables.
 _ENVIRONMENT_KEYS = frozenset({"env", "environment", "environment_variables", "environmentvariables"})
+# A credential container can include descriptive fields as well as secret
+# material. Its descriptor values are not credentials merely because they
+# occur next to one (for example {"provider": "openai", "value": "..."}).
+_CREDENTIAL_DESCRIPTORS = frozenset(
+    {"id", "objectid", "name", "type", "provider", "scope", "scopes", "status"}
+)
+# Descriptors that are opaque secret material inside a container named for
+# credentials ('credentials.id'), but name an identity elsewhere ('api_key.id').
+_CREDENTIAL_GROUP_IDS = frozenset({"id", "objectid"})
 
 
 def credential_id(value: Any) -> str:
@@ -192,6 +202,22 @@ def _record_has_secret_value(item: Mapping, *, environment: bool = False, extend
         return _sensitive_assignment_key(name) if environment else _sensitive_key(name)
     level = _setting_level(name, record=not environment)
     return _setting_value_withheld(level, item.get("value") or item.get("Value")) if level else False
+
+
+def _credential_member(key: str, child: Any, *, group: bool) -> bool:
+    """Whether the field ``key`` (lowercase) of a credential container holds credential material.
+
+    A nested record or list does, whatever its name: a provider or name field
+    can itself hold a credential record. A scalar does unless it is a
+    descriptive label beside the secret ('provider', 'name', 'status'). An
+    'id' is one in a container named for credentials ('credentials.id'),
+    but names an identity under other credential names ('api_key.id', Azure
+    'identity.authorization.objectId'), and a copied short ID must not taint
+    otherwise independent caller labels or report identities.
+    """
+    if isinstance(child, (Mapping, list, tuple)):
+        return True
+    return key not in _CREDENTIAL_DESCRIPTORS or (group and key in _CREDENTIAL_GROUP_IDS)
 
 
 class _Sanitizer:
@@ -402,6 +428,126 @@ class _Sanitizer:
         }
 
 
+class _NestedSanitizer(_Sanitizer):
+    """The last ``sanitize`` pass: the scalar leaves nested in a container ``clean`` withholds whole.
+
+    The value of a sensitive key or of a secret-named record can be a record
+    or a list. Its leaves are credential material as well (see
+    ``_credential_member``), so a copy in an unrelated field must not survive
+    because the credential is nested. Those leaves also hold what the other
+    passes read to withhold a credential beside them: an option name
+    ('--webhook_secret'), a setting or record name ('PASSWORD_1'), a tag or a
+    command word. Removed before those passes, such a leaf hid that context
+    and the credential behind it was kept. This pass therefore runs last and
+    adds no text rule: ``discover`` reads the input for the leaves, and
+    ``clean`` removes them, with the spelling the text passes give them, from
+    the copy the extended pass left, where they can only add markers. It is
+    charged and bounded as the extended pass, which also reads a copy.
+    """
+
+    def __init__(self, *, redact_short_secrets: bool) -> None:
+        super().__init__(
+            redact_short_secrets=redact_short_secrets, env_values_are_secrets=False, extended=True
+        )
+        # An aliased object can occur both outside and inside a credential
+        # container. Revisit it under the stricter parent, but still bound cycles.
+        self.containers: set[tuple[int, bool, bool, bool]] = set()
+
+    def discover(
+        self,
+        item: Any,
+        depth: int = 0,
+        *,
+        environment: bool = False,
+        credential: bool = False,
+        credential_group: bool = False,
+    ) -> None:
+        """Remember the leaves of the credential containers in ``item``.
+
+        ``credential`` marks a container that ``clean`` withholds whole: the
+        value of a sensitive key, of a record named for a secret by the
+        established or the added rules, or a member of such a container.
+        ``credential_group`` marks a container named for credentials.
+        """
+        identity = (id(item), environment, credential, credential_group)
+        if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in self.containers):
+            return
+        if isinstance(item, (Mapping, list, tuple)):
+            self.containers.add(identity)
+        if isinstance(item, Mapping):
+            named_secret = _record_has_secret_value(item, environment=environment) or (
+                _record_has_secret_value(item, environment=environment, extended=True)
+            )
+            for key, child in item.items():
+                name = str(key)
+                lower_name = name.lower()
+                key_sensitive = _sensitive_key(name) or environment and _sensitive_assignment_key(name)
+                # 'credentials.id' can itself be opaque secret material;
+                # 'api_key.id' names an identity (see _credential_member).
+                child_group = credential_group or (
+                    key_sensitive
+                    and _KEY_NORMALISE.sub("", lower_name).endswith(("credential", "credentials"))
+                )
+                # A record's value under any casing ('VALUE'), which clean
+                # withholds, and the members of a credential container.
+                member = (named_secret and lower_name == "value") or (
+                    credential and _credential_member(lower_name, child, group=child_group)
+                )
+                if member:
+                    self.remember(child)
+                self.discover(
+                    child,
+                    depth + 1,
+                    environment=environment or lower_name in _ENVIRONMENT_KEYS,
+                    credential=key_sensitive or member,
+                    credential_group=child_group,
+                )
+        elif isinstance(item, (list, tuple)):
+            for child in item:
+                if credential:
+                    self.remember(child)
+                self.discover(
+                    child,
+                    depth + 1,
+                    environment=environment,
+                    credential=credential,
+                    credential_group=credential_group,
+                )
+
+    def order(self) -> None:
+        """Rank the known values, and the spellings the text passes give them, longest first.
+
+        The copy this pass reads went through every text pass, which can have
+        withheld part of a known value ('prefix sk-proj-... suffix'). Remove
+        that spelling too, so the value's other fragments are not kept.
+        """
+        for secret in tuple(self.known):
+            self.charge(len(secret))
+            spelling = _redact_extended(_sanitize_established(secret))
+            if spelling and spelling != REDACTED:
+                self.known.add(spelling)
+        self.ordered = sorted(self.known, key=len, reverse=True)
+
+    def text(self, item: str) -> str:
+        """``item`` without the known values; no text pass runs again.
+
+        The markers the earlier passes left are not searched: a value found
+        only inside one ('ACT') does not occur in the field.
+        """
+        self.charge(len(item) * len(self.ordered))
+        for secret in self.ordered:
+            if self.redact_short_secrets:
+                item = self.replace(item, secret)
+                continue
+            parts = item.split(REDACTED) if secret in REDACTED else [item]
+            if len(secret) < 8 and any(secret in part for part in parts):
+                return REDACTED
+            # Keep line counts stable, as _Sanitizer.text does.
+            marker = REDACTED + "\n" * secret.count("\n")
+            item = REDACTED.join(part.replace(secret, marker) for part in parts)
+        return item
+
+
 def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_secrets: bool = True) -> Any:
     """Return a sanitized JSON-like copy, preserving nonsecret fields and types.
 
@@ -429,18 +575,34 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     so it checks neither that text nor its length; it is charged only for
     removing the values the added rules find from the other fields, and only
     that removal can reach a limit the established pass did not.
+
+    A third pass then removes the leaves nested in a withheld credential
+    container from every other field of that copy (see ``_NestedSanitizer``).
+    It runs last, so it too only adds markers: a leaf can be an option or
+    setting name the first two passes read to withhold the value after it.
+    The values the established pass knew are already removed everywhere.
     """
     _check_sanitization_structure(value)
-    for extended in (False, True):
-        sanitizer = _Sanitizer(
+    passes = [
+        _Sanitizer(
             redact_short_secrets=redact_short_secrets,
             env_values_are_secrets=env_values_are_secrets,
             extended=extended,
         )
-        sanitizer.discover(value)
+        for extended in (False, True)
+    ]
+    copy = value
+    for sanitizer in passes:
+        sanitizer.discover(copy)
         sanitizer.order()
-        value = sanitizer.clean(value)
-    return value
+        copy = sanitizer.clean(copy)
+    nested = _NestedSanitizer(redact_short_secrets=redact_short_secrets)
+    nested.discover(value)
+    nested.known -= passes[0].known
+    if not nested.known:
+        return copy
+    nested.order()
+    return nested.clean(copy)
 
 
 def _check_sanitization_structure(value: Any) -> None:

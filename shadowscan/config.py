@@ -42,6 +42,7 @@ checked here. Keys starting with an underscore are reserved for the engine.
 from __future__ import annotations
 
 import difflib
+import json
 import logging
 import math
 import os
@@ -57,6 +58,7 @@ from shadowscan.errors import SetupError, yaml_error_position
 from shadowscan.risk import RiskPolicy
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.redaction import REDACTED, sanitize_text
+from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
 log = logging.getLogger("shadowscan.config")
@@ -118,6 +120,37 @@ _UNDOCUMENTED_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     "lowcode.workato": frozenset({"max_pages"}),
     "lowcode.zapier": frozenset({"max_pages"}),
 }
+# Built-in connector switches are normalised before connector construction so
+# environment expansion cannot turn the string ``"false"`` into a truthy
+# value.  Plugin configuration remains opaque: an approved plugin owns its
+# schema and receives values unchanged.
+_BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
+    "cloud.aws": frozenset({"allow_instance_credentials"}),
+    "cloud.azure": frozenset({"allow_instance_credentials", "include_app_settings"}),
+    "cloud.gcp": frozenset({"allow_instance_credentials"}),
+    "cloud.oci": frozenset({"allow_instance_credentials"}),
+    "code.filesystem": frozenset({"include_tests", "scan_secrets", "strict_coverage", "use_git"}),
+    "code.github": frozenset(
+        {
+            "include_archived",
+            "include_forks",
+            "include_tests",
+            "scan_secrets",
+            "strict_coverage",
+            "use_git",
+        }
+    ),
+    "code.gitlab": frozenset(
+        {"include_archived", "include_tests", "scan_secrets", "strict_coverage", "use_git"}
+    ),
+    "gateway.logs": frozenset({"llm_hosts_only"}),
+    "identity.entra": frozenset({"include_first_party"}),
+    "identity.okta": frozenset({"fetch_tokens", "include_inactive"}),
+    "lowcode.power-platform": frozenset({"include_bots"}),
+    "saas.generic": frozenset({"keep_all"}),
+    "saas.github-apps": frozenset({"include_unrecognized_apps"}),
+    "saas.microsoft-teams": frozenset({"include_store"}),
+}
 _IDENTIFIER_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 _deprecations_warned: set[str] = set()
 
@@ -132,6 +165,48 @@ class MinConfidenceError(ConfigValidationError):
     The CLI reports it as a usage error because the same threshold is also a
     command line option.
     """
+
+
+def _validate_config_graph(value: Any, *, reject_nonfinite: bool = True) -> None:
+    """Reject non-finite numbers while bounding work over opaque values.
+
+    Plugin configuration has no first-party key schema, but it still crosses
+    the scanner's serialization and hashing boundaries. Traverse mappings and
+    ordinary containers without interpreting their keys, applying the same
+    node/depth ceilings as bounded YAML construction.
+    """
+    remaining = BoundedSafeLoader.MAX_EXPANDED_NODES
+    active: set[int] = set()
+
+    def validate(item: Any, depth: int = 0) -> None:
+        nonlocal remaining
+        remaining -= 1
+        if remaining < 0 or depth > BoundedSafeLoader.MAX_DEPTH:
+            raise ConfigValidationError("scan configuration validation limit exceeded")
+        if reject_nonfinite and isinstance(item, float) and not math.isfinite(item):
+            raise ConfigValidationError("scan configuration numbers must be finite")
+        if isinstance(item, Mapping):
+            children: Any = item.items()
+        elif isinstance(item, (list, tuple, set, frozenset)):
+            children = item
+        else:
+            return
+        identity = id(item)
+        if identity in active:
+            raise ConfigValidationError("scan configuration cannot contain cycles")
+        active.add(identity)
+        try:
+            if isinstance(item, Mapping):
+                for key, child in children:
+                    validate(key, depth + 1)
+                    validate(child, depth + 1)
+            else:
+                for child in children:
+                    validate(child, depth + 1)
+        finally:
+            active.remove(identity)
+
+    validate(value)
 
 
 def _warn_deprecated_once(key: str, message: str) -> None:
@@ -199,6 +274,30 @@ def validate_connector_config(name: str, config: Mapping[Any, Any]) -> None:
         raise ConfigValidationError(message + "; run `shadowscan connectors` to list its options")
 
 
+def connector_boolean(value: Any, name: str) -> bool:
+    """Return a strict built-in connector boolean without Python truthiness.
+
+    Native booleans and case-insensitive ``true`` / ``false`` strings are
+    accepted.  Strings are necessary because environment interpolation occurs
+    after YAML parsing.  Other spellings and scalar types are rejected rather
+    than guessing at a security-sensitive switch.
+    """
+    return _strict_boolean(value, f"connector option {name}")
+
+
+def normalize_connector_config(name: str, config: Mapping[Any, Any]) -> dict[str, Any]:
+    """Validate and copy one connector configuration for programmatic callers."""
+    _validate_config_graph(config)
+    validate_connector_config(name, config)
+    normalized = dict(config)
+    if name == "code.filesystem" and "path" in normalized and "paths" in normalized:
+        raise ConfigValidationError("connector 'code.filesystem': specify path or paths, not both")
+    for key in _BOOLEAN_CONNECTOR_KEYS.get(name, frozenset()):
+        if key in normalized:
+            normalized[key] = connector_boolean(normalized[key], key)
+    return normalized
+
+
 def expand_env(value: Any) -> Any:
     if isinstance(value, str):
 
@@ -228,6 +327,14 @@ class ConnectorSpec:
     config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
     label: str | None = None  # optional distinct id when the same connector runs twice
+
+    def __post_init__(self) -> None:
+        self.name = _nonempty_string(self.name, "connector name")
+        if not isinstance(self.config, dict):
+            raise ConfigValidationError("connector config must be a mapping")
+        self.enabled = _connector_enabled(self.enabled)
+        if self.label is not None:
+            self.label = _nonempty_string(self.label, "connector label")
 
     @property
     def id(self) -> str:
@@ -272,6 +379,7 @@ class ScanConfig:
             )
             self.connector_timeout_seconds = connector_timeout
         self.validate_security_options()
+        self.validate_connector_specs()
 
     def validate_security_options(self) -> None:
         self.plugins = validate_plugins(self.plugins)
@@ -299,6 +407,29 @@ class ScanConfig:
             RiskPolicy.from_options(self.risk_weights, self.risk_basis)
         except ValueError as exc:
             raise ConfigValidationError(f"options.{exc}") from None
+
+    def validate_connector_specs(self) -> None:
+        """Validate programmatically constructed built-in connector specs.
+
+        File-based configuration takes this path too, keeping one schema
+        boundary for YAML, embedding callers, and configurations mutated
+        between reusable engine runs. Third-party plugin options deliberately
+        remain opaque.
+        """
+        if not isinstance(self.connectors, list):
+            raise ConfigValidationError("connectors must be a list")
+        for spec in self.connectors:
+            if not isinstance(spec, ConnectorSpec):
+                raise ConfigValidationError("each connector entry must be a ConnectorSpec")
+            # ConnectorSpec validates its structural fields at construction,
+            # but embedding callers may mutate them afterwards.
+            spec.name = _nonempty_string(spec.name, "connector name")
+            if not isinstance(spec.config, dict):
+                raise ConfigValidationError("connector config must be a mapping")
+            spec.enabled = _connector_enabled(spec.enabled)
+            if spec.label is not None:
+                spec.label = _nonempty_string(spec.label, "connector label")
+            spec.config = normalize_connector_config(spec.name, spec.config)
 
     def validate_connector_isolation(self, specs: list[ConnectorSpec]) -> None:
         """Do not expose live connector credentials to an unrelated source parser."""
@@ -329,6 +460,11 @@ class ScanConfig:
     def from_dict(cls, data: dict[str, Any], source: str | None = None) -> ScanConfig:
         if not isinstance(data, dict):
             raise ConfigValidationError("scan configuration must be a mapping")
+        # Bound/cycle-check before environment expansion, whose recursive copy
+        # assumes a finite acyclic graph. Known fields retain their more useful
+        # field-specific numeric diagnostics; opaque connector values receive
+        # finite-number validation in ``normalize_connector_config``.
+        _validate_config_graph(data, reject_nonfinite=False)
         _check_fields(data, _CONFIG_FIELDS, "scan configuration")
         data = expand_env(data)
         opts = data.get("options", {})
@@ -368,6 +504,13 @@ class ScanConfig:
                 raise ConfigValidationError("connector config must be a mapping")
             cfg = item.pop("config", None)
             if isinstance(cfg, dict):
+                overlap = next((key for key in item if key in cfg), None)
+                if overlap is not None:
+                    shown_key = _display_identifier(overlap, "a key")
+                    shown_name = _display_identifier(name, "connector")
+                    raise ConfigValidationError(
+                        f"connector {shown_name}: inline options and nested config both define {shown_key}"
+                    )
                 item.update(cfg)
             validate_connector_config(name, item)
             specs.append(ConnectorSpec(name=name, config=item, enabled=enabled, label=label))
@@ -441,7 +584,22 @@ def _resolve(base: Path, p: str) -> str:
     return str(base / path)
 
 
+def _strict_boolean(value: Any, location: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    raise ConfigValidationError(f"{location} must be a boolean (true or false)")
+
+
 def _boolean_option(value: Any, name: str) -> bool:
+    # Options are parsed by YAML before environment expansion. Preserve the
+    # existing native-boolean contract; only connector values document and
+    # support string interpolation for booleans.
     if not isinstance(value, bool):
         raise ConfigValidationError(f"options.{name} must be a YAML boolean")
     return value
@@ -523,15 +681,13 @@ def _node_position(node: yaml.Node) -> str:
 
 def _connector_enabled(value: Any) -> bool:
     """Expand environment-backed connector flags without relying on string truthiness."""
-    if isinstance(value, bool):
-        return value
     if isinstance(value, str):
         normalized = value.strip().lower()
-        if normalized in {"true", "yes", "on", "1"}:
+        if normalized in {"yes", "on", "1"}:
             return True
-        if normalized in {"false", "no", "off", "0"}:
+        if normalized in {"no", "off", "0"}:
             return False
-    raise ConfigValidationError("connector enabled must be a boolean (true or false)")
+    return _strict_boolean(value, "connector enabled")
 
 
 def validate_connector_timeout_seconds(value: Any) -> float:
@@ -608,10 +764,10 @@ def _coerce(value: str) -> Any:
         return float(value)
     if value.startswith(("[", "{")):
         try:
-            import json
-
-            return json.loads(value)
-        except ValueError:
+            return strict_json_loads(value)
+        except JSONIntegrityError:
+            raise ValueError("structured --set values require unique fields and finite numbers") from None
+        except json.JSONDecodeError:
             pass
     if "," in value and not value.startswith(("http", "/")):
         return [v.strip() for v in value.split(",") if v.strip()]

@@ -8,17 +8,22 @@ security advisories and repository administration. Contributors are welcome;
 there is currently no foundation, governing board or independent review team.
 
 The detailed [review and merge policy](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy)
-is authoritative. Routine changes receive maintainer review and automated
-checks; an independent human approval is preferred but is not guaranteed in the
-current single-maintainer process. Independent human review is required before
-any tagged release. These are different assurances and must not be conflated.
+is authoritative. The `main` ruleset is configured to require one approving
+review from someone with write access, an up-to-date branch and passing
+`test (3.11)`, `test (3.12)` and `analyze` checks before a pull request can
+merge, and to dismiss stale approvals after a new push. Its enforcement has been
+switched on and off during 2026-09; a disabled ruleset blocks nothing. The
+author cannot approve their own change; the single maintainer therefore needs a
+second eligible human reviewer for changes they author. AI-assisted review is
+advisory, not an approval. Independent human review is also required before any
+tagged release.
 
 Repository settings may change. Consult the
 [live repository rules](https://github.com/aisecnomad/Project-Nexus/rules) and the
 [verification commands](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#merge-gate-and-review-status)
-before relying on enforcement. A configured but disabled ruleset blocks nothing;
-this document does not claim that GitHub enforces the written review policy.
-Do not weaken rulesets or bypass failed checks to merge a change.
+before relying on enforcement. The ruleset has no configured bypass actors,
+but it only blocks anything while it is enabled. Do not weaken it, bypass
+review or checks, or count a green workflow as an independent review.
 
 ## Roles
 
@@ -63,22 +68,75 @@ enterprise identity, cloud security, SaaS administration, scanner evaluation,
 SARIF, packaging or secure software maintenance. Start with documentation,
 reproducible issues, fixtures or reviews; a large connector is not a prerequisite.
 
-Sustained, careful contributions, constructive collaboration and willingness to
-maintain changes inform an invitation. The maintainer and candidate should agree
-on the scope of responsibility before granting access, use the least privileges
-needed, and record role changes in this document. Commit volume alone does not
-entitle someone to repository administration. To offer sustained triage or
-review help, open an issue titled `Maintainer interest`; see the
-[maintainer roster](https://github.com/aisecnomad/Project-Nexus/blob/main/MAINTAINERS.md).
+### Getting involved
 
-When an independent reviewer is available, enable and verify required approvals
-for routine pull requests. Access should be reviewed when responsibilities
-change or someone steps away. A maintainer handover should record the successor,
-release and security responsibilities, and access transfer before the outgoing
-maintainer leaves. Revoke obsolete access and rotate shared credentials that a
-departing maintainer could access, where applicable. Update the maintainer roster
-to reflect the handover. Until another maintainer is appointed, there is a
+Examples of low-effort, high-value contributions:
+
+- **Documentation**: fix unclear sections, add examples, or improve architecture docs
+- **Test fixtures**: contribute reproducible offline cases for connectors or edge cases
+- **Issue triage**: reproduce issues, request clarification, or help close duplicates
+- **Code review**: review pull requests, ask questions, and suggest improvements
+- **Maintenance**: investigate CI failures, update dependencies, or improve tooling
+
+To express interest, open an issue titled `Maintainer interest` with your background
+and areas of focus. See the [maintainer roster](https://github.com/aisecnomad/Project-Nexus/blob/main/MAINTAINERS.md)
+for the current team.
+
+### Reviewer role
+
+An independent reviewer examines changes, records what was verified and any
+remaining limitation, and provides the non-author approval that the review
+policy and the `main` ruleset call for. This role requires:
+
+- Demonstrated understanding of the project's architecture and trust model
+- Careful review of security, test coverage, and documentation impacts
+- Willingness to take responsibility for approved changes
+- Availability to review during active development
+
+A reviewer needs write access to satisfy the ruleset's approval requirement;
+grant it deliberately and record it in MAINTAINERS.md. To propose yourself as a
+reviewer, open an issue with your GitHub profile and explain your relevant
+experience.
+
+### Co-maintainer path
+
+Sustained, careful contributions, constructive collaboration and willingness to
+maintain changes inform an invitation to co-maintainer status. Commit volume
+alone does not entitle someone to repository administration. Before granting
+access, the current maintainer and candidate should agree on:
+
+- Specific scope (for example identity connectors, the release process, or security)
+- Decision authority (decisions they can make independently versus after discussion)
+- Time commitment and response expectations
+- Escalation path for out-of-scope decisions
+
+Once agreed, the current maintainer will:
+
+1. Update this document and MAINTAINERS.md with the role, scope, and effective date
+2. Grant the least GitHub permission the role needs (write access, not admin,
+   unless administration is part of the agreed scope)
+3. Record any shared resource the role needs; the project currently has no
+   shared credentials, signing keys or deployment tokens, and a release remains
+   a manual maintainer action
+4. Record the handover in a pull request so the history is clear
+
+**Succession planning**: recruit an independent reviewer with appropriate
+access for maintainer-authored pull requests and verify that the approval
+requirement is enforced before relying on it. Access should be reviewed when
+responsibilities change or someone steps away. A maintainer handover should
+record the successor, their release and security responsibilities, and the
+access transfer before the outgoing maintainer leaves. Until another
+maintainer is appointed, there is a
 single-person continuity risk; support and response times are not guaranteed.
+
+### Offboarding
+
+When a reviewer or maintainer steps away:
+
+1. Revoke repository access (collaborator write or admin permission)
+2. Rotate any shared credential they could still use, where one exists
+3. Update MAINTAINERS.md and this document with the departure date
+4. Review their recent approvals and ensure no security-sensitive change lacks oversight
 
 ## Release process
 

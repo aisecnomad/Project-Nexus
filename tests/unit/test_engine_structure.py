@@ -17,7 +17,7 @@ import shadowscan.engine as engine_module
 import shadowscan.models as models
 import shadowscan.utils.redaction as redaction
 from shadowscan.comparison import _scanner_digest
-from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine, _ExportLedger, _JobState, _retain_sanitizable
 from shadowscan.incremental import IncrementalCache
 from shadowscan.models import (
@@ -220,7 +220,7 @@ def test_undigestable_state_falls_back_to_full_passes(sanitizer_calls, monkeypat
 # ------------------------------------------------------------ preparation
 
 
-def test_signature_index_and_inventory_load_once_per_lifecycle(monkeypatch, tmp_path):
+def test_signature_index_is_cached_but_inventory_is_fresh_for_every_run(monkeypatch, tmp_path):
     index_loads = []
     inventory_loads = []
     monkeypatch.setattr(
@@ -240,12 +240,17 @@ def test_signature_index_and_inventory_load_once_per_lifecycle(monkeypatch, tmp_
     cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem")], inventory=[str(inventory)])
     engine = Engine(cfg)
     assert len(index_loads) == 1 and len(inventory_loads) == 1
+    # Approval is security-sensitive even before the first run.  A mutation
+    # after construction must not survive as a stale authorization snapshot.
+    inventory.write_text("agents: []\n")
     first = engine.run()
-    assert first.complete and first.inventory_size == 1
-    assert len(index_loads) == 1 and len(inventory_loads) == 1
+    assert first.complete and first.inventory_size == 0
+    assert len(index_loads) == 1 and len(inventory_loads) == 2
     # Approval can change independently of the Engine; a reused Engine reads it again.
+    inventory.write_text("agents:\n  - id: agent\n    owner: team\n    resources: ['repo/agent']\n")
     second = engine.run()
-    assert second.complete and len(index_loads) == 1 and len(inventory_loads) == 2
+    assert second.complete and second.inventory_size == 1
+    assert len(index_loads) == 1 and len(inventory_loads) == 3
 
 
 def test_reused_engine_reloads_index_only_when_pack_sources_change(monkeypatch, tmp_path):
@@ -291,7 +296,7 @@ def test_supplied_index_is_never_reloaded(monkeypatch):
     assert engine.index is index
 
 
-def test_security_options_validate_once_unless_the_config_changes(monkeypatch):
+def test_security_options_are_revalidated_before_every_run(monkeypatch):
     calls = []
     original = ScanConfig.validate_security_options
 
@@ -306,13 +311,44 @@ def test_security_options_validate_once_unless_the_config_changes(monkeypatch):
     engine = Engine(cfg, SignatureIndex([]))
     assert len(calls) == 2
     assert engine.run().complete and engine.run().complete
-    assert len(calls) == 2
+    assert len(calls) == 4
     cfg.allow_private_origin = "yes"
     with pytest.raises(ValueError, match="allow_private_origin"):
         engine.run()
-    assert len(calls) == 3
+    assert len(calls) == 5
     cfg.allow_private_origin = True
-    assert engine.run().complete and len(calls) == 4
+    assert engine.run().complete and len(calls) == 6
+
+
+@pytest.mark.parametrize(
+    "mutate,message",
+    [
+        (lambda cfg: setattr(cfg, "risk_basis", "severity"), "risk_basis"),
+        (
+            lambda cfg: cfg.risk_weights["tags"].__setitem__("custom.invalid", 101),
+            "risk_weights.tags.custom.invalid",
+        ),
+        (lambda cfg: setattr(cfg, "job_deadline_seconds", float("nan")), "job_deadline_seconds"),
+    ],
+)
+def test_mutated_security_options_fail_before_connector_construction(monkeypatch, mutate, message):
+    constructed = []
+
+    class UnexpectedConnector(_Connector):
+        def __init__(self, ctx):
+            constructed.append(ctx)
+            super().__init__(ctx)
+
+    monkeypatch.setattr(engine_module, "get_connector_class", lambda name: UnexpectedConnector)
+    cfg = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem")],
+        risk_weights={"tags": {}},
+    )
+    engine = Engine(cfg, SignatureIndex([]))
+    mutate(cfg)
+    with pytest.raises(ConfigValidationError, match=re.escape(message)):
+        engine.run()
+    assert not constructed
 
 
 def test_invalid_inventory_still_fails_at_construction(tmp_path):

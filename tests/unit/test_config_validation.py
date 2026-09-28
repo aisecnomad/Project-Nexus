@@ -12,6 +12,7 @@ import shadowscan.config as config_module
 from shadowscan.config import (
     SHARED_CONNECTOR_KEYS,
     ConfigValidationError,
+    ConnectorSpec,
     MinConfidenceError,
     ScanConfig,
     accepted_connector_keys,
@@ -103,6 +104,193 @@ def test_plugin_connector_keys_are_not_checked_at_parse_time():
     assert accepted_connector_keys("custom.plugin") is None
     cfg = ScanConfig.from_dict({"connectors": [{"name": "custom.plugin", "anything": 1}]})
     assert cfg.connectors[0].config == {"anything": 1}
+
+
+@pytest.mark.parametrize("name", ["code.filesystem", "custom.plugin"])
+def test_inline_and_nested_connector_options_cannot_overlap(name):
+    with pytest.raises(
+        ConfigValidationError, match="inline options and nested config both define 'path'"
+    ) as failure:
+        ScanConfig.from_dict(
+            {
+                "connectors": [
+                    {
+                        "name": name,
+                        "path": "inline-private-path",
+                        "config": {"path": "nested-private-path"},
+                    }
+                ]
+            }
+        )
+    assert "inline-private-path" not in str(failure.value)
+    assert "nested-private-path" not in str(failure.value)
+
+
+def test_nonoverlapping_inline_and_nested_connector_options_are_merged():
+    cfg = ScanConfig.from_dict(
+        {
+            "connectors": [
+                {
+                    "name": "code.filesystem",
+                    "path": ".",
+                    "config": {"scan_secrets": False},
+                }
+            ]
+        }
+    )
+    assert cfg.connectors[0].config["path"].endswith(".")
+    assert cfg.connectors[0].config["scan_secrets"] is False
+
+
+def test_yaml_filesystem_path_and_paths_are_mutually_exclusive(tmp_path):
+    path = tmp_path / "scan.yaml"
+    path.write_text(
+        "connectors:\n  - name: code.filesystem\n    path: one\n    paths: [two]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigValidationError, match="specify path or paths, not both"):
+        ScanConfig.from_yaml(path)
+
+
+def test_programmatic_filesystem_path_and_paths_are_mutually_exclusive():
+    with pytest.raises(ConfigValidationError, match="specify path or paths, not both"):
+        ScanConfig(connectors=[ConnectorSpec("code.filesystem", {"path": "one", "paths": ["two"]})])
+
+
+def test_reused_engine_rejects_path_alias_added_after_a_run(tmp_path, index):
+    from shadowscan.engine import Engine
+
+    cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem", {"path": str(tmp_path)})])
+    engine = Engine(cfg, index)
+    engine.run()
+
+    cfg.connectors[0].config["paths"] = [str(tmp_path)]
+    with pytest.raises(ConfigValidationError, match="specify path or paths, not both"):
+        engine.run()
+
+
+@pytest.mark.parametrize(
+    "name,key",
+    [
+        ("cloud.aws", "allow_instance_credentials"),
+        ("cloud.azure", "include_app_settings"),
+        ("cloud.gcp", "allow_instance_credentials"),
+        ("cloud.oci", "allow_instance_credentials"),
+        ("code.filesystem", "scan_secrets"),
+        ("code.github", "include_archived"),
+        ("code.gitlab", "include_archived"),
+        ("gateway.logs", "llm_hosts_only"),
+        ("identity.entra", "include_first_party"),
+        ("identity.okta", "fetch_tokens"),
+        ("lowcode.power-platform", "include_bots"),
+        ("saas.generic", "keep_all"),
+        ("saas.github-apps", "include_unrecognized_apps"),
+        ("saas.microsoft-teams", "include_store"),
+    ],
+)
+def test_environment_expanded_false_never_inverts_connector_booleans(monkeypatch, name, key):
+    monkeypatch.setenv("NEXUS_CONNECTOR_BOOLEAN", "false")
+    cfg = ScanConfig.from_dict({"connectors": [{"name": name, key: "${NEXUS_CONNECTOR_BOOLEAN}"}]})
+    assert cfg.connectors[0].config[key] is False
+
+
+def test_environment_expanded_true_is_a_native_connector_boolean(monkeypatch):
+    monkeypatch.setenv("NEXUS_CONNECTOR_BOOLEAN", "TrUe")
+    cfg = ScanConfig.from_dict(
+        {"connectors": [{"name": "code.github", "include_archived": "${NEXUS_CONNECTOR_BOOLEAN}"}]}
+    )
+    assert cfg.connectors[0].config["include_archived"] is True
+
+
+@pytest.mark.parametrize("value", ["yes", "0", "perhaps", 0, 1, None, [], {}])
+def test_invalid_connector_boolean_fails_closed_without_echoing_value(value):
+    with pytest.raises(ConfigValidationError, match="connector option llm_hosts_only") as failure:
+        ScanConfig.from_dict({"connectors": [{"name": "gateway.logs", "llm_hosts_only": value}]})
+    assert repr(value) not in str(failure.value)
+
+
+def test_programmatic_scan_config_rejects_misspelled_built_in_option():
+    with pytest.raises(
+        ConfigValidationError,
+        match=r"connector 'identity\.okta' does not accept 'fetch_tokenz'",
+    ):
+        ScanConfig(connectors=[ConnectorSpec("identity.okta", {"fetch_tokenz": True})])
+
+
+def test_engine_boundary_rejects_a_built_in_option_added_after_construction(index):
+    from shadowscan.engine import Engine
+
+    cfg = ScanConfig(connectors=[ConnectorSpec("identity.okta")])
+    cfg.connectors[0].config["fetch_tokenz"] = True
+    with pytest.raises(ConfigValidationError, match="fetch_tokenz"):
+        Engine(cfg, index)
+
+
+def test_valid_programmatic_scan_config_normalises_connector_booleans():
+    cfg = ScanConfig(
+        connectors=[
+            ConnectorSpec(
+                "code.github",
+                {"include_archived": "false", "include_forks": "true", "max_repos": 25},
+                enabled="false",  # type: ignore[arg-type] - embedding input is runtime-validated
+            )
+        ]
+    )
+    assert cfg.connectors[0].config == {
+        "include_archived": False,
+        "include_forks": True,
+        "max_repos": 25,
+    }
+    assert cfg.connectors[0].enabled is False
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [("yes", True), ("on", True), ("1", True), ("no", False), ("off", False), ("0", False)],
+)
+def test_programmatic_connector_enabled_preserves_compatibility_aliases(value, expected):
+    spec = ConnectorSpec("custom.plugin", enabled=value)  # type: ignore[arg-type]
+    assert spec.enabled is expected
+
+
+def test_programmatic_plugin_config_values_remain_opaque():
+    cfg = ScanConfig(
+        connectors=[ConnectorSpec("custom.plugin", {"plugin_switch": "false"})],
+        plugins=["custom.plugin"],
+    )
+    assert cfg.connectors[0].config == {"plugin_switch": "false"}
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_nonfinite_numbers_are_rejected_inside_opaque_plugin_config(value):
+    with pytest.raises(ConfigValidationError, match="numbers must be finite") as failure:
+        ScanConfig.from_dict(
+            {"connectors": [{"name": "custom.plugin", "config": {"opaque": [{"number": value}]}}]}
+        )
+    assert str(value) not in str(failure.value)
+
+
+def test_nonfinite_yaml_is_rejected_inside_opaque_plugin_config(tmp_path):
+    path = tmp_path / "scan.yaml"
+    path.write_text(
+        "connectors:\n  - name: custom.plugin\n    config:\n      opaque: [.nan, .inf]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigValidationError, match="numbers must be finite"):
+        ScanConfig.from_yaml(path)
+
+
+def test_programmatic_plugin_config_rejects_nonfinite_numbers():
+    with pytest.raises(ConfigValidationError, match="numbers must be finite"):
+        ScanConfig(connectors=[ConnectorSpec("custom.plugin", {"opaque": {"number": math.nan}})])
+
+
+def test_recursive_config_validation_is_depth_bounded_without_interpreting_plugin_keys():
+    opaque: object = "leaf"
+    for _ in range(70):
+        opaque = {"plugin-owned-key": opaque}
+    with pytest.raises(ConfigValidationError, match="validation limit exceeded"):
+        ScanConfig.from_dict({"connectors": [{"name": "custom.plugin", "config": {"opaque": opaque}}]})
 
 
 def _keys_read_by(cls: type[BaseConnector]) -> set[str]:

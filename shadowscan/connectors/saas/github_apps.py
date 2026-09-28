@@ -19,7 +19,7 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import cap_confidence, finalize
+from shadowscan.connectors.common import cap_confidence, config_boolean, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -53,9 +53,9 @@ class GitHubAppsConnector(BaseConnector):
         super().__init__(ctx)
         self.org = ctx.get("org", env="GITHUB_ORG")
         self.api_url = str(ctx.get("api_url", "https://api.github.com", env="GITHUB_API_URL")).rstrip("/")
-        self.include_unrecognized = ctx.get("include_unrecognized_apps", False)
-        if not isinstance(self.include_unrecognized, bool):
-            raise ConnectorError("saas.github-apps: include_unrecognized_apps must be a boolean")
+        self.include_unrecognized = config_boolean(
+            ctx.get("include_unrecognized_apps", False), "include_unrecognized_apps"
+        )
 
     def collect(self) -> Iterable[dict[str, Any]]:
         token = self.ctx.get("token", env="GITHUB_TOKEN")

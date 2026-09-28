@@ -37,7 +37,7 @@ from shadowscan.connectors.code.remote import (  # noqa: F401 - re-exported for 
     repository_target,
     select_api_paths,
 )
-from shadowscan.connectors.common import apply_matches, finalize
+from shadowscan.connectors.common import apply_matches, config_boolean, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.git import clone_limits
 from shadowscan.utils.http import HttpError, validate_url
@@ -105,7 +105,8 @@ class GitHubConnector(RemoteRepositoryConnector):
         "scan_secrets": "forwarded to the filesystem scanner (see code.filesystem)",
         "clone_depth": "git clone depth (default 1)",
         "clone_max_bytes": (
-            "preflight repository size cap (default 268435456); requires a disk quota for hard limits"
+            "provider size preflight and observed checkout size cap (default 268435456); "
+            "strict disk limits require an OS quota"
         ),
         "clone_timeout_seconds": "per-repository git clone deadline (default 120)",
         "topics": "only repositories with any of these topics",
@@ -133,8 +134,8 @@ class GitHubConnector(RemoteRepositoryConnector):
             ctx.get("clone_max_bytes", 256 * 1024 * 1024),
             ctx.get("clone_timeout_seconds", 120),
         )
-        self.include_archived = bool(ctx.get("include_archived", False))
-        self.include_forks = bool(ctx.get("include_forks", False))
+        self.include_archived = config_boolean(ctx.get("include_archived", False), "include_archived")
+        self.include_forks = config_boolean(ctx.get("include_forks", False), "include_forks")
         self.topics = set(ctx.get("topics", []) or [])
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         if self.token:

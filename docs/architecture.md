@@ -193,12 +193,18 @@ not constrain code that a loaded plugin runs.
 
 ### Packaging a plugin
 
-The distribution name `shadowscan` on PyPI belongs to an unrelated project. Do
-not declare `shadowscan` as a dependency of a plugin: `pip` would resolve it to
-that unrelated package. Depend on a reviewed git revision instead, as the README
-install instructions do, for example
-`shadowscan @ git+https://github.com/aisecnomad/Project-Nexus.git@<40-character-sha>`.
+The distribution is named `project-nexus-shadowscan`; its import package,
+CLI command and connector entry-point group remain `shadowscan`, `shadowscan`
+and `shadowscan.connectors`. The candidate is not published to PyPI, and the
+name is not reserved by changing this metadata. Do not declare `shadowscan` as
+a dependency: that PyPI name belongs to an unrelated project.
+
+For now, depend on a reviewed full git revision, as the README install
+instructions do, for example
+`project-nexus-shadowscan @ git+https://github.com/aisecnomad/Project-Nexus.git@<40-character-sha>`.
 PyPI rejects direct URL requirements, so a plugin published on PyPI should leave
-the scanner out of its `dependencies` and document the install step. Renaming
-the distribution is under consideration; once a renamed distribution exists,
-depend on that instead.
+the scanner out of its `dependencies` and document the reviewed-checkout install
+step. Use a fresh virtual environment when moving from an earlier Project Nexus
+distribution named `shadowscan`; installing both distributions together can
+overwrite their shared import package and command. After a reviewed release is
+published under the new name, plugin dependencies can use that distribution.

@@ -27,7 +27,7 @@ from shadowscan.connectors.code.remote import (
     repository_blob_id,
     select_api_paths,
 )
-from shadowscan.connectors.common import apply_matches, finalize, name_matches
+from shadowscan.connectors.common import apply_matches, config_boolean, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.git import clone_limits, has_clone_size_estimate
 from shadowscan.utils.http import HttpError, validate_url
@@ -74,7 +74,8 @@ class GitLabConnector(RemoteRepositoryConnector):
         "include_archived": "default false",
         "max_projects": "default 500",
         "clone_max_bytes": (
-            "preflight repository size cap (default 268435456); requires a disk quota for hard limits"
+            "provider size preflight and observed checkout size cap (default 268435456); "
+            "strict disk limits require an OS quota"
         ),
         "clone_timeout_seconds": "per-repository git clone deadline (default 120)",
         "scan_timeout": "matching budget in seconds per file (default 2)",
@@ -112,7 +113,7 @@ class GitLabConnector(RemoteRepositoryConnector):
             ctx.get("clone_max_bytes", 256 * 1024 * 1024),
             ctx.get("clone_timeout_seconds", 120),
         )
-        self.include_archived = bool(ctx.get("include_archived", False))
+        self.include_archived = config_boolean(ctx.get("include_archived", False), "include_archived")
         self.http = self._api_client({"PRIVATE-TOKEN": self.token} if self.token else {})
 
     def collect(self) -> Iterable[dict[str, Any]]:

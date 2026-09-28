@@ -59,6 +59,7 @@ COMMUNITY_FILES = (
     ".github/labels.yml",
     "requirements.lock",
     "requirements-build.lock",
+    "requirements-ci.lock",
     "requirements-docs.lock",
 )
 
@@ -325,6 +326,24 @@ def test_ci_matrix_covers_every_classified_python_version() -> None:
     assert matrix == classified, f"CI tests {sorted(matrix)} but pyproject classifies {sorted(classified)}"
 
 
+def test_distribution_rename_preserves_cli_and_plugin_contract() -> None:
+    project = _pyproject()["project"]
+    assert project["name"] == "project-nexus-shadowscan"
+    assert project["scripts"] == {"shadowscan": "shadowscan.cli:main"}
+    assert "shadowscan.connectors" in project["entry-points"]
+    assert project["optional-dependencies"]["all"] == [f"{project['name']}[cloud,dev,docs]"]
+    for path in (
+        ROOT / "docs/getting-started/install.md",
+        ROOT / "examples/github-action-code-scan.yml",
+        ROOT / "Makefile",
+        GITHUB / "workflows/ci.yml",
+        GITHUB / "workflows/release.yml",
+    ):
+        text = _read(path)
+        assert "project_nexus_shadowscan-*.whl" in text
+        assert "/shadowscan-*.whl" not in text
+
+
 def test_makefile_lint_and_typecheck_paths_match_ci() -> None:
     ci = _ci_run_lines()
     makefile = [line.strip() for line in _read(ROOT / "Makefile").splitlines()]
@@ -346,20 +365,33 @@ def test_makefile_evaluates_the_same_corpora_as_ci() -> None:
         assert (ROOT / corpus).is_file(), f"CI references a missing corpus {corpus}"
 
 
-def test_pre_commit_hooks_run_the_same_ruff_and_mypy_as_ci() -> None:
-    config = _load_yaml(ROOT / ".pre-commit-config.yaml")
+def test_pre_commit_hooks_are_immutable_and_match_ci_versions() -> None:
+    config_text = _read(ROOT / ".pre-commit-config.yaml")
     revisions = {
-        repo["repo"].rsplit("/", 1)[1]: str(repo["rev"]).lstrip("v")
-        for repo in config["repos"]
-        if "rev" in repo
+        match.group("name"): (match.group("sha"), match.group("version"))
+        for match in re.finditer(
+            r"^  - repo: https://github\.com/[^/]+/(?P<name>[\w-]+)\n"
+            r"    rev: (?P<sha>[0-9a-f]{40}) # v(?P<version>\S+)$",
+            config_text,
+            re.MULTILINE,
+        )
     }
+    assert {"pre-commit-hooks", "ruff-pre-commit", "mirrors-mypy"} <= revisions.keys()
+    assert all(re.fullmatch(r"[0-9a-f]{40}", sha) for sha, _ in revisions.values())
     constraints = dict(
         re.findall(
             r"^([A-Za-z0-9_.-]+)==(\S+)$", _read(ROOT / "requirements-ci-constraints.txt"), re.MULTILINE
         )
     )
-    assert revisions["ruff-pre-commit"] == constraints["ruff"], "pre-commit ruff rev differs from the CI pin"
-    assert revisions["mirrors-mypy"] == constraints["mypy"], "pre-commit mypy rev differs from the CI pin"
+    assert revisions["ruff-pre-commit"][1] == constraints["ruff"], (
+        "pre-commit ruff version differs from the CI pin"
+    )
+    assert revisions["mirrors-mypy"][1] == constraints["mypy"], (
+        "pre-commit mypy version differs from the CI pin"
+    )
+    for package in ("types-PyYAML", "types-requests"):
+        pin = f"{package}=={constraints[package]}"
+        assert pin in config_text, f"pre-commit additional dependency is not pinned: {package}"
 
 
 def test_docs_toolchain_is_hash_locked_everywhere_it_is_installed() -> None:
@@ -379,6 +411,35 @@ def test_docs_toolchain_is_hash_locked_everywhere_it_is_installed() -> None:
     assert install in _read(ROOT / "Makefile"), "make docs must install docs tools from the lock"
     for workflow in WORKFLOWS:
         assert "mkdocs-material==" not in _read(workflow), f"{workflow.name} pins mkdocs outside the lock"
+
+
+def test_ci_toolchain_is_exactly_pinned_and_hash_locked_everywhere() -> None:
+    lock = _read(ROOT / "requirements-ci.lock")
+    locked = {
+        name.lower().replace("_", "-").replace(".", "-"): version
+        for name, version in re.findall(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)", lock, re.MULTILINE)
+    }
+    assert locked, "requirements-ci.lock has no pins"
+    assert lock.count("--hash=sha256:") >= len(locked), "every CI dependency needs at least one hash"
+    constraints = {
+        name.lower().replace("_", "-").replace(".", "-"): version
+        for name, version in re.findall(
+            r"^([A-Za-z0-9_.-]+)==([^\s;]+)(?:\s*;.*)?$",
+            _read(ROOT / "requirements-ci-constraints.txt"),
+            re.MULTILINE,
+        )
+    }
+    assert constraints.items() <= locked.items(), "CI lock drifted from its reviewed direct constraints"
+    for requirement in (
+        _pyproject()["project"]["dependencies"] + _pyproject()["project"]["optional-dependencies"]["dev"]
+    ):
+        name = re.split(r"[<>=!\[; ]", requirement, maxsplit=1)[0]
+        normalized = name.lower().replace("_", "-").replace(".", "-")
+        assert normalized in locked, f"CI lock omits direct requirement {requirement}"
+    install = "--require-hashes --only-binary=:all: -r requirements-ci.lock"
+    assert install in _read(ROOT / "Makefile")
+    assert install in _read(GITHUB / "workflows" / "ci.yml")
+    assert "-r requirements-ci.lock" in _read(GITHUB / "workflows" / "release.yml")
 
 
 _USES_LINE = re.compile(r"^\s*-?\s*uses:\s*(?P<ref>[^#\s]+)\s*(?P<comment>#.*)?$")
@@ -433,12 +494,11 @@ def test_pre_commit_hooks_select_files_with_types_or() -> None:
 
 
 def test_dev_extra_is_fully_pinned_for_ci() -> None:
-    """CI installs [dev] under constraints; an unpinned name floats from the live index."""
-    # CI constrains the [dev] install with both runtime and build-backend locks.
+    """Every development dependency must occur in a hash-locked CI input."""
     pinned = {
         name.lower().replace("_", "-")
         for text in (
-            _read(ROOT / "requirements-ci-constraints.txt"),
+            _read(ROOT / "requirements-ci.lock"),
             _read(ROOT / "requirements.lock"),
             _read(ROOT / "requirements-build.lock"),
         )

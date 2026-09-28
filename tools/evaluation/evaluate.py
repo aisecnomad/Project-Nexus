@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -37,6 +38,7 @@ MAX_FILE_BYTES = 32_000
 MAX_TOTAL_FILE_BYTES = 1_000_000
 _ID = re.compile(r"[a-z][a-z0-9_-]{1,79}\Z")
 _SIGNATURE = re.compile(r"[a-z0-9][a-z0-9._-]{0,100}\Z")
+_FINDING_SELECTORS = ("expected_findings", "forbidden_findings")
 
 
 class CorpusError(ValueError):
@@ -86,7 +88,94 @@ def _safe_name(name: Any) -> bool:
     )
 
 
-def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
+def _validate_finding_selectors(assertions: dict[str, Any], where: str) -> None:
+    """Constrain explicit labels to scanner fields, with one bounded selector per rule."""
+    for relation in _FINDING_SELECTORS:
+        selectors = assertions.get(relation, [])
+        if not isinstance(selectors, list) or len(selectors) > 20:
+            raise CorpusError(f"{where}: {relation} must contain at most 20 finding selectors")
+        seen: set[tuple[str, str | None, str | None]] = set()
+        for selector in selectors:
+            _keys(
+                selector,
+                {"kind"},
+                {"product_signature", "provider_signature"},
+                f"{where} {relation} selector",
+            )
+            try:
+                kind = Kind(selector["kind"])
+            except (ValueError, TypeError) as exc:
+                raise CorpusError(f"{where}: unknown {relation} finding kind") from exc
+            for field in ("product_signature", "provider_signature"):
+                signature = selector.get(field)
+                if field in selector and (
+                    not isinstance(signature, str) or not _SIGNATURE.fullmatch(signature)
+                ):
+                    raise CorpusError(f"{where}: invalid {relation} {field}")
+            product = selector.get("product_signature")
+            provider = selector.get("provider_signature")
+            if product is not None and product.startswith("provider."):
+                raise CorpusError(f"{where}: product_signature must not be a provider ID")
+            if provider is not None and not provider.startswith("provider."):
+                raise CorpusError(f"{where}: provider_signature must be a provider ID")
+            key = (kind.value, product, provider)
+            if key in seen:
+                raise CorpusError(f"{where}: duplicate {relation} selector")
+            seen.add(key)
+    expected = {
+        (selector["kind"], selector.get("product_signature"), selector.get("provider_signature"))
+        for selector in assertions.get("expected_findings", [])
+    }
+    forbidden = {
+        (selector["kind"], selector.get("product_signature"), selector.get("provider_signature"))
+        for selector in assertions.get("forbidden_findings", [])
+    }
+    if expected & forbidden:
+        raise CorpusError(f"{where}: a finding selector cannot be both expected and forbidden")
+    for required_kind, required_product, required_provider in expected:
+        for excluded_kind, excluded_product, excluded_provider in forbidden:
+            if (
+                required_kind == excluded_kind
+                and (excluded_product is None or excluded_product == required_product)
+                and (excluded_provider is None or excluded_provider == required_provider)
+            ):
+                raise CorpusError(f"{where}: forbidden selector covers an expected finding")
+
+
+def _validate_exact_findings(assertions: dict[str, Any], where: str) -> None:
+    if "exact_findings" not in assertions:
+        return
+    entries = assertions["exact_findings"]
+    if not isinstance(entries, list) or len(entries) > 20:
+        raise CorpusError(f"{where}: exact_findings must contain at most 20 finding labels")
+    for entry in entries:
+        _keys(
+            entry,
+            {"kind", "product_signatures", "provider_signatures"},
+            set(),
+            f"{where} exact_findings entry",
+        )
+        try:
+            Kind(entry["kind"])
+        except (ValueError, TypeError) as exc:
+            raise CorpusError(f"{where}: unknown exact_findings kind") from exc
+        for field, expected_prefix in (("product_signatures", False), ("provider_signatures", True)):
+            signatures = entry[field]
+            if (
+                not isinstance(signatures, list)
+                or len(signatures) > 20
+                or any(
+                    not isinstance(sig, str)
+                    or not _SIGNATURE.fullmatch(sig)
+                    or sig.startswith("provider.") != expected_prefix
+                    for sig in signatures
+                )
+                or len(set(signatures)) != len(signatures)
+            ):
+                raise CorpusError(f"{where}: {field} must contain up to 20 unique signature IDs")
+
+
+def load_corpus(path: Path) -> tuple[dict[str, Any], list[Case], str]:
     """Parse a bounded, declarative corpus. Case files are text and never run."""
     try:
         # Use the same descriptor-based read as other policy inputs: checking a
@@ -98,11 +187,34 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
     data = _keys(data, {"schema", "metadata", "cases"}, set(), "corpus")
     if type(data["schema"]) is not int or data["schema"] != 1:
         raise CorpusError("unsupported corpus schema; expected 1")
-    meta = _keys(data["metadata"], {"name", "type", "provenance"}, set(), "metadata")
-    if not all(isinstance(value, str) and 0 < len(value) <= 500 for value in meta.values()) or meta[
-        "type"
-    ] not in {"synthetic", "public-pinned", "adjudicated"}:
+    meta = _keys(
+        data["metadata"],
+        {"name", "type", "provenance"},
+        {"known_gap_policy"},
+        "metadata",
+    )
+    if not all(
+        isinstance(meta[key], str) and 0 < len(meta[key]) <= 500 for key in ("name", "type", "provenance")
+    ) or meta["type"] not in {"synthetic", "public-pinned", "adjudicated"}:
         raise CorpusError("metadata requires a name, type and provenance")
+    gap_policy = meta.get("known_gap_policy")
+    if gap_policy is not None:
+        gap_policy = _keys(
+            gap_policy,
+            {"max_count", "expires_on"},
+            set(),
+            "metadata known_gap_policy",
+        )
+        if type(gap_policy["max_count"]) is not int or not 0 <= gap_policy["max_count"] <= 20:
+            raise CorpusError("metadata known_gap_policy max_count must be an integer from 0 to 20")
+        try:
+            expiry = date.fromisoformat(gap_policy["expires_on"])
+        except (TypeError, ValueError) as exc:
+            raise CorpusError("metadata known_gap_policy expires_on must be an ISO date") from exc
+        if expiry.isoformat() != gap_policy["expires_on"]:
+            raise CorpusError("metadata known_gap_policy expires_on must be an ISO date")
+        if expiry < date.today():
+            raise CorpusError("metadata known_gap_policy has expired; review or remove every known gap")
     items = data["cases"]
     if not isinstance(items, list) or not 1 <= len(items) <= MAX_CASES:
         raise CorpusError("corpus must contain 1 to 500 cases")
@@ -112,6 +224,13 @@ def load_corpus(path: Path) -> tuple[dict[str, str], list[Case], str]:
     for i, item in enumerate(items):
         case, total_bytes = _parse_case(item, f"case {i}", ids, total_bytes, meta["type"])
         cases.append(case)
+    gap_count = sum(case.known_gap for case in cases)
+    if gap_count and gap_policy is None:
+        raise CorpusError("known_gap cases require a bounded metadata known_gap_policy")
+    if gap_policy is not None and gap_count > gap_policy["max_count"]:
+        raise CorpusError(
+            f"known_gap count {gap_count} exceeds the declared maximum {gap_policy['max_count']}"
+        )
     return meta, cases, hashlib.sha256(raw).hexdigest()
 
 
@@ -172,7 +291,15 @@ def _case_assertions(value: Any, where: str) -> dict[str, Any]:
     assertions = _keys(
         value,
         set(),
-        {"max_agent_findings", "max_secret_findings", "server_count", "server_names"},
+        {
+            "forbidden_signatures",
+            "max_agent_findings",
+            "max_secret_findings",
+            "server_count",
+            "server_names",
+            "exact_findings",
+            *_FINDING_SELECTORS,
+        },
         f"{where} assertions",
     )
     for key in ("max_agent_findings", "max_secret_findings", "server_count"):
@@ -187,6 +314,18 @@ def _case_assertions(value: Any, where: str) -> dict[str, Any]:
         or len(set(assertions["server_names"])) != len(assertions["server_names"])
     ):
         raise CorpusError(f"{where}: server_names must contain up to 20 unique names")
+    if "forbidden_signatures" in assertions and (
+        not isinstance(assertions["forbidden_signatures"], list)
+        or len(assertions["forbidden_signatures"]) > 20
+        or any(
+            not isinstance(signature, str) or not _SIGNATURE.fullmatch(signature)
+            for signature in assertions["forbidden_signatures"]
+        )
+        or len(set(assertions["forbidden_signatures"])) != len(assertions["forbidden_signatures"])
+    ):
+        raise CorpusError(f"{where}: forbidden_signatures must contain up to 20 unique signature IDs")
+    _validate_finding_selectors(assertions, where)
+    _validate_exact_findings(assertions, where)
     return assertions
 
 
@@ -238,6 +377,8 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
         {
             "kind": f.kind.value,
             "resource_type": f.resource_type,
+            "frameworks": sorted(set(f.frameworks)),
+            "model_providers": sorted(set(f.model_providers)),
             "signatures": sorted(set(f.frameworks + f.model_providers)),
             "confidence": f.confidence,
             **(
@@ -253,8 +394,75 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
     ]
 
 
-def _assertions(case: Case, findings: list[dict[str, Any]]) -> list[str]:
+def _finding_checks(case: Case, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    checks = []
+    for relation in _FINDING_SELECTORS:
+        for selector in case.assertions.get(relation, []):
+            observed = any(
+                finding["kind"] == selector["kind"]
+                and (
+                    "product_signature" not in selector
+                    or selector["product_signature"] in finding["frameworks"]
+                )
+                and (
+                    "provider_signature" not in selector
+                    or selector["provider_signature"] in finding["model_providers"]
+                )
+                for finding in findings
+            )
+            checks.append(
+                {
+                    "relation": relation,
+                    "selector": selector,
+                    "observed": observed,
+                    "passed": observed if relation == "expected_findings" else not observed,
+                }
+            )
+    return checks
+
+
+def _exact_finding_set(case: Case, findings: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Compare all emitted findings, including duplicate kinds and full attribution."""
+    if "exact_findings" not in case.assertions:
+        return None
+    expected = sorted(
+        (
+            entry["kind"],
+            tuple(sorted(entry["product_signatures"])),
+            tuple(sorted(entry["provider_signatures"])),
+        )
+        for entry in case.assertions["exact_findings"]
+    )
+    observed = sorted(
+        (finding["kind"], tuple(finding["frameworks"]), tuple(finding["model_providers"]))
+        for finding in findings
+    )
+    return {
+        "expected": [[kind, list(products), list(providers)] for kind, products, providers in expected],
+        "observed": [[kind, list(products), list(providers)] for kind, products, providers in observed],
+        "passed": expected == observed,
+    }
+
+
+def _assertions(
+    case: Case,
+    findings: list[dict[str, Any]],
+    checks: list[dict[str, Any]],
+    exact_set: dict[str, Any] | None,
+) -> list[str]:
     failures = []
+    for check in checks:
+        if not check["passed"]:
+            action = (
+                "expected finding missing"
+                if check["relation"] == "expected_findings"
+                else "forbidden finding observed"
+            )
+            failures.append(f"{action}: {json.dumps(check['selector'], sort_keys=True)}")
+    if exact_set is not None and not exact_set["passed"]:
+        failures.append(
+            f"exact findings differ: expected {exact_set['expected']}; observed {exact_set['observed']}"
+        )
     mcp = [f for f in findings if f["kind"] == Kind.MCP_SERVER.value]
     if "max_agent_findings" in case.assertions:
         observed = sum(f["kind"] == Kind.AGENT.value for f in findings)
@@ -281,6 +489,11 @@ def _assertions(case: Case, findings: list[dict[str, Any]]) -> list[str]:
                 "active MCP server names: expected "
                 f"{sorted(case.assertions['server_names'])}; got {observed_names}"
             )
+    forbidden = set(case.assertions.get("forbidden_signatures", []))
+    if forbidden:
+        observed = sorted(forbidden & {signature for f in findings for signature in f["signatures"]})
+        if observed:
+            failures.append(f"forbidden signature attributions observed: {observed}")
     return failures
 
 
@@ -317,6 +530,42 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "specificity": tn / (tn + fp) if tn + fp else None,
         }
     return summary
+
+
+def finding_assertion_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Counts of explicitly labeled selectors, never inferred from the binary target."""
+    groups = {
+        name: {"checks": 0, "passed": 0, "failed": 0}
+        for name in (*_FINDING_SELECTORS, "kind_only", "product_signature", "provider_signature")
+    }
+    for row in rows:
+        for check in row["finding_checks"]:
+            selector = check["selector"]
+            fields = [check["relation"]]
+            fields.extend(field for field in ("product_signature", "provider_signature") if field in selector)
+            if len(fields) == 1:
+                fields.append("kind_only")
+            for field in fields:
+                groups[field]["checks"] += 1
+                groups[field]["passed" if check["passed"] else "failed"] += 1
+    return {
+        "note": (
+            "Explicit checks on selected cases; selectors are partial unless exact_findings is set. "
+            "Overlapping categories are not independent observations or field accuracy."
+        ),
+        "cases_with_checks": sum(bool(row["finding_checks"]) for row in rows),
+        "exact_finding_sets": {
+            "checks": sum(row["exact_finding_set"] is not None for row in rows),
+            "passed": sum(
+                row["exact_finding_set"] is not None and row["exact_finding_set"]["passed"] for row in rows
+            ),
+            "failed": sum(
+                row["exact_finding_set"] is not None and not row["exact_finding_set"]["passed"]
+                for row in rows
+            ),
+        },
+        **groups,
+    }
 
 
 def known_gaps(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -425,7 +674,9 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
                 and (case.signature is None or case.signature in f["signatures"])
             ]
             score = max((f["confidence"] for f in matching), default=0.0)
-            assertion_failures = _assertions(case, iterations[0][1])
+            finding_checks = _finding_checks(case, iterations[0][1])
+            exact_set = _exact_finding_set(case, iterations[0][1])
+            assertion_failures = _assertions(case, iterations[0][1], finding_checks, exact_set)
             rows.append(
                 {
                     "id": case.id,
@@ -439,10 +690,13 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
                     "correct": case.present == bool(matching) and not assertion_failures,
                     "known_gap": case.known_gap,
                     "assertion_failures": assertion_failures,
+                    "finding_checks": finding_checks,
+                    "exact_finding_set": exact_set,
                     "findings": iterations[0][1],
                     "median_ms": round(statistics.median(duration for duration, _ in iterations) * 1000, 3),
                 }
             )
+    gap_report = known_gaps(rows)
     return {
         "schema": 1,
         "corpus": {**metadata, "sha256": corpus_digest},
@@ -456,7 +710,8 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
         },
         "cases": rows,
         "metrics": summarize(rows),
-        "known_gaps": known_gaps(rows),
+        "finding_assertions": finding_assertion_metrics(rows),
+        "known_gaps": gap_report,
         "calibration": calibration(rows),
         "performance": {
             "repeats": repeats,
@@ -467,8 +722,10 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
             "p95_scan_ms": round(_percentile(durations, 0.95) * 1000, 3),
             "total_scan_s": round(sum(durations), 3),
         },
-        # Known gaps are counted in the metrics above but never fail the run.
-        "passed": all(row["correct"] or row["known_gap"] for row in rows),
+        # Open gaps are temporarily waived only inside the bounded, unexpired
+        # corpus policy validated above. A passing flagged case fails the gate
+        # until its obsolete waiver is removed, preventing permanent bypasses.
+        "passed": all(row["correct"] or row["known_gap"] for row in rows) and not gap_report["passing"],
     }
 
 

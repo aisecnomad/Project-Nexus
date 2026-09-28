@@ -65,8 +65,10 @@ def test_github_clone_skips_hostile_branch(index, monkeypatch):
     connector = GitHubConnector(ctx)
     captured: dict[str, list[str]] = {}
 
-    def fake_clone(cmd, env, ctx, timeout):
+    def fake_clone(cmd, env, ctx, timeout, *, destination, max_bytes):
         captured["cmd"] = list(cmd)
+        assert destination == "/tmp/dest"
+        assert max_bytes == connector.clone_max_bytes
         return True
 
     monkeypatch.setattr(remote_mod, "run_bounded_clone", fake_clone)

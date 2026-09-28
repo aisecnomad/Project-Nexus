@@ -31,6 +31,7 @@ from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.models import Finding
 from shadowscan.utils.git import (
+    CloneSizeError,
     CloneTimeoutError,
     clone_environment,
     exceeds_clone_size,
@@ -464,7 +465,19 @@ class RemoteRepositoryConnector(BaseConnector):
             )
         cmd += ["--", url, dest]
         try:
-            return run_bounded_clone(cmd, env, self.ctx, self.clone_timeout_seconds)
+            # The checkout is measured while git runs and again after it exits;
+            # an oversized clone is rejected and the caller removes it.
+            return run_bounded_clone(
+                cmd,
+                env,
+                self.ctx,
+                self.clone_timeout_seconds,
+                destination=dest,
+                max_bytes=self.clone_max_bytes,
+            )
+        except CloneSizeError as exc:
+            self.ctx.warn(f"{self.name}: {exc}; using sampled API mode", incomplete=True)
+            return False
         except (OSError, CloneTimeoutError) as exc:
             self.log.debug("git clone failed: %s", type(exc).__name__)
             return False

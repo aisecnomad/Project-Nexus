@@ -25,7 +25,7 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize, scope_matches
+from shadowscan.connectors.common import config_boolean, finalize, scope_matches
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -74,6 +74,7 @@ class _GraphExport:
         self.role_assignments: dict[str, list[dict[str, Any]]] = {}
         self.applications: list[dict[str, Any]] = []
         self.role_names: dict[str, str] = {}
+        self.conflicting_role_names: set[str] = set()
         self.conflicting_sps: set[str] = set()
         self.conflicting_snapshots: dict[str, list[dict[str, Any]]] = {}
         self.truncated_snapshots: set[str] = set()
@@ -102,7 +103,9 @@ class EntraConnector(BaseConnector):
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.tenant = ctx.get("tenant_id", env="AZURE_TENANT_ID")
-        self.include_first_party = bool(ctx.get("include_first_party", False))
+        self.include_first_party = config_boolean(
+            ctx.get("include_first_party", False), "include_first_party"
+        )
         self.max_lookups = int(ctx.get("max_app_role_lookups", 2000))
         self.http: HttpClient | None = None
 
@@ -155,16 +158,8 @@ class EntraConnector(BaseConnector):
             "notes,appRoleAssignmentRequired,appRoles,oauth2PermissionScopes,description,loginUrl"
         )
         sps = list(self._pages("/servicePrincipals", params={"$select": sp_select, "$top": 999}))
-        role_names: dict[str, str] = {}
-        for sp in sps:
-            for role in (sp.get("appRoles") or []) + (sp.get("oauth2PermissionScopes") or []):
-                if role.get("id") and role.get("value"):
-                    role_names[role["id"]] = role["value"]
-        yield {"_kind": "roleMap", "roles": role_names}
         for sp in sps:
             sp["_kind"] = "servicePrincipal"
-            sp.pop("appRoles", None)
-            sp.pop("oauth2PermissionScopes", None)
             yield sp
         for grant in self._pages("/oauth2PermissionGrants", params={"$top": 999}):
             grant["_kind"] = "oauth2PermissionGrant"
@@ -233,7 +228,8 @@ class EntraConnector(BaseConnector):
                 self.ctx.warn("identity.entra: unsupported or malformed Graph record; coverage incomplete")
                 continue
             if kind == "roleMap":
-                graph.role_names.update(rec.get("roles") or {})
+                for role_id, value in (rec.get("roles") or {}).items():
+                    self._remember_role_name(graph, role_id, value)
             elif kind == "servicePrincipal":
                 self._add_principal(graph, rec)
             elif kind == "oauth2PermissionGrant":
@@ -265,7 +261,24 @@ class EntraConnector(BaseConnector):
         graph.sps[sp_id] = rec
         for role in (rec.get("appRoles") or []) + (rec.get("oauth2PermissionScopes") or []):
             if role.get("id") and role.get("value"):
-                graph.role_names[role["id"]] = role["value"]
+                self._remember_role_name(graph, role["id"], role["value"])
+
+    def _remember_role_name(self, graph: _GraphExport, role_id: str, value: str) -> None:
+        """Record a permission label; an id with conflicting labels keeps no label at all.
+
+        Role definitions can arrive from a roleMap and from several principals.
+        A later definition must not silently relabel an earlier one, so a
+        conflicting id falls back to its unresolved identifier.
+        """
+        if role_id in graph.conflicting_role_names:
+            return
+        previous = graph.role_names.get(role_id)
+        if previous is None:
+            graph.role_names[role_id] = value
+        elif previous != value:
+            graph.role_names.pop(role_id, None)
+            graph.conflicting_role_names.add(role_id)
+            self.ctx.warn("identity.entra: conflicting role labels; permission-name coverage incomplete")
 
     def _unresolved_finding(self, sp_id: str, graph: _GraphExport) -> Finding | None:
         """Permission evidence for a principal missing from, or conflicting within, the export."""

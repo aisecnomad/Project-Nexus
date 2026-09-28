@@ -22,6 +22,7 @@ from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.redaction import _sensitive_key, sanitize
+from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 
 _SCHEMA = "shadowscan.collection-scope/v1"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -32,23 +33,14 @@ MAX_REPORT_BYTES = 64 * 1024 * 1024
 def load_report(path: str | Path) -> dict[str, Any]:
     """Read an unambiguous, bounded report without following input symlinks."""
 
-    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError("duplicate report field")
-            result[key] = value
-        return result
-
-    def invalid_number(value: str) -> None:
-        raise ValueError("report numbers must be finite")
-
     try:
-        report = json.loads(
-            read_policy_text(Path(path), max_bytes=MAX_REPORT_BYTES),
-            object_pairs_hook=unique_object,
-            parse_constant=invalid_number,
-        )
+        try:
+            report = strict_json_loads(read_policy_text(Path(path), max_bytes=MAX_REPORT_BYTES))
+        except JSONIntegrityError as exc:
+            # Preserve the established public errors without exposing any
+            # attacker-controlled field names or values.
+            message = "duplicate report field" if "Duplicate" in str(exc) else "report numbers must be finite"
+            raise ValueError(message) from None
         if not isinstance(report, dict):
             raise ValueError("report must be a JSON object")
         _findings(report)

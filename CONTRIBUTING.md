@@ -37,12 +37,14 @@ as your first contribution.
 
 ## Getting started
 
-Use Python 3.11 or newer and Git on a POSIX system: Linux and macOS are
-CI-validated targets, and on Windows use WSL, because the scanner's confined
-file reader needs `O_NOFOLLOW`/`dir_fd` and the Makefile assumes `/tmp` and a
-`.venv/bin` layout. The macOS CI job runs lint, typecheck, tests and coverage
-without hash-locked supply chain validation (wheel hashes are Linux-specific). Fork the repository on GitHub if you
-need a branch you can push; clone your fork in that case. In a local checkout:
+Use Python 3.11, 3.12, or 3.13 and Git on a POSIX system. Linux and macOS are
+CI-validated development and test targets; Linux x86_64 is the only validated
+deployment target for the production runtime lock. On Windows use WSL,
+because the scanner's confined file reader needs `O_NOFOLLOW`/`dir_fd` and the
+Makefile assumes `/tmp` and a `.venv/bin` layout. Linux and macOS CI install the
+hash-locked runtime, cloud and development toolchain. Fork the repository on
+GitHub if you need a branch you can push; clone your fork in that case. In a
+local checkout:
 
 ```bash
 git clone https://github.com/aisecnomad/Project-Nexus.git
@@ -50,14 +52,13 @@ cd Project-Nexus
 python -m venv .venv
 source .venv/bin/activate
 git switch -c fix/short-description
-python -m pip install -e ".[all]"    # dev + cloud + docs extras
-make install-hooks                   # pre-commit hooks (recommended)
+make install                         # hash-locked dev + cloud + docs environment
+pre-commit install                   # recommended local hooks
 ```
 
-Cloud SDKs are optional for users, but the test suite is gated with them
-installed; `.[all]` (or `.[cloud,dev]`, which omits the docs toolchain)
-includes them. Offline fixtures cover the cloud connectors; do not commit live
-tenant exports.
+Cloud SDKs are optional for users, but the Linux test suite is gated with the
+hash-locked runtime set that includes them. Offline fixtures cover the cloud
+connectors; do not commit live tenant exports.
 
 Run `make help` for a quick reference of all development commands.
 
@@ -89,6 +90,9 @@ make test            # full suite with the overall coverage floor
 make coverage-gate   # connector coverage; run after make test
 make check           # all local quality gates
 ```
+
+For detailed testing guidance, environment setup troubleshooting, and advanced patterns,
+see [Testing Guide](docs/testing.md).
 
 To run the connector coverage check directly after the full coverage test run,
 export a report and pass its filename explicitly:
@@ -219,21 +223,27 @@ See [docs/signatures.md](docs/signatures.md) for the schema and authoring guide.
 ShadowScan currently has a single maintainer. The maintainer reviews changes,
 checks validation and is accountable for merges. CI and CodeQL must pass on the
 current PR revision, conflicts must be resolved, and substantive review feedback
-must be addressed. Prefer independent human review for routine changes; the
-current single-maintainer process does not guarantee it. AI-assisted review is
-advisory and is never an independent human approval.
+must be addressed. The `main` ruleset is configured to require one approving
+review from someone with write access for every pull request, including routine
+changes. An author cannot approve their own change: a maintainer-authored PR
+requires a second eligible human reviewer. Stale approvals are dismissed after
+a push; request a new approval for the final revision. That ruleset has been
+enabled and disabled more than once during 2026-09, so check the live rules
+before relying on it. AI-assisted review is advisory and is never an
+independent human approval.
 
 Before merging, the maintainer checks:
 
-- The PR targets `main`, conflicts are resolved, and current CI and CodeQL
-  checks pass. This includes signature validation, lint, typing, dependency
-  audit, coverage, detection evaluation, and package and smoke checks.
+- The PR targets `main`, is up to date, conflicts are resolved, and current CI
+  and CodeQL checks pass, including the strict required checks `test (3.11)`,
+  `test (3.12)` and `analyze`. CI also runs signature validation, lint, typing,
+  dependency audit, coverage, detection evaluation, and package and smoke checks.
 - The change respects the trust model, documents compatibility changes, and
   includes appropriate validation. An AI-assisted change must meet the same
   requirements as any other contribution.
-- The review record describes what was checked and any remaining limitation.
-  If an independent approval exists, it must cover the final commit; a later
-  push requires renewed review before that approval can be relied on.
+- The approving reviewer has write access, is someone other than the author,
+  and approved the final PR revision. The review record describes what was
+  checked and any remaining limitation. A new push requires renewed approval.
 
 The historical review status is documented in
 [merge gate and review status](docs/production.md#merge-gate-and-review-status).
@@ -241,8 +251,9 @@ Do not read a merged pull request, green check, AI review or version number as
 evidence that a second person examined the change. Repository settings are
 separate from this policy: inspect the
 [live rules](https://github.com/aisecnomad/Project-Nexus/rules) and PR checks
-before merging. Do not disable checks or review rules to make a merge possible,
-and do not describe an unenforced requirement as an active platform gate.
+before merging. The ruleset has no configured bypass actors, but it blocks
+nothing while it is disabled. Do not disable checks or review rules to make a
+merge possible, and recheck live enforcement before relying on it.
 
 **Independent human review is required before any tagged release.** The
 reviewer must not have authored or produced the change. A review is recorded as
@@ -251,11 +262,13 @@ the review author, state and `commit_id` with
 `gh api repos/aisecnomad/Project-Nexus/pulls/<number>/reviews`, and compare that
 commit to the current PR head. The ruleset on `main` is configured to require
 one approving review from a reviewer with write access; its enforcement state
-has changed during 2026-09 and can change again, so check the
+has changed more than once during 2026-09 and it read back as disabled on
+2026-09-27, so check the
 [live rules](https://github.com/aisecnomad/Project-Nexus/rules) rather than this
 sentence. While the maintainer is the only account with write access, that rule
-cannot be satisfied for the maintainer's own changes by anyone but a second
-reviewer. Never manufacture an approval or treat an AI reviewer as that person.
+cannot be satisfied for the maintainer's own changes until a second eligible
+reviewer receives write access and approves. Never manufacture an approval or
+treat an AI reviewer as that person.
 
 For deployment, pin the full reviewed commit SHA and retain its review and
 acceptance evidence. No tag exists yet; `0.1.1` names an unreleased candidate.
@@ -275,10 +288,11 @@ the work under the Apache-2.0 license and that you agree to the
 [Developer Certificate of Origin](https://developercertificate.org/) (DCO).
 
 You can sign off your commits with `git commit -s`, which adds a
-`Signed-off-by` line. The [`DCO` workflow](.github/workflows/dco.yml) checks
-every commit in a pull request for a matching sign-off and reports the result
-as a status check; whether it is configured to block merges follows the same
-repository rules as any other check (see
+`Signed-off-by` line. CI calls the reusable [`DCO` workflow](.github/workflows/dco.yml)
+to check every non-merge commit in a pull request for a matching sign-off.
+The `CI gate` check requires successful DCO, documentation, and every Python
+matrix job, including the container smoke test. Whether that check is configured
+to block merges follows the live repository rules (see
 [review and merge policy](#review-and-merge-policy)).
 
 ## License

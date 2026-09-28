@@ -140,7 +140,7 @@ def test_schema_diagnostics_never_echo_unknown_keys_or_values(tmp_path, content)
     assert "Traceback" not in result.output
 
 
-def test_connector_specific_fields_and_nested_overrides_remain_supported(monkeypatch):
+def test_connector_specific_fields_and_nonoverlapping_nested_config_remain_supported(monkeypatch):
     monkeypatch.setenv("NEXUS_PARALLEL", "2")
     config = ScanConfig.from_dict(
         {
@@ -149,13 +149,13 @@ def test_connector_specific_fields_and_nested_overrides_remain_supported(monkeyp
                 {
                     "name": "cloud.aws",
                     "regions": ["us-east-1"],
-                    "config": {"regions": ["eu-west-1"], "cloudtrail_days": 3},
+                    "config": {"cloudtrail_days": 3},
                 }
             ],
         }
     )
     assert config.parallel == 2
-    assert config.connectors[0].config == {"regions": ["eu-west-1"], "cloudtrail_days": 3}
+    assert config.connectors[0].config == {"regions": ["us-east-1"], "cloudtrail_days": 3}
 
 
 def test_unknown_built_in_connector_key_fails_closed_without_echoing_its_value():

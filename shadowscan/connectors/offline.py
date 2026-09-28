@@ -40,7 +40,8 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from shadowscan.utils.files import NotRegularFileError, changed_since, open_confined_file
-from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
+from shadowscan.utils.safe_json import strict_json_loads
+from shadowscan.utils.safe_yaml import YAMLResourceLimitError, strict_bounded_safe_load
 
 if TYPE_CHECKING:
     from shadowscan.connectors.base import BaseConnector
@@ -390,7 +391,7 @@ def load_offline_file(
                 continue
             saw_record = True
             try:
-                data = json.loads(line)
+                data = strict_json_loads(line)
             except (json.JSONDecodeError, RecursionError, ValueError):
                 report(f"invalid JSON record at line {number}")
                 continue
@@ -413,7 +414,7 @@ def load_offline_file(
         return
     if suffix in {".yaml", ".yml"}:
         try:
-            data = bounded_safe_load(text)
+            data = strict_bounded_safe_load(text)
         except YAMLResourceLimitError:
             report("YAML safety limit exceeded")
             return
@@ -423,7 +424,7 @@ def load_offline_file(
         yield from conn._unwrap(data, report)
         return
     try:
-        data = json.loads(text)
+        data = strict_json_loads(text)
     except json.JSONDecodeError:
         yield from conn._json_lines(text, report)
     except (RecursionError, ValueError):
@@ -461,7 +462,7 @@ def json_lines(cls: type[BaseConnector], text: str, report: Report) -> Iterator[
         if not line.strip():
             continue
         try:
-            data = json.loads(line)
+            data = strict_json_loads(line)
         except (json.JSONDecodeError, RecursionError, ValueError):
             report(f"invalid JSON record at line {number}")
             continue
@@ -481,7 +482,11 @@ def _csv_rows(
 ) -> Iterator[dict[str, Any]]:
     try:
         fields = reader.fieldnames
-        if not fields or any(not field.strip() for field in fields) or len(set(fields)) != len(fields):
+        if (
+            not fields
+            or any(not field.strip() for field in fields)
+            or len({field.strip().casefold() for field in fields}) != len(fields)
+        ):
             report("CSV export needs unique, nonempty column names")
             return
         for rec in reader:
@@ -498,7 +503,14 @@ def _csv_rows(
 
 def is_csv_provider_error(record: dict[str, str]) -> bool:
     """Recognize metadata-only failures without treating log event rows as failures."""
-    fields = {key.strip().lower(): value for key, value in record.items()}
+    fields: dict[str, str] = {}
+    for key, value in record.items():
+        normalized = key.strip().casefold()
+        if normalized in fields:
+            # Keys that differ only by case or padding are ambiguous; treat the
+            # row as unusable rather than guessing which value applies.
+            return True
+        fields[normalized] = value
     if not fields.keys() <= _CSV_ERROR_FIELDS:
         return False
     return bool(fields.get("error", "").strip()) or fields.get("ok", "").strip().lower() == "false"

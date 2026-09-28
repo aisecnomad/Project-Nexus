@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shlex
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -123,9 +127,22 @@ def test_workflows_use_pinned_actions_and_scoped_permissions(path: Path) -> None
     assert not _write_scopes(workflow["permissions"]), "top-level permissions must be read-only"
     assert "pull_request_target" not in _triggers(workflow)
     for name, job in workflow["jobs"].items():
-        assert type(job.get("timeout-minutes")) is int and job["timeout-minutes"] > 0, name
+        for key, value in (job.get("env") or {}).items():
+            assert not re.search(r"\$\{\{\s*(?:runner|steps)\.", str(value)), (
+                f"{name}: job env {key} uses a context available only after runner allocation"
+            )
         permissions = job.get("permissions", workflow["permissions"])
         assert _write_scopes(permissions) <= WRITE_SCOPES.get((path.name, name), set()), name
+        if "uses" in job:
+            # Same-repository reusable workflows resolve at the caller's commit.
+            # Their own jobs are checked here for timeouts, actions and scopes.
+            target = job["uses"]
+            assert re.fullmatch(r"\./\.github/workflows/[\w-]+\.yml", target), name
+            called = ROOT / target
+            assert called in WORKFLOWS and "workflow_call" in _triggers(_load(called)), name
+            assert not job.get("secrets"), "reusable CI must not inherit secrets"
+        else:
+            assert type(job.get("timeout-minutes")) is int and job["timeout-minutes"] > 0, name
         for step in job.get("steps", []):
             action = step.get("uses")
             if action:
@@ -134,6 +151,167 @@ def test_workflows_use_pinned_actions_and_scoped_permissions(path: Path) -> None
                     assert step.get("with", {}).get("persist-credentials") is False, name
             script = step.get("run", "")
             assert not re.search(r"\$\{\{\s*github\.(?:event\.|head_ref\b)", script), name
+
+
+def test_ci_gate_waits_for_every_job_and_cannot_skip_failed_dependencies() -> None:
+    jobs = _load(GITHUB / "workflows" / "ci.yml")["jobs"]
+    gate = jobs["gate"]
+    assert gate["name"] == "CI gate", "keep the required-check context stable"
+    assert gate["if"] == "always()", "failed or skipped jobs must still be evaluated"
+    assert set(gate["needs"]) == set(jobs) - {"gate"}
+    assert not any(job.get("continue-on-error") for job in jobs.values())
+    assert not any(step.get("continue-on-error") for step in gate["steps"])
+    for name in ("docs", "test-macos", "test"):
+        assert "if" not in jobs[name], f"{name} must always run"
+    assert jobs["dco"]["if"] == "github.event_name == 'pull_request'"
+    assert jobs["dco"]["uses"] == "./.github/workflows/dco.yml"
+    assert set(_triggers(_load(GITHUB / "workflows" / "dco.yml"))) == {"workflow_call"}
+
+
+@pytest.mark.parametrize(
+    "event,docs,macos,tests,dco,passes",
+    [
+        ("pull_request", "success", "success", "success", "success", True),
+        ("push", "success", "success", "success", "skipped", True),
+        ("pull_request", "success", "success", "failure", "success", False),
+        ("pull_request", "success", "success", "cancelled", "success", False),
+        ("pull_request", "success", "success", "skipped", "success", False),
+        ("pull_request", "failure", "success", "success", "success", False),
+        ("pull_request", "cancelled", "success", "success", "success", False),
+        ("pull_request", "skipped", "success", "success", "success", False),
+        ("pull_request", "success", "failure", "success", "success", False),
+        ("pull_request", "success", "cancelled", "success", "success", False),
+        ("pull_request", "success", "skipped", "success", "success", False),
+        ("pull_request", "success", "success", "success", "failure", False),
+        ("pull_request", "success", "success", "success", "cancelled", False),
+        ("pull_request", "success", "success", "success", "skipped", False),
+        ("pull_request", "success", "success", "", "success", False),
+        ("push", "success", "success", "failure", "skipped", False),
+        ("push", "success", "success", "success", "failure", False),
+        ("workflow_dispatch", "success", "success", "success", "skipped", False),
+    ],
+)
+def test_ci_gate_executes_fail_closed(
+    event: str, docs: str, macos: str, tests: str, dco: str, passes: bool
+) -> None:
+    gate = _load(GITHUB / "workflows" / "ci.yml")["jobs"]["gate"]
+    script = gate["steps"][0]["run"]
+    # Execute the committed workflow script, including failed/cancelled/skipped
+    # matrix results; a conditional that accidentally skips the gate is unsafe.
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={
+            **os.environ,
+            "EVENT_NAME": event,
+            "DOCS_RESULT": docs,
+            "MACOS_RESULT": macos,
+            "TEST_RESULT": tests,
+            "DCO_RESULT": dco,
+        },
+    )
+    assert (result.returncode == 0) is passes, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "case,passes",
+    [
+        ("signed", True),
+        ("mixed_case", True),
+        ("divergent", True),
+        ("unsigned", False),
+        ("forged", False),
+        ("missing_base", False),
+        ("missing_head", False),
+        ("malformed_base", False),
+        ("malformed_head", False),
+        ("missing_context", False),
+        ("push_context", False),
+        ("empty_range", False),
+        ("disconnected", False),
+        ("range_error", False),
+    ],
+)
+def test_dco_executes_against_real_commit_ranges(tmp_path: Path, case: str, passes: bool) -> None:
+    git_path = shutil.which("git")
+    assert git_path is not None
+    env = {
+        **os.environ,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_AUTHOR_NAME": "DCO Reviewer",
+        "GIT_AUTHOR_EMAIL": "reviewer@example.test",
+        "GIT_COMMITTER_NAME": "DCO Reviewer",
+        "GIT_COMMITTER_EMAIL": "reviewer@example.test",
+    }
+
+    def git(*args: str, extra_env: dict[str, str] | None = None) -> str:
+        return subprocess.run(
+            [git_path, "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={os.devnull}", *args],
+            cwd=tmp_path,
+            env={**env, **(extra_env or {})},
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+
+    git("init", "-q", "--initial-branch=main")
+    git("commit", "--allow-empty", "-qm", "Base")
+    base = git("rev-parse", "HEAD")
+    signed = "Change\n\nSigned-off-by: DCO Reviewer <reviewer@example.test>"
+    message = "Change" if case == "unsigned" else signed
+    if case == "mixed_case":
+        message = signed.replace("reviewer@example.test", "ReViewer@Example.Test")
+    if case == "divergent":
+        git("checkout", "-qb", "feature")
+    if case == "disconnected":
+        git("checkout", "--orphan", "unrelated")
+    extra = {"GIT_AUTHOR_EMAIL": ".*", "GIT_COMMITTER_EMAIL": ".*"} if case == "forged" else {}
+    git("commit", "--allow-empty", "-qm", message, extra_env=extra)
+    head = git("rev-parse", "HEAD")
+    if case == "divergent":
+        git("checkout", "-q", "main")
+        git("commit", "--allow-empty", "-qm", "Main advanced")
+        base = git("rev-parse", "HEAD")
+    if case == "missing_base":
+        base = "0" * 40
+    elif case == "malformed_base":
+        base = "HEAD~1"
+    if case == "missing_head":
+        head = "1" * 40
+    elif case == "malformed_head":
+        head = "--all"
+    if case == "empty_range":
+        head = base
+    event = "" if case == "missing_context" else "push" if case == "push_context" else "pull_request"
+    run_env = {**env, "EVENT_NAME": event, "BASE_SHA": base, "HEAD_SHA": head}
+    if case == "range_error":
+        # Refs remain valid; fail the enumeration itself to exercise error
+        # propagation that process substitution previously discarded.
+        wrapper_dir = tmp_path / "bin"
+        wrapper_dir.mkdir()
+        wrapper = wrapper_dir / "git"
+        wrapper.write_text(
+            f'#!/bin/sh\nif [ "$1" = "rev-list" ]; then exit 2; fi\nexec {shlex.quote(git_path)} "$@"\n',
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o700)
+        run_env["PATH"] = str(wrapper_dir) + os.pathsep + os.environ["PATH"]
+    steps = _load(GITHUB / "workflows" / "dco.yml")["jobs"]["check"]["steps"]
+    script = next(step["run"] for step in steps if "run" in step)
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=tmp_path,
+        env=run_env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert (result.returncode == 0) is passes, result.stdout + result.stderr
+    assert ("All commits signed off." in result.stdout) is passes
 
 
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)

@@ -6,6 +6,7 @@ import html
 import re
 
 from shadowscan.models import Finding, ScanResult
+from shadowscan.reporters._publication import publication_stats, related_finding_ids
 
 _LEVEL_ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": "⚪"}
 _LEVEL_ORDER = ["critical", "high", "medium", "low", "info"]
@@ -151,19 +152,20 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("")
     lines.append("| Connector | Objects examined | Findings | Errors | Warnings | Status |")
     lines.append("|---|---|---|---|---|---|")
-    for st in result.stats:
-        if st.skipped:
-            status = f"skipped: {st.skip_reason}"
+    stats = publication_stats(result)
+    for st in stats:
+        if st["skipped"]:
+            status = f"skipped: {st['skip_reason']}"
         else:
-            status = "incomplete" if st.incomplete or st.errors else "cached" if st.cached else "ok"
+            status = "incomplete" if st["incomplete"] or st["errors"] else "cached" if st["cached"] else "ok"
         lines.append(
-            f"| {_text(st.connector)} | {st.objects_examined} | {st.findings} | {len(st.errors)}"
-            f" | {len(st.warnings)} | {_text(status)} |"
+            f"| {_text(st['connector'])} | {st['objects_examined']} | {st['findings']} | {len(st['errors'])}"
+            f" | {len(st['warnings'])} | {_text(status)} |"
         )
     lines.append("")
-    for st in result.stats:
-        for diagnostic in [*st.errors, *st.warnings]:
-            lines.append(f"- **{_text(st.connector)}:** {_text(diagnostic)}")
+    for st in stats:
+        for diagnostic in [*st["errors"], *st["warnings"]]:
+            lines.append(f"- **{_text(st['connector'])}:** {_text(diagnostic)}")
     lines.append("")
     return "\n".join(lines)
 
@@ -216,9 +218,9 @@ def _finding_section(f: Finding) -> list[str]:
             start, end = _text(window.get("start")), _text(window.get("end"))
             out.append(f"- **Observation window:** {start} → {end}  ")
         out.append(f"- **Activity limits:** {_text(activity.get('limitations', ''))}  ")
-    related = f.metadata.get("related")
+    related = related_finding_ids(f.metadata)
     if related:
-        out.append(f"- **Related findings:** {', '.join(_code(r) for r in related[:8])}  ")
+        out.append(f"- **Related findings:** {', '.join(_code(r) for r in related)}  ")
     factors = [x for x in f.risk.factors if x.weight]
     if factors:
         out.append("")
