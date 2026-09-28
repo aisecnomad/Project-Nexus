@@ -28,12 +28,15 @@
 |---|---|
 | `shadowscan/models.py` | `Finding`, `Evidence`, `Risk`, `ScanResult`; confidence = noisy-OR of evidence weights |
 | `shadowscan/signatures/` | YAML loader/validator (`loader.py`) and matchers (`matcher.py`); packs in `data/` |
-| `shadowscan/connectors/base.py` | `BaseConnector` (`collect`, `analyze`, `load_offline`, `run`, record dumping), `ConnectorContext` |
-| `shadowscan/connectors/common.py` | turning matches into evidence / frameworks / capabilities, permission classification, blob scanning |
+| `shadowscan/connectors/base.py` | `BaseConnector` (`collect`, `analyze`, `load_offline`, `run`, record dumping, [engine hooks](#engine-hooks)), `ConnectorContext` |
+| `shadowscan/connectors/offline.py` | offline export reading: file discovery without following links, confined readers with byte limits, JSON / JSONL / YAML / CSV parsing, envelope and pagination checks |
+| `shadowscan/connectors/common.py` | turning matches into evidence / frameworks / capabilities, permission classification, blob scanning, merging the metadata of duplicate findings |
 | `shadowscan/connectors/<surface>/` | one module per data source |
+| `shadowscan/connectors/code/remote.py` | shared by `code.github` and `code.gitlab`: offline clone loading, clone hardening and origin pinning, API snapshots and blob verification |
+| `shadowscan/utils/files.py` | confined reads: no link followed in any path component, directories opened for traversal only (`O_PATH` on Linux) |
 | `shadowscan/registry.py` | inventory formats and reconciliation, capability-card stub generation |
 | `shadowscan/risk.py` | additive, explainable risk model |
-| `shadowscan/engine.py` | parallel connector execution, merge, correlation, reconciliation, scoring |
+| `shadowscan/engine.py` | parallel connector execution, merge, correlation, reconciliation, scoring; no connector names |
 | `shadowscan/config.py` | YAML config with `${ENV}` expansion, `--set` parsing, connector key validation |
 | `shadowscan/errors.py` | `SetupError`: setup failures whose messages are credential-free and printed verbatim by the CLI |
 | `shadowscan/reporters/` | output formats |
@@ -56,12 +59,38 @@
 5. Reporters render. SARIF carries `file:line` for code findings and logical
    locations elsewhere; HTML is self-contained.
 
+Merging keeps the first observation's owner and metadata and unions evidence,
+frameworks, capabilities, tags, permissions and models. Metadata that combines
+across observations (`variable_names`, `runtime_observations`, and the
+per-source request, token and cost metrics of gateway-surface callers) is merged
+by `merge_duplicate_metadata` in `shadowscan/connectors/common.py`, next to the
+connectors that emit those keys.
+
 Reports declare `shadowscan.finding-identity/v2`. Inferred classification and
 current permissions do not enter the ID. The default observation discriminator
 is the resource-type family before `/`; connectors emitting distinct observations
 of one resource within the same family must supply different stable
 `identity_discriminator` values. Schema upgrades require fresh comparison
 baselines and invalidate older incremental caches.
+
+## Engine hooks
+
+The engine never special-cases a connector name. Behaviour that differs by
+connector is a capability the class declares; `BaseConnector` holds the
+defaults, which describe an ordinary connector.
+
+| hook | default | declared by | engine behaviour |
+|---|---|---|---|
+| `cache_roots_separately(roots, root_ids, *, labelled)` | `False` | `code.filesystem` | an incremental scan of several `paths` runs and caches one job per root; raising `ConnectorError` runs the connector once so its own validation reports the scan incomplete |
+| `inherits_instance_credentials_approval()` | `True` for a connector on the cloud surface or one whose `config_keys` documents `allow_instance_credentials` | every `cloud.*` connector, plugins included, through its surface: the registry holds `cloud.*` names to it | the connector's `allow_instance_credentials` is set from `options.allow_instance_credentials`, whether or not it documents the key; a value in any connector entry is replaced the same way, so it never takes effect |
+| `uses_run_identity_key` | `False` | `gateway.logs` | the connector's jobs share one private key per scan run (`ConnectorContext.gateway_identity_key`), so identical sources in one report share opaque caller and scope IDs that separate runs cannot link |
+
+The engine looks up the connector class once per configured entry and reads
+these hooks from it. As in collection, the lookup, which imports an approved
+plugin, runs under the scan's private-origin policy and is skipped once the
+entry is out of time. When the lookup fails or is skipped the defaults apply
+and the entry is reported incomplete. Plugins run with scanner privileges, so a
+hook a plugin declares is trusted like the rest of its code.
 
 ## Design principles
 
@@ -101,6 +130,11 @@ class AcmeAgentHubConnector(BaseConnector):
             apply_matches(f, name_matches(self.index, rec["name"], rec.get("description")))
             yield finalize(f, self.index)
 ```
+
+Offline mode needs no code: `BaseConnector.load_offline` reads the `input`
+export through `shadowscan/connectors/offline.py`. Override `load_offline`, or
+one of the thin `_`-prefixed offline methods it calls, only for a format the
+shared parser does not cover.
 
 Register it in `pyproject.toml`:
 

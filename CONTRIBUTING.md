@@ -189,6 +189,10 @@ contract. In brief:
 6. Document in `docs/connectors.md` with configuration keys, required API
    scopes, and offline export format.
 
+`BaseConnector.load_offline` already reads `input` exports. Declare an
+[engine hook](docs/architecture.md#engine-hooks) only when the engine must
+treat the connector differently; the engine never special-cases a name.
+
 ## Writing signatures
 
 Signatures are YAML. Add a pack directory with `--signatures` or the

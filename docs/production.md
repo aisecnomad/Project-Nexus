@@ -339,8 +339,14 @@ workers for untrusted repositories.
 
 `allow_instance_credentials: false` disables implicit cloud instance-metadata
 credential acquisition. Enabling it is a global opt-in; a connector-level value
-cannot silently override that policy. Use explicit audit credentials or approved
-workload credentials and inspect account/tenant attribution before rollout.
+cannot silently override that policy. The engine replaces the key in any
+connector entry with the scan-wide value, and passes that value to every
+`cloud.*` connector, plugins included, and to any plugin that declares the
+cloud surface or documents the key in its `config_keys`. Before this release
+only `cloud.*` entries were replaced, so review plugin entries that set their
+own `allow_instance_credentials: true`: it no longer takes effect. Use
+explicit audit credentials or approved workload credentials and inspect
+account/tenant attribution before rollout.
 These settings are credential-use policy, not a process or network sandbox.
 
 Custom packs can add signatures by default. Replacing a built-in signature
