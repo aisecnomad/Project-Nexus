@@ -211,9 +211,13 @@ _RECORD_WORD = re.compile(r"name|key|Name|Key|NAME|KEY")
 _RECORD_VALUE = re.compile(r"(?<![\w.-])(?P<quote>[\"']?)(?:value|Value|VALUE)(?P=quote)[ \t]*[:=][ \t]*")
 # An unquoted value stops at ']' unless that ']' closes a marker an earlier
 # pass (or an earlier sanitization) left in it: stopping inside the marker
-# would withhold '[REDACTED' again and grow it by one ']' on every pass.
+# would withhold '[REDACTED' again and grow it by one ']' on every pass. It
+# also stops at an escaped line break ('\n' in JSON-escaped YAML): run past
+# it, the value would take the next line's name ('\n$env:auth_token = "v"')
+# and hide that name from the assignment rules.
 _RECORD_INLINE_VALUE = re.compile(
-    r"\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;}\])]+(?:(?<=\[REDACTED)\][^\s,;}\])]*)*"
+    r"\"[^\"\r\n]*\"|'[^'\r\n]*'"
+    r"|(?:[^\s,;}\])\\]|\\(?![nr]))+(?:(?<=\[REDACTED)\](?:[^\s,;}\])\\]|\\(?![nr]))*)*"
 )
 # A quoted value runs to its closing quote, past a '}' inside it ('"p}v"').
 _RECORD_QUOTED_VALUE = re.compile(r"\"[^\"\r\n]*\"|'[^'\r\n]*'")
@@ -262,6 +266,8 @@ class _RecordIndex:
             return self.fields[inline], stop, -1
         column = match.start() - line_start
         position = line_end + 1
+        if text[line_start : match.start()].strip(" \t-"):
+            return self._embedded_sibling(line_start, position)
         for _ in range(_RECORD_LINES):
             if position >= len(text):
                 return None
@@ -275,6 +281,28 @@ class _RecordIndex:
                     sibling = self.siblings[position]
                     if sibling is not None:
                         return sibling, end, column
+            position = end + 1
+        return None
+
+    def _embedded_sibling(self, line_start: int, position: int) -> tuple[re.Match[str], int, int] | None:
+        """The value field of a record name that other text precedes on its line.
+
+        Such a name ('x = f(v), - name: API_KEY') has no column its siblings
+        share, so the next line that is not blank or a comment is its value
+        field when it starts one and is indented deeper than the name's line.
+        """
+        line_indent = self._measure(line_start)[1]
+        for _ in range(_RECORD_LINES):
+            if position >= len(self.text):
+                return None
+            end, indent, lead = self._measure(position)
+            if lead and lead != "#":
+                if indent <= line_indent:
+                    return None
+                if position not in self.siblings:
+                    self.siblings[position] = _RECORD_VALUE.match(self.text, position + indent)
+                sibling = self.siblings[position]
+                return None if sibling is None else (sibling, end, indent)
             position = end + 1
         return None
 
