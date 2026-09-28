@@ -64,7 +64,9 @@ def test_unfinished_annotations_are_withheld_without_exhausting_the_budget():
     assert sanitize_text(safe) == safe
 
 
-def _best_time(source: str, repeats: int) -> float:
+# Both sizes take the fastest of three runs: one slow moment on a shared CI
+# runner would otherwise read as a super-linear cost of the larger input.
+def _best_time(source: str, repeats: int = 3) -> float:
     best = float("inf")
     for _ in range(repeats):
         started = time.perf_counter()
@@ -84,8 +86,8 @@ def _best_time(source: str, repeats: int) -> float:
 )
 def test_unfinished_annotation_redaction_scales_linearly(unit):
     small, large = unit * 500, unit * 2000
-    small_time = _best_time(small, 3)
-    large_time = _best_time(large, 1)
+    small_time = _best_time(small)
+    large_time = _best_time(large)
     # Four times the input must not cost more than ten times the time (a
     # quadratic scan costs sixteen times). The floor absorbs timer noise on
     # tiny inputs; no absolute bound, since coverage tracing slows CI runners.
@@ -168,8 +170,8 @@ def test_reused_annotation_scans_match_a_scan_per_candidate(monkeypatch):
 )
 def test_candidates_on_one_long_line_scale_linearly(unit):
     small, large = unit * 1000, unit * 4000
-    small_time = _best_time(small, 3)
-    large_time = _best_time(large, 1)
+    small_time = _best_time(small)
+    large_time = _best_time(large)
     assert large_time < max(small_time, 0.02) * 10, (small_time, large_time)
 
 

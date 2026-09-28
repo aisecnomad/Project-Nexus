@@ -20,7 +20,9 @@ from shadowscan.utils import redaction
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 
 
-def _best_time(source: str, repeats: int) -> float:
+# Both sizes take the fastest of three runs: one slow moment on a shared CI
+# runner would otherwise read as a super-linear cost of the larger input.
+def _best_time(source: str, repeats: int = 3) -> float:
     best = float("inf")
     for _ in range(repeats):
         started = time.perf_counter()
@@ -66,8 +68,8 @@ def _best_time(source: str, repeats: int) -> float:
 )
 def test_context_named_credential_passes_scale_linearly(unit):
     small, large = unit * 1000, unit * 4000
-    small_time = _best_time(small, 3)
-    large_time = _best_time(large, 1)
+    small_time = _best_time(small)
+    large_time = _best_time(large)
     # Four times the input must not cost more than ten times the time (a
     # quadratic pass costs sixteen times). The floor absorbs timer noise on
     # tiny inputs; no absolute bound, since coverage tracing slows CI runners.
@@ -129,8 +131,8 @@ def test_blank_runs_inside_a_record_value_scale_linearly():
     def source(blanks: int) -> str:
         return "- name: API_KEY\n  value: opaque" + " " * blanks + "tail # note\n"
 
-    small_time = _best_time(source(10_000), 3)
-    large_time = _best_time(source(40_000), 1)
+    small_time = _best_time(source(10_000))
+    large_time = _best_time(source(40_000))
     assert large_time < max(small_time, 0.02) * 10, (small_time, large_time)
     safe = sanitize_text(source(100))
     assert "opaque" not in safe and "tail" not in safe and safe.endswith("# note\n")
