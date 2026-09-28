@@ -29,7 +29,7 @@ from urllib.parse import quote, urlsplit
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.manifests import is_manifest_name
-from shadowscan.connectors.common import apply_matches, finalize
+from shadowscan.connectors.common import apply_matches, config_boolean, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.git import (
     CloneTimeoutError,
@@ -181,8 +181,8 @@ class GitHubConnector(BaseConnector):
             ctx.get("clone_max_bytes", 256 * 1024 * 1024),
             ctx.get("clone_timeout_seconds", 120),
         )
-        self.include_archived = bool(ctx.get("include_archived", False))
-        self.include_forks = bool(ctx.get("include_forks", False))
+        self.include_archived = config_boolean(ctx.get("include_archived", False), "include_archived")
+        self.include_forks = config_boolean(ctx.get("include_forks", False), "include_forks")
         self.topics = set(ctx.get("topics", []) or [])
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         if self.token:

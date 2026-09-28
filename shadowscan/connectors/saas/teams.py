@@ -17,7 +17,7 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.common import config_boolean, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -47,7 +47,7 @@ class TeamsConnector(BaseConnector):
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
         self.tenant = ctx.get("tenant_id", env="AZURE_TENANT_ID")
-        self.include_store = bool(ctx.get("include_store", False))
+        self.include_store = config_boolean(ctx.get("include_store", False), "include_store")
         self.max_teams = int(ctx.get("max_teams", 300))
 
     def _client(self) -> HttpClient:
@@ -106,6 +106,7 @@ class TeamsConnector(BaseConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         apps: dict[str, dict[str, Any]] = {}
+        conflicting_apps: set[str] = set()
         installs: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
             kind = self._record_kind(rec)
@@ -115,7 +116,15 @@ class TeamsConnector(BaseConnector):
                 )
                 continue
             if kind == "teamsApp":
-                apps[rec["id"]] = rec
+                app_id = rec["id"]
+                existing = apps.get(app_id)
+                if existing is None or existing.get("_from_install"):
+                    apps[app_id] = rec
+                elif existing != rec and app_id not in conflicting_apps:
+                    conflicting_apps.add(app_id)
+                    self.ctx.warn(
+                        "saas.microsoft-teams: conflicting Teams app records; app identity coverage incomplete"
+                    )
             else:
                 app = rec.get("teamsApp") or {}
                 definition = rec.get("teamsAppDefinition") or {}
@@ -130,6 +139,8 @@ class TeamsConnector(BaseConnector):
                         "_from_install": True,
                     }
         for app_id, app in apps.items():
+            if app_id in conflicting_apps:
+                continue
             self.ctx.examined()
             try:
                 f = self._app_finding(app_id, app, installs.get(app_id, []))

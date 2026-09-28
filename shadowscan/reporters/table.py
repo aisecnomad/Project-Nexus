@@ -8,6 +8,7 @@ from rich.table import Table
 from rich.text import Text
 
 from shadowscan.models import Finding, ScanResult
+from shadowscan.reporters._publication import publication_stats
 from shadowscan.utils.output import terminal_text
 
 _LEVEL_STYLE = {
@@ -29,6 +30,10 @@ def _level(f: Finding) -> Text:
 def print_table(
     result: ScanResult, console: Console | None = None, verbose: bool = False, max_rows: int | None = None
 ) -> None:
+    # Preflight every publication boundary before writing a single terminal
+    # byte. A cyclic or over-budget plugin diagnostic must not leave behind an
+    # apparently complete header and findings table followed by an exception.
+    stats = publication_stats(result)
     for finding in result.findings:
         finding.sanitize()
     console = console or Console()
@@ -115,12 +120,12 @@ def print_table(
         console.print(
             f"[dim]… {len(result.findings) - max_rows} more findings (use --output to export all)[/dim]"
         )
-    errs = [(st.connector, e) for st in result.stats for e in st.errors]
+    errs = [(st["connector"], error) for st in stats for error in st["errors"]]
     if errs:
         console.print("[bold red]Connector errors:[/bold red]")
         for c, error in errs[:20]:
             console.print(Text(terminal_text(f"  {c}: {error}"), style="red"))
-    warns = [(st.connector, w) for st in result.stats for w in st.warnings]
+    warns = [(st["connector"], warning) for st in stats for warning in st["warnings"]]
     if warns and (verbose or not result.complete):
         console.print("[bold yellow]Warnings:[/bold yellow]")
         for c, w in warns[:30]:
@@ -129,17 +134,17 @@ def print_table(
         Text(
             terminal_text(
                 " · ".join(
-                    f"{st.connector}: {st.objects_examined} objects, {st.findings} findings"
+                    f"{st['connector']}: {st['objects_examined']} objects, {st['findings']} findings"
                     + (
                         " (skipped)"
-                        if st.skipped
+                        if st["skipped"]
                         else " (incomplete)"
-                        if st.incomplete or st.errors
+                        if st["incomplete"] or st["errors"]
                         else " (cached)"
-                        if st.cached
+                        if st["cached"]
                         else ""
                     )
-                    for st in result.stats
+                    for st in stats
                 )
             ),
             style="dim",

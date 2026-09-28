@@ -15,6 +15,9 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
+from shadowscan.utils.files import read_policy_text
+from shadowscan.utils.safe_json import strict_json_loads
+
 _SHA = re.compile(r"[0-9a-f]{40}")
 _REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
@@ -22,6 +25,15 @@ _WORKFLOW_PATHS = {
     "CI": ".github/workflows/ci.yml",
     "CodeQL": ".github/workflows/codeql.yml",
 }
+_MAX_JSON_BYTES = 64 * 1024 * 1024
+
+
+def _load_json(path: Path, description: str) -> Any:
+    """Read bounded release evidence without ambiguous or non-finite data."""
+    try:
+        return strict_json_loads(read_policy_text(path, max_bytes=_MAX_JSON_BYTES))
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        raise ValueError(f"{description} must be bounded, unambiguous JSON with finite numbers") from None
 
 
 def verify_ci_run(
@@ -122,6 +134,7 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
         "runtime-sbom.cdx.json",
         "requirements.lock",
         "requirements-build.lock",
+        "requirements-ci.lock",
         "requirements-ci-constraints.txt",
     }
     if not required.issubset({path.name for path in files}):
@@ -135,7 +148,7 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
         raise ValueError("refusing to overwrite existing release evidence")
     verified_runs = {}
     for workflow, verify in (("ci", verify_ci_run), ("codeql", verify_codeql_run)):
-        saved = json.loads((directory / f"{workflow}-verification.json").read_text(encoding="utf-8"))
+        saved = _load_json(directory / f"{workflow}-verification.json", f"saved {workflow} evidence")
         # Recheck each saved identity rather than copying arbitrary JSON into the manifest.
         if (
             not isinstance(saved, dict)
@@ -150,7 +163,7 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
             current_sha=commit,
             run_id=str(saved.get("id", "")),
         )
-    sbom = json.loads((directory / "runtime-sbom.cdx.json").read_text(encoding="utf-8"))
+    sbom = _load_json(directory / "runtime-sbom.cdx.json", "runtime SBOM")
     if not isinstance(sbom, dict) or sbom.get("bomFormat") != "CycloneDX" or not sbom.get("components"):
         raise ValueError("runtime SBOM must contain CycloneDX components")
     manifest = {
@@ -173,7 +186,9 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
         ],
     }
     manifest_path = directory / "build-evidence.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8"
+    )
     files.append(manifest_path)
     (directory / "SHA256SUMS").write_text(
         "".join(f"{_digest(path)}  {path.name}\n" for path in sorted(files)), encoding="utf-8"
@@ -207,13 +222,16 @@ def main() -> None:
         if args.command in ("verify-ci", "verify-codeql"):
             verify = verify_ci_run if args.command == "verify-ci" else verify_codeql_run
             result = verify(
-                json.loads(args.input.read_text(encoding="utf-8")),
+                _load_json(args.input, "workflow run response"),
                 repository=args.repository,
                 expected_sha=args.expected_sha,
                 current_sha=args.current_sha,
                 run_id=args.run_id,
             )
-            args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            args.output.write_text(
+                json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n",
+                encoding="utf-8",
+            )
         else:
             write_manifest(
                 args.directory, repository=args.repository, commit=args.commit, workflow_run=args.workflow_run

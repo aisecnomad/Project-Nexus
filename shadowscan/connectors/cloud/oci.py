@@ -20,6 +20,7 @@ from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import cloud_finding, done, name_hint, scan_env, string_list
+from shadowscan.connectors.cloud.credentials import allow_instance_credentials
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.text import truncate
@@ -80,7 +81,9 @@ class OciConnector(BaseConnector):
         auth = str(self.ctx.get("auth", "config"))
         if auth not in {"config", "instance_principal", "resource_principal"}:
             raise ConnectorError("cloud.oci: auth must be config, instance_principal or resource_principal")
-        if auth != "config" and self.ctx.get("allow_instance_credentials", False) is not True:
+        if auth != "config" and not allow_instance_credentials(
+            self.ctx.get("allow_instance_credentials", False)
+        ):
             raise ConnectorError(
                 "cloud.oci: instance/resource credentials require options.allow_instance_credentials=true"
             )

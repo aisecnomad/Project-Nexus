@@ -442,7 +442,10 @@ def run(config: dict[str, Any]) -> dict[str, Any]:
     settings = expand_env(dict(config["connector"]))
     name = settings.pop("name")
     # Engine and built-in connector safety options cannot be overridden by input.
-    with tempfile.TemporaryDirectory(prefix="shadowscan-canary-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="shadowscan-canary-") as unresolved:
+        # The engine refuses a record dump directory that traverses a symbolic
+        # link; macOS temporary directories do (/var resolves to /private/var).
+        temporary = str(Path(unresolved).resolve())
         engine = Engine(
             ScanConfig(
                 connectors=[ConnectorSpec(name, settings)],

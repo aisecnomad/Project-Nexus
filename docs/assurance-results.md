@@ -66,8 +66,11 @@ acceptance before enabling enforcement.
 ## Reproduction
 
 Use the commands in [evaluation.md](evaluation.md) and [canaries.md](canaries.md).
-CI retains its existing Python 3.11/3.12 tests, overall coverage floor of 80%,
-per-connector floor of 75%, lint, types, dependency audit, installed-wheel and
-container checks. It additionally validates the annotation ledger and frozen
-corpus, and retains evaluation JSON artifacts with each run. Required checks
-apply to the final commit; recorded local reports do not replace them.
+When this dated result was recorded, CI covered Python 3.11/3.12. The current
+workflow covers Linux 3.11–3.13 and macOS 3.11/3.13 for lint, types, tests and
+the overall 80% and per-connector 75% coverage floors. Linux additionally runs
+the full runtime dependency audit, installed-wheel and container checks. It also
+validates the annotation ledger and frozen corpus, and retains evaluation JSON
+artifacts with each run.
+Required checks apply to the final commit; recorded local reports do not replace
+them.

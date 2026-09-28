@@ -35,6 +35,9 @@ domain-wide delegation impersonating an admin (`service_account_file` +
 `access_token` with those scopes. Live collection resolves the authenticated
 immutable customer ID with `customers.get` before listing users. A configured
 concrete `customer` must match; `my_customer` and email domains are not identities.
+For service-account authentication, the signed assertion audience and token
+exchange are fixed to `https://oauth2.googleapis.com/token`; a `token_uri` in
+the key document cannot redirect the credential exchange.
 Offline exports may contain individual token records or per-user objects such
 as `{"user":"user@example.com","tokens":[...]}`. The latter retains user
 attribution whether supplied as one object or inside an array. Offline runs must

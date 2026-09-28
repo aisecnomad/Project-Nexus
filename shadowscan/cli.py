@@ -47,7 +47,12 @@ from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures import Match, SignatureIndex, get_index
 from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
-from shadowscan.utils.output import prepare_private_directory, terminal_text, write_private_text
+from shadowscan.utils.output import (
+    prepare_private_directory,
+    terminal_report_text,
+    terminal_text,
+    write_private_text,
+)
 from shadowscan.utils.platform import UnsupportedPlatformError, require_supported_platform
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 
@@ -91,9 +96,18 @@ def _setup_logging(verbose: int, quiet: bool) -> None:
 
 def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_rows: int | None) -> None:
     if fmt == "table" and not output:
-        print_table(result, console=console, verbose=verbose, max_rows=max_rows)
+        try:
+            print_table(result, console=console, verbose=verbose, max_rows=max_rows)
+        except (OverflowError, RecursionError, TypeError, ValueError):
+            raise click.ClickException("could not render report; result data is invalid") from None
         return
-    text = render(result, "json" if fmt == "table" else fmt)
+    try:
+        text = render(result, "json" if fmt == "table" else fmt)
+    except (OverflowError, RecursionError, TypeError, ValueError):
+        # Reporter exceptions can contain attacker-controlled values. Invalid
+        # plugin output (including NaN/Infinity) must fail before stdout or an
+        # existing report receives any partial, non-standard serialization.
+        raise click.ClickException("could not render report; result data is invalid") from None
     if output:
         try:
             write_private_text(output, text)
@@ -105,9 +119,12 @@ def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_r
             )
         )
         if fmt == "table":
-            print_table(result, console=console, verbose=verbose, max_rows=max_rows)
+            try:
+                print_table(result, console=console, verbose=verbose, max_rows=max_rows)
+            except (OverflowError, RecursionError, TypeError, ValueError):
+                raise click.ClickException("could not render report; result data is invalid") from None
     else:
-        click.echo(text)
+        click.echo(terminal_report_text(text, fmt))
 
 
 def _exit_code(result: ScanResult, fail_on: str | None) -> int:

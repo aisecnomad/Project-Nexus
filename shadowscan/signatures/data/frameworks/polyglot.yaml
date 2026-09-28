@@ -19,9 +19,16 @@ signatures:
         patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.']
         weight: 0.9
       - type: code
-        patterns: ['\bAiServices\.builder\s*\(', '\bAiServices\.create\s*\(', '@Tool\s*(?:\(|\n)', '\bAgenticServices\.']
+        patterns: ['\bAiServices\.builder\s*\(', '\bAiServices\.create\s*\(', '\bAgenticServices\.']
         weight: 0.85
         agent_indicator: true
+      - type: code
+        # @Tool is shared by Spring AI. It identifies LangChain4j only when
+        # this project also has LangChain4j import/dependency evidence.
+        patterns: ['@Tool\s*(?:\(|\n)']
+        weight: 0.85
+        agent_indicator: true
+        ambiguous: true
 
   - id: framework.spring-ai
     name: Spring AI

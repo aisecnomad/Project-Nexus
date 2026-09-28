@@ -104,11 +104,11 @@ def test_constructor_errors_redact_configured_and_environment_credentials(monkey
 
     class BadConstructor:
         def __init__(self, ctx):
-            remote_secret = ctx.get("client_secret", env="TEST_SHADOWSCAN_SECRET")
-            raise RuntimeError(f"upstream rejected {ctx.require('api_key')} and {remote_secret}")
+            remote_secret = ctx.get("access_token", env="TEST_SHADOWSCAN_SECRET")
+            raise RuntimeError(f"upstream rejected {ctx.require('client_secret')} and {remote_secret}")
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda _: BadConstructor)
-    cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem", {"api_key": configured})], parallel=1)
+    cfg = ScanConfig(connectors=[ConnectorSpec("identity.entra", {"client_secret": configured})], parallel=1)
     result = Engine(cfg, index).run()
     output = json.dumps(result.to_dict()) + render_sarif(result) + caplog.text
     assert configured not in output and environment not in output

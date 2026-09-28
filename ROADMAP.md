@@ -16,8 +16,12 @@ fail-closed trust model.
   Completing the packet is not a release approval.
 - Grow the first-contribution surface: documentation, signatures, offline
   fixtures, evaluation cases.
-- Recruit a second reviewer so independent review is a repository setting,
-  not only a convention.
+- Recruit an independent reviewer who can satisfy the active non-author
+  approval rule and review the exact release candidate.
+- Complete fresh human-labeled holdout and scope-specific live tenant
+  acceptance; retain the evidence before enabling enforcement.
+- Require the aggregate `CI gate` in the live branch rules and exercise the
+  manual release-evidence workflow after the candidate is reviewed and merged.
 
 ## Next
 
@@ -37,8 +41,8 @@ fail-closed trust model.
 - First tagged release and signed artifacts. Nothing publishes
   automatically.
 - Optional package index publish from a reviewed tag.
-- A second reviewer who can satisfy the `main` ruleset's non-author approving
-  review, which is configured today but cannot be met by a single maintainer.
+- Confirm availability of the `project-nexus-shadowscan` distribution name at
+  publication time; source metadata does not reserve a package-index namespace.
 
 ## Not planned
 

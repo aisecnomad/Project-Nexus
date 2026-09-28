@@ -16,8 +16,9 @@ drown in noise and teams lose trust in the tool.
 Use a **noisy-OR** model for confidence and an **additive, explainable** model
 for risk, kept separate:
 
-- **Confidence** = P(agent | evidence). Computed as 1 − ∏(1 − wᵢ) where wᵢ
-  is the weight of each independent evidence signal. Ranges from 0 to 1.
+- **Confidence** is a heuristic evidence score, computed as 1 − ∏(1 − wᵢ)
+  after grouping correlated signals. It ranges from 0 to 1; it is not a
+  calibrated P(agent | evidence) or proof of runtime execution.
 - **Risk** = sum of factor weights, scaled by confidence. Each factor
   (shadow status, credential exposure, capabilities, ownership) adds a
   documented weight to the score. The final risk score is
@@ -32,8 +33,8 @@ score is auditable.
 
 - Low-confidence findings (a dependency import) are visually distinct from
   confirmed findings (a running Bedrock Agent).
-- Risk scaling by confidence prevents low-confidence noise from triggering
-  CI gates.
+- Risk scaling reduces contributions from weak evidence. An operator still
+  needs to validate false-positive behavior before choosing a CI threshold.
 - Every score is explainable: the `risk.factors` and `evidence` arrays in
   the finding JSON show exactly what contributed.
 

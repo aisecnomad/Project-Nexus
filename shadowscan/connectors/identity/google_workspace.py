@@ -18,7 +18,6 @@ immutable customer ID in ``customer`` for offline attribution.
 from __future__ import annotations
 
 import hashlib
-import json
 import secrets
 import time
 from collections.abc import Iterable
@@ -34,8 +33,10 @@ from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.identity import google_customer_id
+from shadowscan.utils.safe_json import strict_json_loads
 
 SCOPES = "https://www.googleapis.com/auth/admin.directory.user.readonly https://www.googleapis.com/auth/admin.directory.user.security https://www.googleapis.com/auth/admin.directory.customer.readonly"
+_GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
 class GoogleWorkspaceConnector(BaseConnector):
@@ -320,14 +321,29 @@ def _dwd_token(sa_file: Path, subject: str, scopes: str) -> str:
         import jwt  # PyJWT
     except ImportError as exc:  # pragma: no cover
         raise ConnectorError("identity.google-workspace: PyJWT with cryptography is required") from exc
-    info = json.loads(sa_file.read_text(encoding="utf-8"))
+    try:
+        info = strict_json_loads(sa_file.read_text(encoding="utf-8"))
+        if not isinstance(info, dict) or any(
+            not isinstance(info.get(field), str) or not info[field]
+            for field in ("client_email", "private_key")
+        ):
+            raise ValueError("invalid service-account document")
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        # JSON parser errors can include credential-bearing source excerpts.
+        # Keep the connector diagnostic fixed and safe for report publication.
+        raise ConnectorError(
+            "identity.google-workspace: service account key is unreadable or invalid"
+        ) from None
     now = int(time.time())
     assertion = jwt.encode(
         {
             "iss": info["client_email"],
             "sub": subject,
             "scope": scopes,
-            "aud": info.get("token_uri", "https://oauth2.googleapis.com/token"),
+            # This connector is Google-specific. A credential document must
+            # not redirect its signed assertion to an attacker-controlled
+            # endpoint or alter the audience the assertion was minted for.
+            "aud": _GOOGLE_TOKEN_URI,
             "iat": now,
             "exp": now + 3600,
         },
@@ -337,7 +353,7 @@ def _dwd_token(sa_file: Path, subject: str, scopes: str) -> str:
     )
     client = HttpClient()
     resp = client.post(
-        info.get("token_uri", "https://oauth2.googleapis.com/token"),
+        _GOOGLE_TOKEN_URI,
         data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion},
     )
     token: str = client.read_json_response(resp)["access_token"]

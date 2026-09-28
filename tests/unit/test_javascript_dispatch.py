@@ -144,6 +144,11 @@ def test_file_longer_than_the_grammar_is_a_plain_non_match(monkeypatch):
     assert _recognize(SOURCE) == []
 
 
+def test_source_larger_than_dispatch_character_budget_is_plain_non_match(monkeypatch):
+    monkeypatch.setattr(javascript_dispatch, "MAX_SOURCE_CHARS", len(SOURCE) - 1)
+    assert _recognize(SOURCE) == []
+
+
 def test_mid_size_javascript_file_stays_complete_with_its_evidence(tmp_path, run_connector):
     # A file far larger than the dispatch grammar is an unsupported shape, not
     # an analysis gap: its ordinary SDK evidence is kept and the scan completes.

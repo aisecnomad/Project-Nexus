@@ -234,6 +234,7 @@ class SalesforceConnector(BaseConnector):
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         bots: dict[str, dict[str, Any]] = {}
+        conflicting_bots: set[str] = set()
         versions: dict[str, list[dict[str, Any]]] = {}
         planners: list[dict[str, Any]] = []
         plugins: list[dict[str, Any]] = []
@@ -255,7 +256,14 @@ class SalesforceConnector(BaseConnector):
                 if not isinstance(bot_id, str) or not bot_id.strip():
                     self.ctx.warn("lowcode.salesforce: BotDefinition has no valid Id or DeveloperName")
                     continue
-                bots[bot_id] = rec
+                existing = bots.get(bot_id)
+                if existing is None:
+                    bots[bot_id] = rec
+                elif existing != rec and bot_id not in conflicting_bots:
+                    conflicting_bots.add(bot_id)
+                    self.ctx.warn(
+                        "lowcode.salesforce: conflicting bot definitions; bot identity coverage incomplete"
+                    )
             elif kind == "BotVersion":
                 versions.setdefault(rec.get("BotDefinitionId", ""), []).append(rec)
             elif kind == "GenAiPlannerDefinition":
@@ -284,6 +292,8 @@ class SalesforceConnector(BaseConnector):
                 if f:
                     yield f
         for bid, bot in bots.items():
+            if bid in conflicting_bots:
+                continue
             self.ctx.examined()
             yield self._bot_finding(bot, versions.get(bid, []))
         for p in planners:

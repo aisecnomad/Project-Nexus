@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -427,6 +428,10 @@ def test_actual_evaluator_known_gap_report_cannot_pass_holdout(evidence):
     root, manifest, _ = evidence
     corpus = json.loads((root / "corpus.json").read_text())
     corpus["cases"][0]["known_gap"] = True
+    corpus["metadata"]["known_gap_policy"] = {
+        "max_count": 1,
+        "expires_on": "2099-12-31",
+    }
     corpus_ref = write_artifact(root, "corpus.json", corpus)
     manifest["evaluation"]["corpus"] = corpus_ref
     annotations = json.loads((root / "annotations.json").read_text())
@@ -762,3 +767,19 @@ def test_control_from_unselected_service_is_rejected(evidence):
     )
     with pytest.raises(gate.EvidenceError, match="canary_control_service_mismatch"):
         gate.verify(write_manifest(root, manifest), now=NOW)
+
+
+def test_verifier_resolves_a_symlinked_temporary_directory(evidence, tmp_path, monkeypatch):
+    # Private corpus and ledger snapshots are read through the policy reader,
+    # which refuses symlink traversal. macOS temporary directories live under
+    # /var -> /private/var, so the verifier must resolve its own snapshots.
+    root, manifest, report = evidence
+    real = tmp_path / "real-temp"
+    real.mkdir()
+    link = tmp_path / "temp-link"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (NotImplementedError, OSError):
+        pytest.skip("symlinks are unavailable")
+    monkeypatch.setattr(tempfile, "tempdir", str(link))
+    assert gate.verify(write_manifest(root, manifest), now=NOW)["status"] == "EVIDENCE_CONSISTENT"

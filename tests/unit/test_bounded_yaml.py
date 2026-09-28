@@ -226,7 +226,19 @@ import json
 import resource
 from shadowscan.utils.safe_yaml import bounded_safe_load, YAMLResourceLimitError
 from shadowscan.utils.redaction import sanitize, SanitizationLimitError
-resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
+limit = 256 * 1024 * 1024
+# Cap the memory available to this check. Linux honours RLIMIT_AS; macOS
+# rejects lowering it (EINVAL) and only takes RLIMIT_DATA. The loader and
+# sanitizer limits under test must reject amplification either way.
+for name in ('RLIMIT_AS', 'RLIMIT_DATA'):
+    kind = getattr(resource, name, None)
+    if kind is None:
+        continue
+    try:
+        resource.setrlimit(kind, (limit, limit))
+    except (ValueError, OSError):
+        continue
+    break
 for merge in (False, True):
     lines = ['a0: &a0 {label: ordinary}' if merge else 'a0: &a0 [ordinary]']
     for level in range(1, 10):

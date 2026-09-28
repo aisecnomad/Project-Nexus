@@ -11,12 +11,13 @@ import os
 from pathlib import Path
 
 from shadowscan.connectors.base import ConnectorError
+from shadowscan.connectors.common import config_boolean
 
 _ADC_FILENAME = "application_default_credentials.json"
 
 
 def allow_instance_credentials(value: object) -> bool:
-    return value is True
+    return config_boolean(value, "allow_instance_credentials")
 
 
 def application_default_credentials_path(explicit: str | None = None) -> Path | None:

@@ -33,7 +33,7 @@ from shadowscan.connectors.code.github import (
     repository_blob_matches,
     repository_target,
 )
-from shadowscan.connectors.common import apply_matches, finalize, name_matches
+from shadowscan.connectors.common import apply_matches, config_boolean, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.git import (
     CloneTimeoutError,
@@ -101,7 +101,7 @@ class GitLabConnector(BaseConnector):
             ctx.get("clone_max_bytes", 256 * 1024 * 1024),
             ctx.get("clone_timeout_seconds", 120),
         )
-        self.include_archived = bool(ctx.get("include_archived", False))
+        self.include_archived = config_boolean(ctx.get("include_archived", False), "include_archived")
         headers = {"PRIVATE-TOKEN": self.token} if self.token else {}
         self.http = HttpClient(
             self.api_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True)

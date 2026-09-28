@@ -79,17 +79,17 @@ def test_unterminated_native_fstring_marks_scan_incomplete(tmp_path, run_connect
 @pytest.mark.parametrize(
     ("source", "agent"),
     [
-        ('text = f"example StateGraph( only"\n', False),
-        ('text = f"{{StateGraph(}}"\n', False),
-        ("text = f\"{'StateGraph('}\"\n", False),
-        ('text = f"{value:StateGraph(}"\n', False),
-        ('text = f"{StateGraph(1)}"\n', True),
-        ('text = f"{value:{StateGraph(1)}}"\n', True),
-        ("text = f\"outer {f'nested {StateGraph(1)}'}\"\n", True),
+        ('text = f"example create_react_agent( only"\n', False),
+        ('text = f"{{create_react_agent(}}"\n', False),
+        ("text = f\"{'create_react_agent('}\"\n", False),
+        ('text = f"{value:create_react_agent(}"\n', False),
+        ('text = f"{create_react_agent(model, tools)}"\n', True),
+        ('text = f"{value:{create_react_agent(model, tools)}}"\n', True),
+        ("text = f\"outer {f'nested {create_react_agent(model, tools)}'}\"\n", True),
     ],
 )
 def test_filesystem_scan_fstring_text_vs_code(tmp_path, run_connector, source, agent):
-    (tmp_path / "agent.py").write_text("from langgraph.graph import StateGraph\n" + source)
+    (tmp_path / "agent.py").write_text("from langgraph.prebuilt import create_react_agent\n" + source)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert any(f.kind == Kind.AGENT and "framework.langgraph" in f.frameworks for f in findings) == agent

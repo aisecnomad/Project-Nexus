@@ -21,7 +21,8 @@ import regex as re
 import yaml
 
 from shadowscan.signatures.matcher import _run_regex, pattern_timeout
-from shadowscan.utils.safe_yaml import YAMLResourceLimitError, bounded_safe_load
+from shadowscan.utils.safe_json import strict_json_loads
+from shadowscan.utils.safe_yaml import YAMLResourceLimitError, strict_bounded_safe_load
 
 # Regex execution here runs outside the signature matcher. A per-pattern
 # ceiling well above the matcher's 100 ms keeps ordinary large manifests from
@@ -281,7 +282,7 @@ def parse_setup_cfg(text: str) -> ManifestResult:
 def parse_conda_env(text: str) -> ManifestResult:
     res = ManifestResult()
     try:
-        data = bounded_safe_load(text)
+        data = strict_bounded_safe_load(text)
     except YAMLResourceLimitError:
         res.errors.append("YAML safety limit exceeded")
         return res
@@ -305,8 +306,8 @@ def parse_conda_env(text: str) -> ManifestResult:
 def parse_package_json(text: str) -> ManifestResult:
     res = ManifestResult()
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
+        data = strict_json_loads(text)
+    except ValueError:
         res.errors.append("invalid JSON")
         return res
     data = _mapping(data, res, "document")
@@ -400,7 +401,16 @@ def parse_pom(text: str) -> ManifestResult:
     for dependency in root.iter():
         if dependency.tag.rsplit("}", 1)[-1] != "dependency":
             continue
-        tags = {child.tag.rsplit("}", 1)[-1]: (child.text or "").strip() for child in dependency}
+        tags: dict[str, str] = {}
+        ambiguous = False
+        for child in dependency:
+            tag = child.tag.rsplit("}", 1)[-1]
+            if tag in {"groupId", "artifactId", "version", "scope"} and tag in tags:
+                ambiguous = True
+            tags[tag] = (child.text or "").strip()
+        if ambiguous:
+            res.errors.append("POM dependency contains a duplicate meaningful field")
+            continue
         g, a = tags.get("groupId"), tags.get("artifactId")
         if g and a:
             res.deps.append(Dep("maven", f"{g}:{a}", tags.get("version"), dev=tags.get("scope") == "test"))
@@ -426,24 +436,41 @@ def parse_gradle(text: str) -> ManifestResult:
     return res
 
 
-_NUGET_REF = re.compile(
-    r"""<(?:PackageReference|PackageVersion|package)\s+[^>]*?(?:Include|id)\s*=\s*["']([^"']+)["'][^>]*?(?:Version|version)\s*=\s*["']([^"']*)["']""",
-    re.I,
-)
-_NUGET_REF_NOVER = re.compile(
-    r"""<(?:PackageReference|PackageVersion)\s+[^>]*?Include\s*=\s*["']([^"']+)["']""", re.I
-)
-
-
 def parse_nuget(text: str) -> ManifestResult:
     res = ManifestResult()
-    seen: set[str] = set()
-    for m in _NUGET_REF.finditer(text, timeout=_pattern_timeout(), concurrent=False):
-        seen.add(m.group(1))
-        res.deps.append(Dep("nuget", m.group(1), m.group(2)))
-    for m in _NUGET_REF_NOVER.finditer(text, timeout=_pattern_timeout(), concurrent=False):
-        if m.group(1) not in seen:
-            res.deps.append(Dep("nuget", m.group(1)))
+    # Package manifests never need document types or entities. Reject them
+    # before parsing so comments stay inert and Expat cannot expand attacker-
+    # controlled declarations on runtimes with weaker amplification limits.
+    upper = text.upper()
+    if "<!DOCTYPE" in upper or "<!ENTITY" in upper:
+        res.errors.append("NuGet DTD/entity declarations are unsupported")
+        return res
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        res.errors.append("invalid NuGet XML")
+        return res
+
+    for element in root.iter():
+        if element.tag.rsplit("}", 1)[-1].lower() not in {
+            "packagereference",
+            "packageversion",
+            "package",
+        }:
+            continue
+        identities: list[str] = []
+        versions: list[str] = []
+        for attribute, value in element.attrib.items():
+            key = attribute.rsplit("}", 1)[-1].lower()
+            if key in {"include", "id"}:
+                identities.append(value.strip())
+            elif key == "version":
+                versions.append(value.strip())
+        if len(identities) > 1 or len(versions) > 1:
+            res.errors.append("NuGet dependency contains ambiguous attributes")
+            continue
+        if identities and identities[0]:
+            res.deps.append(Dep("nuget", identities[0], versions[0] if versions else None))
     return res
 
 
@@ -460,8 +487,8 @@ def parse_gemfile(text: str) -> ManifestResult:
 def parse_composer(text: str) -> ManifestResult:
     res = ManifestResult()
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
+        data = strict_json_loads(text)
+    except ValueError:
         res.errors.append("invalid JSON")
         return res
     data = _mapping(data, res, "document")

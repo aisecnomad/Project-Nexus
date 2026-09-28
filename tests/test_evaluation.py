@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import json
 import stat
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -42,11 +43,17 @@ def _corpus(
     }
     if known_gap is not None:
         case["known_gap"] = known_gap
-    return {
+    corpus = {
         "schema": 1,
         "metadata": {"name": "test", "type": "synthetic", "provenance": "unit test"},
         "cases": [case],
     }
+    if known_gap:
+        corpus["metadata"]["known_gap_policy"] = {
+            "max_count": 1,
+            "expires_on": "2099-12-31",
+        }
+    return corpus
 
 
 def _write(path: Path, value: dict) -> Path:
@@ -69,17 +76,28 @@ def test_lexer_and_toml_layout_cases_have_distinct_narrow_labels():
     _, cases, _ = load_corpus(DEFAULT_CORPUS)
     by_id = {case.id: case for case in cases}
     for case_id in (
-        "py-fstring-interpolated-agent",
-        "js-regex-then-agent",
+        "py-fstring-interpolated-react-factory",
+        "js-regex-then-react-factory",
         "mcp-toml-table-active",
         "mcp-toml-dotted-active",
     ):
         assert by_id[case_id].present
-    for case_id in ("py-fstring-literal-agent", "jsx-text-agent"):
+    for case_id in (
+        "py-fstring-literal-agent",
+        "jsx-text-agent",
+        "py-fstring-interpolated-agent",
+        "js-regex-then-agent",
+    ):
         assert not by_id[case_id].present
-    assert "{StateGraph(dict)}" in by_id["py-fstring-interpolated-agent"].files["agent.py"]
+    assert (
+        "{create_react_agent(model, tools)}"
+        in by_id["py-fstring-interpolated-react-factory"].files["agent.py"]
+    )
     assert "{{StateGraph(dict)}}" in by_id["py-fstring-literal-agent"].files["agent.py"]
-    assert "const graph = new StateGraph()" in by_id["js-regex-then-agent"].files["agent.js"]
+    assert (
+        "const graph = createReactAgent({ model, tools })"
+        in by_id["js-regex-then-react-factory"].files["agent.js"]
+    )
     for case_id in ("mcp-toml-table-active", "mcp-toml-dotted-active"):
         assert by_id[case_id].assertions == {"server_count": 1, "server_names": ["active"]}
 
@@ -204,6 +222,29 @@ def test_corpus_rejects_non_boolean_label_and_invalid_assertions(tmp_path: Path)
         load_corpus(_write(tmp_path / "data.json", data))
 
 
+def test_corpus_rejects_invalid_forbidden_signature_assertions(tmp_path: Path):
+    for value in ("framework.langchain", ["bad signature"], ["framework.langchain"] * 2):
+        data = _corpus({"plain.py": "pass\n"})
+        data["cases"][0]["assertions"] = {"forbidden_signatures": value}
+        with pytest.raises(CorpusError, match="forbidden_signatures"):
+            load_corpus(_write(tmp_path / "data.json", data))
+
+
+def test_known_gap_requires_unexpired_bounded_policy(tmp_path: Path):
+    data = _corpus({"plain.py": "pass\n"})
+    data["cases"][0]["known_gap"] = True
+    with pytest.raises(CorpusError, match="bounded.*known_gap_policy"):
+        load_corpus(_write(tmp_path / "missing-policy.json", data))
+
+    data["metadata"]["known_gap_policy"] = {"max_count": 0, "expires_on": "2099-12-31"}
+    with pytest.raises(CorpusError, match="exceeds the declared maximum"):
+        load_corpus(_write(tmp_path / "over-budget.json", data))
+
+    data["metadata"]["known_gap_policy"] = {"max_count": 1, "expires_on": "2000-01-01"}
+    with pytest.raises(CorpusError, match="expired"):
+        load_corpus(_write(tmp_path / "expired.json", data))
+
+
 def test_public_snapshot_digest_is_verified(tmp_path: Path):
     value = json.loads(DEFAULT_CORPUS.with_name("public_corpus.json").read_text())
     first = value["cases"][0]
@@ -248,6 +289,39 @@ def test_structural_assertion_causes_regression_even_when_label_matches(tmp_path
     assert "active MCP server count" in result["cases"][0]["assertion_failures"][0]
 
 
+def test_forbidden_attribution_causes_regression_even_when_target_matches(tmp_path: Path, monkeypatch):
+    corpus = _write(
+        tmp_path / "data.json",
+        _corpus(
+            {"agent.py": "pass\n"},
+            present=True,
+            assertions={"forbidden_signatures": ["framework.langchain4j"]},
+        ),
+    )
+    evaluation_module = importlib.import_module("tools.evaluation.evaluate")
+    monkeypatch.setattr(
+        evaluation_module,
+        "_scan_case",
+        lambda *args, **kwargs: (
+            0.001,
+            [
+                {
+                    "kind": "agent",
+                    "resource_type": "project",
+                    "signatures": ["framework.langgraph", "framework.langchain4j"],
+                    "confidence": 0.9,
+                }
+            ],
+        ),
+    )
+    report = evaluate(corpus)
+    assert report["metrics"]["all"]["tp"] == 1
+    assert report["passed"] is False
+    assert report["cases"][0]["assertion_failures"] == [
+        "forbidden signature attributions observed: ['framework.langchain4j']"
+    ]
+
+
 def test_known_gap_is_counted_in_metrics_but_does_not_fail_the_run(tmp_path: Path):
     corpus = _write(tmp_path / "data.json", _corpus({"plain.py": "pass\n"}, present=True, known_gap=True))
     report = evaluate(corpus)
@@ -268,7 +342,8 @@ def test_passing_known_gap_is_reported_for_flag_removal(tmp_path: Path):
     report = evaluate(corpus)
     assert report["known_gaps"]["passing"] == ["plain-code"]
     assert report["known_gaps"]["failing"] == []
-    assert report["passed"] is True
+    assert report["passed"] is False
+    assert main(["--corpus", str(corpus)]) == 1
 
 
 def test_unflagged_case_defaults_to_regression(tmp_path: Path):
@@ -340,7 +415,9 @@ def _acceptance_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
             "family": "agent",
             "description": "Active graph construction",
             "files": {
-                "agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# separately selected acceptance case\n"
+                "agent.py": "from langgraph.prebuilt import create_react_agent\n"
+                "graph = create_react_agent(model, tools)\n"
+                "# separately selected acceptance case\n"
             },
             "target": {"kind": "agent", "signature": "framework.langgraph"},
             "present": True,
@@ -470,7 +547,9 @@ def test_acceptance_uses_predeclared_error_budget_instead_of_perfect_labels(tmp_
             "family": "agent",
             "description": "Active graph construction with simulated missed observation",
             "files": {
-                "missed.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# distinct missed acceptance case\n"
+                "missed.py": "from langgraph.prebuilt import create_react_agent\n"
+                "graph = create_react_agent(model, tools)\n"
+                "# distinct missed acceptance case\n"
             },
             "target": {"kind": "agent", "signature": "framework.langgraph"},
             "present": True,
@@ -550,3 +629,35 @@ def test_acceptance_annotation_preflight_is_bounded(tmp_path: Path):
     )
     with pytest.raises(CorpusError, match="annotations"):
         accept(corpus, policy, annotations)
+
+
+def _symlinked_temporary_directory(tmp_path: Path, monkeypatch) -> Path:
+    """Point tempfile at a symlink, as macOS does with /var -> /private/var."""
+    real = tmp_path / "real-temp"
+    real.mkdir()
+    link = tmp_path / "temp-link"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (NotImplementedError, OSError):
+        pytest.skip("symlinks are unavailable")
+    monkeypatch.setattr(tempfile, "tempdir", str(link))
+    assert tempfile.gettempdir() == str(link)
+    return link
+
+
+def test_evaluation_resolves_a_symlinked_temporary_directory(tmp_path: Path, monkeypatch):
+    # The scanner refuses a scan root that traverses a symbolic link. macOS keeps
+    # $TMPDIR under /var, a symlink to /private/var, so an unresolved case root
+    # turned every evaluation case into an incomplete scan there.
+    _symlinked_temporary_directory(tmp_path, monkeypatch)
+    corpus = _write(tmp_path / "data.json", _corpus({"plain.py": "def hello():\n    return 1\n"}))
+    report = evaluate(corpus)
+    assert report["passed"] is True
+    assert report["metrics"]["all"]["tn"] == 1
+
+
+def test_benchmark_resolves_a_symlinked_temporary_directory(tmp_path: Path, monkeypatch):
+    _symlinked_temporary_directory(tmp_path, monkeypatch)
+    report = benchmark(files=3, runs=1)
+    assert report["files"] == 3
+    assert report["runs"] == 1

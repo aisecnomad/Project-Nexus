@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -340,3 +341,20 @@ def test_denial_phrase_in_arbitrary_error_never_counts():
     records = [{"_kind": "account", "account": "123456789012", "regions": ["us-east-1"]}]
     stats = ScanStats("cloud.aws", "now", incomplete=True, warnings=["unexpected failure: access denied"])
     assert not evaluate(config, ScanResult(stats=[stats]), records)["passed"]
+
+
+def test_replay_run_resolves_a_symlinked_temporary_directory(tmp_path, monkeypatch):
+    # The engine refuses a record dump directory that traverses a symbolic link.
+    # macOS temporary directories do (/var -> /private/var), which made every
+    # replay report a policy violation instead of a verdict.
+    real = tmp_path / "real-temp"
+    real.mkdir()
+    link = tmp_path / "temp-link"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (NotImplementedError, OSError):
+        pytest.skip("symlinks are unavailable")
+    monkeypatch.setattr(tempfile, "tempdir", str(link))
+    report = run(load_config(EXAMPLES / "aws-replay.yaml"))
+    assert report["status"] == "REPLAY_PASS"
+    assert report["live_acceptance"] is False

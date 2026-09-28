@@ -24,7 +24,7 @@ from urllib.parse import quote, urlsplit
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import apply_matches, blob_matches, finalize, name_matches
+from shadowscan.connectors.common import apply_matches, blob_matches, config_boolean, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path
@@ -145,7 +145,7 @@ class PowerPlatformConnector(BaseConnector):
         self.client_id = ctx.get("client_id", env="AZURE_CLIENT_ID")
         self.client_secret = ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
         self.only_envs = set(ctx.get("environments", []) or [])
-        self.include_bots = bool(ctx.get("include_bots", True))
+        self.include_bots = config_boolean(ctx.get("include_bots", True), "include_bots")
         self._tokens: dict[str, str] = {}
 
     # ------------------------------------------------------------------ auth
@@ -262,6 +262,7 @@ class PowerPlatformConnector(BaseConnector):
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         bots: dict[str, dict[str, Any]] = {}
+        conflicting_bots: set[str] = set()
         components: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
             kind = self._record_kind(rec)
@@ -281,12 +282,22 @@ class PowerPlatformConnector(BaseConnector):
                 if f:
                     yield f
             elif kind == "bot":
-                bots[str(rec.get("botid") or rec.get("id") or rec.get("schemaname"))] = rec
+                bot_id = str(rec.get("botid") or rec.get("id") or rec.get("schemaname"))
+                existing = bots.get(bot_id)
+                if existing is None:
+                    bots[bot_id] = rec
+                elif existing != rec and bot_id not in conflicting_bots:
+                    conflicting_bots.add(bot_id)
+                    self.ctx.warn(
+                        "lowcode.power-platform: conflicting bot records; bot identity coverage incomplete"
+                    )
             elif kind == "botcomponent":
                 components.setdefault(
                     str(rec.get("_parentbotid_value") or rec.get("parentbotid") or ""), []
                 ).append(rec)
         for bid, bot in bots.items():
+            if bid in conflicting_bots:
+                continue
             self.ctx.examined()
             yield self._bot_finding(bot, components.get(bid, []))
 

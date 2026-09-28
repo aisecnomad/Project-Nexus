@@ -23,6 +23,7 @@ from urllib.parse import quote
 
 from shadowscan import __version__
 from shadowscan.models import Finding, RiskLevel, ScanResult, Surface
+from shadowscan.reporters._publication import publication_stats
 
 _LEVEL = {
     RiskLevel.CRITICAL: "error",
@@ -43,6 +44,9 @@ _RANK = {RiskLevel.INFO: 0, RiskLevel.LOW: 1, RiskLevel.MEDIUM: 2, RiskLevel.HIG
 _RULE_NAME_CHARS = re.compile(r"[^A-Za-z0-9_]")
 _SNIPPET_LIMIT = 200
 _MAX_LOCATIONS = 20
+_GCP_RESOURCE = re.compile(
+    r"^projects/[^/]+/(?:global|locations|regions|serviceAccounts|service_accounts|zones)(?:/|$)"
+)
 
 
 def _compact(mapping: dict[str, Any]) -> dict[str, Any]:
@@ -102,6 +106,21 @@ def _rule_id(f: Finding) -> str:
     return f"shadowscan/{f.kind.value}/{primary}"
 
 
+def _is_resource_location(location: str) -> bool:
+    """Return whether a location names a remote object rather than a file.
+
+    Prefix-only checks misclassified ordinary paths such as ``http_client.py``
+    and ``projects/app/agent.py``. Require URL syntax or a provider resource-id
+    grammar so repository paths continue to receive physical locations.
+    """
+    normalized = location.replace("\\", "/")
+    return (
+        re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", normalized) is not None
+        or normalized.startswith(("arn:", "urn:", "ocid1.", "/subscriptions/"))
+        or _GCP_RESOURCE.match(normalized) is not None
+    )
+
+
 def _physical_locations(f: Finding) -> list[dict[str, Any]]:
     """Physical locations for ``path[:line]`` evidence, deduplicated and capped.
 
@@ -117,9 +136,7 @@ def _physical_locations(f: Finding) -> list[dict[str, Any]]:
     seen: set[tuple[str, int]] = set()
     root = str(f.metadata.get("scan_root") or "")
     for e in f.evidence:
-        if not e.location or e.location.startswith(
-            ("http", "arn:", "/subscriptions/", "projects/", "ocid1.")
-        ):
+        if not e.location or _is_resource_location(e.location):
             continue
         m = _LOC.match(e.location)
         if not m:
@@ -142,10 +159,9 @@ def _physical_locations(f: Finding) -> list[dict[str, Any]]:
         locs.append(loc)
         if len(locs) >= _MAX_LOCATIONS:
             break
-    if not locs and f.metadata.get("path"):
-        locs.append(
-            {"physicalLocation": {"artifactLocation": _artifact_location(str(f.metadata["path"]), root)}}
-        )
+    metadata_path = f.metadata.get("path")
+    if not locs and isinstance(metadata_path, str) and not _is_resource_location(metadata_path):
+        locs.append({"physicalLocation": {"artifactLocation": _artifact_location(metadata_path, root)}})
     return locs
 
 
@@ -220,6 +236,7 @@ def render_sarif(result: ScanResult) -> str:
     for rid, level in worst.items():
         rules[rid]["defaultConfiguration"]["level"] = _LEVEL[level]
         rules[rid]["properties"]["security-severity"] = _SECURITY_SEVERITY[level]
+    stats = publication_stats(result)
     invocation = _compact(
         {
             "executionSuccessful": result.complete,
@@ -227,12 +244,12 @@ def render_sarif(result: ScanResult) -> str:
             "endTimeUtc": _utc_timestamp(result.finished_at),
             "toolExecutionNotifications": [
                 {
-                    "level": "error" if st.errors or st.skipped else "warning",
-                    "message": {"text": f"{st.connector}: {msg}"},
+                    "level": "error" if st["errors"] or st["skipped"] else "warning",
+                    "message": {"text": f"{st['connector']}: {msg}"},
                 }
-                for st in result.stats
+                for st in stats
                 for msg in dict.fromkeys(
-                    st.errors + st.warnings + ([st.skip_reason] if st.skip_reason else [])
+                    st["errors"] + st["warnings"] + ([st["skip_reason"]] if st["skip_reason"] else [])
                 )
             ],
         }
@@ -256,4 +273,4 @@ def render_sarif(result: ScanResult) -> str:
             }
         ],
     }
-    return json.dumps(sarif, indent=2, default=str)
+    return json.dumps(sarif, indent=2, default=str, allow_nan=False)

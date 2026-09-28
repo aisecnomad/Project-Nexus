@@ -128,16 +128,15 @@ def test_static_scope_tracks_detection_settings_not_content(tmp_path, index):
     assert build_collection_scope(config, index, [spec]) != original
 
 
-@pytest.mark.parametrize("connector", ["cloud.aws", "code.github"])
 @pytest.mark.parametrize(
-    "private_config",
+    ("connector", "private_config"),
     [
-        {"token": "t1"},
-        {"token": credential_id("t1")},
-        {"safe_alias": credential_id("t1")},
-        {"safe_alias": "alias-" + credential_id("t1")},
-        {"auth": {"password": "t1"}},
-        {"env": {"CUSTOM_VALUE": "t1"}},
+        ("code.github", {"token": "t1"}),
+        ("code.github", {"token": credential_id("t1")}),
+        ("code.github", {"org": credential_id("t1")}),
+        ("code.github", {"org": "alias-" + credential_id("t1")}),
+        ("code.filesystem", {"metadata": {"auth": {"password": "t1"}}}),
+        ("code.filesystem", {"metadata": {"env": {"CUSTOM_VALUE": "t1"}}}),
     ],
 )
 def test_secret_bearing_offline_scope_omits_public_fingerprint(tmp_path, index, connector, private_config):

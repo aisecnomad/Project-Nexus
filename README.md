@@ -3,7 +3,7 @@
 [![CI](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue.svg)](https://www.python.org/downloads/)
 [![Docs](https://img.shields.io/badge/docs-source-blue.svg)](https://github.com/aisecnomad/Project-Nexus/tree/main/docs)
 
 **ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
@@ -93,7 +93,7 @@ Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export
 
 ## Frameworks & products recognised
 
-215 signatures / 1000 signals, YAML-defined with explicit opt-in overrides:
+215 signatures / 1001 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -124,13 +124,18 @@ For cloud collection, install the extra from the same reviewed revision:
 
 ```bash
 SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
-python -m pip install "shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@${SHADOWSCAN_REVISION}"
+python -m pip install "project-nexus-shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@${SHADOWSCAN_REVISION}"
 ```
+
+The distribution is named `project-nexus-shadowscan`; the command and Python
+imports remain `shadowscan`. The unrelated `shadowscan` package on PyPI is not
+this project. The new distribution name is not a claim of a published package
+or a reserved namespace: install the reviewed source or built wheel below.
 
 The current `0.1.1` source version is an unreleased candidate; the version
 string does not imply a published or signed artifact. These VCS installs resolve
 transitive dependencies at install time. For deployment, use the locked install
-below. Python 3.11+ is required; CI covers 3.11, 3.12, and 3.13. Core dependencies
+below. Python 3.11, 3.12, or 3.13 is required and covered by CI. Core dependencies
 include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
@@ -295,6 +300,7 @@ See [deployment and migration](docs/production.md) for the rollout checks.
 ```
 
 * **confidence** combines evidence weights with noisy-OR. It groups correlated source evidence first, so repeated matches cannot inflate the score. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
+* **potential_capabilities** in static finding metadata records framework features supported only by availability evidence, such as an import or dependency. These are excluded from capability risk factors until stronger source evidence supports them.
 * **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence. The listed factors always add up to `score`; confidence scaling and the 0–100 bounds appear as factors.
 * **danger_score** is the same model without the governance factors (inventory registration and ownership): what the agent can do, independent of whether anyone approved it. Set `options.risk_basis: danger` to base `level` and `--fail-on` on it, and `options.risk_weights` to tune weights (see [Risk policy](#risk-policy)).
 * **shadow** is `true` unless exactly one inventory entry matches an explicit resource pattern and its configured scope restrictions; names only suggest entries for review. An approved entry lends its owner to the finding.

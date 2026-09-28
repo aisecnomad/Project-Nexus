@@ -1,10 +1,11 @@
 """Dataclass attributes are independent values, never positional CLI arguments."""
 
+import math
 import re
 
 import pytest
 
-from shadowscan.models import Evidence, Finding, Kind, Risk, RiskFactor, Surface
+from shadowscan.models import Evidence, Finding, Kind, Risk, RiskFactor, ScanResult, Surface
 from shadowscan.utils.redaction import REDACTED
 
 
@@ -46,6 +47,13 @@ def test_finding_flag_shaped_title_preserves_resource_identity_and_serialization
     assert finding.confidence == 0.5
     assert finding.risk.factors[0].description == "Independent description"
     assert finding.to_dict()["evidence"][0]["weight"] == 0.5
+
+
+def test_scan_result_refuses_nonfinite_json_publication():
+    result = ScanResult(version="test", collection_scope={"untrusted_metric": math.nan})
+
+    with pytest.raises(ValueError, match="Out of range float values"):
+        result.to_json()
 
 
 def test_singleton_wrappers_preserve_real_nested_argv_and_cross_field_redaction():
