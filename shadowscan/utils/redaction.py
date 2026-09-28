@@ -312,9 +312,9 @@ class _Sanitizer:
         if self.redact_short_secrets:
             # The structural pass can rewrite part of a whole configured secret.
             # Remember that spelling too so its other opaque fragments are removed.
-            for secret in tuple(self.known):
-                self.charge(len(secret))
-                spelling = self.text_passes(secret)
+            for value in tuple(self.known):
+                self.charge(len(value))
+                spelling = self.text_passes(value)
                 if spelling and spelling != REDACTED:
                     self.known.add(spelling)
         self.ordered = sorted(self.known, key=len, reverse=True)
@@ -332,17 +332,17 @@ class _Sanitizer:
             # from the path-secret rules while retaining its capability token.
             self.charge(len(item))
             item = self.text_passes(item)
-        for secret in self.ordered:
+        for value in self.ordered:
             if self.redact_short_secrets:
-                item = self.replace(item, secret)
-            elif len(secret) < 8 and secret in item:
+                item = self.replace(item, value)
+            elif len(value) < 8 and value in item:
                 # Default report sanitization withholds the entire field for
                 # short secrets; this avoids both expansion and partial leaks.
                 return REDACTED
             else:
                 # Keep line counts stable: excerpts index sanitized text by the
                 # raw line number, and a multi-line secret would shift them.
-                item = item.replace(secret, REDACTED + "\n" * secret.count("\n"))
+                item = item.replace(value, REDACTED + "\n" * value.count("\n"))
         return self.text_passes(item)
 
     def replace(self, item: str, secret: str) -> str:
@@ -521,9 +521,9 @@ class _NestedSanitizer(_Sanitizer):
         withheld part of a known value ('prefix sk-proj-... suffix'). Remove
         that spelling too, so the value's other fragments are not kept.
         """
-        for secret in tuple(self.known):
-            self.charge(len(secret))
-            spelling = _redact_extended(_sanitize_established(secret))
+        for value in tuple(self.known):
+            self.charge(len(value))
+            spelling = _redact_extended(_sanitize_established(value))
             if spelling and spelling != REDACTED:
                 self.known.add(spelling)
         self.ordered = sorted(self.known, key=len, reverse=True)
@@ -535,16 +535,16 @@ class _NestedSanitizer(_Sanitizer):
         only inside one ('ACT') does not occur in the field.
         """
         self.charge(len(item) * len(self.ordered))
-        for secret in self.ordered:
+        for value in self.ordered:
             if self.redact_short_secrets:
-                item = self.replace(item, secret)
+                item = self.replace(item, value)
                 continue
-            parts = item.split(REDACTED) if secret in REDACTED else [item]
-            if len(secret) < 8 and any(secret in part for part in parts):
+            parts = item.split(REDACTED) if value in REDACTED else [item]
+            if len(value) < 8 and any(value in part for part in parts):
                 return REDACTED
             # Keep line counts stable, as _Sanitizer.text does.
-            marker = REDACTED + "\n" * secret.count("\n")
-            item = REDACTED.join(part.replace(secret, marker) for part in parts)
+            marker = REDACTED + "\n" * value.count("\n")
+            item = REDACTED.join(part.replace(value, marker) for part in parts)
         return item
 
 
