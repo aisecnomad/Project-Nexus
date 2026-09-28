@@ -263,7 +263,8 @@ def test_confined_directory_refuses_a_linked_ancestor(tmp_path):
 def test_without_o_path_the_root_is_opened_in_one_no_follow_any_call(tmp_path, monkeypatch):
     # macOS has no O_PATH. Its O_NOFOLLOW_ANY makes the kernel refuse a link in
     # any component of the path, which, like an open by path, needs only
-    # search permission on the ancestors.
+    # search permission on the ancestors. XNU fails the open with EINVAL when
+    # O_NOFOLLOW is passed as well, so the call must not carry it.
     native = hasattr(os, "O_NOFOLLOW_ANY")
     nofollow_any = getattr(os, "O_NOFOLLOW_ANY", 0x20000000)
     monkeypatch.delattr(os, "O_PATH", raising=False)
@@ -279,9 +280,8 @@ def test_without_o_path_the_root_is_opened_in_one_no_follow_any_call(tmp_path, m
     monkeypatch.setattr(os, "open", opener)
     monkeypatch.setattr(os, "supports_dir_fd", {*os.supports_dir_fd, opener})
     os.close(open_confined_directory(tmp_path))
-    assert calls == [
-        (str(tmp_path.absolute()), os.O_RDONLY | os.O_NOFOLLOW | nofollow_any | os.O_DIRECTORY, None)
-    ]
+    assert calls == [(str(tmp_path.absolute()), os.O_RDONLY | nofollow_any | os.O_DIRECTORY, None)]
+    assert not calls[0][1] & os.O_NOFOLLOW
 
 
 def test_confined_file_below_a_directory_leaves_the_directory_open(tmp_path):
