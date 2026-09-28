@@ -216,7 +216,7 @@ def test_nested_repository_scan_inherits_cancellation_and_publication_fence(
             self.ctx.check_deadline()
             return []
 
-    monkeypatch.setattr(f"{cls.__module__}.FilesystemConnector", CaptureFilesystem)
+    monkeypatch.setattr("shadowscan.connectors.code.remote.FilesystemConnector", CaptureFilesystem)
     connector = cls(parent)
     record = {"full_name": "org/repo", "path_with_namespace": "org/repo"}
     assert list(connector._scan_local(record, str(tmp_path))) == []

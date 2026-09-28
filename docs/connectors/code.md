@@ -101,6 +101,9 @@ enumerated Git object IDs.
 An offline input with no clone directories is incomplete.
 An explicit `repos:` response whose repository identity does not match the
 requested name is incomplete, and that response is not scanned.
+An org or user listing entry whose `full_name` is not a plain `owner/name`
+(letters, digits, `.`, `_` and `-`, never a `.` or `..` segment) is an error
+that makes the scan incomplete; that repository is never requested or cloned.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) first checks the provider's repository
@@ -125,6 +128,9 @@ findings retain the scanned Git tree/commit identity in
 commit before downloading files.
 Missing, malformed or mismatched details for an explicitly named project, and an offline
 input with no clone directories, make the scan incomplete.
+A group listing entry whose project `id` is not a positive integer is an error
+that makes the scan incomplete; that project is skipped before any request is
+made for it, and the other projects in the listing are still scanned.
 GitLab clones use the same observed `clone_max_bytes` and timeout behavior as
 GitHub clones above. GitLab's reported size is a preflight estimate in bytes;
 it does not replace a filesystem/container disk quota.

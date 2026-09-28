@@ -153,7 +153,9 @@ An offline clone directory containing no repositories makes the scan incomplete;
 verify the export or select an intended nonempty directory.
 An explicit `repos:` response with a missing or mismatched repository identity
 also makes coverage incomplete; the connector will not scan a different repo
-as a substitute for the requested one.
+as a substitute for the requested one. An org or user listing entry whose
+`full_name` is not a plain `owner/name` is an error that makes the scan
+incomplete; that repository is never requested or cloned.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) checks GitHub's reported repository size
@@ -192,6 +194,9 @@ without launching Git.
 A missing, malformed or mismatched response for an explicitly named project
 marks coverage incomplete; an empty offline clone directory is also incomplete. Check the
 configured project names and export before treating an empty result as clean.
+A group listing entry whose project `id` is not a positive integer is an
+error that makes the scan incomplete; that project is skipped before any
+request is made for it, and the other projects are still scanned.
 Polling cannot provide a hard disk or network-transfer limit; enforce a writable
 disk quota on the worker.
 

@@ -124,8 +124,7 @@ def test_clone_callers_enforce_hooks_auth_and_branch_validation(provider, branch
         )
         return True
 
-    monkeypatch.setattr("shadowscan.connectors.code.github.run_bounded_clone", fake_clone)
-    monkeypatch.setattr("shadowscan.connectors.code.gitlab.run_bounded_clone", fake_clone)
+    monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", fake_clone)
     repo = {
         "full_name": "acme/app",
         "default_branch": branch,
