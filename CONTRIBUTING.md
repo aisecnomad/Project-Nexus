@@ -83,6 +83,9 @@ make coverage-gate   # connector coverage; run after make test
 make check           # all local quality gates
 ```
 
+For detailed testing guidance, environment setup troubleshooting, and advanced patterns,
+see [Testing Guide](docs/testing.md).
+
 To run the connector coverage check directly after the full coverage test run,
 export a report and pass its filename explicitly:
 
