@@ -205,9 +205,12 @@ def _exclude_evaluated_cases(cases: list[Case], corpus_digest: str, base: Path, 
     _require(isinstance(additional, list) and len(additional) <= 32, "invalid_prior_corpora")
     sources = bundled_source_index()
     with tempfile.TemporaryDirectory(prefix="nexus-prior-evaluations-") as temp:
+        # Policy reads refuse paths through symbolic links; the platform
+        # temporary directory can be one (macOS /var resolves to /private/var).
+        private = Path(temp).resolve()
         for number, ref in enumerate(additional):
             _, raw = _artifact(ref, base)
-            snapshot = Path(temp) / f"prior-{number}.json"
+            snapshot = private / f"prior-{number}.json"
             snapshot.write_text(raw, encoding="utf-8")
             _, prior, digest = load_corpus(snapshot)
             sources.add(prior, digest)
@@ -275,7 +278,8 @@ def _evaluation(
     # and ledger validators reopen files; private snapshots prevent a source file
     # change between digest validation and semantic validation.
     with tempfile.TemporaryDirectory(prefix="nexus-acceptance-") as temp:
-        corpus_path, annotation_path = Path(temp) / "corpus.json", Path(temp) / "annotations.json"
+        private = Path(temp).resolve()
+        corpus_path, annotation_path = private / "corpus.json", private / "annotations.json"
         corpus_path.write_text(corpus_raw, encoding="utf-8")
         annotation_path.write_text(annotation_raw, encoding="utf-8")
         ledger = validate_annotations(corpus_path, annotation_path)

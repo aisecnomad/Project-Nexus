@@ -401,8 +401,12 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
     durations: list[float] = []
     file_bytes = 0
     with tempfile.TemporaryDirectory(prefix="shadowscan-eval-") as temp:
+        # The scanner refuses a scan root that traverses a symbolic link. The
+        # platform temporary directory itself can be one (macOS resolves /var
+        # and /tmp through /private), so scan the resolved private directory.
+        base = Path(temp).resolve()
         for case in cases:
-            root = Path(temp) / case.id
+            root = base / case.id
             root.mkdir(mode=0o700)
             for name, contents in case.files.items():
                 dest = root / name

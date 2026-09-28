@@ -33,7 +33,9 @@ def benchmark(*, files: int = 1000, runs: int = 3) -> dict:
     findings_count = None
     file_bytes = 0
     with tempfile.TemporaryDirectory(prefix="shadowscan-benchmark-") as temp:
-        root = Path(temp)
+        # Resolve the temporary root: the scanner refuses scan roots that
+        # traverse a symbolic link, and macOS temporary directories do.
+        root = Path(temp).resolve()
         for i in range(paths):
             project = root / f"project-{i:02d}"
             project.mkdir()
