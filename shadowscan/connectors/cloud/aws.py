@@ -156,6 +156,10 @@ _LLM_SECRET_KEYWORDS = (
     "pinecone",
     "tavily",
 )
+# Evidence heuristics over a serialized trust policy, not URL validation: the
+# GitHub Actions OIDC issuer host and the Bedrock service principals.
+_GITHUB_ACTIONS_OIDC = "token.actions.githubusercontent.com"
+_BEDROCK_TRUST_SERVICES = frozenset({"bedrock.amazonaws.com", "bedrock-agentcore.amazonaws.com"})
 # Service principals in a role trust policy that run agents or AI workloads.
 _WORKLOAD_TRUST_SERVICES = (
     "lambda.amazonaws.com",
@@ -1719,7 +1723,7 @@ class AwsConnector(BaseConnector):
         wildcard = [a for a in actions if "*" in a or "?" in a]
         trust = json.dumps(rec.get("assume_role_policy") or {})
         principals = [svc for svc in _WORKLOAD_TRUST_SERVICES if svc in trust]
-        if "oidc-provider" in trust or "token.actions.githubusercontent.com" in trust:
+        if "oidc-provider" in trust or _GITHUB_ACTIONS_OIDC in trust:
             principals.append("oidc-federated")
         wildcard_note = " + wildcards " + ", ".join(wildcard[:3]) if wildcard else ""
         potential_note = "; potential NotAction grants " + ", ".join(potential[:8]) if potential else ""
@@ -1736,7 +1740,7 @@ class AwsConnector(BaseConnector):
                 weight=0.45 if llm else 0.25,
             )
         )
-        if "bedrock.amazonaws.com" in principals or "bedrock-agentcore.amazonaws.com" in principals:
+        if _BEDROCK_TRUST_SERVICES.intersection(principals):
             f.add_framework("cloud.aws-bedrock-agents")
             f.add_tag("agent-execution-role")
         if wildcard:
