@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from shadowscan.connectors.base import BaseConnector
-from shadowscan.connectors.code.filesystem import _parse_mcp_servers
+from shadowscan.connectors.code.filesystem import _NO_STRUCTURE, _parse_mcp_servers, _structured_context
 from shadowscan.connectors.code.manifests import parse_manifest
 from shadowscan.connectors.code.semantic_config import parse_agent_manifest, structured_code_matches
 from shadowscan.models import Kind
@@ -385,6 +385,35 @@ def test_repository_scan_marks_structured_integrity_failures_incomplete(tmp_path
     assert any("framework.crewai" in finding.frameworks for finding in findings)
     assert ctx.stats.incomplete
     assert any(name in error for error in ctx.stats.errors)
+
+
+# Unrendered Helm/Go templates are not YAML: a placeholder reads as a mapping
+# key and conditional branches repeat fields.
+_UNRENDERED_TEMPLATES = [
+    "spec:\n  containers:\n    - image: {{ .Values.image }}\n",
+    'spec:\n  logLevel: "{{ .Values.logLevel }}"\n  logLevel: info\n',
+]
+
+
+@pytest.mark.parametrize("text", _UNRENDERED_TEMPLATES)
+def test_unrendered_templates_use_lexical_redaction_while_plain_yaml_fails_closed(text):
+    assert _structured_context("chart/templates/deployment.yaml", text) is _NO_STRUCTURE
+    plain = text.replace('"{{ .Values.logLevel }}"', "debug").replace("{{ .Values.image }}", "{[a]: b}")
+    with pytest.raises(YAMLIntegrityError):
+        _structured_context("chart/values.yaml", plain)
+
+
+@pytest.mark.parametrize("text", _UNRENDERED_TEMPLATES)
+def test_repository_scan_keeps_unrendered_templates_complete(tmp_path, run_connector, text):
+    target = tmp_path / "chart" / "templates" / "deployment.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text(text, encoding="utf-8")
+    (tmp_path / "neighbor.py").write_text("from crewai import Agent\n", encoding="utf-8")
+
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+
+    assert any("framework.crewai" in finding.frameworks for finding in findings)
+    assert not ctx.stats.incomplete, ctx.stats.errors
 
 
 @pytest.mark.parametrize(

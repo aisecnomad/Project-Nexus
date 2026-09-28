@@ -585,6 +585,37 @@ pinned baseline with a candidate before enforcing policy on the new output:
   servers no longer add capabilities; MCP server capabilities come from their
   registered tools. Risk scores of affected findings change accordingly.
 
+## Completeness, report and credential changes
+
+The 2026-09-28 changes alter completeness, report text and credential policy.
+Compare a pinned baseline with a candidate before enforcing policy on the new
+output:
+
+- **Changed diagnostics, still incomplete.** A YAML value PyYAML cannot
+  construct, such as an impossible date or an integer over 4,300 digits,
+  already made a scan incomplete; it is now reported as malformed YAML
+  (`invalid YAML`, `invalid agent definition YAML`), and the agent definition
+  is now listed where it used to be dropped, which can raise that finding's
+  risk score. Scan configuration and inventory files with such a value still
+  fail at setup (exit 1), now with `ConfigValidationError` or
+  `InventoryValidationError`. A cancellation or connector deadline while a
+  credential finding is built now ends that connector instead of being
+  recorded as one file's error; the scan was and is incomplete.
+- **Newly complete.** A Python module whose imports cannot resolve to any
+  signature is complete at any size or nesting depth, because the import
+  binder, which could add no evidence there, is skipped for it.
+  `mypy/checker.py` (52,729 AST nodes) used to make ordinary library trees
+  exit 3. A module that imports a library a signature describes keeps the
+  `max_ast_nodes` diagnostic: a warning in tests, an error elsewhere.
+  Configuration, inventory, signature pack, report and offline input files
+  below a traverse-only directory (mode `0711`) now open, since directories
+  are opened for traversal only.
+  An unrendered Helm, Jinja or Go-template YAML file, such as a chart
+  template with `image: {{ .Values.image }}`, no longer reports
+  `structured parsing incomplete`: it is not YAML until rendered, so its
+  excerpts use lexical redaction. Plain YAML with duplicate or non-finite
+  data still makes the scan incomplete.
+
 ## Finding identity and comparison migration
 
 Finding IDs now separate stable source identity from inferred classification.
@@ -628,8 +659,20 @@ source snapshot.
 
 Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
 Filesystem scans reject selected roots whose paths traverse a symbolic link.
-Source links encountered during a walk are skipped and mark coverage incomplete;
-review or explicitly exclude them before accepting a completeness gate.
+They then open each root once and read every file, including `CODEOWNERS`,
+relative to it without following a link in any path component. A scan needs
+read and search permission on the root and the directories below it, but on
+Linux and macOS only search permission on the directories above it (they are
+opened with `O_PATH` on Linux; on macOS the root is opened in one call with
+`O_NOFOLLOW_ANY`), so a checkout below a traverse-only directory such as a
+mode `0711` home directory is scanned completely. A root that cannot be opened
+this way is reported, by its `label` when one is set, as
+`could not open the scan root safely (<reason>)`, for example
+`permission denied`, and makes the scan incomplete. Source links encountered
+during a walk are skipped and mark coverage incomplete. A directory replaced
+by a link while the scan runs fails the reads below it and also marks
+coverage incomplete, so content outside the root is never analyzed. Review
+or explicitly exclude such paths before accepting a completeness gate.
 Pre/post content hashes can detect ordinary concurrent edits but do not form an
 atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
 and revert between those reads.
