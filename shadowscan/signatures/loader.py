@@ -81,10 +81,9 @@ class Signal:
     languages: list[str] = field(default_factory=list)  # import / code
     names: list[str] = field(default_factory=list)  # dependency / env / client_id
     prefixes: list[str] = field(default_factory=list)  # dependency
-    exclude_names: list[str] = field(default_factory=list)  # dependency: exact names a prefix must not claim
-    exclude_prefixes: list[str] = field(
-        default_factory=list
-    )  # dependency: name prefixes a prefix must not claim
+    # dependency: exact names and name prefixes that a prefix must not claim
+    exclude_names: list[str] = field(default_factory=list)
+    exclude_prefixes: list[str] = field(default_factory=list)
     patterns: list[str] = field(default_factory=list)  # regexes
     globs: list[str] = field(default_factory=list)  # file
     values: list[str] = field(default_factory=list)  # domain / scope / iac
@@ -156,10 +155,8 @@ class Signature:
                 raise ValueError(f"{self.source}: {self.id}: signal weight out of range")
             if s.type == "dependency" and not (s.names or s.prefixes):
                 raise ValueError(f"{self.source}: {self.id}: dependency signal needs names/prefixes")
-            if (
-                s.type in {"import", "code", "user_agent", "name", "model", "secret", "image"}
-                and not s.patterns
-            ):
+            pattern_types = {"import", "code", "user_agent", "name", "model", "secret", "image"}
+            if s.type in pattern_types and not s.patterns:
                 raise ValueError(f"{self.source}: {self.id}: {s.type} signal needs patterns")
             if s.type == "file" and not s.globs:
                 raise ValueError(f"{self.source}: {self.id}: file signal needs globs")
@@ -220,7 +217,7 @@ class _UniqueKeyLoader(BoundedSafeLoader):
 
 
 def _unique_mapping(loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False) -> dict[str, Any]:
-    out = {}
+    out: dict[str, Any] = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)
         # Marks render a source excerpt when printed; report numbers only.
@@ -361,7 +358,8 @@ def load_signatures(
                     raise SignaturePackError(f"{f}: duplicate signature id {sig.id!r} in {d}")
                 if sig.id in reserved and not allow_override:
                     raise SignaturePackError(
-                        f"{f}: signature id {sig.id!r} is reserved by a built-in; explicitly enable signature overrides"
+                        f"{f}: signature id {sig.id!r} is reserved by a built-in; explicitly enable signature"
+                        " overrides"
                     )
                 pack_ids.add(sig.id)
                 by_id[sig.id] = sig
