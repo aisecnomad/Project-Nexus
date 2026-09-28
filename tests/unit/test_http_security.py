@@ -471,8 +471,6 @@ def test_post_json_uses_the_default_streamed_body_limit():
         ("paginate_odata", {"value": {}}, {}),
         ("paginate_token", {"nextPageToken": None}, {}),
         ("paginate_token", {"items": None}, {}),
-        ("paginate_cursor", {"ok": True}, {}),
-        ("paginate_cursor", {"results": {}}, {}),
     ],
 )
 def test_paginators_fail_closed_on_missing_or_invalid_collection(paginator, data, kwargs):

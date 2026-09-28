@@ -9,7 +9,9 @@ exported. Every connector instance has a collision-resistant export filename,
 including repeated connector names or labels that normalize to the same text. Redaction
 removes sensitive values, so an export is not a lossless copy of the API response.
 Live HTTP endpoints require HTTPS; redirects and pagination cannot send credentials
-to another origin. Denied access, collection failures and pagination limits make
+to another origin. Denied access, collection failures, pagination limits and
+oversized or slow responses (see
+[resource limits](production.md#resource-limits-and-incomplete-scans)) make
 the scan incomplete rather than producing a clean result.
 
 Offline file and directory inputs use shared safety limits: 10,000 files,
