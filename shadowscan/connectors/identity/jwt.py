@@ -404,6 +404,8 @@ _IDENTITY_WEIGHT = {
     "agent": 0.6,
     "delegated-agent": 0.75,
 }
+# Subjects and e-mail addresses of Google service accounts end with this suffix.
+_GOOGLE_SERVICE_ACCOUNT_SUFFIX = ".iam.gserviceaccount.com"
 
 
 def _machine_identity(f: Finding, claims: dict[str, Any], family: str, sub: str) -> tuple[str, list[str]]:
@@ -423,8 +425,8 @@ def _machine_identity(f: Finding, claims: dict[str, Any], family: str, sub: str)
     if family == "okta" and claims.get("cid") and claims.get("cid") == sub:
         identity_type = "service"
         reasons.append("Okta cid == sub (service app token)")
-    if sub.endswith(".iam.gserviceaccount.com") or str(claims.get("email", "")).endswith(
-        ".iam.gserviceaccount.com"
+    if sub.endswith(_GOOGLE_SERVICE_ACCOUNT_SUFFIX) or str(claims.get("email", "")).endswith(
+        _GOOGLE_SERVICE_ACCOUNT_SUFFIX
     ):
         identity_type = "service"
         reasons.append("Google service account")
