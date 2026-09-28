@@ -15,18 +15,53 @@ Offline export: JSONL of dumped records (``_kind`` per record).
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.cloud.common import cloud_finding, done, name_hint, scan_env, string_list
+from shadowscan.connectors.cloud.common import (
+    RECORD_ERRORS,
+    RecordDispatch,
+    cloud_finding,
+    credential_name_matches,
+    done,
+    first_tag,
+    name_hint,
+    scan_env,
+    string_list,
+)
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.text import truncate
 
 GENAI_POLICY_RX = re.compile(
-    r"(?i)\b(?:allow)\b.*?\b(?:to\s+)?(manage|use|read|inspect)\s+(generative-ai[a-z-]*|oda[a-z-]*|data-science[a-z-]*|all-resources|ai-service[a-z-]*)\b"
+    r"(?i)\b(?:allow)\b.*?\b(?:to\s+)?(manage|use|read|inspect)\s+"
+    r"(generative-ai[a-z-]*|oda[a-z-]*|data-science[a-z-]*|all-resources|ai-service[a-z-]*)\b"
+)
+_POLICY_SUBJECT = re.compile(r"(?i)allow\s+(?:group|dynamic-group|service|any-user)\s+([^\s]+)")
+# Serving images and settings that indicate an LLM model deployment.
+_LLM_DEPLOYMENT_HINTS = ("vllm", "tgi", "llm", "text-generation", "model_deploy_predict_endpoint")
+_LLM_SECRET_KEYWORDS = (
+    "openai",
+    "anthropic",
+    "claude",
+    "gemini",
+    "llm",
+    "genai",
+    "cohere",
+    "huggingface",
+    "mistral",
+    "langsmith",
+    "langfuse",
+)
+# Dynamic-group matching rules for AI workloads (agents, deployments, functions, containers).
+_AI_WORKLOAD_RULES = (
+    "genai",
+    "generativeai",
+    "datasciencemodeldeployment",
+    "fnfunc",
+    "computecontainerinstance",
 )
 
 
@@ -36,6 +71,17 @@ def _resource_id(value: Any) -> str:
     return value
 
 
+def _tool_config_type(tool: dict[str, Any]) -> Any:
+    config = tool.get("tool_config")
+    return config.get("tool_config_type") if isinstance(config, dict) else None
+
+
+def _tool_type(tool: dict[str, Any]) -> str:
+    """Tool type from the tool configuration, else the legacy ``type`` field."""
+    config = tool.get("tool_config")
+    return str(config.get("tool_config_type") if isinstance(config, dict) else tool.get("type") or "?")
+
+
 class OciConnector(BaseConnector):
     name: ClassVar[str] = "cloud.oci"
     _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = True
@@ -43,15 +89,21 @@ class OciConnector(BaseConnector):
     provider: ClassVar[str | None] = "oci"
     requires: ClassVar[list[str]] = ["oci"]
     description: ClassVar[str] = (
-        "OCI Generative AI Agents, Digital Assistant, GenAI endpoints/clusters, Data Science deployments, Functions, Container Instances, IAM policies and Vault secret names."
+        "OCI Generative AI Agents, Digital Assistant, GenAI endpoints/clusters, Data Science deployments, "
+        "Functions, Container Instances, IAM policies and Vault secret names."
     )
     config_keys: ClassVar[dict[str, str]] = {
         "profile": "~/.oci/config profile (default DEFAULT)",
         "config_file": "path to OCI config (default ~/.oci/config)",
         "auth": "config | instance_principal | resource_principal (default config)",
-        "allow_instance_credentials": "allow instance/resource principal credentials (default false; inherited from options)",
+        "allow_instance_credentials": (
+            "allow instance/resource principal credentials (default false; inherited from options)"
+        ),
         "regions": "regions to scan (default: all subscribed)",
-        "region": "session region for instance_principal auth (default: the signer's region); config auth uses the profile's region",
+        "region": (
+            "session region for instance_principal auth (default: the signer's region); "
+            "config auth uses the profile's region"
+        ),
         "tenancy": "tenancy OCID (default: from the config profile or the principal signer)",
         "compartments": "compartment OCIDs (default: all active compartments in the tenancy)",
         "max_pages": "cap on pages per paginated list call, at least 1 (default 1000)",
@@ -189,15 +241,13 @@ class OciConnector(BaseConnector):
         identity = self._client(oci.identity.IdentityClient)
         compartments = list(self.compartments)
         if not compartments:
-            compartments = [c for c in [self.tenancy] if c] + [
-                c.id
-                for c in self._all(
-                    identity.list_compartments,
-                    self.tenancy,
-                    compartment_id_in_subtree=True,
-                    lifecycle_state="ACTIVE",
-                )
-            ]
+            listed = self._all(
+                identity.list_compartments,
+                self.tenancy,
+                compartment_id_in_subtree=True,
+                lifecycle_state="ACTIVE",
+            )
+            compartments = [c for c in [self.tenancy] if c] + [c.id for c in listed]
         regions = self.regions or [
             r.region_name for r in self._all(identity.list_region_subscriptions, self.tenancy)
         ]
@@ -233,101 +283,107 @@ class OciConnector(BaseConnector):
     def _collect_region_comp(self, region: str, comp: str) -> Iterator[dict[str, Any]]:
         import oci
 
-        try:
-            agents = self._client(oci.generative_ai_agent.GenerativeAiAgentClient, region)
-            for a in self._all(agents.list_agents, compartment_id=comp):
-                rec = self._d(a)
-                rec.update({"_kind": "genai-agent", "_region": region, "_compartment": comp})
-                if hasattr(agents, "list_tools"):
-                    rec["_tools"] = [
-                        self._d(t) for t in self._all(agents.list_tools, compartment_id=comp, agent_id=a.id)
-                    ]
-                else:
-                    self.ctx.warn("cloud.oci: list_tools unavailable in installed SDK", incomplete=True)
-                    rec["_tools"] = []
-                yield rec
-            for e in self._all(agents.list_agent_endpoints, compartment_id=comp):
-                yield {"_kind": "genai-agent-endpoint", "_region": region, "_compartment": comp, **self._d(e)}
-            for kb in self._all(agents.list_knowledge_bases, compartment_id=comp):
-                yield {
-                    "_kind": "genai-knowledge-base",
-                    "_region": region,
-                    "_compartment": comp,
-                    **self._d(kb),
-                }
-        except AttributeError:
-            self.ctx.warn("cloud.oci: generative_ai_agent unavailable in installed SDK", incomplete=True)
-        try:
-            genai = self._client(oci.generative_ai.GenerativeAiClient, region)
-            for ep in self._all(genai.list_endpoints, comp):
-                yield {"_kind": "genai-endpoint", "_region": region, "_compartment": comp, **self._d(ep)}
-            for cl in self._all(genai.list_dedicated_ai_clusters, comp):
-                yield {"_kind": "genai-cluster", "_region": region, "_compartment": comp, **self._d(cl)}
-            for m in self._all(genai.list_models, comp):
-                d = self._d(m)
-                # Custom (fine-tuned) models are type CUSTOM and reference a base model;
-                # FINE_TUNE is a capability that *base* models advertise, and OCI custom
-                # models are built on the same vendors as the base catalogue.
-                if d.get("type") == "CUSTOM" or d.get("base_model_id"):
-                    yield {"_kind": "genai-custom-model", "_region": region, "_compartment": comp, **d}
-        except AttributeError:
-            self.ctx.warn("cloud.oci: generative_ai unavailable in installed SDK", incomplete=True)
-        try:
-            oda = self._client(oci.oda.OdaClient, region)
-            for inst in self._all(oda.list_oda_instances, comp):
-                yield {"_kind": "oda-instance", "_region": region, "_compartment": comp, **self._d(inst)}
-        except AttributeError:
-            self.ctx.warn("cloud.oci: oda unavailable in installed SDK", incomplete=True)
-        try:
-            ds = self._client(oci.data_science.DataScienceClient, region)
-            for md in self._all(ds.list_model_deployments, comp):
-                yield {"_kind": "model-deployment", "_region": region, "_compartment": comp, **self._d(md)}
-        except AttributeError:
-            self.ctx.warn("cloud.oci: data_science unavailable in installed SDK", incomplete=True)
-        try:
-            fn = self._client(oci.functions.FunctionsManagementClient, region)
-            yield from self._collect_functions(fn, region, comp)
-        except AttributeError:
-            self.ctx.warn("cloud.oci: functions unavailable in installed SDK", incomplete=True)
-        try:
-            ci = self._client(oci.container_instances.ContainerInstanceClient, region)
-            for inst in self._all(ci.list_container_instances, comp):
-                d = self._d(inst)
-                containers = []
-                for c in self._all(ci.list_containers, comp, container_instance_id=inst.id):
-                    try:
-                        cd = self._d(ci.get_container(c.id).data)
-                    except Exception as exc:  # noqa: BLE001 - continue other containers
-                        self.ctx.warn(f"cloud.oci: container detail collection failed ({type(exc).__name__})")
-                        continue
-                    containers.append(
-                        {
-                            "display_name": cd.get("display_name"),
-                            "image_url": cd.get("image_url"),
-                            "environment_variables": cd.get("environment_variables") or {},
-                        }
-                    )
-                d["_containers"] = containers
-                yield {"_kind": "container-instance", "_region": region, "_compartment": comp, **d}
-        except AttributeError:
-            self.ctx.warn("cloud.oci: container_instances unavailable in installed SDK", incomplete=True)
-        try:
-            vaults = self._client(oci.vault.VaultsClient, region)
-            for s in self._all(vaults.list_secrets, comp):
-                yield {
-                    "_kind": "secret-name",
-                    "_region": region,
-                    "_compartment": comp,
-                    "id": s.id,
-                    "secret_name": s.secret_name,
-                    "description": s.description,
-                    "time_created": str(s.time_created),
-                }
-        except AttributeError:
-            self.ctx.warn("cloud.oci: vault unavailable in installed SDK", incomplete=True)
+        # Each service is optional in older SDKs: a missing module or client
+        # attribute leaves that service's coverage incomplete, not the others.
+        sections: tuple[tuple[str, Callable[[Any, str, str], Iterator[dict[str, Any]]]], ...] = (
+            ("generative_ai_agent", self._collect_agents),
+            ("generative_ai", self._collect_genai),
+            ("oda", self._collect_oda),
+            ("data_science", self._collect_model_deployments),
+            ("functions", self._collect_function_apps),
+            ("container_instances", self._collect_container_instances),
+            ("vault", self._collect_secret_names),
+        )
+        for module, collect in sections:
+            try:
+                yield from collect(oci, region, comp)
+            except AttributeError:
+                self.ctx.warn(f"cloud.oci: {module} unavailable in installed SDK", incomplete=True)
+
+    def _collect_agents(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
+        agents = self._client(oci.generative_ai_agent.GenerativeAiAgentClient, region)
+        for a in self._all(agents.list_agents, compartment_id=comp):
+            rec = self._d(a)
+            rec.update({"_kind": "genai-agent", "_region": region, "_compartment": comp})
+            if hasattr(agents, "list_tools"):
+                tools = self._all(agents.list_tools, compartment_id=comp, agent_id=a.id)
+                rec["_tools"] = [self._d(t) for t in tools]
+            else:
+                self.ctx.warn("cloud.oci: list_tools unavailable in installed SDK", incomplete=True)
+                rec["_tools"] = []
+            yield rec
+        for e in self._all(agents.list_agent_endpoints, compartment_id=comp):
+            yield {"_kind": "genai-agent-endpoint", "_region": region, "_compartment": comp, **self._d(e)}
+        for kb in self._all(agents.list_knowledge_bases, compartment_id=comp):
+            yield {"_kind": "genai-knowledge-base", "_region": region, "_compartment": comp, **self._d(kb)}
+
+    def _collect_genai(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
+        genai = self._client(oci.generative_ai.GenerativeAiClient, region)
+        for ep in self._all(genai.list_endpoints, comp):
+            yield {"_kind": "genai-endpoint", "_region": region, "_compartment": comp, **self._d(ep)}
+        for cl in self._all(genai.list_dedicated_ai_clusters, comp):
+            yield {"_kind": "genai-cluster", "_region": region, "_compartment": comp, **self._d(cl)}
+        for m in self._all(genai.list_models, comp):
+            d = self._d(m)
+            # Custom (fine-tuned) models are type CUSTOM and reference a base model;
+            # FINE_TUNE is a capability that *base* models advertise, and OCI custom
+            # models are built on the same vendors as the base catalogue.
+            if d.get("type") == "CUSTOM" or d.get("base_model_id"):
+                yield {"_kind": "genai-custom-model", "_region": region, "_compartment": comp, **d}
+
+    def _collect_oda(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
+        oda = self._client(oci.oda.OdaClient, region)
+        for inst in self._all(oda.list_oda_instances, comp):
+            yield {"_kind": "oda-instance", "_region": region, "_compartment": comp, **self._d(inst)}
+
+    def _collect_model_deployments(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
+        ds = self._client(oci.data_science.DataScienceClient, region)
+        for md in self._all(ds.list_model_deployments, comp):
+            yield {"_kind": "model-deployment", "_region": region, "_compartment": comp, **self._d(md)}
+
+    def _collect_function_apps(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
+        fn = self._client(oci.functions.FunctionsManagementClient, region)
+        yield from self._collect_functions(fn, region, comp)
+
+    def _collect_container_instances(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
+        ci = self._client(oci.container_instances.ContainerInstanceClient, region)
+        for inst in self._all(ci.list_container_instances, comp):
+            d = self._d(inst)
+            containers = []
+            for c in self._all(ci.list_containers, comp, container_instance_id=inst.id):
+                try:
+                    cd = self._d(ci.get_container(c.id).data)
+                except Exception as exc:  # noqa: BLE001 - continue other containers
+                    self.ctx.warn(f"cloud.oci: container detail collection failed ({type(exc).__name__})")
+                    continue
+                containers.append(
+                    {
+                        "display_name": cd.get("display_name"),
+                        "image_url": cd.get("image_url"),
+                        "environment_variables": cd.get("environment_variables") or {},
+                    }
+                )
+            d["_containers"] = containers
+            yield {"_kind": "container-instance", "_region": region, "_compartment": comp, **d}
+
+    def _collect_secret_names(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
+        vaults = self._client(oci.vault.VaultsClient, region)
+        for s in self._all(vaults.list_secrets, comp):
+            yield {
+                "_kind": "secret-name",
+                "_region": region,
+                "_compartment": comp,
+                "id": s.id,
+                "secret_name": s.secret_name,
+                "description": s.description,
+                "time_created": str(s.time_created),
+            }
 
     def _function_detail(
-        self, client: Any, kind: str, summary: dict[str, Any]
+        self,
+        client: Any,
+        kind: str,
+        summary: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, str], bool]:
         """List summaries omit config; retain known evidence when detail is denied."""
         try:
@@ -342,13 +398,12 @@ class OciConnector(BaseConnector):
             return summary, {}, False
         if not isinstance(detail, dict) or detail.get("id") != summary["id"] or "error" in detail:
             self.ctx.warn(
-                f"cloud.oci: invalid {kind} detail response; configuration coverage unknown", incomplete=True
+                f"cloud.oci: invalid {kind} detail response; configuration coverage unknown",
+                incomplete=True,
             )
             return summary, {}, False
-        record = {
-            **summary,
-            **{key: value for key, value in detail.items() if key != "config" and value is not None},
-        }
+        known = {key: value for key, value in detail.items() if key != "config" and value is not None}
+        record = {**summary, **known}
         config = detail.get("config")
         if "config" in detail and config is None:
             return record, {}, True
@@ -361,30 +416,25 @@ class OciConnector(BaseConnector):
         complete = len(valid) == len(config)
         if not complete:
             self.ctx.warn(
-                f"cloud.oci: invalid {kind} configuration entries; coverage unknown", incomplete=True
+                f"cloud.oci: invalid {kind} configuration entries; coverage unknown",
+                incomplete=True,
             )
         return record, valid, complete
 
     def _collect_functions(self, client: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         for app in self._all(client.list_applications, comp):
             app_summary = self._d(app)
-            if (
-                not isinstance(app_summary, dict)
-                or not isinstance(app_summary.get("id"), str)
-                or not app_summary["id"].strip()
-            ):
+            if not _has_id(app_summary):
                 self.ctx.warn("cloud.oci: invalid application summary; coverage unknown", incomplete=True)
                 continue
             application, inherited, application_complete = self._function_detail(
-                client, "application", app_summary
+                client,
+                "application",
+                app_summary,
             )
             for func in self._all(client.list_functions, app_summary["id"]):
                 summary = self._d(func)
-                if (
-                    not isinstance(summary, dict)
-                    or not isinstance(summary.get("id"), str)
-                    or not summary["id"].strip()
-                ):
+                if not _has_id(summary):
                     self.ctx.warn("cloud.oci: invalid function summary; coverage unknown", incomplete=True)
                     continue
                 detail, overrides, function_complete = self._function_detail(client, "function", summary)
@@ -409,20 +459,10 @@ class OciConnector(BaseConnector):
         endpoints: dict[str, list[dict[str, Any]]] = {}
         agents: list[dict[str, Any]] = []
         others: list[dict[str, Any]] = []
-        handlers = {
-            name[3:].replace("_", "-"): getattr(self, name)
-            for name in dir(type(self))
-            if name.startswith("_h_")
-        }
+        dispatch = RecordDispatch(self, "tenancy", "genai-agent", "genai-agent-endpoint")
         for rec in records:
-            self.ctx.examined()
-            kind = rec.get("_kind") if isinstance(rec, dict) else None
-            if not isinstance(kind, str) or kind not in handlers.keys() | {
-                "tenancy",
-                "genai-agent",
-                "genai-agent-endpoint",
-            }:
-                self.ctx.warn("cloud.oci: record has missing, invalid, or unsupported _kind")
+            kind = dispatch.kind(rec)
+            if kind is None:
                 continue
             try:
                 if kind == "tenancy":
@@ -437,30 +477,29 @@ class OciConnector(BaseConnector):
                     endpoints.setdefault(rec["agent_id"], []).append(rec)
                 else:
                     others.append(rec)
-            except (ValueError, TypeError, KeyError, AttributeError):
-                self.ctx.warn("cloud.oci: record has invalid fields for its _kind")
+            except RECORD_ERRORS:
+                dispatch.invalid()
         for a in agents:
             try:
                 yield self._agent_finding(a, endpoints.get(str(a.get("id")), []))
-            except (ValueError, TypeError, KeyError, AttributeError):
-                self.ctx.warn("cloud.oci: record has invalid agent fields")
+            except RECORD_ERRORS:
+                dispatch.invalid("agent fields")
         for rec in others:
             try:
-                f = handlers[rec["_kind"]](rec)
+                f = dispatch.handlers[rec["_kind"]](rec)
                 if f:
                     yield f
-            except (ValueError, TypeError, KeyError, AttributeError):
-                self.ctx.warn("cloud.oci: record has invalid fields for its _kind")
+            except RECORD_ERRORS:
+                dispatch.invalid()
 
     def _base(self, rec: dict[str, Any]) -> dict[str, Any]:
+        owner = first_tag(rec.get("freeform_tags"), "owner", "Owner") or first_tag(
+            (rec.get("defined_tags") or {}).get("Oracle-Tags"), "CreatedBy"
+        )
         return {
             "account": rec.get("_compartment") or self.tenancy,
             "region": rec.get("_region"),
-            "owner": (
-                (rec.get("freeform_tags") or {}).get("owner")
-                or (rec.get("freeform_tags") or {}).get("Owner")
-                or ((rec.get("defined_tags") or {}).get("Oracle-Tags") or {}).get("CreatedBy")
-            ),
+            "owner": owner,
             "first_seen": rec.get("time_created"),
             "last_seen": rec.get("time_updated"),
         }
@@ -479,20 +518,15 @@ class OciConnector(BaseConnector):
         f.add_model_provider("provider.oci-generative-ai")
         f.add_capability("tool-use")
         tools = a.get("_tools") or []
-        tool_types = sorted(
-            {
-                str(
-                    t.get("tool_config", {}).get("tool_config_type")
-                    if isinstance(t.get("tool_config"), dict)
-                    else t.get("type") or "?"
-                )
-                for t in tools
-            }
-        )
+        tool_types = sorted({_tool_type(t) for t in tools})
         f.add_evidence(
             Evidence(
                 signal="oci:genai-agent",
-                description=f"Agent '{a.get('display_name')}' ({a.get('lifecycle_state')}) with {len(a.get('knowledge_base_ids') or [])} knowledge base(s), {len(tools)} tool(s) [{', '.join(tool_types)}], {len(eps)} endpoint(s)",
+                description=(
+                    f"Agent '{a.get('display_name')}' ({a.get('lifecycle_state')}) with "
+                    f"{len(a.get('knowledge_base_ids') or [])} knowledge base(s), {len(tools)} tool(s) "
+                    f"[{', '.join(tool_types)}], {len(eps)} endpoint(s)"
+                ),
                 location=a.get("id"),
                 weight=0.97,
                 signature="cloud.oci-generative-ai-agents",
@@ -507,9 +541,9 @@ class OciConnector(BaseConnector):
         for ep in eps:
             if ep.get("should_enable_trace") is False:
                 f.add_tag("tracing-disabled")
-            if ep.get("content_moderation_config") in (None, {}) or (
-                isinstance(ep.get("content_moderation_config"), dict)
-                and not ep["content_moderation_config"].get("should_enable_on_input")
+            moderation = ep.get("content_moderation_config")
+            if moderation in (None, {}) or (
+                isinstance(moderation, dict) and not moderation.get("should_enable_on_input")
             ):
                 f.add_tag("no-content-moderation")
         name_hint(self.index, f, a.get("display_name"), a.get("description"))
@@ -518,15 +552,7 @@ class OciConnector(BaseConnector):
                 "state": a.get("lifecycle_state"),
                 "description": truncate(a.get("description")),
                 "knowledge_bases": a.get("knowledge_base_ids"),
-                "tools": [
-                    {
-                        "name": t.get("display_name"),
-                        "type": (t.get("tool_config") or {}).get("tool_config_type")
-                        if isinstance(t.get("tool_config"), dict)
-                        else None,
-                    }
-                    for t in tools
-                ][:30],
+                "tools": [{"name": t.get("display_name"), "type": _tool_config_type(t)} for t in tools][:30],
                 "endpoints": [
                     {
                         "id": e.get("id"),
@@ -580,7 +606,10 @@ class OciConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="oci:genai-endpoint",
-                description=f"Dedicated endpoint '{rec.get('display_name')}' ({rec.get('lifecycle_state')}) for model {rec.get('model_id')} on cluster {rec.get('dedicated_ai_cluster_id')}",
+                description=(
+                    f"Dedicated endpoint '{rec.get('display_name')}' ({rec.get('lifecycle_state')}) "
+                    f"for model {rec.get('model_id')} on cluster {rec.get('dedicated_ai_cluster_id')}"
+                ),
                 weight=0.6,
             )
         )
@@ -607,7 +636,10 @@ class OciConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="oci:genai-cluster",
-                description=f"Dedicated AI cluster '{rec.get('display_name')}' type {rec.get('type')} units {rec.get('unit_count')} ({rec.get('lifecycle_state')})",
+                description=(
+                    f"Dedicated AI cluster '{rec.get('display_name')}' type {rec.get('type')} "
+                    f"units {rec.get('unit_count')} ({rec.get('lifecycle_state')})"
+                ),
                 weight=0.5,
             )
         )
@@ -647,7 +679,10 @@ class OciConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="oci:oda",
-                description=f"Digital Assistant instance '{rec.get('display_name')}' ({rec.get('lifecycle_state')}, shape {rec.get('shape_name')})",
+                description=(
+                    f"Digital Assistant instance '{rec.get('display_name')}' "
+                    f"({rec.get('lifecycle_state')}, shape {rec.get('shape_name')})"
+                ),
                 weight=0.85,
                 signature="cloud.oci-generative-ai-agents",
             )
@@ -664,33 +699,32 @@ class OciConnector(BaseConnector):
             resource_type="model-deployment",
             **self._base(rec),
         )
-        env = (rec.get("model_deployment_configuration_details") or {}).get(
-            "environment_configuration_details"
-        ) or {}
+        configuration = rec.get("model_deployment_configuration_details") or {}
+        env = configuration.get("environment_configuration_details") or {}
         image = env.get("image")
         if image:
             apply_matches(f, self.index.match_image(image), location=rec.get("id"))
         scan_env(self.index, f, env.get("environment_variables"), location=rec.get("id"))
         name_hint(self.index, f, rec.get("display_name"), rec.get("description"))
         llm = bool(f.frameworks or f.model_providers) or any(
-            k in str(env).lower()
-            for k in ("vllm", "tgi", "llm", "text-generation", "model_deploy_predict_endpoint")
+            k in str(env).lower() for k in _LLM_DEPLOYMENT_HINTS
         )
         if not llm:
             return None
         f.add_evidence(
             Evidence(
                 signal="oci:model-deployment",
-                description=f"Model deployment '{rec.get('display_name')}' ({rec.get('lifecycle_state')}) image {image or 'default'}",
+                description=(
+                    f"Model deployment '{rec.get('display_name')}' ({rec.get('lifecycle_state')}) "
+                    f"image {image or 'default'}"
+                ),
                 weight=0.5,
             )
         )
         f.metadata.update(
             {
                 "image": image,
-                "model_id": (rec.get("model_deployment_configuration_details") or {})
-                .get("model_configuration_details", {})
-                .get("model_id"),
+                "model_id": configuration.get("model_configuration_details", {}).get("model_id"),
             }
         )
         return done(f, self.index, Kind.CLOUD_RESOURCE)
@@ -750,10 +784,11 @@ class OciConnector(BaseConnector):
             scan_env(self.index, f, c.get("environment_variables"), location=rec.get("id"))
         if not f.frameworks and not f.model_providers:
             return None
+        images = ", ".join(str(c.get("image_url")) for c in rec.get("_containers") or [])[:200]
         f.add_evidence(
             Evidence(
                 signal="oci:container-instance",
-                description=f"Container instance '{rec.get('display_name')}' images {', '.join(str(c.get('image_url')) for c in rec.get('_containers') or [])[:200]}",
+                description=f"Container instance '{rec.get('display_name')}' images {images}",
                 weight=0.25,
             )
         )
@@ -761,24 +796,8 @@ class OciConnector(BaseConnector):
 
     def _h_secret_name(self, rec: dict[str, Any]) -> Finding | None:
         name = str(rec.get("secret_name") or "")
-        norm = "".join(ch if ch.isalnum() else "_" for ch in name).upper().strip("_")
-        matches = self.index.match_env(norm)
-        if not matches and not any(
-            k in name.lower()
-            for k in (
-                "openai",
-                "anthropic",
-                "claude",
-                "gemini",
-                "llm",
-                "genai",
-                "cohere",
-                "huggingface",
-                "mistral",
-                "langsmith",
-                "langfuse",
-            )
-        ):
+        matches = credential_name_matches(self.index, name, _LLM_SECRET_KEYWORDS)
+        if matches is None:
             return None
         f = cloud_finding(
             self.name,
@@ -818,12 +837,9 @@ class OciConnector(BaseConnector):
             m = GENAI_POLICY_RX.search(s)
             if m:
                 verb, family = m.group(1).lower(), m.group(2).lower()
-                apply_matches(
-                    f,
-                    self.index.match_scope(family) + self.index.match_scope(f"{verb} {family}"),
-                    weight_scale=0.6,
-                )
-                subj = re.search(r"(?i)allow\s+(?:group|dynamic-group|service|any-user)\s+([^\s]+)", s)
+                scopes = self.index.match_scope(family) + self.index.match_scope(f"{verb} {family}")
+                apply_matches(f, scopes, weight_scale=0.6)
+                subj = _POLICY_SUBJECT.search(s)
                 if subj:
                     subjects.append(subj.group(1))
                 if family == "all-resources" and verb == "manage":
@@ -861,16 +877,7 @@ class OciConnector(BaseConnector):
             surface=Surface.IDENTITY,
         )
         name_hint(self.index, f, name, rec.get("description"))
-        if not f.frameworks and not any(
-            k in rule.lower()
-            for k in (
-                "genai",
-                "generativeai",
-                "datasciencemodeldeployment",
-                "fnfunc",
-                "computecontainerinstance",
-            )
-        ):
+        if not f.frameworks and not any(k in rule.lower() for k in _AI_WORKLOAD_RULES):
             return None
         f.add_evidence(
             Evidence(
@@ -882,3 +889,7 @@ class OciConnector(BaseConnector):
         f.add_tag("workload-identity")
         f.metadata.update({"matching_rule": rule, "description": rec.get("description")})
         return done(f, self.index, Kind.SERVICE_IDENTITY)
+
+
+def _has_id(summary: Any) -> bool:
+    return isinstance(summary, dict) and isinstance(summary.get("id"), str) and bool(summary["id"].strip())
