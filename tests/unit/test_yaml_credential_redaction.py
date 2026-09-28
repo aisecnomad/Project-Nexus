@@ -35,7 +35,10 @@ def test_yaml_continued_plain_secret_respects_nested_mapping_boundary(prefix):
 
 
 def test_yaml_block_redaction_preserves_unrelated_blocks_and_line_locations():
-    source = f"description: |\r\n  ordinary documentation\r\npassword: | # comment\r\n  {SECRET}\r\nname: public\r\n"
+    source = (
+        "description: |\r\n  ordinary documentation\r\n"
+        f"password: | # comment\r\n  {SECRET}\r\nname: public\r\n"
+    )
     clean = sanitize_text(source)
     assert "ordinary documentation" in clean and "name: public" in clean
     assert SECRET not in clean
@@ -50,7 +53,10 @@ def test_yaml_source_secret_body_is_redacted_before_evidence_selection(tmp_path,
         encoding="utf-8",
     )
     findings, ctx = run_connector(
-        "code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=scan_secrets
+        "code.filesystem",
+        path=str(tmp_path),
+        use_git=False,
+        scan_secrets=scan_secrets,
     )
     assert findings and not ctx.stats.incomplete
     # Real operational configuration still produces evidence; code-like text
