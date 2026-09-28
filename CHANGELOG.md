@@ -163,6 +163,12 @@ Behavior changes to review before upgrading (see
 
 Development:
 
+- ruff enforces line length (E501, 110 columns) outside `tests/` and
+  loop-variable capture in closures (B023) everywhere. mypy requires
+  annotated definitions (`disallow_untyped_defs`) and reports unused
+  `type: ignore` comments (`warn_unused_ignores`). Only `regex`, `boto3`,
+  `botocore` and `oci`, which ship neither stubs nor a `py.typed` marker, may
+  be imported untyped.
 - The evaluation, benchmark, canary and acceptance tools resolve the temporary
   directories they create before handing paths to the scanner, so they pass on
   macOS, where `/var` and `/tmp` are links into `/private`. The symbolic-link

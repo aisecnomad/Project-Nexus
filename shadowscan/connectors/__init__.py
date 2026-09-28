@@ -206,14 +206,16 @@ def _verify_connector_class(name: str, path: str, cls: object) -> type[BaseConne
         raise _refuse(
             name,
             "invalid-attribute",
-            f"{where} must declare surface as a shadowscan.models.Surface member, not {type(surface).__name__}",
+            f"{where} must declare surface as a shadowscan.models.Surface member, "
+            f"not {type(surface).__name__}",
         )
     namespace = name.partition(".")[0]
     if namespace in _SURFACE_IDS and surface.value != namespace:
         raise _refuse(
             name,
             "surface-mismatch",
-            f"{where} declares surface {surface.value!r} but its name is in the built-in {namespace!r} namespace",
+            f"{where} declares surface {surface.value!r} but its name is in the built-in "
+            f"{namespace!r} namespace",
         )
     if not isinstance(cls.description, str) or not cls.description.strip():
         raise _refuse(name, "invalid-attribute", f"{where} must declare a nonempty string description")

@@ -248,6 +248,15 @@ def _validate_projection_aliases(data: dict[str, Any]) -> None:
 
 def _projected_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
     """Project operational schema fields; never traverse arbitrary metadata."""
+    yield from _node_graph_signals(data)
+    yield from _dify_signals(data)
+    yield from _workflow_step_signals(data)
+    yield from _gateway_signals(data)
+    yield from _workflow_action_signals(data)
+
+
+def _node_graph_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
+    """n8n, Flowise and Langflow node graphs."""
     # n8n exports place executable node types directly below nodes[]. Neither
     # a description mentioning a node type nor a disabled node is evidence.
     for node in _objects(data.get("nodes")):
@@ -286,7 +295,10 @@ def _projected_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
                 and isinstance(node_data.get("node"), dict)
             ):
                 yield "platform.langflow", json.dumps({"type": "Agent", "display_name": "Agent"})
-    # Dify's top-level app identity plus an actual model/workflow declaration.
+
+
+def _dify_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
+    """Dify's top-level app identity plus an actual model/workflow declaration."""
     app = data.get("app")
     if (
         data.get("kind") == "app"
@@ -315,6 +327,10 @@ def _projected_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
             if app["mode"] == "agent-chat" or has_agent_nodes:
                 declaration += "\nagent_mode:\n  enabled: true"
             yield "platform.dify", declaration
+
+
+def _workflow_step_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
+    """Make blueprint modules, Workato recipe steps and Copilot Studio dialogs."""
     # Make blueprint modules are under flow[] (routes have nested flow[]).
     pending = list(_objects(data.get("flow")))
     visited = 0
@@ -344,7 +360,10 @@ def _projected_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
         },
     ) and (isinstance(data.get("beginDialog"), dict) or isinstance(data.get("actions"), list)):
         yield "platform.copilot-studio", "kind: " + data["kind"]
-    # Gateways: structural configuration, without promoting arbitrary prompts.
+
+
+def _gateway_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
+    """Gateways: structural configuration, without promoting arbitrary prompts."""
     models = data.get("model_list")
     if isinstance(models, list) and any(
         _nonempty(model.get("model_name"))
@@ -356,6 +375,10 @@ def _projected_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
     for plugin in _objects(data.get("plugins")):
         if _nonempty(plugin.get("name")) and isinstance(plugin.get("config"), dict):
             yield "platform.kong-ai-gateway", "name: " + plugin["name"]
+
+
+def _workflow_action_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
+    """Azure Logic Apps / Power Platform workflow actions and Retool queries."""
     # Azure/Power Platform workflow actions have operational inputs. Select
     # only known connection fields, never prompt text or descriptions.
     definition = data.get("definition")

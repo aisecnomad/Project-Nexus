@@ -215,37 +215,14 @@ class JwtConnector(BaseConnector, _NoDump):
     def analyze_token(
         self, token: str, jwks_url: str | None = None, context: str | None = None
     ) -> Finding | None:
-        import jwt as pyjwt
-
         if len(token) > 131072:
             self.ctx.warn("identity.jwt: token exceeds analysis byte limit")
             return None
-        try:
-            # PyJWT uses permissive JSON decoding. Reject ambiguous signed
-            # fields before either classification or signature verification.
-            for segment in token.split(".")[:2]:
-                strict_json_loads(pyjwt.utils.base64url_decode(segment))
-            header = pyjwt.get_unverified_header(token)
-            claims = pyjwt.decode(
-                token, options={"verify_signature": False, "verify_exp": False, "verify_aud": False}
-            )
-        except (pyjwt.PyJWTError, RecursionError, ValueError) as exc:
-            self.ctx.warn(f"identity.jwt: cannot decode token ({type(exc).__name__})")
+        decoded = self._decode(token)
+        if decoded is None:
             return None
-        verified: bool | None = None
-        if jwks_url:
-            try:
-                verified = verify_against_jwks(
-                    token,
-                    jwks_url,
-                    header,
-                    expected_issuer=self.ctx.get("expected_issuer"),
-                    allowed_algorithms=self.ctx.get("allowed_algorithms"),
-                    document_loader=self._jwks_document,
-                )
-            except Exception as exc:  # noqa: BLE001
-                verified = False
-                self.ctx.warn(f"identity.jwt: signature verification failed ({type(exc).__name__})")
+        header, claims = decoded
+        verified = self._verify_signature(token, jwks_url, header) if jwks_url else None
 
         digest = hashlib.sha256(token.encode()).hexdigest()[:16]
         iss = str(claims.get("iss") or "")
@@ -263,76 +240,7 @@ class JwtConnector(BaseConnector, _NoDump):
             provider=family,
             account=iss or None,
         )
-        reasons: list[str] = []
-        identity_type = "human"
-
-        has_user = any(k in claims for k in USER_CLAIMS)
-        if claims.get("gty") == "client-credentials":
-            identity_type = "service"
-            reasons.append("Auth0 gty=client-credentials")
-        if str(claims.get("idtyp", "")).lower() == "app":
-            identity_type = "service"
-            reasons.append("Entra idtyp=app (app-only token)")
-        elif (
-            family == "entra" and ("appid" in claims or "azp" in claims) and not has_user and "oid" in claims
-        ):
-            identity_type = "service"
-            reasons.append("Entra token has appid/azp and oid but no user claims")
-        if family == "okta" and claims.get("cid") and claims.get("cid") == sub:
-            identity_type = "service"
-            reasons.append("Okta cid == sub (service app token)")
-        if sub.endswith(".iam.gserviceaccount.com") or str(claims.get("email", "")).endswith(
-            ".iam.gserviceaccount.com"
-        ):
-            identity_type = "service"
-            reasons.append("Google service account")
-        if (
-            family == "cognito"
-            and claims.get("token_use") == "access"
-            and claims.get("client_id")
-            and not claims.get("username")
-        ):
-            identity_type = "service"
-            reasons.append("Cognito client-credentials access token")
-        if sub.startswith("spiffe://") or str(claims.get("spiffe_id", "")).startswith("spiffe://"):
-            identity_type = "workload"
-            reasons.append("SPIFFE workload identity")
-            f.add_tag("spiffe")
-        if family == "keycloak" and (
-            str(sub).startswith("service-account-")
-            or str(claims.get("preferred_username", "")).startswith("service-account-")
-        ):
-            identity_type = "service"
-            reasons.append("Keycloak service account")
-        agent_hints: dict[str, Any] = {}
-        for key in AGENT_CLAIM_KEYS:
-            if key not in claims or key in {"act", "may_act"}:
-                continue
-            if key in _AGENT_NAMING_CLAIMS and not name_matches(self.index, str(claims[key])):
-                continue
-            agent_hints[key] = claims[key]
-        if "act" in claims or "may_act" in claims:
-            # A user-subject token whose claims identify an agent is an agent
-            # acting on behalf of that user; delegation never weakens the class.
-            identity_type = "delegated-agent" if identity_type != "human" or agent_hints else "delegated"
-            actor = claims.get("act") or {}
-            chain = []
-            while isinstance(actor, dict):
-                chain.append(str(actor.get("sub") or actor.get("client_id") or "?"))
-                actor = actor.get("act")
-            reasons.append(f"RFC 8693 actor chain: {' -> '.join(chain) or 'present'}")
-            f.add_tag("delegation")
-            f.add_capability("delegated-identity")
-        azp = claims.get("azp") or claims.get("appid") or claims.get("client_id") or claims.get("cid")
-        if azp and aud_list and str(azp) not in aud_list and identity_type == "human":
-            reasons.append(
-                f"authorised party {azp} differs from audience (token issued to a client acting for the user)"
-            )
-        if agent_hints:
-            reasons.append(f"agent-related claims: {', '.join(agent_hints)}")
-            f.add_tag("agent-claims")
-            if identity_type == "human":
-                identity_type = "agent"
+        identity_type, reasons, agent_hints, azp = self._classify_identity(f, claims, family, sub, aud_list)
         hint_text = (
             " ".join(str(v) for v in agent_hints.values())
             + " "
@@ -341,72 +249,30 @@ class JwtConnector(BaseConnector, _NoDump):
         apply_matches(f, name_matches(self.index, hint_text), weight_scale=0.7)
         apply_matches(f, domain_matches(self.index, *aud_list, iss), weight_scale=0.7)
 
-        scopes: list[str] = []
-        for key in ("scope", "scp"):
-            v = claims.get(key)
-            if isinstance(v, str):
-                scopes.extend(v.split())
-            elif isinstance(v, list):
-                scopes.extend(str(x) for x in v)
-        for key in ("roles", "permissions", "groups", "wids"):
-            v = claims.get(key)
-            if isinstance(v, list):
-                scopes.extend(str(x) for x in v)
+        scopes = _claimed_permissions(claims)
         classify_permissions(self.index, f, scopes)
 
         iat = parse_timestamp(claims.get("iat"))
         exp = parse_timestamp(claims.get("exp"))
         lifetime_h = (exp - iat).total_seconds() / 3600 if iat and exp else None
-        hygiene: list[str] = []
-        if not exp:
-            hygiene.append("no expiry (exp)")
-        elif lifetime_h and lifetime_h > 24:
-            hygiene.append(f"long lifetime ({lifetime_h:.0f}h)")
         alg = str(header.get("alg", ""))
-        if alg.lower() == "none":
-            hygiene.append("alg=none")
-        elif alg.upper().startswith("HS") and family in {"okta", "entra", "google", "auth0", "cognito"}:
-            hygiene.append(f"symmetric alg {alg} on public issuer")
+        hygiene = _hygiene_issues(alg, family, exp, lifetime_h)
         if exp and exp < datetime.now(UTC):
             f.add_tag("expired")
         for h in hygiene:
             f.add_tag("token-hygiene")
             f.add_evidence(Evidence(signal="jwt:hygiene", description=h, weight=0.1))
 
-        weight = {
-            "human": 0.05,
-            "delegated": 0.35,
-            "service": 0.5,
-            "workload": 0.5,
-            "agent": 0.6,
-            "delegated-agent": 0.75,
-        }[identity_type]
         f.add_evidence(
             Evidence(
                 signal=f"jwt:{identity_type}",
                 description=f"Identity type '{identity_type}' for sub={sub or '?'} iss={iss or '?'}"
                 + (f" ({'; '.join(reasons)})" if reasons else ""),
-                weight=weight,
+                weight=_IDENTITY_WEIGHT[identity_type],
             )
         )
         if verified is not None:
-            expected_issuer = self.ctx.get("expected_issuer")
-            verified_description = (
-                "signature and configured issuer verified; expiry and audience NOT validated"
-                if expected_issuer
-                else "signature verified against configured JWKS; issuer, expiry and audience NOT validated"
-            )
-            f.add_evidence(
-                Evidence(
-                    signal="jwt:signature",
-                    description=verified_description if verified else "signature NOT verified",
-                    weight=0.0,
-                )
-            )
-            f.metadata["verified"] = verified
-            f.metadata["verification_scope"] = "signature-and-issuer" if expected_issuer else "signature-only"
-            f.metadata["issuer_verified"] = bool(verified and expected_issuer)
-            f.metadata["authorization_validated"] = False
+            self._signature_evidence(f, verified)
         f.add_tag(f"identity:{identity_type}")
         f.title = f"JWT ({identity_type}) for {sub or azp or '?'} from {family}"
         f.owner = (
@@ -441,6 +307,175 @@ class JwtConnector(BaseConnector, _NoDump):
         f.kind = Kind.TOKEN
         f.sanitize()
         return f
+
+    def _decode(self, token: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        """Header and claims, decoded without verification; None when undecodable."""
+        import jwt as pyjwt
+
+        try:
+            # PyJWT uses permissive JSON decoding. Reject ambiguous signed
+            # fields before either classification or signature verification.
+            for segment in token.split(".")[:2]:
+                strict_json_loads(pyjwt.utils.base64url_decode(segment))
+            header = pyjwt.get_unverified_header(token)
+            claims = pyjwt.decode(
+                token, options={"verify_signature": False, "verify_exp": False, "verify_aud": False}
+            )
+        except (pyjwt.PyJWTError, RecursionError, ValueError) as exc:
+            self.ctx.warn(f"identity.jwt: cannot decode token ({type(exc).__name__})")
+            return None
+        return header, claims
+
+    def _verify_signature(self, token: str, jwks_url: str, header: dict[str, Any]) -> bool:
+        try:
+            return verify_against_jwks(
+                token,
+                jwks_url,
+                header,
+                expected_issuer=self.ctx.get("expected_issuer"),
+                allowed_algorithms=self.ctx.get("allowed_algorithms"),
+                document_loader=self._jwks_document,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.ctx.warn(f"identity.jwt: signature verification failed ({type(exc).__name__})")
+            return False
+
+    def _classify_identity(
+        self, f: Finding, claims: dict[str, Any], family: str, sub: str, aud_list: list[str]
+    ) -> tuple[str, list[str], dict[str, Any], Any]:
+        """Identity type, the reasons for it, agent-hint claims and the authorised party."""
+        identity_type, reasons = _machine_identity(f, claims, family, sub)
+        agent_hints: dict[str, Any] = {}
+        for key in AGENT_CLAIM_KEYS:
+            if key not in claims or key in {"act", "may_act"}:
+                continue
+            if key in _AGENT_NAMING_CLAIMS and not name_matches(self.index, str(claims[key])):
+                continue
+            agent_hints[key] = claims[key]
+        if "act" in claims or "may_act" in claims:
+            # A user-subject token whose claims identify an agent is an agent
+            # acting on behalf of that user; delegation never weakens the class.
+            identity_type = "delegated-agent" if identity_type != "human" or agent_hints else "delegated"
+            actor = claims.get("act") or {}
+            chain = []
+            while isinstance(actor, dict):
+                chain.append(str(actor.get("sub") or actor.get("client_id") or "?"))
+                actor = actor.get("act")
+            reasons.append(f"RFC 8693 actor chain: {' -> '.join(chain) or 'present'}")
+            f.add_tag("delegation")
+            f.add_capability("delegated-identity")
+        azp = claims.get("azp") or claims.get("appid") or claims.get("client_id") or claims.get("cid")
+        if azp and aud_list and str(azp) not in aud_list and identity_type == "human":
+            reasons.append(
+                f"authorised party {azp} differs from audience (token issued to a client acting for the user)"
+            )
+        if agent_hints:
+            reasons.append(f"agent-related claims: {', '.join(agent_hints)}")
+            f.add_tag("agent-claims")
+            if identity_type == "human":
+                identity_type = "agent"
+        return identity_type, reasons, agent_hints, azp
+
+    def _signature_evidence(self, f: Finding, verified: bool) -> None:
+        expected_issuer = self.ctx.get("expected_issuer")
+        verified_description = (
+            "signature and configured issuer verified; expiry and audience NOT validated"
+            if expected_issuer
+            else "signature verified against configured JWKS; issuer, expiry and audience NOT validated"
+        )
+        f.add_evidence(
+            Evidence(
+                signal="jwt:signature",
+                description=verified_description if verified else "signature NOT verified",
+                weight=0.0,
+            )
+        )
+        f.metadata["verified"] = verified
+        f.metadata["verification_scope"] = "signature-and-issuer" if expected_issuer else "signature-only"
+        f.metadata["issuer_verified"] = bool(verified and expected_issuer)
+        f.metadata["authorization_validated"] = False
+
+
+_IDENTITY_WEIGHT = {
+    "human": 0.05,
+    "delegated": 0.35,
+    "service": 0.5,
+    "workload": 0.5,
+    "agent": 0.6,
+    "delegated-agent": 0.75,
+}
+
+
+def _machine_identity(f: Finding, claims: dict[str, Any], family: str, sub: str) -> tuple[str, list[str]]:
+    """Service or workload identity from issuer-specific claims; "human" otherwise."""
+    reasons: list[str] = []
+    identity_type = "human"
+    has_user = any(k in claims for k in USER_CLAIMS)
+    if claims.get("gty") == "client-credentials":
+        identity_type = "service"
+        reasons.append("Auth0 gty=client-credentials")
+    if str(claims.get("idtyp", "")).lower() == "app":
+        identity_type = "service"
+        reasons.append("Entra idtyp=app (app-only token)")
+    elif family == "entra" and ("appid" in claims or "azp" in claims) and not has_user and "oid" in claims:
+        identity_type = "service"
+        reasons.append("Entra token has appid/azp and oid but no user claims")
+    if family == "okta" and claims.get("cid") and claims.get("cid") == sub:
+        identity_type = "service"
+        reasons.append("Okta cid == sub (service app token)")
+    if sub.endswith(".iam.gserviceaccount.com") or str(claims.get("email", "")).endswith(
+        ".iam.gserviceaccount.com"
+    ):
+        identity_type = "service"
+        reasons.append("Google service account")
+    if (
+        family == "cognito"
+        and claims.get("token_use") == "access"
+        and claims.get("client_id")
+        and not claims.get("username")
+    ):
+        identity_type = "service"
+        reasons.append("Cognito client-credentials access token")
+    if sub.startswith("spiffe://") or str(claims.get("spiffe_id", "")).startswith("spiffe://"):
+        identity_type = "workload"
+        reasons.append("SPIFFE workload identity")
+        f.add_tag("spiffe")
+    if family == "keycloak" and (
+        str(sub).startswith("service-account-")
+        or str(claims.get("preferred_username", "")).startswith("service-account-")
+    ):
+        identity_type = "service"
+        reasons.append("Keycloak service account")
+    return identity_type, reasons
+
+
+def _claimed_permissions(claims: dict[str, Any]) -> list[str]:
+    """Scopes, roles, permissions and group/directory-role ids carried by the token."""
+    scopes: list[str] = []
+    for key in ("scope", "scp"):
+        v = claims.get(key)
+        if isinstance(v, str):
+            scopes.extend(v.split())
+        elif isinstance(v, list):
+            scopes.extend(str(x) for x in v)
+    for key in ("roles", "permissions", "groups", "wids"):
+        v = claims.get(key)
+        if isinstance(v, list):
+            scopes.extend(str(x) for x in v)
+    return scopes
+
+
+def _hygiene_issues(alg: str, family: str, exp: datetime | None, lifetime_h: float | None) -> list[str]:
+    hygiene: list[str] = []
+    if not exp:
+        hygiene.append("no expiry (exp)")
+    elif lifetime_h and lifetime_h > 24:
+        hygiene.append(f"long lifetime ({lifetime_h:.0f}h)")
+    if alg.lower() == "none":
+        hygiene.append("alg=none")
+    elif alg.upper().startswith("HS") and family in {"okta", "entra", "google", "auth0", "cognito"}:
+        hygiene.append(f"symmetric alg {alg} on public issuer")
+    return hygiene
 
 
 def _has_kubernetes_service_account_claims(claims: dict[str, Any]) -> bool:

@@ -125,6 +125,11 @@ exact supported Python matrix and dependency pins.
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
 
+Ruff enforces a 110-column line length outside `tests/` and flags loop
+variables captured by closures (B023). Mypy requires annotated definitions
+(`disallow_untyped_defs`) and reports unused `type: ignore` comments.
+`pyproject.toml` holds the complete rule sets.
+
 The same gates as individual commands:
 
 ```bash
