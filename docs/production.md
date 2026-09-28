@@ -218,8 +218,14 @@ workers for untrusted repositories.
 
 `allow_instance_credentials: false` disables implicit cloud instance-metadata
 credential acquisition. Enabling it is a global opt-in; a connector-level value
-cannot silently override that policy. Use explicit audit credentials or approved
-workload credentials and inspect account/tenant attribution before rollout.
+cannot silently override that policy. The engine replaces the key in any
+connector entry with the scan-wide value, and passes that value to every
+`cloud.*` connector, plugins included, and to any plugin that declares the
+cloud surface or documents the key in its `config_keys`. Before this release
+only `cloud.*` entries were replaced, so review plugin entries that set their
+own `allow_instance_credentials: true`: it no longer takes effect. Use
+explicit audit credentials or approved workload credentials and inspect
+account/tenant attribution before rollout.
 These settings are credential-use policy, not a process or network sandbox.
 
 Custom packs can add signatures by default. Replacing a built-in signature
@@ -252,7 +258,8 @@ are ignored. Cloud SDK and Git transport behavior remains separate. Do not assum
 that the shared client's policy controls every network connection in the process.
 Inject only trusted `requests.Session` implementations. Calls to the shared
 client that explicitly request `stream=True` must read within a size limit and
-close the response; the default buffered response path enforces a 16 MiB limit.
+close the response; the default buffered response path enforces a 16 MiB limit
+and a whole-body [read deadline](#resource-limits-and-incomplete-scans).
 
 JWT verification is for analysis. The default scope is signature evidence;
 configuring `expected_issuer` also binds the issuer. Neither mode authorizes a
@@ -277,8 +284,22 @@ turn Git or the scanner into a process sandbox.
 
 ## Resource limits and incomplete scans
 
-Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded content by default. Pagination rejects missing or malformed collection arrays and records an incomplete scan when a response exceeds its limit. Review unusually large provider pages against their API contract before raising a per-client or per-request limit. GitLab file downloads remain capped at 512 KB (512,000 bytes) per file.
-
+Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded
+content by default. Each response body must also arrive within twice the
+client timeout (60 seconds by default). The 30-second client timeout bounds
+each connection attempt and each socket read, so without the deadline a server
+that sends a byte just inside every timeout could hold a worker until the
+connector deadline abandoned it. A body still being read at the deadline is
+aborted (`HTTP response exceeds the read deadline`) and the connector's
+collection is incomplete (exit 3); a partial body is never analyzed. The
+deadline follows the client's timeout, not a `timeout` passed with one
+request, and applies to each response separately:
+`connector_timeout_seconds` still bounds a connector's whole collection.
+Pagination rejects missing or malformed collection arrays and records an
+incomplete scan when a response exceeds its limit. Review unusually large
+provider pages against their API contract before raising a per-client or
+per-request limit. GitLab file downloads remain capped at 512 KB (512,000
+bytes) per file.
 
 YAML parsing checks input size, composed nodes, alias count, nesting, expanded
 nodes/content and merge work before object construction. Sanitization has a
@@ -390,9 +411,18 @@ record-export directories are created as 0700; existing non-private directories
 are rejected without changing their permissions. Use dedicated directories for
 these outputs.
 
-The Markdown reporter defangs bare HTTP(S) and `www.` strings in untrusted text
-fields. This keeps repository names, diagnostics and evidence descriptions from
-becoming automatically clickable when reports are pasted into a ticket or wiki.
+The Markdown reporter defangs bare HTTP(S) and `www.` strings and writes `@` as
+`[@]` in untrusted text fields, so repository names, owners, diagnostics and
+evidence descriptions do not become links, @-mentions or e-mail links when
+reports are pasted into a ticket, pull request or wiki. Code spans keep
+identifiers verbatim. The CSV reporter inserts a literal `'` at the start of a
+value, and after each `,`, `;`, tab, `|` or line break inside it, where the
+text that follows begins with `=`, `+`, `-` or `@` (also after whitespace,
+including no-break spaces, or double quotes) or with a tab or carriage
+return; a value that begins with a line feed is marked too. Other tabs and
+line breaks inside a value are left alone. A report opened with another
+delimiter therefore cannot create a formula cell. Strip every marker when
+consuming CSV programmatically, or consume `json`.
 
 Dump filenames include the original connector configuration ordinal and a safe
 label. Repeated names or normalization-colliding labels no longer overwrite each
@@ -459,6 +489,88 @@ pinned baseline with a candidate before enforcing policy on the new output:
   servers no longer add capabilities; MCP server capabilities come from their
   registered tools. Risk scores of affected findings change accordingly.
 
+## Completeness, report and credential changes
+
+The 2026-09-28 changes alter completeness, report text and credential policy.
+Compare a pinned baseline with a candidate before enforcing policy on the new
+output:
+
+- **Newly incomplete (exit 3).** A shared HTTP response body that misses the
+  [read deadline](#resource-limits-and-incomplete-scans); a `code.filesystem`
+  root that cannot be opened safely, or a directory replaced by a link during
+  the scan (see
+  [finding identity](#finding-identity-and-comparison-migration)); a
+  `code.gitlab` group listing entry without a positive integer project `id`;
+  and a `code.github` listing entry whose `full_name` is not a plain
+  `owner/name`.
+- **Changed diagnostics, still incomplete.** A YAML value PyYAML cannot
+  construct, such as an impossible date or an integer over 4,300 digits,
+  already made a scan incomplete; it is now reported as malformed YAML
+  (`invalid YAML`, `invalid agent definition YAML`), and the agent definition
+  is now listed where it used to be dropped, which can raise that finding's
+  risk score. Scan configuration and inventory files with such a value still
+  fail at setup (exit 1), now with `ConfigValidationError` or
+  `InventoryValidationError`. A cancellation or connector deadline while a
+  credential finding is built now ends that connector instead of being
+  recorded as one file's error; the scan was and is incomplete.
+- **Newly complete.** A Python module whose imports cannot resolve to any
+  signature is complete at any size or nesting depth, because the import
+  binder, which could add no evidence there, is skipped for it.
+  `mypy/checker.py` (52,729 AST nodes) used to make ordinary library trees
+  exit 3. A module that imports a library a signature describes keeps the
+  `max_ast_nodes` diagnostic: a warning in tests, an error elsewhere.
+  Configuration, inventory, signature pack, report and offline input files
+  below a traverse-only directory (mode `0711`) now open, since directories
+  are opened for traversal only.
+- **Reports.** CSV reports also carry `'` markers after a `,`, `;`, tab, `|`
+  or line break inside a value, not only at its start (see
+  [output migration](#output-and-inventory-migration)). Consumers that strip
+  only a leading marker must strip these too, or read `json`. Markdown writes
+  `@` as `[@]` in untrusted text, including owner e-mail addresses.
+- **Redaction.** Report excerpts and structured connector metadata withhold
+  more credential forms: literals passed to credential constructors and
+  builder chains, literal fallbacks of credential environment variables,
+  credential command-line options, .NET and XML settings, and opaque values
+  under credential-like names ([changelog](changelog.md) lists them). This is
+  a credential-policy change without configuration changes; scores and
+  evaluation results are unchanged. Expect more `[REDACTED]` markers, for
+  example on every literal after the first in a multi-argument credential
+  constructor (such as a client ID), on opaque-looking values under names
+  such as `cacheKey` or `nextPageToken`, and on a capitalized literal
+  fallback after a credential name. Reports produced before this release may
+  show such values although the scan exited 0, for example a web.config
+  `<appSettings>` key beside an Azure OpenAI endpoint, a C#
+  `new AzureKeyCredential("…")` or a `--key` command line. Regenerate earlier
+  reports that covered .NET or XML configuration, SDK client code or such
+  command lines, and rotate any key they show. The
+  [security policy](security.md) lists the forms still not withheld; keep
+  treating reports as confidential.
+- **Redaction limits.** Redaction is linear in its input, so minified bundles
+  and long runs of unfinished annotations no longer exhaust the redaction
+  budget or time out, and a long unquoted value after `key=` no longer hangs
+  a scan. Expressions nested more than 100 brackets deep are withheld through
+  the end of the excerpt, and an unquoted word holding more than 16
+  command-line options from its 17th option on. In structured metadata the
+  added rules run as a second pass over the first pass's output. That pass
+  refuses a value the earlier rules accepted, with a sanitization limit
+  (exit 3), only when removing a credential it found from the value's other
+  fields would exceed the replacement work budget or grow a text past the
+  size limit. Report sanitization takes about 28% longer.
+- **Finding identity.** IDs are computed from sanitized resource fields, so
+  an ID changes only where such a field held a value that is now withheld;
+  the demo, sample repository and evaluation corpora keep their IDs. The
+  redaction policy token changed, so findings verified clean under the old
+  rules are sanitized again automatically.
+- **Plugins and embedders.** `shadowscan.utils.text.sanitize_record` and
+  `HttpClient.paginate_cursor` are removed: call
+  `shadowscan.utils.redaction.sanitize`, and paginate explicitly. Patch
+  redaction rules only through `shadowscan.utils.redaction`. A plugin that
+  declares the cloud surface or documents `allow_instance_credentials`
+  receives the scan-wide approval (see
+  [explicit security policy](#explicit-security-policy)), and engine
+  behavior that differs by connector is a class hook (see
+  [architecture](architecture.md#engine-hooks)).
+
 ## Finding identity and comparison migration
 
 Finding IDs now separate stable source identity from inferred classification.
@@ -502,8 +614,19 @@ source snapshot.
 
 Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
 Filesystem scans reject selected roots whose paths traverse a symbolic link.
-Source links encountered during a walk are skipped and mark coverage incomplete;
-review or explicitly exclude them before accepting a completeness gate.
+They then open each root once and read every file, including `CODEOWNERS`,
+relative to it without following a link in any path component. A scan needs
+read and search permission on the root and the directories below it, but on
+Linux only search permission on the directories above it (they are opened
+with `O_PATH`), so a checkout below a traverse-only directory such as a mode
+`0711` home directory is scanned completely. A root that cannot be opened
+this way is reported, by its `label` when one is set, as
+`could not open the scan root safely (<reason>)`, for example
+`permission denied`, and makes the scan incomplete. Source links encountered
+during a walk are skipped and mark coverage incomplete. A directory replaced
+by a link while the scan runs fails the reads below it and also marks
+coverage incomplete, so content outside the root is never analyzed. Review
+or explicitly exclude such paths before accepting a completeness gate.
 Pre/post content hashes can detect ordinary concurrent edits but do not form an
 atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
 and revert between those reads.
@@ -674,7 +797,9 @@ the concrete status, denominator, control and reviewer artifacts:
    count or an empty report alone.
 3. Check sanitized artifacts with synthetic credentials and enforce private
    file/directory modes. Keep configuration, state and outputs outside scanned
-   repositories and restrict access to retained reports.
+   repositories and restrict access to retained reports. Regenerate retained
+   reports after an upgrade that withholds more, such as the
+   [2026-09-28 redaction changes](#completeness-report-and-credential-changes).
 4. Replay each exported instance using its manifest filename, checking account,
    resource identity and detection consistency. Sanitized exports are not
    lossless raw API backups; credential findings may differ after redaction.

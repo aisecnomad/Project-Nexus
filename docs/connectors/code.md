@@ -118,6 +118,9 @@ findings retain the scanned Git tree/commit identity in
 commit before downloading files.
 Missing, malformed or mismatched details for an explicitly named project, and an offline
 input with no clone directories, make the scan incomplete.
+A group listing entry whose project `id` is not a positive integer is an error
+that makes the scan incomplete; that project is skipped before any request is
+made for it, and the other projects in the listing are still scanned.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

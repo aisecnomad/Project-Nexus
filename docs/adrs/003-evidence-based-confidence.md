@@ -49,9 +49,11 @@ score is auditable.
 ## Amendment (2026-09-27)
 
 The decision above stands as recorded. Two statements in it do not describe
-the implementation, which has used the formulas below since this ADR was
-accepted; this amendment records the current model instead of rewriting the
-decision.
+the implementation. The code has scaled risk as below since the ADR's date
+(2026-09-23), and has matched the rest of this amendment since shortly after:
+per-group confidence since 2026-09-24, and the `bounds` factor and
+`danger_score` since 2026-09-25. This amendment records the current model
+instead of rewriting the decision.
 
 - **Confidence is a heuristic evidence score, not P(agent | evidence).** It is
   the noisy-OR 1 − ∏(1 − wᵢ) of evidence weights clamped to [0, 1], rounded to

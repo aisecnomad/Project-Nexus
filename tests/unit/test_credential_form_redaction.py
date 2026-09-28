@@ -513,6 +513,17 @@ def test_an_opaque_option_value_never_hides_a_following_assignment(separator):
         # reads: that pass stops at the brace, as it always has.
         f'{{"name": "Password", "value": "p}}{HEX}"}}',
         f'- {{name: DB_PASSWORD, value: "p}}{HEX}"}}',
+        # Call forms the credential-call rules do not read: a space or comment
+        # before the parenthesis (prose writes one), redundant parentheses, a C#
+        # interpolated string and a triple-quoted string spanning lines.
+        f'AzureKeyCredential ("{HEX}")',
+        f'AzureKeyCredential/*key*/("{HEX}")',
+        f'AzureKeyCredential(("{HEX}"))',
+        f'new AzureKeyCredential($"{HEX}")',
+        f"AzureKeyCredential('''\n{HEX}\n''')",
+        # A credential query parameter outside a URL with a scheme.
+        f"?sv=2024-05-04&sig={HEX}&se=2030-01-01",
+        f"account.blob.core.windows.net/container?sig={HEX}&se=2030-01-01",
     ],
 )
 def test_documented_gaps_are_still_open(source):

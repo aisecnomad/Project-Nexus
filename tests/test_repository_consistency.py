@@ -6,8 +6,9 @@ Markdown link and heading anchor resolves, the community files GitHub and the
 OpenSSF Scorecard look for exist, `CITATION.cff` matches `pyproject.toml`, the
 CI matrix matches the classifiers, the Makefile and pre-commit hooks run what CI
 runs, every CodeQL action step is pinned to the same release, the docs toolchain
-comes from its lock everywhere, and documented counts match the shipped code.
-Run both modules with ``make policy``.
+comes from its lock everywhere, and documented counts, CSV report markers and
+the HTTP read deadline match the shipped code. Run both modules with
+``make policy``.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ import pytest
 import yaml
 
 from shadowscan.connectors import builtin_connector_names
+from shadowscan.reporters.csv_ import _safe_cell
+from shadowscan.utils import http
 
 ROOT = Path(__file__).resolve().parents[1]
 GITHUB = ROOT / ".github"
@@ -515,3 +518,59 @@ def test_gcp_pagination_caps_are_not_dropped_from_the_per_surface_page() -> None
     assert sentence in per_surface, (
         "docs/connectors/cloud.md is missing the GCP pagination caps documented in docs/connectors.md"
     )
+
+
+# --- Documented report and transport behaviour matches the code --------------
+
+# How the documents name each character after which the CSV reporter can put a
+# formula marker inside a cell.
+_CSV_SEPARATOR_NAMES = {
+    ",": "`,`",
+    ";": "`;`",
+    "|": "`|`",
+    "\t": "tab",
+    "\n": "line break",
+    "\r": "line break",
+}
+_READ_DEADLINE_CLAIM = re.compile(r"within (\w+) the client timeout \((\d+) seconds by default\)")
+_READ_DEADLINE_FACTORS = {"twice": 2}
+
+
+def _paragraphs(path: Path) -> list[str]:
+    """Blank-line separated blocks of a document, each on one line."""
+    return [" ".join(block.split()) for block in re.split(r"\n[ \t]*\n", _read(path))]
+
+
+def test_documented_csv_markers_match_the_reporter() -> None:
+    # Consumers strip the markers the documents describe. A consumer told only
+    # about a leading marker corrupts every value with a marker inside it.
+    candidates = [chr(code) for code in range(1, 128)] + ["\x85", "\xa0", "\u2028", "\u2029"]
+    inside = {sep for sep in candidates if _safe_cell(f"a{sep}=1") != f"a{sep}=1"}
+    assert inside, "the CSV reporter no longer marks a formula inside a cell; update this test"
+    unnamed = inside - _CSV_SEPARATOR_NAMES.keys()
+    assert not unnamed, f"name {sorted(unnamed)!r} here and in the CSV documentation"
+    names = sorted({_CSV_SEPARATOR_NAMES[sep] for sep in inside})
+    claims = [
+        (path, paragraph)
+        for path in [ROOT / "SECURITY.md", *_current_docs()]
+        for paragraph in _paragraphs(path)
+        if "csv" in paragraph.lower() and "`'`" in paragraph
+    ]
+    assert any(path.name == "README.md" for path, _ in claims), "README should describe the CSV markers"
+    for path, paragraph in claims:
+        missing = [name for name in names if name not in paragraph]
+        assert not missing, f"{_relative(path)} describes CSV markers without the separators {missing}"
+
+
+def test_documented_http_read_deadline_matches_the_client() -> None:
+    claims = [
+        (path, match)
+        for path in [ROOT / "SECURITY.md", *_current_docs()]
+        for paragraph in _paragraphs(path)
+        for match in _READ_DEADLINE_CLAIM.finditer(paragraph)
+    ]
+    assert any(path.name == "SECURITY.md" for path, _ in claims), "SECURITY.md should state the read deadline"
+    expected = (http.READ_DEADLINE_FACTOR, http.DEFAULT_TIMEOUT * http.READ_DEADLINE_FACTOR)
+    for path, match in claims:
+        claimed = (_READ_DEADLINE_FACTORS.get(match.group(1)), int(match.group(2)))
+        assert claimed == expected, f"{_relative(path)} says {match.group(0)!r}; the client uses {expected}"

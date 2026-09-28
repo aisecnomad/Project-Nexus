@@ -42,12 +42,12 @@ COLUMNS = [
 # A spreadsheet cell must not begin with a formula trigger (OWASP CSV injection).
 # A value can start several cells: a report opened with another delimiter (for
 # example a semicolon locale), or a joined list split on "|", starts a new cell
-# after each delimiter or line break. Leading whitespace and quotes may be
-# trimmed, so they do not hide a trigger. A value that starts with a tab or line
-# break, or a later cell that does, is also neutralised.
+# after each delimiter or line break. Leading whitespace, including a no-break
+# space, and quotes may be trimmed, so they do not hide a trigger. A value that
+# starts with a tab or line break, or a later cell that does, is also neutralised.
 _FORMULA_CELL = re.compile(
     r"^(?=[\t\r\n])"
-    r"|(?:^|(?<=[,;\t|\r\n]))(?=[\t\r]|[ \t\r\n\v\f\ufeff\"]*[=+\-@])"
+    r"|(?:^|(?<=[,;\t|\r\n]))(?=[\t\r]|[ \t\r\n\v\f\ufeff\u00a0\"]*[=+\-@])"
 )
 
 
