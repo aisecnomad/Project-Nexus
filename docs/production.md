@@ -662,9 +662,10 @@ Filesystem scans reject selected roots whose paths traverse a symbolic link.
 They then open each root once and read every file, including `CODEOWNERS`,
 relative to it without following a link in any path component. A scan needs
 read and search permission on the root and the directories below it, but on
-Linux only search permission on the directories above it (they are opened
-with `O_PATH`), so a checkout below a traverse-only directory such as a mode
-`0711` home directory is scanned completely. A root that cannot be opened
+Linux and macOS only search permission on the directories above it (they are
+opened with `O_PATH` on Linux; on macOS the root is opened in one call with
+`O_NOFOLLOW_ANY`), so a checkout below a traverse-only directory such as a
+mode `0711` home directory is scanned completely. A root that cannot be opened
 this way is reported, by its `label` when one is set, as
 `could not open the scan root safely (<reason>)`, for example
 `permission denied`, and makes the scan incomplete. Source links encountered

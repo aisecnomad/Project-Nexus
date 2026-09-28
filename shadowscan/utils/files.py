@@ -122,11 +122,17 @@ def open_confined_directory(path: PurePath) -> int:
     traversal (:func:`_traversal_flags`): the descriptor serves to anchor
     those opens, not to list the directory, and like an open by path they
     need search, not read, permission on the directory and its ancestors.
-    Raises ``ValueError`` like :func:`open_confined_file`; ``OSError``
-    propagates unchanged and may name the path.
+    Without ``O_PATH`` but with ``O_NOFOLLOW_ANY`` (macOS), the kernel opens
+    the whole path in one call and refuses a link in any component, so the
+    ancestors still need only search permission; the directory itself is
+    opened for reading. Raises ``ValueError`` like :func:`open_confined_file`;
+    ``OSError`` propagates unchanged and may name the path.
     """
     _require_confined_open()
     absolute = Path(path).absolute()
+    nofollow_any = getattr(os, "O_NOFOLLOW_ANY", 0)
+    if nofollow_any and not hasattr(os, "O_PATH"):
+        return os.open(absolute, os.O_RDONLY | os.O_NOFOLLOW | nofollow_any | os.O_DIRECTORY)
     flags = _traversal_flags()
     directory = os.open(absolute.anchor, flags)
     try:
