@@ -89,7 +89,12 @@ def test_report_to_character_device_is_written_in_place():
 def test_report_refuses_a_socket_without_replacing_it():
     with tempfile.TemporaryDirectory(dir="/tmp") as directory:
         path = Path(directory) / "s"
-        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        except OSError as exc:
+            if exc.errno in (errno.EPERM, errno.EACCES, errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT):
+                pytest.skip("this worker cannot create Unix sockets")
+            raise
         try:
             server.bind(str(path))
             with pytest.raises(ValueError, match="non-regular"):

@@ -203,21 +203,27 @@ See [docs/signatures.md](docs/signatures.md) for the schema and authoring guide.
 ShadowScan currently has a single maintainer. The maintainer reviews changes,
 checks validation and is accountable for merges. CI and CodeQL must pass on the
 current PR revision, conflicts must be resolved, and substantive review feedback
-must be addressed. Prefer independent human review for routine changes; the
-current single-maintainer process does not guarantee it. AI-assisted review is
-advisory and is never an independent human approval.
+must be addressed. The `main` ruleset is configured to require one approving
+review from someone with write access for every pull request, including routine
+changes. An author cannot approve their own change: a maintainer-authored PR
+requires a second eligible human reviewer. Stale approvals are dismissed after
+a push; request a new approval for the final revision. That ruleset has been
+enabled and disabled more than once during 2026-09, so check the live rules
+before relying on it. AI-assisted review is advisory and is never an
+independent human approval.
 
 Before merging, the maintainer checks:
 
-- The PR targets `main`, conflicts are resolved, and current CI and CodeQL
-  checks pass. This includes signature validation, lint, typing, dependency
-  audit, coverage, detection evaluation, and package and smoke checks.
+- The PR targets `main`, is up to date, conflicts are resolved, and current CI
+  and CodeQL checks pass, including the strict required checks `test (3.11)`,
+  `test (3.12)` and `analyze`. CI also runs signature validation, lint, typing,
+  dependency audit, coverage, detection evaluation, and package and smoke checks.
 - The change respects the trust model, documents compatibility changes, and
   includes appropriate validation. An AI-assisted change must meet the same
   requirements as any other contribution.
-- The review record describes what was checked and any remaining limitation.
-  If an independent approval exists, it must cover the final commit; a later
-  push requires renewed review before that approval can be relied on.
+- The approving reviewer has write access, is someone other than the author,
+  and approved the final PR revision. The review record describes what was
+  checked and any remaining limitation. A new push requires renewed approval.
 
 The historical review status is documented in
 [merge gate and review status](docs/production.md#merge-gate-and-review-status).
@@ -225,8 +231,9 @@ Do not read a merged pull request, green check, AI review or version number as
 evidence that a second person examined the change. Repository settings are
 separate from this policy: inspect the
 [live rules](https://github.com/aisecnomad/Project-Nexus/rules) and PR checks
-before merging. Do not disable checks or review rules to make a merge possible,
-and do not describe an unenforced requirement as an active platform gate.
+before merging. The ruleset has no configured bypass actors, but it blocks
+nothing while it is disabled. Do not disable checks or review rules to make a
+merge possible, and recheck live enforcement before relying on it.
 
 **Independent human review is required before any tagged release.** The
 reviewer must not have authored or produced the change. A review is recorded as
@@ -235,11 +242,13 @@ the review author, state and `commit_id` with
 `gh api repos/aisecnomad/Project-Nexus/pulls/<number>/reviews`, and compare that
 commit to the current PR head. The ruleset on `main` is configured to require
 one approving review from a reviewer with write access; its enforcement state
-has changed during 2026-09 and can change again, so check the
+has changed more than once during 2026-09 and it read back as disabled on
+2026-09-27, so check the
 [live rules](https://github.com/aisecnomad/Project-Nexus/rules) rather than this
 sentence. While the maintainer is the only account with write access, that rule
-cannot be satisfied for the maintainer's own changes by anyone but a second
-reviewer. Never manufacture an approval or treat an AI reviewer as that person.
+cannot be satisfied for the maintainer's own changes until a second eligible
+reviewer receives write access and approves. Never manufacture an approval or
+treat an AI reviewer as that person.
 
 For deployment, pin the full reviewed commit SHA and retain its review and
 acceptance evidence. No tag exists yet; `0.1.1` names an unreleased candidate.

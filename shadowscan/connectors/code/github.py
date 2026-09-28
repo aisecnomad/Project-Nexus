@@ -32,6 +32,7 @@ from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.connectors.common import apply_matches, config_boolean, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.git import (
+    CloneSizeError,
     CloneTimeoutError,
     clone_environment,
     clone_limits,
@@ -158,7 +159,7 @@ class GitHubConnector(BaseConnector):
         "max_files": "forwarded to the filesystem scanner (see code.filesystem)",
         "scan_secrets": "forwarded to the filesystem scanner (see code.filesystem)",
         "clone_depth": "git clone depth (default 1)",
-        "clone_max_bytes": "preflight repository size cap (default 268435456); requires a disk quota for hard limits",
+        "clone_max_bytes": "provider size preflight and observed checkout size cap (default 268435456); strict disk limits require an OS quota",
         "clone_timeout_seconds": "per-repository git clone deadline (default 120)",
         "topics": "only repositories with any of these topics",
         "input": "offline: directory containing cloned repositories",
@@ -463,7 +464,17 @@ class GitHubConnector(BaseConnector):
             )
         cmd += ["--", url, dest]
         try:
-            return run_bounded_clone(cmd, env, self.ctx, self.clone_timeout_seconds)
+            return run_bounded_clone(
+                cmd,
+                env,
+                self.ctx,
+                self.clone_timeout_seconds,
+                destination=dest,
+                max_bytes=self.clone_max_bytes,
+            )
+        except CloneSizeError as exc:
+            self.ctx.warn(f"code.github: {exc}; using sampled API mode", incomplete=True)
+            return False
         except (OSError, CloneTimeoutError) as exc:
             self.log.debug("git clone failed: %s", type(exc).__name__)
             return False

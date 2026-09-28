@@ -119,6 +119,14 @@ Source excerpts now redact sensitive environment-call arguments, and repository
 connector debug diagnostics omit raw exception payloads. Run the synthetic report
 and log checks before distributing reports; redaction remains a defense in depth
 control, not permission to publish private source or unrestricted tenant exports.
+The sanitizer also propagates opaque secret values found in nested credential
+objects or lists to sibling fields in the same finding or connector record export.
+It leaves common credential descriptor labels intact so resource identity remains
+useful; the containing credential field is still redacted. Recheck stored reports
+and exports containing nested credential data before sharing or reusing them,
+because earlier scanner versions could leave an identical value in an unrelated
+description. Synthetic regressions exercise this path; no live tenant validation
+is implied.
 
 The two holdout acceptance paths share source-overlap checks. Copying or renaming
 previously evaluated source does not create new independent observations; repeated
@@ -484,12 +492,17 @@ Use disposable, resource-limited workers for untrusted repository scans. Keep
 scanner state and output outside the repository under review. Avoid handing
 production credentials to a job that executes repository-controlled build steps.
 For GitHub/GitLab remote repository scans, preflight estimates and process-group
-cancellation reduce ordinary runaway clone cost but do not guarantee a hard
-aggregate byte, writable disk or time bound on every platform. Give each
-disposable worker an operating-system/container writable disk quota, memory and
-process limits, a separate job wall-clock deadline and a cleanup policy for
-abandoned workspaces. A worker's soft connector timeout is not a disk quota or
-a hard kill for every child process. A local checkout example, such as
+cancellation reduce ordinary runaway clone cost. `clone_max_bytes` also stops a
+clone when observed checkout use, including `.git`, exceeds the configured cap.
+It checks during the clone and after Git exits; a failed measurement or excessive
+entry count also stops Git, removes the partial checkout and makes collection
+incomplete while retaining the sampled API fallback. Periodic checks can
+overshoot the threshold, and the cap does not limit network transfer bytes or
+guarantee a hard writable disk ceiling. Give each disposable worker an
+operating-system/container writable disk quota, memory and process limits, a
+separate job wall-clock deadline and a cleanup policy for abandoned workspaces.
+A worker's soft connector timeout is not a hard kill for every child process.
+A local checkout example, such as
 `examples/github-action-code-scan.yml`, does not exercise the remote clone path.
 
 ## Output and inventory migration
@@ -719,11 +732,12 @@ gh api repos/aisecnomad/Project-Nexus/branches/main/protection
 gh pr view <number> --repo aisecnomad/Project-Nexus --json author,mergedBy,reviews
 ```
 
-An approving review counts only when it comes from an account other than the
-author's and was submitted on the final commit of the pull request. A successful
-workflow run is necessary but does not supply that approval. Recheck the live
-ruleset and pull request status at release time. Do not weaken the rules to
-self-merge.
+An approving review counts only when it comes from a person with write access,
+other than the author, and covers the final revision of the pull request. A
+successful workflow run or Copilot review does not supply that approval. A
+single maintainer cannot approve their own PR: recruit a second eligible human
+reviewer rather than weakening the rules to self-merge. Recheck the live ruleset
+and pull request status at release time.
 
 The CI workflow installs hash-locked runtime, build and core/development
 dependency sets and validates signatures, lint, typing, dependency advisories

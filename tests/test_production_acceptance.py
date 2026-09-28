@@ -19,7 +19,16 @@ import pytest
 from shadowscan import __version__
 from tools.acceptance import verify as gate
 from tools.evaluation.annotations import validate_annotations
-from tools.evaluation.evaluate import evaluate, known_gaps, load_corpus, summarize
+from tools.evaluation.evaluate import (
+    _assertions,
+    _exact_finding_set,
+    _finding_checks,
+    evaluate,
+    finding_assertion_metrics,
+    known_gaps,
+    load_corpus,
+    summarize,
+)
 
 NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
 SOURCE = "1" * 64
@@ -111,8 +120,21 @@ def evidence(tmp_path, monkeypatch):
             "correct": True,
             "known_gap": False,
             "assertion_failures": [],
+            "finding_checks": [],
+            "exact_finding_set": None,
             "median_ms": 1.0,
-            "findings": [{"kind": "agent", "signatures": [], "confidence": 1.0}] if case.present else [],
+            "findings": [
+                {
+                    "kind": "agent",
+                    "resource_type": "project",
+                    "frameworks": [],
+                    "model_providers": [],
+                    "signatures": [],
+                    "confidence": 1.0,
+                }
+            ]
+            if case.present
+            else [],
         }
         for case in loaded_cases
     ]
@@ -129,6 +151,7 @@ def evidence(tmp_path, monkeypatch):
         },
         "cases": rows,
         "metrics": summarize(rows),
+        "finding_assertions": finding_assertion_metrics(rows),
         "known_gaps": known_gaps(rows),
         "calibration": {},
         "performance": {},
@@ -257,7 +280,14 @@ def refresh_evaluation(root: Path, manifest: dict, report: dict, corpus: dict) -
     for row, case in zip(report["cases"], cases, strict=True):
         row["source"] = case.source
         row["target"] = {"kind": case.kind.value, "signature": case.signature}
+        checks = _finding_checks(case, row["findings"])
+        exact_set = _exact_finding_set(case, row["findings"])
+        row["finding_checks"] = checks
+        row["exact_finding_set"] = exact_set
+        row["assertion_failures"] = _assertions(case, row["findings"], checks, exact_set)
+        row["correct"] = row["present"] == row["predicted"] and not row["assertion_failures"]
     report["metrics"] = summarize(report["cases"])
+    report["finding_assertions"] = finding_assertion_metrics(report["cases"])
     report["known_gaps"] = known_gaps(report["cases"])
     report["passed"] = all(row["correct"] for row in report["cases"])
     manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", report)
@@ -282,6 +312,9 @@ def test_optional_per_kind_policy_counts_and_error_caps(evidence):
         row = report["cases"][number]
         for finding in row["findings"]:
             finding["kind"] = "mcp-server"
+            finding["resource_type"] = "mcp-config"
+            finding["server_count"] = 0
+            finding["server_names"] = []
     refresh_evaluation(root, manifest, report, corpus)
     agent = {
         "min_positive_cases": 4,
@@ -304,7 +337,20 @@ def test_optional_per_kind_policy_counts_and_error_caps(evidence):
     # thresholds; the MCP-specific zero-false-positive limit must catch the miss.
     row = report["cases"][14]
     row.update(
-        predicted=True, correct=False, findings=[{"kind": "mcp-server", "signatures": [], "confidence": 0.7}]
+        predicted=True,
+        correct=False,
+        findings=[
+            {
+                "kind": "mcp-server",
+                "resource_type": "mcp-config",
+                "frameworks": [],
+                "model_providers": [],
+                "signatures": [],
+                "confidence": 0.7,
+                "server_count": 0,
+                "server_names": [],
+            }
+        ],
     )
     report["metrics"] = summarize(report["cases"])
     report["known_gaps"] = known_gaps(report["cases"])
@@ -589,6 +635,91 @@ def test_case_labels_and_metrics_are_recomputed(evidence):
     report["cases"][0]["present"] = False
     manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", report)
     with pytest.raises(gate.EvidenceError, match="evaluation_label_mismatch"):
+        gate.verify(write_manifest(root, manifest), now=NOW)
+
+
+def test_finding_assertion_summaries_and_observations_are_recomputed(evidence):
+    root, manifest, report = evidence
+    corpus = json.loads((root / "corpus.json").read_text())
+    corpus["cases"][0]["assertions"] = {
+        "expected_findings": [{"kind": "agent", "product_signature": "framework.langgraph"}],
+        "exact_findings": [
+            {"kind": "agent", "product_signatures": ["framework.langgraph"], "provider_signatures": []}
+        ],
+    }
+    corpus["cases"][7]["assertions"] = {
+        "forbidden_findings": [{"kind": "agent"}],
+        "exact_findings": [],
+    }
+    positive = report["cases"][0]["findings"][0]
+    positive["frameworks"] = ["framework.langgraph"]
+    positive["signatures"] = ["framework.langgraph"]
+    refresh_evaluation(root, manifest, report, corpus)
+    assert gate.verify(write_manifest(root, manifest), now=NOW)["status"] == "EVIDENCE_CONSISTENT"
+    assert report["finding_assertions"]["exact_finding_sets"]["checks"] == 2
+
+    def rejected(candidate: dict, code: str) -> None:
+        manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", candidate)
+        with pytest.raises(gate.EvidenceError, match=code):
+            gate.verify(write_manifest(root, manifest), now=NOW)
+
+    changed = copy.deepcopy(report)
+    changed["cases"][0]["finding_checks"][0]["observed"] = False
+    rejected(changed, "inconsistent_evaluation_finding_checks")
+
+    changed = copy.deepcopy(report)
+    changed["cases"][0]["finding_checks"][0]["passed"] = 1
+    rejected(changed, "inconsistent_evaluation_finding_checks")
+
+    changed = copy.deepcopy(report)
+    changed["cases"][0]["exact_finding_set"]["observed"].clear()
+    rejected(changed, "inconsistent_evaluation_finding_checks")
+
+    changed = copy.deepcopy(report)
+    changed["cases"][0]["exact_finding_set"]["passed"] = 1
+    rejected(changed, "inconsistent_evaluation_finding_checks")
+
+    changed = copy.deepcopy(report)
+    changed["finding_assertions"]["expected_findings"]["passed"] += 1
+    rejected(changed, "inconsistent_evaluation_finding_metrics")
+
+    changed = copy.deepcopy(report)
+    changed["finding_assertions"]["expected_findings"]["checks"] = True
+    rejected(changed, "inconsistent_evaluation_finding_metrics")
+
+    # Even if forged case/aggregate checks are recomputed from the altered
+    # observation, a missing expected product cannot be waved through.
+    changed = copy.deepcopy(report)
+    changed_finding = changed["cases"][0]["findings"][0]
+    changed_finding["frameworks"] = ["framework.crewai"]
+    changed_finding["signatures"] = ["framework.crewai"]
+    _, loaded, _ = load_corpus(root / "corpus.json")
+    case = loaded[0]
+    changed["cases"][0]["finding_checks"] = _finding_checks(case, changed["cases"][0]["findings"])
+    changed["cases"][0]["exact_finding_set"] = _exact_finding_set(case, changed["cases"][0]["findings"])
+    changed["finding_assertions"] = finding_assertion_metrics(changed["cases"])
+    rejected(changed, "evaluation_assertion_failure")
+
+
+def test_verifier_accepts_complete_mcp_finding_above_label_limits(evidence):
+    root, manifest, report = evidence
+    names = sorted([*(f"server-{number:02}" for number in range(20)), "server-" + "x" * 120])
+    mcp = {
+        "kind": "mcp-server",
+        "resource_type": "mcp-config",
+        "frameworks": ["protocol.mcp"],
+        "model_providers": [],
+        "signatures": ["protocol.mcp"],
+        "confidence": 0.9,
+        "server_count": len(names),
+        "server_names": names,
+    }
+    report["cases"][0]["findings"].append(mcp)
+    manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", report)
+    assert gate.verify(write_manifest(root, manifest), now=NOW)["status"] == "EVIDENCE_CONSISTENT"
+    mcp["server_count"] -= 1
+    manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", report)
+    with pytest.raises(gate.EvidenceError, match="invalid_evaluation_findings"):
         gate.verify(write_manifest(root, manifest), now=NOW)
 
 

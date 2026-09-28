@@ -148,12 +148,16 @@ as a substitute for the requested one.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) checks GitHub's reported repository size
-before cloning, and `clone_timeout_seconds` (default 120) bounds each clone.
+before cloning and samples the local checkout, including `.git`, while Git runs.
+The clone is stopped when observed size exceeds the cap or cannot be measured,
+and checked again after Git exits. `clone_timeout_seconds` (default 120) bounds
+each clone.
 An oversized repository or missing/malformed size estimate falls back to sampled
 API mode without launching Git and marks coverage incomplete. A failed clone or
 Git being unavailable for explicit `mode: clone` also marks the scan incomplete.
-The provider's size is an estimate, not a download or disk quota. Run remote
-scans with a host/container wall-clock limit and a writable disk quota.
+The provider's size is an estimate, and polling can overshoot between samples.
+Neither check limits network transfer or guarantees a hard disk ceiling. Run
+remote scans with a host/container wall-clock limit and a writable disk quota.
 
 Options: `org` (env `GITHUB_ORG`), `user` or `repos`; `token` (env
 `GITHUB_TOKEN`, falling back to `github_token` / env `GH_TOKEN`); `api_url`,
@@ -171,15 +175,16 @@ Live API records cannot choose internal offline paths or dispatch fields. Code
 findings retain the scanned Git tree/commit identity in
 `metadata.source_snapshot`, and API mode pins tree pagination to an immutable
 commit before downloading files.
-`clone_max_bytes` and `clone_timeout_seconds` have the same defaults and
-incomplete-scan semantics as `code.github`. GitLab project details are queried
-for size statistics when the listing omits them. If no usable estimate is
-available, the connector falls back to sampled API mode without launching Git.
+`clone_max_bytes` and `clone_timeout_seconds` have the same defaults, sampled
+checkout measurement and incomplete-scan semantics as `code.github`. GitLab
+project details are queried for size statistics when the listing omits them.
+Without a usable estimate, the connector falls back to sampled API mode
+without launching Git.
 A missing, malformed or mismatched response for an explicitly named project
 marks coverage incomplete; an empty offline clone directory is also incomplete. Check the
 configured project names and export before treating an empty result as clean.
-A size estimate cannot bound actual checkout bytes; enforce a writable disk
-quota on the worker.
+Polling cannot provide a hard disk or network-transfer limit; enforce a writable
+disk quota on the worker.
 
 Options: `group` (env `GITLAB_GROUP`) or `projects`; `token` (env
 `GITLAB_TOKEN`); `api_url` (env `GITLAB_API_URL`), `mode`, `include_archived`,
