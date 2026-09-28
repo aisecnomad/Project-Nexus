@@ -11,7 +11,7 @@ from shadowscan.models import Evidence, Finding, Kind, ScanResult, Surface
 from shadowscan.reporters.csv_ import _safe_cell, render_csv
 
 TRIGGERS = ("=", "+", "-", "@")
-TRIMMED = " \t\r\n\v\f\ufeff\""
+TRIMMED = " \t\r\n\v\f\ufeff\u00a0\""
 
 HOSTILE = [
     "x;=2+5;",
@@ -37,6 +37,9 @@ HOSTILE = [
     ("a;\tb", "a;'\tb"),
     ("a;\rb", "a;'\rb"),
     ("=1;=2|=3", "'=1;'=2|'=3"),
+    # A no-break space may be trimmed like a space.
+    ("\u00a0=1+1", "'\u00a0=1+1"),
+    ("a;\u00a0+1", "a;'\u00a0+1"),
 ])
 def test_formula_trigger_after_any_delimiter_is_neutralised(value, expected):
     assert _safe_cell(value) == expected
@@ -59,7 +62,7 @@ def test_no_cell_starts_a_formula_whichever_delimiter_opens_the_report(delimiter
     finding = Finding(
         surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
         title=HOSTILE[0], resource=HOSTILE[1], resource_type="repository", owner=HOSTILE[3],
-        frameworks=["framework.langchain", "@SUM(1)"], tags=["safe", "=1+1"],
+        frameworks=["framework.langchain", "@SUM(1)"], tags=["safe", "=1+1", "\u00a0=1+1"],
         evidence=[Evidence(signal="test", description=value, weight=0.5) for value in HOSTILE],
     )
 
