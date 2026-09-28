@@ -15,6 +15,14 @@ Behavior changes to review before upgrading (see
     (`file could not be read`). A root that cannot be opened this way is
     reported, by its `label` when one is set, as
     `could not open the scan root safely (<reason>)`.
+  - `code.gitlab` skips a group listing entry whose project `id` is not a
+    positive integer (`group project listing entry has no valid numeric id;
+    project skipped`) and scans the other projects. Such an id used to reach
+    request paths, where it could send the token to another API endpoint,
+    and a missing id aborted the whole listing.
+  - `code.github` skips an org or user listing entry whose `full_name` is not
+    a plain `owner/name` (`repository listing entry has no valid owner/name;
+    repository skipped`). It used to reach request paths and the clone URL.
 - **Changed diagnostics (these scans were already incomplete):**
   - A YAML value PyYAML cannot construct, such as an impossible date or an
     integer over 4,300 digits, is reported as malformed YAML: `invalid YAML`
