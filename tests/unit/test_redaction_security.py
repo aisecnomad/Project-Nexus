@@ -194,10 +194,15 @@ def test_export_is_sanitized_atomic_and_owner_only(tmp_path):
 def test_jwt_dump_never_writes_token_records(tmp_path):
     target = tmp_path / "jwt.jsonl"
     token = jwt.encode(
-        {"sub": "agent", "agent_id": "agent-1"}, "synthetic-test-signing-key-only-32-bytes", algorithm="HS256"
+        {"sub": "agent", "agent_id": "agent-1"},
+        "synthetic-test-signing-key-only-32-bytes",
+        algorithm="HS256",
     )
     connector = JwtConnector(
-        ConnectorContext(config={"tokens": [token], "_dump_path": str(target)}, index=_index())
+        ConnectorContext(
+            config={"tokens": [token], "_dump_path": str(target)},
+            index=_index(),
+        )
     )
     findings = connector.run()
     assert len(findings) == 1 and not connector.ctx.stats.errors
@@ -209,7 +214,11 @@ def test_jwt_dump_never_writes_token_records(tmp_path):
 def test_generic_saas_does_not_copy_arbitrary_export_columns():
     connector = GenericSaaSConnector(ConnectorContext(config={"keep_all": True}, index=_index()))
     result = list(
-        connector.analyze([{"name": "Agent", "id": "app-1", "users": 4, "custom_private_column": SECRET}])
+        connector.analyze(
+            [
+                {"name": "Agent", "id": "app-1", "users": 4, "custom_private_column": SECRET},
+            ]
+        )
     )
     assert len(result) == 1
     assert SECRET not in json.dumps(result[0].to_dict())

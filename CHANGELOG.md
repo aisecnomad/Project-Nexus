@@ -64,6 +64,67 @@ Behavior changes to review before upgrading (see
     (YAMLIntegrityError)`. Such a file is not YAML until rendered, so its
     excerpts use lexical redaction, as for any template the YAML parser
     rejects. Plain YAML with duplicate or non-finite data still fails closed.
+- **Report redaction** withholds more credential forms, in excerpts and in
+  structured connector metadata. Expect more `[REDACTED]` markers:
+  - string literals passed to credential constructors, helpers and factories
+    (`AzureKeyCredential("…")`, `HTTPBasicAuth("user", "…")`,
+    `Credentials.basic`, `setBearerToken`, `WithAPIKey`, `cohere.Client`),
+    including Rust `::new("…")`, C# target-typed `new("…")`, calls down a
+    builder chain (`builder().apiKey("…")`, `.header("x-api-key", "…")`) and
+    `auth=("user", "…")` tuples;
+  - literal defaults of credentials read from the environment
+    (`process.env.OPENAI_API_KEY || "…"`, `?? "…"`, `or "…"`, `?: "…"`,
+    `${OPENAI_API_KEY:-…}`);
+  - credential command-line options: `--api-key`, `--token`, `--password`,
+    `--key` and `--pwd`, also in argv lists; `curl -u` and
+    `-H "X-Api-Key:…"`; `-p` after `docker login`, other registry logins and
+    `az`, `oc` or `cf` logins; `sshpass -p`; MySQL `-p…`; a literal echoed
+    into `--password-stdin`; and `dotnet user-secrets set NAME VALUE`;
+  - Dockerfile `ENV`, `setx`, `setenv`, C `#define`, PowerShell and TOML
+    quoted keys assigned with `=`, and R `<-`;
+  - XML key/name attributes, element names and name/value records, read as
+    .NET settings by their last `:`, `__` or `.` segment as well as whole
+    (`<add key="OpenAI:Secret" value="…"/>`, `- name: AzureOpenAI__Key`). In
+    structured metadata the value is also removed from the record's other
+    fields;
+  - an opaque-looking value under a name whose last word, ignoring trailing
+    digits, names a credential (`openaiKey`, `key`, `KEY1`), and a lone
+    opaque value on the unindented line after a sensitive key;
+  - more token prefixes: Google `ya29.`, `1//0` and `GOCSPX-`; Slack `xapp-`
+    and `xoxe`; the GitLab `glrt-` family; `npm_`, `pypi-` and `dop_v1_`;
+    and Stripe, SendGrid, Databricks, Shopify, Atlassian, Linear, Notion,
+    Postman, Doppler, Supabase, Grafana, Sentry, Vault and Terraform Cloud
+    tokens. `Ocp-Apim-Subscription-Key` and names ending in
+    `subscriptionKey` are credentials.
+
+  A C# `new AzureKeyCredential("<key>")`, a Java `builder().apiKey("<key>")`
+  or a web.config `<appSettings>` key used to reach the reports of a complete
+  scan; regenerate such reports and rotate the keys they show. Endpoint URLs,
+  model names, variable names and references, placeholders and ordinary
+  values (`<add key="CacheKey" value="users"/>`) stay visible. SECURITY.md
+  lists the forms that are still not withheld, among them a space or comment
+  before a call's parenthesis, redundant parentheses, C# interpolated and
+  multi-line triple-quoted strings, one-letter options, a query parameter
+  outside a URL and an unquoted value that reads as an identifier.
+- **Redaction fixes:** a YAML parent key such as `openai:` no longer takes
+  the next line as its value, which leaked a nested `api_key: <value>`. A
+  `Bearer`/`Basic` scheme before a line break no longer drops a line from
+  the excerpt, and a marker inside an unquoted value no longer gains a `]`
+  each time a report sanitizes it again. Redaction is linear on hostile
+  layouts that used to time out, exhaust the redaction budget or hang the
+  scan without marking it incomplete: long runs of unfinished annotations,
+  minified lines with thousands of sensitive keys, and long unquoted values
+  after `key=`. Expressions nested more than 100 brackets deep are withheld
+  through the end of the excerpt, and an unquoted word holding more than 16
+  command-line options is withheld from its 17th option on.
+- **Finding identity:** IDs are computed from sanitized resource fields, so
+  an ID changes only where such a field held a value that is now withheld.
+  These redaction rules leave the findings and IDs of the demo, the sample
+  repository and every evaluation corpus unchanged; the classification
+  corrections of September 27 below can still change findings. The redaction
+  policy token changed, so findings verified clean under the old rules are
+  sanitized again. Report sanitization takes about 28% longer (11 s to 14 s
+  for 19 MB of library source).
 - **Plugins and embedders:**
   - `shadowscan.utils.text.sanitize_record` is removed; call
     `shadowscan.utils.redaction.sanitize`.
@@ -75,6 +136,10 @@ Behavior changes to review before upgrading (see
     `BaseConnector` to `shadowscan/connectors/offline.py` with
     `BaseConnector` names unchanged, and duplicate-finding metadata merging
     to `shadowscan.connectors.common.merge_duplicate_metadata`.
+  - `shadowscan.utils.redaction` is split into `redaction_*` modules with the
+    same public API and rule names. Patch rules through
+    `shadowscan.utils.redaction`, never through a `redaction_*` module;
+    `policy_token()` covers every module.
   - `SignatureIndex.signals_of_type(kind)` returns the (signature, signal)
     pairs of one signal type in pack order.
 

@@ -34,6 +34,7 @@
 | `shadowscan/connectors/<surface>/` | one module per data source |
 | `shadowscan/connectors/code/remote.py` | shared by `code.github` and `code.gitlab`: offline clone loading, clone hardening and origin pinning, API snapshots and blob verification |
 | `shadowscan/utils/files.py` | confined reads: no link followed in any path component, directories opened for traversal only (`O_PATH` on Linux) |
+| `shadowscan/utils/redaction.py` | redaction API (`sanitize`, `sanitize_text`, `policy_token`) driving the passes in the `redaction_*` modules; patch rules here, never in a `redaction_*` module |
 | `shadowscan/registry.py` | inventory formats and reconciliation, capability-card stub generation |
 | `shadowscan/risk.py` | additive, explainable risk model |
 | `shadowscan/engine.py` | parallel connector execution, merge, correlation, reconciliation, scoring; no connector names |

@@ -621,6 +621,40 @@ output:
   `structured parsing incomplete`: it is not YAML until rendered, so its
   excerpts use lexical redaction. Plain YAML with duplicate or non-finite
   data still makes the scan incomplete.
+- **Redaction.** Report excerpts and structured connector metadata withhold
+  more credential forms: literals passed to credential constructors and
+  builder chains, literal fallbacks of credential environment variables,
+  credential command-line options, .NET and XML settings, and opaque values
+  under credential-like names ([changelog](changelog.md) lists them). This is
+  a credential-policy change without configuration changes; scores and
+  evaluation results are unchanged. Expect more `[REDACTED]` markers, for
+  example on every literal after the first in a multi-argument credential
+  constructor (such as a client ID), on opaque-looking values under names
+  such as `cacheKey` or `nextPageToken`, and on a capitalized literal
+  fallback after a credential name. Reports produced before this release may
+  show such values although the scan exited 0, for example a web.config
+  `<appSettings>` key beside an Azure OpenAI endpoint, a C#
+  `new AzureKeyCredential("…")` or a `--key` command line. Regenerate earlier
+  reports that covered .NET or XML configuration, SDK client code or such
+  command lines, and rotate any key they show. The
+  [security policy](security.md) lists the forms still not withheld; keep
+  treating reports as confidential.
+- **Redaction limits.** Redaction is linear in its input, so minified bundles
+  and long runs of unfinished annotations no longer exhaust the redaction
+  budget or time out, and a long unquoted value after `key=` no longer hangs
+  a scan. Expressions nested more than 100 brackets deep are withheld through
+  the end of the excerpt, and an unquoted word holding more than 16
+  command-line options from its 17th option on. In structured metadata the
+  added rules run as a second pass over the first pass's output. That pass
+  refuses a value the earlier rules accepted, with a sanitization limit
+  (exit 3), only when removing a credential it found from the value's other
+  fields would exceed the replacement work budget or grow a text past the
+  size limit. Report sanitization takes about 28% longer.
+- **Finding identity.** IDs are computed from sanitized resource fields, so
+  an ID changes only where such a field held a value that is now withheld;
+  the demo, sample repository and evaluation corpora keep their IDs. The
+  redaction policy token changed, so findings verified clean under the old
+  rules are sanitized again automatically.
 
 ## Finding identity and comparison migration
 
@@ -858,7 +892,9 @@ the concrete status, denominator, control and reviewer artifacts:
    count or an empty report alone.
 3. Check sanitized artifacts with synthetic credentials and enforce private
    file/directory modes. Keep configuration, state and outputs outside scanned
-   repositories and restrict access to retained reports.
+   repositories and restrict access to retained reports. Regenerate retained
+   reports after an upgrade that withholds more, such as the
+   [2026-09-28 redaction changes](#completeness-report-and-credential-changes).
 4. Replay each exported instance using its manifest filename, checking account,
    resource identity and detection consistency. Sanitized exports are not
    lossless raw API backups; credential findings may differ after redaction.

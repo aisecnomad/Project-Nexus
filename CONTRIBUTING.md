@@ -74,6 +74,10 @@ This validates that the bundled signatures load successfully. It needs no cloud
 credentials. When iterating on a change, replace the path and test name with the
 relevant test; a single-test pass does not establish full-suite coverage.
 
+A test that replaces a redaction rule must patch it through
+`shadowscan.utils.redaction`, which rebinds the name in every `redaction_*`
+module; patching a `redaction_*` module directly changes only that module.
+
 Existing Make targets provide the next steps:
 
 ```bash

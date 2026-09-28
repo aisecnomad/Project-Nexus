@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, ScanStats, Surface
-from shadowscan.utils.redaction import SanitizationLimitError
+from shadowscan.utils import redaction
+from shadowscan.utils.redaction import REDACTED, SanitizationLimitError
 
 
 def _finding(resource="same", **metadata):
@@ -94,3 +97,58 @@ def test_correlation_sanitization_limit_marks_partial_analysis(monkeypatch, inde
     assert not result.complete
     assert [finding.resource for finding in result.findings] == ["neighbor"]
     assert any("runtime correlation incomplete" in error for stats in result.stats for error in stats.errors)
+
+
+# Structured sanitize() runs the established rules, then the rules added since
+# on the established copy. Markers can make that copy longer than its source
+# ('password=ab' becomes 'password=[REDACTED]'), so the added pass must not
+# check it against the size limit or charge it to the work budget again.
+_GROWN = "password=ab\n" * 583  # 6,996 characters; 11,660 once sanitized
+
+
+@pytest.mark.parametrize("redact_short_secrets", [False, True])
+def test_sanitized_text_longer_than_the_size_limit_is_not_refused(monkeypatch, redact_short_secrets):
+    monkeypatch.setattr(redaction, "_MAX_SANITIZATION_CHARS", 10_000)
+    expected = redaction.sanitize_text(_GROWN)
+    assert len(expected) > 10_000
+    safe = redaction.sanitize({"excerpt": _GROWN}, redact_short_secrets=redact_short_secrets)
+    assert safe == {"excerpt": expected}
+
+
+@pytest.mark.parametrize("redact_short_secrets", [False, True])
+def test_a_value_the_added_rules_find_is_removed_from_text_past_the_limit(monkeypatch, redact_short_secrets):
+    monkeypatch.setattr(redaction, "_MAX_SANITIZATION_CHARS", 10_000)
+    secret = "a8f3c91d7e2b4f6a9d0c"
+    value = {"excerpt": _GROWN + secret, "settings": [{"name": "OpenAI:Secret", "value": secret}]}
+    safe = redaction.sanitize(value, redact_short_secrets=redact_short_secrets)
+    assert secret not in str(safe)
+    assert safe["settings"] == [{"name": "OpenAI:Secret", "value": REDACTED}]
+
+
+def test_sanitized_text_is_not_charged_to_the_work_budget_again(monkeypatch):
+    # The established pass is charged 7,003 (its key and text); the grown copy
+    # would have been charged 11,667 more.
+    monkeypatch.setattr(redaction, "_MAX_REDACTION_WORK", 8_000)
+    assert redaction.sanitize({"excerpt": _GROWN}) == {"excerpt": redaction.sanitize_text(_GROWN)}
+
+
+def test_removing_a_value_only_the_added_rules_find_is_bounded(monkeypatch):
+    # Removing that value from every other field is the one work the added
+    # pass is charged for. Past the budget the whole value is refused (an
+    # incomplete scan); the found value is never kept.
+    monkeypatch.setattr(redaction, "_MAX_REDACTION_WORK", 8_000)
+    value = {"excerpt": _GROWN, "settings": [{"name": "OpenAI:Secret", "value": "a8f3c91d7e2b4f6a9d0c"}]}
+    with pytest.raises(SanitizationLimitError, match="credential replacement work limit"):
+        redaction.sanitize(value)
+
+
+def test_short_secret_expansion_is_bounded_before_the_text_passes_read_it(monkeypatch):
+    # The text passes are observed where sanitize() calls them.
+    monkeypatch.setattr(redaction, "_MAX_SANITIZATION_CHARS", 64)
+    calls: list[str] = []
+    for name in ("_sanitize_established", "_redact_extended"):
+        real = getattr(redaction, name)
+        monkeypatch.setattr(redaction, name, lambda text, real=real: calls.append(text) or real(text))
+    with pytest.raises(SanitizationLimitError, match="credential replacement size limit"):
+        redaction.sanitize([{"password": "a"}, "a" * 50], redact_short_secrets=True)
+    assert calls and all(len(text) <= 64 for text in calls)
