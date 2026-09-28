@@ -7,6 +7,14 @@
 Behavior changes to review before upgrading (see
 [production](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#completeness-report-and-credential-changes)):
 
+- **Credential policy:** the scan-wide `options.allow_instance_credentials`
+  now replaces `allow_instance_credentials` in every connector entry. Only
+  `cloud.*` entries were replaced before, so a third-party connector's own
+  entry could grant it instance-credential approval. The scan-wide value
+  still goes to every `cloud.*` connector, plugins included, and now also to
+  any plugin that declares the cloud surface or documents the key in
+  `config_keys`; with the default `false` this only denies. Built-in
+  connectors behave as before.
 - **New incomplete scans (exit 3):**
   - `code.filesystem` opens each scan root once and reads every file, and
     `CODEOWNERS`, relative to it without following a link in any path
@@ -59,6 +67,14 @@ Behavior changes to review before upgrading (see
 - **Plugins and embedders:**
   - `shadowscan.utils.text.sanitize_record` is removed; call
     `shadowscan.utils.redaction.sanitize`.
+  - The engine no longer names connectors. Per-root incremental caching, the
+    instance-credential approval and the per-run gateway identity key are
+    hooks a connector class declares (`cache_roots_separately`,
+    `inherits_instance_credentials_approval`, `uses_run_identity_key`; see
+    `docs/architecture.md`). Offline export parsing moved from
+    `BaseConnector` to `shadowscan/connectors/offline.py` with
+    `BaseConnector` names unchanged, and duplicate-finding metadata merging
+    to `shadowscan.connectors.common.merge_duplicate_metadata`.
   - `SignatureIndex.signals_of_type(kind)` returns the (signature, signal)
     pairs of one signal type in pack order.
 
