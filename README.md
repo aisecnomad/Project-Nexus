@@ -302,8 +302,14 @@ Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
 findings carry file: line locations), `csv`, `markdown`, `html` (self-contained,
 filterable, with evidence drill-down). In `csv` output a cell that starts with
 `=`, `+`, `-`, `@`, a tab or a newline is prefixed with a literal `'` so
-spreadsheets treat it as text (common for `@team` owners); strip that prefix
-when consuming the file programmatically, or use `json`.
+spreadsheets treat it as text (common for `@team` owners). The same marker is
+inserted after a `,`, `;`, tab, `|` or line break inside a value wherever the
+text after it could start a formula, so opening the file with another delimiter
+cannot create a formula cell. Strip those markers too when consuming the file
+programmatically, or use `json`. `markdown` output defangs links (`hxxps://`,
+`www[.]`) and writes `@` as `[@]` in untrusted text, so a report pasted into an
+issue or pull request creates no links, @-mentions or e-mail links; code spans
+keep identifiers verbatim.
 
 ### Risk policy
 

@@ -30,7 +30,10 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   This exception does not relax origin or TLS checks. HTTP proxies, including
   environment proxy settings, are unsupported by this transport.
 * Default shared HTTP responses and JSON/pagination helpers are limited to 16 MiB
-  of decoded bytes; oversized and malformed collection responses fail collection.
+  of decoded bytes, and each body must arrive within twice the client timeout
+  (60 seconds by default). Oversized, slow and malformed collection responses
+  fail collection, which marks the scan incomplete; a partial body is never
+  analyzed.
   Explicit raw streaming callers are responsible for bounded reads and closure.
   Injected Requests sessions have their adapters replaced by destination policy.
   GitLab source-file downloads have a stricter 512 KB (512,000 bytes) per-file cap.
