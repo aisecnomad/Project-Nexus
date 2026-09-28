@@ -6,6 +6,7 @@ import sys
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
+from urllib.parse import urlsplit
 
 import pytest
 import requests
@@ -243,7 +244,7 @@ def test_gcp_project_collection_walks_every_enabled_ai_service(index):
     # Engine covers its three multi-regions.
     vertex = f"https://us-central1-aiplatform.googleapis.com/v1/projects/{PROJECT}/locations/us-central1"
     assert f"{vertex}/reasoningEngines" in urls and f"{vertex}/endpoints" in urls
-    assert sum("dialogflow.googleapis.com" in url for url in urls) == 2
+    assert sum(urlsplit(url).hostname == "dialogflow.googleapis.com" for url in urls) == 2
     assert [url.split("/locations/")[1].split("/")[0] for url in urls if "discoveryengine" in url] == [
         "global",
         "us",

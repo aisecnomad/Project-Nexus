@@ -107,6 +107,11 @@ _RUN_LOCATION = re.compile(r"[a-z][a-z0-9-]*[0-9]")
 _SERVICE_ACCOUNT_NAME = re.compile(r"projects/[A-Za-z0-9._:-]+/serviceAccounts/[^/?#\s]+")
 
 
+def _uses(services: Iterable[str | None], service: str) -> bool:
+    """Whether ``service`` is one of ``services``: exact service names, never a URL substring."""
+    return service in services
+
+
 def _audit_filter(since: str) -> str:
     services = " OR ".join(f'"{service}"' for service in _AUDIT_SERVICES)
     methods = " OR ".join(f'"{method}"' for method in _AUDIT_METHODS)
@@ -348,14 +353,14 @@ class GcpConnector(BaseConnector):
         enabled = [s.get("config", {}).get("name") for s in services]
         ai_enabled = [s for s in enabled if s in AI_SERVICES]
         yield {"_kind": "project", "project": project, "ai_services": ai_enabled}
-        if "aiplatform.googleapis.com" in enabled:
+        if _uses(enabled, "aiplatform.googleapis.com"):
             yield from self._collect_vertex(project)
-        if "dialogflow.googleapis.com" in enabled:
+        if _uses(enabled, "dialogflow.googleapis.com"):
             for loc in ["global", *self.locations]:
                 url = f"https://dialogflow.googleapis.com/v3/projects/{project}/locations/{loc}/agents"
                 for agent in self._pages(url, "agents"):
                     yield {"_kind": "dialogflow-agent", "_project": project, "_location": loc, **agent}
-        if "discoveryengine.googleapis.com" in enabled:
+        if _uses(enabled, "discoveryengine.googleapis.com"):
             for loc in ["global", "us", "eu"]:
                 url = (
                     f"https://discoveryengine.googleapis.com/v1/projects/{project}/locations/{loc}"
@@ -363,19 +368,19 @@ class GcpConnector(BaseConnector):
                 )
                 for eng in self._pages(url, "engines"):
                     yield {"_kind": "discovery-engine", "_project": project, "_location": loc, **eng}
-        if "run.googleapis.com" in enabled:
+        if _uses(enabled, "run.googleapis.com"):
             yield from self._collect_cloud_run(project)
-        if "cloudfunctions.googleapis.com" in enabled:
+        if _uses(enabled, "cloudfunctions.googleapis.com"):
             url = f"https://cloudfunctions.googleapis.com/v2/projects/{project}/locations/-/functions"
             for fn in self._pages(url, "functions"):
                 yield {"_kind": "cloud-function", "_project": project, **fn}
         yield from self._collect_iam_policy(project)
         yield from self._collect_service_accounts(project)
-        if "apikeys.googleapis.com" in enabled:
+        if _uses(enabled, "apikeys.googleapis.com"):
             url = f"https://apikeys.googleapis.com/v2/projects/{project}/locations/global/keys"
             for key in self._pages(url, "keys"):
                 yield {"_kind": "api-key", "_project": project, **key}
-        if "secretmanager.googleapis.com" in enabled:
+        if _uses(enabled, "secretmanager.googleapis.com"):
             url = f"https://secretmanager.googleapis.com/v1/projects/{project}/secrets"
             for s in self._pages(url, "secrets"):
                 yield {
@@ -385,7 +390,7 @@ class GcpConnector(BaseConnector):
                     "createTime": s.get("createTime"),
                     "labels": s.get("labels"),
                 }
-        if self.audit_days > 0 and "aiplatform.googleapis.com" in enabled:
+        if self.audit_days > 0 and _uses(enabled, "aiplatform.googleapis.com"):
             yield from self._collect_audit(project)
 
     def _collect_vertex(self, project: str) -> Iterator[dict[str, Any]]:
@@ -959,9 +964,9 @@ class GcpConnector(BaseConnector):
             first_seen=rec.get("createTime"),
             last_seen=rec.get("updateTime"),
         )
-        if "generativelanguage.googleapis.com" in ai_targets or unrestricted:
+        if _uses(ai_targets, "generativelanguage.googleapis.com") or unrestricted:
             f.add_model_provider("provider.google-gemini")
-        if "aiplatform.googleapis.com" in ai_targets:
+        if _uses(ai_targets, "aiplatform.googleapis.com"):
             f.add_model_provider("provider.google-vertex-ai")
         f.add_evidence(
             Evidence(
