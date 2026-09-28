@@ -82,7 +82,10 @@ def test_sanitize_verifies_unchanged_state_by_digest_and_redacts_every_later_mut
     finding.evidence.append(Evidence(signal="x", description="Authorization: Bearer abcdef0123456789"))
     assert "abcdef0123456789" not in finding.to_dict()["evidence"][0]["description"] and len(calls) == 5
     finding.risk = Risk(score=10, factors=[RiskFactor("f", "password=hunter2-value", 1)])
-    assert finding.to_dict()["risk"]["factors"][0]["description"] == f"password={REDACTED}" and len(calls) == 6
+    assert (
+        finding.to_dict()["risk"]["factors"][0]["description"] == f"password={REDACTED}"
+        and len(calls) == 6
+    )
     finding.to_dict()
     assert len(calls) == 6
 
@@ -121,7 +124,9 @@ def test_failed_sanitization_pass_records_no_verified_state():
     with pytest.raises(SanitizationLimitError):
         finding.sanitize()
     assert finding._clean_digest is None, "a failed pass never marks the state verified"
-    assert REDACTED in finding.connector, "the rejected identity field is withheld even though the finding is omitted"
+    assert REDACTED in finding.connector, (
+        "the rejected identity field is withheld even though the finding is omitted"
+    )
 
 
 def test_state_digest_rejects_an_aliased_dag_before_expanding_it():

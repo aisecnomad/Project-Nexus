@@ -88,6 +88,11 @@ CASES = {
     "flag-space": ("list.sh", f"curl --api-key {HEX} https://api.openai.com/v1/models\n", HEX),
     "flag-token": ("proxy.sh", f"llm-proxy --token {BASE62} --upstream https://api.openai.com/v1\n", BASE62),
     "flag-password": ("gateway.sh", f"llm-gateway --password={PASSWORD} --upstream {AZURE}\n", PASSWORD),
+    "flag-key": ("key.sh", f"llm --key {HEX} --base-url https://api.openai.com/v1\n", HEX),
+    "dotnet-user-secrets": ("setup.sh", (
+        f'dotnet user-secrets set "AzureOpenAI:Key" "{HEX}" && curl {AZURE}openai/deployments\n'
+    ), HEX),
+    "numbered-key": ("env.sh", f"export AZURE_OPENAI_ENDPOINT={AZURE} AZURE_OPENAI_KEY1={BASE62}\n", BASE62),
     "header-without-space": ("claude.sh", (
         f'curl -H "x-api-key:{HEX}" https://api.anthropic.com/v1/messages\n'
     ), HEX),
@@ -109,6 +114,38 @@ CASES = {
         f'<appSettings><add key="AZURE_OPENAI_API_KEY" value="{HEX}" /><add key="Endpoint" value="{AZURE}" />'
         "</appSettings>\n"
     ), HEX),
+    # Hierarchical .NET setting names: the last segment names the credential.
+    # (The walker does not read '.config' files, so App.config's shape is
+    # scanned under an '.xml' name.)
+    "dotnet-hierarchical-key": ("conf/app.xml", (
+        "<configuration><appSettings>"
+        f'<add key="AzureOpenAI:Endpoint" value="{AZURE}"/><add key="AzureOpenAI:Key" value="{HEX}"/>'
+        "</appSettings></configuration>\n"
+    ), HEX),
+    "dotnet-hierarchical-secret": ("web.xml", (
+        f'<appSettings><add key="OpenAI:Endpoint" value="{AZURE}"/>'
+        f'<add key="OpenAI:Secret" value="{PASSWORD}"/></appSettings>\n'
+    ), PASSWORD),
+    "xml-credential-named-element": ("openai-settings.xml", (
+        f"<openai><endpoint>{AZURE}</endpoint><OpenAIKey>{BASE62}</OpenAIKey></openai>\n"
+    ), BASE62),
+    # Not under 'env', whose values the structural pass already withholds.
+    "yaml-hierarchical-record": ("deploy/parameters.yaml", (
+        f"parameters: [{{name: AzureOpenAI__Endpoint, value: {AZURE}}}, "
+        f"{{name: AzureOpenAI__Key, value: {HEX}}}]\n"
+    ), HEX),
+    # An element's own name decides its content beside a key attribute that
+    # names a setting ('openai.token' counts by its last segment).
+    "xml-element-with-setting-key": ("openai-token.xml", (
+        f"<configuration><openai><endpoint>{AZURE}</endpoint>"
+        f'<token key="openai.token" value="">{HEX}</token></openai></configuration>\n'
+    ), HEX),
+    "yaml-credential-named-key": ("config/openai.yaml", (
+        f"openai: {{endpoint: {AZURE}, openaiKey: {HEX}}}\n"
+    ), HEX),
+    "mysql-attached-password": ("migrate.sh", (
+        f"mysql -h db -u root -pS3cretKey2024 app < schema.sql && curl {AZURE}openai/deployments\n"
+    ), "S3cretKey2024"),
     "xml-password-element": ("settings.xml", (
         f"<server><url>https://api.openai.com/v1</url><password>{PASSWORD}</password></server>\n"
     ), PASSWORD),

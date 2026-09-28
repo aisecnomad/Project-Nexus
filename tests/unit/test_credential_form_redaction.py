@@ -153,6 +153,63 @@ FORMS: list[tuple[str, str, str]] = [
     (f'<entry key="openai.api.key">{HEX}</entry>', HEX, "</entry>"),
     (f'<property name="password" value="{PASSWORD}"/>', PASSWORD, 'name="password"'),
     (f'<Parameter Name="ApiKey" Value="{HEX}"/>', HEX, 'Name="ApiKey"'),
+    # Hierarchical setting names ('AzureOpenAI:Key', 'AzureOpenAI__Key',
+    # 'openai.token') and names whose last word names a credential, read as
+    # the assignment rules read them: a sensitive last segment withholds any
+    # value, a credential word only an opaque one.
+    (f'<add key="AzureOpenAI:Token" value="{HEX}"/>', HEX, 'key="AzureOpenAI:Token"'),
+    (f'<add key="OpenAI:Secret" value="{HEX}"/>', HEX, 'key="OpenAI:Secret"'),
+    (f'<add key="OpenAI:Secret" value="{PASSWORD}"/>', PASSWORD, 'key="OpenAI:Secret"'),
+    (f'<add key="OpenAIKey" value="{HEX}"/>', HEX, 'key="OpenAIKey"'),
+    (f'<add key="AzureOpenAI:Key" value="{HEX}"/>', HEX, 'key="AzureOpenAI:Key"'),
+    (f'<add key="AzureOpenAI__Key" value="{BASE62}" />', BASE62, 'key="AzureOpenAI__Key"'),
+    (f"<OpenAIKey>{HEX}</OpenAIKey>", HEX, "</OpenAIKey>"),
+    (f"<OpenAIKey>\n  {HEX}\n</OpenAIKey>", HEX, "</OpenAIKey>"),
+    (f'<entry key="openai.token">{HEX}</entry>', HEX, "</entry>"),
+    (f'<entry key="openai.key">{BASE64}</entry>', BASE64, "</entry>"),
+    (f'<setting name="AzureOpenAI:Key"><value>{HEX}</value></setting>', HEX, "</setting>"),
+    (f'<password key="CacheKey">{PASSWORD}</password>', PASSWORD, "</password>"),
+    # An element's own name decides its content however strongly a key/name
+    # attribute decided its value attributes, and a key/name attribute also
+    # names the content beside them.
+    (f'<apiKey name="OpenAI:Secret" value="">{HEX}</apiKey>', HEX, '<apiKey name="OpenAI:Secret" value="">'),
+    (f'<token key="openai.token" value="ignored">{HEX}</token>', HEX, '<token key="openai.token" value="'),
+    (f'<Secret key="OpenAI:Secret" value="x">{HEX}</Secret>', HEX, "</Secret>"),
+    (f'<apiKey name="AzureOpenAI__Token" value="${{X}}">{HEX}</apiKey>', HEX, 'value="${X}">'),
+    (f'<apiKey name="api_key" value="">{HEX}</apiKey>', HEX, '<apiKey name="api_key" value="">'),
+    (f'<password key="Token" value="users">{PASSWORD}</password>', PASSWORD, "</password>"),
+    (f'<add key="Password" value="">{PASSWORD}</add>', PASSWORD, '<add key="Password" value="">'),
+    (f'<add key="OpenAIKey" value="">{HEX}</add>', HEX, '<add key="OpenAIKey" value="">'),
+    (f"{{name: OpenAIKey, value: {HEX}}}", HEX, "{name: OpenAIKey, value: "),
+    (f"- name: AzureOpenAI__Key\n  value: {HEX}\n", HEX, "- name: AzureOpenAI__Key\n"),
+    (f"- name: AzureOpenAI:Secret\n  value: {PASSWORD}\n", PASSWORD, "- name: AzureOpenAI:Secret\n"),
+    (f'{{"name": "AzureOpenAI:Key", "value": "{BASE62}"}}', BASE62, '"AzureOpenAI:Key"'),
+    (f"- name: OpenAIKey\n  value: |\n    {HEX}\n- name: MODEL\n", HEX, "- name: MODEL"),
+    # A weak name deciding a shared value field first leaves a sensitive one to withhold it.
+    ("{name: pageToken, key: token, value: hunter2hunter}", "hunter2hunter", "{name: pageToken, key: token"),
+    # Options named for a credential, numbered credential names and values
+    # stored by 'dotnet user-secrets set' lose opaque values, as the same names
+    # do in assignments; a sensitive setting name loses any value.
+    (f"llm --key {HEX} --model gpt-4o", HEX, "--model gpt-4o"),
+    (f"db-cli --pwd={BASE62} --host db.example.com", BASE62, "--host db.example.com"),
+    (f'args: ["--key", "{HEX}", "--model", "gpt-4o"]', HEX, '"--model", "gpt-4o"'),
+    (f"tool --key svc:{HEX} --verbose", HEX, "--verbose"),
+    # An option value holding an assignment is left to the assignment rules.
+    (f"tool --key a.api_key={HEX}", HEX, "tool --key a.api_key="),
+    (f"KEY1={HEX}\n", HEX, "KEY1="),
+    (f'azure_openai_key2 = "{BASE62}"', BASE62, "azure_openai_key2 = "),
+    # Unquoted YAML values under the same names, as after '='.
+    (f"openaiKey: {HEX}\n", HEX, "openaiKey: "),
+    (f"key: {BASE62}\n", BASE62, "key: "),
+    (f"openai:\n  OPENAI_KEY2: {HEX}\n", HEX, "  OPENAI_KEY2: "),
+    (f"- TOKEN_2: {BASE62}  # rotated\n", BASE62, "  # rotated\n"),
+    # A MySQL client's '-pVALUE' is a password even when it ends in a credential word.
+    ("mysql -u root -pS3cretKey2024 app", "S3cretKey2024", "mysql -u root -p"),
+    ("mysqldump -u root -pdbPass2024 shop > shop.sql", "dbPass2024", " shop > shop.sql"),
+    (f'<add key="AzureOpenAI:Key2" value="{HEX}"/>', HEX, 'key="AzureOpenAI:Key2"'),
+    (f'dotnet user-secrets set "AzureOpenAI:Key" "{HEX}"', HEX, 'set "AzureOpenAI:Key" '),
+    (f"dotnet user-secrets set AzureOpenAI:ApiKey {BASE62} --project src/Api", BASE62, "--project src/Api"),
+    (f"dotnet user-secrets set 'Smtp:Password' '{PASSWORD}'", PASSWORD, "'Smtp:Password'"),
     # Properties, INI and YAML forms (already covered; kept as regressions).
     (f"spring.ai.openai.api-key={HEX}", HEX, "spring.ai.openai.api-key="),
     (f"[openai]\napi_key = {HEX}\n", HEX, "[openai]"),
@@ -180,6 +237,11 @@ FORMS: list[tuple[str, str, str]] = [
     (f'<add key="api_key" value="{HEX}', HEX, '<add key="api_key" value='),
     (f"{{name: OPENAI_API_KEY, value: https://svc:{BASE62}@api.openai.com/v1}}", BASE62,
      "{name: OPENAI_API_KEY"),
+    # A quoted value under a setting name runs to its closing quote, past a
+    # '}' inside it (a name the established rules read is cut there: see the
+    # documented gaps below).
+    (f'{{"name": "OpenAI:Secret", "value": "p}}{HEX}"}}', HEX, '{"name": "OpenAI:Secret", "value": "'),
+    (f'- {{name: AzureOpenAI__Key, value: "p}}{HEX}"}}', HEX, "- {name: AzureOpenAI__Key, value: "),
 ]
 
 
@@ -340,9 +402,150 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
     "az login --use-device-code && az acr login --name contoso",
     "echo ${{ secrets.ACR_PASSWORD }} | docker login -u svc --password-stdin contoso.azurecr.io",
     "echo hello | tee out.txt; docker login -u svc --password-stdin",
+    # Settings whose last word names a credential keep ordinary values, as the
+    # same names do in assignments ('cacheKey = "user:123"').
+    '<add key="CacheKey" value="users"/>',
+    '<add key="SortKey" value="createdAt"/>',
+    '<add key="AzureOpenAI:Key" value="YOUR_API_KEY"/>',
+    '<add key="AzureOpenAI:Key" value="%AZURE_OPENAI_KEY%"/>',
+    '<add key="Logging:LogLevel:Default" value="Information"/>',
+    '<add key="OpenAI:Endpoint" value="https://contoso.openai.azure.com/"/>',
+    "<PartitionKey>users</PartitionKey>",
+    "<Key>photos/2024/img.jpg</Key>",
+    "<NextToken></NextToken>",
+    '<entry key="openai.token">${OPENAI_TOKEN}</entry>',
+    '<setting name="OpenAIKey"><value>short</value></setting>',
+    '<input name="key" value="enter">',
+    "{name: pageToken, value: next}",
+    "{name: OpenAIKey, value: ${OPENAI_KEY}}",
+    '{name: OpenAI:Secret, value: "${OPENAI_SECRET}"}',
+    "- name: cacheKey\n  value: users\n",
+    "- name: OpenAIKey\n  value: |\n    first line\n    second line\n",
+    '<add key="CacheKey" value="users">users-by-id</add>',
+    '<OpenAIKey key="Region" value="eu">users</OpenAIKey>',
+    '<apiKey name="OpenAI:Secret" value="${OPENAI_SECRET}">${OPENAI_SECRET}</apiKey>',
+    # Unquoted YAML values that are words, paths or too short to be keys.
+    "cacheKey: users-by-id\nsortKey: createdAtDescending\npageToken: nextPage2\n",
+    "key: photos/2024/img.jpg\nkey: Ed25519PrivateKey\nopenaiKey: OpenAIKeyType;\nkey: a1b2c3\n",
+    "key:a1b2c3d4e5f6a7b8",
+    # Options and numbered names keep ordinary values.
+    "tool --key users --sort-key name --cache-key users-by-id",
+    "curl -k https://example.com --key client.pem --key-file ~/.ssh/id_ed25519",
+    f"tool --no-key {HEX}",
+    "payload = dict(key1='value1', key2='value2')",
+    'dotnet user-secrets set "AzureOpenAI:Endpoint" "https://contoso.openai.azure.com/"',
+    'dotnet user-secrets set "AzureOpenAI:Key" "$AZURE_OPENAI_KEY"',
+    "dotnet user-secrets list --project src/Api",
 ])
 def test_names_references_placeholders_and_ordinary_arguments_are_preserved(source):
     assert sanitize_text(source) == source
+
+
+def test_argv_options_named_for_a_credential_lose_opaque_values_everywhere():
+    # A structured argv list reads options as a command line does, and a
+    # withheld value is also withheld from the record's other fields.
+    safe = sanitize({"args": ["--key", HEX, "--model", "gpt-4o"], "note": f"started with {HEX}"})
+    assert safe == {"args": ["--key", REDACTED, "--model", "gpt-4o"], "note": f"started with {REDACTED}"}
+    ordinary = {"args": ["--key", "users", "--sort-key", "name", "--no-key", HEX]}
+    assert sanitize(ordinary) == ordinary
+
+
+@pytest.mark.parametrize("separator", ["#", "/", " ", ";"])
+def test_an_opaque_option_value_never_hides_a_following_assignment(separator):
+    # The option's value and the assignment glued to it are both withheld:
+    # withholding '--key' values first swallowed the name 'password', and the
+    # assignment rules no longer saw it.
+    source = f'tool --key {HEX}{separator}password = "{PASSWORD}"'
+    safe = sanitize_text(source)
+    assert HEX not in safe and PASSWORD not in safe
+    assert safe.startswith("tool --key ") and sanitize_text(safe) == safe
+
+
+# Forms SECURITY.md lists as not withheld: nothing in them names a credential
+# the way the rules above read names. When one is closed, move it to FORMS
+# and update SECURITY.md.
+@pytest.mark.xfail(strict=True, reason="documented redaction gap (SECURITY.md)")
+@pytest.mark.parametrize("source", [
+    f"llm -k {HEX}",
+    f'new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "{HEX}")',
+    f'x = "{HEX}"  # openai key',
+    # A record whose value field comes before its name field.
+    f'{{"value": "{HEX}", "name": "Password"}}',
+    f"- value: {HEX}\n  name: DB_PASSWORD\n",
+    # A quoted value holding a '}' under a name the established record pass
+    # reads: that pass stops at the brace, as it always has.
+    f'{{"name": "Password", "value": "p}}{HEX}"}}',
+    f'- {{name: DB_PASSWORD, value: "p}}{HEX}"}}',
+])
+def test_documented_gaps_are_still_open(source):
+    assert HEX not in sanitize_text(source)
+
+
+@pytest.mark.xfail(strict=True, reason="documented redaction gap (SECURITY.md)")
+@pytest.mark.parametrize(("source", "value"), [
+    # An unquoted value made of capitalized words and digits reads as an
+    # identifier, as 'Ed25519PrivateKey' does.
+    ("KEY1=Gh4Hj9Kl8Zx2Qw", "Gh4Hj9Kl8Zx2Qw"),
+    ("openaiKey: Zx9Kq2Lm8Np4", "Zx9Kq2Lm8Np4"),
+    # An option glued to the value before it is not read as an option.
+    (f'tool --key=users--password "{PASSWORD}"', PASSWORD),
+    (f'tool --key={HEX}--password "{PASSWORD}"', PASSWORD),
+])
+def test_documented_value_gaps_are_still_open(source, value):
+    assert value not in sanitize_text(source)
+
+
+@pytest.mark.parametrize("name", [
+    "OpenAIKey", "OpenAI:Secret", "AzureOpenAI:Token", "AzureOpenAI__Key", "openai.token", "KEY1",
+    "Db:Password",
+])
+@pytest.mark.parametrize("value_first", [False, True])
+def test_structured_name_value_records_read_names_as_settings(name, value_first):
+    # Connector metadata reads a record's name as the text passes read it: a
+    # sensitive last segment withholds any value, a credential word (numbered
+    # or not) an opaque one; the value is also withheld from sibling fields.
+    record = {"value": HEX, "name": name} if value_first else {"name": name, "value": HEX}
+    safe = sanitize({"settings": [record], "note": f"rotated {HEX}"})
+    assert safe == {"settings": [{**record, "value": REDACTED}], "note": f"rotated {REDACTED}"}
+    assert HEX not in repr(sanitize([record], redact_short_secrets=True))
+
+
+@pytest.mark.parametrize("record", [
+    {"name": "CacheKey", "value": "users"},
+    {"name": "PAGE_TOKEN", "value": "next"},
+    {"Key": "sort_key", "Value": "createdAtDescending"},
+    {"name": "AzureOpenAI:Endpoint", "value": AZURE},
+    {"name": "AzureOpenAI:Key", "value": "${AZURE_OPENAI_KEY}"},
+    {"name": "OpenAIKey", "value": "photos/2024/img.jpg"},
+])
+def test_structured_setting_records_keep_ordinary_values(record):
+    # An environment-style or credential-word name keeps a value that does not
+    # look like an opaque key, as in text ('cacheKey = "users"').
+    assert sanitize({"settings": [record]}) == {"settings": [record]}
+
+
+def test_structured_readable_value_under_a_sensitive_setting_is_withheld():
+    safe = sanitize({"name": "OpenAI:Secret", "value": "hunter2", "note": "hunter2 was rotated"})
+    assert safe == {"name": "OpenAI:Secret", "value": REDACTED, "note": REDACTED}
+
+
+@pytest.mark.parametrize("source", [
+    # Environment-style names ('PAGE_TOKEN', like 'DB_PASSWORD') withhold any
+    # value: a readable password is still a password. bd16bd6 already
+    # withheld these four; they guard that reading names as settings keeps it.
+    "{name: PAGE_TOKEN, value: next}",
+    "{name: DB_PASSWORD, value: hunter2}",
+    '<add key="Db:Password" value="hunter2"/>',
+    "- name: Smtp__Password\n  value: hunter2\n",
+    # A sensitive last segment of a hierarchical name, which bd16bd6 did not read.
+    '<add key="OpenAI:Secret" value="hunter2"/>',
+    "- name: AzureOpenAI__Token\n  value: hunter2\n",
+    '<entry key="openai.token">hunter2</entry>',
+])
+def test_sensitive_setting_names_withhold_readable_values(source):
+    safe = sanitize_text(source)
+    assert REDACTED in safe
+    assert "next" not in safe and "hunter2" not in safe
 
 
 # One form per context-named pass, and values that an earlier pass or an
