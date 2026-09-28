@@ -71,7 +71,7 @@ def test_gcp_offline_export_covers_every_handler_kind(run_connector, fixtures):
     assert not ctx.stats.incomplete and not ctx.stats.warnings
     grouped = _by_kind(findings)
 
-    endpoint, = grouped["vertex-endpoint"]  # the endpoint without deployed models is not an AI resource
+    (endpoint,) = grouped["vertex-endpoint"]  # the endpoint without deployed models is not an AI resource
     assert endpoint.resource.endswith("/endpoints/42") and endpoint.region == "us-central1"
     assert endpoint.models == [
         "projects/acme-search/locations/us-central1/models/llama-3-8b-instruct",
@@ -85,7 +85,7 @@ def test_gcp_offline_export_covers_every_handler_kind(run_connector, fixtures):
     assert engines["SOLUTION_TYPE_SEARCH"].kind == Kind.CLOUD_RESOURCE
     assert all("rag" in f.capabilities for f in engines.values())
 
-    function, = grouped["cloud-function"]  # resize-images has no AI signal
+    (function,) = grouped["cloud-function"]  # resize-images has no AI signal
     assert function.title == "Cloud Function: summarise-tickets" and function.region == "europe-west1"
     assert "provider.anthropic" in function.model_providers and "autonomous" in function.capabilities
     assert function.metadata["trigger"] == "google.cloud.pubsub.topic.v1.messagePublished"
@@ -105,10 +105,10 @@ def test_gcp_offline_export_covers_every_handler_kind(run_connector, fixtures):
     assert "broad-project-access" in grants["user:root@acme.example"].tags
     assert "public-principal" in grants["allAuthenticatedUsers"].tags
 
-    account, = grouped["service-account"]
+    (account,) = grouped["service-account"]
     assert account.metadata["keys"] is None and account.metadata["key_coverage"] == "unknown"
     assert "secret-manager-secret" not in grouped  # db-password is not an LLM credential
-    project, = grouped["enabled-apis"]  # acme-batch enables no AI API
+    (project,) = grouped["enabled-apis"]  # acme-batch enables no AI API
     assert project.account == PROJECT
 
     callers = {f.account: f for f in grouped["caller/principal"]}
@@ -126,47 +126,117 @@ def test_gcp_offline_export_covers_every_handler_kind(run_connector, fixtures):
 def test_gcp_project_collection_walks_every_enabled_ai_service(index):
     connector = GcpConnector(context(index, locations=["us-central1"], audit_days=1))
     engine = f"projects/{PROJECT}/locations/us-central1/reasoningEngines/7"
-    fake = FakeGoogle({
-        "/services": enabled(
-            "aiplatform.googleapis.com", "dialogflow.googleapis.com", "discoveryengine.googleapis.com",
-            "cloudfunctions.googleapis.com", "apikeys.googleapis.com", "secretmanager.googleapis.com",
-        ),
-        "/reasoningEngines": {"reasoningEngines": [{"name": engine, "displayName": "negotiator",
-                                                    "spec": {"agentFramework": "google-adk"}}]},
-        "/endpoints": {"endpoints": [{
-            "name": f"projects/{PROJECT}/locations/us-central1/endpoints/1",
-            "deployedModels": [{"model": "publishers/google/models/gemini-1.5-pro"}]}]},
-        "/global/agents": {"agents": [{"name": f"projects/{PROJECT}/locations/global/agents/a",
-                                       "displayName": "helpdesk"}]},
-        "/global/collections/default_collection/engines": {"engines": [{
-            "name": f"projects/{PROJECT}/locations/global/collections/default_collection/engines/e",
-            "displayName": "support", "solutionType": "SOLUTION_TYPE_CHAT"}]},
-        "/functions": {"functions": [{"name": f"projects/{PROJECT}/locations/us-central1/functions/f"}]},
-        "/serviceAccounts": {"accounts": [{"name": SA_NAME, "displayName": "CrewAI agent runner"},
-                                          {"name": "projects/other/../escape", "displayName": "bad"}]},
-        # Service-account keys (IAM) and API keys (API Keys service) share the /keys suffix.
-        "/keys": lambda url: {"keys": [{"name": "k"}]} if url.startswith("https://iam.") else {"keys": [
-            {"name": "projects/1/locations/global/keys/k1", "displayName": "gemini-dev",
-             "restrictions": {}}]},
-        "/secrets": {"secrets": [{"name": "projects/1/secrets/openai-api-key", "createTime": "2025-01-01",
-                                  "labels": {"team": "ml"}, "replication": {"automatic": {}}}]},
-    }, posts={
-        ":getIamPolicy": {
-            "bindings": [{"role": "roles/aiplatform.user", "members": ["user:dev@acme.example"]}]},
-        "entries:list": {"entries": [{"timestamp": "2025-09-01T00:00:00Z", "protoPayload": {
-            "methodName": "google.cloud.aiplatform.v1.PredictionService.GenerateContent",
-            "resourceName": engine, "authenticationInfo": {"principalEmail": "dev@acme.example"},
-            "requestMetadata": {"callerIp": "203.0.113.5", "callerSuppliedUserAgent": "langchain/0.3"}}}]},
-    })
+    fake = FakeGoogle(
+        {
+            "/services": enabled(
+                "aiplatform.googleapis.com",
+                "dialogflow.googleapis.com",
+                "discoveryengine.googleapis.com",
+                "cloudfunctions.googleapis.com",
+                "apikeys.googleapis.com",
+                "secretmanager.googleapis.com",
+            ),
+            "/reasoningEngines": {
+                "reasoningEngines": [
+                    {"name": engine, "displayName": "negotiator", "spec": {"agentFramework": "google-adk"}}
+                ]
+            },
+            "/endpoints": {
+                "endpoints": [
+                    {
+                        "name": f"projects/{PROJECT}/locations/us-central1/endpoints/1",
+                        "deployedModels": [{"model": "publishers/google/models/gemini-1.5-pro"}],
+                    }
+                ]
+            },
+            "/global/agents": {
+                "agents": [
+                    {"name": f"projects/{PROJECT}/locations/global/agents/a", "displayName": "helpdesk"}
+                ]
+            },
+            "/global/collections/default_collection/engines": {
+                "engines": [
+                    {
+                        "name": f"projects/{PROJECT}/locations/global/collections/default_collection/engines/e",
+                        "displayName": "support",
+                        "solutionType": "SOLUTION_TYPE_CHAT",
+                    }
+                ]
+            },
+            "/functions": {"functions": [{"name": f"projects/{PROJECT}/locations/us-central1/functions/f"}]},
+            "/serviceAccounts": {
+                "accounts": [
+                    {"name": SA_NAME, "displayName": "CrewAI agent runner"},
+                    {"name": "projects/other/../escape", "displayName": "bad"},
+                ]
+            },
+            # Service-account keys (IAM) and API keys (API Keys service) share the /keys suffix.
+            "/keys": lambda url: (
+                {"keys": [{"name": "k"}]}
+                if url.startswith("https://iam.")
+                else {
+                    "keys": [
+                        {
+                            "name": "projects/1/locations/global/keys/k1",
+                            "displayName": "gemini-dev",
+                            "restrictions": {},
+                        }
+                    ]
+                }
+            ),
+            "/secrets": {
+                "secrets": [
+                    {
+                        "name": "projects/1/secrets/openai-api-key",
+                        "createTime": "2025-01-01",
+                        "labels": {"team": "ml"},
+                        "replication": {"automatic": {}},
+                    }
+                ]
+            },
+        },
+        posts={
+            ":getIamPolicy": {
+                "bindings": [{"role": "roles/aiplatform.user", "members": ["user:dev@acme.example"]}]
+            },
+            "entries:list": {
+                "entries": [
+                    {
+                        "timestamp": "2025-09-01T00:00:00Z",
+                        "protoPayload": {
+                            "methodName": "google.cloud.aiplatform.v1.PredictionService.GenerateContent",
+                            "resourceName": engine,
+                            "authenticationInfo": {"principalEmail": "dev@acme.example"},
+                            "requestMetadata": {
+                                "callerIp": "203.0.113.5",
+                                "callerSuppliedUserAgent": "langchain/0.3",
+                            },
+                        },
+                    }
+                ]
+            },
+        },
+    )
     connector.http = fake  # type: ignore[assignment]
     records = list(connector._collect_project(PROJECT))
 
     assert [r["_kind"] for r in records] == [
-        "project", "reasoning-engine", "vertex-endpoint", "dialogflow-agent", "discovery-engine",
-        "cloud-function", "iam-policy", "service-account", "api-key", "secret-name", "audit-event",
+        "project",
+        "reasoning-engine",
+        "vertex-endpoint",
+        "dialogflow-agent",
+        "discovery-engine",
+        "cloud-function",
+        "iam-policy",
+        "service-account",
+        "api-key",
+        "secret-name",
+        "audit-event",
     ]
     assert records[0]["ai_services"] == [
-        "aiplatform.googleapis.com", "dialogflow.googleapis.com", "discoveryengine.googleapis.com",
+        "aiplatform.googleapis.com",
+        "dialogflow.googleapis.com",
+        "discoveryengine.googleapis.com",
     ]
     urls = [url for url, _ in fake.gets]
     # Vertex uses regional hosts; Dialogflow covers global plus every location; Discovery
@@ -175,7 +245,9 @@ def test_gcp_project_collection_walks_every_enabled_ai_service(index):
     assert f"{vertex}/reasoningEngines" in urls and f"{vertex}/endpoints" in urls
     assert sum("dialogflow.googleapis.com" in url for url in urls) == 2
     assert [url.split("/locations/")[1].split("/")[0] for url in urls if "discoveryengine" in url] == [
-        "global", "us", "eu",
+        "global",
+        "us",
+        "eu",
     ]
     assert (f"https://iam.googleapis.com/v1/{SA_NAME}/keys", {"keyTypes": "USER_MANAGED"}) in fake.gets
     secret = next(r for r in records if r["_kind"] == "secret-name")
@@ -199,15 +271,18 @@ def test_gcp_project_collection_walks_every_enabled_ai_service(index):
     assert "framework.google-adk" in findings["reasoning-engine"][0].frameworks
     assert findings["dialogflow-cx-agent"][0].kind == Kind.AGENT
     assert findings["secret-manager-secret"][0].metadata["labels"] == {"team": "ml"}
-    caller, = findings["caller/principal"]
+    (caller,) = findings["caller/principal"]
     assert caller.metadata["user_agents"] == {"langchain/0.3": 1}
 
 
 def test_gcp_invalid_iam_policy_response_is_incomplete_without_losing_accounts(index):
     connector = GcpConnector(context(index))
     connector.http = FakeGoogle(  # type: ignore[assignment]
-        {"/services": enabled(), "/serviceAccounts": {"accounts": [{"name": SA_NAME}]},
-         "/keys": {"keys": []}},
+        {
+            "/services": enabled(),
+            "/serviceAccounts": {"accounts": [{"name": SA_NAME}]},
+            "/keys": {"keys": []},
+        },
         posts={":getIamPolicy": {"error": {"code": 403, "status": "PERMISSION_DENIED"}}},
     )
     records = list(connector._collect_project(PROJECT))
@@ -218,8 +293,9 @@ def test_gcp_invalid_iam_policy_response_is_incomplete_without_losing_accounts(i
 
 def test_gcp_empty_service_usage_response_is_not_an_empty_project(index):
     connector = GcpConnector(context(index))
-    fake = FakeGoogle({"/services": None, "/serviceAccounts": {"accounts": []}},
-                      posts={":getIamPolicy": {"bindings": []}})
+    fake = FakeGoogle(
+        {"/services": None, "/serviceAccounts": {"accounts": []}}, posts={":getIamPolicy": {"bindings": []}}
+    )
     connector.http = fake  # type: ignore[assignment]
     records = list(connector._collect_project(PROJECT))
     assert records[0] == {"_kind": "project", "project": PROJECT, "ai_services": []}
@@ -227,17 +303,29 @@ def test_gcp_empty_service_usage_response_is_not_an_empty_project(index):
     assert any("empty response" in w for w in connector.ctx.stats.warnings)
 
 
-@pytest.mark.parametrize("responses,warning,expected", [
-    ([HttpError(403, "https://logging.googleapis.com")], "audit logs not readable", 0),
-    ([requests.ConnectionError("reset")], "audit logs not readable", 0),
-    ([{"error": {"code": 400}}], "invalid audit log response", 0),
-    ([{"entries": "not-a-list"}], "invalid audit log response", 0),
-    ([{"entries": ["bad", {"protoPayload": "bad"}, {"protoPayload": {"methodName": "Predict"}}]}],
-     "invalid audit log entry", 1),
-    ([{"entries": [{"protoPayload": {}}], "nextPageToken": "a"},
-      {"entries": [{"protoPayload": {}}], "nextPageToken": "a"}], "repeated audit pagination token", 2),
-    ([{"entries": [], "nextPageToken": 5}], "repeated audit pagination token", 0),
-])
+@pytest.mark.parametrize(
+    "responses,warning,expected",
+    [
+        ([HttpError(403, "https://logging.googleapis.com")], "audit logs not readable", 0),
+        ([requests.ConnectionError("reset")], "audit logs not readable", 0),
+        ([{"error": {"code": 400}}], "invalid audit log response", 0),
+        ([{"entries": "not-a-list"}], "invalid audit log response", 0),
+        (
+            [{"entries": ["bad", {"protoPayload": "bad"}, {"protoPayload": {"methodName": "Predict"}}]}],
+            "invalid audit log entry",
+            1,
+        ),
+        (
+            [
+                {"entries": [{"protoPayload": {}}], "nextPageToken": "a"},
+                {"entries": [{"protoPayload": {}}], "nextPageToken": "a"},
+            ],
+            "repeated audit pagination token",
+            2,
+        ),
+        ([{"entries": [], "nextPageToken": 5}], "repeated audit pagination token", 0),
+    ],
+)
 def test_gcp_audit_collection_fails_closed_and_keeps_observed_events(index, responses, warning, expected):
     connector = GcpConnector(context(index, audit_days=1))
     connector.http = Mock()
@@ -263,15 +351,23 @@ def test_gcp_audit_pages_forward_their_continuation_token(index):
 
 def test_gcp_collect_discovers_active_projects_and_stops_at_max_projects(index):
     connector = GcpConnector(context(index, max_projects=1))
-    fake = FakeGoogle({
-        "/v1/projects": {"projects": [{"projectId": "first"}, {"name": "no-id"}, {"projectId": "second"}]},
-        "/services": enabled(), "/serviceAccounts": {"accounts": []},
-    }, posts={":getIamPolicy": {"bindings": []}})
+    fake = FakeGoogle(
+        {
+            "/v1/projects": {
+                "projects": [{"projectId": "first"}, {"name": "no-id"}, {"projectId": "second"}]
+            },
+            "/services": enabled(),
+            "/serviceAccounts": {"accounts": []},
+        },
+        posts={":getIamPolicy": {"bindings": []}},
+    )
     connector._auth = lambda: setattr(connector, "http", fake)  # type: ignore[method-assign]
     records = list(connector.collect())
     assert [r["project"] for r in records if r["_kind"] == "project"] == ["first"]
-    assert fake.gets[0] == ("https://cloudresourcemanager.googleapis.com/v1/projects",
-                            {"filter": "lifecycleState:ACTIVE"})
+    assert fake.gets[0] == (
+        "https://cloudresourcemanager.googleapis.com/v1/projects",
+        {"filter": "lifecycleState:ACTIVE"},
+    )
     assert "cloud.gcp: max_projects reached" in connector.ctx.stats.warnings
     assert connector.ctx.stats.incomplete
 
@@ -355,7 +451,11 @@ def test_gcp_https_credential_requests_use_the_bounded_client(index, monkeypatch
     session.client.request = Mock(return_value="token-response")
     assert session.request("POST", "https://oauth2.googleapis.com/token", data={"a": "b"}) == "token-response"
     session.client.request.assert_called_once_with(
-        "POST", "https://oauth2.googleapis.com/token", raise_for_status=False, data={"a": "b"}, stream=False,
+        "POST",
+        "https://oauth2.googleapis.com/token",
+        raise_for_status=False,
+        data={"a": "b"},
+        stream=False,
     )
     session.client.session.close = Mock()
     session.close()
@@ -403,7 +503,11 @@ def stats_context(index, **config):
 @pytest.mark.parametrize("keys", [None, [], {"error": {}}, {"keys": None}, {"keys": [1]}])
 def test_gcp_unknown_key_inventory_is_not_zero_keys(index, keys):
     connector = GcpConnector(stats_context(index, projects="project-one"))
-    account = {"name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com", "email": "crew@project-one.iam.gserviceaccount.com", "displayName": "n8n agent runner"}
+    account = {
+        "name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com",
+        "email": "crew@project-one.iam.gserviceaccount.com",
+        "displayName": "n8n agent runner",
+    }
     connector._pages = lambda url, *a, **kw: iter([account]) if url.endswith("/serviceAccounts") else iter([])
     connector._get = Mock(return_value=keys)
     connector.http = Mock()
@@ -421,7 +525,10 @@ def test_gcp_unknown_key_inventory_is_not_zero_keys(index, keys):
 @pytest.mark.parametrize("keys,count", [({}, 0), ({"keys": []}, 0), ({"keys": [{"name": "key-one"}]}, 1)])
 def test_gcp_observed_key_inventory_keeps_true_count(index, keys, count):
     connector = GcpConnector(stats_context(index))
-    account = {"name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com", "displayName": "CrewAI agent runner"}
+    account = {
+        "name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com",
+        "displayName": "CrewAI agent runner",
+    }
     connector._pages = lambda url, *a, **kw: iter([account]) if url.endswith("/serviceAccounts") else iter([])
     connector._get = Mock(return_value=keys)
     connector.http = Mock()
@@ -440,7 +547,10 @@ def test_gcp_repeated_pagination_token_preserves_partial_data_but_marks_incomple
         {"items": [{"id": "first"}], "nextPageToken": "same"},
         {"items": [{"id": "second"}], "nextPageToken": "same"},
     ]
-    assert [item["id"] for item in connector._pages("https://example.googleapis.com/v1/items", "items")] == ["first", "second"]
+    assert [item["id"] for item in connector._pages("https://example.googleapis.com/v1/items", "items")] == [
+        "first",
+        "second",
+    ]
     assert connector.http.get_json.call_count == 2
     assert ctx.stats.incomplete
 

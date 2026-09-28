@@ -18,8 +18,7 @@ from dataclasses import dataclass
 
 JOB_DEADLINE_EXIT_CODE = 3
 JOB_DEADLINE_MESSAGE = (
-    "job deadline exceeded; exiting without waiting for blocked workers "
-    "(scan coverage is incomplete)"
+    "job deadline exceeded; exiting without waiting for blocked workers (scan coverage is incomplete)"
 )
 
 

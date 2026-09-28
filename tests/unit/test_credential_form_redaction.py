@@ -34,15 +34,30 @@ PASSWORD = _random(ALNUM + "!@%^*-_.~", 20)
 # (source, secret, text that must survive)
 FORMS: list[tuple[str, str, str]] = [
     # Credential constructors and helpers with positional string arguments.
-    ('var client = new OpenAIClient(new Uri("https://contoso.openai.azure.com/"), '
-     f'new AzureKeyCredential("{HEX}"));', HEX, '"https://contoso.openai.azure.com/"'),
-    (f'OpenAIClient client = new OpenAIClientBuilder().endpoint("{AZURE}")'
-     f'.credential(new AzureKeyCredential("{HEX}")).buildClient();', HEX, AZURE),
-    (f'client = ChatCompletionsClient("https://contoso.openai.azure.com/", AzureKeyCredential("{HEX}"))',
-     HEX, "ChatCompletionsClient"),
+    (
+        'var client = new OpenAIClient(new Uri("https://contoso.openai.azure.com/"), '
+        f'new AzureKeyCredential("{HEX}"));',
+        HEX,
+        '"https://contoso.openai.azure.com/"',
+    ),
+    (
+        f'OpenAIClient client = new OpenAIClientBuilder().endpoint("{AZURE}")'
+        f'.credential(new AzureKeyCredential("{HEX}")).buildClient();',
+        HEX,
+        AZURE,
+    ),
+    (
+        f'client = ChatCompletionsClient("https://contoso.openai.azure.com/", AzureKeyCredential("{HEX}"))',
+        HEX,
+        "ChatCompletionsClient",
+    ),
     (f'const azureKey = new AzureKeyCredential("{HEX}");', HEX, "const azureKey = new AzureKeyCredential("),
-    ('client, err := azopenai.NewClientWithKeyCredential("https://contoso.openai.azure.com/", '
-     f'azcore.NewKeyCredential("{HEX}"), nil)', HEX, "https://contoso.openai.azure.com/"),
+    (
+        'client, err := azopenai.NewClientWithKeyCredential("https://contoso.openai.azure.com/", '
+        f'azcore.NewKeyCredential("{HEX}"), nil)',
+        HEX,
+        "https://contoso.openai.azure.com/",
+    ),
     (f'var cred = new KeyCredential("{BASE62}");', BASE62, "var cred = new KeyCredential("),
     (f'var chat = new ChatClient("gpt-4o", new ApiKeyCredential("{BASE62}"));', BASE62, '"gpt-4o"'),
     (f'var cred = new AzureNamedKeyCredential("contosostorage", "{BASE64}");', BASE64, '"contosostorage"'),
@@ -69,8 +84,11 @@ FORMS: list[tuple[str, str, str]] = [
     (f'Request.builder().header("x-api-key", "{HEX}").build()', HEX, '.header("x-api-key", '),
     (f'given().auth().oauth2("{BASE62}").when().get("/v1/models")', BASE62, '.get("/v1/models")'),
     (f'given().auth().basic("svc", "{PASSWORD}").when()', PASSWORD, '.basic("svc", '),
-    (f'given()\n    .auth()\n    .preemptive()\n    .basic("svc", "{PASSWORD}")\n', PASSWORD,
-     '.basic("svc", '),
+    (
+        f'given()\n    .auth()\n    .preemptive()\n    .basic("svc", "{PASSWORD}")\n',
+        PASSWORD,
+        '.basic("svc", ',
+    ),
     (f'client?.setApiKey("{HEX}")', HEX, "client?.setApiKey("),
     # Python f-strings, backtick-only text, Rust paths and C# target-typed construction.
     (f'cred = AzureKeyCredential(f"{HEX}")', HEX, "cred = AzureKeyCredential("),
@@ -82,8 +100,7 @@ FORMS: list[tuple[str, str, str]] = [
     (f'private static readonly ApiKeyCredential? Openai = new("{BASE62}");', BASE62, "Openai = new("),
     (f'AzureKeyCredential @openai = new("{HEX}");', HEX, "AzureKeyCredential @openai = new("),
     # Command lines in shell scripts, CI YAML, Makefiles and argv lists.
-    (f'curl -u "svc:{HEX}" https://contoso.openai.azure.com/openai/deployments', HEX,
-     '"svc:'),
+    (f'curl -u "svc:{HEX}" https://contoso.openai.azure.com/openai/deployments', HEX, '"svc:'),
     (f"curl --api-key={HEX} https://api.openai.com/v1/models", HEX, "https://api.openai.com/v1/models"),
     (f"curl --api-key={HEX}=--token=chained", HEX, "curl --api-key="),
     (f'echo "prefix"--token {HEX}', HEX, 'echo "prefix"--token '),
@@ -109,15 +126,24 @@ FORMS: list[tuple[str, str, str]] = [
     (f"az login --service-principal -u app-id -p {PASSWORD} --tenant contoso", PASSWORD, "--tenant contoso"),
     (f"az acr login --name contoso -u svc -p {BASE62}", BASE62, "--name contoso -u svc -p "),
     (f"oc login https://api.example.com:6443 -u dev -p {PASSWORD}", PASSWORD, "-u dev -p "),
-    (f"cf login -a https://api.example.com -u dev -p {PASSWORD}", PASSWORD,
-     "cf login -a https://api.example.com"),
+    (
+        f"cf login -a https://api.example.com -u dev -p {PASSWORD}",
+        PASSWORD,
+        "cf login -a https://api.example.com",
+    ),
     (f"echo {HEX} | docker login -u svc --password-stdin contoso.azurecr.io", HEX, "| docker login -u svc"),
-    (f"echo -n '{PASSWORD}' | helm registry login -u svc --password-stdin r.example.com", PASSWORD,
-     "echo -n '"),
+    (
+        f"echo -n '{PASSWORD}' | helm registry login -u svc --password-stdin r.example.com",
+        PASSWORD,
+        "echo -n '",
+    ),
     # Literal defaults of credentials read from the environment.
     (f'const k = process.env.OPENAI_API_KEY || "{HEX}";', HEX, "process.env.OPENAI_API_KEY || "),
-    (f'var k = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? "{HEX}";', HEX,
-     'GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? '),
+    (
+        f'var k = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? "{HEX}";',
+        HEX,
+        'GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? ',
+    ),
     (f'k = os.getenv("OPENAI_API_KEY") or "{HEX}"', HEX, 'os.getenv("OPENAI_API_KEY") or '),
     (f'val k = System.getenv("OPENAI_API_KEY") ?: "{BASE62}"', BASE62, 'System.getenv("OPENAI_API_KEY") ?: '),
     (f'k = ENV["OPENAI_API_KEY"] || "{HEX}"', HEX, 'ENV["OPENAI_API_KEY"] || '),
@@ -134,11 +160,11 @@ FORMS: list[tuple[str, str, str]] = [
     (f'api_key <- "{HEX}"\n', HEX, "api_key <- "),
     (f'openai_token <<- "{BASE62}"\n', BASE62, "openai_token <<- "),
     (f'let openaiKey = "{HEX}";', HEX, "let openaiKey = "),
-    (f'const azureOpenAIKey = `{BASE62}`;', BASE62, "const azureOpenAIKey = "),
+    (f"const azureOpenAIKey = `{BASE62}`;", BASE62, "const azureOpenAIKey = "),
     (f'const openaiKey: string = "{HEX}";', HEX, "const openaiKey: string = "),
     (f'val anthropicKey: String? = "{BASE62}"', BASE62, "val anthropicKey: String? = "),
     (f"OPENAI_KEY ?= {HEX}\n", HEX, "OPENAI_KEY ?= "),
-    (f'openai.key={HEX}\n', HEX, "openai.key="),
+    (f"openai.key={HEX}\n", HEX, "openai.key="),
     (f'{{"anthropicKey": "{BASE62}", "model": "claude-sonnet-4"}}', BASE62, '"model": "claude-sonnet-4"'),
     (f'key = "{HEX}"', HEX, "key = "),
     (f"invalid token:\n{BASE62}\n", BASE62, "invalid token:\n"),
@@ -218,8 +244,11 @@ FORMS: list[tuple[str, str, str]] = [
     (f'[openai]\n"api-key" = "{HEX}"\n', HEX, '"api-key" = '),
     (f"if token:\n    return token\nopenai:\n  api_key: {HEX}\n", HEX, "    return token"),
     # Name/value records in container environments and parameter lists.
-    (f"env:\n  - name: OPENAI_API_KEY\n    value: {HEX}\n  - name: MODEL\n    value: gpt-4o\n", HEX,
-     "value: gpt-4o"),
+    (
+        f"env:\n  - name: OPENAI_API_KEY\n    value: {HEX}\n  - name: MODEL\n    value: gpt-4o\n",
+        HEX,
+        "value: gpt-4o",
+    ),
     (f'{{"name": "AZURE_OPENAI_API_KEY", "value": "{HEX}"}}', HEX, '"AZURE_OPENAI_API_KEY"'),
     (f'environment = [{{ name = "OPENAI_API_KEY", value = "{HEX}" }}]', HEX, '"OPENAI_API_KEY"'),
     (f"- name: OPENAI_API_KEY\n  value: |\n    {HEX}\n- name: MODEL\n", HEX, "- name: MODEL"),
@@ -235,8 +264,11 @@ FORMS: list[tuple[str, str, str]] = [
     (f"Name: TOKEN Value: {BASE62}", BASE62, "Name: TOKEN Value: "),
     (f"{{key: token, value: {HEX}}}", HEX, "{key: token, value: "),
     (f'<add key="api_key" value="{HEX}', HEX, '<add key="api_key" value='),
-    (f"{{name: OPENAI_API_KEY, value: https://svc:{BASE62}@api.openai.com/v1}}", BASE62,
-     "{name: OPENAI_API_KEY"),
+    (
+        f"{{name: OPENAI_API_KEY, value: https://svc:{BASE62}@api.openai.com/v1}}",
+        BASE62,
+        "{name: OPENAI_API_KEY",
+    ),
     # A quoted value under a setting name runs to its closing quote, past a
     # '}' inside it (a name the established rules read is cut there: see the
     # documented gaps below).
@@ -302,141 +334,144 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
     assert sanitize_text(safe) == safe
 
 
-@pytest.mark.parametrize("source", [
-    'client = AzureKeyCredential(os.environ["AZURE_OPENAI_API_KEY"])',
-    'var cred = new AzureKeyCredential(Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY"));',
-    'get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")',
-    'cred = AzureKeyCredential("<your-api-key>")',
-    'cred = AzureKeyCredential("YOUR_API_KEY")',
-    'cred = AzureKeyCredential("your-azure-openai-key")',
-    'var chat = new ChatClient("gpt-4o-mini", new ApiKeyCredential(key));',
-    'AzureNamedKeyCredential("account", key)',
-    'user_id = Column(Integer, ForeignKey("users.id"))',
-    'ids = tokenizer.encode("hello world")',
-    'raise KeyError("api_version")',
-    'enc = tiktoken.encoding_for_model("gpt-4o")',
-    'n = count_tokens("text-embedding-3-small")',
-    'client = openai.NewClient(os.Getenv("OPENAI_API_KEY"))',
-    "94 | Cosmetic | Spelling error on Login ('log|n')",
-    "tool --token-file /run/secrets/token",
-    "tool --token --verbose",
-    'args: ["--password=--verbose"]',
-    "curl --api-key $OPENAI_API_KEY https://api.openai.com",
-    'curl --api-key "${OPENAI_API_KEY}" https://api.openai.com',
-    'echo "$TOKEN" | docker login --password-stdin -u user',
-    "usage: tool [--token TOKEN] [--api-key API_KEY]",
-    "Use --token to authenticate against the API.",
-    'parser.add_argument("--api-key", help="OpenAI key")',
-    "docker run -u 1000:1000 image",
-    'curl -u "$USER:$PASS" https://example.test',
-    "python -u script.py --model gpt-4o",
-    'curl -H "Content-Type:application/json" https://api.openai.com',
-    'setx OPENAI_API_KEY "%OPENAI_API_KEY%"',
-    "ENV OPENAI_BASE_URL https://api.openai.com/v1",
-    "<password>${env.PASSWORD}</password>",
-    '<add key="Endpoint" value="https://contoso.openai.azure.com/"/>',
-    "List<Token> tokens = new ArrayList<>();",
-    '<input type="password" name="password" value="">',
-    "env:\n  - name: MODEL\n    value: gpt-4o\n",
-    "env:\n  - name: OPENAI_API_KEY\n    valueFrom:\n      secretKeyRef: {name: openai, key: api-key}\n",
-    "requests.get(url, auth=(username, password))",
-    'if headers["token"] == "expected": pass',
-    'value = lookup("token") or "default"',
-    # Prose and checks that name a credential without presenting one.
-    "Env token should be set before the job runs",
-    'requireAuth("admin")',
-    'const { user } = useAuth("github");',
-    'if (!verifyToken("session")) return;',
-    'names = list().stream().of("alpha", "beta2gamma9Delta")',
-    'Stream.of("alpha", "beta2gamma9Delta").map(Token::new)',
-    # '-p' is a port, a path flag or a password prompt outside a login.
-    "docker run -p 8080:80 ghcr.io/example/app",
-    "mkdir -p build/output",
-    "ssh -p 2222 svc@build.example.com",
-    "mysql -u root -p app",
-    "docker login -u svc --password-stdin registry.example.com",
-    'docker login -u svc -p "$REGISTRY_PASSWORD" registry.example.com',
-    "docker login -u svc registry.example.com && docker run -p 8080:80 app",
-    "docker login -u svc -p\n",
-    # Types, identifiers and ordinary values under names ending in a credential word.
-    "def sign(self, msg: bytes, key: EllipticCurvePrivateKey) -> bytes:",
-    "key: Ed25519PrivateKey | Ed448PrivateKey",
-    "key = Ed25519PrivateKey",
-    'sortKey = "createdAtDescending"',
-    'cacheKey = "user:123"',
-    'const cacheKey: string = "users-by-id";',
-    "nextPageToken = response.next_page_token",
-    f'monkey = "{HEX}"',
-    f'bypass = "{HEX}"',
-    f"const openaiKey = `${{prefix}}{HEX}`;",
-    f"name:\n{BASE62}\n",
-    "#define API_KEY_LENGTH 32",
-    "#define GET_TOKEN(name) lookup(name)",
-    "if (count<-1) return;",
-    "x <- c(1, 2, 3)",
-    "token:\nexpired\n",
-    # Fallback defaults, construction and paths that present no credential.
-    'k = os.environ.get("OPENAI_API_KEY") or "default"',
-    'const name = user.name || "anonymous"',
-    'const key = process.env.OPENAI_API_KEY || ""',
-    'const key = process.env.OPENAI_API_KEY || "<your-api-key>"',
-    'const model = process.env.OPENAI_MODEL || "gpt-4o-mini"',
-    f'const region = process.env.AZURE_REGION ?? "{HEX}"',
-    "echo ${OPENAI_API_KEY:-}",
-    "echo ${OPENAI_API_KEY:-$FALLBACK_API_KEY}",
-    "echo ${OPENAI_MODEL:-gpt-4o}",
-    "echo ${GITHUB_TOKEN:-none} ${OPENAI_API_KEY:-your-api-key}",
-    'cred = AzureKeyCredential(f"{key}")',
-    'var cred = new AzureKeyCredential($"{prefix}{suffix}");',
-    'const label = format(item) ?? "untitled-9"',
-    f'Uri endpoint = new("{AZURE}");',
-    f'List<string> names = new("{HEX}");',
-    f'Map<String,\n    String> names = new("{HEX}");',
-    f'if (cache == new("{HEX}")) return;',
-    f'items[0] = new("{HEX}");',
-    f'c = new("{HEX}");',
-    'let kind = TokenKind::Ident("name".to_string());',
-    # A URL after '-a' is an API endpoint, not user:password.
-    "cf login -a https://api.example.com -u dev",
-    "http -a https://example.com/items",
-    "az login --use-device-code && az acr login --name contoso",
-    "echo ${{ secrets.ACR_PASSWORD }} | docker login -u svc --password-stdin contoso.azurecr.io",
-    "echo hello | tee out.txt; docker login -u svc --password-stdin",
-    # Settings whose last word names a credential keep ordinary values, as the
-    # same names do in assignments ('cacheKey = "user:123"').
-    '<add key="CacheKey" value="users"/>',
-    '<add key="SortKey" value="createdAt"/>',
-    '<add key="AzureOpenAI:Key" value="YOUR_API_KEY"/>',
-    '<add key="AzureOpenAI:Key" value="%AZURE_OPENAI_KEY%"/>',
-    '<add key="Logging:LogLevel:Default" value="Information"/>',
-    '<add key="OpenAI:Endpoint" value="https://contoso.openai.azure.com/"/>',
-    "<PartitionKey>users</PartitionKey>",
-    "<Key>photos/2024/img.jpg</Key>",
-    "<NextToken></NextToken>",
-    '<entry key="openai.token">${OPENAI_TOKEN}</entry>',
-    '<setting name="OpenAIKey"><value>short</value></setting>',
-    '<input name="key" value="enter">',
-    "{name: pageToken, value: next}",
-    "{name: OpenAIKey, value: ${OPENAI_KEY}}",
-    '{name: OpenAI:Secret, value: "${OPENAI_SECRET}"}',
-    "- name: cacheKey\n  value: users\n",
-    "- name: OpenAIKey\n  value: |\n    first line\n    second line\n",
-    '<add key="CacheKey" value="users">users-by-id</add>',
-    '<OpenAIKey key="Region" value="eu">users</OpenAIKey>',
-    '<apiKey name="OpenAI:Secret" value="${OPENAI_SECRET}">${OPENAI_SECRET}</apiKey>',
-    # Unquoted YAML values that are words, paths or too short to be keys.
-    "cacheKey: users-by-id\nsortKey: createdAtDescending\npageToken: nextPage2\n",
-    "key: photos/2024/img.jpg\nkey: Ed25519PrivateKey\nopenaiKey: OpenAIKeyType;\nkey: a1b2c3\n",
-    "key:a1b2c3d4e5f6a7b8",
-    # Options and numbered names keep ordinary values.
-    "tool --key users --sort-key name --cache-key users-by-id",
-    "curl -k https://example.com --key client.pem --key-file ~/.ssh/id_ed25519",
-    f"tool --no-key {HEX}",
-    "payload = dict(key1='value1', key2='value2')",
-    'dotnet user-secrets set "AzureOpenAI:Endpoint" "https://contoso.openai.azure.com/"',
-    'dotnet user-secrets set "AzureOpenAI:Key" "$AZURE_OPENAI_KEY"',
-    "dotnet user-secrets list --project src/Api",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        'client = AzureKeyCredential(os.environ["AZURE_OPENAI_API_KEY"])',
+        'var cred = new AzureKeyCredential(Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY"));',
+        'get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")',
+        'cred = AzureKeyCredential("<your-api-key>")',
+        'cred = AzureKeyCredential("YOUR_API_KEY")',
+        'cred = AzureKeyCredential("your-azure-openai-key")',
+        'var chat = new ChatClient("gpt-4o-mini", new ApiKeyCredential(key));',
+        'AzureNamedKeyCredential("account", key)',
+        'user_id = Column(Integer, ForeignKey("users.id"))',
+        'ids = tokenizer.encode("hello world")',
+        'raise KeyError("api_version")',
+        'enc = tiktoken.encoding_for_model("gpt-4o")',
+        'n = count_tokens("text-embedding-3-small")',
+        'client = openai.NewClient(os.Getenv("OPENAI_API_KEY"))',
+        "94 | Cosmetic | Spelling error on Login ('log|n')",
+        "tool --token-file /run/secrets/token",
+        "tool --token --verbose",
+        'args: ["--password=--verbose"]',
+        "curl --api-key $OPENAI_API_KEY https://api.openai.com",
+        'curl --api-key "${OPENAI_API_KEY}" https://api.openai.com',
+        'echo "$TOKEN" | docker login --password-stdin -u user',
+        "usage: tool [--token TOKEN] [--api-key API_KEY]",
+        "Use --token to authenticate against the API.",
+        'parser.add_argument("--api-key", help="OpenAI key")',
+        "docker run -u 1000:1000 image",
+        'curl -u "$USER:$PASS" https://example.test',
+        "python -u script.py --model gpt-4o",
+        'curl -H "Content-Type:application/json" https://api.openai.com',
+        'setx OPENAI_API_KEY "%OPENAI_API_KEY%"',
+        "ENV OPENAI_BASE_URL https://api.openai.com/v1",
+        "<password>${env.PASSWORD}</password>",
+        '<add key="Endpoint" value="https://contoso.openai.azure.com/"/>',
+        "List<Token> tokens = new ArrayList<>();",
+        '<input type="password" name="password" value="">',
+        "env:\n  - name: MODEL\n    value: gpt-4o\n",
+        "env:\n  - name: OPENAI_API_KEY\n    valueFrom:\n      secretKeyRef: {name: openai, key: api-key}\n",
+        "requests.get(url, auth=(username, password))",
+        'if headers["token"] == "expected": pass',
+        'value = lookup("token") or "default"',
+        # Prose and checks that name a credential without presenting one.
+        "Env token should be set before the job runs",
+        'requireAuth("admin")',
+        'const { user } = useAuth("github");',
+        'if (!verifyToken("session")) return;',
+        'names = list().stream().of("alpha", "beta2gamma9Delta")',
+        'Stream.of("alpha", "beta2gamma9Delta").map(Token::new)',
+        # '-p' is a port, a path flag or a password prompt outside a login.
+        "docker run -p 8080:80 ghcr.io/example/app",
+        "mkdir -p build/output",
+        "ssh -p 2222 svc@build.example.com",
+        "mysql -u root -p app",
+        "docker login -u svc --password-stdin registry.example.com",
+        'docker login -u svc -p "$REGISTRY_PASSWORD" registry.example.com',
+        "docker login -u svc registry.example.com && docker run -p 8080:80 app",
+        "docker login -u svc -p\n",
+        # Types, identifiers and ordinary values under names ending in a credential word.
+        "def sign(self, msg: bytes, key: EllipticCurvePrivateKey) -> bytes:",
+        "key: Ed25519PrivateKey | Ed448PrivateKey",
+        "key = Ed25519PrivateKey",
+        'sortKey = "createdAtDescending"',
+        'cacheKey = "user:123"',
+        'const cacheKey: string = "users-by-id";',
+        "nextPageToken = response.next_page_token",
+        f'monkey = "{HEX}"',
+        f'bypass = "{HEX}"',
+        f"const openaiKey = `${{prefix}}{HEX}`;",
+        f"name:\n{BASE62}\n",
+        "#define API_KEY_LENGTH 32",
+        "#define GET_TOKEN(name) lookup(name)",
+        "if (count<-1) return;",
+        "x <- c(1, 2, 3)",
+        "token:\nexpired\n",
+        # Fallback defaults, construction and paths that present no credential.
+        'k = os.environ.get("OPENAI_API_KEY") or "default"',
+        'const name = user.name || "anonymous"',
+        'const key = process.env.OPENAI_API_KEY || ""',
+        'const key = process.env.OPENAI_API_KEY || "<your-api-key>"',
+        'const model = process.env.OPENAI_MODEL || "gpt-4o-mini"',
+        f'const region = process.env.AZURE_REGION ?? "{HEX}"',
+        "echo ${OPENAI_API_KEY:-}",
+        "echo ${OPENAI_API_KEY:-$FALLBACK_API_KEY}",
+        "echo ${OPENAI_MODEL:-gpt-4o}",
+        "echo ${GITHUB_TOKEN:-none} ${OPENAI_API_KEY:-your-api-key}",
+        'cred = AzureKeyCredential(f"{key}")',
+        'var cred = new AzureKeyCredential($"{prefix}{suffix}");',
+        'const label = format(item) ?? "untitled-9"',
+        f'Uri endpoint = new("{AZURE}");',
+        f'List<string> names = new("{HEX}");',
+        f'Map<String,\n    String> names = new("{HEX}");',
+        f'if (cache == new("{HEX}")) return;',
+        f'items[0] = new("{HEX}");',
+        f'c = new("{HEX}");',
+        'let kind = TokenKind::Ident("name".to_string());',
+        # A URL after '-a' is an API endpoint, not user:password.
+        "cf login -a https://api.example.com -u dev",
+        "http -a https://example.com/items",
+        "az login --use-device-code && az acr login --name contoso",
+        "echo ${{ secrets.ACR_PASSWORD }} | docker login -u svc --password-stdin contoso.azurecr.io",
+        "echo hello | tee out.txt; docker login -u svc --password-stdin",
+        # Settings whose last word names a credential keep ordinary values, as the
+        # same names do in assignments ('cacheKey = "user:123"').
+        '<add key="CacheKey" value="users"/>',
+        '<add key="SortKey" value="createdAt"/>',
+        '<add key="AzureOpenAI:Key" value="YOUR_API_KEY"/>',
+        '<add key="AzureOpenAI:Key" value="%AZURE_OPENAI_KEY%"/>',
+        '<add key="Logging:LogLevel:Default" value="Information"/>',
+        '<add key="OpenAI:Endpoint" value="https://contoso.openai.azure.com/"/>',
+        "<PartitionKey>users</PartitionKey>",
+        "<Key>photos/2024/img.jpg</Key>",
+        "<NextToken></NextToken>",
+        '<entry key="openai.token">${OPENAI_TOKEN}</entry>',
+        '<setting name="OpenAIKey"><value>short</value></setting>',
+        '<input name="key" value="enter">',
+        "{name: pageToken, value: next}",
+        "{name: OpenAIKey, value: ${OPENAI_KEY}}",
+        '{name: OpenAI:Secret, value: "${OPENAI_SECRET}"}',
+        "- name: cacheKey\n  value: users\n",
+        "- name: OpenAIKey\n  value: |\n    first line\n    second line\n",
+        '<add key="CacheKey" value="users">users-by-id</add>',
+        '<OpenAIKey key="Region" value="eu">users</OpenAIKey>',
+        '<apiKey name="OpenAI:Secret" value="${OPENAI_SECRET}">${OPENAI_SECRET}</apiKey>',
+        # Unquoted YAML values that are words, paths or too short to be keys.
+        "cacheKey: users-by-id\nsortKey: createdAtDescending\npageToken: nextPage2\n",
+        "key: photos/2024/img.jpg\nkey: Ed25519PrivateKey\nopenaiKey: OpenAIKeyType;\nkey: a1b2c3\n",
+        "key:a1b2c3d4e5f6a7b8",
+        # Options and numbered names keep ordinary values.
+        "tool --key users --sort-key name --cache-key users-by-id",
+        "curl -k https://example.com --key client.pem --key-file ~/.ssh/id_ed25519",
+        f"tool --no-key {HEX}",
+        "payload = dict(key1='value1', key2='value2')",
+        'dotnet user-secrets set "AzureOpenAI:Endpoint" "https://contoso.openai.azure.com/"',
+        'dotnet user-secrets set "AzureOpenAI:Key" "$AZURE_OPENAI_KEY"',
+        "dotnet user-secrets list --project src/Api",
+    ],
+)
 def test_names_references_placeholders_and_ordinary_arguments_are_preserved(source):
     assert sanitize_text(source) == source
 
@@ -465,40 +500,54 @@ def test_an_opaque_option_value_never_hides_a_following_assignment(separator):
 # the way the rules above read names. When one is closed, move it to FORMS
 # and update SECURITY.md.
 @pytest.mark.xfail(strict=True, reason="documented redaction gap (SECURITY.md)")
-@pytest.mark.parametrize("source", [
-    f"llm -k {HEX}",
-    f'new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "{HEX}")',
-    f'x = "{HEX}"  # openai key',
-    # A record whose value field comes before its name field.
-    f'{{"value": "{HEX}", "name": "Password"}}',
-    f"- value: {HEX}\n  name: DB_PASSWORD\n",
-    # A quoted value holding a '}' under a name the established record pass
-    # reads: that pass stops at the brace, as it always has.
-    f'{{"name": "Password", "value": "p}}{HEX}"}}',
-    f'- {{name: DB_PASSWORD, value: "p}}{HEX}"}}',
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        f"llm -k {HEX}",
+        f'new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "{HEX}")',
+        f'x = "{HEX}"  # openai key',
+        # A record whose value field comes before its name field.
+        f'{{"value": "{HEX}", "name": "Password"}}',
+        f"- value: {HEX}\n  name: DB_PASSWORD\n",
+        # A quoted value holding a '}' under a name the established record pass
+        # reads: that pass stops at the brace, as it always has.
+        f'{{"name": "Password", "value": "p}}{HEX}"}}',
+        f'- {{name: DB_PASSWORD, value: "p}}{HEX}"}}',
+    ],
+)
 def test_documented_gaps_are_still_open(source):
     assert HEX not in sanitize_text(source)
 
 
 @pytest.mark.xfail(strict=True, reason="documented redaction gap (SECURITY.md)")
-@pytest.mark.parametrize(("source", "value"), [
-    # An unquoted value made of capitalized words and digits reads as an
-    # identifier, as 'Ed25519PrivateKey' does.
-    ("KEY1=Gh4Hj9Kl8Zx2Qw", "Gh4Hj9Kl8Zx2Qw"),
-    ("openaiKey: Zx9Kq2Lm8Np4", "Zx9Kq2Lm8Np4"),
-    # An option glued to the value before it is not read as an option.
-    (f'tool --key=users--password "{PASSWORD}"', PASSWORD),
-    (f'tool --key={HEX}--password "{PASSWORD}"', PASSWORD),
-])
+@pytest.mark.parametrize(
+    ("source", "value"),
+    [
+        # An unquoted value made of capitalized words and digits reads as an
+        # identifier, as 'Ed25519PrivateKey' does.
+        ("KEY1=Gh4Hj9Kl8Zx2Qw", "Gh4Hj9Kl8Zx2Qw"),
+        ("openaiKey: Zx9Kq2Lm8Np4", "Zx9Kq2Lm8Np4"),
+        # An option glued to the value before it is not read as an option.
+        (f'tool --key=users--password "{PASSWORD}"', PASSWORD),
+        (f'tool --key={HEX}--password "{PASSWORD}"', PASSWORD),
+    ],
+)
 def test_documented_value_gaps_are_still_open(source, value):
     assert value not in sanitize_text(source)
 
 
-@pytest.mark.parametrize("name", [
-    "OpenAIKey", "OpenAI:Secret", "AzureOpenAI:Token", "AzureOpenAI__Key", "openai.token", "KEY1",
-    "Db:Password",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "OpenAIKey",
+        "OpenAI:Secret",
+        "AzureOpenAI:Token",
+        "AzureOpenAI__Key",
+        "openai.token",
+        "KEY1",
+        "Db:Password",
+    ],
+)
 @pytest.mark.parametrize("value_first", [False, True])
 def test_structured_name_value_records_read_names_as_settings(name, value_first):
     # Connector metadata reads a record's name as the text passes read it: a
@@ -510,14 +559,17 @@ def test_structured_name_value_records_read_names_as_settings(name, value_first)
     assert HEX not in repr(sanitize([record], redact_short_secrets=True))
 
 
-@pytest.mark.parametrize("record", [
-    {"name": "CacheKey", "value": "users"},
-    {"name": "PAGE_TOKEN", "value": "next"},
-    {"Key": "sort_key", "Value": "createdAtDescending"},
-    {"name": "AzureOpenAI:Endpoint", "value": AZURE},
-    {"name": "AzureOpenAI:Key", "value": "${AZURE_OPENAI_KEY}"},
-    {"name": "OpenAIKey", "value": "photos/2024/img.jpg"},
-])
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"name": "CacheKey", "value": "users"},
+        {"name": "PAGE_TOKEN", "value": "next"},
+        {"Key": "sort_key", "Value": "createdAtDescending"},
+        {"name": "AzureOpenAI:Endpoint", "value": AZURE},
+        {"name": "AzureOpenAI:Key", "value": "${AZURE_OPENAI_KEY}"},
+        {"name": "OpenAIKey", "value": "photos/2024/img.jpg"},
+    ],
+)
 def test_structured_setting_records_keep_ordinary_values(record):
     # An environment-style or credential-word name keeps a value that does not
     # look like an opaque key, as in text ('cacheKey = "users"').
@@ -529,19 +581,22 @@ def test_structured_readable_value_under_a_sensitive_setting_is_withheld():
     assert safe == {"name": "OpenAI:Secret", "value": REDACTED, "note": REDACTED}
 
 
-@pytest.mark.parametrize("source", [
-    # Environment-style names ('PAGE_TOKEN', like 'DB_PASSWORD') withhold any
-    # value: a readable password is still a password. bd16bd6 already
-    # withheld these four; they guard that reading names as settings keeps it.
-    "{name: PAGE_TOKEN, value: next}",
-    "{name: DB_PASSWORD, value: hunter2}",
-    '<add key="Db:Password" value="hunter2"/>',
-    "- name: Smtp__Password\n  value: hunter2\n",
-    # A sensitive last segment of a hierarchical name, which bd16bd6 did not read.
-    '<add key="OpenAI:Secret" value="hunter2"/>',
-    "- name: AzureOpenAI__Token\n  value: hunter2\n",
-    '<entry key="openai.token">hunter2</entry>',
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        # Environment-style names ('PAGE_TOKEN', like 'DB_PASSWORD') withhold any
+        # value: a readable password is still a password. bd16bd6 already
+        # withheld these four; they guard that reading names as settings keeps it.
+        "{name: PAGE_TOKEN, value: next}",
+        "{name: DB_PASSWORD, value: hunter2}",
+        '<add key="Db:Password" value="hunter2"/>',
+        "- name: Smtp__Password\n  value: hunter2\n",
+        # A sensitive last segment of a hierarchical name, which bd16bd6 did not read.
+        '<add key="OpenAI:Secret" value="hunter2"/>',
+        "- name: AzureOpenAI__Token\n  value: hunter2\n",
+        '<entry key="openai.token">hunter2</entry>',
+    ],
+)
 def test_sensitive_setting_names_withhold_readable_values(source):
     safe = sanitize_text(source)
     assert REDACTED in safe
@@ -582,10 +637,17 @@ _PASS_FORMS = [
     "echo ${{OPENAI_API_KEY:-{v}}}",
 ]
 _PASS_VALUES = [
-    HEX, PASSWORD, REDACTED, f"{BASE62[:6]}{REDACTED}{BASE62[6:14]}",
-    f"https://svc:{BASE62}@api.example.com/v1", f"<![CDATA[{HEX}]]>",
-    f"eyJ{BASE62[:10]}.{BASE62[10:20]}.{BASE62[20:30]}", f"Bearer {HEX}", "",
-    f"{HEX[:8]} {HEX[8:16]}", "${OPENAI_API_KEY}",
+    HEX,
+    PASSWORD,
+    REDACTED,
+    f"{BASE62[:6]}{REDACTED}{BASE62[6:14]}",
+    f"https://svc:{BASE62}@api.example.com/v1",
+    f"<![CDATA[{HEX}]]>",
+    f"eyJ{BASE62[:10]}.{BASE62[10:20]}.{BASE62[20:30]}",
+    f"Bearer {HEX}",
+    "",
+    f"{HEX[:8]} {HEX[8:16]}",
+    "${OPENAI_API_KEY}",
 ]
 
 
@@ -602,13 +664,16 @@ def test_every_context_named_pass_is_stable_under_resanitization(form):
             assert REDACTED + "]" not in once, (source, once)
 
 
-@pytest.mark.parametrize("source", [
-    # A nested sensitive assignment inside an unquoted value: the value was
-    # cut inside the marker, so each pass withheld '[REDACTED' again.
-    f"Value: a.api_key={REDACTED}",
-    "Value: sk-...OPENAI_API_KEY=${OPENAI_API_KEY:-$(cat /run/secrets/key)}",
-    f"note: {{name: OPENAI_API_KEY, value: {REDACTED}}}",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        # A nested sensitive assignment inside an unquoted value: the value was
+        # cut inside the marker, so each pass withheld '[REDACTED' again.
+        f"Value: a.api_key={REDACTED}",
+        "Value: sk-...OPENAI_API_KEY=${OPENAI_API_KEY:-$(cat /run/secrets/key)}",
+        f"note: {{name: OPENAI_API_KEY, value: {REDACTED}}}",
+    ],
+)
 def test_resanitizing_never_grows_a_marker(source):
     once = sanitize_text(source)
     assert sanitize_text(once) == once
@@ -624,12 +689,15 @@ def test_a_record_value_that_is_already_withheld_is_kept():
         assert redaction._redact_name_value_pairs(source) == source
 
 
-@pytest.mark.parametrize("source", [
-    'see token.("x")',
-    'auth._("x")',
-    'Key.__("abc")',
-    'call a.secret.("value", "other") here',
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        'see token.("x")',
+        'auth._("x")',
+        'Key.__("abc")',
+        'call a.secret.("value", "other") here',
+    ],
+)
 def test_callees_that_name_nothing_are_ordinary_text(source):
     # 'token.(' has no name after the dot: reading one raised IndexError,
     # which made any scan with such a line (even a comment) incomplete.

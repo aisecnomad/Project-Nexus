@@ -44,9 +44,17 @@ def test_record_dispatch_maps_handler_methods_to_record_kinds(index):
 def test_record_dispatch_counts_every_record_and_rejects_unknown_kinds(index):
     scanner = GcpConnector(context(index))
     dispatch = RecordDispatch(scanner, "audit-event")
-    kinds = [dispatch.kind(rec) for rec in (
-        {"_kind": "audit-event"}, {"_kind": "reasoning-engine"}, {"_kind": "vcn"}, {"_kind": 3}, {}, ["list"],
-    )]
+    kinds = [
+        dispatch.kind(rec)
+        for rec in (
+            {"_kind": "audit-event"},
+            {"_kind": "reasoning-engine"},
+            {"_kind": "vcn"},
+            {"_kind": 3},
+            {},
+            ["list"],
+        )
+    ]
     assert kinds == ["audit-event", "reasoning-engine", None, None, None, None]
     stats = scanner.ctx.stats
     assert stats.objects_examined == 6
@@ -60,15 +68,24 @@ def test_aggregate_caller_event_folds_counters_window_and_seed():
     callers: dict[tuple[str, str], dict[str, Any]] = {}
     key = ("project", "agent@example.com")
     first = aggregate_caller_event(
-        callers, key, time="2025-09-02T00:00:00Z", tally={"methods": None}, tally_present={"agents": "adk/1"},
+        callers,
+        key,
+        time="2025-09-02T00:00:00Z",
+        tally={"methods": None},
+        tally_present={"agents": "adk/1"},
         seed={"project": "project", "regions": set()},
     )
     second = aggregate_caller_event(
-        callers, key, time="2025-09-01T00:00:00Z", tally={"methods": "Predict"}, tally_present={"agents": ""},
+        callers,
+        key,
+        time="2025-09-01T00:00:00Z",
+        tally={"methods": "Predict"},
+        tally_present={"agents": ""},
         seed={"project": "ignored-after-creation", "regions": {"replaced"}},
     )
-    third = aggregate_caller_event(callers, key, time=None, tally={"methods": "Predict"},
-                                   tally_present={"agents": "adk/1"})
+    third = aggregate_caller_event(
+        callers, key, time=None, tally={"methods": "Predict"}, tally_present={"agents": "adk/1"}
+    )
     assert first is second is third and list(callers) == [key]
     assert first["events"] == 3
     assert first["methods"] == {None: 1, "Predict": 2}  # tally counts a missing value too

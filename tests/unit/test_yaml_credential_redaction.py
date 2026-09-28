@@ -53,7 +53,10 @@ def test_yaml_source_secret_body_is_redacted_before_evidence_selection(tmp_path,
         encoding="utf-8",
     )
     findings, ctx = run_connector(
-        "code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=scan_secrets,
+        "code.filesystem",
+        path=str(tmp_path),
+        use_git=False,
+        scan_secrets=scan_secrets,
     )
     assert findings and not ctx.stats.incomplete
     # Real operational configuration still produces evidence; code-like text

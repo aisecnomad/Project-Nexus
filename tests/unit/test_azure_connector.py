@@ -70,9 +70,14 @@ def test_azure_scalar_subscription_is_one_subscription(index):
 
 def test_azure_app_settings_are_redacted_in_dumps_but_analyzed_live(index):
     record = {
-        "_kind": "appsettings", "id": "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
-        "name": "app", "kind": "functionapp",
-        "environment": {"OPENAI_API_KEY": "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h", "SENDGRID_KEY": "SG.opaque-value-1234567890"},
+        "_kind": "appsettings",
+        "id": "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
+        "name": "app",
+        "kind": "functionapp",
+        "environment": {
+            "OPENAI_API_KEY": "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h",
+            "SENDGRID_KEY": "SG.opaque-value-1234567890",
+        },
     }
     dumped = sanitize(record)
     assert set(dumped["environment"].values()) == {REDACTED}
@@ -89,13 +94,26 @@ def test_azure_foundry_projects_inherit_subscription_and_location(index, monkeyp
     connector = AzureConnector(context(index, subscriptions="s1"))
     account_id = "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/acc"
     http = Mock()
-    http.post_json.return_value = {"data": [{
-        "id": account_id, "name": "acc", "type": "microsoft.cognitiveservices/accounts", "kind": "AIServices",
-        "location": "eastus", "subscriptionId": "s1", "properties": {},
-    }]}
+    http.post_json.return_value = {
+        "data": [
+            {
+                "id": account_id,
+                "name": "acc",
+                "type": "microsoft.cognitiveservices/accounts",
+                "kind": "AIServices",
+                "location": "eastus",
+                "subscriptionId": "s1",
+                "properties": {},
+            }
+        ]
+    }
 
     def fake_list(path, api, *, allow_partial=False):
-        return [{"id": f"{account_id}/projects/p1", "name": "p1", "properties": {}}] if path.endswith("/projects") else []
+        return (
+            [{"id": f"{account_id}/projects/p1", "name": "p1", "properties": {}}]
+            if path.endswith("/projects")
+            else []
+        )
 
     monkeypatch.setattr(connector, "_auth", lambda: setattr(connector, "http", http))
     monkeypatch.setattr(connector, "_list", fake_list)
@@ -113,10 +131,17 @@ def test_azure_invalid_or_failed_appsettings_preserves_later_resources(index, fa
     connector._auth = Mock()
     connector._list = Mock(return_value=[])
     connector.http = Mock()
-    rows = [{"id": f"/subscriptions/s1/providers/Microsoft.Web/sites/{name}", "type": "microsoft.web/sites", "name": name}
-            for name in ("failed", "good")]
+    rows = [
+        {
+            "id": f"/subscriptions/s1/providers/Microsoft.Web/sites/{name}",
+            "type": "microsoft.web/sites",
+            "name": name,
+        }
+        for name in ("failed", "good")
+    ]
     connector.http.post_json.side_effect = [
-        {"data": rows}, failed,
+        {"data": rows},
+        failed,
         {"properties": {"OPENAI_API_KEY": "sk-proj-" + "b" * 40, "CUSTOM": "opaque-secret-value"}},
     ]
     records = list(connector.collect())
@@ -130,10 +155,13 @@ def test_azure_invalid_or_failed_appsettings_preserves_later_resources(index, fa
 def test_foundry_classic_route_version_and_cursor_contract(index, monkeypatch):
     # Official azure-ai-agents_1.0.0 build_agents_list_agents_request:
     # GET /assistants, api-version=v1, limit and after query parameters.
-    calls = foundry_http(monkeypatch, [
-        {"object": "list", "data": [{"id": "asst_first"}], "has_more": True, "last_id": "asst_first"},
-        {"object": "list", "data": [{"id": "asst_second"}], "has_more": False, "last_id": "asst_second"},
-    ])
+    calls = foundry_http(
+        monkeypatch,
+        [
+            {"object": "list", "data": [{"id": "asst_first"}], "has_more": True, "last_id": "asst_first"},
+            {"object": "list", "data": [{"id": "asst_second"}], "has_more": False, "last_id": "asst_second"},
+        ],
+    )
     ctx = foundry_context(index)
     records = list(AzureConnector(ctx)._collect_agents({"id": "/account"}, PROJECT))
     assert [r["id"] for r in records] == ["asst_first", "asst_second"]
@@ -147,13 +175,21 @@ def test_foundry_classic_route_version_and_cursor_contract(index, monkeypatch):
     assert not ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("page", [
-    None, {}, [], {"error": {"code": "denied"}}, {"data": {}, "has_more": False},
-    {"data": [], "has_more": "false"}, {"data": []},
-    {"data": [], "has_more": True, "last_id": "a"},
-    {"data": [{"id": "a"}], "has_more": True, "last_id": []},
-    {"data": [{"id": "a"}], "has_more": True, "last_id": "other"},
-])
+@pytest.mark.parametrize(
+    "page",
+    [
+        None,
+        {},
+        [],
+        {"error": {"code": "denied"}},
+        {"data": {}, "has_more": False},
+        {"data": [], "has_more": "false"},
+        {"data": []},
+        {"data": [], "has_more": True, "last_id": "a"},
+        {"data": [{"id": "a"}], "has_more": True, "last_id": []},
+        {"data": [{"id": "a"}], "has_more": True, "last_id": "other"},
+    ],
+)
 def test_foundry_malformed_envelopes_are_incomplete(index, monkeypatch, page):
     foundry_http(monkeypatch, [page])
     ctx = foundry_context(index)
@@ -192,8 +228,16 @@ def test_azure_app_settings_are_exported_as_redactable_environment(index, monkey
     monkeypatch.setattr(connector, "_list", lambda *args, **kwargs: [])
     connector.http = Mock()
     connector.http.post_json.side_effect = [
-        {"data": [{"id": "/subscriptions/sub1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
-                   "type": "microsoft.web/sites", "name": "worker", "kind": "app"}]},
+        {
+            "data": [
+                {
+                    "id": "/subscriptions/sub1/resourceGroups/rg/providers/Microsoft.Web/sites/app",
+                    "type": "microsoft.web/sites",
+                    "name": "worker",
+                    "kind": "app",
+                }
+            ]
+        },
         {"properties": {"OPENAI_API_KEY": "synthetic-azure-app-secret"}},
     ]
 

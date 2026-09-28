@@ -87,8 +87,13 @@ def _tags(values: list[str]) -> str:
 
 _LEVELS = ("critical", "high", "medium", "low", "info")
 _COLUMNS = (
-    ("score", "Risk"), ("shadow", "Shadow"), ("surface", "Surface"), ("kind", "Kind"),
-    ("title", "Title"), ("owner", "Owner"), ("confidence", "Conf."),
+    ("score", "Risk"),
+    ("shadow", "Shadow"),
+    ("surface", "Surface"),
+    ("kind", "Kind"),
+    ("title", "Title"),
+    ("owner", "Owner"),
+    ("confidence", "Conf."),
 )
 
 
@@ -167,9 +172,17 @@ def render_html(result: ScanResult) -> str:
         shadow = "" if f.shadow is None else ("yes" if f.shadow else "no")
         level = f.risk.level.value
         labels = " ".join(f.frameworks + f.model_providers + f.tags + f.capabilities)
-        text = " ".join([
-            f.title, f.resource, f.owner or "", labels, f.kind.value, f.surface.value, f.provider or "",
-        ]).lower()
+        text = " ".join(
+            [
+                f.title,
+                f.resource,
+                f.owner or "",
+                labels,
+                f.kind.value,
+                f.surface.value,
+                f.provider or "",
+            ]
+        ).lower()
         parts.append(
             f"<tr class='row' data-score='{_e(f.risk.score)}' data-level='{level}' data-shadow='{shadow}'"
             f" data-surface='{_e(f.surface.value)}' data-kind='{_e(f.kind.value)}' data-title='{_e(f.title)}'"

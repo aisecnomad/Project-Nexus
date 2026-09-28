@@ -13,27 +13,47 @@ from shadowscan.models import ScanStats
 
 def test_group_variables_keep_all_names_in_one_finding(index):
     connector = GitLabConnector(ConnectorContext(index=index))
-    findings = list(connector.analyze([
-        _GitLabMetadata("group_variable", {"group": "team", "key": "OPENAI_API_KEY", "masked": True}),
-        _GitLabMetadata("group_variable", {"group": "team", "key": "ANTHROPIC_API_KEY", "masked": False}),
-        _GitLabMetadata("group_variables", {"group": "team", "variables": [
-            {"key": "GEMINI_API_KEY", "masked": True},
-            {"key": 42, "masked": False},
-        ]}),
-    ]))
+    findings = list(
+        connector.analyze(
+            [
+                _GitLabMetadata("group_variable", {"group": "team", "key": "OPENAI_API_KEY", "masked": True}),
+                _GitLabMetadata(
+                    "group_variable", {"group": "team", "key": "ANTHROPIC_API_KEY", "masked": False}
+                ),
+                _GitLabMetadata(
+                    "group_variables",
+                    {
+                        "group": "team",
+                        "variables": [
+                            {"key": "GEMINI_API_KEY", "masked": True},
+                            {"key": 42, "masked": False},
+                        ],
+                    },
+                ),
+            ]
+        )
+    )
     assert len(findings) == 1
     assert set(findings[0].metadata["variable_names"]) == {
-        "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
     }
     assert "unmasked-ci-variable" in findings[0].tags
 
 
 def test_group_collection_redacts_all_variable_values(index):
     connector = GitLabConnector(ConnectorContext(index=index))
-    connector._optional_list = Mock(side_effect=[[], [], [
-        {"key": "OPENAI_API_KEY", "value": "synthetic-secret-1"},
-        {"key": "ANTHROPIC_API_KEY", "value": "synthetic-secret-2"},
-    ]])
+    connector._optional_list = Mock(
+        side_effect=[
+            [],
+            [],
+            [
+                {"key": "OPENAI_API_KEY", "value": "synthetic-secret-1"},
+                {"key": "ANTHROPIC_API_KEY", "value": "synthetic-secret-2"},
+            ],
+        ]
+    )
     connector.http = Mock()
     connector.http.try_get_json.return_value = {}
     records = list(connector._group_identities("team"))
@@ -42,10 +62,18 @@ def test_group_collection_redacts_all_variable_values(index):
     assert "synthetic-secret" not in str(records)
 
 
-@pytest.mark.parametrize("response", [
-    {}, None, [], {"id": 7}, {"id": 0, "path_with_namespace": "acme/agent"},
-    {"id": 7, "path_with_namespace": " "}, {"id": True, "path_with_namespace": "acme/agent"},
-])
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        None,
+        [],
+        {"id": 7},
+        {"id": 0, "path_with_namespace": "acme/agent"},
+        {"id": 7, "path_with_namespace": " "},
+        {"id": True, "path_with_namespace": "acme/agent"},
+    ],
+)
 def test_gitlab_malformed_explicit_project_response_marks_scan_incomplete(response, index):
     ctx = ConnectorContext(config={"projects": ["acme/agent"]}, index=index)
     ctx.stats = ScanStats(connector="code.gitlab", started_at="2026-01-01T00:00:00Z")
@@ -79,10 +107,12 @@ def test_gitlab_invalid_explicit_response_does_not_hide_valid_project(index, fix
 def test_gitlab_wrong_explicit_project_does_not_hide_valid_neighbor(index, fixtures, monkeypatch):
     ctx = ConnectorContext(config={"projects": ["acme/agent", "acme/valid"], "use_git": False}, index=index)
     connector = GitLabConnector(ctx)
-    connector.http.try_get_json = Mock(side_effect=[
-        {"id": 7, "path_with_namespace": "acme/other"},
-        {"id": 8, "path_with_namespace": "acme/valid"},
-    ])
+    connector.http.try_get_json = Mock(
+        side_effect=[
+            {"id": 7, "path_with_namespace": "acme/other"},
+            {"id": 8, "path_with_namespace": "acme/valid"},
+        ]
+    )
     fetch = Mock(return_value=str(fixtures / "sample_repo"))
     monkeypatch.setattr(connector, "_fetch", fetch)
     monkeypatch.setattr(connector, "_project_level", lambda _project: iter(()))
@@ -96,11 +126,14 @@ def test_gitlab_wrong_explicit_project_does_not_hide_valid_neighbor(index, fixtu
     assert any("does not match the requested path or id" in warning for warning in ctx.stats.warnings)
 
 
-@pytest.mark.parametrize("requested,response", [
-    ("Acme/Agent", {"id": 7, "path_with_namespace": "acme/agent"}),
-    ("7", {"id": 7, "path_with_namespace": "acme/agent"}),
-    ("007", {"id": 7, "path_with_namespace": "acme/agent"}),
-])
+@pytest.mark.parametrize(
+    "requested,response",
+    [
+        ("Acme/Agent", {"id": 7, "path_with_namespace": "acme/agent"}),
+        ("7", {"id": 7, "path_with_namespace": "acme/agent"}),
+        ("007", {"id": 7, "path_with_namespace": "acme/agent"}),
+    ],
+)
 def test_gitlab_explicit_project_accepts_case_and_numeric_id(requested, response, index):
     ctx = ConnectorContext(config={"projects": [requested]}, index=index)
     ctx.stats = ScanStats(connector="code.gitlab", started_at="2026-01-01T00:00:00Z")
@@ -125,7 +158,9 @@ def test_gitlab_empty_group_listing_is_valid_when_optional_metadata_is_empty(ind
 
 def test_gitlab_group_records_keep_the_plain_group_path(index):
     connector = GitLabConnector(ConnectorContext(index=index))
-    connector._optional_list = Mock(side_effect=[[{"id": 7, "name": "bot"}], [], [{"key": "OPENAI_API_KEY", "masked": True}]])
+    connector._optional_list = Mock(
+        side_effect=[[{"id": 7, "name": "bot"}], [], [{"key": "OPENAI_API_KEY", "masked": True}]]
+    )
     connector.http = Mock()
     connector.http.try_get_json.return_value = {}
     records = list(connector._group_identities("my-org/platform"))

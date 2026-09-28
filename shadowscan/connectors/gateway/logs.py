@@ -134,7 +134,9 @@ def _runtime_labels(rec: dict[str, Any], metadata: dict[str, Any]) -> tuple[dict
 
 
 def _restore_scope(
-    scope: dict[str, str], clean_values: Iterable[tuple[str]], scope_key: bytes,
+    scope: dict[str, str],
+    clean_values: Iterable[tuple[str]],
+    scope_key: bytes,
 ) -> tuple[dict[str, str], bool]:
     """Keep redacted scope identities distinct without disclosing their labels.
 
@@ -169,8 +171,11 @@ def _withhold_public_credential_id(value: Any, identifier: str) -> Any:
     if isinstance(value, dict):
         # A credential-bearing metadata key must not survive as a dictionary
         # key or collide with a different key after replacement.
-        return {key: _withhold_public_credential_id(child, identifier)
-                for key, child in value.items() if not isinstance(key, str) or identifier not in key}
+        return {
+            key: _withhold_public_credential_id(child, identifier)
+            for key, child in value.items()
+            if not isinstance(key, str) or identifier not in key
+        }
     if isinstance(value, list):
         return [_withhold_public_credential_id(child, identifier) for child in value]
     if isinstance(value, tuple):
@@ -188,15 +193,30 @@ def _validate_scalar_fields(ev: Event) -> None:
     status: object = ev.status  # schemas copy raw JSON values into the field
     if isinstance(status, int) and not isinstance(status, bool):
         ev.status = str(status)
-    for name in ("caller", "caller_kind", "caller_label", "model", "provider", "host",
-                 "user_agent", "ip", "user", "team", "status", "path"):
+    for name in (
+        "caller",
+        "caller_kind",
+        "caller_label",
+        "model",
+        "provider",
+        "host",
+        "user_agent",
+        "ip",
+        "user",
+        "team",
+        "status",
+        "path",
+    ):
         value = getattr(ev, name)
         if value is not None and not isinstance(value, str):
             raise ConnectorError(f"gateway.logs: normalized {name} must be a string")
 
 
 def _conceal_api_key(
-    ev: Event, rec: dict[str, Any], schema: str, scope_key: bytes,
+    ev: Event,
+    rec: dict[str, Any],
+    schema: str,
+    scope_key: bytes,
 ) -> tuple[str | None, str | None]:
     """Replace an API key caller with a keyed opaque identity.
 
@@ -221,7 +241,10 @@ def _conceal_api_key(
 
 
 def normalise_with_record(
-    rec: dict[str, Any], schema: str, *, scope_key: bytes | None = None,
+    rec: dict[str, Any],
+    schema: str,
+    *,
+    scope_key: bytes | None = None,
 ) -> tuple[Event | None, dict[str, Any] | None]:
     """Normalize and also return the sanitized source record.
 
@@ -249,17 +272,24 @@ def normalise_with_record(
     # Inside a gateway export, they can be short credentials or share bytes
     # with aliases, owners, metadata, and scope labels. Register the raw value
     # locally before sanitizing all reportable Event fields and the record.
-    clean_record, clean_fields, clean_scope, _ = sanitize((
-        rec, [(value,) for value in fields.values()], [(value,) for value in raw_scope.values()],
-        {"api_key": raw_key} if raw_key is not None else {},
-    ))
+    clean_record, clean_fields, clean_scope, _ = sanitize(
+        (
+            rec,
+            [(value,) for value in fields.values()],
+            [(value,) for value in raw_scope.values()],
+            {"api_key": raw_key} if raw_key is not None else {},
+        )
+    )
     if raw_key is not None and _PUBLIC_CREDENTIAL_ID.fullmatch(raw_key):
         clean_record, clean_fields, clean_scope = _withhold_public_credential_id(
-            (clean_record, clean_fields, clean_scope), raw_key,
+            (clean_record, clean_fields, clean_scope),
+            raw_key,
         )
     cleaned = dict(zip(fields, (value for (value,) in clean_fields), strict=True))
     cleaned["scope"], cleaned["scope_redacted"] = _restore_scope(
-        raw_scope, clean_scope, scope_key,
+        raw_scope,
+        clean_scope,
+        scope_key,
     )
     cleaned["caller_kind"] = ev.caller_kind  # normalized enum, not a source field
     cleaned["schema"] = ev.schema  # detected/validated provider schema
@@ -463,8 +493,14 @@ class _DetailBudget:
     observation_requests_omitted: int = 0
 
 
-def _count(counter: Counter, key: str, amount: int, dropped: Counter, dimension: str,
-           budget: _DetailBudget | None = None) -> None:
+def _count(
+    counter: Counter,
+    key: str,
+    amount: int,
+    dropped: Counter,
+    dimension: str,
+    budget: _DetailBudget | None = None,
+) -> None:
     """Bound retained labels, counting lost requests without inventing a label."""
     if key not in counter:
         # The first label of a distribution is always retained (bounded by
@@ -505,8 +541,14 @@ def _record_interval(c: _Caller, ev: Event, retain_interval: bool) -> bool:
     if not ev.aggregated:
         return False
     if retain_interval and len(c.usage_intervals) < min(_MAX_USAGE_INTERVALS, _MAX_DISTINCT_KEYS):
-        c.usage_intervals.append({"start": to_iso(ev.timestamp), "end": to_iso(ev.interval_end),
-                                  "requests": ev.request_count, "model": ev.model})
+        c.usage_intervals.append(
+            {
+                "start": to_iso(ev.timestamp),
+                "end": to_iso(ev.interval_end),
+                "requests": ev.request_count,
+                "model": ev.model,
+            }
+        )
         return True
     c.usage_intervals_dropped += 1
     c.usage_interval_requests_dropped += ev.request_count
@@ -575,19 +617,22 @@ def _record_observation(c: _Caller, ev: Event, detail_budget: _DetailBudget | No
             return
         if detail_budget is not None:
             detail_budget.used += 1
-    observation = c.observations.setdefault(bucket, {
-        "code_resources": ev.code_resources,
-        "frameworks": ev.runtime_frameworks,
-        "environment": ev.environment,
-        "scope": dict(ev.scope),
-        "events": 0,
-        "timestamped_events": 0,
-        "first_seen": None,
-        "last_seen": None,
-        "identity_basis": "configured-exact-caller-and-scope",
-        "identity_assurance": ev.identity_assurance,
-        "environment_assurance": "event-label-unverified" if ev.environment else "absent",
-    })
+    observation = c.observations.setdefault(
+        bucket,
+        {
+            "code_resources": ev.code_resources,
+            "frameworks": ev.runtime_frameworks,
+            "environment": ev.environment,
+            "scope": dict(ev.scope),
+            "events": 0,
+            "timestamped_events": 0,
+            "first_seen": None,
+            "last_seen": None,
+            "identity_basis": "configured-exact-caller-and-scope",
+            "identity_assurance": ev.identity_assurance,
+            "environment_assurance": "event-label-unverified" if ev.environment else "absent",
+        },
+    )
     observation["events"] += ev.request_count
     if ev.timestamp and not ev.aggregated:
         timestamp = to_iso(ev.timestamp)
@@ -601,18 +646,46 @@ def _record_observation(c: _Caller, ev: Event, detail_budget: _DetailBudget | No
 
 
 # Accepted ``format`` values; None auto-detects the schema per record.
-_FORMATS = frozenset({
-    None, "litellm", "portkey", "kong", "cloudflare", "helicone", "langfuse", "bedrock", "azure-openai",
-    "vertex", "openai-usage", "anthropic-usage", "access-log", "generic",
-})
+_FORMATS = frozenset(
+    {
+        None,
+        "litellm",
+        "portkey",
+        "kong",
+        "cloudflare",
+        "helicone",
+        "langfuse",
+        "bedrock",
+        "azure-openai",
+        "vertex",
+        "openai-usage",
+        "anthropic-usage",
+        "access-log",
+        "generic",
+    }
+)
 
 # Generic exports: the credential or principal fields an exact binding may name.
 _GENERIC_KEY_FIELDS = (
-    "api_key", "apiKey", "api_key_id", "key", "key_id", "key_alias", "virtual_key", "token_id",
+    "api_key",
+    "apiKey",
+    "api_key_id",
+    "key",
+    "key_id",
+    "key_alias",
+    "virtual_key",
+    "token_id",
 )
 _GENERIC_PRINCIPAL_FIELDS = (
-    "principal", "principal_id", "identity.arn", "caller", "service", "service_name",
-    "app", "application", "app_name",
+    "principal",
+    "principal_id",
+    "identity.arn",
+    "caller",
+    "service",
+    "service_name",
+    "app",
+    "application",
+    "app_name",
 )
 
 _CALLER_KIND_WEIGHT = {
@@ -845,10 +918,16 @@ class GatewayLogConnector(BaseConnector, _NoDump):
     def _envelope_context(rec: dict[str, Any]) -> dict[str, Any]:
         """Keep source timestamps and scope when an export wraps an event."""
         return {
-            key: rec[key] for key in (
-                "timestamp", "receiveTimestamp", "resource", "labels",
-                "project_id", "logName",
-            ) if key in rec
+            key: rec[key]
+            for key in (
+                "timestamp",
+                "receiveTimestamp",
+                "resource",
+                "labels",
+                "project_id",
+                "logName",
+            )
+            if key in rec
         }
 
     def _expand_usage_bucket(self, rec: dict[str, Any]) -> Iterator[dict[str, Any]]:
@@ -872,7 +951,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             yield {
                 **result,
                 "object": result.get("object") or "organization.usage.completions.result",
-                "start_time": rec["start_time"], "end_time": rec["end_time"],
+                "start_time": rec["start_time"],
+                "end_time": rec["end_time"],
             }
 
     def _expand_log_events(self, rec: dict[str, Any], depth: int) -> Iterator[dict[str, Any]]:
@@ -910,10 +990,21 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 continue
             # Some gateways have a model field and a descriptive message; keep
             # those events intact rather than treating the description as a log.
-            if key == "message" and any(k in rec for k in (
-                "model", "model_name", "modelId", "provider", "api_key", "apiKey",
-                "service", "user", "user_id", "principal",
-            )):
+            if key == "message" and any(
+                k in rec
+                for k in (
+                    "model",
+                    "model_name",
+                    "modelId",
+                    "provider",
+                    "api_key",
+                    "apiKey",
+                    "service",
+                    "user",
+                    "user_id",
+                    "principal",
+                )
+            ):
                 break
             if isinstance(body, dict):
                 yield from self._expand_record({**self._envelope_context(rec), **body}, depth + 1)
@@ -1004,7 +1095,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         # CloudWatch and usage buckets carry context on the enclosing object.
         # The generic offline list unwrapping would discard its scope or interval.
         if isinstance(data, dict) and (
-            "logEvents" in data or data.get("object") == "bucket"
+            "logEvents" in data
+            or data.get("object") == "bucket"
             or (self.format == "openai-usage" and "results" in data)
         ):
             if not self._valid_record(data):
@@ -1045,7 +1137,6 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 continue
             for rec in self._gateway_records(data):
                 yield from self._expand_record(rec)
-
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         callers: dict[str, _Caller] = {}
@@ -1088,11 +1179,22 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                     omitted_caller_requests += ev.request_count
                     continue
                 retained_intervals += self._accumulate(
-                    callers, ev, identity, retained_intervals < _MAX_TOTAL_USAGE_INTERVALS,
+                    callers,
+                    ev,
+                    identity,
+                    retained_intervals < _MAX_TOTAL_USAGE_INTERVALS,
                     detail_budget,
                 )
-            except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
-                    RecursionError, ConnectorError, MatchTimeoutError) as exc:
+            except (
+                ValueError,
+                TypeError,
+                AttributeError,
+                KeyError,
+                OverflowError,
+                RecursionError,
+                ConnectorError,
+                MatchTimeoutError,
+            ) as exc:
                 detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
                 self.ctx.warn(f"gateway.logs: invalid record {n}: {type(exc).__name__}{detail}")
                 continue
@@ -1105,14 +1207,25 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 continue
             try:
                 yield self._finding(c)
-            except (ValueError, TypeError, AttributeError, KeyError, OverflowError,
-                    RecursionError, ConnectorError, MatchTimeoutError) as exc:
+            except (
+                ValueError,
+                TypeError,
+                AttributeError,
+                KeyError,
+                OverflowError,
+                RecursionError,
+                ConnectorError,
+                MatchTimeoutError,
+            ) as exc:
                 detail = f": {exc}" if isinstance(exc, MatchTimeoutError) else ""
                 self.ctx.warn(f"gateway.logs: caller analysis failed ({type(exc).__name__}){detail}")
 
     def _report_limits(
-        self, callers: dict[str, _Caller], detail_budget: _DetailBudget,
-        omitted_caller_records: int, omitted_caller_requests: int,
+        self,
+        callers: dict[str, _Caller],
+        detail_budget: _DetailBudget,
+        omitted_caller_records: int,
+        omitted_caller_requests: int,
     ) -> None:
         """Warn about every bound that truncated caller coverage or detail."""
         if omitted_caller_records:
@@ -1160,9 +1273,13 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         if clean is None:
             # Private callers may enrich an Event without using normalise().
             raw_scope, environment = _runtime_labels(rec, ev.metadata)
-            _, clean_scope, (ev.environment,) = sanitize((
-                rec, [(value,) for value in raw_scope.values()], (environment,),
-            ))
+            _, clean_scope, (ev.environment,) = sanitize(
+                (
+                    rec,
+                    [(value,) for value in raw_scope.values()],
+                    (environment,),
+                )
+            )
             ev.scope, ev.scope_redacted = _restore_scope(raw_scope, clean_scope, self._scope_key)
         if ev.scope_redacted:
             self.ctx.warn(
@@ -1177,10 +1294,15 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         ua = ev.user_agent or ""
         cached = framework_cache.get(ua)
         if cached is None:
-            frameworks = tuple(sorted({
-                match.signature.id for match in self.index.match_user_agent(ua)
-                if match.signature.category == "framework"
-            }))
+            frameworks = tuple(
+                sorted(
+                    {
+                        match.signature.id
+                        for match in self.index.match_user_agent(ua)
+                        if match.signature.category == "framework"
+                    }
+                )
+            )
             if len(ua) <= _MAX_CACHED_USER_AGENT_CHARS:
                 framework_cache[ua] = frameworks
                 if len(framework_cache) > _MAX_CACHED_USER_AGENTS:
@@ -1288,8 +1410,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
 
     @staticmethod
     def _accumulate(
-        callers: dict[str, _Caller], ev: Event, identity: str | None = None,
-        retain_interval: bool = True, detail_budget: _DetailBudget | None = None,
+        callers: dict[str, _Caller],
+        ev: Event,
+        identity: str | None = None,
+        retain_interval: bool = True,
+        detail_budget: _DetailBudget | None = None,
     ) -> bool:
         if identity is None:
             identity = json.dumps([ev.caller, ev.scope], sort_keys=True)

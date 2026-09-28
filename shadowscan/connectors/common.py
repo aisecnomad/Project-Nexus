@@ -223,8 +223,23 @@ _PLACEHOLDER = re.compile(
 _TEMPLATE_MARKER = re.compile(r"<[^<>\s]+>|\$\{[^{}]*\}|\{\{[^{}]*\}\}")
 # Lowercase words that documentation uses where a real key would go.
 _PLACEHOLDER_WORDS: tuple[str, ...] = (
-    "replaceme", "replace", "placeholder", "changeme", "example", "sample", "dummy", "fake",
-    "test", "insert", "paste", "here", "todo", "your", "redacted", "mock", "demo",
+    "replaceme",
+    "replace",
+    "placeholder",
+    "changeme",
+    "example",
+    "sample",
+    "dummy",
+    "fake",
+    "test",
+    "insert",
+    "paste",
+    "here",
+    "todo",
+    "your",
+    "redacted",
+    "mock",
+    "demo",
 )
 _FILL_RUN = re.compile(r"(?<![A-Za-z])(?:x{4,}|X{4,})(?![A-Za-z])|[*#?]{4,}")
 _ALPHA_RUN = re.compile(r"[A-Za-z]+")
@@ -238,8 +253,10 @@ _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*\s*[=:]\s*[\"']?(.*?)[\"']?$
 
 def _case_delimited(value: str, start: int, end: int) -> bool:
     """True when value[start:end] is its own token by separators or case changes."""
-    left = start == 0 or not value[start - 1].isalpha() or (
-        value[start - 1].islower() and value[start].isupper()
+    left = (
+        start == 0
+        or not value[start - 1].isalpha()
+        or (value[start - 1].islower() and value[start].isupper())
     )
     if not left:
         return False
@@ -348,8 +365,10 @@ def blob_matches(index: SignatureIndex, text: str, *, secrets: bool = False) -> 
         [m for m in index.match_secrets(text) if not looks_like_placeholder(m.value)] if secrets else []
     )
     candidates = [
-        *index.match_code(text, None), *index.match_domains_in_text(text),
-        *index.match_envs_in_text(text), *secret_matches,
+        *index.match_code(text, None),
+        *index.match_domains_in_text(text),
+        *index.match_envs_in_text(text),
+        *secret_matches,
     ]
     for m in candidates:
         if m.signature.category == "identity-app" and m.signal.type == "domain":
@@ -379,12 +398,27 @@ def model_matches(index: SignatureIndex, *models: str | None) -> list[Match]:
 # Metrics a gateway-surface caller finding (gateway.logs, and the CloudTrail and
 # Vertex AI callers of cloud.aws and cloud.gcp) sums across distinct sources.
 _RUNTIME_TOTALS = (
-    "events", "records", "aggregate_records", "tool_known", "tool_requests",
-    "tool_call_responses", "tokens_in", "tokens_out", "cost", "errors",
+    "events",
+    "records",
+    "aggregate_records",
+    "tool_known",
+    "tool_requests",
+    "tool_call_responses",
+    "tokens_in",
+    "tokens_out",
+    "cost",
+    "errors",
 )
 _RUNTIME_DISTRIBUTIONS = (
-    "models", "providers", "hosts", "user_agents", "source_ips", "end_users", "teams",
-    "operations", "schemas",
+    "models",
+    "providers",
+    "hosts",
+    "user_agents",
+    "source_ips",
+    "end_users",
+    "teams",
+    "operations",
+    "schemas",
 )
 _RUNTIME_MERGE_NOTE = "Counts sum records across inputs; overlapping exports can represent the same requests."
 
@@ -395,6 +429,7 @@ def _is_number(value: Any) -> bool:
 
 def unique_records(records: list[Any]) -> list[dict[str, Any]]:
     """Deduplicate nested observations while retaining their first provenance."""
+
     def key_for(value: Any) -> Any:
         if isinstance(value, dict):
             return ("dict", frozenset((key, key_for(item)) for key, item in value.items()))
@@ -485,7 +520,9 @@ def _merge_runtime_sources(merged: Finding, sources: list[dict[str, Any]]) -> No
         if identity_evidence:
             primary = identity_evidence[0]
             primary.description = re.sub(
-                r"^\d+ LLM request\(s\)", f"{events} LLM request(s)", primary.description,
+                r"^\d+ LLM request\(s\)",
+                f"{events} LLM request(s)",
+                primary.description,
             )
             merged.evidence = [ev for ev in merged.evidence if ev.signal != identity_signal or ev is primary]
     if len(unique) > 1:

@@ -22,14 +22,17 @@ def directory(monkeypatch):
     monkeypatch.setattr(GoogleWorkspaceConnector, "_auth", auth)
 
 
-@pytest.mark.parametrize("body,complete", [
-    ({"kind": "admin#directory#users"}, True),
-    ({"users": []}, True),
-    ({}, False),
-    ({"error": "upstream failure"}, False),
-    ({"kind": "admin#directory#users", "users": None}, False),
-    ({"kind": "admin#directory#users", "nextPageToken": "more"}, False),
-])
+@pytest.mark.parametrize(
+    "body,complete",
+    [
+        ({"kind": "admin#directory#users"}, True),
+        ({"users": []}, True),
+        ({}, False),
+        ({"error": "upstream failure"}, False),
+        ({"kind": "admin#directory#users", "users": None}, False),
+        ({"kind": "admin#directory#users", "nextPageToken": "more"}, False),
+    ],
+)
 @responses.activate
 def test_google_user_collection_shapes(directory, run_connector, body, complete):
     responses.get(f"{BASE}/admin/directory/v1/users", json=body)
@@ -38,24 +41,41 @@ def test_google_user_collection_shapes(directory, run_connector, body, complete)
     assert ctx.stats.incomplete is not complete
 
 
-@pytest.mark.parametrize("body,complete", [
-    ({"kind": "admin#directory#tokenList"}, True),
-    ({"items": []}, True),
-    ({}, False),
-    ({"kind": "unexpected"}, False),
-    ({"kind": "admin#directory#tokenList", "items": None}, False),
-    ({"kind": "admin#directory#tokenList", "error": "denied"}, False),
-])
+@pytest.mark.parametrize(
+    "body,complete",
+    [
+        ({"kind": "admin#directory#tokenList"}, True),
+        ({"items": []}, True),
+        ({}, False),
+        ({"kind": "unexpected"}, False),
+        ({"kind": "admin#directory#tokenList", "items": None}, False),
+        ({"kind": "admin#directory#tokenList", "error": "denied"}, False),
+    ],
+)
 @responses.activate
 def test_google_token_collection_shapes(directory, run_connector, body, complete):
-    responses.get(f"{BASE}/admin/directory/v1/users", json={"users": [
-        {"primaryEmail": "first@example.test"}, {"primaryEmail": "second@example.test"},
-    ]})
+    responses.get(
+        f"{BASE}/admin/directory/v1/users",
+        json={
+            "users": [
+                {"primaryEmail": "first@example.test"},
+                {"primaryEmail": "second@example.test"},
+            ]
+        },
+    )
     responses.get(f"{BASE}/admin/directory/v1/users/first@example.test/tokens", json=body)
-    responses.get(f"{BASE}/admin/directory/v1/users/second@example.test/tokens", json={"items": [{
-        "clientId": "client-1", "displayText": "Fireflies.ai",
-        "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
-    }]})
+    responses.get(
+        f"{BASE}/admin/directory/v1/users/second@example.test/tokens",
+        json={
+            "items": [
+                {
+                    "clientId": "client-1",
+                    "displayText": "Fireflies.ai",
+                    "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+                }
+            ]
+        },
+    )
     findings, ctx = run_connector("identity.google-workspace")
     assert len(findings) == 1
     assert findings[0].metadata["user_count"] == 1
@@ -64,14 +84,28 @@ def test_google_token_collection_shapes(directory, run_connector, body, complete
 
 @responses.activate
 def test_google_invalid_token_json_preserves_other_users(directory, run_connector):
-    responses.get(f"{BASE}/admin/directory/v1/users", json={"users": [
-        {"primaryEmail": "first@example.test"}, {"primaryEmail": "second@example.test"},
-    ]})
+    responses.get(
+        f"{BASE}/admin/directory/v1/users",
+        json={
+            "users": [
+                {"primaryEmail": "first@example.test"},
+                {"primaryEmail": "second@example.test"},
+            ]
+        },
+    )
     responses.get(f"{BASE}/admin/directory/v1/users/first@example.test/tokens", body="not JSON")
-    responses.get(f"{BASE}/admin/directory/v1/users/second@example.test/tokens", json={"items": [{
-        "clientId": "client-1", "displayText": "Fireflies.ai",
-        "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
-    }]})
+    responses.get(
+        f"{BASE}/admin/directory/v1/users/second@example.test/tokens",
+        json={
+            "items": [
+                {
+                    "clientId": "client-1",
+                    "displayText": "Fireflies.ai",
+                    "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+                }
+            ]
+        },
+    )
     findings, ctx = run_connector("identity.google-workspace")
     assert len(findings) == 1
     assert ctx.stats.incomplete
@@ -90,7 +124,15 @@ def test_google_token_denial_marks_scan_incomplete_and_preserves_other_users(mon
                 return {"id": "C01234567"}
             if "second@example.test" in path:
                 raise HttpError(403, "https://admin.googleapis.com/admin/directory/v1/users/second/tokens")
-            return {"items": [{"clientId": "client-1", "displayText": "Fireflies.ai", "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]}]}
+            return {
+                "items": [
+                    {
+                        "clientId": "client-1",
+                        "displayText": "Fireflies.ai",
+                        "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+                    }
+                ]
+            }
 
     def fake_auth(self):
         self.http = Directory()
@@ -110,11 +152,22 @@ def _offline(run_connector, tmp_path, name, payload, **config):
 
 
 def test_google_workspace_unwraps_admin_sdk_token_list_envelope(run_connector, tmp_path):
-    envelope = {"kind": "admin#directory#tokenList", "etag": "x", "items": [{
-        "kind": "admin#directory#token", "clientId": "1234.apps.googleusercontent.com", "displayText": "Fireflies.ai Notetaker",
-        "scopes": ["https://www.googleapis.com/auth/gmail.readonly"], "userKey": "alice@example.test",
-    }]}
-    findings, ctx = _offline(run_connector, tmp_path, "identity.google-workspace", envelope, customer="C01234567")
+    envelope = {
+        "kind": "admin#directory#tokenList",
+        "etag": "x",
+        "items": [
+            {
+                "kind": "admin#directory#token",
+                "clientId": "1234.apps.googleusercontent.com",
+                "displayText": "Fireflies.ai Notetaker",
+                "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+                "userKey": "alice@example.test",
+            }
+        ],
+    }
+    findings, ctx = _offline(
+        run_connector, tmp_path, "identity.google-workspace", envelope, customer="C01234567"
+    )
     assert [f.title for f in findings] == ["Google Workspace OAuth app: Fireflies.ai Notetaker"]
     assert findings[0].metadata["user_count"] == 1
     assert not ctx.stats.warnings and not ctx.stats.incomplete
@@ -126,9 +179,17 @@ def test_google_workspace_encodes_user_key_in_token_path(run_connector, monkeypa
         connector.http = HttpClient("https://admin.googleapis.com")
 
     monkeypatch.setattr(GoogleWorkspaceConnector, "_auth", auth)
-    responses.get("https://admin.googleapis.com/admin/directory/v1/customers/my_customer", json={"id": "C01234567"})
-    responses.get("https://admin.googleapis.com/admin/directory/v1/users", json={"users": [{"primaryEmail": "a/b#c@example.test"}]})
-    responses.get("https://admin.googleapis.com/admin/directory/v1/users/a%2Fb%23c@example.test/tokens", json={"kind": "admin#directory#tokenList"})
+    responses.get(
+        "https://admin.googleapis.com/admin/directory/v1/customers/my_customer", json={"id": "C01234567"}
+    )
+    responses.get(
+        "https://admin.googleapis.com/admin/directory/v1/users",
+        json={"users": [{"primaryEmail": "a/b#c@example.test"}]},
+    )
+    responses.get(
+        "https://admin.googleapis.com/admin/directory/v1/users/a%2Fb%23c@example.test/tokens",
+        json={"kind": "admin#directory#tokenList"},
+    )
     findings, ctx = run_connector("identity.google-workspace")
     assert findings == [] and not ctx.stats.incomplete
     assert responses.calls[-1].request.path_url == "/admin/directory/v1/users/a%2Fb%23c@example.test/tokens"

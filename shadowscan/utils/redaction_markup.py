@@ -82,7 +82,10 @@ class _MarkupContent:
 
 
 def _markup_content(
-    text: str, contents: _MarkupContent, tag: re.Match[str], inner_value: bool,
+    text: str,
+    contents: _MarkupContent,
+    tag: re.Match[str],
+    inner_value: bool,
 ) -> tuple[int, int] | None:
     """The content of the element ``tag`` opens (of its <value> child when ``inner_value``).
 
@@ -98,7 +101,9 @@ def _markup_content(
 
 
 def _markup_attributes(
-    text: str, tag: re.Match[str], level: Callable[[str], int],
+    text: str,
+    tag: re.Match[str],
+    level: Callable[[str], int],
 ) -> tuple[int, list[tuple[int, int]]]:
     """The strongest ``level`` of the key/name attributes of ``tag``, and where its value attributes are."""
     named = 0
@@ -176,18 +181,18 @@ def _redact_markup_settings(text: str) -> str:
     spans: list[tuple[int, int]] = []
     for tag in _XML_TAG.finditer(text):
         named, values = _markup_attributes(text, tag, _setting_level)
-        spans.extend(span for span in values if _setting_value_withheld(named, text[span[0]:span[1]]))
+        spans.extend(span for span in values if _setting_value_withheld(named, text[span[0] : span[1]]))
         if tag.group("attributes").rstrip().endswith("/"):
             continue  # a self-closing element has no content
         if named:
             content = _markup_content(text, contents, tag, inner_value=True)
-            if content is not None and _setting_value_withheld(named, text[content[0]:content[1]]):
+            if content is not None and _setting_value_withheld(named, text[content[0] : content[1]]):
                 spans.append(content)
         # The same content decided twice is one span: the copy is dropped when withheld.
         level = _setting_level(tag.group("tag").rsplit(":", 1)[-1])
         if level:
             content = _markup_content(text, contents, tag, inner_value=False)
-            if content is not None and _setting_value_withheld(level, text[content[0]:content[1]]):
+            if content is not None and _setting_value_withheld(level, text[content[0] : content[1]]):
                 spans.append(content)
     return _withhold_markup(text, spans)
 
@@ -342,7 +347,9 @@ def _record_names(text: str) -> Iterator[re.Match[str]]:
 
 
 def _record_value(
-    text: str, located: tuple[re.Match[str], int, int], quoted: bool,
+    text: str,
+    located: tuple[re.Match[str], int, int],
+    quoted: bool,
 ) -> tuple[int, int, str] | None:
     """Where the value of a located value field is, without its quotes: (start, end, value).
 
@@ -358,12 +365,12 @@ def _record_value(
         start, end = value.span()
     else:
         span = _record_line_value(text, field.end(), stop)
-        if span is None or text[span[0]:span[1]].strip() in _RECORD_BLOCK_MARKERS:
+        if span is None or text[span[0] : span[1]].strip() in _RECORD_BLOCK_MARKERS:
             start, end = field.end(), _block_end(text, stop, column)
         else:
             start, end = span
     raw = text[start:end]
-    if raw[:1] in {"\"", "'"} and raw.endswith(raw[0]) and len(raw) > 1:
+    if raw[:1] in {'"', "'"} and raw.endswith(raw[0]) and len(raw) > 1:
         return start + 1, end - 1, raw[1:-1]
     return start, end, raw
 
@@ -389,7 +396,7 @@ def _redact_name_value_pairs(text: str) -> str:
         value = _record_value(text, located, quoted=False)
         if value is None or value[0] < cursor or _kept_value(value[2]):
             continue
-        pieces.append(text[cursor:value[0]])
+        pieces.append(text[cursor : value[0]])
         pieces.append(REDACTED + "\n" * value[2].count("\n"))
         cursor = value[1]
     if not pieces:
@@ -427,7 +434,7 @@ def _redact_record_settings(text: str) -> str:
             continue
         if not _setting_value_withheld(level, _record_scalar(value[2])):
             continue
-        pieces.append(text[cursor:value[0]])
+        pieces.append(text[cursor : value[0]])
         pieces.append(REDACTED + "\n" * value[2].count("\n"))
         cursor = value[1]
     if not pieces:

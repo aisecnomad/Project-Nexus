@@ -43,7 +43,9 @@ class _SlackExport:
 class SlackConnector(BaseConnector):
     name: ClassVar[str] = "saas.slack"
     _OFFLINE_COLLECTION_KINDS: ClassVar[dict[str, str]] = {
-        "approved_apps": "approved_app", "restricted_apps": "restricted_app", "app_requests": "app_request",
+        "approved_apps": "approved_app",
+        "restricted_apps": "restricted_app",
+        "app_requests": "app_request",
     }
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "slack"
@@ -141,9 +143,16 @@ class SlackConnector(BaseConnector):
             error = data.get("error") if isinstance(data, dict) else None
             # Preserve only known machine-readable denial codes; provider text may contain sensitive data.
             if not isinstance(error, str) or error not in {
-                "missing_scope", "not_allowed_token_type", "restricted_action",
-                "invalid_auth", "not_authed", "token_revoked", "account_inactive",
-                "team_access_not_granted", "org_login_required", "not_allowed",
+                "missing_scope",
+                "not_allowed_token_type",
+                "restricted_action",
+                "invalid_auth",
+                "not_authed",
+                "token_revoked",
+                "account_inactive",
+                "team_access_not_granted",
+                "org_login_required",
+                "not_allowed",
             }:
                 error = "invalid or failed response"
             self.ctx.warn(f"saas.slack: {path}: {error}; coverage unknown", incomplete=True)
@@ -199,8 +208,13 @@ class SlackConnector(BaseConnector):
             self.ctx.examined()
             seen.add(app_id)
             f = self._app_finding(
-                app_id, entry["app"], entry["scopes"], entry["status"], bots.get(app_id),
-                logs.get(app_id, []), team_id,
+                app_id,
+                entry["app"],
+                entry["scopes"],
+                entry["status"],
+                bots.get(app_id),
+                logs.get(app_id, []),
+                team_id,
             )
             if f:
                 f.metadata.update(workspace_name=team_name, workspace_scope_source=scope_source)
@@ -222,7 +236,12 @@ class SlackConnector(BaseConnector):
             self.ctx.examined()
             app = req.get("app") or {}
             f = self._app_finding(
-                str(app.get("id") or app.get("app_id")), app, req.get("scopes") or [], "requested", None, [],
+                str(app.get("id") or app.get("app_id")),
+                app,
+                req.get("scopes") or [],
+                "requested",
+                None,
+                [],
                 team_id,
                 requester=get_path(req, "user.email", "user.name", "user.id"),
                 message=req.get("message"),

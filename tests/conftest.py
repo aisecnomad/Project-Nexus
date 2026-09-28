@@ -29,7 +29,9 @@ def host_git_version() -> tuple[int, int] | None:
     if git is None:
         return None
     try:
-        completed = subprocess.run([git, "--version"], capture_output=True, text=True, timeout=10, check=False)
+        completed = subprocess.run(
+            [git, "--version"], capture_output=True, text=True, timeout=10, check=False
+        )
     except (OSError, subprocess.SubprocessError):
         return None
     match = re.search(r"\bgit version (\d+)\.(\d+)", completed.stdout)

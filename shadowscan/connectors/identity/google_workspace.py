@@ -100,10 +100,15 @@ class GoogleWorkspaceConnector(BaseConnector):
                 "incomplete"
             )
             return
-        customer_id = google_customer_id(data.get("id")) if (
-            isinstance(data, dict) and not self._is_error_record(data)
-            and data.get("kind", "admin#directory#customer") == "admin#directory#customer"
-        ) else None
+        customer_id = (
+            google_customer_id(data.get("id"))
+            if (
+                isinstance(data, dict)
+                and not self._is_error_record(data)
+                and data.get("kind", "admin#directory#customer") == "admin#directory#customer"
+            )
+            else None
+        )
         if customer_id is None or (self.customer != "my_customer" and self.customer != customer_id):
             self.ctx.warn(
                 "identity.google-workspace: missing or conflicting customer identity; coverage incomplete"
@@ -179,9 +184,12 @@ class GoogleWorkspaceConnector(BaseConnector):
                     continue
                 # Google omits empty repeated fields, but only an identified
                 # token-list envelope can establish that the user has no tokens.
-                if (not isinstance(data, dict) or self._is_error_record(data)
-                        or ("items" not in data and data.get("kind") != "admin#directory#tokenList")
-                        or not isinstance(data.get("items", []), list)):
+                if (
+                    not isinstance(data, dict)
+                    or self._is_error_record(data)
+                    or ("items" not in data and data.get("kind") != "admin#directory#tokenList")
+                    or not isinstance(data.get("items", []), list)
+                ):
                     self.ctx.warn(f"identity.google-workspace: invalid token response for {email}")
                     continue
                 for tok in data.get("items", []):

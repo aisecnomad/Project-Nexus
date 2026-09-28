@@ -36,13 +36,32 @@ MAX_CONFLICTING_SNAPSHOTS = 16
 MAX_CONFLICTING_EVIDENCE = 64
 # Typed Graph fields: a record whose field has another JSON type is rejected.
 _STRING_FIELDS = (
-    "_kind", "id", "appId", "displayName", "appDisplayName", "publisherName", "notes", "description",
-    "servicePrincipalType", "appOwnerOrganizationId", "scope", "consentType", "principalId", "clientId",
-    "appRoleId", "homepage", "loginUrl",
+    "_kind",
+    "id",
+    "appId",
+    "displayName",
+    "appDisplayName",
+    "publisherName",
+    "notes",
+    "description",
+    "servicePrincipalType",
+    "appOwnerOrganizationId",
+    "scope",
+    "consentType",
+    "principalId",
+    "clientId",
+    "appRoleId",
+    "homepage",
+    "loginUrl",
 )
 _ARRAY_FIELDS = (
-    "appRoles", "oauth2PermissionScopes", "replyUrls", "requiredResourceAccess", "passwordCredentials",
-    "keyCredentials", "tags",
+    "appRoles",
+    "oauth2PermissionScopes",
+    "replyUrls",
+    "requiredResourceAccess",
+    "passwordCredentials",
+    "keyCredentials",
+    "tags",
 )
 
 
@@ -252,17 +271,28 @@ class EntraConnector(BaseConnector):
         """Permission evidence for a principal missing from, or conflicting within, the export."""
         f = self._sp_finding(
             {"id": sp_id, "displayName": "Unresolved principal"},
-            graph.grants.get(sp_id, []), graph.role_assignments.get(sp_id, []), graph.role_names,
+            graph.grants.get(sp_id, []),
+            graph.role_assignments.get(sp_id, []),
+            graph.role_names,
         )
         f, truncated_evidence = self._merge_conflicting_snapshots(f, sp_id, graph)
         if not f:
             return None
         # Nothing is known about a principal missing from the export:
         # never report a type, publisher or first-party status for it.
-        f.metadata.update(dict.fromkeys((
-            "app_id", "service_principal_type", "publisher", "verified_publisher",
-            "first_party", "owner_tenant", "account_enabled",
-        )))
+        f.metadata.update(
+            dict.fromkeys(
+                (
+                    "app_id",
+                    "service_principal_type",
+                    "publisher",
+                    "verified_publisher",
+                    "first_party",
+                    "owner_tenant",
+                    "account_enabled",
+                )
+            )
+        )
         for evidence in f.evidence:
             if evidence.signal == "entra:service-principal" and not evidence.description.startswith(
                 "Conflicting snapshot"
@@ -300,10 +330,14 @@ class EntraConnector(BaseConnector):
                 continue
             if f is None:
                 f = Finding(
-                    surface=Surface.IDENTITY, connector=self.name, kind=observed.kind,
+                    surface=Surface.IDENTITY,
+                    connector=self.name,
+                    kind=observed.kind,
                     title="Entra unresolved service principal evidence",
                     resource=f"entra:unresolved-principal:{sp_id}",
-                    resource_type="unresolved-principal", provider="entra", account=self.tenant,
+                    resource_type="unresolved-principal",
+                    provider="entra",
+                    account=self.tenant,
                 )
             # Preserve meaningful AI signals from every conflicting snapshot
             # without selecting one snapshot's appId, owner, or enabled state.
@@ -345,8 +379,10 @@ class EntraConnector(BaseConnector):
             return None
         kind = rec.get("_kind") or _infer_kind(rec)
         required = {
-            "servicePrincipal": ("id",), "application": ("appId",),
-            "oauth2PermissionGrant": ("clientId",), "appRoleAssignment": ("principalId", "appRoleId"),
+            "servicePrincipal": ("id",),
+            "application": ("appId",),
+            "oauth2PermissionGrant": ("clientId",),
+            "appRoleAssignment": ("principalId", "appRoleId"),
             "roleMap": (),
         }
         if kind not in required or not self._record_fields_valid(rec, required=required[kind]):

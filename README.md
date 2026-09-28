@@ -76,10 +76,12 @@ acceptance, and the workflow does not publish a release.
 
 ## Surfaces & connectors
 
+ShadowScan ships **27 connectors** across the six surfaces below.
+
 | Surface | Connectors | What is discovered |
 |---|---|---|
 | **Code** | `code.filesystem`, `code.github`, `code.gitlab` | Agent frameworks & LLM SDKs (deps, imports, idioms), MCP client/server configs, coding-agent configs (Claude Code sub-agents, Copilot custom agents, Cursor/Codex/Gemini CLI…), A2A agent cards, M365 declarative agents, CrewAI/LangGraph manifests, exported n8n/Flowise/Langflow/Dify flows, IaC provisioning Bedrock/Vertex/Foundry/OCI agents, container images, CI secret names, hard-coded provider keys (redacted) |
-| **Identity** | `identity.okta`, `identity.entra`, `identity.google-workspace`, `identity.auth0`, `identity.jwt` | OAuth apps & consent grants to AI SaaS, service apps / service principals / managed identities with LLM or data permissions, app registrations that look like agents, JWT classification (human / service / workload / delegated-agent) with privilege and hygiene analysis |
+| **Identity** | `identity.okta`, `identity.entra`, `identity.google-workspace`, `identity.auth0`, `identity.jwt` | OAuth apps & consent grants to AI SaaS, service apps / service principals / managed identities with LLM or data permissions, app registrations that look like agents, JWT classification (human/service / workload / delegated-agent) with privilege and hygiene analysis |
 | **Gateway** | `gateway.logs` | Callers reconstructed from LiteLLM, Portkey, Kong AI, Cloudflare AI Gateway, Helicone, Langfuse, Bedrock invocation logs, Azure OpenAI diagnostics, Vertex audit logs, OpenAI/Anthropic usage exports, nginx/envoy/ALB access logs or any JSON: models, frameworks (from user agents), tool-use ratio, 24x7 activity, volume, cost |
 | **Low-code** | `lowcode.power-platform`, `lowcode.salesforce`, `lowcode.servicenow`, `lowcode.n8n`, `lowcode.make`, `lowcode.zapier`, `lowcode.workato` | Copilot Studio agents & topics, Power Automate/Apps using AI connectors, Agentforce planners/topics/actions, Einstein bots, prompt templates, Now Assist AI agents/tools/triggers, automation workflows with AI or agent steps |
 | **SaaS** | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | Bots and apps with their scopes, pending install requests, Teams apps with bots / Copilot agents, GitHub Apps (AI reviewers, coding agents) and their permissions, Rovo/Marketplace apps, Notion integrations, Zoom approved and account-created Marketplace apps (approval does not prove installation), any CSV/JSON app inventory (CASB exports) |
@@ -87,7 +89,7 @@ acceptance, and the workflow does not publish a release.
 
 Connectors support **live** API collection, **offline** JSON/CSV/log exports,
 or both; see the connector guide for the supported modes and provider scope.
-Offline analysis can run in CI, on an analyst laptop or against a SIEM export.
+Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export.
 
 ## Frameworks & products recognised
 
@@ -178,7 +180,7 @@ the sample exports under `tests/fixtures/` are not shipped in the wheel. Steps
 
 ```yaml
 # shadowscan.yaml
-inventory: [./inventory]              # Agent Capability Cards, agents.yaml or CSV
+inventory: [./inventory]              # Agent Cards, agents.yaml or CSV
 signatures: [./custom-signatures]     # optional: extra packs; overrides require opt-in
 options:
   plugins: []                        # exact names of reviewed third-party connectors
@@ -292,7 +294,7 @@ See [deployment and migration](docs/production.md) for the rollout checks.
 }
 ```
 
-* **confidence** combines evidence weights with noisy-OR. Correlated source evidence is grouped first, so repeated matches cannot inflate the score. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
+* **confidence** combines evidence weights with noisy-OR. It groups correlated source evidence first, so repeated matches cannot inflate the score. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
 * **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence. The listed factors always add up to `score`; confidence scaling and the 0–100 bounds appear as factors.
 * **danger_score** is the same model without the governance factors (inventory registration and ownership): what the agent can do, independent of whether anyone approved it. Set `options.risk_basis: danger` to base `level` and `--fail-on` on it, and `options.risk_weights` to tune weights (see [Risk policy](#risk-policy)).
 * **shadow** is `true` unless exactly one inventory entry matches an explicit resource pattern and its configured scope restrictions; names only suggest entries for review. An approved entry lends its owner to the finding.
@@ -303,7 +305,7 @@ findings carry file: line locations), `csv`, `markdown`, `html` (self-contained,
 filterable, with evidence drill-down). In `csv` output a cell that starts with
 `=`, `+`, `-`, `@`, a tab or a newline is prefixed with a literal `'` so
 spreadsheets treat it as text (common for `@team` owners); strip that prefix
-when consuming the file programmatically, or use `json`.
+When consuming the file programmatically, use `json`.
 
 ### Risk policy
 

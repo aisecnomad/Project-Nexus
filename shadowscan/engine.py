@@ -64,9 +64,14 @@ def _security_options(config: ScanConfig) -> tuple[Any, ...]:
     plugins = config.plugins
     return (
         tuple(plugins) if isinstance(plugins, list) else plugins,
-        config.allow_signature_override, config.allow_private_origin,
-        config.allow_instance_credentials, config.allow_credential_mixing,
-        config.connector_timeout_seconds, config.incremental, config.fail_on, config.parallel,
+        config.allow_signature_override,
+        config.allow_private_origin,
+        config.allow_instance_credentials,
+        config.allow_credential_mixing,
+        config.connector_timeout_seconds,
+        config.incremental,
+        config.fail_on,
+        config.parallel,
     )
 
 
@@ -114,10 +119,17 @@ class _ExportLedger:
             entries = [entry for entry in self._entries if entry["config_ordinal"] not in timed_out]
             for number, spec in jobs:
                 if number in timed_out:
-                    entries.append({
-                        "config_ordinal": number, "part": f"{number:04d}", "connector": spec.name,
-                        "label": spec.label, "filename": None, "complete": False, "exported": False,
-                    })
+                    entries.append(
+                        {
+                            "config_ordinal": number,
+                            "part": f"{number:04d}",
+                            "connector": spec.name,
+                            "label": spec.label,
+                            "filename": None,
+                            "complete": False,
+                            "exported": False,
+                        }
+                    )
             return entries
 
 
@@ -129,8 +141,9 @@ class _ConnectorRunner:
     export bookkeeping all count towards the measured connector runtime.
     """
 
-    def __init__(self, engine: Engine, cache: IncrementalCache, dump_directory: Path | None,
-                 exports: _ExportLedger) -> None:
+    def __init__(
+        self, engine: Engine, cache: IncrementalCache, dump_directory: Path | None, exports: _ExportLedger
+    ) -> None:
         self._engine = engine
         self._config = engine.config
         self._index = engine.index
@@ -198,8 +211,15 @@ class _ConnectorRunner:
         except Exception:  # noqa: BLE001 - _run_one reports import failures as incomplete
             return False
 
-    def _run_split(self, number: int, spec: ConnectorSpec, resolved: _Resolved, state: _JobState,
-                   roots: list[Any], root_ids: Any) -> _JobResult:
+    def _run_split(
+        self,
+        number: int,
+        spec: ConnectorSpec,
+        resolved: _Resolved,
+        state: _JobState,
+        roots: list[Any],
+        root_ids: Any,
+    ) -> _JobResult:
         # Repositories are independent cache units: modifying repo B must not
         # force expensive analysis of unchanged repo A in the same connector.
         combined: list[Finding] = []
@@ -219,13 +239,16 @@ class _ConnectorRunner:
             parts.append(child_stats)
         cached_count = sum(s.cached for s in parts)
         stats = ScanStats(
-            connector=spec.id, started_at=min(s.started_at for s in parts),
-            finished_at=now_iso(), findings=len(combined),
+            connector=spec.id,
+            started_at=min(s.started_at for s in parts),
+            finished_at=now_iso(),
+            findings=len(combined),
             objects_examined=sum(s.objects_examined for s in parts),
             errors=[e for s in parts for e in s.errors],
             warnings=[w for s in parts for w in s.warnings],
             incomplete=any(s.incomplete or s.skipped or s.errors for s in parts),
-            skipped=all(s.skipped for s in parts), cached=cached_count == len(parts),
+            skipped=all(s.skipped for s in parts),
+            cached=cached_count == len(parts),
         )
         if cached_count:
             stats.warnings.append(
@@ -233,8 +256,9 @@ class _ConnectorRunner:
             )
         return spec, combined, stats
 
-    def _connector_config(self, spec: ConnectorSpec, hooks: type[BaseConnector],
-                          dump_key: str) -> dict[str, Any]:
+    def _connector_config(
+        self, spec: ConnectorSpec, hooks: type[BaseConnector], dump_key: str
+    ) -> dict[str, Any]:
         cfg = dict(spec.config)
         if "allow_instance_credentials" in cfg or hooks.inherits_instance_credentials_approval():
             # Scan-wide approval cannot be bypassed by a connector-level key.
@@ -246,15 +270,22 @@ class _ConnectorRunner:
             cfg["_dump_path"] = os.path.join(self._dump_directory, f"{dump_key}-{label}.jsonl")
         return cfg
 
-    def _run_one(self, spec: ConnectorSpec, resolved: _Resolved, dump_key: str,
-                 state: _JobState) -> _JobResult:
+    def _run_one(
+        self, spec: ConnectorSpec, resolved: _Resolved, dump_key: str, state: _JobState
+    ) -> _JobResult:
         self._engine._report_progress(spec.id, "starting")
         hooks = _hooks(resolved)
         cfg = self._connector_config(spec, hooks, dump_key)
         identity_key = self._run_identity_key if hooks.uses_run_identity_key else None
-        ctx = ConnectorContext(config=cfg, index=self._index, workdir=self._config.workdir,
-                               deadline=state.deadline, cancelled=state.cancelled,
-                               publication_lock=state.publication_lock, gateway_identity_key=identity_key)
+        ctx = ConnectorContext(
+            config=cfg,
+            index=self._index,
+            workdir=self._config.workdir,
+            deadline=state.deadline,
+            cancelled=state.cancelled,
+            publication_lock=state.publication_lock,
+            gateway_identity_key=identity_key,
+        )
         fs: list[Finding] = []
         started_at = now_iso()
         origin_token = set_allow_private_origin(self._config.allow_private_origin)
@@ -277,21 +308,31 @@ class _ConnectorRunner:
         st.findings = len(fs)
         _sanitize_diagnostics(st)
         if self._dump_directory and not state.cancelled.is_set():
-            exported = (ctx.dump_path == cfg.get("_dump_path") and ctx.dump_path is not None
-                        and not st.skipped)
-            self._exports.record(state, {
-                "config_ordinal": int(dump_key.split("-")[0]), "part": dump_key,
-                "connector": spec.name, "label": spec.label,
-                "filename": Path(ctx.dump_path).name if exported and ctx.dump_path else None,
-                "complete": not (st.incomplete or st.skipped or st.errors),
-                "exported": exported,
-            })
+            exported = ctx.dump_path == cfg.get("_dump_path") and ctx.dump_path is not None and not st.skipped
+            self._exports.record(
+                state,
+                {
+                    "config_ordinal": int(dump_key.split("-")[0]),
+                    "part": dump_key,
+                    "connector": spec.name,
+                    "label": spec.label,
+                    "filename": Path(ctx.dump_path).name if exported and ctx.dump_path else None,
+                    "complete": not (st.incomplete or st.skipped or st.errors),
+                    "exported": exported,
+                },
+            )
         if not state.cancelled.is_set():
             self._engine._report_progress(spec.id, f"{len(fs)} findings")
         return spec, fs, st
 
-    def _collect(self, spec: ConnectorSpec, resolved: _Resolved, ctx: ConnectorContext, started_at: str,
-                 fs: list[Finding]) -> tuple[ScanStats, bool]:
+    def _collect(
+        self,
+        spec: ConnectorSpec,
+        resolved: _Resolved,
+        ctx: ConnectorContext,
+        started_at: str,
+        fs: list[Finding],
+    ) -> tuple[ScanStats, bool]:
         """Reuse a cached result or collect afresh, appending findings to ``fs``.
 
         ``fs`` is filled in place so a failure part-way through still reports
@@ -318,8 +359,11 @@ class _ConnectorRunner:
         collected = connector.run()
         ctx.check_deadline()
         st = ctx.stats or ScanStats(
-            connector=spec.id, started_at=started_at, finished_at=now_iso(),
-            incomplete=True, errors=["connector did not report completion status"],
+            connector=spec.id,
+            started_at=started_at,
+            finished_at=now_iso(),
+            incomplete=True,
+            errors=["connector did not report completion status"],
         )
         st.connector = spec.id
         st.incomplete = st.incomplete or bool(st.errors) or st.skipped
@@ -337,8 +381,9 @@ class _ConnectorRunner:
             # scan incomplete and require a fresh scan for security gates.
             if cache.snapshot(spec) == snapshot:
                 ctx.check_deadline()
-                cache.save(snapshot, fs, st, check_deadline=ctx.check_deadline,
-                           publish_replace=ctx.publish_replace)
+                cache.save(
+                    snapshot, fs, st, check_deadline=ctx.check_deadline, publish_replace=ctx.publish_replace
+                )
             else:
                 st.incomplete = True
                 st.errors.append("static input changed during the scan; rerun required")
@@ -363,8 +408,14 @@ class _Supervisor:
     Queued siblings survive while any worker slot can still run them.
     """
 
-    def __init__(self, engine: Engine, futures: dict[Future[_JobResult], _Job],
-                 states: dict[int, _JobState], workers: int, started_at: str) -> None:
+    def __init__(
+        self,
+        engine: Engine,
+        futures: dict[Future[_JobResult], _Job],
+        states: dict[int, _JobState],
+        workers: int,
+        started_at: str,
+    ) -> None:
         self._engine = engine
         self._futures = futures
         self._states = states
@@ -381,8 +432,11 @@ class _Supervisor:
             for future in done:
                 number, _ = self._futures[future]
                 state = self._states[number]
-                if (state.completed_at is not None and state.deadline is not None
-                        and state.completed_at >= state.deadline):
+                if (
+                    state.completed_at is not None
+                    and state.deadline is not None
+                    and state.completed_at >= state.deadline
+                ):
                     expired.append(future)
                 else:
                     self.completed[number] = future.result()
@@ -418,11 +472,20 @@ class _Supervisor:
         if future.running():
             self._engine.abandoned_workers.append(spec.id)
             self._engine._abandoned_futures.append(future)
-        self.completed[number] = (spec, [], ScanStats(
-            connector=spec.id, started_at=state.started_at or self._started_at,
-            finished_at=now_iso(), incomplete=True, skipped=True,
-            skip_reason=_TIMEOUT_MESSAGE, errors=[_TIMEOUT_MESSAGE], warnings=[_TIMEOUT_WARNING],
-        ))
+        self.completed[number] = (
+            spec,
+            [],
+            ScanStats(
+                connector=spec.id,
+                started_at=state.started_at or self._started_at,
+                finished_at=now_iso(),
+                incomplete=True,
+                skipped=True,
+                skip_reason=_TIMEOUT_MESSAGE,
+                errors=[_TIMEOUT_MESSAGE],
+                warnings=[_TIMEOUT_WARNING],
+            ),
+        )
 
     def _capacity_exhausted(self) -> bool:
         # A timed-out worker can still be running inside an SDK or
@@ -443,18 +506,26 @@ class _Supervisor:
                 with self._states[number].publication_lock:
                     self._states[number].cancelled.set()
                 self.timed_out.add(number)
-                self.completed[number] = (spec, [], ScanStats(
-                    connector=spec.id, started_at=self._started_at, finished_at=now_iso(),
-                    incomplete=True, skipped=True,
-                    skip_reason="no worker capacity remains after connector timeouts",
-                    errors=["connector not started: all worker slots remain occupied by timed-out calls"],
-                ))
+                self.completed[number] = (
+                    spec,
+                    [],
+                    ScanStats(
+                        connector=spec.id,
+                        started_at=self._started_at,
+                        finished_at=now_iso(),
+                        incomplete=True,
+                        skipped=True,
+                        skip_reason="no worker capacity remains after connector timeouts",
+                        errors=["connector not started: all worker slots remain occupied by timed-out calls"],
+                    ),
+                )
                 pending.remove(future)
 
 
 class Engine:
-    def __init__(self, config: ScanConfig, index: SignatureIndex | None = None,
-                 progress: ProgressFn | None = None) -> None:
+    def __init__(
+        self, config: ScanConfig, index: SignatureIndex | None = None, progress: ProgressFn | None = None
+    ) -> None:
         self.config = config
         config.validate_security_options()
         self._validated_options = _security_options(config)
@@ -482,8 +553,9 @@ class Engine:
     # ------------------------------------------------------------ preparation
     def _pack_digest(self) -> str | None:
         try:
-            return signature_source_digest(self.config.signature_dirs or None,
-                                           allow_override=self.config.allow_signature_override)
+            return signature_source_digest(
+                self.config.signature_dirs or None, allow_override=self.config.allow_signature_override
+            )
         except (OSError, ValueError):
             # The load that follows reports the underlying problem.
             return None
@@ -492,8 +564,11 @@ class Engine:
         # Digest before loading: a pack edited in between is then reloaded
         # by the next run rather than masked by a digest taken afterwards.
         digest = self._pack_digest()
-        index = get_index(extra_dirs=self.config.signature_dirs or None, reload=True,
-                          allow_override=self.config.allow_signature_override)
+        index = get_index(
+            extra_dirs=self.config.signature_dirs or None,
+            reload=True,
+            allow_override=self.config.allow_signature_override,
+        )
         self._signature_digest = digest
         return index
 
@@ -540,20 +615,32 @@ class Engine:
         return [selector for selector in only if selector not in selectable]
 
     def _select_jobs(self, only: list[str] | None) -> list[_Job]:
-        return [(number, spec) for number, spec in enumerate(self.config.connectors, 1)
-                if spec.enabled and (not only or spec.id in only or spec.name in only)]
+        return [
+            (number, spec)
+            for number, spec in enumerate(self.config.connectors, 1)
+            if spec.enabled and (not only or spec.id in only or spec.name in only)
+        ]
 
     @staticmethod
     def _reject_selection(result: ScanResult, invalid: list[str]) -> ScanResult:
         result.collection_scope = {
-            "schema": "shadowscan.collection-scope/v1", "comparable": False,
+            "schema": "shadowscan.collection-scope/v1",
+            "comparable": False,
             "reason": "requested connectors are unknown or disabled",
         }
-        result.stats = [ScanStats(
-            connector="engine.selection", started_at=result.started_at, finished_at=now_iso(),
-            skipped=True, incomplete=True, skip_reason="invalid connector selection",
-            errors=[sanitize(f"unknown or disabled connector selector: {selector}") for selector in invalid],
-        )]
+        result.stats = [
+            ScanStats(
+                connector="engine.selection",
+                started_at=result.started_at,
+                finished_at=now_iso(),
+                skipped=True,
+                incomplete=True,
+                skip_reason="invalid connector selection",
+                errors=[
+                    sanitize(f"unknown or disabled connector selector: {selector}") for selector in invalid
+                ],
+            )
+        ]
         result.finished_at = now_iso()
         return result
 
@@ -562,15 +649,27 @@ class Engine:
         if specs:
             return []
         log.warning("no connectors selected")
-        return [ScanStats(
-            connector="engine", started_at=now_iso(), finished_at=now_iso(),
-            skipped=True, skip_reason="no connectors selected", incomplete=True,
-            errors=["no connectors selected"],
-        )]
+        return [
+            ScanStats(
+                connector="engine",
+                started_at=now_iso(),
+                finished_at=now_iso(),
+                skipped=True,
+                skip_reason="no connectors selected",
+                incomplete=True,
+                errors=["no connectors selected"],
+            )
+        ]
 
     # ------------------------------------------------------------- collection
-    def _collect(self, jobs: list[_Job], cache: IncrementalCache, dump_directory: Path | None,
-                 exports: _ExportLedger, started_at: str) -> tuple[dict[int, _JobResult], set[int]]:
+    def _collect(
+        self,
+        jobs: list[_Job],
+        cache: IncrementalCache,
+        dump_directory: Path | None,
+        exports: _ExportLedger,
+        started_at: str,
+    ) -> tuple[dict[int, _JobResult], set[int]]:
         """Run every selected connector under deadline supervision."""
         states = {number: _JobState() for number, _ in jobs}
         runner = _ConnectorRunner(self, cache, dump_directory, exports)
@@ -621,10 +720,12 @@ class Engine:
         return findings, errors
 
     @staticmethod
-    def _write_manifest(dump_directory: Path, exports: list[dict[str, Any]], started_at: str,
-                        stats: list[ScanStats]) -> None:
+    def _write_manifest(
+        dump_directory: Path, exports: list[dict[str, Any]], started_at: str, stats: list[ScanStats]
+    ) -> None:
         manifest = {
-            "schema": "shadowscan.record-exports/v1", "started_at": started_at,
+            "schema": "shadowscan.record-exports/v1",
+            "started_at": started_at,
             "complete": bool(stats) and not any(st.incomplete or st.skipped or st.errors for st in stats),
             "exports": sorted(exports, key=lambda entry: entry["part"]),
         }
@@ -632,10 +733,15 @@ class Engine:
             text = json.dumps(sanitize(manifest), indent=2) + "\n"
             write_private_text(Path(dump_directory) / "manifest.json", text)
         except (OSError, ValueError) as exc:
-            stats.append(ScanStats(
-                connector="engine.exports", started_at=started_at, finished_at=now_iso(), incomplete=True,
-                errors=[f"record export manifest could not be saved: {sanitize(str(exc))}"],
-            ))
+            stats.append(
+                ScanStats(
+                    connector="engine.exports",
+                    started_at=started_at,
+                    finished_at=now_iso(),
+                    incomplete=True,
+                    errors=[f"record export manifest could not be saved: {sanitize(str(exc))}"],
+                )
+            )
 
     # ------------------------------------------------------------------ run
     def run(self, only: list[str] | None = None) -> ScanResult:
@@ -664,10 +770,15 @@ class Engine:
         export_entries = exports.entries(jobs, timed_out) if dump_directory else []
         findings, postprocess_errors = self._postprocess(findings)
         if postprocess_errors:
-            stats.append(ScanStats(
-                connector="engine.postprocess", started_at=result.started_at, finished_at=now_iso(),
-                incomplete=True, errors=postprocess_errors,
-            ))
+            stats.append(
+                ScanStats(
+                    connector="engine.postprocess",
+                    started_at=result.started_at,
+                    finished_at=now_iso(),
+                    incomplete=True,
+                    errors=postprocess_errors,
+                )
+            )
         if self.config.min_confidence > 0:
             findings = [f for f in findings if f.confidence >= self.config.min_confidence]
         findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
@@ -677,6 +788,7 @@ class Engine:
         result.stats = sorted(stats, key=lambda s: s.connector)
         result.finished_at = now_iso()
         return result
+
 
 # ------------------------------------------------------------------ merging
 
@@ -692,7 +804,8 @@ def _merge_classification(cur: Finding, f: Finding) -> None:
     """
     classifications = [(finding.kind, finding.resource_type) for finding in (cur, f)]
     classification = max(
-        classifications, key=lambda value: (_KIND_PRIORITY.get(value[0], 0), value[0].value, value[1]),
+        classifications,
+        key=lambda value: (_KIND_PRIORITY.get(value[0], 0), value[0].value, value[1]),
     )
     for key, current_values in (
         ("observed_kinds", {kind.value for kind, _ in classifications}),
@@ -759,9 +872,23 @@ def merge(findings: list[Finding]) -> list[Finding]:
 # -------------------------------------------------------------- correlation
 
 _NAME_KEYS = (
-    "agent_name", "name", "display_name", "app_slug", "okta_name", "developer_name", "schema_name",
-    "app_id", "client_id", "msa_app_id", "bot_id", "principal", "caller", "repository", "project",
-    "function_name", "agent_id",
+    "agent_name",
+    "name",
+    "display_name",
+    "app_slug",
+    "okta_name",
+    "developer_name",
+    "schema_name",
+    "app_id",
+    "client_id",
+    "msa_app_id",
+    "bot_id",
+    "principal",
+    "caller",
+    "repository",
+    "project",
+    "function_name",
+    "agent_id",
 )
 
 
@@ -816,8 +943,14 @@ def correlate(findings: list[Finding]) -> None:
         if linked_finding:
             # Only link across different connectors / surfaces (within one
             # connector, duplicates are merged already).
-            links = sorted(o for o in others if by_id.get(o) and (
-                by_id[o].connector != linked_finding.connector or by_id[o].surface != linked_finding.surface
-            ))
+            links = sorted(
+                o
+                for o in others
+                if by_id.get(o)
+                and (
+                    by_id[o].connector != linked_finding.connector
+                    or by_id[o].surface != linked_finding.surface
+                )
+            )
             if links:
                 linked_finding.metadata["related"] = links

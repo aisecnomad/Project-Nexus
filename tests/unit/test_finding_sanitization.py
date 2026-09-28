@@ -9,14 +9,25 @@ from shadowscan.utils import redaction
 
 
 def _finding():
-    return Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-                   title="sample", resource="repo:sample", resource_type="repository")
+    return Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="sample",
+        resource="repo:sample",
+        resource_type="repository",
+    )
 
 
 def _bedrock_finding(**kwargs) -> Finding:
-    base = dict(surface=Surface.CLOUD, connector="cloud.aws", kind=Kind.AGENT,
-                title="Bedrock Agent: ops", resource="arn:aws:bedrock:us-east-1:123456789012:agent/A1",
-                resource_type="bedrock-agent")
+    base = dict(
+        surface=Surface.CLOUD,
+        connector="cloud.aws",
+        kind=Kind.AGENT,
+        title="Bedrock Agent: ops",
+        resource="arn:aws:bedrock:us-east-1:123456789012:agent/A1",
+        resource_type="bedrock-agent",
+    )
     base.update(kwargs)
     return Finding(**base)
 

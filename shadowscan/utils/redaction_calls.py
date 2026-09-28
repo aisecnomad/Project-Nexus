@@ -211,7 +211,7 @@ def _call_argument_start(text: str, start: int, end: int) -> int:
 
 def _literal_credential_key(expression: str) -> bool:
     """Read only a literal string key; never evaluate an arbitrary expression."""
-    expression = expression[_call_argument_start(expression, 0, len(expression)):].strip()
+    expression = expression[_call_argument_start(expression, 0, len(expression)) :].strip()
     plain = _CALL_PLAIN_KEY.fullmatch(expression)
     if plain:
         return _sensitive_assignment_key(plain.group("key"))
@@ -238,13 +238,15 @@ def _credential_key_argument(text: str, start: int, end: int, bounded: bool) -> 
     """
     if bounded or end - start <= 4096:
         return _literal_credential_key(text[start:end])
-    head = text[start:start + 4096]
+    head = text[start : start + 4096]
     plain = _CALL_PLAIN_KEY.match(head, _call_argument_start(head, 0, len(head)))
     return plain is not None and _sensitive_assignment_key(plain.group("key"))
 
 
 def _credential_call_values(
-    text: str, spans: list[tuple[int, int]], closed: bool,
+    text: str,
+    spans: list[tuple[int, int]],
+    closed: bool,
 ) -> tuple[bool, list[tuple[int, int]]]:
     """Whether a call pairs a literal credential key with values, and their spans."""
     sensitive = False
@@ -330,7 +332,7 @@ def _redact_credential_calls(text: str) -> str:
         raw = text[start:end]
         pieces.append(text[cursor:start])
         # Preserve physical line numbers and surrounding call arguments.
-        spaces = raw[:len(raw) - len(raw.lstrip(" \t"))]
+        spaces = raw[: len(raw) - len(raw.lstrip(" \t"))]
         pieces.append(spaces + '"' + REDACTED + '"' + "\n" * raw.count("\n"))
         cursor = end
     pieces.append(text[cursor:])
@@ -345,20 +347,66 @@ def _redact_credential_calls(text: str) -> str:
 # (openai.NewClient, cohere.Client) only lose literals that look like opaque
 # keys, because lookups take a credential's name rather than its value.
 _CALLEE_HINT = re.compile(r"(?i)key|token|secret|passw|cred|auth|bearer|client|login")
-_CREDENTIAL_CALLEE_WORDS = frozenset({
-    "apikey", "auth", "authentication", "bearer", "client", "credential", "credentials", "key", "oauth",
-    "passwd", "password", "secret", "token",
-})
-_CREDENTIAL_CONSTRUCTOR_WORDS = frozenset({
-    "auth", "authenticate", "authentication", "credential", "credentials", "login", "passwd", "password",
-})
+_CREDENTIAL_CALLEE_WORDS = frozenset(
+    {
+        "apikey",
+        "auth",
+        "authentication",
+        "bearer",
+        "client",
+        "credential",
+        "credentials",
+        "key",
+        "oauth",
+        "passwd",
+        "password",
+        "secret",
+        "token",
+    }
+)
+_CREDENTIAL_CONSTRUCTOR_WORDS = frozenset(
+    {
+        "auth",
+        "authenticate",
+        "authentication",
+        "credential",
+        "credentials",
+        "login",
+        "passwd",
+        "password",
+    }
+)
 # Verbs that look a credential up or check for one rather than present it
 # (get_password, requireAuth, useAuth): only opaque literals are withheld.
-_LOOKUP_VERBS = frozenset({
-    "check", "count", "del", "delete", "describe", "ensure", "fetch", "find", "get", "has", "is", "list",
-    "load", "log", "lookup", "pop", "print", "read", "remove", "require", "requires", "show", "use",
-    "validate", "verify",
-})
+_LOOKUP_VERBS = frozenset(
+    {
+        "check",
+        "count",
+        "del",
+        "delete",
+        "describe",
+        "ensure",
+        "fetch",
+        "find",
+        "get",
+        "has",
+        "is",
+        "list",
+        "load",
+        "log",
+        "lookup",
+        "pop",
+        "print",
+        "read",
+        "remove",
+        "require",
+        "requires",
+        "show",
+        "use",
+        "validate",
+        "verify",
+    }
+)
 # Factory methods take their receiver's name: Credentials.basic("user", "v"),
 # AwsBasicCredentials.create("id", "v") and Ruby's Cohere::Client.new("v").
 _CALLEE_FACTORIES = frozenset({"basic", "create", "from", "new", "of"})
@@ -402,7 +450,7 @@ def _chained_callee(text: str, dot: int) -> str:
     while len(names) < 4:
         while end > 0 and text[end - 1].isspace():
             end -= 1
-        if end < 2 or text[end - 2:end] != "()":
+        if end < 2 or text[end - 2 : end] != "()":
             break
         name = _name_before(text, end - 2, "_$")
         if not name:
@@ -428,7 +476,7 @@ def _qualified_callee(text: str, call: re.Match[str]) -> str:
     start = call.start()
     if callee.startswith("."):
         return _chained_callee(text, start) + callee
-    if start >= 2 and text[start - 2:start] == "::":
+    if start >= 2 and text[start - 2 : start] == "::":
         receiver = _name_before(text, start - 2, "_")
         return receiver + "." + callee if receiver else callee
     if callee == "new":
@@ -464,7 +512,10 @@ def _declared_type(text: str, equals: int) -> str:
 
 
 def _credential_literals(
-    lexer: _CallLexer, spans: list[tuple[int, int]], closed: bool, level: int,
+    lexer: _CallLexer,
+    spans: list[tuple[int, int]],
+    closed: bool,
+    level: int,
 ) -> list[tuple[int, int]]:
     """Spans of credential string literals among one credential-named call's arguments.
 
@@ -496,7 +547,7 @@ def _credential_literals(
         stop = lexer.string_end(opening)
         closing = stop - len(delimiter)
         terminated = closing >= opening + len(delimiter) and text.startswith(delimiter, closing)
-        value = text[opening + len(delimiter):closing if terminated else stop]
+        value = text[opening + len(delimiter) : closing if terminated else stop]
         if _interpolated(literal.group("prefix") or "", char, value):
             continue  # interpolated text is assembled elsewhere
         positional = level == 2 and not named and not (index == 0 and positional_count > 1)
@@ -520,10 +571,11 @@ _AUTH_PAIR = re.compile(
 
 def _redact_auth_pairs(text: str) -> str:
     """Withhold the password of a literal (user, password) authentication pair."""
+
     def replace(match: re.Match[str]) -> str:
         if _kept_value(match.group("password")):
             return match.group()
         start = match.start("password") - match.start()
-        return match.group()[:start] + REDACTED + match.group()[match.end("password") - match.start():]
+        return match.group()[:start] + REDACTED + match.group()[match.end("password") - match.start() :]
 
     return _AUTH_PAIR.sub(replace, text) if _AUTH_PAIR_HINT.search(text) else text

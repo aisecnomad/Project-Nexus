@@ -30,7 +30,11 @@ def redact(value: str, keep: int = 4) -> str:
 
 
 def read_text(
-    path: PurePath, max_bytes: int, errors: list[str] | None = None, *, dir_fd: int | None = None,
+    path: PurePath,
+    max_bytes: int,
+    errors: list[str] | None = None,
+    *,
+    dir_fd: int | None = None,
 ) -> str | None:
     """Read a bounded regular file without following a symlink in any path component.
 

@@ -23,9 +23,27 @@ from shadowscan.models import ScanStats
 
 # Values a hostile or corrupted listing could place in a repository's ``full_name``.
 MALFORMED_NAMES = [
-    "acme/../../orgs/acme/actions", "../admin", "acme/..", "./app", "acme/.", "acme", "acme/app/extra",
-    "/app", "acme/", "acme/app?per_page=1", "acme/app#x", "acme/app%2F..", "acme/a pp", "acme/app\n",
-    "acme\\app/x", "", True, 7, None, ["acme/app"], {"full_name": "acme/app"},
+    "acme/../../orgs/acme/actions",
+    "../admin",
+    "acme/..",
+    "./app",
+    "acme/.",
+    "acme",
+    "acme/app/extra",
+    "/app",
+    "acme/",
+    "acme/app?per_page=1",
+    "acme/app#x",
+    "acme/app%2F..",
+    "acme/a pp",
+    "acme/app\n",
+    "acme\\app/x",
+    "",
+    True,
+    7,
+    None,
+    ["acme/app"],
+    {"full_name": "acme/app"},
 ]
 VALID_NAMES = ["acme/app", "Acme-Corp/.github", "octocat_acme/my.repo-2", "a/_", "acme/..."]
 
@@ -49,8 +67,8 @@ def test_listing_malformed_full_name_is_an_error_and_never_requested(index, full
         hostile["full_name"] = full_name
     valid = {"full_name": "acme/valid", "default_branch": "main", "owner": {"login": "acme"}}
     connector.http = Mock()
-    connector.http.paginate_link.side_effect = (
-        lambda path, **_: [hostile, valid] if path == "/orgs/acme/repos" else []
+    connector.http.paginate_link.side_effect = lambda path, **_: (
+        [hostile, valid] if path == "/orgs/acme/repos" else []
     )
     connector.http.try_get_json.return_value = {}
 
@@ -70,7 +88,8 @@ def test_user_listing_is_validated_like_the_org_listing(index):
     connector = _github(index, user="octo")
     connector.http = Mock()
     connector.http.paginate_link.return_value = [
-        {"full_name": "octo/../../user/keys"}, {"full_name": "octo/tool"},
+        {"full_name": "octo/../../user/keys"},
+        {"full_name": "octo/tool"},
     ]
 
     assert [record["full_name"] for record in connector.collect()] == ["octo/tool"]

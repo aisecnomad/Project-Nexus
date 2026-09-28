@@ -147,7 +147,11 @@ def _log_masked_failure(stage: str, exc: BaseException) -> None:
 
 
 def _run_and_emit(
-    cfg: ScanConfig, fmt: str, output: str | None, verbose: int, max_rows: int | None,
+    cfg: ScanConfig,
+    fmt: str,
+    output: str | None,
+    verbose: int,
+    max_rows: int | None,
     only: list[str] | None = None,
 ) -> None:
     # Reuse a CLI-option watchdog already running during command preparation;
@@ -169,7 +173,11 @@ def _run_and_emit(
 
 
 def _run_and_emit_with_deadline(
-    cfg: ScanConfig, fmt: str, output: str | None, verbose: int, max_rows: int | None,
+    cfg: ScanConfig,
+    fmt: str,
+    output: str | None,
+    verbose: int,
+    max_rows: int | None,
     only: list[str] | None = None,
 ) -> None:
     def progress(cid: str, msg: str) -> None:
@@ -207,8 +215,8 @@ def _run_and_emit_with_deadline(
         # Python joins worker threads at interpreter exit, which would hold the
         # process (and its CI job) open indefinitely. The report is written.
         abandoned = len(engine.abandoned_workers)
-        _exit_abandoned_workers(code,
-            f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]"
+        _exit_abandoned_workers(
+            code, f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]"
         )
     sys.exit(code)
 
@@ -249,33 +257,45 @@ def _job_deadline_option(ctx: click.Context, param: click.Parameter, value: floa
 # Deadline, credential, plugin and destination approvals for scanning commands.
 security_options = [
     click.option(
-        "--job-deadline-seconds", type=float, callback=_job_deadline_option, is_eager=True,
+        "--job-deadline-seconds",
+        type=float,
+        callback=_job_deadline_option,
+        is_eager=True,
         help="CLI process deadline, including setup and output; exits 3 on expiry (default: disabled);"
         " use an external supervisor to reap subprocesses",
     ),
     click.option(
-        "--allow-instance-credentials/--deny-instance-credentials", default=None,
+        "--allow-instance-credentials/--deny-instance-credentials",
+        default=None,
         help="explicitly allow cloud instance or managed-identity credentials",
     ),
     click.option(
-        "--allow-credential-mixing/--deny-credential-mixing", default=None,
+        "--allow-credential-mixing/--deny-credential-mixing",
+        default=None,
         help="allow reviewed source inputs alongside live credentialed connectors",
     ),
     click.option(
-        "--connector-timeout-seconds", "--connector-timeout", "connector_timeout_seconds", type=float,
+        "--connector-timeout-seconds",
+        "--connector-timeout",
+        "connector_timeout_seconds",
+        type=float,
         callback=_connector_timeout_option,
         help="per-connector completion deadline in seconds (default: 120); --connector-timeout is a"
         " deprecated alias; blocking calls cannot be forcibly stopped",
     ),
     click.option(
-        "--allow-plugin", multiple=True, help="allow one reviewed third-party connector name (repeatable)",
+        "--allow-plugin",
+        multiple=True,
+        help="allow one reviewed third-party connector name (repeatable)",
     ),
     click.option(
-        "--allow-signature-override/--deny-signature-override", default=None,
+        "--allow-signature-override/--deny-signature-override",
+        default=None,
         help="explicitly allow a reviewed custom pack to replace built-in signatures",
     ),
     click.option(
-        "--allow-private-origin/--deny-private-origin", default=None,
+        "--allow-private-origin/--deny-private-origin",
+        default=None,
         help="allow private HTTPS endpoints for this scan; origin restrictions still apply",
     ),
 ]
@@ -283,39 +303,60 @@ security_options = [
 # Incremental state, report output, inventory, signature and gating options.
 report_options = [
     click.option(
-        "--incremental/--no-incremental", default=None,
+        "--incremental/--no-incremental",
+        default=None,
         help="reuse completed scans when input content and signatures are unchanged",
     ),
     click.option(
-        "--state-dir", type=click.Path(file_okay=False),
+        "--state-dir",
+        type=click.Path(file_okay=False),
         help="private incremental state directory, outside scanned repositories",
     ),
     click.option(
-        "--format", "-f", "fmt", type=click.Choice(FORMATS), default="table", show_default=True,
+        "--format",
+        "-f",
+        "fmt",
+        type=click.Choice(FORMATS),
+        default="table",
+        show_default=True,
         help="output format",
     ),
     click.option(
-        "--output", "-o", type=click.Path(dir_okay=False),
+        "--output",
+        "-o",
+        type=click.Path(dir_okay=False),
         help="write the report to a file (table format also prints to the terminal)",
     ),
     click.option(
-        "--inventory", "-i", multiple=True,
+        "--inventory",
+        "-i",
+        multiple=True,
         help="sanctioned inventory: Agent Capability Cards dir/file, agents.yaml or CSV (repeatable)",
     ),
     click.option(
-        "--signatures", "-s", "signature_dirs", multiple=True,
+        "--signatures",
+        "-s",
+        "signature_dirs",
+        multiple=True,
         help="extra signature pack directory (repeatable)",
     ),
     click.option(
-        "--min-confidence", type=float, default=0.0, show_default=True, callback=_min_confidence_option,
+        "--min-confidence",
+        type=float,
+        default=0.0,
+        show_default=True,
+        callback=_min_confidence_option,
         help="drop findings below this confidence (finite 0–1)",
     ),
     click.option(
-        "--fail-on", type=click.Choice(LEVELS), help="exit 2 if any finding reaches this risk level",
+        "--fail-on",
+        type=click.Choice(LEVELS),
+        help="exit 2 if any finding reaches this risk level",
     ),
     click.option("--max-rows", type=int, default=None, help="limit rows printed in table mode"),
     click.option(
-        "--dump-records", type=click.Path(file_okay=False),
+        "--dump-records",
+        type=click.Path(file_okay=False),
         help="directory for sanitized connector records (JWTs are never exported)",
     ),
 ]
@@ -357,9 +398,14 @@ class ScanOptions:
     def config(self, connectors: list[ConnectorSpec]) -> ScanConfig:
         """Configure a scan of connectors that a command built from its own arguments."""
         return ScanConfig(
-            connectors=connectors, inventory=list(self.inventory), signature_dirs=list(self.signature_dirs),
-            min_confidence=self.min_confidence, fail_on=self.fail_on, dump_records=self.dump_records,
-            incremental=bool(self.incremental), state_dir=self.state_dir,
+            connectors=connectors,
+            inventory=list(self.inventory),
+            signature_dirs=list(self.signature_dirs),
+            min_confidence=self.min_confidence,
+            fail_on=self.fail_on,
+            dump_records=self.dump_records,
+            incremental=bool(self.incremental),
+            state_dir=self.state_dir,
         )
 
 
@@ -421,7 +467,11 @@ def main(verbose: int, quiet: bool) -> None:
 # ---------------------------------------------------------------------- scan
 @main.command()
 @click.option(
-    "--config", "-c", "config_path", type=click.Path(exists=True, dir_okay=False), required=True,
+    "--config",
+    "-c",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False),
+    required=True,
     help="shadowscan.yaml",
 )
 @click.option("--only", multiple=True, help="run only these connector names / labels (repeatable)")
@@ -455,11 +505,17 @@ def scan(config_path: str, only: tuple[str, ...], opts: ScanOptions) -> None:
 @main.command()
 @click.argument("connector")
 @click.option(
-    "--input", "input_path", type=click.Path(exists=True),
+    "--input",
+    "input_path",
+    type=click.Path(exists=True),
     help="offline export (file or directory) instead of the live API",
 )
 @click.option(
-    "--set", "-S", "settings", multiple=True, help="connector option key=value (repeatable; lists as a,b,c)",
+    "--set",
+    "-S",
+    "settings",
+    multiple=True,
+    help="connector option key=value (repeatable; lists as a,b,c)",
 )
 @scan_options
 def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts: ScanOptions) -> None:
@@ -489,16 +545,26 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
 @click.option("--exclude", multiple=True, help="extra directory names / globs to skip")
 @click.option("--no-secrets", is_flag=True, help="skip credential detection")
 @click.option(
-    "--strict-coverage", is_flag=True,
+    "--strict-coverage",
+    is_flag=True,
     help="record incomplete file and symlink coverage as errors (exit 3 in either mode)",
 )
 @click.option(
-    "--include-tests", is_flag=True, help="let test and fixture code establish agents at full weight",
+    "--include-tests",
+    is_flag=True,
+    help="let test and fixture code establish agents at full weight",
 )
 @scan_options
 def code(
-    paths: tuple[str, ...], github_org: str | None, github_repo: tuple[str, ...], gitlab_group: str | None,
-    mode: str | None, exclude: tuple[str, ...], no_secrets: bool, strict_coverage: bool, include_tests: bool,
+    paths: tuple[str, ...],
+    github_org: str | None,
+    github_repo: tuple[str, ...],
+    gitlab_group: str | None,
+    mode: str | None,
+    exclude: tuple[str, ...],
+    no_secrets: bool,
+    strict_coverage: bool,
+    include_tests: bool,
     opts: ScanOptions,
 ) -> None:
     """Scan local directories and/or remote repositories for agent code, MCP, coding agents, IaC and
@@ -532,8 +598,20 @@ def code(
 
 # ------------------------------------------------------------------- gateway
 GATEWAY_LOG_FORMATS = [
-    "auto", "litellm", "portkey", "kong", "cloudflare", "helicone", "langfuse", "bedrock", "azure-openai",
-    "vertex", "openai-usage", "anthropic-usage", "access-log", "generic",
+    "auto",
+    "litellm",
+    "portkey",
+    "kong",
+    "cloudflare",
+    "helicone",
+    "langfuse",
+    "bedrock",
+    "azure-openai",
+    "vertex",
+    "openai-usage",
+    "anthropic-usage",
+    "access-log",
+    "generic",
 ]
 
 
@@ -541,16 +619,25 @@ GATEWAY_LOG_FORMATS = [
 @click.argument("logs", nargs=-1, required=True, type=click.Path(exists=True))
 @click.option("--log-format", type=click.Choice(GATEWAY_LOG_FORMATS), default="auto", show_default=True)
 @click.option(
-    "--min-events", type=int, default=1, show_default=True, help="ignore callers with fewer requests",
+    "--min-events",
+    type=int,
+    default=1,
+    show_default=True,
+    help="ignore callers with fewer requests",
 )
 @click.option(
-    "--all-hosts", is_flag=True,
+    "--all-hosts",
+    is_flag=True,
     help="for access logs, keep traffic to every host (default: LLM/agent hosts only)",
 )
 @click.option("--label", help="gateway name used as the findings' account/provider")
 @scan_options
 def gateway(
-    logs: tuple[str, ...], log_format: str, min_events: int, all_hosts: bool, label: str | None,
+    logs: tuple[str, ...],
+    log_format: str,
+    min_events: int,
+    all_hosts: bool,
+    label: str | None,
     opts: ScanOptions,
 ) -> None:
     """Analyse LLM gateway / provider / proxy logs and reconstruct the callers."""
@@ -570,19 +657,28 @@ def gateway(
 @main.command()
 @click.argument("tokens", nargs=-1)
 @click.option(
-    "--file", "-F", "token_file", type=click.Path(exists=True, dir_okay=False),
+    "--file",
+    "-F",
+    "token_file",
+    type=click.Path(exists=True, dir_okay=False),
     help="file with one JWT per line or a JSON list",
 )
 @click.option("--jwks-url", help="verify signatures against this trusted JWKS endpoint")
 @click.option("--expected-issuer", help="require this exact issuer when checking a JWT signature")
 @click.option(
-    "--jwt-algorithm", multiple=True, type=click.Choice(["RS256", "ES256", "EdDSA", "PS256"]),
+    "--jwt-algorithm",
+    multiple=True,
+    type=click.Choice(["RS256", "ES256", "EdDSA", "PS256"]),
     help="narrow allowed signature algorithms (repeatable)",
 )
 @scan_options
 def jwt(
-    tokens: tuple[str, ...], token_file: str | None, jwks_url: str | None, expected_issuer: str | None,
-    jwt_algorithm: tuple[str, ...], opts: ScanOptions,
+    tokens: tuple[str, ...],
+    token_file: str | None,
+    jwks_url: str | None,
+    expected_issuer: str | None,
+    jwt_algorithm: tuple[str, ...],
+    opts: ScanOptions,
 ) -> None:
     """Classify JWTs as human / service / delegated-agent identities and assess their privileges."""
     conf: dict[str, Any] = {}
@@ -617,11 +713,17 @@ def list_connectors(surface: str | None, as_json: bool) -> None:
     rows: list[dict[str, Any]] = []
     for n in names:
         if n not in builtin_connector_names():
-            rows.append({
-                "name": n, "surface": n.split(".")[0],
-                "description": "Third-party plugin (not loaded; explicitly allow before use)",
-                "config": {}, "requires": [], "offline": "unknown", "enabled": False,
-            })
+            rows.append(
+                {
+                    "name": n,
+                    "surface": n.split(".")[0],
+                    "description": "Third-party plugin (not loaded; explicitly allow before use)",
+                    "config": {},
+                    "requires": [],
+                    "offline": "unknown",
+                    "enabled": False,
+                }
+            )
             continue
         try:
             cls = get_connector_class(n)
@@ -631,10 +733,16 @@ def list_connectors(surface: str | None, as_json: bool) -> None:
         config = dict(cls.config_keys)
         for key, text in cls.shared_config_keys.items():
             config.setdefault(key, text)
-        rows.append({
-            "name": n, "surface": cls.surface.value, "description": cls.description, "config": config,
-            "requires": cls.requires, "offline": cls.offline_formats,
-        })
+        rows.append(
+            {
+                "name": n,
+                "surface": cls.surface.value,
+                "description": cls.description,
+                "config": config,
+                "requires": cls.requires,
+                "offline": cls.offline_formats,
+            }
+        )
     for problem in plugin_registry_errors():
         err_console.print(Text(f"warning: plugin registry: {problem}", style="yellow"))
     if as_json:
@@ -685,7 +793,17 @@ def _load_index(signature_dirs: tuple[str, ...], allow_override: bool) -> Signat
 
 
 SIGNATURE_KINDS = [
-    "dependency", "domain", "user-agent", "model", "name", "env", "scope", "image", "iac", "file", "text",
+    "dependency",
+    "domain",
+    "user-agent",
+    "model",
+    "name",
+    "env",
+    "scope",
+    "image",
+    "iac",
+    "file",
+    "text",
     "secret",
 ]
 _ALLOW_OVERRIDE_HELP = "allow a reviewed pack to replace built-in signatures"
@@ -701,7 +819,10 @@ _ALLOW_OVERRIDE_HELP = "allow a reviewed pack to replace built-in signatures"
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--allow-signature-override", is_flag=True, help=_ALLOW_OVERRIDE_HELP)
 def signatures_list(
-    category: str | None, signature_dirs: tuple[str, ...], as_json: bool, allow_signature_override: bool,
+    category: str | None,
+    signature_dirs: tuple[str, ...],
+    as_json: bool,
+    allow_signature_override: bool,
 ) -> None:
     """List loaded signatures."""
     idx = _load_index(signature_dirs, allow_signature_override)
@@ -709,14 +830,23 @@ def signatures_list(
     if category:
         sigs = [s for s in sigs if s.category == category]
     if as_json:
-        click.echo(json.dumps([
-            {
-                "id": s.id, "name": s.name, "category": s.category, "vendor": s.vendor,
-                "signals": len(s.signals), "agent_indicator": s.agent_indicator,
-                "capabilities": s.capabilities,
-            }
-            for s in sigs
-        ], indent=2))
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "id": s.id,
+                        "name": s.name,
+                        "category": s.category,
+                        "vendor": s.vendor,
+                        "signals": len(s.signals),
+                        "agent_indicator": s.agent_indicator,
+                        "capabilities": s.capabilities,
+                    }
+                    for s in sigs
+                ],
+                indent=2,
+            )
+        )
         return
     table = Table(title=f"{len(sigs)} signatures", header_style="bold")
     table.add_column("Id", no_wrap=True)
@@ -728,7 +858,12 @@ def signatures_list(
     for s in sigs:
         agent = "✓" if s.agent_indicator else ""
         table.add_row(
-            Text(s.id), Text(s.name), Text(s.category), Text(s.vendor or ""), str(len(s.signals)), agent,
+            Text(s.id),
+            Text(s.name),
+            Text(s.category),
+            Text(s.vendor or ""),
+            str(len(s.signals)),
+            agent,
         )
     console.print(table)
 
@@ -738,7 +873,9 @@ def signatures_list(
 @click.option("--signatures", "-s", "signature_dirs", multiple=True)
 @click.option("--allow-signature-override", is_flag=True, help=_ALLOW_OVERRIDE_HELP)
 def signatures_show(
-    signature_id: str, signature_dirs: tuple[str, ...], allow_signature_override: bool,
+    signature_id: str,
+    signature_dirs: tuple[str, ...],
+    allow_signature_override: bool,
 ) -> None:
     """Print one signature as YAML."""
     idx = _load_index(signature_dirs, allow_signature_override)
@@ -748,15 +885,30 @@ def signatures_show(
     signals = []
     for s in sig.signals:
         fields_ = {
-            "type": s.type, "weight": s.weight, "ecosystem": s.ecosystem, "languages": s.languages,
-            "names": s.names, "prefixes": s.prefixes, "patterns": s.patterns, "globs": s.globs,
-            "values": s.values, "capabilities": s.capabilities, "agent_indicator": s.agent_indicator,
+            "type": s.type,
+            "weight": s.weight,
+            "ecosystem": s.ecosystem,
+            "languages": s.languages,
+            "names": s.names,
+            "prefixes": s.prefixes,
+            "patterns": s.patterns,
+            "globs": s.globs,
+            "values": s.values,
+            "capabilities": s.capabilities,
+            "agent_indicator": s.agent_indicator,
         }
         signals.append({k: v for k, v in fields_.items() if v not in (None, [], False)})
     data = {
-        "id": sig.id, "name": sig.name, "category": sig.category, "vendor": sig.vendor,
-        "homepage": sig.homepage, "description": sig.description, "capabilities": sig.capabilities,
-        "agent_indicator": sig.agent_indicator, "risk_notes": sig.risk_notes, "source": sig.source,
+        "id": sig.id,
+        "name": sig.name,
+        "category": sig.category,
+        "vendor": sig.vendor,
+        "homepage": sig.homepage,
+        "description": sig.description,
+        "capabilities": sig.capabilities,
+        "agent_indicator": sig.agent_indicator,
+        "risk_notes": sig.risk_notes,
+        "source": sig.source,
         "signals": signals,
     }
     click.echo(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
@@ -766,14 +918,20 @@ def signatures_show(
 @click.argument("value")
 @click.option("--kind", type=click.Choice(["auto", *SIGNATURE_KINDS]), default="auto", show_default=True)
 @click.option(
-    "--ecosystem", default="any", show_default=True,
+    "--ecosystem",
+    default="any",
+    show_default=True,
     help="for dependency: pypi | npm | go | cargo | maven | nuget | rubygems | composer; 'any' tries every"
     " ecosystem in the loaded packs",
 )
 @click.option("--signatures", "-s", "signature_dirs", multiple=True)
 @click.option("--allow-signature-override", is_flag=True, help=_ALLOW_OVERRIDE_HELP)
 def signatures_test(
-    value: str, kind: str, ecosystem: str, signature_dirs: tuple[str, ...], allow_signature_override: bool,
+    value: str,
+    kind: str,
+    ecosystem: str,
+    signature_dirs: tuple[str, ...],
+    allow_signature_override: bool,
 ) -> None:
     """Test what a value matches, e.g. `shadowscan signatures test langchain-openai --kind dependency`.
 
@@ -785,10 +943,14 @@ def signatures_test(
     idx = _load_index(signature_dirs, allow_signature_override)
     kinds = [kind] if kind != "auto" else SIGNATURE_KINDS
     if ecosystem.lower() == "any":
-        ecosystems = sorted({
-            (s.ecosystem or "any").lower()
-            for sig in idx.signatures.values() for s in sig.signals if s.type == "dependency"
-        })
+        ecosystems = sorted(
+            {
+                (s.ecosystem or "any").lower()
+                for sig in idx.signatures.values()
+                for s in sig.signals
+                if s.type == "dependency"
+            }
+        )
     else:
         ecosystems = [ecosystem]
 
@@ -805,7 +967,9 @@ def signatures_test(
 
     def match_text(v: str) -> list[Match]:
         return (
-            idx.match_code(v) + idx.match_imports(v, None) + idx.match_domains_in_text(v)
+            idx.match_code(v)
+            + idx.match_imports(v, None)
+            + idx.match_domains_in_text(v)
             + idx.match_envs_in_text(v)
         )
 
@@ -873,7 +1037,11 @@ def inventory_check(paths: tuple[str, ...]) -> None:
         else:
             resources = Text("none (suggestions only)", style="dim")
         table.add_row(
-            Text(e.agent_id), Text(e.name or ""), Text(e.owner or ""), resources, Text(e.source or ""),
+            Text(e.agent_id),
+            Text(e.name or ""),
+            Text(e.owner or ""),
+            resources,
+            Text(e.source or ""),
         )
     console.print(table)
 
@@ -881,11 +1049,17 @@ def inventory_check(paths: tuple[str, ...]) -> None:
 @inventory.command("stubs")
 @click.argument("findings_json", type=click.Path(exists=True, dir_okay=False))
 @click.option(
-    "--out", "-o", "out_dir", type=click.Path(file_okay=False), required=True,
+    "--out",
+    "-o",
+    "out_dir",
+    type=click.Path(file_okay=False),
+    required=True,
     help="directory to write one capability-card YAML per shadow agent",
 )
 @click.option(
-    "--kinds", default="agent,mcp-server,workflow,bot-app,agent-config", show_default=True,
+    "--kinds",
+    default="agent,mcp-server,workflow,bot-app,agent-config",
+    show_default=True,
     help="finding kinds to register",
 )
 @click.option("--min-risk", type=click.Choice(LEVELS), default="low", show_default=True)
@@ -900,8 +1074,11 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
         cards = []
         for record in data["findings"]:
             finding = Finding.from_dict(record)
-            if (finding.kind.value not in wanted or finding.shadow is False
-                    or LEVELS.index(finding.risk.level.value) > threshold):
+            if (
+                finding.kind.value not in wanted
+                or finding.shadow is False
+                or LEVELS.index(finding.risk.level.value) > threshold
+            ):
                 continue
             cards.append((finding.id, card_stub_for(finding)))
     except (ValueError, TypeError, OSError, KeyError, AttributeError, RecursionError):

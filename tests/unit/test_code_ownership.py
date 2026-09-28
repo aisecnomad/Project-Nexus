@@ -104,15 +104,18 @@ def test_codeowners_aggregate_budget_marks_later_ownership_incomplete(tmp_path, 
     assert len(ctx.stats.errors) == errors_before
 
 
-@pytest.mark.parametrize("pattern, path, expected", [
-    ("/services/api/", "services/api/main.py", True),
-    ("/services/api/", "packages/api/main.py", False),
-    ("/**/api/", "packages/api/x.py", True),
-    ("*.py", "a/b/c.py", True),
-    ("/docs/*.md", "docs/readme.md", True),
-    ("/docs/*.md", "src/docs/readme.md", False),
-    ("services/*/agents/", "services/x/agents/run.py", True),
-])
+@pytest.mark.parametrize(
+    "pattern, path, expected",
+    [
+        ("/services/api/", "services/api/main.py", True),
+        ("/services/api/", "packages/api/main.py", False),
+        ("/**/api/", "packages/api/x.py", True),
+        ("*.py", "a/b/c.py", True),
+        ("/docs/*.md", "docs/readme.md", True),
+        ("/docs/*.md", "src/docs/readme.md", False),
+        ("services/*/agents/", "services/x/agents/run.py", True),
+    ],
+)
 def test_codeowners_first_selector_short_circuit_preserves_semantics(pattern, path, expected):
     assert codeowners_match(pattern, path) is expected
 

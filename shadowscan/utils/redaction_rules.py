@@ -13,21 +13,57 @@ from typing import Any
 REDACTED = "[REDACTED]"
 _FINGERPRINT = re.compile(r"^credential:sha256:[a-f0-9]{64}$")
 _SENSITIVE_SUFFIXES = (
-    "apikey", "accesskey", "secretkey", "keystring", "privatekeydata", "accesskeyid", "secretaccesskey",
-    "accesstoken", "refreshtoken", "idtoken", "authtoken", "apitoken", "foundrytoken", "githubtoken",
+    "apikey",
+    "accesskey",
+    "secretkey",
+    "keystring",
+    "privatekeydata",
+    "accesskeyid",
+    "secretaccesskey",
+    "accesstoken",
+    "refreshtoken",
+    "idtoken",
+    "authtoken",
+    "apitoken",
+    "foundrytoken",
+    "githubtoken",
     "clientsecret",
-    "authorization", "proxyauthorization", "password", "passwd", "privatekey",
-    "credential", "credentials", "bearertoken", "sessiontoken", "signingkey",
-    "secretstring", "secretbinary", "connectionstring", "connstr",
+    "authorization",
+    "proxyauthorization",
+    "password",
+    "passwd",
+    "privatekey",
+    "credential",
+    "credentials",
+    "bearertoken",
+    "sessiontoken",
+    "signingkey",
+    "secretstring",
+    "secretbinary",
+    "connectionstring",
+    "connstr",
     # Azure storage / Service Bus connection-string members and SAS tokens.
-    "accountkey", "sharedaccesskey", "sastoken",
+    "accountkey",
+    "sharedaccesskey",
+    "sastoken",
     # Capability URLs: whoever holds a webhook URL can post through it.
-    "webhookurl", "webhookuri", "webhookid", "hookurl",
+    "webhookurl",
+    "webhookuri",
+    "webhookid",
+    "hookurl",
     # Azure API Management and AI services (Ocp-Apim-Subscription-Key).
     "subscriptionkey",
 )
 _SENSITIVE_NAMES = {
-    "token", "jwt", "secret", "bearer", "passwd", "password", "authorization", "cookie", "setcookie",
+    "token",
+    "jwt",
+    "secret",
+    "bearer",
+    "passwd",
+    "password",
+    "authorization",
+    "cookie",
+    "setcookie",
 }
 _MAX_SANITIZATION_NODES = 100_000
 _MAX_SANITIZATION_CHARS = 64 * 1024 * 1024
@@ -75,9 +111,20 @@ _CALLEE_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 # stripe.secretKey, key) also name sort keys, page tokens and cache keys, so
 # only a literal that looks like an opaque key is withheld from them.
 _OPAQUE_NAME = re.compile(r"[A-Za-z_$][\w$-]*(?:\.[A-Za-z_$][\w$-]*)*")
-_OPAQUE_NAME_WORDS = frozenset({
-    "apikey", "credential", "credentials", "key", "pass", "passwd", "password", "pwd", "secret", "token",
-})
+_OPAQUE_NAME_WORDS = frozenset(
+    {
+        "apikey",
+        "credential",
+        "credentials",
+        "key",
+        "pass",
+        "passwd",
+        "password",
+        "pwd",
+        "secret",
+        "token",
+    }
+)
 # Values that name, locate or stand in for a credential instead of being one.
 _REFERENCE = re.compile(
     r"\$\{\{[^{}\r\n]*\}\}|\{\{[^{}\r\n]*\}\}|\$\{[A-Za-z_][A-Za-z0-9_.]*\}|\$\([^()\r\n]*\)"
@@ -86,10 +133,22 @@ _REFERENCE = re.compile(
 _ALPHANUMERIC = re.compile(r"[A-Za-z0-9]")
 _ENVIRONMENT_NAME = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+")
 _FILE_PATH = re.compile(r"(?:[\w.~-]*[/\\])+[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,5}")
-_PLACEHOLDER_WORDS = frozenset({
-    "changeme", "dummy", "example", "fake", "insert", "placeholder", "redacted", "replace", "replaceme",
-    "sample", "todo", "your",
-})
+_PLACEHOLDER_WORDS = frozenset(
+    {
+        "changeme",
+        "dummy",
+        "example",
+        "fake",
+        "insert",
+        "placeholder",
+        "redacted",
+        "replace",
+        "replaceme",
+        "sample",
+        "todo",
+        "your",
+    }
+)
 _PLACEHOLDER_FILL = re.compile(r"(?i)x{4,}|\*{4,}|\.{3,}")
 # Random keys change character class (digit, lower, upper) often inside one
 # long alphanumeric run; names, words and model identifiers rarely do.

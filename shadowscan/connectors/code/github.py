@@ -130,7 +130,8 @@ class GitHubConnector(RemoteRepositoryConnector):
         self.max_records = self._record_cap(ctx.get("max_repos", 500))
         self.depth = int(ctx.get("clone_depth", 1))
         self.clone_max_bytes, self.clone_timeout_seconds = clone_limits(
-            ctx.get("clone_max_bytes", 256 * 1024 * 1024), ctx.get("clone_timeout_seconds", 120),
+            ctx.get("clone_max_bytes", 256 * 1024 * 1024),
+            ctx.get("clone_timeout_seconds", 120),
         )
         self.include_archived = bool(ctx.get("include_archived", False))
         self.include_forks = bool(ctx.get("include_forks", False))
@@ -210,10 +211,21 @@ class GitHubConnector(RemoteRepositoryConnector):
             yield from self._analyze_repository(repo, self._fetch_repo, self._repo_level_findings)
 
     def _filesystem_options(self) -> dict[str, Any]:
-        return {k: v for k, v in self.ctx.config.items() if k in {
-            "exclude", "max_file_size", "max_files", "scan_timeout", "scan_secrets", "use_git",
-            "strict_coverage", "include_tests",
-        }}
+        return {
+            k: v
+            for k, v in self.ctx.config.items()
+            if k
+            in {
+                "exclude",
+                "max_file_size",
+                "max_files",
+                "scan_timeout",
+                "scan_secrets",
+                "use_git",
+                "strict_coverage",
+                "include_tests",
+            }
+        }
 
     def _checkout_account(self, repo: dict[str, Any], full: str) -> Any:
         return (repo.get("owner") or {}).get("login")
@@ -257,7 +269,8 @@ class GitHubConnector(RemoteRepositoryConnector):
         if branch is None:
             return None
         tree = self.http.try_get_json(
-            f"/repos/{full}/git/trees/{quote(branch, safe='')}", params={"recursive": "1"},
+            f"/repos/{full}/git/trees/{quote(branch, safe='')}",
+            params={"recursive": "1"},
         )
         if not isinstance(tree, dict) or not isinstance(tree.get("tree"), list):
             self.ctx.warn(f"code.github: cannot read tree of {full}", incomplete=True)
@@ -284,7 +297,8 @@ class GitHubConnector(RemoteRepositoryConnector):
         entries = [t for t in tree["tree"] if isinstance(t, dict) and isinstance(t.get("path"), str)]
         if len(entries) != len(tree["tree"]):
             self.ctx.warn(
-                f"code.github: malformed tree entries in {full}; source coverage partial", incomplete=True,
+                f"code.github: malformed tree entries in {full}; source coverage partial",
+                incomplete=True,
             )
         if any(t.get("type") == "commit" or t.get("mode") in {"120000", "160000"} for t in entries):
             self.ctx.warn(
@@ -292,9 +306,12 @@ class GitHubConnector(RemoteRepositoryConnector):
                 incomplete=True,
             )
         blobs = {
-            t["path"]: t for t in entries
-            if t.get("type") == "blob" and t.get("mode") not in {"120000", "160000"}
-            and isinstance(t.get("size", 0), int) and 0 <= t.get("size", 0) <= API_MAX_BLOB_BYTES
+            t["path"]: t
+            for t in entries
+            if t.get("type") == "blob"
+            and t.get("mode") not in {"120000", "160000"}
+            and isinstance(t.get("size", 0), int)
+            and 0 <= t.get("size", 0) <= API_MAX_BLOB_BYTES
         }
         if any(
             t.get("type") == "blob" and (not isinstance(t.get("size", 0), int) or t.get("size", 0) < 0)
@@ -308,7 +325,8 @@ class GitHubConnector(RemoteRepositoryConnector):
         selected = select_api_paths(paths)
         if len(selected) < sum(t.get("type") == "blob" for t in entries):
             self.ctx.warn(
-                f"code.github: API mode samples repository {full}; source coverage partial", incomplete=True,
+                f"code.github: API mode samples repository {full}; source coverage partial",
+                incomplete=True,
             )
         dest, fetched = self._write_api_snapshot(repo, blobs, selected, tmp, f" in {full}")
         self.log.info("code.github: %s fetched %d/%d files via API", full, fetched, len(paths))
@@ -348,7 +366,8 @@ class GitHubConnector(RemoteRepositoryConnector):
                         names.append(item["name"])
             except HttpError as exc:
                 self.ctx.warn(
-                    f"code.github: repository metadata HTTP {exc.status}; coverage unknown", incomplete=True,
+                    f"code.github: repository metadata HTTP {exc.status}; coverage unknown",
+                    incomplete=True,
                 )
         if not names:
             return
@@ -367,15 +386,17 @@ class GitHubConnector(RemoteRepositoryConnector):
             provider="github",
             account=(repo.get("owner") or {}).get("login"),
         )
-        f.add_evidence(Evidence(
-            signal="ci:secret-names",
-            description=(
-                "Actions/Codespaces/Dependabot secret or variable names: "
-                f"{', '.join(sorted(set(names)))[:400]}"
-            ),
-            location=f"{repo.get('html_url')}/settings/secrets/actions",
-            weight=0.3,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="ci:secret-names",
+                description=(
+                    "Actions/Codespaces/Dependabot secret or variable names: "
+                    f"{', '.join(sorted(set(names)))[:400]}"
+                ),
+                location=f"{repo.get('html_url')}/settings/secrets/actions",
+                weight=0.3,
+            )
+        )
         apply_matches(f, matches, location=f"{full} (repository secrets)", weight_scale=0.8)
         f.metadata["secret_names"] = sorted(set(names))
         f.add_tag("ci-credentials")

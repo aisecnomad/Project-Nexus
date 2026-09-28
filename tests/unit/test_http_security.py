@@ -32,12 +32,23 @@ def client(*responses, **kwargs):
 def test_invalid_custom_header_does_not_echo_credential():
     credential = "synthetic-header-credential"
     with pytest.raises(ValueError) as exc:
-        HttpClient("https://api.example.com/v1", headers={"Authorization": f"Bearer {credential}\nInjected: yes"})
+        HttpClient(
+            "https://api.example.com/v1", headers={"Authorization": f"Bearer {credential}\nInjected: yes"}
+        )
     assert credential not in str(exc.value)
     assert "invalid characters" in str(exc.value)
 
 
-@pytest.mark.parametrize("target", ["https://evil.example/items", "http://api.example.com/items", "https://api.example.com:444/items", "https://api.example.com@evil.example/items", "//evil.example/items"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://evil.example/items",
+        "http://api.example.com/items",
+        "https://api.example.com:444/items",
+        "https://api.example.com@evil.example/items",
+        "//evil.example/items",
+    ],
+)
 def test_untrusted_origin_rejected_before_credentials_are_sent(target):
     http, session = client()
     with pytest.raises(ValueError):
@@ -63,7 +74,9 @@ def test_same_origin_redirect_allowed():
 def test_server_retry_after_is_bounded(monkeypatch):
     sleep = Mock()
     monkeypatch.setattr("shadowscan.utils.http.time.sleep", sleep)
-    http, _ = client(response(status=429, headers={"Retry-After": "999999999999999999999"}), response({"ok": True}))
+    http, _ = client(
+        response(status=429, headers={"Retry-After": "999999999999999999999"}), response({"ok": True})
+    )
     assert http.get_json("/items") == {"ok": True}
     sleep.assert_called_once_with(120)
 
@@ -73,7 +86,9 @@ def test_pagination_refuses_cross_origin_links(paginator):
     initial = [] if paginator == "paginate_link" else {"value": []}
     http, session = client(response(initial, headers={"Link": '<https://evil.example/next>; rel="next"'}))
     if paginator == "paginate_odata":
-        session.request.side_effect = [response({"value": [], "@odata.nextLink": "https://evil.example/next"})]
+        session.request.side_effect = [
+            response({"value": [], "@odata.nextLink": "https://evil.example/next"})
+        ]
     with pytest.raises(ValueError):
         list(getattr(http, paginator)("/items"))
     assert session.request.call_count == 1
@@ -121,7 +136,9 @@ def test_pagination_budget_exhaustion_is_an_error():
         list(http.paginate_link("/items", max_pages=1))
 
 
-@pytest.mark.parametrize("path", ["../escape.py", "/escape.py", "nested/../../escape.py", "..\\escape.py", "C:/escape.py", "."])
+@pytest.mark.parametrize(
+    "path", ["../escape.py", "/escape.py", "nested/../../escape.py", "..\\escape.py", "C:/escape.py", "."]
+)
 def test_repository_api_paths_stay_inside_checkout(tmp_path, path):
     with pytest.raises(RuntimeError):
         repository_target(str(tmp_path), path)
@@ -135,7 +152,16 @@ def test_repository_symlink_escape_is_rejected(tmp_path):
         repository_target(str(checkout), "nested/escape.py")
 
 
-@pytest.mark.parametrize("cls,record", [(GitHubConnector, {"full_name": "org/repo", "clone_url": "https://evil.example/repo.git"}), (GitLabConnector, {"path_with_namespace": "org/repo", "http_url_to_repo": "https://evil.example/repo.git"})])
+@pytest.mark.parametrize(
+    "cls,record",
+    [
+        (GitHubConnector, {"full_name": "org/repo", "clone_url": "https://evil.example/repo.git"}),
+        (
+            GitLabConnector,
+            {"path_with_namespace": "org/repo", "http_url_to_repo": "https://evil.example/repo.git"},
+        ),
+    ],
+)
 def test_clone_refuses_metadata_credential_destination(cls, record, tmp_path, index, monkeypatch):
     run = Mock()
     monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", run)
@@ -145,14 +171,30 @@ def test_clone_refuses_metadata_credential_destination(cls, record, tmp_path, in
     run.assert_not_called()
 
 
-@pytest.mark.parametrize("cls,record,origin", [(GitHubConnector, {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"}, "https://github.com/"), (GitLabConnector, {"path_with_namespace": "org/repo", "http_url_to_repo": "https://gitlab.com/org/repo.git"}, "https://gitlab.com/")])
+@pytest.mark.parametrize(
+    "cls,record,origin",
+    [
+        (
+            GitHubConnector,
+            {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"},
+            "https://github.com/",
+        ),
+        (
+            GitLabConnector,
+            {"path_with_namespace": "org/repo", "http_url_to_repo": "https://gitlab.com/org/repo.git"},
+            "https://gitlab.com/",
+        ),
+    ],
+)
 def test_clone_credential_header_is_origin_scoped(cls, record, origin, tmp_path, index, monkeypatch):
     run = Mock(return_value=True)
     monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", run)
     connector = cls(ConnectorContext(config={"token": "synthetic-token"}, index=index))
     assert connector._clone(record, str(tmp_path))
     env = run.call_args.args[1]
-    settings = {env[f"GIT_CONFIG_KEY_{n}"]: env[f"GIT_CONFIG_VALUE_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))}
+    settings = {
+        env[f"GIT_CONFIG_KEY_{n}"]: env[f"GIT_CONFIG_VALUE_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))
+    }
     assert "http.extraheader" not in settings
     assert settings[f"http.{origin}.extraheader"].startswith("Authorization: Basic ")
     assert settings["http.followRedirects"] == "false"
@@ -162,7 +204,9 @@ def test_clone_credential_header_is_origin_scoped(cls, record, origin, tmp_path,
 def test_github_api_download_rejects_traversal_before_request(tmp_path, index):
     connector = GitHubConnector(ConnectorContext(index=index))
     connector.http = Mock()
-    connector.http.try_get_json.return_value = {"tree": [{"path": "../escape.py", "type": "blob", "size": 10}]}
+    connector.http.try_get_json.return_value = {
+        "tree": [{"path": "../escape.py", "type": "blob", "size": 10}]
+    }
     with pytest.raises(RuntimeError):
         connector._fetch_via_api({"full_name": "org/repo"}, str(tmp_path))
     assert connector.http.try_get_json.call_count == 1
@@ -179,7 +223,18 @@ def test_gitlab_api_download_rejects_traversal_before_request(tmp_path, index):
     connector.http.get.assert_not_called()
 
 
-@pytest.mark.parametrize("host", ["127.0.0.1", "169.254.169.254", "10.2.3.4", "[::1]", "[::ffff:127.0.0.1]", "100.64.0.1", "metadata.google.internal"])
+@pytest.mark.parametrize(
+    "host",
+    [
+        "127.0.0.1",
+        "169.254.169.254",
+        "10.2.3.4",
+        "[::1]",
+        "[::ffff:127.0.0.1]",
+        "100.64.0.1",
+        "metadata.google.internal",
+    ],
+)
 def test_private_destinations_rejected_before_request(host):
     http, session = client()
     # Use an empty base URL to isolate the destination policy from origin checks.
@@ -194,10 +249,12 @@ def test_dns_rebinding_cannot_change_the_connected_address(monkeypatch):
 
     from shadowscan.utils.http import _PublicHTTPSConnection
 
-    resolver = Mock(side_effect=[
-        [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))],
-        [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 443))],
-    ])
+    resolver = Mock(
+        side_effect=[
+            [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))],
+            [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 443))],
+        ]
+    )
     sock = Mock()
     monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolver)
     monkeypatch.setattr("shadowscan.utils.http.socket.socket", Mock(return_value=sock))
@@ -214,10 +271,15 @@ def test_connect_rejects_private_dns_answer_without_creating_socket(monkeypatch)
 
     from shadowscan.utils.http import _PublicHTTPSConnection
 
-    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", Mock(return_value=[
-        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443)),
-        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.0.0.1", 443)),
-    ]))
+    monkeypatch.setattr(
+        "shadowscan.utils.http.socket.getaddrinfo",
+        Mock(
+            return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.0.0.1", 443)),
+            ]
+        ),
+    )
     factory = Mock()
     monkeypatch.setattr("shadowscan.utils.http.socket.socket", factory)
     with pytest.raises(ValueError, match="Refusing"):
@@ -230,10 +292,12 @@ def test_connect_rejects_rebinding_after_url_preflight(monkeypatch):
 
     from shadowscan.utils.http import _PublicHTTPSConnection, validate_url
 
-    resolver = Mock(side_effect=[
-        [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))],
-        [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("169.254.169.254", 443))],
-    ])
+    resolver = Mock(
+        side_effect=[
+            [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))],
+            [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("169.254.169.254", 443))],
+        ]
+    )
     monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolver)
     factory = Mock()
     monkeypatch.setattr("shadowscan.utils.http.socket.socket", factory)
@@ -268,8 +332,12 @@ def test_private_override_does_not_mutate_another_clients_pool():
     public = HttpClient()
     private = HttpClient(allow_private_origin=True)
     try:
-        public_pool = public.session.get_adapter("https://").poolmanager.connection_from_url("https://example.com")
-        private_pool = private.session.get_adapter("https://").poolmanager.connection_from_url("https://example.com")
+        public_pool = public.session.get_adapter("https://").poolmanager.connection_from_url(
+            "https://example.com"
+        )
+        private_pool = private.session.get_adapter("https://").poolmanager.connection_from_url(
+            "https://example.com"
+        )
         assert public_pool.ConnectionCls is _PublicHTTPSConnection
         assert private_pool.ConnectionCls is _PrivateHTTPSConnection
     finally:
@@ -299,7 +367,7 @@ def test_tls_verification_cannot_be_disabled():
 
 def test_bounded_json_reads_streamed_decoded_bytes_and_closes_response():
     result = response({"keys": []})
-    result.iter_content = Mock(return_value=iter([b'{"keys":', b'[]}']))
+    result.iter_content = Mock(return_value=iter([b'{"keys":', b"[]}"]))
     result.close = Mock()
     http, session = client(result)
     assert http.get_json("/keys", max_bytes=16) == {"keys": []}
@@ -307,7 +375,9 @@ def test_bounded_json_reads_streamed_decoded_bytes_and_closes_response():
     result.close.assert_called_once()
 
 
-@pytest.mark.parametrize("content_length,chunks", [("1000", []), (None, [b"x" * 9, b"y" * 9]), ("3", [b"x" * 17])])
+@pytest.mark.parametrize(
+    "content_length,chunks", [("1000", []), (None, [b"x" * 9, b"y" * 9]), ("3", [b"x" * 17])]
+)
 def test_bounded_json_refuses_oversized_declared_or_decoded_body(content_length, chunks):
     result = response(headers={"Content-Length": content_length} if content_length else {})
     result.iter_content = Mock(return_value=iter(chunks))
@@ -316,6 +386,7 @@ def test_bounded_json_refuses_oversized_declared_or_decoded_body(content_length,
     with pytest.raises(ValueError, match="byte limit"):
         http.get_json("/keys", max_bytes=16)
     result.close.assert_called_once()
+
 
 def test_default_json_limit_is_enforced_while_streaming():
     result = response({"keys": []})
@@ -429,16 +500,19 @@ def test_falsy_session_tls_settings_never_reach_transport(setting):
     session.request.assert_not_called()
 
 
-@pytest.mark.parametrize("entry", [
-    {"Authorization": "opaque-secret-value\n"},
-    {"Authorization": "opaque-secret-value\rInjected: header"},
-    {"Authorization": "opaque-secret-value\0"},
-    {"Authorization": "opaque-secret-value\x7f"},
-    {"Authorization": "opaque-secret-value\u2603"},
-    {"opaque-secret-value\n": "value"},
-    {"opaque-secret-value:bad": "value"},
-    {"Authorization": ["opaque-secret-value"]},
-])
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"Authorization": "opaque-secret-value\n"},
+        {"Authorization": "opaque-secret-value\rInjected: header"},
+        {"Authorization": "opaque-secret-value\0"},
+        {"Authorization": "opaque-secret-value\x7f"},
+        {"Authorization": "opaque-secret-value\u2603"},
+        {"opaque-secret-value\n": "value"},
+        {"opaque-secret-value:bad": "value"},
+        {"Authorization": ["opaque-secret-value"]},
+    ],
+)
 @pytest.mark.parametrize("source", ["constructor", "injected", "override", "mutated"])
 def test_invalid_header_never_echoes_credentials_or_reaches_transport(entry, source):
     session = Mock(headers={})
@@ -475,8 +549,11 @@ def test_valid_byte_headers_and_request_header_removal_are_supported():
     response._content = b"{}"
     response._content_consumed = True
     session.send = Mock(return_value=response)
-    client = HttpClient("https://8.8.8.8", session=session,
-                        headers={"Authorization": "Bearer synthetic", "X-Label": b"caf\xe9"})
+    client = HttpClient(
+        "https://8.8.8.8",
+        session=session,
+        headers={"Authorization": "Bearer synthetic", "X-Label": b"caf\xe9"},
+    )
     client.get("/items", headers={"Authorization": None, "X-Correlation-ID": "a\tb"})
     request = session.send.call_args.args[0]
     assert "Authorization" not in request.headers

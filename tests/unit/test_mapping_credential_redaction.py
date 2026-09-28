@@ -12,14 +12,14 @@ SECRET = "opaque-synthetic-credential"
 TAIL = "opaque-private-tail"
 
 SOURCES = [
-    f'{{"api_key": "{SECRET}\\\"{TAIL}", "model": "langchain"}}',
+    f'{{"api_key": "{SECRET}\\"{TAIL}", "model": "langchain"}}',
     f"api_key: '{SECRET}''{TAIL}'\nmodel: langchain",
     f'{{"password": ["{SECRET}", "{TAIL}"], "model": "langchain"}}',
     f"{{'api_key': {{'part': ['{SECRET}', '{TAIL}']}}, 'model': 'langchain'}}",
     f'const config = {{api_key: `{SECRET}\n{TAIL}`, model: "langchain"}};',
     f'{{"api_key": "{SECRET}" + "{TAIL}", "model": "langchain"}}',
     f'{{"api_key": ("{SECRET}" "{TAIL}"), "model": "langchain"}}',
-    f'{{"api_key": "{SECRET}\\\";{TAIL}',
+    f'{{"api_key": "{SECRET}\\";{TAIL}',
 ]
 
 
@@ -30,8 +30,8 @@ def test_sensitive_mapping_redaction_covers_complete_value(source):
     assert REDACTED in clean
     assert clean.count("\n") == source.count("\n")
     assert sanitize_text(clean) == clean
-    if 'langchain' in source:
-        assert 'langchain' in clean
+    if "langchain" in source:
+        assert "langchain" in clean
 
 
 def test_mapping_credential_fingerprint_remains_stable():
@@ -44,10 +44,14 @@ def test_mapping_credential_fingerprint_remains_stable():
 def test_source_mapping_credentials_never_enter_scan_evidence(tmp_path, run_connector, scan_secrets):
     for number, source in enumerate(SOURCES):
         (tmp_path / f"agent_{number}.py").write_text(
-            "import langchain; config = " + source + "\n", encoding="utf-8",
+            "import langchain; config = " + source + "\n",
+            encoding="utf-8",
         )
     findings, ctx = run_connector(
-        "code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=scan_secrets,
+        "code.filesystem",
+        path=str(tmp_path),
+        use_git=False,
+        scan_secrets=scan_secrets,
     )
     assert findings and not ctx.stats.incomplete
     output = json.dumps([finding.to_dict() for finding in findings])

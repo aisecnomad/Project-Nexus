@@ -22,10 +22,24 @@ _MAX_FSTRING_DEPTH = 24
 # A slash is a regular-expression delimiter only where an expression can start.
 # In particular, after an identifier, literal, or closing expression delimiter
 # it is division. This is deliberately a lexical approximation, not a JS parser.
-_REGEX_PREFIX_WORDS = frozenset({
-    "await", "case", "delete", "do", "else", "in", "instanceof", "new", "of",
-    "return", "throw", "typeof", "void", "yield",
-})
+_REGEX_PREFIX_WORDS = frozenset(
+    {
+        "await",
+        "case",
+        "delete",
+        "do",
+        "else",
+        "in",
+        "instanceof",
+        "new",
+        "of",
+        "return",
+        "throw",
+        "typeof",
+        "void",
+        "yield",
+    }
+)
 _CONTROL_HEADS = frozenset({"catch", "for", "if", "switch", "while", "with"})
 _MAX_REGEX_LENGTH = 8192
 
@@ -75,7 +89,7 @@ def _jsx_open_name(text: str, start: int) -> str | None:
         pos += 1
     if pos == len(text) or text[pos] not in " \t\r\n/>":
         return None
-    name = text[start + 1:pos]
+    name = text[start + 1 : pos]
     # A bare `<T>(...)` in TSX is commonly a generic arrow function, with
     # no JSX closing tag. Leave its body visible to the scanner.
     if name[0].isupper():
@@ -83,19 +97,23 @@ def _jsx_open_name(text: str, start: int) -> str | None:
             return None
         # Constrained and defaulted TSX generic arrows can look like JSX
         # opening tags: `<T extends object>(x: T) => x` and `<T = X>(...)`.
-        suffix = text[pos:min(len(text), pos + 64)].lstrip()
+        suffix = text[pos : min(len(text), pos + 64)].lstrip()
         constraint = suffix.startswith("extends") and (
             len(suffix) == 7 or suffix[7].isspace() or suffix[7] in "<{"
         )
         if constraint or suffix.startswith("="):
             end = text.find(">(", pos, min(len(text), pos + 1024))
-            if end >= 0 and "=>" in text[end + 2:min(len(text), end + 258)]:
+            if end >= 0 and "=>" in text[end + 2 : min(len(text), end + 258)]:
                 return None
     return name
 
 
 def noncode_ranges(
-    text: str, language: str | None, dialect: str | None = None, *, jsx: bool = False,
+    text: str,
+    language: str | None,
+    dialect: str | None = None,
+    *,
+    jsx: bool = False,
 ) -> tuple[list[tuple[int, int]], bool]:
     """Return sorted ignored half-open spans and whether lexing was incomplete."""
     if language == "python":
@@ -133,7 +151,11 @@ _UNTERMINATED_ONE_LINE_STRING = "unterminated string literal"
 
 
 def _python_ranges_from(
-    text: str, offsets: list[int], first_line: int, spans: list[tuple[int, int]], reader: io.StringIO,
+    text: str,
+    offsets: list[int],
+    first_line: int,
+    spans: list[tuple[int, int]],
+    reader: io.StringIO,
 ) -> tuple[bool, int | None]:
     """Tokenize from ``first_line``; return (ambiguous, line to resume at or None)."""
 
@@ -146,7 +168,8 @@ def _python_ranges_from(
     fstring_start_type = getattr(tokenize, "FSTRING_START", None)
     fstring_end_type = getattr(tokenize, "FSTRING_END", None)
     fstring_parts = {
-        getattr(tokenize, name) for name in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END")
+        getattr(tokenize, name)
+        for name in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END")
         if hasattr(tokenize, name)
     }
     try:
@@ -243,7 +266,7 @@ def _legacy_fstring_ranges(token: str, base: int, depth: int = 0) -> tuple[list[
             if token[i] == "\\":
                 i += 2
             elif token.startswith(delimiter, i):
-                return i + len(delimiter), "f" in token[start:prefix.start(1)].lower(), True
+                return i + len(delimiter), "f" in token[start : prefix.start(1)].lower(), True
             else:
                 i += 1
         return body_end, False, False
@@ -336,8 +359,17 @@ class _JavaScriptLexer:
     """
 
     __slots__ = (
-        "can_start_regex", "control_parens", "control_pending", "incomplete", "jsx", "modes", "open_jsx_tags",
-        "pending_jsx_tags", "size", "spans", "text",
+        "can_start_regex",
+        "control_parens",
+        "control_pending",
+        "incomplete",
+        "jsx",
+        "modes",
+        "open_jsx_tags",
+        "pending_jsx_tags",
+        "size",
+        "spans",
+        "text",
     )
 
     def __init__(self, text: str, jsx: bool) -> None:
@@ -424,7 +456,7 @@ class _JavaScriptLexer:
                     return self._unterminated(start)
                 spans.append((start, i))
                 spans.append((i, end + 1))
-                if not self.open_jsx_tags or text[i + 2:end].strip() != self.open_jsx_tags.pop():
+                if not self.open_jsx_tags or text[i + 2 : end].strip() != self.open_jsx_tags.pop():
                     self.incomplete = True
                 modes.pop()
                 i = end + 1
@@ -509,7 +541,9 @@ class _JavaScriptLexer:
         """Walk code or an expression body, tracking where a regular expression can start."""
         text, size, jsx, spans, modes = self.text, self.size, self.jsx, self.spans, self.modes
         can_start_regex, control_pending, control_parens = (
-            self.can_start_regex, self.control_pending, self.control_parens
+            self.can_start_regex,
+            self.control_pending,
+            self.control_parens,
         )
         while i < size:
             if text.startswith("//", i):
@@ -551,9 +585,12 @@ class _JavaScriptLexer:
                     modes[-1] = (mode, depth - 1)
                     can_start_regex[-1] = False
                 return i + 1
-            elif jsx and text[i] == "<" and can_start_regex[-1] and (
-                name := _jsx_open_name(text, i)
-            ) is not None:
+            elif (
+                jsx
+                and text[i] == "<"
+                and can_start_regex[-1]
+                and (name := _jsx_open_name(text, i)) is not None
+            ):
                 self.pending_jsx_tags.append(name)
                 modes.append(("jsx_tag", i))
                 can_start_regex[-1] = False
@@ -723,12 +760,18 @@ def _literal_prefix(text: str, i: int, language: str) -> str:
 
 
 def _open_literal(
-    text: str, i: int, q: int, prefix: str, language: str, dialect: str | None,
+    text: str,
+    i: int,
+    q: int,
+    prefix: str,
+    language: str,
+    dialect: str | None,
 ) -> tuple[_Literal, int]:
     """Return the literal opened by ``prefix`` at ``i`` and the quote at ``q``, and the index after it."""
     quote = text[q]
-    triple = (quote == '"' and language in {"java", "dotnet", "swift", "dart", "ruby"}
-              and text.startswith('"""', q))
+    triple = (
+        quote == '"' and language in {"java", "dotnet", "swift", "dart", "ruby"} and text.startswith('"""', q)
+    )
     if quote == "'" and language in {"dart", "ruby"} and text.startswith("'''", q):
         triple = True
     opener = quote * (3 if triple else 1)
@@ -743,11 +786,12 @@ def _open_literal(
     elif language == "ruby" and quote == '"':
         interpolation = "#{"
     literal = _Literal(
-        i, close,
-        escaped=quote != "`" and not (
-            prefix == "r" or "@" in prefix or prefix.startswith("#") or triple and language == "dotnet"
-        ),
-        verbatim="@" in prefix, interpolation=interpolation,
+        i,
+        close,
+        escaped=quote != "`"
+        and not (prefix == "r" or "@" in prefix or prefix.startswith("#") or triple and language == "dotnet"),
+        verbatim="@" in prefix,
+        interpolation=interpolation,
         multiline=triple or quote == "`" or "@" in prefix,
     )
     return literal, q + len(opener)
@@ -762,8 +806,19 @@ class _SourceLexer:
     """
 
     __slots__ = (
-        "dialect", "go_import_block", "heredocs", "incomplete", "language", "line_checked_through",
-        "line_start", "modes", "php_code", "size", "spans", "stopped", "text",
+        "dialect",
+        "go_import_block",
+        "heredocs",
+        "incomplete",
+        "language",
+        "line_checked_through",
+        "line_start",
+        "modes",
+        "php_code",
+        "size",
+        "spans",
+        "stopped",
+        "text",
     )
 
     def __init__(self, text: str, language: str, dialect: str | None) -> None:
@@ -819,11 +874,11 @@ class _SourceLexer:
             self.line_start = newline + 1
         self.line_checked_through = index
         if index - self.line_start > _MAX_GO_IMPORT_PREFIX:
-            prefix = self.text[self.line_start:self.line_start + _MAX_GO_IMPORT_PREFIX]
+            prefix = self.text[self.line_start : self.line_start + _MAX_GO_IMPORT_PREFIX]
             if prefix.isspace() or re.match(r"\s*import\b", prefix):
                 self.incomplete = True  # Too long to classify as a Go import safely.
             return None
-        return self.text[self.line_start:index]
+        return self.text[self.line_start : index]
 
     def _php_template(self, i: int) -> int:
         """Mask template text up to and including the next PHP opening tag."""
@@ -877,8 +932,7 @@ class _SourceLexer:
             language == "php" and re.fullmatch(r"\s*" + re.escape(marker) + r"[;,)]?\s*", line)
         ):
             heredocs.pop(0)
-        elif ((language == "ruby" and "#{" in line)
-              or (language == "php" and ("${" in line or "{$" in line))):
+        elif (language == "ruby" and "#{" in line) or (language == "php" and ("${" in line or "{$" in line)):
             # Interpolation inside a here-document needs language parsing.
             # Preserve the conservative mask and report incomplete analysis.
             self.incomplete = True
@@ -903,9 +957,10 @@ class _SourceLexer:
                 return i + 1, False
         if quote == '"' and language == "go":
             before = self._line_before(i)
-            if before is not None and (re.fullmatch(r"\s*import\s+(?:[\w.]+\s+)?", before) or (
-                self.go_import_block and re.fullmatch(r"\s*(?:[\w.]+\s*)?", before)
-            )):
+            if before is not None and (
+                re.fullmatch(r"\s*import\s+(?:[\w.]+\s+)?", before)
+                or (self.go_import_block and re.fullmatch(r"\s*(?:[\w.]+\s*)?", before))
+            ):
                 i = q + 1
                 while i < size and text[i] != '"' and text[i] not in "\r\n":
                     i += 2 if text[i] == "\\" else 1
@@ -946,8 +1001,12 @@ class _SourceLexer:
                 self.php_code = False
                 return i + 2
 
-            if (language == "ruby" and (i == 0 or text[i - 1] == "\n") and text.startswith("=begin", i)
-                    and (i + 6 == size or text[i + 6].isspace())):
+            if (
+                language == "ruby"
+                and (i == 0 or text[i - 1] == "\n")
+                and text.startswith("=begin", i)
+                and (i + 6 == size or text[i + 6].isspace())
+            ):
                 # Search from a position instead of slicing: a file of many short
                 # blocks would otherwise copy the remainder for each one (quadratic).
                 end_marker = _RUBY_BLOCK_END.search(text, i + 6)
@@ -974,8 +1033,11 @@ class _SourceLexer:
                     i = heredoc.end()
                     continue
 
-            if (language == "go" and text.startswith("import", i)
-                    and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_"))):
+            if (
+                language == "go"
+                and text.startswith("import", i)
+                and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_"))
+            ):
                 match = _GO_IMPORT_BLOCK.match(text, i)
                 if match:
                     self.go_import_block = True
@@ -988,8 +1050,9 @@ class _SourceLexer:
                 i = self._mask(i, *_block_comment_end(text, i, "(*", "*)", nested=True))
                 continue
 
-            if ((language != "ruby" and text.startswith("//", i))
-                    or (language in {"ruby", "php"} and text[i] == "#")):
+            if (language != "ruby" and text.startswith("//", i)) or (
+                language in {"ruby", "php"} and text[i] == "#"
+            ):
                 end = text.find("\n", i)
                 end = size if end < 0 else end
                 spans.append((i, end))

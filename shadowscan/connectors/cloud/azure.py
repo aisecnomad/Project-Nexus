@@ -77,7 +77,12 @@ _FOUNDRY_HOST_SUFFIXES = (".services.ai.azure.com", ".cognitiveservices.azure.co
 # Foundry agent tool types and the capability each grants.
 _BROWSING_TOOLS = {"bing_grounding", "bing_custom_search"}
 _ACTION_TOOLS = {
-    "openapi", "azure_function", "function", "connected_agent", "mcp", "sharepoint_grounding",
+    "openapi",
+    "azure_function",
+    "function",
+    "connected_agent",
+    "mcp",
+    "sharepoint_grounding",
     "fabric_dataagent",
 }
 _RETRIEVAL_TOOLS = {"file_search", "azure_ai_search", "sharepoint_grounding"}
@@ -144,7 +149,9 @@ class AzureConnector(BaseConnector):
         self.include_app_settings = bool(ctx.get("include_app_settings", True))
         try:
             self.subscriptions = string_list(
-                ctx.get("subscriptions"), "subscriptions", pattern=r"[A-Za-z0-9-]+",
+                ctx.get("subscriptions"),
+                "subscriptions",
+                pattern=r"[A-Za-z0-9-]+",
             )
         except ValueError as exc:
             raise ConnectorError(f"cloud.azure: {exc}") from None
@@ -240,7 +247,8 @@ class AzureConnector(BaseConnector):
         self._auth()
         assert self.http
         subs = self.subscriptions or [
-            s["subscriptionId"] for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or []
+            s["subscriptionId"]
+            for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or []
             if isinstance(s.get("subscriptionId"), str)
         ]
         if not subs:
@@ -248,7 +256,8 @@ class AzureConnector(BaseConnector):
         for r in self._resource_graph(subs):
             if not isinstance(r, dict):
                 self.ctx.warn(
-                    "cloud.azure: Resource Graph returned an invalid resource record", incomplete=True,
+                    "cloud.azure: Resource Graph returned an invalid resource record",
+                    incomplete=True,
                 )
                 continue
             rid = r.get("id")
@@ -264,8 +273,12 @@ class AzureConnector(BaseConnector):
                 role_id = str(get_path(ra, "properties.roleDefinitionId", default="")).rsplit("/", 1)[-1]
                 if role_id in AI_ROLE_IDS:
                     yield {
-                        "_kind": "role-assignment", "_subscription": sub, "role_id": role_id,
-                        "role": AI_ROLE_IDS[role_id], **(ra.get("properties") or {}), "id": ra.get("id"),
+                        "_kind": "role-assignment",
+                        "_subscription": sub,
+                        "role_id": role_id,
+                        "role": AI_ROLE_IDS[role_id],
+                        **(ra.get("properties") or {}),
+                        "id": ra.get("id"),
                     }
 
     def _resource_graph(self, subs: list[str]) -> list[Any]:
@@ -281,7 +294,8 @@ class AzureConnector(BaseConnector):
             body = {"subscriptions": subs, "query": ARG_QUERY, "options": options}
             try:
                 data = self.http.post_json(
-                    "/providers/Microsoft.ResourceGraph/resources", params={"api-version": "2021-03-01"},
+                    "/providers/Microsoft.ResourceGraph/resources",
+                    params={"api-version": "2021-03-01"},
                     json=body,
                 )
             except (HttpError, RequestException, ValueError) as exc:
@@ -297,7 +311,8 @@ class AzureConnector(BaseConnector):
             if skip_token is None or skip_token == "":
                 if str(data.get("resultTruncated", "false")).lower() == "true":
                     self.ctx.warn(
-                        "cloud.azure: Resource Graph results truncated without continuation", incomplete=True,
+                        "cloud.azure: Resource Graph results truncated without continuation",
+                        incomplete=True,
                     )
                 break
             if not isinstance(skip_token, str):
@@ -319,15 +334,21 @@ class AzureConnector(BaseConnector):
             for d in self._list(f"{rid}/deployments", "2024-10-01", allow_partial=True) or []:
                 yield {"_kind": "deployment", "_account": rid, "_account_name": r.get("name"), **d}
             diag = self._list(
-                f"{rid}/providers/Microsoft.Insights/diagnosticSettings", "2021-05-01-preview",
+                f"{rid}/providers/Microsoft.Insights/diagnosticSettings",
+                "2021-05-01-preview",
                 allow_partial=False,
             )
-            yield {"_kind": "diagnostics", "_account": rid, "settings": diag,
-                   "coverage": "unknown" if diag is None else "observed"}
+            yield {
+                "_kind": "diagnostics",
+                "_account": rid,
+                "settings": diag,
+                "coverage": "unknown" if diag is None else "observed",
+            }
             for p in self._list(f"{rid}/projects", "2025-04-01-preview", allow_partial=True) or []:
                 if not isinstance(p, dict):
                     self.ctx.warn(
-                        "cloud.azure: invalid Foundry project record; coverage unknown", incomplete=True,
+                        "cloud.azure: invalid Foundry project record; coverage unknown",
+                        incomplete=True,
                     )
                     continue
                 p["_kind"] = "resource"
@@ -342,7 +363,9 @@ class AzureConnector(BaseConnector):
         elif t == "microsoft.logic/workflows":
             wf = self._get(str(rid), "2019-05-01") or {}
             yield {
-                "_kind": "logicapp-definition", "id": rid, "name": r.get("name"),
+                "_kind": "logicapp-definition",
+                "id": rid,
+                "name": r.get("name"),
                 "definition": get_path(wf, "properties.definition"),
                 "connections": get_path(wf, "properties.parameters.$connections.value"),
                 "state": get_path(wf, "properties.state"),
@@ -350,10 +373,14 @@ class AzureConnector(BaseConnector):
         elif t == "microsoft.web/sites" and self.include_app_settings:
             try:
                 settings = self.http.post_json(
-                    f"{rid}/config/appsettings/list", params={"api-version": "2022-03-01"},
+                    f"{rid}/config/appsettings/list",
+                    params={"api-version": "2022-03-01"},
                 )
-                if (not isinstance(settings, dict) or "error" in settings
-                        or not isinstance(settings.get("properties"), dict)):
+                if (
+                    not isinstance(settings, dict)
+                    or "error" in settings
+                    or not isinstance(settings.get("properties"), dict)
+                ):
                     self.ctx.warn(
                         f"cloud.azure: invalid appsettings response for {rid}; coverage unknown",
                         incomplete=True,
@@ -361,15 +388,21 @@ class AzureConnector(BaseConnector):
                     return
                 # The env-style key ensures dumps redact every value,
                 # including opaque credentials under nonstandard names.
-                yield {"_kind": "appsettings", "id": rid, "name": r.get("name"), "kind": r.get("kind"),
-                       "environment": settings["properties"]}
+                yield {
+                    "_kind": "appsettings",
+                    "id": rid,
+                    "name": r.get("name"),
+                    "kind": r.get("kind"),
+                    "environment": settings["properties"],
+                }
             except (HttpError, RequestException, ValueError) as exc:
                 self.ctx.warn(f"cloud.azure: appsettings {_failure(exc)} for {rid}", incomplete=True)
 
     def _collect_agents(self, account: dict[str, Any], project: dict[str, Any]) -> Iterator[dict[str, Any]]:
         token = self._foundry()
-        endpoint = (get_path(project, "properties.endpoints.AI Foundry API")
-                    or get_path(account, "properties.endpoints.AI Foundry API"))
+        endpoint = get_path(project, "properties.endpoints.AI Foundry API") or get_path(
+            account, "properties.endpoints.AI Foundry API"
+        )
         if not (token and endpoint):
             self.ctx.warn(
                 "cloud.azure: Foundry agent inventory unavailable; token or endpoint missing",
@@ -400,35 +433,48 @@ class AzureConnector(BaseConnector):
                 data = http.get_json("/assistants", params=dict(params))
             except (HttpError, RequestException, ValueError) as exc:
                 self.ctx.warn(
-                    f"cloud.azure: Foundry agents {_failure(exc)}; coverage unknown", incomplete=True,
+                    f"cloud.azure: Foundry agents {_failure(exc)}; coverage unknown",
+                    incomplete=True,
                 )
                 return
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("data"), list):
                 self.ctx.warn(
-                    "cloud.azure: invalid Foundry agent response; coverage unknown", incomplete=True,
+                    "cloud.azure: invalid Foundry agent response; coverage unknown",
+                    incomplete=True,
                 )
                 return
             for a in data["data"]:
                 if not isinstance(a, dict) or not isinstance(a.get("id"), str) or not a["id"].strip():
                     self.ctx.warn(
-                        "cloud.azure: invalid Foundry agent record; coverage unknown", incomplete=True,
+                        "cloud.azure: invalid Foundry agent record; coverage unknown",
+                        incomplete=True,
                     )
                     continue
                 yield {
-                    **a, "_kind": "foundry-agent", "_project": project.get("id"),
-                    "_project_name": project.get("name"), "_account": account.get("id"),
+                    **a,
+                    "_kind": "foundry-agent",
+                    "_project": project.get("id"),
+                    "_project_name": project.get("name"),
+                    "_account": account.get("id"),
                     "_endpoint": endpoint,
                 }
             if not isinstance(data.get("has_more"), bool):
                 self.ctx.warn(
-                    "cloud.azure: invalid Foundry agent pagination status; coverage unknown", incomplete=True,
+                    "cloud.azure: invalid Foundry agent pagination status; coverage unknown",
+                    incomplete=True,
                 )
                 return
             if not data["has_more"]:
                 return
             after = data.get("last_id")
-            if (not isinstance(after, str) or not after.strip() or after in seen or not data["data"]
-                    or not isinstance(data["data"][-1], dict) or after != data["data"][-1].get("id")):
+            if (
+                not isinstance(after, str)
+                or not after.strip()
+                or after in seen
+                or not data["data"]
+                or not isinstance(data["data"][-1], dict)
+                or after != data["data"][-1].get("id")
+            ):
                 self.ctx.warn("cloud.azure: invalid Foundry agent continuation", incomplete=True)
                 return
             seen.add(after)
@@ -495,7 +541,10 @@ class AzureConnector(BaseConnector):
                 dispatch.invalid()
 
     def _resource_finding(
-        self, r: dict[str, Any], deps: list[dict[str, Any]], diag: list[dict[str, Any]] | None,
+        self,
+        r: dict[str, Any],
+        deps: list[dict[str, Any]],
+        diag: list[dict[str, Any]] | None,
     ) -> Finding | None:
         t = str(r.get("type", "")).lower()
         rid = r.get("id")
@@ -506,7 +555,9 @@ class AzureConnector(BaseConnector):
         tags = r.get("tags") or {}
         owner = first_tag(tags, "owner", "Owner", "team", "CreatedBy")
         base: _ResourceBase = {
-            "account": r.get("subscriptionId"), "region": r.get("location"), "owner": owner,
+            "account": r.get("subscriptionId"),
+            "region": r.get("location"),
+            "owner": owner,
         }
         if t == "microsoft.cognitiveservices/accounts":
             return self._cognitive_account(r, rid, props, tags, base, deps, diag)
@@ -517,100 +568,170 @@ class AzureConnector(BaseConnector):
         return builder(r, rid, props, tags, base)
 
     def _foundry_project(
-        self, r: dict[str, Any], rid: str, props: dict[str, Any], tags: dict[str, Any], base: _ResourceBase,
+        self,
+        r: dict[str, Any],
+        rid: str,
+        props: dict[str, Any],
+        tags: dict[str, Any],
+        base: _ResourceBase,
     ) -> Finding:
         f = cloud_finding(
-            self.name, "azure", kind=Kind.CLOUD_RESOURCE, title=f"Azure AI Foundry project: {r.get('name')}",
-            resource=rid, resource_type="ai-foundry-project", **base,
+            self.name,
+            "azure",
+            kind=Kind.CLOUD_RESOURCE,
+            title=f"Azure AI Foundry project: {r.get('name')}",
+            resource=rid,
+            resource_type="ai-foundry-project",
+            **base,
         )
         f.add_framework("cloud.azure-ai-foundry-agents")
-        f.add_evidence(Evidence(
-            signal="azure:foundry-project",
-            description=(
-                f"Foundry project '{r.get('name')}' ({props.get('provisioningState')}) "
-                f"endpoints {', '.join((props.get('endpoints') or {}).keys())[:200]}"
-            ),
-            location=rid, weight=0.7, signature="cloud.azure-ai-foundry-agents",
-        ))
-        f.metadata.update({
-            "endpoints": props.get("endpoints"), "description": truncate(props.get("description")),
-            "tags": tags,
-        })
+        f.add_evidence(
+            Evidence(
+                signal="azure:foundry-project",
+                description=(
+                    f"Foundry project '{r.get('name')}' ({props.get('provisioningState')}) "
+                    f"endpoints {', '.join((props.get('endpoints') or {}).keys())[:200]}"
+                ),
+                location=rid,
+                weight=0.7,
+                signature="cloud.azure-ai-foundry-agents",
+            )
+        )
+        f.metadata.update(
+            {
+                "endpoints": props.get("endpoints"),
+                "description": truncate(props.get("description")),
+                "tags": tags,
+            }
+        )
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _ml_workspace(
-        self, r: dict[str, Any], rid: str, props: dict[str, Any], tags: dict[str, Any], base: _ResourceBase,
+        self,
+        r: dict[str, Any],
+        rid: str,
+        props: dict[str, Any],
+        tags: dict[str, Any],
+        base: _ResourceBase,
     ) -> Finding | None:
         kind = str(r.get("kind") or "Default")
         if kind.lower() not in {"hub", "project"}:
             return None
         f = cloud_finding(
-            self.name, "azure", kind=Kind.CLOUD_RESOURCE,
-            title=f"Azure AI Foundry {kind.lower()} (hub-based): {r.get('name')}", resource=rid,
-            resource_type=f"ml-workspace/{kind.lower()}", **base,
+            self.name,
+            "azure",
+            kind=Kind.CLOUD_RESOURCE,
+            title=f"Azure AI Foundry {kind.lower()} (hub-based): {r.get('name')}",
+            resource=rid,
+            resource_type=f"ml-workspace/{kind.lower()}",
+            **base,
         )
         f.add_framework("cloud.azure-ai-foundry-agents")
-        f.add_evidence(Evidence(
-            signal="azure:ml-workspace",
-            description=f"{kind} workspace '{r.get('name')}' discovery {props.get('discoveryUrl')}",
-            location=rid, weight=0.6, signature="cloud.azure-ai-foundry-agents",
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="azure:ml-workspace",
+                description=f"{kind} workspace '{r.get('name')}' discovery {props.get('discoveryUrl')}",
+                location=rid,
+                weight=0.6,
+                signature="cloud.azure-ai-foundry-agents",
+            )
+        )
         f.metadata.update({"kind": kind, "hub": props.get("hubResourceId"), "tags": tags})
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _managed_identity(
-        self, r: dict[str, Any], rid: str, props: dict[str, Any], tags: dict[str, Any], base: _ResourceBase,
+        self,
+        r: dict[str, Any],
+        rid: str,
+        props: dict[str, Any],
+        tags: dict[str, Any],
+        base: _ResourceBase,
     ) -> Finding | None:
         f = cloud_finding(
-            self.name, "azure", kind=Kind.SERVICE_IDENTITY,
+            self.name,
+            "azure",
+            kind=Kind.SERVICE_IDENTITY,
             title=f"User-assigned managed identity: {r.get('name')}",
-            resource=rid, resource_type="managed-identity", surface=Surface.IDENTITY, **base,
+            resource=rid,
+            resource_type="managed-identity",
+            surface=Surface.IDENTITY,
+            **base,
         )
         name_hint(self.index, f, r.get("name"))
         if not f.frameworks:
             return None
-        f.add_evidence(Evidence(
-            signal="azure:managed-identity",
-            description=f"Managed identity '{r.get('name')}' principal {props.get('principalId')}",
-            location=rid, weight=0.3,
-        ))
-        f.metadata.update({
-            "principal_id": props.get("principalId"), "client_id": props.get("clientId"), "tags": tags,
-        })
+        f.add_evidence(
+            Evidence(
+                signal="azure:managed-identity",
+                description=f"Managed identity '{r.get('name')}' principal {props.get('principalId')}",
+                location=rid,
+                weight=0.3,
+            )
+        )
+        f.metadata.update(
+            {
+                "principal_id": props.get("principalId"),
+                "client_id": props.get("clientId"),
+                "tags": tags,
+            }
+        )
         return done(f, self.index, Kind.SERVICE_IDENTITY)
 
     def _search_service(
-        self, r: dict[str, Any], rid: str, props: dict[str, Any], tags: dict[str, Any], base: _ResourceBase,
+        self,
+        r: dict[str, Any],
+        rid: str,
+        props: dict[str, Any],
+        tags: dict[str, Any],
+        base: _ResourceBase,
     ) -> Finding:
         f = cloud_finding(
-            self.name, "azure", kind=Kind.CLOUD_RESOURCE, title=f"Azure AI Search: {r.get('name')}",
-            resource=rid, resource_type="search-service", **base,
+            self.name,
+            "azure",
+            kind=Kind.CLOUD_RESOURCE,
+            title=f"Azure AI Search: {r.get('name')}",
+            resource=rid,
+            resource_type="search-service",
+            **base,
         )
         f.add_framework("memory.vector-stores")
-        f.add_evidence(Evidence(
-            signal="azure:search",
-            description=(
-                f"AI Search service '{r.get('name')}' (RAG retrieval tier); "
-                f"public network {props.get('publicNetworkAccess')}"
-            ),
-            location=rid, weight=0.3,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="azure:search",
+                description=(
+                    f"AI Search service '{r.get('name')}' (RAG retrieval tier); "
+                    f"public network {props.get('publicNetworkAccess')}"
+                ),
+                location=rid,
+                weight=0.3,
+            )
+        )
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _cognitive_account(
-        self, r: dict[str, Any], rid: str, props: dict[str, Any], tags: dict[str, Any], base: _ResourceBase,
-        deps: list[dict[str, Any]], diag: list[dict[str, Any]] | None,
+        self,
+        r: dict[str, Any],
+        rid: str,
+        props: dict[str, Any],
+        tags: dict[str, Any],
+        base: _ResourceBase,
+        deps: list[dict[str, Any]],
+        diag: list[dict[str, Any]] | None,
     ) -> Finding | None:
         kind = str(r.get("kind") or "")
         if kind.lower() not in {"openai", "aiservices"} and not deps:
             return None
         f = cloud_finding(
-            self.name, "azure", kind=Kind.CLOUD_RESOURCE,
+            self.name,
+            "azure",
+            kind=Kind.CLOUD_RESOURCE,
             title=(
                 f"Azure {'OpenAI' if kind.lower() == 'openai' else 'AI Services'} account: {r.get('name')} "
                 f"({len(deps)} deployment(s))"
             ),
-            resource=rid, resource_type=f"cognitive-services/{kind}", **base,
+            resource=rid,
+            resource_type=f"cognitive-services/{kind}",
+            **base,
         )
         f.add_model_provider("provider.azure-openai")
         if kind.lower() == "aiservices" or get_path(props, "allowProjectManagement"):
@@ -619,18 +740,21 @@ class AzureConnector(BaseConnector):
             str(get_path(d, "properties.model.name")) for d in deps if get_path(d, "properties.model.name")
         ]
         apply_matches(f, model_matches(self.index, *f.models), weight_scale=0.4)
-        dep_summary = ", ".join(
-            f"{d.get('name')}={get_path(d, 'properties.model.name')}" for d in deps
-        )[:300] or "none"
-        f.add_evidence(Evidence(
-            signal="azure:cognitive-account",
-            description=(
-                f"{kind} account '{r.get('name')}' deployments: {dep_summary}; "
-                f"public network {props.get('publicNetworkAccess')}; "
-                f"local auth disabled {props.get('disableLocalAuth')}"
-            ),
-            location=rid, weight=0.6,
-        ))
+        dep_summary = (
+            ", ".join(f"{d.get('name')}={get_path(d, 'properties.model.name')}" for d in deps)[:300] or "none"
+        )
+        f.add_evidence(
+            Evidence(
+                signal="azure:cognitive-account",
+                description=(
+                    f"{kind} account '{r.get('name')}' deployments: {dep_summary}; "
+                    f"public network {props.get('publicNetworkAccess')}; "
+                    f"local auth disabled {props.get('disableLocalAuth')}"
+                ),
+                location=rid,
+                weight=0.6,
+            )
+        )
         if props.get("disableLocalAuth") is not True:
             f.add_tag("api-key-auth-enabled")
         if props.get("publicNetworkAccess", "Enabled") == "Enabled":
@@ -639,59 +763,94 @@ class AzureConnector(BaseConnector):
             any(entry.get("enabled") for entry in (d.get("properties") or {}).get("logs") or []) for d in diag
         ):
             f.add_tag("no-diagnostic-logging")
-            f.add_evidence(Evidence(
-                signal="azure:no-diagnostics",
-                description="No diagnostic setting sends request logs anywhere — usage is not auditable",
-                weight=0.1,
-            ))
+            f.add_evidence(
+                Evidence(
+                    signal="azure:no-diagnostics",
+                    description="No diagnostic setting sends request logs anywhere — usage is not auditable",
+                    weight=0.1,
+                )
+            )
         f.metadata["diagnostic_logging_status"] = "unknown" if diag is None else "observed"
-        f.metadata.update({
-            "kind": kind,
-            "endpoint": props.get("endpoint"),
-            "deployments": [
-                {"name": d.get("name"), "model": get_path(d, "properties.model.name"),
-                 "version": get_path(d, "properties.model.version"), "capacity": get_path(d, "sku.capacity")}
-                for d in deps
-            ],
-            "public_network_access": props.get("publicNetworkAccess"),
-            "disable_local_auth": props.get("disableLocalAuth"),
-            "tags": tags,
-        })
+        f.metadata.update(
+            {
+                "kind": kind,
+                "endpoint": props.get("endpoint"),
+                "deployments": [
+                    {
+                        "name": d.get("name"),
+                        "model": get_path(d, "properties.model.name"),
+                        "version": get_path(d, "properties.model.version"),
+                        "capacity": get_path(d, "sku.capacity"),
+                    }
+                    for d in deps
+                ],
+                "public_network_access": props.get("publicNetworkAccess"),
+                "disable_local_auth": props.get("disableLocalAuth"),
+                "tags": tags,
+            }
+        )
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _bot_service(
-        self, r: dict[str, Any], rid: str, props: dict[str, Any], tags: dict[str, Any], base: _ResourceBase,
+        self,
+        r: dict[str, Any],
+        rid: str,
+        props: dict[str, Any],
+        tags: dict[str, Any],
+        base: _ResourceBase,
     ) -> Finding:
         f = cloud_finding(
-            self.name, "azure", kind=Kind.AGENT,
+            self.name,
+            "azure",
+            kind=Kind.AGENT,
             title=f"Azure Bot: {props.get('displayName') or r.get('name')}",
-            resource=rid, resource_type="bot-service", **base,
+            resource=rid,
+            resource_type="bot-service",
+            **base,
         )
         endpoint = str(props.get("endpoint", "")).lower()
         copilot_studio = any(hint in endpoint for hint in _COPILOT_STUDIO_HINTS)
         f.add_framework("platform.copilot-studio" if copilot_studio else "framework.bot-framework")
-        f.add_evidence(Evidence(
-            signal="azure:bot",
-            description=(
-                f"Bot '{props.get('displayName')}' endpoint {props.get('endpoint')} "
-                f"app id {props.get('msaAppId')} channels {', '.join(props.get('enabledChannels') or [])}"
-            ),
-            location=rid, weight=0.85,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="azure:bot",
+                description=(
+                    f"Bot '{props.get('displayName')}' endpoint {props.get('endpoint')} "
+                    f"app id {props.get('msaAppId')} channels {', '.join(props.get('enabledChannels') or [])}"
+                ),
+                location=rid,
+                weight=0.85,
+            )
+        )
         apply_matches(f, self.index.match_domains_in_text(str(props.get("endpoint") or "")), weight_scale=0.6)
-        f.metadata.update({
-            "endpoint": props.get("endpoint"), "msa_app_id": props.get("msaAppId"),
-            "msa_app_type": props.get("msaAppType"), "channels": props.get("enabledChannels"),
-            "is_streaming": props.get("isStreamingSupported"), "tags": tags,
-        })
+        f.metadata.update(
+            {
+                "endpoint": props.get("endpoint"),
+                "msa_app_id": props.get("msaAppId"),
+                "msa_app_type": props.get("msaAppType"),
+                "channels": props.get("enabledChannels"),
+                "is_streaming": props.get("isStreamingSupported"),
+                "tags": tags,
+            }
+        )
         return done(f, self.index, Kind.AGENT)
 
     def _container_app(
-        self, r: dict[str, Any], rid: str, props: dict[str, Any], tags: dict[str, Any], base: _ResourceBase,
+        self,
+        r: dict[str, Any],
+        rid: str,
+        props: dict[str, Any],
+        tags: dict[str, Any],
+        base: _ResourceBase,
     ) -> Finding | None:
         f = cloud_finding(
-            self.name, "azure", kind=Kind.CLOUD_RESOURCE, title=f"Container App: {r.get('name')}",
-            resource=rid, resource_type="container-app", **base,
+            self.name,
+            "azure",
+            kind=Kind.CLOUD_RESOURCE,
+            title=f"Container App: {r.get('name')}",
+            resource=rid,
+            resource_type="container-app",
+            **base,
         )
         for c in get_path(props, "template.containers", default=[]) or []:
             if c.get("image"):
@@ -702,29 +861,39 @@ class AzureConnector(BaseConnector):
         if not f.frameworks and not f.model_providers:
             return None
         containers = get_path(props, "template.containers", default=[]) or []
-        f.add_evidence(Evidence(
-            signal="azure:container-app",
-            description=(
-                f"Container app '{r.get('name')}' "
-                f"images {', '.join(str(c.get('image')) for c in containers)[:200]}; "
-                f"external ingress {get_path(props, 'configuration.ingress.external')}"
-            ),
-            location=rid, weight=0.25,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="azure:container-app",
+                description=(
+                    f"Container app '{r.get('name')}' "
+                    f"images {', '.join(str(c.get('image')) for c in containers)[:200]}; "
+                    f"external ingress {get_path(props, 'configuration.ingress.external')}"
+                ),
+                location=rid,
+                weight=0.25,
+            )
+        )
         if get_path(props, "configuration.ingress.external"):
             f.add_tag("public-ingress")
-        f.metadata.update({
-            "images": [c.get("image") for c in containers], "identity": r.get("identity"), "tags": tags,
-        })
+        f.metadata.update(
+            {
+                "images": [c.get("image") for c in containers],
+                "identity": r.get("identity"),
+                "tags": tags,
+            }
+        )
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_foundry_agent(self, rec: dict[str, Any]) -> Finding:
         tools = [t.get("type") for t in rec.get("tools") or [] if isinstance(t, dict)]
         project = str(rec.get("_project", ""))
         f = cloud_finding(
-            self.name, "azure", kind=Kind.AGENT,
+            self.name,
+            "azure",
+            kind=Kind.AGENT,
             title=f"Azure AI Foundry agent: {rec.get('name') or rec.get('id')}",
-            resource=f"{rec.get('_project')}/agents/{rec.get('id')}", resource_type="foundry-agent",
+            resource=f"{rec.get('_project')}/agents/{rec.get('id')}",
+            resource_type="foundry-agent",
             account=_subscription(project),
             first_seen=str(rec.get("created_at")) if rec.get("created_at") else None,
         )
@@ -736,15 +905,19 @@ class AzureConnector(BaseConnector):
             self.ctx.warn("cloud.azure: Foundry agent has an invalid model identifier")
         f.models = [model] if isinstance(model, str) and model else []
         apply_matches(f, model_matches(self.index, *f.models), weight_scale=0.4)
-        f.add_evidence(Evidence(
-            signal="azure:foundry-agent",
-            description=(
-                f"Agent '{rec.get('name')}' on {rec.get('model')} "
-                f"with tools {', '.join(str(t) for t in tools) or 'none'} "
-                f"in project {rec.get('_project_name')}"
-            ),
-            location=rec.get("_endpoint"), weight=0.97, signature="cloud.azure-ai-foundry-agents",
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="azure:foundry-agent",
+                description=(
+                    f"Agent '{rec.get('name')}' on {rec.get('model')} "
+                    f"with tools {', '.join(str(t) for t in tools) or 'none'} "
+                    f"in project {rec.get('_project_name')}"
+                ),
+                location=rec.get("_endpoint"),
+                weight=0.97,
+                signature="cloud.azure-ai-foundry-agents",
+            )
+        )
         if "code_interpreter" in tools:
             f.add_capability("code-exec")
         if any(t in _BROWSING_TOOLS for t in tools):
@@ -755,31 +928,46 @@ class AzureConnector(BaseConnector):
             f.add_capability("multi-agent")
         if any(t in _RETRIEVAL_TOOLS for t in tools):
             f.add_capability("rag")
-        f.metadata.update({
-            "agent_id": rec.get("id"), "model": rec.get("model"), "tools": tools,
-            "instructions": truncate(str(rec.get("instructions") or ""), 300),
-            "project": rec.get("_project_name"), "metadata": rec.get("metadata"),
-        })
+        f.metadata.update(
+            {
+                "agent_id": rec.get("id"),
+                "model": rec.get("model"),
+                "tools": tools,
+                "instructions": truncate(str(rec.get("instructions") or ""), 300),
+                "project": rec.get("_project_name"),
+                "metadata": rec.get("metadata"),
+            }
+        )
         return done(f, self.index, Kind.AGENT)
 
     def _h_logicapp_definition(self, rec: dict[str, Any]) -> Finding | None:
         rid = rec.get("id", "")
         f = cloud_finding(
-            self.name, "azure", kind=Kind.WORKFLOW, title=f"Logic App with AI steps: {rec.get('name')}",
-            resource=rid, resource_type="logic-app", account=_subscription(rid),
+            self.name,
+            "azure",
+            kind=Kind.WORKFLOW,
+            title=f"Logic App with AI steps: {rec.get('name')}",
+            resource=rid,
+            resource_type="logic-app",
+            account=_subscription(rid),
         )
         blob = {"definition": rec.get("definition"), "connections": rec.get("connections")}
         hits = scan_blob(self.index, f, blob, location=rid)
         if not f.frameworks and not f.model_providers:
             return None
         f.add_framework("cloud.azure-logic-apps-ai")
-        f.add_evidence(Evidence(
-            signal="azure:logic-app",
-            description=(
-                f"Logic App '{rec.get('name')}' ({rec.get('state')}) references AI connectors / agent actions"
-            ),
-            location=rid, weight=0.6, signature="cloud.azure-logic-apps-ai",
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="azure:logic-app",
+                description=(
+                    f"Logic App '{rec.get('name')}' ({rec.get('state')}) references AI connectors / agent "
+                    "actions"
+                ),
+                location=rid,
+                weight=0.6,
+                signature="cloud.azure-logic-apps-ai",
+            )
+        )
         trigger_map = (rec.get("definition") or {}).get("triggers") or {}
         triggers = list(trigger_map.keys())
         if any("recurrence" in str(trigger_map.get(t, {}).get("type", "")).lower() for t in triggers):
@@ -791,12 +979,16 @@ class AzureConnector(BaseConnector):
     def _h_appsettings(self, rec: dict[str, Any]) -> Finding | None:
         rid = rec.get("id", "")
         f = cloud_finding(
-            self.name, "azure", kind=Kind.CLOUD_RESOURCE,
+            self.name,
+            "azure",
+            kind=Kind.CLOUD_RESOURCE,
             title=(
                 f"{'Function' if 'functionapp' in str(rec.get('kind', '')).lower() else 'Web'} "
                 f"app: {rec.get('name')}"
             ),
-            resource=rid, resource_type=f"web-site/{rec.get('kind')}", account=_subscription(rid),
+            resource=rid,
+            resource_type=f"web-site/{rec.get('kind')}",
+            account=_subscription(rid),
         )
         # Backward-compatible analysis of exports written before environment.
         settings = rec.get("environment") if isinstance(rec.get("environment"), dict) else rec.get("settings")
@@ -804,14 +996,17 @@ class AzureConnector(BaseConnector):
         name_hint(self.index, f, rec.get("name"))
         if not f.frameworks and not f.model_providers:
             return None
-        f.add_evidence(Evidence(
-            signal="azure:app-settings",
-            description=(
-                f"App '{rec.get('name')}' has LLM-related app settings: "
-                f"{', '.join(f.metadata.get('env_matches', []))[:200]}"
-            ),
-            location=rid, weight=0.3,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="azure:app-settings",
+                description=(
+                    f"App '{rec.get('name')}' has LLM-related app settings: "
+                    f"{', '.join(f.metadata.get('env_matches', []))[:200]}"
+                ),
+                location=rid,
+                weight=0.3,
+            )
+        )
         f.metadata["setting_names"] = sorted((settings or {}).keys())[:60]
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
@@ -820,26 +1015,38 @@ class AzureConnector(BaseConnector):
         ptype = rec.get("principalType")
         role = rec.get("role")
         f = cloud_finding(
-            self.name, "azure", kind=Kind.IAM_GRANT,
+            self.name,
+            "azure",
+            kind=Kind.IAM_GRANT,
             title=f"{role} granted to {ptype} {identities.get(pid, pid)}",
-            resource=rec.get("id") or f"{pid}:{rec.get('role_id')}", resource_type="role-assignment",
-            account=rec.get("_subscription"), surface=Surface.IDENTITY,
+            resource=rec.get("id") or f"{pid}:{rec.get('role_id')}",
+            resource_type="role-assignment",
+            account=rec.get("_subscription"),
+            surface=Surface.IDENTITY,
         )
         llm = scan_iam_actions(self.index, f, [str(role), str(rec.get("role_id"))], location=rec.get("scope"))
         if not llm and role not in _BROAD_ROLES:
             return None
         if role in _BROAD_ROLES and ptype != "ServicePrincipal":
             return None
-        f.add_evidence(Evidence(
-            signal="azure:role-assignment",
-            description=f"{ptype} {identities.get(pid, pid)} has '{role}' on {rec.get('scope')}",
-            weight=0.45 if ptype == "ServicePrincipal" else 0.2,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="azure:role-assignment",
+                description=f"{ptype} {identities.get(pid, pid)} has '{role}' on {rec.get('scope')}",
+                weight=0.45 if ptype == "ServicePrincipal" else 0.2,
+            )
+        )
         if ptype == "ServicePrincipal":
             f.add_tag("service-principal")
         name_hint(self.index, f, identities.get(pid))
-        f.metadata.update({
-            "principal_id": pid, "principal_type": ptype, "principal_name": identities.get(pid), "role": role,
-            "scope": rec.get("scope"), "created": rec.get("createdOn"),
-        })
+        f.metadata.update(
+            {
+                "principal_id": pid,
+                "principal_type": ptype,
+                "principal_name": identities.get(pid),
+                "role": role,
+                "scope": rec.get("scope"),
+                "created": rec.get("createdOn"),
+            }
+        )
         return done(f, self.index, Kind.IAM_GRANT)

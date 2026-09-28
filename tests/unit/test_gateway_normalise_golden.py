@@ -44,7 +44,9 @@ from shadowscan.connectors.gateway.logs import NORMALISERS, GatewayLogConnector,
 from shadowscan.signatures.matcher import MatchTimeoutError
 
 GATEWAY_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "gateway"
-GOLDEN_DIR = GATEWAY_FIXTURES.parent / "gateway_golden"  # outside gateway/ so a directory scan of the samples never ingests goldens
+GOLDEN_DIR = (
+    GATEWAY_FIXTURES.parent / "gateway_golden"
+)  # outside gateway/ so a directory scan of the samples never ingests goldens
 
 # A fixed key makes every HMAC-derived opaque identity reproducible. It is a
 # test constant, never a secret.
@@ -61,14 +63,33 @@ IDENTITY_KEY = b"shadowscan-gateway-golden-identity-key"
 # which depends only on the finding's own fields.
 VOLATILE_FINDING_FIELDS = ("id", "metadata.runtime_source.id", "metadata.runtime_source.input")
 
-SUPPORTED_SCHEMAS = frozenset({
-    "litellm", "portkey", "kong", "cloudflare", "helicone", "langfuse", "bedrock",
-    "azure-openai", "vertex", "openai-usage", "anthropic-usage", "access-log", "generic",
-})
+SUPPORTED_SCHEMAS = frozenset(
+    {
+        "litellm",
+        "portkey",
+        "kong",
+        "cloudflare",
+        "helicone",
+        "langfuse",
+        "bedrock",
+        "azure-openai",
+        "vertex",
+        "openai-usage",
+        "anthropic-usage",
+        "access-log",
+        "generic",
+    }
+)
 
 _RECORD_ERRORS = (
-    ValueError, TypeError, AttributeError, KeyError, OverflowError,
-    RecursionError, ConnectorError, MatchTimeoutError,
+    ValueError,
+    TypeError,
+    AttributeError,
+    KeyError,
+    OverflowError,
+    RecursionError,
+    ConnectorError,
+    MatchTimeoutError,
 )
 
 
@@ -99,7 +120,9 @@ def _materialise_input(golden: dict[str, Any], tmp_path: Path) -> Path:
 
 
 def _connector(index, path: Path, config: dict[str, Any]) -> GatewayLogConnector:
-    ctx = ConnectorContext(config={"input": str(path), **config}, index=index, gateway_identity_key=IDENTITY_KEY)
+    ctx = ConnectorContext(
+        config={"input": str(path), **config}, index=index, gateway_identity_key=IDENTITY_KEY
+    )
     return GatewayLogConnector(ctx)
 
 
@@ -150,8 +173,7 @@ def observe(index, golden: dict[str, Any], tmp_path: Path) -> dict[str, Any]:
     return {
         "events": events,
         "findings": [
-            {"identity": finding.compute_id(), **_without_volatile(finding.to_dict())}
-            for finding in findings
+            {"identity": finding.compute_id(), **_without_volatile(finding.to_dict())} for finding in findings
         ],
         "diagnostics": {
             "warnings": list(stats.warnings),
@@ -164,7 +186,9 @@ def observe(index, golden: dict[str, Any], tmp_path: Path) -> dict[str, Any]:
 
 
 def _write(path: Path, golden: dict[str, Any], observed: dict[str, Any]) -> None:
-    updated = {key: value for key, value in golden.items() if key not in ("events", "findings", "diagnostics")}
+    updated = {
+        key: value for key, value in golden.items() if key not in ("events", "findings", "diagnostics")
+    }
     updated["volatile_fields"] = list(VOLATILE_FINDING_FIELDS)
     updated.update(observed)
     path.write_text(json.dumps(updated, indent=1, allow_nan=False) + "\n", encoding="utf-8")
@@ -186,7 +210,9 @@ def _bedrock_tool_use_correction(observed: dict[str, Any], expected: dict[str, A
 
     assert len(observed["findings"]) == len(expected["findings"]) == 2
     assert sorted(finding["metadata"]["tool_call_responses"] for finding in observed["findings"]) == [30, 90]
-    for actual, baseline, entry in zip(observed["findings"], expected["findings"], comparable["findings"], strict=True):
+    for actual, baseline, entry in zip(
+        observed["findings"], expected["findings"], comparable["findings"], strict=True
+    ):
         assert baseline["metadata"]["tool_call_responses"] == 0
         assert actual["metadata"]["tool_call_responses"] == actual["metadata"]["events"]
         entry["metadata"]["tool_call_responses"] = 0
@@ -196,8 +222,8 @@ def _bedrock_tool_use_correction(observed: dict[str, Any], expected: dict[str, A
         old_description = baseline_evidence[0]["description"]
         assert old_description.endswith("0 responses invoked tools")
         assert tool_evidence[0]["description"] == (
-            old_description[:-len("0 responses invoked tools")]
-            + f'{actual["metadata"]["tool_call_responses"]} responses invoked tools'
+            old_description[: -len("0 responses invoked tools")]
+            + f"{actual['metadata']['tool_call_responses']} responses invoked tools"
         )
         tool_evidence[0]["description"] = old_description
     return comparable
@@ -213,7 +239,11 @@ def test_golden_replay(index, tmp_path, golden_path):
         golden = _load(golden_path)
     assert golden["volatile_fields"] == list(VOLATILE_FINDING_FIELDS)
     expected = {key: golden[key] for key in ("events", "findings", "diagnostics")}
-    comparable = _bedrock_tool_use_correction(observed, expected) if golden_path.name == "bedrock_invocations.json" else observed
+    comparable = (
+        _bedrock_tool_use_correction(observed, expected)
+        if golden_path.name == "bedrock_invocations.json"
+        else observed
+    )
     assert comparable == expected
     # Dict equality ignores key order; the report layout must not drift either.
     assert json.dumps(comparable) == json.dumps(expected), "field order changed"

@@ -10,7 +10,14 @@ from shadowscan.models import Finding, Kind, Surface
 
 @pytest.mark.parametrize("container", [set, frozenset])
 def test_unordered_permissions_have_stable_order(index, container):
-    finding = Finding(surface=Surface.SAAS, connector="test", kind=Kind.BOT_APP, title="Agent", resource="test:agent", resource_type="app")
+    finding = Finding(
+        surface=Surface.SAAS,
+        connector="test",
+        kind=Kind.BOT_APP,
+        title="Agent",
+        resource="test:agent",
+        resource_type="app",
+    )
     scopes = container(["repo:write", "admin:org", "read:user"])
 
     classify_permissions(index, finding, scopes)
@@ -19,7 +26,14 @@ def test_unordered_permissions_have_stable_order(index, container):
 
 
 def test_ordered_permissions_preserve_provider_order(index):
-    finding = Finding(surface=Surface.SAAS, connector="test", kind=Kind.BOT_APP, title="Agent", resource="test:agent", resource_type="app")
+    finding = Finding(
+        surface=Surface.SAAS,
+        connector="test",
+        kind=Kind.BOT_APP,
+        title="Agent",
+        resource="test:agent",
+        resource_type="app",
+    )
 
     classify_permissions(index, finding, ["repo:write", "read:user", "admin:org"])
 

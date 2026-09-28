@@ -32,8 +32,18 @@ SYNTHETIC_OPENAI_KEY = "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h"
 SYNTHETIC_GITHUB_TOKEN = "ghp_Cf85qKYbxE5f5FdUlWJLY8mYNi2TZf50hya5"
 PLACEHOLDER_ANTHROPIC_KEY = "sk-ant-api03-REPLACE_ME_WITH_REAL_KEY"
 PROVIDER_ENV_NAMES = [
-    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "COHERE_API_KEY", "GROQ_API_KEY",
-    "TOGETHER_API_KEY", "FIREWORKS_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "XAI_API_KEY", "PERPLEXITY_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "MISTRAL_API_KEY",
+    "COHERE_API_KEY",
+    "GROQ_API_KEY",
+    "TOGETHER_API_KEY",
+    "FIREWORKS_API_KEY",
+    "OPENROUTER_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "XAI_API_KEY",
+    "PERPLEXITY_API_KEY",
 ]
 HEURISTIC_ONLY_SOURCE = (
     "import subprocess\n\n"
@@ -49,54 +59,70 @@ def _project(findings):
 
 
 def _finding(**kwargs) -> Finding:
-    return Finding(surface=Surface.CODE, connector="test", kind=Kind.FRAMEWORK_USAGE, title="t",
-                   resource="repo", resource_type="project", **kwargs)
+    return Finding(
+        surface=Surface.CODE,
+        connector="test",
+        kind=Kind.FRAMEWORK_USAGE,
+        title="t",
+        resource="repo",
+        resource_type="project",
+        **kwargs,
+    )
 
 
 # ------------------------------------------------------------- placeholders
-@pytest.mark.parametrize("value, reason", [
-    (PLACEHOLDER_ANTHROPIC_KEY, "placeholder-word"),
-    ("sk-proj-PLACEHOLDERpUdqnr1cfLxYE5WueqDoGMF2D4CB97", "placeholder-word"),
-    ("sk-proj-YourKeyHere" + "q7Lm3Xz9" * 4, "placeholder-word"),
-    ("sk-proj-YOURKEYHERE1234567890123456789012345", "placeholder-word"),
-    ("sk-proj-your_openai_key_goes_here_1234567890ab", "placeholder-word"),
-    ("ghp_EXAMPLE0000000000000000000000000000", "placeholder-word"),
-    ("sk-proj-" + "x" * 40, "placeholder-word"),
-    ("sk-proj-Crc02JkJzPUMAhGr0lDZ-TEST-HKAGp2hVbFoYL8sAgiCi", "placeholder-word"),
-    ("sk-proj-dummyvalueH5tyKbgZMTpFuWSUSzxGajsbgRsMn7", "placeholder-word"),
-    ("sk-proj-" + "b" * 40, "low-entropy"),
-    ("sk-proj-" + "0" * 40, "low-entropy"),
-    ("sk-proj-0000-0000-0000-0000-0000-0000-0000-0000", "low-entropy"),
-    ("sk-proj-" + "1234567890" * 4, "low-entropy"),
-    ("sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN", "low-entropy"),
-    ("sk-proj-1234567890abcdef1234567890abcdef", "low-entropy"),
-    ("AIza" + "0" * 35, "low-entropy"),
-    ("hf_" + "a" * 34, "low-entropy"),
-    ("sk-proj-<your-key>", "template"),
-    ("${OPENAI_API_KEY}", "template"),
-    ("{{ secrets.OPENAI_API_KEY }}", "template"),
-    ("changeme", "template"),
-    ("xxxxxxxx", "template"),
-])
+@pytest.mark.parametrize(
+    "value, reason",
+    [
+        (PLACEHOLDER_ANTHROPIC_KEY, "placeholder-word"),
+        ("sk-proj-PLACEHOLDERpUdqnr1cfLxYE5WueqDoGMF2D4CB97", "placeholder-word"),
+        ("sk-proj-YourKeyHere" + "q7Lm3Xz9" * 4, "placeholder-word"),
+        ("sk-proj-YOURKEYHERE1234567890123456789012345", "placeholder-word"),
+        ("sk-proj-your_openai_key_goes_here_1234567890ab", "placeholder-word"),
+        ("ghp_EXAMPLE0000000000000000000000000000", "placeholder-word"),
+        ("sk-proj-" + "x" * 40, "placeholder-word"),
+        ("sk-proj-Crc02JkJzPUMAhGr0lDZ-TEST-HKAGp2hVbFoYL8sAgiCi", "placeholder-word"),
+        ("sk-proj-dummyvalueH5tyKbgZMTpFuWSUSzxGajsbgRsMn7", "placeholder-word"),
+        ("sk-proj-" + "b" * 40, "low-entropy"),
+        ("sk-proj-" + "0" * 40, "low-entropy"),
+        ("sk-proj-0000-0000-0000-0000-0000-0000-0000-0000", "low-entropy"),
+        ("sk-proj-" + "1234567890" * 4, "low-entropy"),
+        ("sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN", "low-entropy"),
+        ("sk-proj-1234567890abcdef1234567890abcdef", "low-entropy"),
+        ("AIza" + "0" * 35, "low-entropy"),
+        ("hf_" + "a" * 34, "low-entropy"),
+        ("sk-proj-<your-key>", "template"),
+        ("${OPENAI_API_KEY}", "template"),
+        ("{{ secrets.OPENAI_API_KEY }}", "template"),
+        ("changeme", "template"),
+        ("xxxxxxxx", "template"),
+    ],
+)
 def test_placeholder_reason_recognises_documentation_samples(value, reason):
     assert placeholder_reason(value) == reason
     assert looks_like_placeholder(value)
 
 
-@pytest.mark.parametrize("value", [
-    SYNTHETIC_OPENAI_KEY,
-    SYNTHETIC_GITHUB_TOKEN,
-    "sk-proj-3OoFmQTsHfOvesPLUXvRXpfToFF2XPOcdJ2kMQJ2g0",
-    "sk-ant-api03-6cH3uWOWa4kNYqST0kQrUnYKWYg3BbZ4Tg2XxyRRBIGPepmhEU-FrMwGYwsaVeZAA",
-    "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",
-    # Derived at runtime from a digest so no secret-shaped literal sits in the source.
-    "lsv2_pt_" + hashlib.sha256(b"langsmith-sample-body").hexdigest()[:32] + "_" + hashlib.sha256(b"langsmith-sample-suffix").hexdigest()[:10],
-    "sk-or-v1-" + hashlib.sha256(b"openrouter-sample").hexdigest(),
-    "sk-proj-syntheticcredentialvaluenotarealkey",
-    "opaque-synthetic-credential-value",
-    "SG.opaque-value-1234567890",
-    "",
-])
+@pytest.mark.parametrize(
+    "value",
+    [
+        SYNTHETIC_OPENAI_KEY,
+        SYNTHETIC_GITHUB_TOKEN,
+        "sk-proj-3OoFmQTsHfOvesPLUXvRXpfToFF2XPOcdJ2kMQJ2g0",
+        "sk-ant-api03-6cH3uWOWa4kNYqST0kQrUnYKWYg3BbZ4Tg2XxyRRBIGPepmhEU-FrMwGYwsaVeZAA",
+        "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",
+        # Derived at runtime from a digest so no secret-shaped literal sits in the source.
+        "lsv2_pt_"
+        + hashlib.sha256(b"langsmith-sample-body").hexdigest()[:32]
+        + "_"
+        + hashlib.sha256(b"langsmith-sample-suffix").hexdigest()[:10],
+        "sk-or-v1-" + hashlib.sha256(b"openrouter-sample").hexdigest(),
+        "sk-proj-syntheticcredentialvaluenotarealkey",
+        "opaque-synthetic-credential-value",
+        "SG.opaque-value-1234567890",
+        "",
+    ],
+)
 def test_placeholder_heuristic_keeps_real_looking_values(value):
     assert placeholder_reason(value) is None
     assert not looks_like_placeholder(value)
@@ -106,10 +132,12 @@ def test_placeholder_heuristic_does_not_suppress_random_keys():
     rng = random.Random(20260924)
     alphabet = string.ascii_letters + string.digits
     flagged = [
-        key for key in (
+        key
+        for key in (
             "sk-proj-" + "".join(rng.choice(alphabet) for _ in range(rng.choice([32, 48, 64])))
             for _ in range(1000)
-        ) if looks_like_placeholder(key)
+        )
+        if looks_like_placeholder(key)
     ]
     assert flagged == []
 
@@ -125,7 +153,10 @@ def test_env_sample_placeholder_is_example_credential_not_secret(tmp_path: Path,
     assert project is not None and project.kind == Kind.FRAMEWORK_USAGE
     assert "example-credential" in project.tags
     examples = [e for e in project.evidence if e.signal.startswith("example-credential:")]
-    assert {e.signal for e in examples} == {"example-credential:provider.anthropic", "example-credential:provider.openai"}
+    assert {e.signal for e in examples} == {
+        "example-credential:provider.anthropic",
+        "example-credential:provider.openai",
+    }
     for e in examples:
         assert e.weight == 0.1 and e.attributes["placeholder"] == "placeholder-word"
         assert "REPLACE_ME" not in e.description and "xxxx" not in e.description
@@ -138,7 +169,9 @@ def test_env_sample_placeholder_is_example_credential_not_secret(tmp_path: Path,
 
 
 def test_marker_words_outside_the_matched_key_do_not_hide_real_keys(tmp_path: Path, run_connector):
-    (tmp_path / "config.py").write_text(f'OPENAI_API_KEY = "{SYNTHETIC_OPENAI_KEY}"  # TODO rotate this example\n')
+    (tmp_path / "config.py").write_text(
+        f'OPENAI_API_KEY = "{SYNTHETIC_OPENAI_KEY}"  # TODO rotate this example\n'
+    )
     (tmp_path / ".env").write_text(f"OPENAI_API_KEY={SYNTHETIC_OPENAI_KEY} # replace me later\n")
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
     assert not ctx.stats.errors
@@ -150,10 +183,19 @@ def test_marker_words_outside_the_matched_key_do_not_hide_real_keys(tmp_path: Pa
 
 def test_placeholder_token_in_mcp_config_is_not_an_inline_secret(tmp_path: Path, run_connector):
     def scan(token: str):
-        (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"github": {
-            "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
-            "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": token},
-        }}}))
+        (tmp_path / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "github": {
+                            "command": "npx",
+                            "args": ["-y", "@modelcontextprotocol/server-github"],
+                            "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": token},
+                        }
+                    }
+                }
+            )
+        )
         findings, _ = run_connector("code.filesystem", path=str(tmp_path))
         return next(f for f in findings if f.kind == Kind.MCP_SERVER)
 
@@ -165,17 +207,31 @@ def test_placeholder_token_in_mcp_config_is_not_an_inline_secret(tmp_path: Path,
 
 def test_cloud_env_scan_judges_each_matched_key(index):
     finding = _finding()
-    scan_env(index, finding, {"OPENAI_API_KEY": PLACEHOLDER_ANTHROPIC_KEY, "ANTHROPIC_API_KEY": "sk-ant-api03-" + "0" * 40})
+    scan_env(
+        index,
+        finding,
+        {"OPENAI_API_KEY": PLACEHOLDER_ANTHROPIC_KEY, "ANTHROPIC_API_KEY": "sk-ant-api03-" + "0" * 40},
+    )
     assert "plaintext-credential" not in finding.tags and "secret-in-env" not in finding.tags
     finding = _finding()
-    scan_env(index, finding, {"OPENAI_BASE_URL": f"https://test.example.com/v1?api_key={SYNTHETIC_OPENAI_KEY}"})
+    scan_env(
+        index, finding, {"OPENAI_BASE_URL": f"https://test.example.com/v1?api_key={SYNTHETIC_OPENAI_KEY}"}
+    )
     assert "plaintext-credential" in finding.tags
     assert all(SYNTHETIC_OPENAI_KEY not in e.description for e in finding.evidence)
 
 
 def test_blob_matches_skip_placeholder_secrets(index):
-    assert not [m for m in blob_matches(index, f"key: {PLACEHOLDER_ANTHROPIC_KEY}", secrets=True) if m.signal.type == "secret"]
-    assert [m for m in blob_matches(index, f"key: {SYNTHETIC_OPENAI_KEY}", secrets=True) if m.signal.type == "secret"]
+    assert not [
+        m
+        for m in blob_matches(index, f"key: {PLACEHOLDER_ANTHROPIC_KEY}", secrets=True)
+        if m.signal.type == "secret"
+    ]
+    assert [
+        m
+        for m in blob_matches(index, f"key: {SYNTHETIC_OPENAI_KEY}", secrets=True)
+        if m.signal.type == "secret"
+    ]
 
 
 # ------------------------------------------------ derivative usage findings
@@ -217,7 +273,11 @@ def test_env_names_only_stay_below_confirmed(tmp_path: Path, run_connector):
     (tmp_path / "app.py").write_text("import openai\nclient = openai.OpenAI()\n")
     findings, _ = run_connector("code.filesystem", path=str(tmp_path))
     project = _project(findings)
-    assert project is not None and "env-names-only" not in project.tags and "confidence_cap" not in project.metadata
+    assert (
+        project is not None
+        and "env-names-only" not in project.tags
+        and "confidence_cap" not in project.metadata
+    )
     assert project.likelihood == Likelihood.CONFIRMED
 
 
@@ -229,7 +289,7 @@ def test_evidence_per_signature_is_capped_before_confidence_is_computed():
     assert indicators == 0 and len(finding.evidence) == 12
     finalize(finding)
     assert finding.metadata["evidence_counts"] == {"provider.test|env": 30}
-    assert finding.confidence == round(1 - 0.4 ** 12, 3)
+    assert finding.confidence == round(1 - 0.4**12, 3)
 
 
 def test_cap_confidence_rescales_evidence_and_survives_recomputation():
@@ -256,7 +316,10 @@ def test_vendor_neutral_heuristics_alone_are_not_an_agent(tmp_path: Path, run_co
     project = _project(findings)
     assert project is not None and project.kind == Kind.AGENT and "framework.langgraph" in project.frameworks
     assert {"code-exec", "autonomous"} <= set(project.capabilities)
-    assert any(e.signal == "code:heuristic.code-execution" and e.location.startswith("deploy.py:") for e in project.evidence)
+    assert any(
+        e.signal == "code:heuristic.code-execution" and e.location.startswith("deploy.py:")
+        for e in project.evidence
+    )
 
 
 def test_heuristics_with_only_a_secret_are_dropped(tmp_path: Path, run_connector):
@@ -280,7 +343,9 @@ def test_heuristics_next_to_env_names_only_do_not_make_an_agent(tmp_path: Path, 
     assert project.metadata["agent_indicators"] == 0
     # The finding is built from the name references alone: no heuristic evidence, no deploy.py.
     assert {e.signal for e in project.evidence} == {"env:provider.openai"}
-    assert all(e.weight == pytest.approx(0.3) and e.location.startswith(".env.example:") for e in project.evidence)
+    assert all(
+        e.weight == pytest.approx(0.3) and e.location.startswith(".env.example:") for e in project.evidence
+    )
     assert project.title == "LLM usage in repository root: OpenAI"
     assert assess(project, index).score < 50
 
@@ -295,8 +360,13 @@ def test_heuristics_next_to_env_names_only_do_not_make_an_agent(tmp_path: Path, 
     assert "env-names-only" not in project.tags and "confidence_cap" not in project.metadata
     assert {"autonomous", "code-exec"} <= set(project.capabilities)
     assert project.metadata["agent_indicators"] == 0
-    assert any(e.signal == "import:provider.openai" and e.location.startswith("app.py:") for e in project.evidence)
-    assert any(e.signal == "code:heuristic.code-execution" and e.location.startswith("deploy.py:") for e in project.evidence)
+    assert any(
+        e.signal == "import:provider.openai" and e.location.startswith("app.py:") for e in project.evidence
+    )
+    assert any(
+        e.signal == "code:heuristic.code-execution" and e.location.startswith("deploy.py:")
+        for e in project.evidence
+    )
 
 
 def test_env_names_only_keeps_generic_llm_env_names(tmp_path: Path, run_connector):
@@ -318,7 +388,11 @@ def test_live_credential_is_not_an_env_name_only_anchor(tmp_path: Path, run_conn
     assert not ctx.stats.errors
     assert any(f.kind == Kind.SECRET for f in findings)
     project = _project(findings)
-    assert project is not None and "env-names-only" not in project.tags and "confidence_cap" not in project.metadata
+    assert (
+        project is not None
+        and "env-names-only" not in project.tags
+        and "confidence_cap" not in project.metadata
+    )
     assert any(e.signal == "secret:provider.openai" for e in project.evidence)
     # Full weights and heuristic capabilities are kept, but generic idioms never confirm an agent.
     assert project.kind == Kind.FRAMEWORK_USAGE and {"autonomous", "code-exec"} <= set(project.capabilities)
@@ -327,13 +401,22 @@ def test_live_credential_is_not_an_env_name_only_anchor(tmp_path: Path, run_conn
 
 # ------------------------------------------------------ MCP capabilities
 def test_mcp_servers_map_to_data_access_browsing_and_code_exec(tmp_path: Path, run_connector, index):
-    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {
-        "files": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv"]},
-        "db": {"command": "uvx", "args": ["mcp-server-sqlite", "--db-path", "app.db"]},
-        "web": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-puppeteer"]},
-        "gh": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]},
-        "sh": {"command": "npx", "args": ["-y", "mcp-shell"]},
-    }}))
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "files": {
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv"],
+                    },
+                    "db": {"command": "uvx", "args": ["mcp-server-sqlite", "--db-path", "app.db"]},
+                    "web": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-puppeteer"]},
+                    "gh": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]},
+                    "sh": {"command": "npx", "args": ["-y", "mcp-shell"]},
+                }
+            }
+        )
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
     assert not ctx.stats.errors
     mcp = next(f for f in findings if f.kind == Kind.MCP_SERVER)
@@ -343,12 +426,18 @@ def test_mcp_servers_map_to_data_access_browsing_and_code_exec(tmp_path: Path, r
 
 
 # ----------------------------------------------------- gateway temporal signal
-def _gateway_records(caller: dict, *, tools: bool = False, user_agent: str = "OpenAI/Python 1.51.0") -> list[dict]:
+def _gateway_records(
+    caller: dict, *, tools: bool = False, user_agent: str = "OpenAI/Python 1.51.0"
+) -> list[dict]:
     records = []
     for day in range(3):
         for hour in range(24):
-            record = {**caller, "model": "gpt-4o", "user_agent": user_agent,
-                      "timestamp": f"2026-09-{5 + day:02d}T{hour:02d}:15:00Z"}
+            record = {
+                **caller,
+                "model": "gpt-4o",
+                "user_agent": user_agent,
+                "timestamp": f"2026-09-{5 + day:02d}T{hour:02d}:15:00Z",
+            }
             if tools:
                 record["request"] = {"tools": [{"type": "function", "function": {"name": "search"}}]}
             records.append(record)
@@ -364,21 +453,32 @@ def _scan_gateway(tmp_path: Path, run_connector, records: list[dict]) -> Finding
 
 
 def test_round_the_clock_human_caller_is_not_agentic(tmp_path: Path, run_connector):
-    finding = _scan_gateway(tmp_path, run_connector, _gateway_records({"api_key": "hashed-key-alice", "user": "alice@acme.com"}))
+    finding = _scan_gateway(
+        tmp_path, run_connector, _gateway_records({"api_key": "hashed-key-alice", "user": "alice@acme.com"})
+    )
     assert finding.title.startswith("LLM caller")
     assert "always-on" in finding.tags and "autonomous" not in finding.capabilities
     assert finding.metadata["agent_indicators"] == 0
-    assert finding.metadata["activity"]["always_on"] is True and finding.metadata["activity"]["always_on_corroborated"] is False
+    assert (
+        finding.metadata["activity"]["always_on"] is True
+        and finding.metadata["activity"]["always_on_corroborated"] is False
+    )
     always_on = next(e for e in finding.evidence if e.signal == "gateway:always-on")
     assert always_on.weight == 0.3 and "without tool use" in always_on.description
 
 
-@pytest.mark.parametrize("caller, kwargs", [
-    ({"api_key": "hashed-key-alice", "user": "alice@acme.com"}, {"tools": True}),
-    ({"api_key": "hashed-key-alice", "user": "alice@acme.com"}, {"user_agent": "langchain/0.3.1 OpenAI/Python 1.51.0"}),
-    ({"api_key": "hashed-key-batch"}, {}),
-    ({"service": "nightly-summariser", "user": "svc@acme.com"}, {}),
-])
+@pytest.mark.parametrize(
+    "caller, kwargs",
+    [
+        ({"api_key": "hashed-key-alice", "user": "alice@acme.com"}, {"tools": True}),
+        (
+            {"api_key": "hashed-key-alice", "user": "alice@acme.com"},
+            {"user_agent": "langchain/0.3.1 OpenAI/Python 1.51.0"},
+        ),
+        ({"api_key": "hashed-key-batch"}, {}),
+        ({"service": "nightly-summariser", "user": "svc@acme.com"}, {}),
+    ],
+)
 def test_corroborated_round_the_clock_callers_are_agentic(tmp_path: Path, run_connector, caller, kwargs):
     finding = _scan_gateway(tmp_path, run_connector, _gateway_records(caller, **kwargs))
     assert finding.title.startswith("Agentic caller")
@@ -389,7 +489,9 @@ def test_corroborated_round_the_clock_callers_are_agentic(tmp_path: Path, run_co
 
 
 def test_business_hours_caller_has_no_temporal_signal(tmp_path: Path, run_connector):
-    records = [r for r in _gateway_records({"api_key": "hashed-key-batch"}) if 9 <= int(r["timestamp"][11:13]) < 17]
+    records = [
+        r for r in _gateway_records({"api_key": "hashed-key-batch"}) if 9 <= int(r["timestamp"][11:13]) < 17
+    ]
     records = records * 3  # keep at least 50 timestamped events
     finding = _scan_gateway(tmp_path, run_connector, records)
     assert "always-on" not in finding.tags and finding.metadata["activity"]["always_on"] is False

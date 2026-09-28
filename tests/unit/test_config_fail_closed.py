@@ -10,7 +10,9 @@ from shadowscan.config import ScanConfig
 
 
 @pytest.mark.parametrize("present_value", [None, ""])
-@pytest.mark.parametrize("template", ["${SHADOWSCAN_REQUIRED_TEST}", "prefix-${SHADOWSCAN_REQUIRED_TEST}-suffix"])
+@pytest.mark.parametrize(
+    "template", ["${SHADOWSCAN_REQUIRED_TEST}", "prefix-${SHADOWSCAN_REQUIRED_TEST}-suffix"]
+)
 def test_missing_or_empty_required_environment_reference_fails_closed(monkeypatch, present_value, template):
     if present_value is None:
         monkeypatch.delenv("SHADOWSCAN_REQUIRED_TEST", raising=False)
@@ -28,30 +30,39 @@ def test_explicit_environment_default_is_used_for_missing_or_empty_variable(monk
     else:
         monkeypatch.setenv("SHADOWSCAN_OPTIONAL_TEST", present_value)
 
-    cfg = ScanConfig.from_dict({
-        "connectors": [{
-            "name": "code.github",
-            "token": "${SHADOWSCAN_OPTIONAL_TEST:-fallback}",
-            "api_url": "${SHADOWSCAN_OPTIONAL_TEST:-}",
-        }],
-    })
+    cfg = ScanConfig.from_dict(
+        {
+            "connectors": [
+                {
+                    "name": "code.github",
+                    "token": "${SHADOWSCAN_OPTIONAL_TEST:-fallback}",
+                    "api_url": "${SHADOWSCAN_OPTIONAL_TEST:-}",
+                }
+            ],
+        }
+    )
     assert cfg.connectors[0].config["token"] == "fallback"
     assert cfg.connectors[0].config["api_url"] == ""
 
 
 def test_present_environment_reference_expands_without_coercing_connector_secret(monkeypatch):
     monkeypatch.setenv("SHADOWSCAN_REQUIRED_TEST", "opaque value")
-    cfg = ScanConfig.from_dict({"connectors": [{"name": "code.github", "token": "${SHADOWSCAN_REQUIRED_TEST}"}]})
+    cfg = ScanConfig.from_dict(
+        {"connectors": [{"name": "code.github", "token": "${SHADOWSCAN_REQUIRED_TEST}"}]}
+    )
     assert cfg.connectors[0].config["token"] == "opaque value"
 
 
-@pytest.mark.parametrize("document", [
-    "options:\n  parallel: 1\n  parallel: 2\n",
-    "options:\n  fail_on: high\n  fail_on: critical\n",
-    "connectors:\n  - name: code.github\n    name: code.filesystem\n",
-    "connectors:\n  - name: code.github\n    config:\n      token: first\n      token: second\n",
-    "inventory: []\ninventory: []\n",
-])
+@pytest.mark.parametrize(
+    "document",
+    [
+        "options:\n  parallel: 1\n  parallel: 2\n",
+        "options:\n  fail_on: high\n  fail_on: critical\n",
+        "connectors:\n  - name: code.github\n    name: code.filesystem\n",
+        "connectors:\n  - name: code.github\n    config:\n      token: first\n      token: second\n",
+        "inventory: []\ninventory: []\n",
+    ],
+)
 def test_duplicate_authored_yaml_keys_are_rejected(tmp_path, document):
     path = tmp_path / "scan.yaml"
     path.write_text(document, encoding="utf-8")
@@ -101,23 +112,26 @@ def test_supported_fail_on_levels_are_accepted(value):
     assert ScanConfig.from_dict({"options": {"fail_on": value}}).fail_on == value
 
 
-@pytest.mark.parametrize("data", [
-    {"option": {"parallel": 1}},
-    {"options": {"paralell": 1}},
-    {"options": []},
-    {"options": "parallel: 1"},
-    {"inventory": "./inventory"},
-    {"inventory": ["./inventory", 2]},
-    {"signatures": "./signatures"},
-    {"signatures": [None]},
-    {"connectors": "code.github"},
-    {"connectors": {"name": "code.github"}},
-    {"connectors": [{"name": "code.github", "config": []}]},
-    {"connectors": [{"name": "code.github", "config": "token=value"}]},
-    {"connectors": [{"name": 42}]},
-    {"connectors": [{"name": "code.github", "label": False}]},
-    {"options": {"workdir": []}},
-])
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"option": {"parallel": 1}},
+        {"options": {"paralell": 1}},
+        {"options": []},
+        {"options": "parallel: 1"},
+        {"inventory": "./inventory"},
+        {"inventory": ["./inventory", 2]},
+        {"signatures": "./signatures"},
+        {"signatures": [None]},
+        {"connectors": "code.github"},
+        {"connectors": {"name": "code.github"}},
+        {"connectors": [{"name": "code.github", "config": []}]},
+        {"connectors": [{"name": "code.github", "config": "token=value"}]},
+        {"connectors": [{"name": 42}]},
+        {"connectors": [{"name": "code.github", "label": False}]},
+        {"options": {"workdir": []}},
+    ],
+)
 def test_unknown_fields_and_invalid_container_types_are_rejected(data):
     with pytest.raises(ValueError):
         ScanConfig.from_dict(data)
@@ -128,12 +142,15 @@ def test_connector_options_stay_open_for_external_plugins():
     assert cfg.connectors[0].config["new_plugin_parameter"] == "value"
 
 
-@pytest.mark.parametrize("data", [
-    {"options": {"parallel": "private-value-do-not-echo"}},
-    {"options": {"incremental": "private-value-do-not-echo"}},
-    {"options": {"fail_on": "private-value-do-not-echo"}},
-    {"options": {"unexpected": "private-value-do-not-echo"}},
-])
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"options": {"parallel": "private-value-do-not-echo"}},
+        {"options": {"incremental": "private-value-do-not-echo"}},
+        {"options": {"fail_on": "private-value-do-not-echo"}},
+        {"options": {"unexpected": "private-value-do-not-echo"}},
+    ],
+)
 def test_config_validation_errors_never_echo_values(data):
     with pytest.raises(ValueError) as error:
         ScanConfig.from_dict(data)

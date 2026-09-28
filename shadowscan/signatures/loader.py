@@ -32,6 +32,7 @@ class SignaturePackError(SetupError, ValueError):
     never included, so the CLI may print the message verbatim.
     """
 
+
 VALID_CATEGORIES = {
     "framework",  # agent orchestration frameworks (LangChain, CrewAI, ADK...)
     "provider",  # model providers / inference APIs (OpenAI, Bedrock, Ollama...)
@@ -306,7 +307,8 @@ def _signature_dirs(extra_dirs: Sequence[str | os.PathLike[str]] | None, include
 def signature_source_digest(
     extra_dirs: Sequence[str | os.PathLike[str]] | None = None,
     include_builtin: bool = True,
-    *, allow_override: bool = False,
+    *,
+    allow_override: bool = False,
 ) -> str:
     """Digest the exact inputs :func:`load_signatures` would read.
 
@@ -333,7 +335,8 @@ def signature_source_digest(
 def load_signatures(
     extra_dirs: Sequence[str | os.PathLike[str]] | None = None,
     include_builtin: bool = True,
-    *, allow_override: bool = False,
+    *,
+    allow_override: bool = False,
 ) -> list[Signature]:
     """Load built-in signatures plus any extra packs.
 

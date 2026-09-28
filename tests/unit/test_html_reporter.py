@@ -25,8 +25,14 @@ class _Page(HTMLParser):
 
 
 def test_report_csp_only_authorizes_shipped_script_and_escapes_numeric_slots():
-    finding = Finding(surface=Surface.CODE, connector="test", kind=Kind.AGENT,
-                      title="</script><script>alert(1)</script>", resource="agent", resource_type="test")
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="test",
+        kind=Kind.AGENT,
+        title="</script><script>alert(1)</script>",
+        resource="agent",
+        resource_type="test",
+    )
     # Direct library callers do not go through Finding.from_dict validation.
     finding.risk.score = "'><img src=x onerror=alert(1)>"  # type: ignore[assignment]
     result = ScanResult(version="test", findings=[finding])

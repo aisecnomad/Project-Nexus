@@ -44,13 +44,16 @@ def _run(index, root, **config):
 
 
 # ------------------------------------------------------------------ JSONC
-@pytest.mark.parametrize(("text", "expected"), [
-    ('{"a": 1, // c\n "b": [1,],}', {"a": 1, "b": [1]}),
-    ('{"url": "http://x//y", /* c */ "k": "v,}",}', {"url": "http://x//y", "k": "v,}"}),
-    ('{"s": "quote \\" // kept", "t": [1, 2, ], }', {"s": 'quote " // kept', "t": [1, 2]}),
-    ('[1, /* x */ 2, ]', [1, 2]),
-    ('{"k": ",]"}', {"k": ",]"}),
-])
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('{"a": 1, // c\n "b": [1,],}', {"a": 1, "b": [1]}),
+        ('{"url": "http://x//y", /* c */ "k": "v,}",}', {"url": "http://x//y", "k": "v,}"}),
+        ('{"s": "quote \\" // kept", "t": [1, 2, ], }', {"s": 'quote " // kept', "t": [1, 2]}),
+        ("[1, /* x */ 2, ]", [1, 2]),
+        ('{"k": ",]"}', {"k": ",]"}),
+    ],
+)
 def test_lenient_json_strips_comments_and_trailing_commas_outside_strings(text, expected):
     assert load_json_lenient(text) == expected
 
@@ -75,11 +78,14 @@ def test_lenient_json_is_linear_on_large_documents():
     assert time.perf_counter() - started < 5
 
 
-@pytest.mark.parametrize(("rel", "text"), [
-    (".devcontainer/devcontainer.json", DEVCONTAINER),
-    (".vscode/settings.json", VSCODE_SETTINGS),
-    ("tsconfig.json", '{"compilerOptions": {"strict": true, /* why */ },}'),
-])
+@pytest.mark.parametrize(
+    ("rel", "text"),
+    [
+        (".devcontainer/devcontainer.json", DEVCONTAINER),
+        (".vscode/settings.json", VSCODE_SETTINGS),
+        ("tsconfig.json", '{"compilerOptions": {"strict": true, /* why */ },}'),
+    ],
+)
 def test_structured_config_accepts_jsonc(index, rel, text):
     errors: list[str] = []
     structured_code_matches(index, rel, text, errors)
@@ -121,7 +127,9 @@ def test_malformed_ordinary_config_warns_but_agent_settings_fail_closed(tmp_path
 
 # ---------------------------------------------------------- AST budget
 def _huge_module(lines: int) -> str:
-    return "from openai import OpenAI\nclient = OpenAI()\n" + "".join(f"value_{i} = [{i}, {i} + 1]\n" for i in range(lines))
+    return "from openai import OpenAI\nclient = OpenAI()\n" + "".join(
+        f"value_{i} = [{i}, {i} + 1]\n" for i in range(lines)
+    )
 
 
 def test_structural_budget_is_a_distinct_timeout(index):
@@ -160,14 +168,21 @@ def test_max_ast_nodes_is_validated(tmp_path, index, value):
 
 # ----------------------------------------------------------- notebooks
 def _notebook(code: str, output_bytes: int) -> str:
-    return json.dumps({
-        "cells": [
-            {"cell_type": "markdown", "source": ["# Crew demo\n"]},
-            {"cell_type": "code", "source": code.splitlines(keepends=True),
-             "outputs": [{"output_type": "display_data", "data": {"image/png": "A" * output_bytes}}]},
-        ],
-        "metadata": {}, "nbformat": 4, "nbformat_minor": 5,
-    })
+    return json.dumps(
+        {
+            "cells": [
+                {"cell_type": "markdown", "source": ["# Crew demo\n"]},
+                {
+                    "cell_type": "code",
+                    "source": code.splitlines(keepends=True),
+                    "outputs": [{"output_type": "display_data", "data": {"image/png": "A" * output_bytes}}],
+                },
+            ],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5,
+        }
+    )
 
 
 CREW_CODE = (

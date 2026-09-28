@@ -70,12 +70,20 @@ def test_finding_from_dict_rejects_malformed_nested_objects():
 
 
 def _sample_finding():
-    return Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-                   title="sample", resource="repo:sample", resource_type="repository")
+    return Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="sample",
+        resource="repo:sample",
+        resource_type="repository",
+    )
 
 
 @pytest.mark.parametrize("field", ["score", "factor", "evidence", "confidence"])
-@pytest.mark.parametrize("value", [True, False, None, "opaque-secret-value", [], {}, float("nan"), float("inf")])
+@pytest.mark.parametrize(
+    "value", [True, False, None, "opaque-secret-value", [], {}, float("nan"), float("inf")]
+)
 def test_finding_import_rejects_malformed_numeric_fields_without_echoing_them(field, value):
     payload = _sample_finding().to_dict()
     if field == "score":
@@ -99,8 +107,17 @@ def test_empty_malformed_risk_cannot_masquerade_as_missing(risk):
         Finding.from_dict(payload)
 
 
-@pytest.mark.parametrize("field,value", [("score", -1), ("score", 101), ("confidence", -0.1),
-                                         ("confidence", 1.1), ("evidence", -0.1), ("evidence", 1.1)])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("score", -1),
+        ("score", 101),
+        ("confidence", -0.1),
+        ("confidence", 1.1),
+        ("evidence", -0.1),
+        ("evidence", 1.1),
+    ],
+)
 def test_finding_import_rejects_out_of_range_scores(field, value):
     payload = _sample_finding().to_dict()
     if field == "score":
@@ -114,9 +131,14 @@ def test_finding_import_rejects_out_of_range_scores(field, value):
 
 
 def _bedrock_finding(**kwargs) -> Finding:
-    base = dict(surface=Surface.CLOUD, connector="cloud.aws", kind=Kind.AGENT,
-                title="Bedrock Agent: ops", resource="arn:aws:bedrock:us-east-1:123456789012:agent/A1",
-                resource_type="bedrock-agent")
+    base = dict(
+        surface=Surface.CLOUD,
+        connector="cloud.aws",
+        kind=Kind.AGENT,
+        title="Bedrock Agent: ops",
+        resource="arn:aws:bedrock:us-east-1:123456789012:agent/A1",
+        resource_type="bedrock-agent",
+    )
     base.update(kwargs)
     return Finding(**base)
 

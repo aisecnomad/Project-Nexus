@@ -42,7 +42,9 @@ def test_metadata_policy_is_distinct_from_clone_policy(monkeypatch):
     assert env["GIT_NO_LAZY_FETCH"] == "1"
     assert env["GIT_OPTIONAL_LOCKS"] == "0"
     assert env["GIT_PROTOCOL_FROM_USER"] == "0"
-    config = {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(int(env["GIT_CONFIG_COUNT"]))}
+    config = {
+        env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(int(env["GIT_CONFIG_COUNT"]))
+    }
     assert config["protocol.allow"] == "never"
     assert config["core.hooksPath"] == os.devnull
     assert config["credential.helper"] == ""
@@ -56,7 +58,9 @@ def test_metadata_policy_is_distinct_from_clone_policy(monkeypatch):
     assert "GIT_NO_LAZY_FETCH" not in clone
 
 
-def test_read_git_snapshot_returns_checked_out_commit_and_tree_without_inherited_config(tmp_path, monkeypatch):
+def test_read_git_snapshot_returns_checked_out_commit_and_tree_without_inherited_config(
+    tmp_path, monkeypatch
+):
     repo = tmp_path / "repo"
     repo.mkdir()
     env = safe_git_env()
@@ -67,17 +71,29 @@ def test_read_git_snapshot_returns_checked_out_commit_and_tree_without_inherited
     ):
         subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, env=env)
     (repo / "requirements.txt").write_text("langchain\n")
-    subprocess.run(["git", "-C", str(repo), "add", "requirements.txt"], check=True, capture_output=True, env=env)
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "requirements.txt"], check=True, capture_output=True, env=env
+    )
     subprocess.run(
         ["git", "-C", str(repo), "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "source"],
-        check=True, capture_output=True, env=env,
+        check=True,
+        capture_output=True,
+        env=env,
     )
     expected = {
         "commit_sha": subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "HEAD^{commit}"], check=True, capture_output=True, text=True, env=env,
+            ["git", "-C", str(repo), "rev-parse", "HEAD^{commit}"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
         ).stdout.strip(),
         "tree_sha": subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"], check=True, capture_output=True, text=True, env=env,
+            ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
         ).stdout.strip(),
     }
     monkeypatch.setenv("GIT_DIR", str(tmp_path / "wrong.git"))
@@ -121,12 +137,16 @@ def test_opt_in_metadata_uses_offline_policy_even_with_local_transport_config(tm
     (tmp_path / ".git").mkdir()
     # Inspect the policy without executing a helper, transport, or attacker code.
     (tmp_path / ".git" / "config").write_text('[protocol "ext"]\nallow = always\n')
-    call = Mock(return_value=SimpleNamespace(returncode=0, stdout="Known\x00known@example.test\x002026-09-23T00:00:00Z\n"))
+    call = Mock(
+        return_value=SimpleNamespace(
+            returncode=0, stdout="Known\x00known@example.test\x002026-09-23T00:00:00Z\n"
+        )
+    )
     monkeypatch.setattr(subprocess, "run", call)
     connector = FilesystemConnector(_context(index, use_git=True))
     assert connector._git_info(tmp_path, ".")["last_author_email"] == "known@example.test"
     cmd = call.call_args.args[0]
-    assert cmd[:len(metadata_git_argv_prefix())] == metadata_git_argv_prefix()
+    assert cmd[: len(metadata_git_argv_prefix())] == metadata_git_argv_prefix()
     assert cmd[-2:] == ["--", "."]
     assert {"--no-show-signature", "--no-ext-diff", "--no-textconv"} <= set(cmd)
     assert call.call_args.kwargs["env"]["GIT_ALLOW_PROTOCOL"] == ""
@@ -177,7 +197,9 @@ def test_external_git_metadata_is_rejected_before_process_start(tmp_path, index,
 
 @pytest.mark.parametrize("connector_type", [GitHubConnector, GitLabConnector])
 @pytest.mark.parametrize("enumeration", ["explicit", "group"])
-def test_live_repository_fields_cannot_scan_local_paths_or_select_internal_kinds(tmp_path, index, monkeypatch, connector_type, enumeration):
+def test_live_repository_fields_cannot_scan_local_paths_or_select_internal_kinds(
+    tmp_path, index, monkeypatch, connector_type, enumeration
+):
     private = tmp_path / "private"
     private.mkdir()
     (private / "requirements.txt").write_text("langchain\n")
@@ -185,11 +207,18 @@ def test_live_repository_fields_cannot_scan_local_paths_or_select_internal_kinds
     fetched.mkdir()
     (fetched / "requirements.txt").write_text("crewai\n")
     github = connector_type is GitHubConnector
-    config_key = ("repos" if github else "projects") if enumeration == "explicit" else ("org" if github else "group")
+    config_key = (
+        ("repos" if github else "projects") if enumeration == "explicit" else ("org" if github else "group")
+    )
     config_value = ["team/repo"] if enumeration == "explicit" else "team"
     connector = connector_type(_context(index, **{config_key: config_value}))
-    payload = {"id": 1, "full_name": "team/repo", "path_with_namespace": "team/repo",
-               "_local_path": str(private), "_kind": "service_account"}
+    payload = {
+        "id": 1,
+        "full_name": "team/repo",
+        "path_with_namespace": "team/repo",
+        "_local_path": str(private),
+        "_kind": "service_account",
+    }
     connector.http.try_get_json = Mock(return_value=payload)
     connector.http.paginate_link = Mock(return_value=iter([payload]))
     if not github:
@@ -214,8 +243,13 @@ def test_plain_dictionary_cannot_supply_offline_scan_authority(tmp_path, index, 
     connector = connector_type(_context(index))
     fetch = Mock(return_value=None)
     monkeypatch.setattr(connector, "_fetch_repo" if connector_type is GitHubConnector else "_fetch", fetch)
-    payload = {"id": 1, "full_name": "team/repo", "path_with_namespace": "team/repo",
-               "_local_path": str(tmp_path), "_kind": "service_account"}
+    payload = {
+        "id": 1,
+        "full_name": "team/repo",
+        "path_with_namespace": "team/repo",
+        "_local_path": str(tmp_path),
+        "_kind": "service_account",
+    }
     assert not list(connector.analyze([payload]))
     fetch.assert_called_once()
 
@@ -254,9 +288,16 @@ def test_git_author_containing_the_separator_cannot_forge_fields(tmp_path, index
 
     monkeypatch.setattr(fs_module.subprocess, "run", fake_run)
     info = connector._git_info(tmp_path, ".")
-    assert info == {"last_author": "Eve|forged@example.com|2001-01-01T00:00:00+00:00", "last_author_email": "a@b.c",
-                    "last_commit": "2026-01-01T00:00:00+00:00"}
-    monkeypatch.setattr(fs_module.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout="a\x00b\x00not-a-date", stderr=""))
+    assert info == {
+        "last_author": "Eve|forged@example.com|2001-01-01T00:00:00+00:00",
+        "last_author_email": "a@b.c",
+        "last_commit": "2026-01-01T00:00:00+00:00",
+    }
+    monkeypatch.setattr(
+        fs_module.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout="a\x00b\x00not-a-date", stderr=""),
+    )
     assert connector._git_info(tmp_path, ".") == {} and ctx.stats.warnings
 
 
@@ -269,7 +310,9 @@ def test_git_metadata_decoding_is_lenient_and_isolated(tmp_path, index, monkeypa
 
     def fake_run(argv, **kwargs):
         captured.update(kwargs)
-        return subprocess.CompletedProcess(argv, 0, stdout="Jos�\x00j@example.test\x002026-01-01T00:00:00Z", stderr="")
+        return subprocess.CompletedProcess(
+            argv, 0, stdout="Jos�\x00j@example.test\x002026-01-01T00:00:00Z", stderr=""
+        )
 
     monkeypatch.setattr(fs_module.subprocess, "run", fake_run)
     assert connector._git_info(tmp_path, ".")["last_author_email"] == "j@example.test"

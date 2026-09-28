@@ -14,13 +14,20 @@ from shadowscan.connectors.saas.teams import TeamsConnector
 from shadowscan.engine import Engine, merge
 
 SLACK_APP = {"_kind": "approved_app", "app": {"id": "A1", "name": "Claude"}, "scopes": []}
-TEAMS_APP = {"_kind": "teamsApp", "id": "valid-app", "distributionMethod": "organization", "displayName": "ChatGPT"}
+TEAMS_APP = {
+    "_kind": "teamsApp",
+    "id": "valid-app",
+    "distributionMethod": "organization",
+    "displayName": "ChatGPT",
+}
 
 
 def scan(tmp_path, connector, records, **settings):
     source = tmp_path / "inventory.json"
     source.write_text(json.dumps(records), encoding="utf-8")
-    return Engine(ScanConfig(connectors=[ConnectorSpec(connector, {"input": str(source), **settings})], parallel=1)).run()
+    return Engine(
+        ScanConfig(connectors=[ConnectorSpec(connector, {"input": str(source), **settings})], parallel=1)
+    ).run()
 
 
 def test_slack_same_app_in_same_named_workspaces_stays_separate(tmp_path):
@@ -41,17 +48,20 @@ def test_slack_workspace_rename_preserves_finding_identity(tmp_path):
     assert second.findings[0].metadata["workspace_name"] == "After"
 
 
-@pytest.mark.parametrize("records,settings", [
-    ([SLACK_APP], {}),
-    ([], {}),
-    ([{"_kind": "team", "id": "T1"}, SLACK_APP], {"team_id": "T2"}),
-    ([{"_kind": "team", "id": "T1"}, SLACK_APP, {"_kind": "team", "id": "T2"}], {}),
-    ([{"_kind": "team", "id": "T1"}, SLACK_APP, {"_kind": "team", "name": "Missing"}], {}),
-    ([SLACK_APP, {"_kind": "team", "id": None}], {"team_id": "T1"}),
-    ([SLACK_APP, {"_kind": "team", "id": "Engineering"}], {}),
-    ([{"_kind": "team", "id": "T1"}, {**SLACK_APP, "team_id": "T2"}], {}),
-    ([{"_kind": "team", "id": "T1"}, {**SLACK_APP, "team_id": []}], {}),
-])
+@pytest.mark.parametrize(
+    "records,settings",
+    [
+        ([SLACK_APP], {}),
+        ([], {}),
+        ([{"_kind": "team", "id": "T1"}, SLACK_APP], {"team_id": "T2"}),
+        ([{"_kind": "team", "id": "T1"}, SLACK_APP, {"_kind": "team", "id": "T2"}], {}),
+        ([{"_kind": "team", "id": "T1"}, SLACK_APP, {"_kind": "team", "name": "Missing"}], {}),
+        ([SLACK_APP, {"_kind": "team", "id": None}], {"team_id": "T1"}),
+        ([SLACK_APP, {"_kind": "team", "id": "Engineering"}], {}),
+        ([{"_kind": "team", "id": "T1"}, {**SLACK_APP, "team_id": "T2"}], {}),
+        ([{"_kind": "team", "id": "T1"}, {**SLACK_APP, "team_id": []}], {}),
+    ],
+)
 def test_slack_missing_or_conflicting_scope_cannot_pass_or_relabel(tmp_path, records, settings):
     result = scan(tmp_path, "saas.slack", records, **settings)
     assert not result.complete and not result.findings
@@ -80,28 +90,45 @@ def test_slack_config_scope_requires_workspace_id(index, team_id):
         SlackConnector(ConnectorContext(index=index, config={"team_id": team_id}))
 
 
-@pytest.mark.parametrize("record", [
-    {"_kind": "teamsApp", "displayName": "ChatGPT", "distributionMethod": "organization"},
-    {**TEAMS_APP, "id": None},
-    {**TEAMS_APP, "id": " "},
-    {**TEAMS_APP, "id": ["bad"]},
-    {**TEAMS_APP, "_kind": "unsupported"},
-    {**TEAMS_APP, "displayName": []},
-    {**TEAMS_APP, "appDefinitions": None},
-    {**TEAMS_APP, "appDefinitions": {}},
-    {**TEAMS_APP, "appDefinitions": [123]},
-    {**TEAMS_APP, "appDefinitions": [{"bot": []}]},
-    {**TEAMS_APP, "appDefinitions": [{"bot": {}}]},
-    {**TEAMS_APP, "appDefinitions": [{"teamsAppId": "other-app"}]},
-    {**TEAMS_APP, "appDefinitions": [{"createdBy": {"user": {"displayName": []}}}]},
-    {**TEAMS_APP, "appDefinitions": [{"authorization": []}]},
-    {**TEAMS_APP, "appDefinitions": [{"authorization": {"requiredPermissionSet": {"resourceSpecificPermissions": None}}}]},
-    {**TEAMS_APP, "appDefinitions": [{"authorization": {"requiredPermissionSet": {"resourceSpecificPermissions": [{"permissionValue": []}]}}}]},
-    {"_kind": "installedApp", "id": "installation-is-not-app-identity"},
-    {"_kind": "installedApp", "teamsApp": []},
-    {"_kind": "installedApp", "teamsApp": {"id": "A1"}, "teamsAppDefinition": []},
-    {"_kind": "installedApp", "teamsApp": {"id": "A1"}, "teamsAppDefinition": {"teamsAppId": "A2"}},
-])
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"_kind": "teamsApp", "displayName": "ChatGPT", "distributionMethod": "organization"},
+        {**TEAMS_APP, "id": None},
+        {**TEAMS_APP, "id": " "},
+        {**TEAMS_APP, "id": ["bad"]},
+        {**TEAMS_APP, "_kind": "unsupported"},
+        {**TEAMS_APP, "displayName": []},
+        {**TEAMS_APP, "appDefinitions": None},
+        {**TEAMS_APP, "appDefinitions": {}},
+        {**TEAMS_APP, "appDefinitions": [123]},
+        {**TEAMS_APP, "appDefinitions": [{"bot": []}]},
+        {**TEAMS_APP, "appDefinitions": [{"bot": {}}]},
+        {**TEAMS_APP, "appDefinitions": [{"teamsAppId": "other-app"}]},
+        {**TEAMS_APP, "appDefinitions": [{"createdBy": {"user": {"displayName": []}}}]},
+        {**TEAMS_APP, "appDefinitions": [{"authorization": []}]},
+        {
+            **TEAMS_APP,
+            "appDefinitions": [
+                {"authorization": {"requiredPermissionSet": {"resourceSpecificPermissions": None}}}
+            ],
+        },
+        {
+            **TEAMS_APP,
+            "appDefinitions": [
+                {
+                    "authorization": {
+                        "requiredPermissionSet": {"resourceSpecificPermissions": [{"permissionValue": []}]}
+                    }
+                }
+            ],
+        },
+        {"_kind": "installedApp", "id": "installation-is-not-app-identity"},
+        {"_kind": "installedApp", "teamsApp": []},
+        {"_kind": "installedApp", "teamsApp": {"id": "A1"}, "teamsAppDefinition": []},
+        {"_kind": "installedApp", "teamsApp": {"id": "A1"}, "teamsAppDefinition": {"teamsAppId": "A2"}},
+    ],
+)
 def test_teams_malformed_records_are_incomplete_and_keep_valid_neighbors(tmp_path, record):
     result = scan(tmp_path, "saas.microsoft-teams", [record, TEAMS_APP], tenant_id="tenant-a")
     assert not result.complete
@@ -110,17 +137,34 @@ def test_teams_malformed_records_are_incomplete_and_keep_valid_neighbors(tmp_pat
 
 
 def test_teams_missing_app_id_never_invents_none_resource(tmp_path):
-    result = scan(tmp_path, "saas.microsoft-teams", [{"_kind": "teamsApp", "distributionMethod": "organization", "displayName": "ChatGPT"}])
+    result = scan(
+        tmp_path,
+        "saas.microsoft-teams",
+        [{"_kind": "teamsApp", "distributionMethod": "organization", "displayName": "ChatGPT"}],
+    )
     assert not result.complete and not result.findings
 
 
 def test_teams_installation_uses_definition_catalog_identity(tmp_path):
-    result = scan(tmp_path, "saas.microsoft-teams", [{
-        "_kind": "installedApp", "id": "installation-1", "_team": "Engineering",
-        "teamsAppDefinition": {"teamsAppId": "catalog-1", "displayName": "ChatGPT", "bot": {"id": "bot-1"}},
-    }], tenant_id="tenant-a")
+    result = scan(
+        tmp_path,
+        "saas.microsoft-teams",
+        [
+            {
+                "_kind": "installedApp",
+                "id": "installation-1",
+                "_team": "Engineering",
+                "teamsAppDefinition": {
+                    "teamsAppId": "catalog-1",
+                    "displayName": "ChatGPT",
+                    "bot": {"id": "bot-1"},
+                },
+            }
+        ],
+        tenant_id="tenant-a",
+    )
     assert result.complete
-    finding, = result.findings
+    (finding,) = result.findings
     assert finding.resource == "teams:app:catalog-1"
     assert finding.metadata["install_count"] == 1
 

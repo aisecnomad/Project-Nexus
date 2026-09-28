@@ -45,11 +45,14 @@ def test_connectors_table_keeps_requirements_and_bracketed_descriptions_literal(
 
 
 def test_connectors_reports_plugin_registry_problems_on_stderr(monkeypatch):
-    monkeypatch.setattr("shadowscan.connectors.entry_points", lambda **kwargs: [
-        SimpleNamespace(name="identity.okta", value="must_never_import:Connector"),
-        SimpleNamespace(name="custom.twice", value="first_plugin:Connector"),
-        SimpleNamespace(name="custom.twice", value="second_plugin:Connector"),
-    ])
+    monkeypatch.setattr(
+        "shadowscan.connectors.entry_points",
+        lambda **kwargs: [
+            SimpleNamespace(name="identity.okta", value="must_never_import:Connector"),
+            SimpleNamespace(name="custom.twice", value="first_plugin:Connector"),
+            SimpleNamespace(name="custom.twice", value="second_plugin:Connector"),
+        ],
+    )
     result = CliRunner().invoke(main, ["connectors", "--json"])
     assert result.exit_code == 0, result.output
     rows = json.loads(result.stdout)
@@ -60,14 +63,19 @@ def test_connectors_reports_plugin_registry_problems_on_stderr(monkeypatch):
 
 
 def test_scan_logs_plugin_registry_problems_as_warnings(tmp_path, monkeypatch):
-    monkeypatch.setattr("shadowscan.connectors.entry_points", lambda **kwargs: [
-        SimpleNamespace(name="identity.okta", value="must_never_import:Connector"),
-    ])
+    monkeypatch.setattr(
+        "shadowscan.connectors.entry_points",
+        lambda **kwargs: [
+            SimpleNamespace(name="identity.okta", value="must_never_import:Connector"),
+        ],
+    )
     source = tmp_path / "src"
     source.mkdir()
     result = CliRunner().invoke(main, ["code", str(source), "--format", "json"])
     assert result.exit_code == 0, result.output
-    assert "plugin 'identity.okta' is a built-in connector name; plugins cannot replace it" in _flat(result.stderr)
+    assert "plugin 'identity.okta' is a built-in connector name; plugins cannot replace it" in _flat(
+        result.stderr
+    )
 
 
 # ----------------------------------------------------------- setup errors
@@ -129,7 +137,9 @@ def test_unexpected_exception_during_setup_is_masked_even_when_verbose(tmp_path,
     assert "scan setup failed" in flat and "RuntimeError" in flat
     # -vv adds frame locations for bug reports, never the exception text or source lines.
     assert "test_cli_ux.py:" in flat
-    assert "private-value-do-not-echo" not in flat and "plugin failure" not in flat and "Traceback" not in flat
+    assert (
+        "private-value-do-not-echo" not in flat and "plugin failure" not in flat and "Traceback" not in flat
+    )
 
 
 def test_scan_config_yaml_error_reports_position_without_source_text(tmp_path):
@@ -203,7 +213,9 @@ def test_signatures_test_dependency_kind_defaults_to_every_ecosystem():
     assert result.exit_code == 0, result.output
     assert "(pypi)" in result.output and "(npm)" in result.output
 
-    result = CliRunner().invoke(main, ["signatures", "test", "openai", "--kind", "dependency", "--ecosystem", "npm"])
+    result = CliRunner().invoke(
+        main, ["signatures", "test", "openai", "--kind", "dependency", "--ecosystem", "npm"]
+    )
     assert result.exit_code == 0, result.output
     assert "(npm)" in result.output and "(pypi)" not in result.output
 
@@ -253,13 +265,15 @@ def test_code_scan_explains_credential_isolation_rejection(tmp_path):
 def test_inventory_check_renders_card_fields_literally(tmp_path: Path):
     """Regression: Rich markup in an inventory card crashed ``inventory check``."""
     cards = tmp_path / "agents.yaml"
-    cards.write_text(dedent("""\
+    cards.write_text(
+        dedent("""\
         agents:
           - id: bot-one
             name: "[/]"
             owner: "[bold red]owner[/]"
             resources: ["arn:aws:iam::123456789012:role/[link=https://evil.example]x[/link]"]
-    """))
+    """)
+    )
     result = CliRunner().invoke(main, ["inventory", "check", str(cards)])
     assert result.exit_code == 0, result.output
     assert "[bold red]owner[/]" in result.output and "[/]" in result.output

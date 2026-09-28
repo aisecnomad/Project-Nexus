@@ -25,8 +25,7 @@ def validate_annotations(corpus: Path, annotations: Path) -> dict[str, Any]:
     positives = sum(case.present for case in cases)
     negatives = len(cases) - positives
     public_review = (
-        metadata["type"] == "public-pinned"
-        or ledger["method"] == "independent-ai-double-label-before-scan"
+        metadata["type"] == "public-pinned" or ledger["method"] == "independent-ai-double-label-before-scan"
     )
     repositories = sorted({case.source["repo"] for case in cases if case.source})
     if public_review:
@@ -78,7 +77,8 @@ def validate_annotations(corpus: Path, annotations: Path) -> dict[str, Any]:
 def _load_ledger(annotations: Path, digest: str) -> dict[str, Any]:
     """Read the annotation ledger and check that it records a supported process for this corpus."""
     if (
-        annotations.is_symlink() or not annotations.is_file()
+        annotations.is_symlink()
+        or not annotations.is_file()
         or annotations.stat().st_size > MAX_ANNOTATION_BYTES
     ):
         raise CorpusError("annotations must be a regular, nonsymlink file of at most 1 MB")
@@ -89,13 +89,16 @@ def _load_ledger(annotations: Path, digest: str) -> dict[str, Any]:
     except (UnicodeError, ValueError, RecursionError) as exc:
         raise CorpusError("invalid annotation JSON") from exc
     _keys(
-        ledger, {"schema", "corpus_sha256", "method", "selection", "reviewers", "adjudications"}, set(),
+        ledger,
+        {"schema", "corpus_sha256", "method", "selection", "reviewers", "adjudications"},
+        set(),
         "annotations",
     )
     if type(ledger["schema"]) is not int or ledger["schema"] != 1 or ledger["corpus_sha256"] != digest:
         raise CorpusError("annotation schema or frozen corpus digest mismatch")
     if not isinstance(ledger["method"], str) or ledger["method"] not in {
-        "independent-ai-double-label-before-scan", "independent-human-double-label-before-scan",
+        "independent-ai-double-label-before-scan",
+        "independent-human-double-label-before-scan",
     }:
         raise CorpusError("unsupported annotation method; record the actual labeling process")
     if not isinstance(ledger["selection"], str) or not 1 <= len(ledger["selection"]) <= 2000:
@@ -104,7 +107,9 @@ def _load_ledger(annotations: Path, digest: str) -> dict[str, Any]:
 
 
 def _reviewer_ballots(
-    reviewers: Any, expected: dict[str, bool], case_count: int,
+    reviewers: Any,
+    expected: dict[str, bool],
+    case_count: int,
 ) -> tuple[set[str], list[dict[str, bool]]]:
     """Check the two reviewers' complete labels; return their identities and ballots."""
     if not isinstance(reviewers, list) or len(reviewers) != 2:
@@ -115,7 +120,8 @@ def _reviewer_ballots(
         _keys(reviewer, {"id", "labels"}, set(), "reviewer")
         identity = reviewer["id"]
         if (
-            not isinstance(identity, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{1,79}", identity)
+            not isinstance(identity, str)
+            or not re.fullmatch(r"[a-z][a-z0-9_-]{1,79}", identity)
             or identity in identities
         ):
             raise CorpusError("reviewer IDs must be distinct nonempty identifiers")
@@ -129,7 +135,8 @@ def _reviewer_ballots(
             if not isinstance(case_id, str) or case_id not in expected or case_id in ballot:
                 raise CorpusError("unknown or duplicate annotation case")
             if (
-                type(label["present"]) is not bool or not isinstance(label["reason"], str)
+                type(label["present"]) is not bool
+                or not isinstance(label["reason"], str)
                 or not 1 <= len(label["reason"]) <= 2000
             ):
                 raise CorpusError("annotations require boolean labels and source-based reasons")
@@ -139,7 +146,9 @@ def _reviewer_ballots(
 
 
 def _adjudications(
-    resolutions: Any, expected: dict[str, bool], ballots: list[dict[str, bool]],
+    resolutions: Any,
+    expected: dict[str, bool],
+    ballots: list[dict[str, bool]],
 ) -> dict[str, bool]:
     """Check that each adjudication resolves a recorded disagreement; return the resolved labels."""
     if not isinstance(resolutions, list):
@@ -151,7 +160,8 @@ def _adjudications(
         if not isinstance(case_id, str) or case_id not in expected or case_id in resolved:
             raise CorpusError("unknown or duplicate adjudication")
         if (
-            type(resolution["present"]) is not bool or not isinstance(resolution["reason"], str)
+            type(resolution["present"]) is not bool
+            or not isinstance(resolution["reason"], str)
             or not 1 <= len(resolution["reason"]) <= 2000
         ):
             raise CorpusError("adjudications require boolean labels and source-based reasons")

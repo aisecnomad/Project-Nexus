@@ -1,4 +1,5 @@
 """Canary acceptance contracts. All transport is stubbed; no live tenant claim."""
+
 from __future__ import annotations
 
 import copy
@@ -15,8 +16,15 @@ EXAMPLES = Path(__file__).resolve().parents[1] / "examples/canaries"
 
 @pytest.fixture(autouse=True)
 def isolated_environment(monkeypatch):
-    for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE",
-                "AWS_DEFAULT_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE", "NEXUS_CANARY_SLACK_TOKEN"):
+    for key in (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_PROFILE",
+        "AWS_DEFAULT_PROFILE",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "NEXUS_CANARY_SLACK_TOKEN",
+    ):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -34,7 +42,10 @@ def test_replay_contract_is_not_live_acceptance(provider):
 @pytest.mark.parametrize("provider", ["aws", "slack"])
 def test_live_missing_credentials_never_runs_engine(provider, monkeypatch):
     from shadowscan.engine import Engine
-    monkeypatch.setattr(Engine, "run", lambda *args: pytest.fail("must not contact tenant without credentials"))
+
+    monkeypatch.setattr(
+        Engine, "run", lambda *args: pytest.fail("must not contact tenant without credentials")
+    )
     report = run(load_config(EXAMPLES / f"{provider}-live.yaml"))
     assert report["status"] == "LIVE_NOT_RUN"
     assert not report["live_acceptance"]
@@ -104,8 +115,15 @@ def test_slack_canary_rejects_findings_attributed_to_another_workspace(index):
     assert not verification["passed"] and not verification["scope_verified"]
 
 
-@pytest.mark.parametrize("extra", [{"profile": "unreviewed"}, {"role_arn": "arn:aws:iam::123456789012:role/x"},
-                                   {"allow_instance_credentials": True}, {"endpoint_url": "http://localhost"}])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"profile": "unreviewed"},
+        {"role_arn": "arn:aws:iam::123456789012:role/x"},
+        {"allow_instance_credentials": True},
+        {"endpoint_url": "http://localhost"},
+    ],
+)
 def test_connector_escape_hatches_rejected(extra):
     config = load_config(EXAMPLES / "aws-live.yaml")
     config["connector"].update(extra)
@@ -136,7 +154,9 @@ def test_no_empty_complete_canary_or_replayed_denial():
         validate(config)
 
 
-@pytest.mark.parametrize("message", ["connection timeout", "invalid_auth", "missing_scope and connection timeout"])
+@pytest.mark.parametrize(
+    "message", ["connection timeout", "invalid_auth", "missing_scope and connection timeout"]
+)
 def test_arbitrary_incomplete_result_does_not_pass_denial(message):
     config = load_config(EXAMPLES / "aws-denied.yaml")
     stats = ScanStats("cloud.aws", "now", incomplete=True, warnings=[message])
@@ -150,13 +170,17 @@ def test_arbitrary_incomplete_result_does_not_pass_denial(message):
 
 def _stub_slack(monkeypatch, *, deny=False, wrong_scope=False, omit_collection=False):
     from shadowscan.utils.http import HttpClient
+
     calls = []
     records = [json.loads(line) for line in (EXAMPLES / "slack-records.jsonl").read_text().splitlines()]
 
     def get_json(self, path, params=None):
         calls.append(path)
         if path == "/team.info":
-            return {"ok": True, "team": {"id": "TOTHER" if wrong_scope else "TEXAMPLE", "name": "example-workspace"}}
+            return {
+                "ok": True,
+                "team": {"id": "TOTHER" if wrong_scope else "TEXAMPLE", "name": "example-workspace"},
+            }
         if deny:
             return {"ok": False, "error": "missing_scope"}
         responses = {
@@ -204,6 +228,7 @@ def test_slack_denied_identity_is_detected_but_missing_collection_fails(monkeypa
 def _stub_aws(monkeypatch, *, deny=False, wrong_scope=False):
     boto3 = pytest.importorskip("boto3")
     from botocore.exceptions import ClientError
+
     calls = []
     records = [json.loads(line) for line in (EXAMPLES / "aws-records.jsonl").read_text().splitlines()][1:]
 
@@ -219,8 +244,12 @@ def _stub_aws(monkeypatch, *, deny=False, wrong_scope=False):
         def paginate(self, **kwargs):
             calls.append("lambda:ListFunctions")
             if deny:
-                raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "not displayed"}}, "ListFunctions")
-            functions = [{**record, "Environment": {"Variables": record["Environment"]}} for record in records]
+                raise ClientError(
+                    {"Error": {"Code": "AccessDeniedException", "Message": "not displayed"}}, "ListFunctions"
+                )
+            functions = [
+                {**record, "Environment": {"Variables": record["Environment"]}} for record in records
+            ]
             yield {"Functions": functions}
 
         def list_tags(self, Resource):
@@ -271,11 +300,15 @@ def test_aws_profiles_rejected_before_transport(monkeypatch, variable):
 def test_negative_control_cannot_substitute_account_record_or_unobserved_resource():
     config = load_config(EXAMPLES / "aws-replay.yaml")
     config["controls"][1]["record"] = {"_kind": "account"}
-    config["controls"][1]["finding"]["resource"] = "arn:aws:lambda:us-east-1:123456789012:function:DOES-NOT-EXIST"
+    config["controls"][1]["finding"]["resource"] = (
+        "arn:aws:lambda:us-east-1:123456789012:function:DOES-NOT-EXIST"
+    )
     with pytest.raises(CanaryConfigError, match="canonical identity"):
         validate(config)
     config = load_config(EXAMPLES / "aws-replay.yaml")
-    config["controls"][1]["finding"]["resource"] = "arn:aws:lambda:us-east-1:123456789012:function:DOES-NOT-EXIST"
+    config["controls"][1]["finding"]["resource"] = (
+        "arn:aws:lambda:us-east-1:123456789012:function:DOES-NOT-EXIST"
+    )
     with pytest.raises(CanaryConfigError, match="same object"):
         validate(config)
 

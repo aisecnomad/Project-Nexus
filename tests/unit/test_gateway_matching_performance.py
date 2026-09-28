@@ -14,8 +14,12 @@ from shadowscan.signatures.matcher import MatchTimeoutError
 
 
 def record():
-    return {"service": "worker", "model": "gpt-4o", "user_agent": "langchain/0.3",
-            "timestamp": "2026-09-23T12:00:00Z"}
+    return {
+        "service": "worker",
+        "model": "gpt-4o",
+        "user_agent": "langchain/0.3",
+        "timestamp": "2026-09-23T12:00:00Z",
+    }
 
 
 def test_parallel_repeated_gateway_records_preserve_counts_with_fewer_matches(index, monkeypatch):
@@ -56,9 +60,13 @@ def test_timeout_does_not_cache_partial_framework_results(index, monkeypatch):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
+
             def partial():
                 yield from original(ua)
-                raise MatchTimeoutError("signature matching timed out (custom.pattern); input scan is incomplete")
+                raise MatchTimeoutError(
+                    "signature matching timed out (custom.pattern); input scan is incomplete"
+                )
+
             return partial()
         return original(ua)
 
@@ -129,9 +137,17 @@ def _scan(index, records, **config):
 
 
 def _litellm(i=0, **extra):
-    return {"request_id": str(i), "call_type": "acompletion", "api_key": "opaque-key-one",
-            "api_key_alias": "svc-agent", "model": "gpt-4o", "custom_llm_provider": "openai", "spend": 0.01,
-            "startTime": "2026-01-05T09:00:00Z", **extra}
+    return {
+        "request_id": str(i),
+        "call_type": "acompletion",
+        "api_key": "opaque-key-one",
+        "api_key_alias": "svc-agent",
+        "model": "gpt-4o",
+        "custom_llm_provider": "openai",
+        "spend": 0.01,
+        "startTime": "2026-01-05T09:00:00Z",
+        **extra,
+    }
 
 
 class _Spy:
@@ -149,7 +165,9 @@ class _Spy:
 
 def test_opaque_caller_labels_skip_display_name_matching(index):
     spy = _Spy(index)
-    findings, _ = _scan(spy, [_litellm(api_key_alias=None), _litellm(1, api_key="opaque-key-two")], format="litellm")
+    findings, _ = _scan(
+        spy, [_litellm(api_key_alias=None), _litellm(1, api_key="opaque-key-two")], format="litellm"
+    )
     labels = {finding.metadata["caller"] for finding in findings}
     assert any(label.startswith("credential:hmac-sha256:") for label in labels) and "svc-agent" in labels
     assert "svc-agent" in spy.names
@@ -166,10 +184,19 @@ def test_gateway_memoizes_user_agents_and_strips_query_strings(index, tmp_path, 
     export = tmp_path / "gateway.jsonl"
     with export.open("w") as stream:
         for i in range(60):
-            stream.write(json.dumps({
-                "api_key": "key-one", "model": "gpt-4o", "metadata": {"user_agent": "langchain/0.3"}, "spend": 0.01,
-                "call_type": f"/v1/chat/completions?session={i}", "startTime": f"2026-01-01T10:{i % 60:02d}:00Z",
-            }) + "\n")
+            stream.write(
+                json.dumps(
+                    {
+                        "api_key": "key-one",
+                        "model": "gpt-4o",
+                        "metadata": {"user_agent": "langchain/0.3"},
+                        "spend": 0.01,
+                        "call_type": f"/v1/chat/completions?session={i}",
+                        "startTime": f"2026-01-01T10:{i % 60:02d}:00Z",
+                    }
+                )
+                + "\n"
+            )
     original = index.match_user_agent
     calls = []
 

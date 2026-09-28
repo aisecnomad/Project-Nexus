@@ -45,7 +45,12 @@ from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
 
 DEFAULT_LOCATIONS = [
-    "us-central1", "us-east4", "us-west1", "europe-west1", "europe-west4", "asia-southeast1",
+    "us-central1",
+    "us-east4",
+    "us-west1",
+    "europe-west1",
+    "europe-west4",
+    "asia-southeast1",
     "asia-northeast1",
 ]
 MAX_LIST_PAGES = 500
@@ -62,7 +67,13 @@ AI_SERVICES = {
 # Cloud Audit Logs entries for generative calls (services and method-name fragments).
 _AUDIT_SERVICES = ("aiplatform.googleapis.com", "dialogflow.googleapis.com", "discoveryengine.googleapis.com")
 _AUDIT_METHODS = (
-    "Predict", "GenerateContent", "StreamGenerateContent", "Query", "DetectIntent", "Converse", "Answer",
+    "Predict",
+    "GenerateContent",
+    "StreamGenerateContent",
+    "Query",
+    "DetectIntent",
+    "Converse",
+    "Answer",
 )
 _AUDIT_TEXT_FIELDS = ("principal", "method", "resource", "userAgent", "timestamp", "_project")
 # Agent Engine ``agentFramework`` fragments and the framework signature each implies.
@@ -78,8 +89,19 @@ _AGENT_FRAMEWORK_HINTS = (
 _BROAD_ROLES = {"roles/owner", "roles/editor"}
 _CHAT_SOLUTIONS = {"SOLUTION_TYPE_CHAT", "SOLUTION_TYPE_GENERATIVE_CHAT"}
 _LLM_SECRET_KEYWORDS = (
-    "openai", "anthropic", "claude", "gemini", "llm", "huggingface", "mistral", "cohere", "groq", "langsmith",
-    "langfuse", "pinecone", "tavily",
+    "openai",
+    "anthropic",
+    "claude",
+    "gemini",
+    "llm",
+    "huggingface",
+    "mistral",
+    "cohere",
+    "groq",
+    "langsmith",
+    "langfuse",
+    "pinecone",
+    "tavily",
 )
 _RUN_LOCATION = re.compile(r"[a-z][a-z0-9-]*[0-9]")
 _SERVICE_ACCOUNT_NAME = re.compile(r"projects/[A-Za-z0-9._:-]+/serviceAccounts/[^/?#\s]+")
@@ -88,8 +110,10 @@ _SERVICE_ACCOUNT_NAME = re.compile(r"projects/[A-Za-z0-9._:-]+/serviceAccounts/[
 def _audit_filter(since: str) -> str:
     services = " OR ".join(f'"{service}"' for service in _AUDIT_SERVICES)
     methods = " OR ".join(f'"{method}"' for method in _AUDIT_METHODS)
-    return (f"protoPayload.serviceName=({services}) AND (protoPayload.methodName:({methods})) "
-            f'AND timestamp>="{since}"')
+    return (
+        f"protoPayload.serviceName=({services}) AND (protoPayload.methodName:({methods})) "
+        f'AND timestamp>="{since}"'
+    )
 
 
 def _location(name: str) -> str | None:
@@ -172,7 +196,9 @@ class GcpConnector(BaseConnector):
                     super().__init__()
                     self.trust_env = False
                     self.client = HttpClient(
-                        allow_private_origin=allow_instance, max_retries=0, max_response_bytes=1024 * 1024,
+                        allow_private_origin=allow_instance,
+                        max_retries=0,
+                        max_response_bytes=1024 * 1024,
                     )
 
                 def request(self, method: Any, url: Any, *args: Any, **kwargs: Any) -> Any:
@@ -220,7 +246,9 @@ class GcpConnector(BaseConnector):
                 if not allow_instance:
                     credentials_file = require_local_adc(credentials_file)
                 creds, _ = google.auth.load_credentials_from_file(
-                    credentials_file, scopes=scopes, request=request,
+                    credentials_file,
+                    scopes=scopes,
+                    request=request,
                 )
             creds.refresh(request)
             token = creds.token
@@ -236,6 +264,24 @@ class GcpConnector(BaseConnector):
         except (HttpError, RequestException, ValueError) as exc:
             self.ctx.warn(f"cloud.gcp: collection failed for {url.split('?')[0]} ({_failure(exc)})")
             return None
+
+    def _next_page_token(self, data: dict[str, Any], seen: set[str], *, warn: str) -> str | None:
+        """Return the next page token, or None when pagination should stop.
+
+        An absent or empty token stops pagination silently (normal
+        termination); ``warn`` is only logged for an invalid or
+        already-seen token. Shared by ``_pages`` and ``_collect_audit`` so a
+        fix to this token-handling logic is made once instead of by hand at
+        every paginated call site.
+        """
+        token = data.get("nextPageToken")
+        if token is None or token == "":
+            return None
+        if not isinstance(token, str) or token in seen:
+            self.ctx.warn(warn)
+            return None
+        seen.add(token)
+        return token
 
     def _pages(self, url: str, items_key: str, **params: Any) -> Iterator[dict[str, Any]]:
         token: str | None = None
@@ -267,13 +313,11 @@ class GcpConnector(BaseConnector):
                 self.ctx.warn(f"cloud.gcp: invalid {items_key} page for {url}")
                 return
             yield from items
-            token = data.get("nextPageToken")
-            if token is None or token == "":
+            token = self._next_page_token(
+                data, seen, warn=f"cloud.gcp: invalid or repeated pagination token for {url}"
+            )
+            if token is None:
                 return
-            if not isinstance(token, str) or token in seen:
-                self.ctx.warn(f"cloud.gcp: invalid or repeated pagination token for {url}")
-                return
-            seen.add(token)
         self.ctx.warn(f"cloud.gcp: pagination limit reached for {url}")
 
     # -------------------------------------------------------------- collect
@@ -282,7 +326,8 @@ class GcpConnector(BaseConnector):
         projects: Iterable[str] = list(self.projects)
         if not projects:
             listed = self._pages(
-                "https://cloudresourcemanager.googleapis.com/v1/projects", "projects",
+                "https://cloudresourcemanager.googleapis.com/v1/projects",
+                "projects",
                 filter="lifecycleState:ACTIVE",
             )
             projects = (p["projectId"] for p in listed if p.get("projectId"))
@@ -294,8 +339,10 @@ class GcpConnector(BaseConnector):
 
     def _collect_project(self, project: str) -> Iterator[dict[str, Any]]:
         services = self._pages(
-            f"https://serviceusage.googleapis.com/v1/projects/{project}/services", "services",
-            filter="state:ENABLED", pageSize=200,
+            f"https://serviceusage.googleapis.com/v1/projects/{project}/services",
+            "services",
+            filter="state:ENABLED",
+            pageSize=200,
         )
         enabled = [s.get("config", {}).get("name") for s in services]
         ai_enabled = [s for s in enabled if s in AI_SERVICES]
@@ -309,8 +356,10 @@ class GcpConnector(BaseConnector):
                     yield {"_kind": "dialogflow-agent", "_project": project, "_location": loc, **agent}
         if "discoveryengine.googleapis.com" in enabled:
             for loc in ["global", "us", "eu"]:
-                url = (f"https://discoveryengine.googleapis.com/v1/projects/{project}/locations/{loc}"
-                       "/collections/default_collection/engines")
+                url = (
+                    f"https://discoveryengine.googleapis.com/v1/projects/{project}/locations/{loc}"
+                    "/collections/default_collection/engines"
+                )
                 for eng in self._pages(url, "engines"):
                     yield {"_kind": "discovery-engine", "_project": project, "_location": loc, **eng}
         if "run.googleapis.com" in enabled:
@@ -329,8 +378,11 @@ class GcpConnector(BaseConnector):
             url = f"https://secretmanager.googleapis.com/v1/projects/{project}/secrets"
             for s in self._pages(url, "secrets"):
                 yield {
-                    "_kind": "secret-name", "_project": project, "name": s.get("name"),
-                    "createTime": s.get("createTime"), "labels": s.get("labels"),
+                    "_kind": "secret-name",
+                    "_project": project,
+                    "name": s.get("name"),
+                    "createTime": s.get("createTime"),
+                    "labels": s.get("labels"),
                 }
         if self.audit_days > 0 and "aiplatform.googleapis.com" in enabled:
             yield from self._collect_audit(project)
@@ -364,7 +416,8 @@ class GcpConnector(BaseConnector):
         assert self.http
         try:
             policy = self.http.post_json(
-                f"https://cloudresourcemanager.googleapis.com/v1/projects/{project}:getIamPolicy", json={},
+                f"https://cloudresourcemanager.googleapis.com/v1/projects/{project}:getIamPolicy",
+                json={},
             )
             if not isinstance(policy, dict) or "error" in policy:
                 self.ctx.warn(f"cloud.gcp: invalid IAM policy response for {project}")
@@ -393,15 +446,21 @@ class GcpConnector(BaseConnector):
                     f"cloud.gcp: service account key inventory unavailable for {name}; coverage unknown"
                 )
             # Access-denied and malformed responses must not be reported as zero keys.
-            yield {**sa, "_kind": "service-account", "_project": project,
-                   "user_managed_keys": count,
-                   "key_coverage": "observed" if complete else "unknown"}
+            yield {
+                **sa,
+                "_kind": "service-account",
+                "_project": project,
+                "user_managed_keys": count,
+                "key_coverage": "observed" if complete else "unknown",
+            }
 
     def _collect_audit(self, project: str) -> Iterator[dict[str, Any]]:
         assert self.http
         since = (datetime.now(UTC) - timedelta(days=self.audit_days)).isoformat()
         body = {
-            "resourceNames": [f"projects/{project}"], "filter": _audit_filter(since), "pageSize": 1000,
+            "resourceNames": [f"projects/{project}"],
+            "filter": _audit_filter(since),
+            "pageSize": 1000,
             "orderBy": "timestamp desc",
         }
         token: str | None = None
@@ -433,13 +492,11 @@ class GcpConnector(BaseConnector):
                     "ip": get_path(pp, "requestMetadata.callerIp"),
                     "delegation": get_path(pp, "authenticationInfo.serviceAccountDelegationInfo"),
                 }
-            token = data.get("nextPageToken")
-            if token is None or token == "":
+            token = self._next_page_token(
+                data, seen, warn=f"cloud.gcp: invalid or repeated audit pagination token for {project}"
+            )
+            if token is None:
                 return
-            if not isinstance(token, str) or token in seen:
-                self.ctx.warn(f"cloud.gcp: invalid or repeated audit pagination token for {project}")
-                return
-            seen.add(token)
         self.ctx.warn(f"cloud.gcp: audit pagination limit reached for {project}")
 
     # -------------------------------------------------------------- analyze
@@ -476,7 +533,9 @@ class GcpConnector(BaseConnector):
         # resource project as part of each observation's identity.
         resource = re.sub(r"projects/[^/]+/", "", str(rec.get("resource") or ""))[:120]
         agg = aggregate_caller_event(
-            callers, (rec.get("_project"), rec.get("principal") or "unknown"), time=rec.get("timestamp"),
+            callers,
+            (rec.get("_project"), rec.get("principal") or "unknown"),
+            time=rec.get("timestamp"),
             tally={"methods": rec.get("method"), "resources": resource},
             tally_present={"agents": rec.get("userAgent")},
             seed={"project": rec.get("_project"), "delegated": False},
@@ -489,12 +548,15 @@ class GcpConnector(BaseConnector):
         if not services:
             return None
         f = cloud_finding(
-            self.name, "gcp", kind=Kind.CLOUD_RESOURCE,
+            self.name,
+            "gcp",
+            kind=Kind.CLOUD_RESOURCE,
             title=(
                 f"AI APIs enabled in project {rec.get('project')}: "
                 f"{', '.join(AI_SERVICES.get(s, s) for s in services)}"
             ),
-            resource=f"projects/{rec.get('project')}/ai-apis", resource_type="enabled-apis",
+            resource=f"projects/{rec.get('project')}/ai-apis",
+            resource_type="enabled-apis",
             account=rec.get("project"),
         )
         for s in services:
@@ -504,19 +566,29 @@ class GcpConnector(BaseConnector):
                 f.add_model_provider("provider.google-gemini")
             elif s in {"dialogflow.googleapis.com", "discoveryengine.googleapis.com"}:
                 f.add_framework("cloud.gcp-vertex-agent-engine")
-        f.add_evidence(Evidence(
-            signal="gcp:enabled-apis", description=f"Enabled: {', '.join(services)}", weight=0.3,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="gcp:enabled-apis",
+                description=f"Enabled: {', '.join(services)}",
+                weight=0.3,
+            )
+        )
         f.metadata["services"] = services
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_reasoning_engine(self, rec: dict[str, Any]) -> Finding:
         name = rec.get("name", "")
         f = cloud_finding(
-            self.name, "gcp", kind=Kind.AGENT,
+            self.name,
+            "gcp",
+            kind=Kind.AGENT,
             title=f"Vertex AI Agent Engine: {rec.get('displayName') or name.rsplit('/', 1)[-1]}",
-            resource=name, resource_type="reasoning-engine", account=rec.get("_project"),
-            region=rec.get("_location"), first_seen=rec.get("createTime"), last_seen=rec.get("updateTime"),
+            resource=name,
+            resource_type="reasoning-engine",
+            account=rec.get("_project"),
+            region=rec.get("_location"),
+            first_seen=rec.get("createTime"),
+            last_seen=rec.get("updateTime"),
         )
         f.add_framework("cloud.gcp-vertex-agent-engine")
         f.add_model_provider("provider.google-vertex-ai")
@@ -531,22 +603,29 @@ class GcpConnector(BaseConnector):
         for key, sig in _AGENT_FRAMEWORK_HINTS:
             if key in agent_framework.lower():
                 f.add_framework(sig)
-        f.add_evidence(Evidence(
-            signal="gcp:reasoning-engine",
-            description=(
-                f"Agent Engine '{rec.get('displayName')}' framework={agent_framework or 'unknown'}, "
-                f"{len(class_methods)} exposed method(s), python {pkg.get('pythonVersion')}: "
-                f"{truncate(rec.get('description'), 120)}"
-            ),
-            location=name, weight=0.97, signature="cloud.gcp-vertex-agent-engine",
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="gcp:reasoning-engine",
+                description=(
+                    f"Agent Engine '{rec.get('displayName')}' framework={agent_framework or 'unknown'}, "
+                    f"{len(class_methods)} exposed method(s), python {pkg.get('pythonVersion')}: "
+                    f"{truncate(rec.get('description'), 120)}"
+                ),
+                location=name,
+                weight=0.97,
+                signature="cloud.gcp-vertex-agent-engine",
+            )
+        )
         name_hint(self.index, f, rec.get("displayName"), rec.get("description"))
-        f.metadata.update({
-            "framework": agent_framework,
-            "class_methods": [m.get("name") for m in class_methods if isinstance(m, dict)][:20],
-            "requirements": deps, "python": pkg.get("pythonVersion"),
-            "description": truncate(rec.get("description"), 300),
-        })
+        f.metadata.update(
+            {
+                "framework": agent_framework,
+                "class_methods": [m.get("name") for m in class_methods if isinstance(m, dict)][:20],
+                "requirements": deps,
+                "python": pkg.get("pythonVersion"),
+                "description": truncate(rec.get("description"), 300),
+            }
+        )
         return done(f, self.index, Kind.AGENT)
 
     def _h_vertex_endpoint(self, rec: dict[str, Any]) -> Finding | None:
@@ -555,19 +634,29 @@ class GcpConnector(BaseConnector):
             return None
         name = rec.get("name", "")
         f = cloud_finding(
-            self.name, "gcp", kind=Kind.CLOUD_RESOURCE, title=f"Vertex AI endpoint: {rec.get('displayName')}",
-            resource=name, resource_type="vertex-endpoint", account=rec.get("_project"),
-            region=rec.get("_location"), first_seen=rec.get("createTime"), last_seen=rec.get("updateTime"),
+            self.name,
+            "gcp",
+            kind=Kind.CLOUD_RESOURCE,
+            title=f"Vertex AI endpoint: {rec.get('displayName')}",
+            resource=name,
+            resource_type="vertex-endpoint",
+            account=rec.get("_project"),
+            region=rec.get("_location"),
+            first_seen=rec.get("createTime"),
+            last_seen=rec.get("updateTime"),
         )
         f.add_model_provider("provider.google-vertex-ai")
-        f.add_evidence(Evidence(
-            signal="gcp:vertex-endpoint",
-            description=(
-                f"Endpoint '{rec.get('displayName')}' serves {len(models)} model(s): "
-                f"{', '.join(str(m.get('displayName') or m.get('model')) for m in models[:5])}"
-            ),
-            location=name, weight=0.5,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="gcp:vertex-endpoint",
+                description=(
+                    f"Endpoint '{rec.get('displayName')}' serves {len(models)} model(s): "
+                    f"{', '.join(str(m.get('displayName') or m.get('model')) for m in models[:5])}"
+                ),
+                location=name,
+                weight=0.5,
+            )
+        )
         f.models = [str(m.get("model")) for m in models][:10]
         apply_matches(f, model_matches(self.index, *f.models), weight_scale=0.5)
         return done(f, self.index, Kind.CLOUD_RESOURCE)
@@ -575,48 +664,71 @@ class GcpConnector(BaseConnector):
     def _h_dialogflow_agent(self, rec: dict[str, Any]) -> Finding:
         name = rec.get("name", "")
         f = cloud_finding(
-            self.name, "gcp", kind=Kind.AGENT, title=f"Dialogflow CX agent: {rec.get('displayName')}",
-            resource=name, resource_type="dialogflow-cx-agent", account=rec.get("_project"),
+            self.name,
+            "gcp",
+            kind=Kind.AGENT,
+            title=f"Dialogflow CX agent: {rec.get('displayName')}",
+            resource=name,
+            resource_type="dialogflow-cx-agent",
+            account=rec.get("_project"),
             region=rec.get("_location"),
         )
         f.add_framework("cloud.gcp-vertex-agent-engine")
         gen = rec.get("genAppBuilderSettings") or rec.get("generativeSettings") or {}
-        f.add_evidence(Evidence(
-            signal="gcp:dialogflow",
-            description=(
-                f"Dialogflow CX agent '{rec.get('displayName')}' ({rec.get('defaultLanguageCode')}), "
-                f"generative settings: {bool(gen)}, playbooks: {rec.get('startPlaybook') is not None}"
-            ),
-            location=name, weight=0.9, signature="cloud.gcp-vertex-agent-engine",
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="gcp:dialogflow",
+                description=(
+                    f"Dialogflow CX agent '{rec.get('displayName')}' ({rec.get('defaultLanguageCode')}), "
+                    f"generative settings: {bool(gen)}, playbooks: {rec.get('startPlaybook') is not None}"
+                ),
+                location=name,
+                weight=0.9,
+                signature="cloud.gcp-vertex-agent-engine",
+            )
+        )
         if gen or rec.get("startPlaybook"):
             f.add_capability("tool-use")
-        f.metadata.update({
-            "description": truncate(rec.get("description")), "generative": bool(gen),
-            "start_playbook": rec.get("startPlaybook"),
-            "enable_stackdriver_logging": rec.get("enableStackdriverLogging"),
-        })
+        f.metadata.update(
+            {
+                "description": truncate(rec.get("description")),
+                "generative": bool(gen),
+                "start_playbook": rec.get("startPlaybook"),
+                "enable_stackdriver_logging": rec.get("enableStackdriverLogging"),
+            }
+        )
         return done(f, self.index, Kind.AGENT)
 
     def _h_discovery_engine(self, rec: dict[str, Any]) -> Finding:
         name = rec.get("name", "")
         solution = rec.get("solutionType")
         f = cloud_finding(
-            self.name, "gcp", kind=Kind.AGENT if solution in _CHAT_SOLUTIONS else Kind.CLOUD_RESOURCE,
-            title=f"Vertex AI Search / Agentspace engine: {rec.get('displayName')}", resource=name,
-            resource_type="discovery-engine", account=rec.get("_project"), region=rec.get("_location"),
-            first_seen=rec.get("createTime"), last_seen=rec.get("updateTime"),
+            self.name,
+            "gcp",
+            kind=Kind.AGENT if solution in _CHAT_SOLUTIONS else Kind.CLOUD_RESOURCE,
+            title=f"Vertex AI Search / Agentspace engine: {rec.get('displayName')}",
+            resource=name,
+            resource_type="discovery-engine",
+            account=rec.get("_project"),
+            region=rec.get("_location"),
+            first_seen=rec.get("createTime"),
+            last_seen=rec.get("updateTime"),
         )
         f.add_framework("cloud.gcp-vertex-agent-engine")
         f.add_capability("rag")
-        f.add_evidence(Evidence(
-            signal="gcp:discovery-engine",
-            description=(
-                f"Engine '{rec.get('displayName')}' type {solution} industry {rec.get('industryVertical')} "
-                f"data stores {', '.join(rec.get('dataStoreIds') or [])[:200]}"
-            ),
-            location=name, weight=0.85, signature="cloud.gcp-vertex-agent-engine",
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="gcp:discovery-engine",
+                description=(
+                    f"Engine '{rec.get('displayName')}' type {solution} industry "
+                    f"{rec.get('industryVertical')} "
+                    f"data stores {', '.join(rec.get('dataStoreIds') or [])[:200]}"
+                ),
+                location=name,
+                weight=0.85,
+                signature="cloud.gcp-vertex-agent-engine",
+            )
+        )
         f.metadata.update({"solution_type": solution, "data_stores": rec.get("dataStoreIds")})
         return done(f, self.index, f.kind)
 
@@ -624,9 +736,16 @@ class GcpConnector(BaseConnector):
         name = rec.get("name", "")
         tmpl = rec.get("template") or {}
         f = cloud_finding(
-            self.name, "gcp", kind=Kind.CLOUD_RESOURCE, title=f"Cloud Run service: {name.rsplit('/', 1)[-1]}",
-            resource=name, resource_type="cloud-run-service", account=rec.get("_project"),
-            region=_location(name), first_seen=rec.get("createTime"), last_seen=rec.get("updateTime"),
+            self.name,
+            "gcp",
+            kind=Kind.CLOUD_RESOURCE,
+            title=f"Cloud Run service: {name.rsplit('/', 1)[-1]}",
+            resource=name,
+            resource_type="cloud-run-service",
+            account=rec.get("_project"),
+            region=_location(name),
+            first_seen=rec.get("createTime"),
+            last_seen=rec.get("updateTime"),
         )
         for c in tmpl.get("containers") or []:
             if c.get("image"):
@@ -640,32 +759,46 @@ class GcpConnector(BaseConnector):
         if not f.frameworks and not f.model_providers:
             return None
         images = ", ".join(str(c.get("image")) for c in tmpl.get("containers") or [])[:200]
-        f.add_evidence(Evidence(
-            signal="gcp:cloud-run",
-            description=(
-                f"Service '{name.rsplit('/', 1)[-1]}' images {images}; "
-                f"service account {tmpl.get('serviceAccount')}; ingress {rec.get('ingress')}"
-            ),
-            location=rec.get("uri") or name, weight=0.25,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="gcp:cloud-run",
+                description=(
+                    f"Service '{name.rsplit('/', 1)[-1]}' images {images}; "
+                    f"service account {tmpl.get('serviceAccount')}; ingress {rec.get('ingress')}"
+                ),
+                location=rec.get("uri") or name,
+                weight=0.25,
+            )
+        )
         if rec.get("ingress") == "INGRESS_TRAFFIC_ALL":
             f.add_tag("public-ingress")
-        f.owner = (first_tag(rec.get("labels"), "owner", "team")
-                   or rec.get("lastModifier") or rec.get("creator"))
-        f.metadata.update({
-            "service_account": tmpl.get("serviceAccount"), "uri": rec.get("uri"),
-            "ingress": rec.get("ingress"), "images": [c.get("image") for c in tmpl.get("containers") or []],
-            "labels": rec.get("labels"),
-        })
+        f.owner = (
+            first_tag(rec.get("labels"), "owner", "team") or rec.get("lastModifier") or rec.get("creator")
+        )
+        f.metadata.update(
+            {
+                "service_account": tmpl.get("serviceAccount"),
+                "uri": rec.get("uri"),
+                "ingress": rec.get("ingress"),
+                "images": [c.get("image") for c in tmpl.get("containers") or []],
+                "labels": rec.get("labels"),
+            }
+        )
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_cloud_function(self, rec: dict[str, Any]) -> Finding | None:
         name = rec.get("name", "")
         svc = rec.get("serviceConfig") or {}
         f = cloud_finding(
-            self.name, "gcp", kind=Kind.CLOUD_RESOURCE, title=f"Cloud Function: {name.rsplit('/', 1)[-1]}",
-            resource=name, resource_type="cloud-function", account=rec.get("_project"),
-            region=_location(name), last_seen=rec.get("updateTime"),
+            self.name,
+            "gcp",
+            kind=Kind.CLOUD_RESOURCE,
+            title=f"Cloud Function: {name.rsplit('/', 1)[-1]}",
+            resource=name,
+            resource_type="cloud-function",
+            account=rec.get("_project"),
+            region=_location(name),
+            last_seen=rec.get("updateTime"),
         )
         scan_env(self.index, f, svc.get("environmentVariables"), location=name)
         for s in svc.get("secretEnvironmentVariables") or []:
@@ -673,24 +806,29 @@ class GcpConnector(BaseConnector):
         name_hint(self.index, f, name.rsplit("/", 1)[-1], rec.get("description"))
         if not f.frameworks and not f.model_providers:
             return None
-        f.add_evidence(Evidence(
-            signal="gcp:cloud-function",
-            description=(
-                f"Function '{name.rsplit('/', 1)[-1]}' runtime {get_path(rec, 'buildConfig.runtime')} "
-                f"service account {svc.get('serviceAccountEmail')} ingress {svc.get('ingressSettings')}; "
-                f"trigger {get_path(rec, 'eventTrigger.eventType') or 'https'}"
-            ),
-            location=svc.get("uri") or name, weight=0.25,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="gcp:cloud-function",
+                description=(
+                    f"Function '{name.rsplit('/', 1)[-1]}' runtime {get_path(rec, 'buildConfig.runtime')} "
+                    f"service account {svc.get('serviceAccountEmail')} ingress {svc.get('ingressSettings')}; "
+                    f"trigger {get_path(rec, 'eventTrigger.eventType') or 'https'}"
+                ),
+                location=svc.get("uri") or name,
+                weight=0.25,
+            )
+        )
         if rec.get("eventTrigger"):
             f.add_capability("autonomous")
-        f.metadata.update({
-            "runtime": get_path(rec, "buildConfig.runtime"),
-            "service_account": svc.get("serviceAccountEmail"),
-            "trigger": get_path(rec, "eventTrigger.eventType"),
-            "uri": svc.get("uri"),
-            "labels": rec.get("labels"),
-        })
+        f.metadata.update(
+            {
+                "runtime": get_path(rec, "buildConfig.runtime"),
+                "service_account": svc.get("serviceAccountEmail"),
+                "trigger": get_path(rec, "eventTrigger.eventType"),
+                "uri": svc.get("uri"),
+                "labels": rec.get("labels"),
+            }
+        )
         return done(f, self.index, Kind.CLOUD_RESOURCE)
 
     def _h_iam_policy(self, rec: dict[str, Any]) -> Iterator[Finding]:
@@ -705,70 +843,101 @@ class GcpConnector(BaseConnector):
             roles = sorted(set(roles))
             broad_roles = [role for role in roles if role in _BROAD_ROLES]
             f = cloud_finding(
-                self.name, "gcp", kind=Kind.IAM_GRANT,
+                self.name,
+                "gcp",
+                kind=Kind.IAM_GRANT,
                 title=f"IAM member with AI or broad project access in {project}: {member}",
-                resource=f"projects/{project}/iam/{member}", resource_type="iam-binding", account=project,
+                resource=f"projects/{project}/iam/{member}",
+                resource_type="iam-binding",
+                account=project,
                 surface=Surface.IDENTITY,
             )
             llm = scan_iam_actions(self.index, f, roles, location=f"projects/{project}")
             if not llm and not broad_roles:
                 continue
-            f.add_evidence(Evidence(
-                signal="gcp:iam", description=f"{member} holds {', '.join(roles)}",
-                weight=0.45 if member.startswith("serviceAccount:") else 0.25,
-            ))
+            f.add_evidence(
+                Evidence(
+                    signal="gcp:iam",
+                    description=f"{member} holds {', '.join(roles)}",
+                    weight=0.45 if member.startswith("serviceAccount:") else 0.25,
+                )
+            )
             if broad_roles:
                 f.add_tag("broad-project-access")
-                f.add_evidence(Evidence(
-                    signal="gcp:iam-broad-role",
-                    description=(
-                        f"Broad project grant ({', '.join(broad_roles)}) can enable AI access, subject to "
-                        "applicable policies and service availability; this is access evidence, not observed "
-                        "AI execution."
-                    ),
-                    location=f"projects/{project}", weight=0.25,
-                ))
+                f.add_evidence(
+                    Evidence(
+                        signal="gcp:iam-broad-role",
+                        description=(
+                            f"Broad project grant ({', '.join(broad_roles)}) can enable AI access, subject "
+                            "to "
+                            "applicable policies and service availability; this is access evidence, not "
+                            "observed "
+                            "AI execution."
+                        ),
+                        location=f"projects/{project}",
+                        weight=0.25,
+                    )
+                )
             if member.startswith("serviceAccount:"):
                 f.add_tag("service-account")
             if member.startswith(("allUsers", "allAuthenticatedUsers")):
                 f.add_tag("public-principal")
             name_hint(self.index, f, member)
-            f.metadata.update({
-                "member": member, "roles": roles, "broad_roles": broad_roles,
-                "evidence_class": "access-grant",
-            })
+            f.metadata.update(
+                {
+                    "member": member,
+                    "roles": roles,
+                    "broad_roles": broad_roles,
+                    "evidence_class": "access-grant",
+                }
+            )
             yield done(f, self.index, Kind.IAM_GRANT)
 
     def _h_service_account(self, rec: dict[str, Any]) -> Finding | None:
         email = rec.get("email", "")
         f = cloud_finding(
-            self.name, "gcp", kind=Kind.SERVICE_IDENTITY, title=f"Service account: {email}",
-            resource=rec.get("name") or email, resource_type="service-account", account=rec.get("_project"),
+            self.name,
+            "gcp",
+            kind=Kind.SERVICE_IDENTITY,
+            title=f"Service account: {email}",
+            resource=rec.get("name") or email,
+            resource_type="service-account",
+            account=rec.get("_project"),
             surface=Surface.IDENTITY,
         )
         name_hint(self.index, f, rec.get("displayName"), rec.get("description"), email.split("@")[0])
         if not f.frameworks:
             return None
         keys = rec.get("user_managed_keys")
-        keys_known = (isinstance(keys, int) and not isinstance(keys, bool) and keys >= 0
-                      and rec.get("key_coverage") != "unknown")
+        keys_known = (
+            isinstance(keys, int)
+            and not isinstance(keys, bool)
+            and keys >= 0
+            and rec.get("key_coverage") != "unknown"
+        )
         key_description = (
             f"{keys} user-managed key(s)" if keys_known else "unknown user-managed key inventory"
         )
-        f.add_evidence(Evidence(
-            signal="gcp:service-account",
-            description=(
-                f"Service account '{rec.get('displayName') or email}' with {key_description}; "
-                f"disabled={rec.get('disabled', False)}"
-            ),
-            weight=0.35,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="gcp:service-account",
+                description=(
+                    f"Service account '{rec.get('displayName') or email}' with {key_description}; "
+                    f"disabled={rec.get('disabled', False)}"
+                ),
+                weight=0.35,
+            )
+        )
         if isinstance(keys, int) and keys_known and keys > 0:
             f.add_tag("user-managed-keys")
-        f.metadata.update({
-            "email": email, "keys": keys if keys_known else None,
-            "key_coverage": "observed" if keys_known else "unknown", "disabled": rec.get("disabled"),
-        })
+        f.metadata.update(
+            {
+                "email": email,
+                "keys": keys if keys_known else None,
+                "key_coverage": "observed" if keys_known else "unknown",
+                "disabled": rec.get("disabled"),
+            }
+        )
         return done(f, self.index, Kind.SERVICE_IDENTITY)
 
     def _h_api_key(self, rec: dict[str, Any]) -> Finding | None:
@@ -779,30 +948,40 @@ class GcpConnector(BaseConnector):
             return None
         scope = "for " + ", ".join(AI_SERVICES[t] for t in ai_targets) if ai_targets else "(unrestricted)"
         f = cloud_finding(
-            self.name, "gcp", kind=Kind.SECRET,
+            self.name,
+            "gcp",
+            kind=Kind.SECRET,
             title=f"API key {scope}: {rec.get('displayName') or rec.get('uid')}",
-            resource=str(rec.get("name") or rec.get("uid") or ""), resource_type="api-key",
-            account=rec.get("_project"), first_seen=rec.get("createTime"), last_seen=rec.get("updateTime"),
+            resource=str(rec.get("name") or rec.get("uid") or ""),
+            resource_type="api-key",
+            account=rec.get("_project"),
+            first_seen=rec.get("createTime"),
+            last_seen=rec.get("updateTime"),
         )
         if "generativelanguage.googleapis.com" in ai_targets or unrestricted:
             f.add_model_provider("provider.google-gemini")
         if "aiplatform.googleapis.com" in ai_targets:
             f.add_model_provider("provider.google-vertex-ai")
-        f.add_evidence(Evidence(
-            signal="gcp:api-key",
-            description=(
-                f"API key '{rec.get('displayName')}' restricted to "
-                f"{', '.join(targets) or 'nothing (all APIs)'}"
-            ),
-            weight=0.5 if ai_targets else 0.25,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="gcp:api-key",
+                description=(
+                    f"API key '{rec.get('displayName')}' restricted to "
+                    f"{', '.join(targets) or 'nothing (all APIs)'}"
+                ),
+                weight=0.5 if ai_targets else 0.25,
+            )
+        )
         if unrestricted:
             f.add_tag("unrestricted-api-key")
         restrictions = rec.get("restrictions") or {}
-        f.metadata.update({
-            "targets": targets, "browser_restrictions": bool(restrictions.get("browserKeyRestrictions")),
-            "server_restrictions": bool(restrictions.get("serverKeyRestrictions")),
-        })
+        f.metadata.update(
+            {
+                "targets": targets,
+                "browser_restrictions": bool(restrictions.get("browserKeyRestrictions")),
+                "server_restrictions": bool(restrictions.get("serverKeyRestrictions")),
+            }
+        )
         return done(f, self.index, Kind.SECRET)
 
     def _h_secret_name(self, rec: dict[str, Any]) -> Finding | None:
@@ -811,36 +990,69 @@ class GcpConnector(BaseConnector):
         if matches is None:
             return None
         f = cloud_finding(
-            self.name, "gcp", kind=Kind.SECRET, title=f"Secret Manager secret for LLM provider: {name}",
-            resource=rec.get("name") or name, resource_type="secret-manager-secret",
-            account=rec.get("_project"), first_seen=rec.get("createTime"),
+            self.name,
+            "gcp",
+            kind=Kind.SECRET,
+            title=f"Secret Manager secret for LLM provider: {name}",
+            resource=rec.get("name") or name,
+            resource_type="secret-manager-secret",
+            account=rec.get("_project"),
+            first_seen=rec.get("createTime"),
         )
         apply_matches(f, matches, weight_scale=0.7)
-        f.add_evidence(Evidence(
-            signal="gcp:secret",
-            description=f"Secret '{name}' looks like an LLM provider credential (name only)", weight=0.4,
-        ))
+        f.add_evidence(
+            Evidence(
+                signal="gcp:secret",
+                description=f"Secret '{name}' looks like an LLM provider credential (name only)",
+                weight=0.4,
+            )
+        )
         f.add_tag("managed-secret")
         f.metadata["labels"] = rec.get("labels")
         return done(f, self.index, Kind.SECRET)
 
+    def _is_service_account_principal(self, principal: str) -> bool:
+        raw = (principal or "").strip().lower()
+        if not raw:
+            return False
+        if ":" in raw:
+            raw = raw.split(":", 1)[1]
+        host = raw
+        if "@" in host:
+            host = host.rsplit("@", 1)[1]
+        elif "://" in host:
+            parsed = urlsplit(host)
+            host = parsed.hostname or ""
+        host = host.strip(".")
+        return host == "gserviceaccount.com" or host.endswith(".gserviceaccount.com")
+
     def _caller_finding(self, principal: str, agg: dict[str, Any]) -> Finding:
         f = cloud_finding(
-            self.name, "gcp", kind=Kind.GATEWAY_CALLER,
+            self.name,
+            "gcp",
+            kind=Kind.GATEWAY_CALLER,
             title=f"Vertex AI caller: {principal} — {agg['events']} call(s)",
-            resource=f"audit:{principal}", resource_type="caller/principal", account=agg.get("project"),
-            first_seen=agg["first"], last_seen=agg["last"], surface=Surface.GATEWAY,
+            resource=f"audit:{principal}",
+            resource_type="caller/principal",
+            account=agg.get("project"),
+            first_seen=agg["first"],
+            last_seen=agg["last"],
+            surface=Surface.GATEWAY,
         )
         f.add_model_provider("provider.google-vertex-ai")
         for ua in list(agg["agents"])[:10]:
             apply_matches(f, self.index.match_user_agent(ua))
         f.models = sorted(agg["resources"], key=lambda r: -agg["resources"][r])[:10]
         methods = ", ".join(f"{k}×{v}" for k, v in list(agg["methods"].items())[:5])
-        f.add_evidence(Evidence(
-            signal="gcp:audit", description=f"{agg['events']} call(s) ({methods}) by {principal}",
-            weight=0.45 if principal.endswith("gserviceaccount.com") else 0.25,
-        ))
-        if principal.endswith("gserviceaccount.com"):
+        is_service_account = self._is_service_account_principal(principal)
+        f.add_evidence(
+            Evidence(
+                signal="gcp:audit",
+                description=f"{agg['events']} call(s) ({methods}) by {principal}",
+                weight=0.45 if is_service_account else 0.25,
+            )
+        )
+        if is_service_account:
             f.add_tag("service-account")
         if agg.get("delegated"):
             f.add_tag("delegation")
@@ -848,9 +1060,13 @@ class GcpConnector(BaseConnector):
         if any("reasoningEngines" in r for r in agg["resources"]):
             f.add_framework("cloud.gcp-vertex-agent-engine")
         name_hint(self.index, f, principal)
-        f.metadata.update({
-            "principal": principal, "events": agg["events"], "methods": agg["methods"],
-            "resources": dict(sorted(agg["resources"].items(), key=lambda kv: -kv[1])[:10]),
-            "user_agents": dict(sorted(agg["agents"].items(), key=lambda kv: -kv[1])[:5]),
-        })
+        f.metadata.update(
+            {
+                "principal": principal,
+                "events": agg["events"],
+                "methods": agg["methods"],
+                "resources": dict(sorted(agg["resources"].items(), key=lambda kv: -kv[1])[:10]),
+                "user_agents": dict(sorted(agg["agents"].items(), key=lambda kv: -kv[1])[:5]),
+            }
+        )
         return done(f, self.index, Kind.GATEWAY_CALLER)

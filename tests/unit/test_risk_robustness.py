@@ -16,14 +16,21 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel, ScanStats, Surface, now_iso
-from shadowscan.risk import CAPABILITY_WEIGHTS, KIND_BASE, PROVIDER_WEIGHTS, TAG_WEIGHTS, assess
+from shadowscan.risk import CAPABILITY_WEIGHTS, KIND_BASE, PROVIDER_WEIGHTS, TAG_WEIGHTS, RiskPolicy, assess
 
 GARBAGE = ["many", "", None, [3], {"n": 3}, True, float("nan"), float("inf"), "3.5", object()]
 
 
 def _finding(**overrides) -> Finding:
-    base = dict(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT, title="agent",
-                resource="repo/agent.py", resource_type="agent", confidence=0.9)
+    base = dict(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="agent",
+        resource="repo/agent.py",
+        resource_type="agent",
+        confidence=0.9,
+    )
     base.update(overrides)
     return Finding(**base)
 
@@ -54,8 +61,17 @@ def test_single_or_no_secrets_do_not_score_the_multiple_secrets_factor(count):
 
 
 def test_mcp_server_entries_of_any_shape_are_tolerated():
-    servers = ["stdio", None, ["transport", "stdio"], 5, 2.5, True,
-               {"transport": "stdio"}, {"auto_approve": ["*"]}, {"url": "http://internal.example/mcp"}]
+    servers = [
+        "stdio",
+        None,
+        ["transport", "stdio"],
+        5,
+        2.5,
+        True,
+        {"transport": "stdio"},
+        {"auto_approve": ["*"]},
+        {"url": "http://internal.example/mcp"},
+    ]
     risk = assess(_finding(kind=Kind.MCP_SERVER, metadata={"servers": servers}))
     assert {"mcp-stdio", "mcp-auto-approve", "mcp-plain-http"} <= _ids(risk)
     for servers in ("stdio", {"transport": "stdio"}, 7, None, [], ["stdio"], [None], [["stdio"]]):
@@ -70,9 +86,15 @@ def test_agent_definitions_count_only_when_they_are_a_list(definitions):
     assert risk.score >= 0 and "sub-agents" not in _ids(risk)
 
 
-@pytest.mark.parametrize("definitions, weight", [
-    ([{"file": "a.md"}], 3), ([{"file": "a.md"}, {"file": "b.md"}], 6), (({"file": "a.md"},) * 5, 10), ([], 0),
-])
+@pytest.mark.parametrize(
+    "definitions, weight",
+    [
+        ([{"file": "a.md"}], 3),
+        ([{"file": "a.md"}, {"file": "b.md"}], 6),
+        (({"file": "a.md"},) * 5, 10),
+        ([], 0),
+    ],
+)
 def test_agent_definition_lists_still_score_sub_agents(definitions, weight):
     risk = assess(_finding(kind=Kind.AGENT_CONFIG, metadata={"agent_definitions": definitions}))
     factor = next((factor for factor in risk.factors if factor.id == "sub-agents"), None)
@@ -100,10 +122,16 @@ def test_user_count_garbage_scores_without_the_blast_radius_factor(kind, users):
         assert risk.score >= 0 and "blast-radius" not in _ids(risk)
 
 
-@pytest.mark.parametrize("metadata, weight", [
-    ({"user_count": 250}, 10), ({"consenting_users": "42"}, 5), ({"users": 12.9}, 5), ({"install_count": 9}, 0),
-    ({"user_count": "garbage", "consenting_users": 500}, 0),  # first present key wins, as before
-])
+@pytest.mark.parametrize(
+    "metadata, weight",
+    [
+        ({"user_count": 250}, 10),
+        ({"consenting_users": "42"}, 5),
+        ({"users": 12.9}, 5),
+        ({"install_count": 9}, 0),
+        ({"user_count": "garbage", "consenting_users": 500}, 0),  # first present key wins, as before
+    ],
+)
 def test_user_counts_still_score_blast_radius(metadata, weight):
     risk = assess(_finding(kind=Kind.OAUTH_GRANT, metadata=metadata))
     factor = next((factor for factor in risk.factors if factor.id == "blast-radius"), None)
@@ -128,10 +156,14 @@ def test_non_dict_metadata_and_malformed_list_fields_never_abort_scoring(index, 
 
 
 def test_confidence_scaling_never_adds_risk_to_a_negative_subtotal():
-    expired = _finding(kind=Kind.TOKEN, tags=["expired"], owner="alice", shadow=False, registry_match="svc",
-                       confidence=0.05)
+    expired = _finding(
+        kind=Kind.TOKEN, tags=["expired"], owner="alice", shadow=False, registry_match="svc", confidence=0.05
+    )
     risk = assess(expired, inventory_present=True)
-    assert sum(factor.weight for factor in risk.factors if factor.id not in {"confidence-scaling", "bounds"}) == -10
+    assert (
+        sum(factor.weight for factor in risk.factors if factor.id not in {"confidence-scaling", "bounds"})
+        == -10
+    )
     scaling = next(factor for factor in risk.factors if factor.id == "confidence-scaling")
     assert scaling.weight == 0
     assert "multiplied by 0.62" in scaling.description and "confidence is 0.05" in scaling.description
@@ -158,6 +190,27 @@ def test_confidence_scaling_of_a_positive_subtotal_is_unchanged():
 
 def test_full_confidence_adds_no_scaling_factor():
     assert "confidence-scaling" not in _ids(assess(_finding(confidence=1.0)))
+
+
+def test_danger_basis_omits_zero_weight_governance_factors():
+    # Under "danger", governance factors are scaled to zero and never move
+    # the score; they should not appear at all, matching how tag factors
+    # already skip a zero-weight contribution (risk.py's `if w:` guard).
+    danger = RiskPolicy(basis="danger")
+    risk_no_owner = assess(_finding(owner=None), inventory_present=True, policy=danger)
+    assert _ids(risk_no_owner).isdisjoint({"shadow", "registered", "no-owner"})
+    for finding_shadow in (True, False):
+        target = _finding(owner="alice")
+        target.shadow = finding_shadow
+        risk = assess(target, inventory_present=True, policy=danger)
+        assert _ids(risk).isdisjoint({"shadow", "registered", "no-owner"})
+
+    # Sanity check: the same findings under the default ("combined") basis do
+    # score these factors, so the assertions above are testing the "danger"
+    # scale-to-zero path and not an unrelated absence.
+    combined = RiskPolicy()
+    risk = assess(_finding(owner=None), inventory_present=True, policy=combined)
+    assert "no-owner" in _ids(risk)
 
 
 # ------------------------------------------------------------------ parity on well-formed input
@@ -197,12 +250,20 @@ def _reference_assess(finding: Finding, index, inventory_present: bool) -> Risk:
                 notes.extend(sig.risk_notes)
         if notes:
             factors.append(RiskFactor("vendor-notes", "; ".join(dict.fromkeys(notes))[:300], 5))
-    if finding.kind == Kind.SECRET and finding.metadata.get("count", 1) and int(finding.metadata.get("count", 1)) > 1:
-        factors.append(RiskFactor("multiple-secrets", f"{finding.metadata['count']} credentials in one place", 5))
+    if (
+        finding.kind == Kind.SECRET
+        and finding.metadata.get("count", 1)
+        and int(finding.metadata.get("count", 1)) > 1
+    ):
+        factors.append(
+            RiskFactor("multiple-secrets", f"{finding.metadata['count']} credentials in one place", 5)
+        )
     if finding.kind == Kind.MCP_SERVER:
         servers = finding.metadata.get("servers") or []
         if any(s.get("transport") == "stdio" for s in servers):
-            factors.append(RiskFactor("mcp-stdio", "local stdio MCP servers run with the user's full privileges", 5))
+            factors.append(
+                RiskFactor("mcp-stdio", "local stdio MCP servers run with the user's full privileges", 5)
+            )
         if any(s.get("auto_approve") for s in servers):
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
         if any(s.get("url") and str(s.get("url")).startswith("http://") for s in servers):
@@ -217,8 +278,13 @@ def _reference_assess(finding: Finding, index, inventory_present: bool) -> Risk:
         elif events >= 1_000:
             factors.append(RiskFactor("volume", f"high call volume ({events})", 5))
     if finding.kind in {Kind.OAUTH_GRANT, Kind.BOT_APP}:
-        users = (finding.metadata.get("user_count") or finding.metadata.get("consenting_users")
-                 or finding.metadata.get("users") or finding.metadata.get("install_count") or 0)
+        users = (
+            finding.metadata.get("user_count")
+            or finding.metadata.get("consenting_users")
+            or finding.metadata.get("users")
+            or finding.metadata.get("install_count")
+            or 0
+        )
         try:
             users = int(users)
         except (TypeError, ValueError):
@@ -233,7 +299,9 @@ def _reference_assess(finding: Finding, index, inventory_present: bool) -> Risk:
     if scale < 1.0:
         # Round the scaled score first so the adjustment is exactly the
         # difference the reported score shows, ties included.
-        factors.append(RiskFactor("confidence-scaling", "scaled by confidence", int(round(total * scale)) - total))
+        factors.append(
+            RiskFactor("confidence-scaling", "scaled by confidence", int(round(total * scale)) - total)
+        )
     return Risk(score=score, level=RiskLevel.from_score(score), factors=factors)
 
 
@@ -248,23 +316,54 @@ def _fixture_connectors(fixtures: Path) -> list[tuple[str, dict]]:
         ("gateway.logs", {"input": str(fixtures / "gateway" / "bedrock_invocations.jsonl")}),
         ("gateway.logs", {"input": str(fixtures / "gateway" / "egress_proxy.log")}),
         ("gateway.logs", {"input": str(fixtures / "gateway" / "litellm_spend.jsonl")}),
-        ("identity.auth0", {"input": str(fixtures / "identity" / "auth0_clients.json"), "domain": "acme.eu.auth0.com"}),
+        (
+            "identity.auth0",
+            {"input": str(fixtures / "identity" / "auth0_clients.json"), "domain": "acme.eu.auth0.com"},
+        ),
         ("identity.entra", {"input": str(fixtures / "identity" / "entra_graph.json"), "tenant_id": "t"}),
         ("identity.google-workspace", {"input": str(fixtures / "identity" / "google_tokens.json")}),
         ("identity.jwt", {"input": str(fixtures / "identity" / "tokens.txt")}),
-        ("identity.okta", {"input": str(fixtures / "identity" / "okta_apps.json"), "org_url": "https://acme.okta.com"}),
+        (
+            "identity.okta",
+            {"input": str(fixtures / "identity" / "okta_apps.json"), "org_url": "https://acme.okta.com"},
+        ),
         ("lowcode.make", {"input": str(fixtures / "lowcode" / "make_scenarios.json")}),
         ("lowcode.n8n", {"input": str(fixtures / "lowcode" / "n8n_workflows.json")}),
         ("lowcode.power-platform", {"input": str(fixtures / "lowcode" / "power_platform.json")}),
-        ("lowcode.salesforce", {"input": str(fixtures / "lowcode" / "salesforce.json"),
-                                "instance_url": "https://acme.my.salesforce.com"}),
-        ("lowcode.servicenow", {"input": str(fixtures / "lowcode" / "servicenow.json"), "instance": "acme.service-now.com"}),
+        (
+            "lowcode.salesforce",
+            {
+                "input": str(fixtures / "lowcode" / "salesforce.json"),
+                "instance_url": "https://acme.my.salesforce.com",
+            },
+        ),
+        (
+            "lowcode.servicenow",
+            {"input": str(fixtures / "lowcode" / "servicenow.json"), "instance": "acme.service-now.com"},
+        ),
         ("lowcode.workato", {"input": str(fixtures / "lowcode" / "workato_recipes.json")}),
         ("lowcode.zapier", {"input": str(fixtures / "lowcode" / "zapier_zaps.csv")}),
-        ("saas.atlassian", {"input": str(fixtures / "saas" / "atlassian_plugins.json"), "site": "https://acme.atlassian.net"}),
-        ("saas.generic", {"input": str(fixtures / "saas" / "generic_apps.csv"), "platform": "google-marketplace",
-                          "fields": {"name": "App Name", "scopes": "Permissions", "users": "Users",
-                                     "owner": "Installed By", "url": "Domain"}}),
+        (
+            "saas.atlassian",
+            {
+                "input": str(fixtures / "saas" / "atlassian_plugins.json"),
+                "site": "https://acme.atlassian.net",
+            },
+        ),
+        (
+            "saas.generic",
+            {
+                "input": str(fixtures / "saas" / "generic_apps.csv"),
+                "platform": "google-marketplace",
+                "fields": {
+                    "name": "App Name",
+                    "scopes": "Permissions",
+                    "users": "Users",
+                    "owner": "Installed By",
+                    "url": "Domain",
+                },
+            },
+        ),
         ("saas.github-apps", {"input": str(fixtures / "saas" / "github_installations.json"), "org": "acme"}),
         ("saas.microsoft-teams", {"input": str(fixtures / "saas" / "teams_apps.json"), "tenant_id": "t"}),
         ("saas.notion", {"input": str(fixtures / "saas" / "notion_users.json")}),
@@ -284,10 +383,19 @@ def fixture_findings(index, fixtures) -> list[Finding]:
 
 def test_bundled_fixture_findings_score_identically_to_the_reference(index, fixture_findings):
     assert len(fixture_findings) >= 50 and {finding.kind for finding in fixture_findings} >= {
-        Kind.SECRET, Kind.MCP_SERVER, Kind.AGENT_CONFIG, Kind.GATEWAY_CALLER, Kind.OAUTH_GRANT, Kind.BOT_APP,
+        Kind.SECRET,
+        Kind.MCP_SERVER,
+        Kind.AGENT_CONFIG,
+        Kind.GATEWAY_CALLER,
+        Kind.OAUTH_GRANT,
+        Kind.BOT_APP,
     }
     for finding in fixture_findings:
-        for inventory_present, shadow, match in ((False, None, None), (True, True, None), (True, False, "registered")):
+        for inventory_present, shadow, match in (
+            (False, None, None),
+            (True, True, None),
+            (True, False, "registered"),
+        ):
             candidate = copy.deepcopy(finding)
             candidate.shadow, candidate.registry_match = shadow, match
             actual = assess(candidate, index, inventory_present=inventory_present)
@@ -317,34 +425,64 @@ def _record(**overrides) -> dict:
     return record
 
 
-@pytest.mark.parametrize("name, value", [
-    ("metadata", "garbage"), ("metadata", None), ("metadata", ["count", 3]),
-    ("tags", "policy.privileged-scopes"), ("tags", ["ok", 1]), ("tags", None),
-    ("capabilities", {"code-exec": True}), ("frameworks", "framework.langchain"), ("model_providers", [None]),
-    ("models", 3), ("permissions", [["admin"]]),
-    ("shadow", "false"), ("shadow", 0),
-    ("owner", 5), ("first_seen", 1700000000), ("last_seen", ["2026"]), ("id", 12345),
-    ("provider", ["aws"]), ("registry_match", {"id": "x"}), ("identity_discriminator", 1),
-])
+@pytest.mark.parametrize(
+    "name, value",
+    [
+        ("metadata", "garbage"),
+        ("metadata", None),
+        ("metadata", ["count", 3]),
+        ("tags", "policy.privileged-scopes"),
+        ("tags", ["ok", 1]),
+        ("tags", None),
+        ("capabilities", {"code-exec": True}),
+        ("frameworks", "framework.langchain"),
+        ("model_providers", [None]),
+        ("models", 3),
+        ("permissions", [["admin"]]),
+        ("shadow", "false"),
+        ("shadow", 0),
+        ("owner", 5),
+        ("first_seen", 1700000000),
+        ("last_seen", ["2026"]),
+        ("id", 12345),
+        ("provider", ["aws"]),
+        ("registry_match", {"id": "x"}),
+        ("identity_discriminator", 1),
+    ],
+)
 def test_from_dict_rejects_field_shapes_the_pipeline_cannot_process(name, value):
     with pytest.raises(ValueError, match=name):
         Finding.from_dict(_record(**{name: value}))
 
 
 def test_from_dict_rejects_risk_factors_and_evidence_without_text_fields():
-    for factor in ({"weight": 1}, {"id": "kind", "weight": 1}, {"id": None, "description": "x", "weight": 1},
-                   {"id": "kind", "description": 5, "weight": 1}):
+    for factor in (
+        {"weight": 1},
+        {"id": "kind", "weight": 1},
+        {"id": None, "description": "x", "weight": 1},
+        {"id": "kind", "description": 5, "weight": 1},
+    ):
         record = _record()
         record["risk"]["factors"] = [factor]
         with pytest.raises(ValueError, match="risk factor"):
             Finding.from_dict(record)
-    for item in ({"description": "x"}, {"signal": 1, "description": "x"}, {"signal": "s", "description": None}):
+    for item in (
+        {"description": "x"},
+        {"signal": 1, "description": "x"},
+        {"signal": "s", "description": None},
+    ):
         with pytest.raises(ValueError, match="evidence"):
             Finding.from_dict(_record(evidence=[item]))
 
 
 def test_from_dict_keeps_optional_text_fields_null_and_accepts_garbage_inside_metadata():
-    metadata = {"count": "many", "servers": "stdio", "agent_definitions": 3, "events": [1], "user_count": None}
+    metadata = {
+        "count": "many",
+        "servers": "stdio",
+        "agent_definitions": 3,
+        "events": [1],
+        "user_count": None,
+    }
     finding = Finding.from_dict(_record(owner=None, first_seen=None, shadow=None, metadata=metadata))
     assert finding.owner is None and finding.shadow is None and finding.metadata == metadata
     for kind in (Kind.SECRET, Kind.MCP_SERVER, Kind.AGENT_CONFIG, Kind.GATEWAY_CALLER, Kind.OAUTH_GRANT):
@@ -355,14 +493,36 @@ def test_from_dict_keeps_optional_text_fields_null_and_accepts_garbage_inside_me
 def test_engine_completes_when_report_derived_findings_carry_garbage_metadata(monkeypatch, index):
     records = [
         _record(kind="secret", resource="repo/.env", resource_type="secret", metadata={"count": "many"}),
-        _record(kind="mcp-server", resource="repo/.mcp.json", resource_type="mcp-config",
-                metadata={"servers": ["stdio", None, ["x"], 5, {"transport": "stdio", "url": "http://localhost:3000"}]}),
-        _record(kind="agent-config", resource="repo/.claude", resource_type="agent-config",
-                metadata={"agent_definitions": "not a list"}),
-        _record(surface="gateway", connector="gateway.logs", kind="gateway-caller", resource="gateway:user:bob",
-                resource_type="gateway-caller", metadata={"events": "lots", "runtime_observations": "none"}),
-        _record(surface="identity", connector="identity.okta", kind="oauth-grant", resource="okta:app:1",
-                resource_type="oauth-app", metadata={"user_count": [1, 2], "users": {"n": 1}}),
+        _record(
+            kind="mcp-server",
+            resource="repo/.mcp.json",
+            resource_type="mcp-config",
+            metadata={
+                "servers": ["stdio", None, ["x"], 5, {"transport": "stdio", "url": "http://localhost:3000"}]
+            },
+        ),
+        _record(
+            kind="agent-config",
+            resource="repo/.claude",
+            resource_type="agent-config",
+            metadata={"agent_definitions": "not a list"},
+        ),
+        _record(
+            surface="gateway",
+            connector="gateway.logs",
+            kind="gateway-caller",
+            resource="gateway:user:bob",
+            resource_type="gateway-caller",
+            metadata={"events": "lots", "runtime_observations": "none"},
+        ),
+        _record(
+            surface="identity",
+            connector="identity.okta",
+            kind="oauth-grant",
+            resource="okta:app:1",
+            resource_type="oauth-app",
+            metadata={"user_count": [1, 2], "users": {"n": 1}},
+        ),
     ]
 
     class ReportConnector:
@@ -374,14 +534,21 @@ def test_engine_completes_when_report_derived_findings_carry_garbage_metadata(mo
             return [Finding.from_dict(record) for record in records]
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: ReportConnector)
-    cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem")],
-                     inventory=[str(Path(__file__).parents[1] / "fixtures" / "inventory" / "ops-provisioning-04.yaml")])
+    cfg = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem")],
+        inventory=[str(Path(__file__).parents[1] / "fixtures" / "inventory" / "ops-provisioning-04.yaml")],
+    )
     result = Engine(cfg, index).run()
     assert result.complete, [stats.errors for stats in result.stats]
     assert len(result.findings) == len(records)
-    assert all(finding.risk.factors and finding.risk.score >= 0 and finding.shadow is True for finding in result.findings)
+    assert all(
+        finding.risk.factors and finding.risk.score >= 0 and finding.shadow is True
+        for finding in result.findings
+    )
     mcp = next(finding for finding in result.findings if finding.kind == Kind.MCP_SERVER)
     assert {"mcp-stdio", "mcp-plain-http"} <= _ids(mcp.risk) and "mcp-auto-approve" not in _ids(mcp.risk)
     secret = next(finding for finding in result.findings if finding.kind == Kind.SECRET)
     assert "multiple-secrets" not in _ids(secret.risk)
-    assert result.findings == sorted(result.findings, key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
+    assert result.findings == sorted(
+        result.findings, key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title)
+    )

@@ -56,7 +56,9 @@ def test_sample_repo_exercises_every_emitter(index: SignatureIndex, fixtures: Pa
 
 
 def test_connector_error_from_secret_finding_ends_the_scan(
-    index: SignatureIndex, fixtures: Path, monkeypatch: pytest.MonkeyPatch,
+    index: SignatureIndex,
+    fixtures: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Regression: the credential emit loop caught every Exception, so a
     # cancellation raised while building a secret finding became a per-file
@@ -74,7 +76,10 @@ def test_connector_error_from_secret_finding_ends_the_scan(
 
 @pytest.mark.parametrize("method", sorted(EMITTERS))
 def test_emit_phase_connector_error_propagates(
-    method: str, index: SignatureIndex, fixtures: Path, monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    index: SignatureIndex,
+    fixtures: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(FilesystemConnector, method, _raiser(ConnectorError(CANCELLED)))
     _, ctx = _run(index, fixtures / "sample_repo")
@@ -84,7 +89,10 @@ def test_emit_phase_connector_error_propagates(
 
 @pytest.mark.parametrize("method", sorted(EMITTERS))
 def test_emit_phase_failure_is_isolated(
-    method: str, index: SignatureIndex, fixtures: Path, monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    index: SignatureIndex,
+    fixtures: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     resource_types, message = EMITTERS[method]
     baseline, _ = _run(index, fixtures / "sample_repo")
@@ -100,7 +108,9 @@ def test_emit_phase_failure_is_isolated(
 
 
 def test_file_pass_connector_error_is_not_reported_per_file(
-    index: SignatureIndex, fixtures: Path, monkeypatch: pytest.MonkeyPatch,
+    index: SignatureIndex,
+    fixtures: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(index, "match_secrets", _raiser(ConnectorError(CANCELLED)))
     _, ctx = _run(index, fixtures / "sample_repo")
@@ -108,7 +118,9 @@ def test_file_pass_connector_error_is_not_reported_per_file(
 
 
 def test_credential_detection_failure_keeps_the_content_passes(
-    index: SignatureIndex, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    index: SignatureIndex,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     monkeypatch.setattr(index, "match_secrets", _raiser(RuntimeError("synthetic")))
@@ -152,6 +164,7 @@ def test_cancellation_stops_the_tree_walk(tmp_path, index):
 
 def test_credentials_are_reported_when_a_content_pass_times_out(tmp_path, index, monkeypatch):
     (tmp_path / "app.js").write_text(f'const k = "{SECRET}"; const model = "gpt-4";\n')
+
     # Force a failure after the independent credential pass. Wall-clock timing
     # depends on the machine and on #47's optimized matchers.
     def exhausted(*args, **kwargs):
@@ -165,7 +178,9 @@ def test_credentials_are_reported_when_a_content_pass_times_out(tmp_path, index,
 
 
 def test_credentials_are_reported_when_structured_sanitization_exceeds_its_budget(tmp_path, index):
-    (tmp_path / "fixture.json").write_text(json.dumps({"OPENAI_API_KEY": SECRET, "values": list(range(110_000))}))
+    (tmp_path / "fixture.json").write_text(
+        json.dumps({"OPENAI_API_KEY": SECRET, "values": list(range(110_000))})
+    )
     findings, ctx = _scan(index, tmp_path)
     secret = next(f for f in findings if f.kind == Kind.SECRET)
     assert ctx.stats is not None and any("excerpts withheld" in e for e in ctx.stats.errors)
@@ -180,7 +195,9 @@ def _run_configured(index, root, **config):
 
 def test_emit_phase_failures_are_isolated_per_finding(tmp_path, index, monkeypatch):
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
-    (tmp_path / "config.py").write_text("OPENAI_API_KEY = 'sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h'\n")
+    (tmp_path / "config.py").write_text(
+        "OPENAI_API_KEY = 'sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h'\n"
+    )
 
     def boom(self, *args, **kwargs):
         raise RuntimeError("synthetic")

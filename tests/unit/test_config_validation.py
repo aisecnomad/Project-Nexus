@@ -43,10 +43,13 @@ def test_min_confidence_error_is_a_typed_printable_setup_error():
 
 
 # ---------------------------------------------------------- connector keys
-@pytest.mark.parametrize("entry", [
-    {"name": "identity.okta", "fetch_tokenz": True},
-    {"name": "identity.okta", "config": {"fetch_tokenz": True}},
-])
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"name": "identity.okta", "fetch_tokenz": True},
+        {"name": "identity.okta", "config": {"fetch_tokenz": True}},
+    ],
+)
 def test_unknown_connector_key_names_connector_key_and_closest_option(entry):
     expected = r"connector 'identity\.okta' does not accept 'fetch_tokenz' \(did you mean 'fetch_tokens'\?\)"
     with pytest.raises(ConfigValidationError, match=expected):
@@ -55,7 +58,9 @@ def test_unknown_connector_key_names_connector_key_and_closest_option(entry):
 
 def test_unknown_connector_key_never_echoes_its_value():
     with pytest.raises(ConfigValidationError, match="does not accept 'unexpected'") as failure:
-        ScanConfig.from_dict({"connectors": [{"name": "cloud.aws", "unexpected": "private-value-do-not-echo"}]})
+        ScanConfig.from_dict(
+            {"connectors": [{"name": "cloud.aws", "unexpected": "private-value-do-not-echo"}]}
+        )
     assert "private-value-do-not-echo" not in str(failure.value)
 
 
@@ -73,12 +78,21 @@ def test_reserved_underscore_keys_are_rejected_for_every_connector(name):
 
 
 def test_shared_limits_labels_and_read_aliases_are_accepted():
-    cfg = ScanConfig.from_dict({"connectors": [
-        {"name": "identity.okta", "bearer": "token-value", "max_input_files": 5, "input": "export.json"},
-        {"name": "code.github", "repos": ["acme/app"], "github_token": "token-value"},
-        {"name": "gateway.logs", "input": "log.jsonl", "gateway_name": "edge", "label": "edge-1"},
-        {"name": "code.filesystem", "paths": ["."], "owner": "platform-team"},
-    ]})
+    cfg = ScanConfig.from_dict(
+        {
+            "connectors": [
+                {
+                    "name": "identity.okta",
+                    "bearer": "token-value",
+                    "max_input_files": 5,
+                    "input": "export.json",
+                },
+                {"name": "code.github", "repos": ["acme/app"], "github_token": "token-value"},
+                {"name": "gateway.logs", "input": "log.jsonl", "gateway_name": "edge", "label": "edge-1"},
+                {"name": "code.filesystem", "paths": ["."], "owner": "platform-team"},
+            ]
+        }
+    )
     assert cfg.connectors[0].config["bearer"] == "token-value"
     assert cfg.connectors[1].config["repos"] == ["acme/app"]
     assert cfg.connectors[2].label == "edge-1"
@@ -99,13 +113,22 @@ def _keys_read_by(cls: type[BaseConnector]) -> set[str]:
             continue
         tree = ast.parse(textwrap.dedent(inspect.getsource(klass)))
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {"get", "require"}):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"get", "require"}
+            ):
                 continue
             receiver = node.func.value
             reads_ctx = (isinstance(receiver, ast.Name) and receiver.id == "ctx") or (
                 isinstance(receiver, ast.Attribute) and receiver.attr == "ctx"
             )
-            if reads_ctx and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+            if (
+                reads_ctx
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
                 keys.add(node.args[0].value)
     return keys
 
@@ -135,7 +158,9 @@ def test_yaml_syntax_error_reports_position_only(tmp_path):
 def test_duplicate_key_error_reports_position(tmp_path):
     path = tmp_path / "scan.yaml"
     path.write_text("options:\n  parallel: 1\n  parallel: 2\n", encoding="utf-8")
-    with pytest.raises(ConfigValidationError, match=r"duplicate configuration mapping key \(line 3, column 3\)"):
+    with pytest.raises(
+        ConfigValidationError, match=r"duplicate configuration mapping key \(line 3, column 3\)"
+    ):
         ScanConfig.from_yaml(path)
 
 
@@ -146,7 +171,9 @@ def test_deprecated_timeout_alias_warns_once_per_process(caplog, monkeypatch):
         assert ScanConfig.from_dict({"options": {"connector_timeout": 5}}).connector_timeout_seconds == 5
         ScanConfig.from_dict({"options": {"connector_timeout": 7}})
         ScanConfig(connector_timeout=3)
-    messages = [record.getMessage() for record in caplog.records if "connector_timeout" in record.getMessage()]
+    messages = [
+        record.getMessage() for record in caplog.records if "connector_timeout" in record.getMessage()
+    ]
     assert messages == ["options.connector_timeout is deprecated; use options.connector_timeout_seconds"]
 
 

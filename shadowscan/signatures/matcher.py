@@ -67,6 +67,7 @@ def _run_regex(operation: Callable[[float], Any], context: str, *, max_seconds: 
     subject to the same cumulative CPU and active per-input wall deadlines.
     Genuine expensive matching and repeated contention still fail closed.
     """
+
     def remaining_timeout() -> float:
         return _remaining_timeout() if max_seconds is None else pattern_timeout(max_seconds)
 
@@ -91,7 +92,10 @@ def _run_regex(operation: Callable[[float], Any], context: str, *, max_seconds: 
 
 
 def _finditer(
-    rx: Any, text: str, context: str, limit: int,
+    rx: Any,
+    text: str,
+    context: str,
+    limit: int,
     excluded: Callable[[int], bool] | None = None,
 ) -> list[Any]:
     def collect(timeout: float) -> list[Any]:
@@ -187,18 +191,18 @@ def _plain_shape(pattern: str) -> bool:
         elif in_class:
             if c == "]":
                 in_class = False
-            elif c == "[" and pattern[i + 1:i + 2] in {":", ".", "="}:
+            elif c == "[" and pattern[i + 1 : i + 2] in {":", ".", "="}:
                 return False
             i += 1
         elif c == "[":
             in_class = True
             i += 1
-            if pattern[i:i + 1] == "^":
+            if pattern[i : i + 1] == "^":
                 i += 1
-            if pattern[i:i + 1] == "]":
+            if pattern[i : i + 1] == "]":
                 i += 1
         elif c == "(":
-            if pattern[i + 1:i + 2] == "?":
+            if pattern[i + 1 : i + 2] == "?":
                 opener = _GROUP_OPENER_RX.match(pattern, i)
                 if opener is None:
                     return False
@@ -232,7 +236,7 @@ def _anchored_prefix(pattern: str) -> str | None:
     i = 1
     while i < len(pattern) and pattern[i] in _LABEL_CHARS:
         i += 1
-    if i == 1 or pattern[i:i + 2] != "\\." or pattern[i + 2:i + 3] in {"?", "*", "+", "{"}:
+    if i == 1 or pattern[i : i + 2] != "\\." or pattern[i + 2 : i + 3] in {"?", "*", "+", "{"}:
         return None
     return pattern[1:i].lower()
 
@@ -301,6 +305,8 @@ def _fold(text: str) -> str:
     sound for every text the engine would match.
     """
     return text.casefold().replace("i\u0307", "i").replace("\u0131", "i")
+
+
 _LEADING_FLAGS_RX = re.compile(r"\(\?([ims]+)\)")
 _QUANTIFIER_STARTS = frozenset("*+?{")
 _GROUP_STOP_CHARS = frozenset("()[].^$*+?{")
@@ -327,14 +333,14 @@ def _literal_alternatives(pattern: str, start: int) -> tuple[tuple[str, ...], in
     i = start + 1
     if pattern.startswith("?:", i):
         i += 2
-    elif pattern[i:i + 1] == "?":
+    elif pattern[i : i + 1] == "?":
         return None
     alternatives: list[str] = []
     current: list[str] = []
     while i < len(pattern):
         c = pattern[i]
         if c == "\\":
-            following = pattern[i + 1:i + 2]
+            following = pattern[i + 1 : i + 2]
             literal = following if following in _PUNCT_ESCAPES else _CONTROL_ESCAPES.get(following)
             if literal is None:
                 return None
@@ -485,7 +491,7 @@ class _LiteralScanner:
 
     def _literal(self, literal: str, position: int) -> int:
         """Record ``literal`` according to the quantifier, if any, at ``position``."""
-        after = self.pattern[position:position + 1]
+        after = self.pattern[position : position + 1]
         if after in {"?", "*"}:
             self._flush()
             return self._skip_quantifier(position)
@@ -503,7 +509,7 @@ class _LiteralScanner:
 
     def _require(self, alternatives: tuple[str, ...], position: int) -> int:
         """Record a group's alternatives unless its quantifier makes it optional; return the next index."""
-        after = self.pattern[position:position + 1]
+        after = self.pattern[position : position + 1]
         if after in {"?", "*"}:
             return self._skip_quantifier(position)
         if after == "{":
@@ -521,16 +527,16 @@ class _LiteralScanner:
             position = brace.end() if brace is not None else position + 1
         else:
             position += 1
-        if pattern[position:position + 1] in {"?", "+"}:
+        if pattern[position : position + 1] in {"?", "+"}:
             position += 1
         return position
 
     def _open_class(self, position: int) -> int:
         pattern = self.pattern
         position += 1
-        if pattern[position:position + 1] == "^":
+        if pattern[position : position + 1] == "^":
             position += 1
-        if pattern[position:position + 1] == "]":
+        if pattern[position : position + 1] == "]":
             position += 1
         return position
 
@@ -601,7 +607,9 @@ class _PlainHostCandidates:
     __slots__ = ("regex_by_first", "regex_by_key", "regex_unkeyed", "suffix_by_key", "suffix_unkeyed")
 
     def __init__(
-        self, suffixes: list[tuple[str, Signature, Signal]], regexes: list[tuple[Any, Signature, Signal]],
+        self,
+        suffixes: list[tuple[str, Signature, Signal]],
+        regexes: list[tuple[Any, Signature, Signal]],
     ) -> None:
         self.suffix_by_key: dict[str, list[tuple[int, str, str, Signature, Signal]]] = {}
         self.suffix_unkeyed: list[tuple[int, str, str, Signature, Signal]] = []
@@ -641,6 +649,7 @@ class _PlainHostCandidates:
         if len(merged) > 1:
             merged.sort(key=_ORDER)
         return merged
+
 
 _LANG_ALIASES = {
     "py": "python",
@@ -854,7 +863,8 @@ class SignatureIndex:
             value = {f.name: getattr(sig, f.name) for f in fields(sig) if f.name not in {"source", "signals"}}
             value["signals"] = [
                 {
-                    f.name: getattr(signal, f.name) for f in fields(signal)
+                    f.name: getattr(signal, f.name)
+                    for f in fields(signal)
                     if f.name not in {"compiled", "bounded_compiled"}
                 }
                 for signal in sig.signals
@@ -912,7 +922,11 @@ class SignatureIndex:
             yield
 
     def _match_regex_signals(
-        self, signal_type: str, text: str, language: str | None = None, max_per_signal: int = 3,
+        self,
+        signal_type: str,
+        text: str,
+        language: str | None = None,
+        max_per_signal: int = 3,
         ignore_spans: Sequence[tuple[int, int]] = (),
     ) -> list[Match]:
         # One deadline covers the whole signal class even outside filesystem scans.
@@ -922,7 +936,11 @@ class SignatureIndex:
             )
 
     def _match_regex_signals_with_budget(
-        self, signal_type: str, text: str, language: str | None, max_per_signal: int,
+        self,
+        signal_type: str,
+        text: str,
+        language: str | None,
+        max_per_signal: int,
         ignore_spans: Sequence[tuple[int, int]],
     ) -> list[Match]:
         out: list[Match] = []
@@ -998,8 +1016,10 @@ class SignatureIndex:
         # process: keep only short statements, within a total text budget.
         if len(statement) <= _STATEMENT_CACHE_MAX_LENGTH:
             with self._statement_lock:
-                if (len(self._statement_imports) >= _STATEMENT_CACHE_LIMIT
-                        or self._statement_chars + len(statement) > _STATEMENT_CACHE_MAX_CHARS):
+                if (
+                    len(self._statement_imports) >= _STATEMENT_CACHE_LIMIT
+                    or self._statement_chars + len(statement) > _STATEMENT_CACHE_MAX_CHARS
+                ):
                     self._statement_imports.clear()
                     self._statement_chars = 0
                 if key not in self._statement_imports:
@@ -1008,12 +1028,18 @@ class SignatureIndex:
         return cached
 
     def match_imports(
-        self, text: str, language: str | None, ignore_spans: Sequence[tuple[int, int]] = (),
+        self,
+        text: str,
+        language: str | None,
+        ignore_spans: Sequence[tuple[int, int]] = (),
     ) -> list[Match]:
         return self._match_regex_signals("import", text, language, ignore_spans=ignore_spans)
 
     def match_code(
-        self, text: str, language: str | None = None, ignore_spans: Sequence[tuple[int, int]] = (),
+        self,
+        text: str,
+        language: str | None = None,
+        ignore_spans: Sequence[tuple[int, int]] = (),
     ) -> list[Match]:
         return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans)
 
@@ -1141,9 +1167,13 @@ class SignatureIndex:
                 continue
             seen.add(key)
             labels = host.split(".")
-            if len(labels[-1]) < 2 or not labels[-1].isalpha() or any(
-                not label or len(label) > 63 or not label[0].isalnum() or not label[-1].isalnum()
-                for label in labels
+            if (
+                len(labels[-1]) < 2
+                or not labels[-1].isalpha()
+                or any(
+                    not label or len(label) > 63 or not label[0].isalnum() or not label[-1].isalnum()
+                    for label in labels
+                )
             ):
                 continue
             # Tokens never carry a port, path or newline; only case folding of
@@ -1155,8 +1185,11 @@ class SignatureIndex:
             if not matches:
                 continue
             shared = len({match.signature_id for match in matches}) > 1
-            if (shared and not any("mcp" in label for label in labels)
-                    and any(match.signature_id == _MCP_SIGNATURE for match in matches)):
+            if (
+                shared
+                and not any("mcp" in label for label in labels)
+                and any(match.signature_id == _MCP_SIGNATURE for match in matches)
+            ):
                 # A host shared with another product (and not named for MCP,
                 # like mcp.zapier.com) is MCP only on an MCP path.
                 matches = [match for match in matches if (match.signature_id == _MCP_SIGNATURE) == mcp_path]

@@ -115,6 +115,7 @@ def _read_watchdog(
     released = False
     release = getattr(raw, "release_conn", None)
     if callable(release):
+
         def release_conn() -> None:
             nonlocal released
             with lock:
@@ -307,6 +308,7 @@ class _PublicHTTPSConnection(HTTPSConnection):
 class _PrivateHTTPSConnection(_PublicHTTPSConnection):
     allow_private_origin = True
 
+
 class _PublicHTTPSConnectionPool(HTTPSConnectionPool):
     ConnectionCls = _PublicHTTPSConnection
 
@@ -349,7 +351,7 @@ def _retry_delay(resp: requests.Response, attempt: int) -> float:
     if retry_after and retry_after.isascii() and retry_after.isdigit():
         delay = float(retry_after) + random.uniform(0, 1)
     else:
-        step = min(2 ** attempt, 30)
+        step = min(2**attempt, 30)
         delay = step / 2 + random.uniform(0, step / 2)
     reset = resp.headers.get("X-RateLimit-Reset")
     if resp.headers.get("X-RateLimit-Remaining") == "0" and reset and reset.isascii() and reset.isdigit():
@@ -498,7 +500,10 @@ class HttpClient:
                 delay = _retry_delay(resp, attempt)
                 log.warning(
                     "HTTP %s from %s; retrying in %.0fs (attempt %d)",
-                    resp.status_code, diagnostic_url(url), delay, attempt,
+                    resp.status_code,
+                    diagnostic_url(url),
+                    delay,
+                    attempt,
                 )
                 time.sleep(delay)
                 continue
@@ -646,7 +651,10 @@ class HttpClient:
         return value
 
     def paginate_link(
-        self, path: str, params: dict[str, Any] | None = None, item_key: str | None = None,
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        item_key: str | None = None,
         max_pages: int = 1000,
     ) -> Iterator[Any]:
         """RFC 5988 Link-header pagination for GitHub and GitLab."""

@@ -14,18 +14,21 @@ from shadowscan.utils.redaction import REDACTED, sanitize_text
 SECRET = "opaque-synthetic-credential-for-testing"
 
 
-@pytest.mark.parametrize("source", [
-    f'API_KEY: str = "{SECRET}"',
-    f'CLIENT_SECRET: Final[str] = "{SECRET}"',
-    f'self.password: str | None = "{SECRET}"',
-    f'API_KEY: "str" = "{SECRET}"',
-    f'API_KEY: str = "escaped \\\" {SECRET}"',
-    f'API_KEY: str = """{SECRET}\nprivate-tail"""',
-    f'API_KEY: Final[\n str\n] = (\n "{SECRET}"\n)',
-    f'API_KEY: str = ("{SECRET}" + "private-tail")',
-    f'API_KEY: str = """{SECRET}\nprivate-tail',
-    f'API_KEY: str = (\n "{SECRET}"\n',
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        f'API_KEY: str = "{SECRET}"',
+        f'CLIENT_SECRET: Final[str] = "{SECRET}"',
+        f'self.password: str | None = "{SECRET}"',
+        f'API_KEY: "str" = "{SECRET}"',
+        f'API_KEY: str = "escaped \\" {SECRET}"',
+        f'API_KEY: str = """{SECRET}\nprivate-tail"""',
+        f'API_KEY: Final[\n str\n] = (\n "{SECRET}"\n)',
+        f'API_KEY: str = ("{SECRET}" + "private-tail")',
+        f'API_KEY: str = """{SECRET}\nprivate-tail',
+        f'API_KEY: str = (\n "{SECRET}"\n',
+    ],
+)
 def test_annotated_assignments_redact_entire_rhs_and_preserve_lines(source):
     safe = sanitize_text(source)
     assert SECRET not in safe
@@ -51,8 +54,14 @@ source = 'API_KEY: str' + ' ' * 500_000
 assert sanitize_text(source).endswith(' ' * 500_000)
 assert 'opaque-credential' not in sanitize_text(source + '= "opaque-credential"')
 """
-    result = subprocess.run([sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[2],
-                            capture_output=True, text=True, timeout=15, check=False)
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
@@ -63,7 +72,10 @@ def test_annotated_credentials_never_enter_full_scan_evidence(tmp_path, run_conn
         f'from crewai import Agent; CLIENT_SECRET: Final[str] = "{SECRET}"\n'
     )
     findings, ctx = run_connector(
-        "code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=scan_secrets,
+        "code.filesystem",
+        path=str(tmp_path),
+        use_git=False,
+        scan_secrets=scan_secrets,
     )
     assert findings and not ctx.stats.incomplete
     exported = json.dumps([finding.to_dict() for finding in findings])

@@ -277,12 +277,14 @@ class BaseConnector(ABC):
             self._MAX_OFFLINE_TOTAL_BYTES,
         )
         self.max_input_file_bytes = min(
-            _positive_limit(ctx.get("max_input_file_bytes", _offline.DEFAULT_MAX_INPUT_FILE_BYTES),
-                            "max_input_file_bytes"),
+            _positive_limit(
+                ctx.get("max_input_file_bytes", _offline.DEFAULT_MAX_INPUT_FILE_BYTES), "max_input_file_bytes"
+            ),
             self._MAX_OFFLINE_FILE_BYTES,
         )
-        self.max_input_files = _positive_limit(ctx.get("max_input_files", _offline.DEFAULT_MAX_INPUT_FILES),
-                                               "max_input_files")
+        self.max_input_files = _positive_limit(
+            ctx.get("max_input_files", _offline.DEFAULT_MAX_INPUT_FILES), "max_input_files"
+        )
 
     # ----------------------------------------------------------------- modes
     @property
@@ -381,11 +383,16 @@ class BaseConnector(ABC):
 
     @staticmethod
     def _record_fields_valid(
-        data: Any, *, strings: tuple[str, ...] = (), mappings: tuple[str, ...] = (),
-        arrays: tuple[str, ...] = (), required: tuple[str, ...] = (),
+        data: Any,
+        *,
+        strings: tuple[str, ...] = (),
+        mappings: tuple[str, ...] = (),
+        arrays: tuple[str, ...] = (),
+        required: tuple[str, ...] = (),
     ) -> bool:
-        return _offline.record_fields_valid(data, strings=strings, mappings=mappings, arrays=arrays,
-                                           required=required)
+        return _offline.record_fields_valid(
+            data, strings=strings, mappings=mappings, arrays=arrays, required=required
+        )
 
     @staticmethod
     def _offline_pagination_issue(data: dict[str, Any]) -> str | None:

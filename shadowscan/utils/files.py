@@ -142,7 +142,10 @@ def open_confined_directory(path: PurePath) -> int:
 
 @contextmanager
 def open_confined_file(
-    path: PurePath, *, label: str = "input", dir_fd: int | None = None,
+    path: PurePath,
+    *,
+    label: str = "input",
+    dir_fd: int | None = None,
 ) -> Iterator[tuple[BinaryIO, os.stat_result]]:
     """Open a regular file for reading without following a link in any path component.
 

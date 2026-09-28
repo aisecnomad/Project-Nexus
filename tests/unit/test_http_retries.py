@@ -11,7 +11,9 @@ import requests
 from shadowscan.utils.http import MAX_RETRY_DELAY, HttpClient, HttpError, _rate_limited, _retry_delay
 
 
-def _response(status: int, headers: dict[str, str] | None = None, body: bytes = b'{"ok": true}') -> requests.Response:
+def _response(
+    status: int, headers: dict[str, str] | None = None, body: bytes = b'{"ok": true}'
+) -> requests.Response:
     resp = requests.Response()
     resp.status_code = status
     resp.headers.update(headers or {})
@@ -45,7 +47,9 @@ def _client(*responses: requests.Response) -> tuple[HttpClient, _ScriptedSession
 
 def test_primary_rate_limit_403_waits_for_reset_then_succeeds(sleep):
     reset = str(int(time.time()) + 30)
-    http, session = _client(_response(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset}), _response(200))
+    http, session = _client(
+        _response(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset}), _response(200)
+    )
     assert http.get_json("/orgs/acme/repos") == {"ok": True} and session.calls == 2
     (delay,), _ = sleep.call_args
     assert 29 <= delay <= MAX_RETRY_DELAY
@@ -72,6 +76,11 @@ def test_backoff_without_hints_is_jittered_within_bounds():
 
 def test_every_delay_is_capped():
     far = str(int(time.time()) + 3600)
-    assert _retry_delay(_response(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": far}), 1) == MAX_RETRY_DELAY
+    assert (
+        _retry_delay(_response(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": far}), 1)
+        == MAX_RETRY_DELAY
+    )
     assert _retry_delay(_response(429, {"Retry-After": "999999"}), 1) == MAX_RETRY_DELAY
-    assert _rate_limited(_response(403, {"Retry-After": "1"})) and not _rate_limited(_response(404, {"Retry-After": "1"}))
+    assert _rate_limited(_response(403, {"Retry-After": "1"})) and not _rate_limited(
+        _response(404, {"Retry-After": "1"})
+    )

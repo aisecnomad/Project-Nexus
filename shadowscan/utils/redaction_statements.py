@@ -111,7 +111,18 @@ def _indexed_assignment_candidates(text: str) -> Iterator[tuple[int, str, str, i
                     yield match.start(), key, ":", position + 1
                     break
                 operator = next(
-                    (op for op in ("&&=", "||=", "??=", "+=", "=",) if text.startswith(op, position)), None,
+                    (
+                        op
+                        for op in (
+                            "&&=",
+                            "||=",
+                            "??=",
+                            "+=",
+                            "=",
+                        )
+                        if text.startswith(op, position)
+                    ),
+                    None,
                 )
                 if operator and not text.startswith(("==", "=>"), position):
                     yield match.start(), key, "=", position + len(operator)
@@ -120,8 +131,10 @@ def _indexed_assignment_candidates(text: str) -> Iterator[tuple[int, str, str, i
 
 
 def _assignment_candidates(text: str) -> Iterator[tuple[int, str, str, int]]:
-    plain = ((match.start(), match.group("key"), match.group("separator"), match.end())
-             for match in _PYTHON_ASSIGNMENT_KEY.finditer(text))
+    plain = (
+        (match.start(), match.group("key"), match.group("separator"), match.end())
+        for match in _PYTHON_ASSIGNMENT_KEY.finditer(text)
+    )
     return heapq.merge(plain, _indexed_assignment_candidates(text), key=lambda candidate: candidate[0])
 
 
@@ -320,7 +333,11 @@ class _AssignmentScanner:
         )
 
     def _scan(
-        self, start: int, candidate_end: int, annotated: bool, limit: int,
+        self,
+        start: int,
+        candidate_end: int,
+        annotated: bool,
+        limit: int,
     ) -> tuple[int | None, int, bool] | None:
         """One scan reading at most ``limit`` characters of each line; None if a cut may matter.
 
@@ -374,8 +391,10 @@ class _AssignmentScanner:
                             break
                         if brackets.pop() != {")": "(", "]": "[", "}": "{"}[item.string]:
                             break
-                    elif assigned_at is not None and not brackets and (
-                        item.string == ";" or (argument and item.string == ",")
+                    elif (
+                        assigned_at is not None
+                        and not brackets
+                        and (item.string == ";" or (argument and item.string == ","))
                     ):
                         end = position
                         break

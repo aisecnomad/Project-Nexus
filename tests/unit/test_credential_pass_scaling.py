@@ -29,38 +29,41 @@ def _best_time(source: str, repeats: int) -> float:
     return best
 
 
-@pytest.mark.parametrize("unit", [
-    '<add key="api_key" ',            # a key attribute naming a credential, value never given
-    "{name: API_KEY, ",               # a record name, value field never given
-    '{"name": "API_KEY", ',
-    "key:",                           # a 'key:key:key...' chain of record names
-    "<password><![CDATA[",            # sensitive element content in an unterminated CDATA
-    "<password><![CDATA[ <password>]]>",
-    '<setting name="ApiKey"> ',
-    "docker login -p x ",             # '-p' read from its command
-    "mysql -pabc ",
-    'openaiKey = "',                  # a credential-like name before an unfinished literal
-    ").apiKey(\"",                    # a method called on a call result
-    'k || "',                         # a fallback default; the name is read backwards
-    'f("OPENAI_API_KEY") ?? "a8f3c91d7e2b" ',
-    "${TOKEN:-",                      # an unfinished shell default
-    'AzureKeyCredential a = new("a8f3c91d7e2b"); ',  # a declared type, read backwards
-    'X::new("a"), ',
-    "{name: API_KEY, value: [REDACTED",  # a record value that is not a whole marker
-    '{name: API_KEY, value: "}',       # a quoted record value read past a brace
-    "tool --key a8f3c91d7e2b4f6a ",    # an option whose last word names a credential
-    "openaiKey: a8f3c91d7e2b4f6a ",    # an unquoted YAML value under a credential-like name
-    "--key=#",                         # options inside one word whose kept values run to its end
-    "-u=#",
-    "-H=#",
-    "--key=[REDACTED]#",
-    "-u=a:",                           # a kept user:password or header value after each ':'
-    "-u=a=b:",
-    "-H=a:",
-    "--user=a://",
-    "--api-key=$A#",                   # a reference before the next option
-    "-u=%K%:",
-])
+@pytest.mark.parametrize(
+    "unit",
+    [
+        '<add key="api_key" ',  # a key attribute naming a credential, value never given
+        "{name: API_KEY, ",  # a record name, value field never given
+        '{"name": "API_KEY", ',
+        "key:",  # a 'key:key:key...' chain of record names
+        "<password><![CDATA[",  # sensitive element content in an unterminated CDATA
+        "<password><![CDATA[ <password>]]>",
+        '<setting name="ApiKey"> ',
+        "docker login -p x ",  # '-p' read from its command
+        "mysql -pabc ",
+        'openaiKey = "',  # a credential-like name before an unfinished literal
+        ').apiKey("',  # a method called on a call result
+        'k || "',  # a fallback default; the name is read backwards
+        'f("OPENAI_API_KEY") ?? "a8f3c91d7e2b" ',
+        "${TOKEN:-",  # an unfinished shell default
+        'AzureKeyCredential a = new("a8f3c91d7e2b"); ',  # a declared type, read backwards
+        'X::new("a"), ',
+        "{name: API_KEY, value: [REDACTED",  # a record value that is not a whole marker
+        '{name: API_KEY, value: "}',  # a quoted record value read past a brace
+        "tool --key a8f3c91d7e2b4f6a ",  # an option whose last word names a credential
+        "openaiKey: a8f3c91d7e2b4f6a ",  # an unquoted YAML value under a credential-like name
+        "--key=#",  # options inside one word whose kept values run to its end
+        "-u=#",
+        "-H=#",
+        "--key=[REDACTED]#",
+        "-u=a:",  # a kept user:password or header value after each ':'
+        "-u=a=b:",
+        "-H=a:",
+        "--user=a://",
+        "--api-key=$A#",  # a reference before the next option
+        "-u=%K%:",
+    ],
+)
 def test_context_named_credential_passes_scale_linearly(unit):
     small, large = unit * 1000, unit * 4000
     small_time = _best_time(small, 3)
@@ -93,14 +96,17 @@ def test_reading_a_value_once_finds_the_words_the_pattern_found():
 # every few more characters doubled that. It read every unquoted value after
 # '=' ('key=' hung too), and for a while every value after ':' as well, in
 # structured values as in text.
-@pytest.mark.parametrize(("prefix", "run", "suffix", "count"), [
-    ("token: ", "a", ".", 46),
-    ("key: ", "1", "-", 24),
-    ("key=", "1", "-", 24),
-    ("credential:sha256:", "a", "--auth", 44),
-    ("openaiKey: ", "A", ".", 34),
-    ("api_key: ", "abc", "+", 15),
-])
+@pytest.mark.parametrize(
+    ("prefix", "run", "suffix", "count"),
+    [
+        ("token: ", "a", ".", 46),
+        ("key: ", "1", "-", 24),
+        ("key=", "1", "-", 24),
+        ("credential:sha256:", "a", "--auth", 44),
+        ("openaiKey: ", "A", ".", 34),
+        ("api_key: ", "abc", "+", 15),
+    ],
+)
 @pytest.mark.parametrize("structured", [False, True], ids=["text", "structured"])
 def test_a_long_run_of_one_character_class_is_read_once(prefix, run, suffix, count, structured):
     def cost(repeats: int) -> float:
@@ -153,9 +159,20 @@ def test_a_long_line_of_record_names_completes_in_a_full_scan(tmp_path, index):
     source = "import openai\n# " + "{name: API_KEY, " * 20_000 + "\n"
     (tmp_path / "app.py").write_text(source, encoding="utf-8")
     started = time.perf_counter()
-    result = Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem", {
-        "path": str(tmp_path), "use_git": False,
-    })]), index).run()
+    result = Engine(
+        ScanConfig(
+            connectors=[
+                ConnectorSpec(
+                    "code.filesystem",
+                    {
+                        "path": str(tmp_path),
+                        "use_git": False,
+                    },
+                )
+            ]
+        ),
+        index,
+    ).run()
     elapsed = time.perf_counter() - started
     assert elapsed < 20, elapsed  # generous for slow CI runners
     assert result.complete, [error for stats in result.stats for error in stats.errors]

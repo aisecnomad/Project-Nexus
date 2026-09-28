@@ -39,16 +39,25 @@ def test_one_character_secret_cannot_corrupt_trusted_diagnostic_or_finding_schem
     context = ConnectorContext(config={"token": "a"})
     assert context.sanitize_message("InvalidHeader: a") == f"Inv{REDACTED}lidHe{REDACTED}der: {REDACTED}"
     finding = Finding(
-        surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-        title="Sample agent", resource="repo", resource_type="repository",
-        metadata={"api_key": "a"}, evidence=[Evidence("status", "an agent")],
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="Sample agent",
+        resource="repo",
+        resource_type="repository",
+        metadata={"api_key": "a"},
+        evidence=[Evidence("status", "an agent")],
     )
     assert finding.metadata and "a" not in json.dumps(finding.to_dict()["metadata"])
     assert finding.evidence and finding.evidence[0].signal == REDACTED
     assert "metadata" in finding.to_dict() and "evidence" in finding.to_dict()
     second = Finding(
-        surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-        title="Sample agent 2", resource="repo2", resource_type="repository",
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="Sample agent 2",
+        resource="repo2",
+        resource_type="repository",
         metadata={"api_key": "a"},
     )
     assert finding.id != second.id and finding.id.startswith("ss-") and second.id.startswith("ss-")
@@ -57,16 +66,28 @@ def test_one_character_secret_cannot_corrupt_trusted_diagnostic_or_finding_schem
 def test_short_secret_in_identity_fails_closed_instead_of_colliding():
     with pytest.raises(SanitizationLimitError, match="identity"):
         Finding(
-            surface=Surface.CODE, connector="gateway.logs", kind=Kind.AGENT,
-            title="Agent", resource="repo", resource_type="repository",
+            surface=Surface.CODE,
+            connector="gateway.logs",
+            kind=Kind.AGENT,
+            title="Agent",
+            resource="repo",
+            resource_type="repository",
             metadata={"api_key": "a"},
         )
 
 
 def test_one_character_secret_cannot_corrupt_source_and_mcp_parser_schema():
-    source = json.dumps({"mcpServers": {"agent": {
-        "command": "python", "env": {"API_KEY": "a"}, "args": ["a"],
-    }}})
+    source = json.dumps(
+        {
+            "mcpServers": {
+                "agent": {
+                    "command": "python",
+                    "env": {"API_KEY": "a"},
+                    "args": ["a"],
+                }
+            }
+        }
+    )
     assert _safe_source_text("config.json", source) == REDACTED
     entries = _parse_mcp_servers("config.json", source)
     assert len(entries) == 1

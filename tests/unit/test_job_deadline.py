@@ -31,7 +31,9 @@ def test_cli_retains_yaml_deadline_and_applies_explicit_override(tmp_path, monke
     runner = CliRunner()
     assert runner.invoke(main, ["scan", "--config", str(path)]).exit_code == 0
     assert configs[-1].job_deadline_seconds == 60
-    assert runner.invoke(main, ["scan", "--config", str(path), "--job-deadline-seconds", "2.5"]).exit_code == 0
+    assert (
+        runner.invoke(main, ["scan", "--config", str(path), "--job-deadline-seconds", "2.5"]).exit_code == 0
+    )
     assert configs[-1].job_deadline_seconds == 2.5
     assert ScanConfig().job_deadline_seconds is None
 
@@ -93,10 +95,13 @@ def test_cli_deadline_cancels_when_command_preflight_fails(monkeypatch):
     watchdog.cancel.assert_called_once_with()
 
 
-@pytest.mark.parametrize("args", [
-    ["run", "--job-deadline-seconds", "1"],
-    ["code", ".", "--job-deadline-seconds", "1", "--connector-timeout-seconds", "-3"],
-])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["run", "--job-deadline-seconds", "1"],
+        ["code", ".", "--job-deadline-seconds", "1", "--connector-timeout-seconds", "-3"],
+    ],
+)
 def test_cli_deadline_cancels_when_subcommand_parsing_fails(monkeypatch, args):
     watchdog = Mock()
     arm = Mock(return_value=watchdog)
@@ -144,7 +149,10 @@ cli.main(['code', '.', '--job-deadline-seconds', '0.2'])
 """
     result = subprocess.run(
         [sys.executable, "-c", script, stage, str(marker)],
-        capture_output=True, text=True, timeout=15, check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
     )
     assert marker.read_text() == "blocked"
     assert result.returncode == 3, result.stderr
@@ -153,7 +161,9 @@ cli.main(['code', '.', '--job-deadline-seconds', '0.2'])
 def test_cli_deadline_exits_with_jwt_stdin_held_open():
     process = subprocess.Popen(
         [sys.executable, "-m", "shadowscan", "jwt", "--job-deadline-seconds", "0.2"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     try:
         # Keep stdin open and silent; before the fix, token collection waited
@@ -179,7 +189,10 @@ cli.main(['run', 'code.filesystem', '--job-deadline-seconds', '0.2'])
 """
     result = subprocess.run(
         [sys.executable, "-c", script, str(marker)],
-        capture_output=True, text=True, timeout=15, check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
     )
     assert marker.read_text() == "discovering"
     assert result.returncode == 3, result.stderr

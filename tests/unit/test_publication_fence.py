@@ -64,7 +64,9 @@ def test_cancelled_connector_cannot_publish_incremental_cache(tmp_path):
     cancelled = threading.Event()
     about_to_publish = threading.Event()
     ctx = ConnectorContext(index=SignatureIndex([]), cancelled=cancelled, publication_lock=lock)
-    cache = IncrementalCache(ScanConfig(incremental=True, state_dir=str(tmp_path / "state")), SignatureIndex([]))
+    cache = IncrementalCache(
+        ScanConfig(incremental=True, state_dir=str(tmp_path / "state")), SignatureIndex([])
+    )
     snapshot = Snapshot("a" * 64, "b" * 64)
     errors = []
 
@@ -74,8 +76,13 @@ def test_cancelled_connector_cannot_publish_incremental_cache(tmp_path):
 
     def worker():
         try:
-            cache.save(snapshot, [], ScanStats(connector="test", started_at=now_iso()),
-                       check_deadline=ctx.check_deadline, publish_replace=publish)
+            cache.save(
+                snapshot,
+                [],
+                ScanStats(connector="test", started_at=now_iso()),
+                check_deadline=ctx.check_deadline,
+                publish_replace=publish,
+            )
         except ConnectorError as exc:
             errors.append(exc)
 
@@ -147,7 +154,7 @@ def test_engine_timeout_returns_while_record_replacement_is_blocked(tmp_path, mo
         def run(self):
             target = Path(self.ctx.config["_dump_path"])
             pending = target.with_suffix(".pending")
-            pending.write_text('sanitized export\n')
+            pending.write_text("sanitized export\n")
             try:
                 self.ctx.publish_replace(pending, target)
             finally:
@@ -166,8 +173,12 @@ def test_engine_timeout_returns_while_record_replacement_is_blocked(tmp_path, mo
     monkeypatch.setattr(base.os, "replace", held_replace)
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: ExportConnector)
     dump = tmp_path / "exports"
-    engine = Engine(ScanConfig(connectors=[ConnectorSpec("gateway.logs")],
-                               dump_records=str(dump), connector_timeout_seconds=0.2), SignatureIndex([]))
+    engine = Engine(
+        ScanConfig(
+            connectors=[ConnectorSpec("gateway.logs")], dump_records=str(dump), connector_timeout_seconds=0.2
+        ),
+        SignatureIndex([]),
+    )
     outcome = {}
 
     def supervise():
@@ -199,7 +210,7 @@ def test_engine_timeout_returns_while_record_replacement_is_blocked(tmp_path, mo
         release_replace.set()
         supervisor.join(3)
     assert worker_finished.wait(3)
-    assert target_paths[0].read_text() == 'sanitized export\n'
+    assert target_paths[0].read_text() == "sanitized export\n"
 
 
 def test_cli_returns_promptly_when_a_timed_out_worker_outlives_report_emission(monkeypatch):
@@ -210,10 +221,18 @@ def test_cli_returns_promptly_when_a_timed_out_worker_outlives_report_emission(m
             self.abandoned_workers = ["slow"]
 
         def run(self, only=None):
-            return ScanResult(stats=[ScanStats(
-                connector="slow", started_at=now_iso(), finished_at=now_iso(),
-                skipped=True, incomplete=True, errors=["timed out"],
-            )])
+            return ScanResult(
+                stats=[
+                    ScanStats(
+                        connector="slow",
+                        started_at=now_iso(),
+                        finished_at=now_iso(),
+                        skipped=True,
+                        incomplete=True,
+                        errors=["timed out"],
+                    )
+                ]
+            )
 
     def record_exit(code):
         exit_codes.append(code)
@@ -260,11 +279,17 @@ def test_cli_hard_exit_survives_broken_diagnostic_streams(monkeypatch, failure_p
         raise SystemExit(code)
 
     # Replace the CLI's sys reference, not pytest's own captured streams.
-    monkeypatch.setattr(cli_module, "sys", SimpleNamespace(
-        stdout=SimpleNamespace(flush=lambda: output_step("stdout")),
-        stderr=SimpleNamespace(flush=lambda: output_step("stderr")),
-    ))
-    monkeypatch.setattr(cli_module, "err_console", SimpleNamespace(print=lambda *args: output_step("diagnostic")))
+    monkeypatch.setattr(
+        cli_module,
+        "sys",
+        SimpleNamespace(
+            stdout=SimpleNamespace(flush=lambda: output_step("stdout")),
+            stderr=SimpleNamespace(flush=lambda: output_step("stderr")),
+        ),
+    )
+    monkeypatch.setattr(
+        cli_module, "err_console", SimpleNamespace(print=lambda *args: output_step("diagnostic"))
+    )
     monkeypatch.setattr(cli_module, "Engine", FakeEngine)
     monkeypatch.setattr(cli_module, "_emit", emit)
     monkeypatch.setattr(cli_module.os, "_exit", exit_process)

@@ -36,7 +36,10 @@ class _AutomationBase(BaseConnector):
     platform_signature: ClassVar[str] = ""
 
     def _guarded_finding(
-        self, rec: dict[str, Any], build: Callable[[dict[str, Any]], Finding | None], what: str,
+        self,
+        rec: dict[str, Any],
+        build: Callable[[dict[str, Any]], Finding | None],
+        what: str,
     ) -> Finding | None:
         """Isolate one malformed record so the rest of the export is still analysed."""
         try:
@@ -90,10 +93,15 @@ class _AutomationBase(BaseConnector):
         f.add_framework(self.platform_signature)
         apply_matches(f, matches, location=url)
         if ai_steps:
-            f.add_evidence(Evidence(
-                signal=f"{self.provider}:ai-steps", description=f"AI steps: {', '.join(ai_steps[:10])}",
-                location=url, weight=0.8, signature=self.platform_signature,
-            ))
+            f.add_evidence(
+                Evidence(
+                    signal=f"{self.provider}:ai-steps",
+                    description=f"AI steps: {', '.join(ai_steps[:10])}",
+                    location=url,
+                    weight=0.8,
+                    signature=self.platform_signature,
+                )
+            )
             f.add_capability("tool-use")
         if any(re.search(r"(?i)cron|schedule|interval|timer|recurr", t) for t in triggers):
             f.add_capability("autonomous")
@@ -103,10 +111,15 @@ class _AutomationBase(BaseConnector):
             f.add_tag("event-triggered")
         if active is False:
             f.add_tag("inactive")
-        f.metadata.update({
-            "active": active, "triggers": triggers[:10], "ai_steps": ai_steps[:20], "url": url,
-            **(extra or {}),
-        })
+        f.metadata.update(
+            {
+                "active": active,
+                "triggers": triggers[:10],
+                "ai_steps": ai_steps[:20],
+                "url": url,
+                **(extra or {}),
+            }
+        )
         finalize(f, self.index)
         f.kind = kind
         return f
@@ -132,8 +145,12 @@ class N8nConnector(_AutomationBase):
             raise ConnectorError("lowcode.n8n: api_url and api_key required")
         http = HttpClient(base, headers={"X-N8N-API-KEY": key})
         yield from http.paginate_token(
-            "/workflows", params={"limit": 250}, items_key="data", token_key="nextCursor",
-            token_param="cursor", max_pages=max(1, int(self.ctx.get("max_pages", 1000))),
+            "/workflows",
+            params={"limit": 250},
+            items_key="data",
+            token_key="nextCursor",
+            token_param="cursor",
+            max_pages=max(1, int(self.ctx.get("max_pages", 1000))),
         )
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -147,13 +164,12 @@ class N8nConnector(_AutomationBase):
                 yield f
 
     def _valid_workflow(self, w: Any) -> bool:
-        return (
-            self._record_fields_valid(
-                w, strings=("name", "createdAt", "updatedAt"), mappings=("homeProject",),
-                arrays=("nodes", "tags"),
-            )
-            and isinstance(w.get("nodes"), list)
-        )
+        return self._record_fields_valid(
+            w,
+            strings=("name", "createdAt", "updatedAt"),
+            mappings=("homeProject",),
+            arrays=("nodes", "tags"),
+        ) and isinstance(w.get("nodes"), list)
 
     def _n8n_finding(self, w: dict[str, Any]) -> Finding | None:
         # Exported blueprints can contain useful AI evidence without a provider
@@ -166,24 +182,41 @@ class N8nConnector(_AutomationBase):
             self.ctx.warn("lowcode.n8n: workflow has no valid provider id; identity coverage incomplete")
             workflow_id = hashlib.sha256(json.dumps(w, sort_keys=True, default=str).encode()).hexdigest()
         nodes = [
-            node for node in w["nodes"]
+            node
+            for node in w["nodes"]
             if self._record_fields_valid(
-                node, required=("type",), strings=("name",), mappings=("parameters",),
+                node,
+                required=("type",),
+                strings=("name",),
+                mappings=("parameters",),
             )
         ]
         if len(nodes) != len(w["nodes"]):
             self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
         types = [str(n.get("type", "")) for n in nodes]
         ai_steps = [
-            f"{n.get('name')} ({n.get('type')})" for n in nodes
-            if re.search(r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace"
-                         r"|\.agent$|mcp", str(n.get("type", "")), re.I)
+            f"{n.get('name')} ({n.get('type')})"
+            for n in nodes
+            if re.search(
+                r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace"
+                r"|\.agent$|mcp",
+                str(n.get("type", "")),
+                re.I,
+            )
         ]
         triggers = [t for t in types if re.search(r"trigger|cron|schedule|webhook", t, re.I)]
         models = [
-            str(get_path(n, "parameters.model.value", "parameters.model", "parameters.modelId.value",
-                         "parameters.options.model"))
-            for n in nodes if get_path(n, "parameters.model", "parameters.modelId")
+            str(
+                get_path(
+                    n,
+                    "parameters.model.value",
+                    "parameters.model",
+                    "parameters.modelId.value",
+                    "parameters.options.model",
+                )
+            )
+            for n in nodes
+            if get_path(n, "parameters.model", "parameters.modelId")
         ]
         f = self._workflow_finding(
             wid=str(workflow_id),
@@ -199,11 +232,15 @@ class N8nConnector(_AutomationBase):
             updated=w.get("updatedAt"),
             triggers=triggers,
             ai_steps=ai_steps,
-            kind=(Kind.AGENT if any(t.endswith(".agent") or t.endswith("agentTool") for t in types)
-                  else Kind.WORKFLOW),
+            kind=(
+                Kind.AGENT
+                if any(t.endswith(".agent") or t.endswith("agentTool") for t in types)
+                else Kind.WORKFLOW
+            ),
             resource_type="workflow" if identified else "unresolved-workflow",
             extra={
-                "node_count": len(nodes), "node_types": sorted(set(types))[:40],
+                "node_count": len(nodes),
+                "node_types": sorted(set(types))[:40],
                 "tags": [t.get("name") for t in w.get("tags") or [] if isinstance(t, dict)],
             },
         )
@@ -213,8 +250,10 @@ class N8nConnector(_AutomationBase):
                 f.add_tag("unresolved-identity")
             apply_matches(f, model_matches(self.index, *models), weight_scale=0.5)
             f.models = sorted({m for m in models if m and m != "None"})
-            if any("toolCode" in t or "executeCommand" in t or "n8n-nodes-base.code" in t
-                   or "ssh" in t.lower() for t in types):
+            if any(
+                "toolCode" in t or "executeCommand" in t or "n8n-nodes-base.code" in t or "ssh" in t.lower()
+                for t in types
+            ):
                 f.add_capability("code-exec")
         return f
 
@@ -235,7 +274,11 @@ class MakeConnector(_AutomationBase):
     }
 
     def _offset_pages(
-        self, http: HttpClient, path: str, items_key: str, **params: Any,
+        self,
+        http: HttpClient,
+        path: str,
+        items_key: str,
+        **params: Any,
     ) -> Iterator[dict[str, Any]]:
         seen: set[str] = set()
         for page in range(max(1, int(self.ctx.get("max_pages", 1000)))):
@@ -308,8 +351,11 @@ class MakeConnector(_AutomationBase):
                 continue
             agents = data
             if isinstance(data, dict):
-                agents = ([data] if data.get("id") and data.get("name")
-                          else data.get("aiAgents", data.get("agents")))
+                agents = (
+                    [data]
+                    if data.get("id") and data.get("name")
+                    else data.get("aiAgents", data.get("agents"))
+                )
             if not isinstance(agents, list):
                 self.ctx.warn(f"lowcode.make: invalid AI agents response for team {team}")
                 continue
@@ -334,7 +380,9 @@ class MakeConnector(_AutomationBase):
 
     def _record_kind(self, rec: Any) -> str | None:
         if not self._record_fields_valid(
-            rec, strings=("_kind", "name", "_team"), mappings=("blueprint", "createdByUser", "scheduling"),
+            rec,
+            strings=("_kind", "name", "_team"),
+            mappings=("blueprint", "createdByUser", "scheduling"),
             arrays=("tools",),
         ):
             return None
@@ -381,9 +429,14 @@ class MakeConnector(_AutomationBase):
         flow = bp.get("flow") if isinstance(bp, dict) else None
         modules = [str(m.get("module", "")) for m in (flow or []) if isinstance(m, dict)]
         ai_steps = [
-            m for m in modules
-            if re.search(r"openai|anthropic|claude|gemini|mistral|ai-agents|perplexity|hugging|eden-ai"
-                         r"|cohere|groq|deepseek|assistants", m, re.I)
+            m
+            for m in modules
+            if re.search(
+                r"openai|anthropic|claude|gemini|mistral|ai-agents|perplexity|hugging|eden-ai"
+                r"|cohere|groq|deepseek|assistants",
+                m,
+                re.I,
+            )
         ]
         triggers = modules[:1] + [m for m in modules if re.search(r"webhook|watch|schedule|trigger", m, re.I)]
         return self._workflow_finding(
@@ -391,9 +444,11 @@ class MakeConnector(_AutomationBase):
             name=str(rec.get("name") or bp.get("name") if isinstance(bp, dict) else rec.get("name")),
             blob=json.dumps(bp, default=str)[:300_000],
             owner=str(
-                rec.get("createdByUser", {}).get("name") if isinstance(rec.get("createdByUser"), dict)
+                rec.get("createdByUser", {}).get("name")
+                if isinstance(rec.get("createdByUser"), dict)
                 else rec.get("createdBy") or ""
-            ) or None,
+            )
+            or None,
             account=str(rec.get("_team") or rec.get("teamId") or "") or None,
             active=rec.get("isActive", rec.get("active")),
             created=rec.get("createdAt") or rec.get("created"),
@@ -403,7 +458,8 @@ class MakeConnector(_AutomationBase):
             kind=Kind.AGENT if any("ai-agents" in m for m in modules) else Kind.WORKFLOW,
             resource_type="scenario",
             extra={
-                "module_count": len(modules), "modules": sorted(set(modules))[:40],
+                "module_count": len(modules),
+                "modules": sorted(set(modules))[:40],
                 "scheduling": rec.get("scheduling"),
             },
         )
@@ -464,13 +520,18 @@ class ZapierConnector(_AutomationBase):
         else:
             steps_list = (
                 [str(get_path(s, "app.title", "app", "title", "action") or s) for s in steps]
-                if isinstance(steps, list) else []
+                if isinstance(steps, list)
+                else []
             )
         blob = json.dumps(rec, default=str)[:100_000]
         ai_steps = [
-            s for s in steps_list
-            if re.search(r"(?i)chatgpt|openai|claude|anthropic|gemini|ai by zapier|zapier ai|agent"
-                         r"|copilot|gpt|perplexity|mistral|hugging", s)
+            s
+            for s in steps_list
+            if re.search(
+                r"(?i)chatgpt|openai|claude|anthropic|gemini|ai by zapier|zapier ai|agent"
+                r"|copilot|gpt|perplexity|mistral|hugging",
+                s,
+            )
         ]
         owner = rec.get("owner") or rec.get("Owner") or get_path(rec, "owner.email", "user.email", "creator")
         agent = re.search(r"(?i)\bagent\b", title) or rec.get("type") == "agent" or "instructions" in rec
@@ -550,7 +611,8 @@ class WorkatoConnector(_AutomationBase):
     def _valid_recipe(self, r: Any) -> bool:
         return (
             self._record_fields_valid(
-                r, strings=("name", "author_name", "created_at", "updated_at", "last_run_at"),
+                r,
+                strings=("name", "author_name", "created_at", "updated_at", "last_run_at"),
                 arrays=("config",),
             )
             and self._identified(r, "id", "name")
@@ -560,13 +622,17 @@ class WorkatoConnector(_AutomationBase):
     def _recipe_finding(self, r: dict[str, Any]) -> Finding | None:
         code = r.get("code") or ""
         config = r.get("config") or []
-        providers = sorted({
-            str(c.get("provider") or c.get("keyword") or "") for c in config if isinstance(c, dict)
-        })
+        providers = sorted(
+            {str(c.get("provider") or c.get("keyword") or "") for c in config if isinstance(c, dict)}
+        )
         ai_steps = [
-            p for p in providers
-            if re.search(r"(?i)openai|genai|anthropic|claude|gemini|vertex|bedrock|cohere|mistral"
-                         r"|azure_openai|workato_agent|agentic|copilot|llm", p)
+            p
+            for p in providers
+            if re.search(
+                r"(?i)openai|genai|anthropic|claude|gemini|vertex|bedrock|cohere|mistral"
+                r"|azure_openai|workato_agent|agentic|copilot|llm",
+                p,
+            )
         ]
         blob = (code if isinstance(code, str) else json.dumps(code)) + " " + json.dumps(config, default=str)
         parsed: Any = {}
@@ -591,7 +657,8 @@ class WorkatoConnector(_AutomationBase):
             kind=Kind.AGENT if any("agent" in p.lower() for p in providers) else Kind.WORKFLOW,
             resource_type="recipe",
             extra={
-                "providers": providers[:30], "job_succeeded_count": r.get("job_succeeded_count"),
+                "providers": providers[:30],
+                "job_succeeded_count": r.get("job_succeeded_count"),
                 "folder": r.get("folder_id"),
             },
         )

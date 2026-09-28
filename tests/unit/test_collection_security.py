@@ -23,7 +23,30 @@ def test_aws_managed_policy_grant_is_discovered(index):
     connector = AwsConnector(ctx)
     arn = "arn:aws:iam::aws:policy/AmazonBedrockFullAccess"
     iam = Mock()
-    iam.get_paginator.return_value.paginate.return_value = [{"RoleDetailList": [{"RoleName": "worker", "Arn": "arn:aws:iam::123456789012:role/worker", "AttachedManagedPolicies": [{"PolicyArn": arn}]}], "Policies": [{"Arn": arn, "PolicyVersionList": [{"IsDefaultVersion": True, "Document": {"Statement": [{"Effect": "Allow", "Action": "bedrock:*", "Resource": "*"}]}}]}]}]
+    iam.get_paginator.return_value.paginate.return_value = [
+        {
+            "RoleDetailList": [
+                {
+                    "RoleName": "worker",
+                    "Arn": "arn:aws:iam::123456789012:role/worker",
+                    "AttachedManagedPolicies": [{"PolicyArn": arn}],
+                }
+            ],
+            "Policies": [
+                {
+                    "Arn": arn,
+                    "PolicyVersionList": [
+                        {
+                            "IsDefaultVersion": True,
+                            "Document": {
+                                "Statement": [{"Effect": "Allow", "Action": "bedrock:*", "Resource": "*"}]
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
     connector._client = Mock(return_value=iam)
     records = list(connector._collect_iam())
     assert "AWSManagedPolicy" in iam.get_paginator.return_value.paginate.call_args.kwargs["Filter"]
@@ -35,7 +58,17 @@ def test_unresolved_iam_policy_is_not_silently_clean(index):
     ctx = context(index)
     connector = AwsConnector(ctx)
     connector._client = Mock()
-    connector._paginate_details = Mock(return_value=iter([{"_type": "RoleDetailList", "Arn": "arn:aws:iam::123:role/a", "AttachedManagedPolicies": [{"PolicyArn": "missing"}]}]))
+    connector._paginate_details = Mock(
+        return_value=iter(
+            [
+                {
+                    "_type": "RoleDetailList",
+                    "Arn": "arn:aws:iam::123:role/a",
+                    "AttachedManagedPolicies": [{"PolicyArn": "missing"}],
+                }
+            ]
+        )
+    )
     assert list(connector._collect_iam()) == []
     assert ctx.stats.incomplete
     assert "unresolved" in ctx.stats.warnings[0]
@@ -65,9 +98,17 @@ def test_slack_all_inventories_follow_pagination(index, monkeypatch):
             return {"ok": True, "members": [{"id": "bot", "is_bot": True}]}
         if path == "/team.integrationLogs":
             return {"ok": True, "logs": [{"id": f"log-{params['page']}"}], "paging": {"pages": 2}}
-        key = {"/admin.apps.approved.list": "approved_apps", "/admin.apps.restricted.list": "restricted_apps", "/admin.apps.requests.list": "app_requests"}[path]
+        key = {
+            "/admin.apps.approved.list": "approved_apps",
+            "/admin.apps.restricted.list": "restricted_apps",
+            "/admin.apps.requests.list": "app_requests",
+        }[path]
         second = params.get("cursor") == "next"
-        return {"ok": True, key: [{"id": "second" if second else "first"}], "response_metadata": {"next_cursor": "" if second else "next"}}
+        return {
+            "ok": True,
+            key: [{"id": "second" if second else "first"}],
+            "response_metadata": {"next_cursor": "" if second else "next"},
+        }
 
     monkeypatch.setattr("shadowscan.connectors.saas.slack.HttpClient", Mock(return_value=Mock(get_json=get)))
     records = list(connector.collect())
@@ -91,7 +132,10 @@ def test_azure_arm_continuations_are_followed(index):
     ctx = context(index)
     connector = AzureConnector(ctx)
     connector.http = Mock()
-    connector.http.get_json.side_effect = [{"value": [{"id": "first"}], "nextLink": "https://management.azure.com/next"}, {"value": [{"id": "second"}]}]
+    connector.http.get_json.side_effect = [
+        {"value": [{"id": "first"}], "nextLink": "https://management.azure.com/next"},
+        {"value": [{"id": "second"}]},
+    ]
     assert [r["id"] for r in connector._list("/subscriptions", "2022-12-01")] == ["first", "second"]
     assert connector.http.get_json.call_count == 2
 
@@ -102,7 +146,20 @@ def test_azure_denied_diagnostics_are_unknown_not_disabled(index):
     connector.http = Mock()
     connector.http.get_json.side_effect = HttpError(403, "https://management.azure.com/diagnostics")
     settings = connector._list("/diagnostics", "v1")
-    findings = list(connector.analyze([{"_kind": "resource", "id": "/account", "type": "microsoft.cognitiveservices/accounts", "kind": "OpenAI", "name": "test"}, {"_kind": "diagnostics", "_account": "/account", "settings": settings, "coverage": "unknown"}]))
+    findings = list(
+        connector.analyze(
+            [
+                {
+                    "_kind": "resource",
+                    "id": "/account",
+                    "type": "microsoft.cognitiveservices/accounts",
+                    "kind": "OpenAI",
+                    "name": "test",
+                },
+                {"_kind": "diagnostics", "_account": "/account", "settings": settings, "coverage": "unknown"},
+            ]
+        )
+    )
     assert ctx.stats.incomplete
     assert "no-diagnostic-logging" not in findings[0].tags
     assert findings[0].metadata["diagnostic_logging_status"] == "unknown"
@@ -110,16 +167,42 @@ def test_azure_denied_diagnostics_are_unknown_not_disabled(index):
 
 def test_azure_observed_empty_diagnostics_are_disabled(index):
     connector = AzureConnector(context(index))
-    findings = list(connector.analyze([{"_kind": "resource", "id": "/account", "type": "microsoft.cognitiveservices/accounts", "kind": "OpenAI", "name": "test"}, {"_kind": "diagnostics", "_account": "/account", "settings": [], "coverage": "observed"}]))
+    findings = list(
+        connector.analyze(
+            [
+                {
+                    "_kind": "resource",
+                    "id": "/account",
+                    "type": "microsoft.cognitiveservices/accounts",
+                    "kind": "OpenAI",
+                    "name": "test",
+                },
+                {"_kind": "diagnostics", "_account": "/account", "settings": [], "coverage": "observed"},
+            ]
+        )
+    )
     assert "no-diagnostic-logging" in findings[0].tags
 
 
 def test_foundry_agent_cursor_pages(index, monkeypatch):
     connector = AzureConnector(context(index, foundry_token="synthetic"))
     http = Mock()
-    http.get_json.side_effect = [{"data": [{"id": "first"}], "has_more": True, "last_id": "first"}, {"data": [{"id": "second"}], "has_more": False}]
+    http.get_json.side_effect = [
+        {"data": [{"id": "first"}], "has_more": True, "last_id": "first"},
+        {"data": [{"id": "second"}], "has_more": False},
+    ]
     monkeypatch.setattr("shadowscan.connectors.cloud.azure.HttpClient", Mock(return_value=http))
-    records = list(connector._collect_agents({"id": "/account"}, {"id": "/project", "properties": {"endpoints": {"AI Foundry API": "https://example.services.ai.azure.com/api/projects/test"}}}))
+    records = list(
+        connector._collect_agents(
+            {"id": "/account"},
+            {
+                "id": "/project",
+                "properties": {
+                    "endpoints": {"AI Foundry API": "https://example.services.ai.azure.com/api/projects/test"}
+                },
+            },
+        )
+    )
     assert [r["id"] for r in records] == ["first", "second"]
     assert http.get_json.call_args.kwargs["params"]["after"] == "first"
 
@@ -128,6 +211,13 @@ def test_foundry_rejects_untrusted_metadata_endpoint(index, monkeypatch):
     connector = AzureConnector(context(index, foundry_token="synthetic"))
     http = Mock()
     monkeypatch.setattr("shadowscan.connectors.cloud.azure.HttpClient", http)
-    assert list(connector._collect_agents({}, {"properties": {"endpoints": {"AI Foundry API": "https://evil.example"}}})) == []
+    assert (
+        list(
+            connector._collect_agents(
+                {}, {"properties": {"endpoints": {"AI Foundry API": "https://evil.example"}}}
+            )
+        )
+        == []
+    )
     assert connector.ctx.stats.incomplete
     http.assert_not_called()

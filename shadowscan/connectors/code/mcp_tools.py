@@ -25,8 +25,7 @@ _REGISTRATIONS = (
     re.compile(r"\.(?:registerTool|tool)\(\s*[\"'`]" + _NAME + r"[\"'`]"),
     # Tool schema objects in a list_tools handler: { name: "x", description: ... }
     re.compile(
-        r"\bname\s*:\s*[\"'`]" + _NAME
-        + r"[\"'`]\s*,\s*(?:title\s*:\s*[^\n]{0,200}\n\s*)?description\s*:"
+        r"\bname\s*:\s*[\"'`]" + _NAME + r"[\"'`]\s*,\s*(?:title\s*:\s*[^\n]{0,200}\n\s*)?description\s*:"
     ),
     # Python: types.Tool(name="x", ...)
     re.compile(r"\bTool\(\s*name\s*=\s*[\"']" + _NAME + r"[\"']"),
@@ -50,26 +49,95 @@ _ENUM_MEMBER = re.compile(
 _WORDS = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+")
 
 _VOCABULARY: dict[str, frozenset[str]] = {
-    "code-exec": frozenset({
-        "exec", "execute", "shell", "bash", "command", "commands", "cmd", "eval", "terminal", "script",
-        "powershell", "subprocess", "interpreter",
-    }),
-    "data-access": frozenset({
-        "file", "files", "directory", "directories", "dir", "dirs", "folder", "folders", "path", "paths",
-        "sql", "query", "database", "db", "table", "tables", "record", "records", "git", "repo", "repository",
-    }),
-    "browsing": frozenset({
-        "fetch", "browse", "browser", "navigate", "url", "urls", "http", "https", "web", "scrape", "crawl",
-        "screenshot", "website",
-    }),
-    "memory": frozenset({
-        "memory", "memories", "remember", "recall", "entity", "entities", "observations", "relations",
-        "knowledge",
-    }),
-    "saas-actions": frozenset({
-        "send", "email", "mail", "slack", "tweet", "issue", "issues", "ticket", "tickets", "publish",
-        "deploy", "payment", "transfer",
-    }),
+    "code-exec": frozenset(
+        {
+            "exec",
+            "execute",
+            "shell",
+            "bash",
+            "command",
+            "commands",
+            "cmd",
+            "eval",
+            "terminal",
+            "script",
+            "powershell",
+            "subprocess",
+            "interpreter",
+        }
+    ),
+    "data-access": frozenset(
+        {
+            "file",
+            "files",
+            "directory",
+            "directories",
+            "dir",
+            "dirs",
+            "folder",
+            "folders",
+            "path",
+            "paths",
+            "sql",
+            "query",
+            "database",
+            "db",
+            "table",
+            "tables",
+            "record",
+            "records",
+            "git",
+            "repo",
+            "repository",
+        }
+    ),
+    "browsing": frozenset(
+        {
+            "fetch",
+            "browse",
+            "browser",
+            "navigate",
+            "url",
+            "urls",
+            "http",
+            "https",
+            "web",
+            "scrape",
+            "crawl",
+            "screenshot",
+            "website",
+        }
+    ),
+    "memory": frozenset(
+        {
+            "memory",
+            "memories",
+            "remember",
+            "recall",
+            "entity",
+            "entities",
+            "observations",
+            "relations",
+            "knowledge",
+        }
+    ),
+    "saas-actions": frozenset(
+        {
+            "send",
+            "email",
+            "mail",
+            "slack",
+            "tweet",
+            "issue",
+            "issues",
+            "ticket",
+            "tickets",
+            "publish",
+            "deploy",
+            "payment",
+            "transfer",
+        }
+    ),
 }
 _RUNNABLE = frozenset({"code", "script", "command", "python", "shell", "program"})
 

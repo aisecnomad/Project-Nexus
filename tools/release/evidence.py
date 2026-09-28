@@ -29,8 +29,12 @@ def verify_ci_run(
 ) -> dict[str, Any]:
     """Require successful push CI for the exact dispatched main commit."""
     return _verify_workflow_run(
-        run, repository=repository, expected_sha=expected_sha,
-        current_sha=current_sha, run_id=run_id, workflow="CI",
+        run,
+        repository=repository,
+        expected_sha=expected_sha,
+        current_sha=current_sha,
+        run_id=run_id,
+        workflow="CI",
     )
 
 
@@ -39,14 +43,23 @@ def verify_codeql_run(
 ) -> dict[str, Any]:
     """Require successful push CodeQL for the exact dispatched main commit."""
     return _verify_workflow_run(
-        run, repository=repository, expected_sha=expected_sha,
-        current_sha=current_sha, run_id=run_id, workflow="CodeQL",
+        run,
+        repository=repository,
+        expected_sha=expected_sha,
+        current_sha=current_sha,
+        run_id=run_id,
+        workflow="CodeQL",
     )
 
 
 def _verify_workflow_run(
-    run: Any, *, repository: str, expected_sha: str, current_sha: str,
-    run_id: str, workflow: str,
+    run: Any,
+    *,
+    repository: str,
+    expected_sha: str,
+    current_sha: str,
+    run_id: str,
+    workflow: str,
 ) -> dict[str, Any]:
     """Bind a successful run to the workflow file, branch, commit and repository.
 
@@ -103,8 +116,14 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("release directory must be a real directory")
     files = sorted(directory.iterdir())
-    required = {"ci-verification.json", "codeql-verification.json", "runtime-sbom.cdx.json",
-                "requirements.lock", "requirements-build.lock", "requirements-ci-constraints.txt"}
+    required = {
+        "ci-verification.json",
+        "codeql-verification.json",
+        "runtime-sbom.cdx.json",
+        "requirements.lock",
+        "requirements-build.lock",
+        "requirements-ci-constraints.txt",
+    }
     if not required.issubset({path.name for path in files}):
         raise ValueError("release evidence is missing required files")
     if len([path for path in files if path.suffix == ".whl"]) != 1:
@@ -119,13 +138,17 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
         saved = json.loads((directory / f"{workflow}-verification.json").read_text(encoding="utf-8"))
         # Recheck each saved identity rather than copying arbitrary JSON into the manifest.
         if (
-            not isinstance(saved, dict) or saved.get("repository") != repository
+            not isinstance(saved, dict)
+            or saved.get("repository") != repository
             or saved.get("head_sha") != commit
         ):
             raise ValueError(f"saved {workflow} evidence does not match the release source")
         verified_runs[workflow] = verify(
             {**saved, "repository": {"full_name": repository}, "head_repository": {"full_name": repository}},
-            repository=repository, expected_sha=commit, current_sha=commit, run_id=str(saved.get("id", "")),
+            repository=repository,
+            expected_sha=commit,
+            current_sha=commit,
+            run_id=str(saved.get("id", "")),
         )
     sbom = json.loads((directory / "runtime-sbom.cdx.json").read_text(encoding="utf-8"))
     if not isinstance(sbom, dict) or sbom.get("bomFormat") != "CycloneDX" or not sbom.get("components"):
@@ -187,8 +210,11 @@ def main() -> None:
         if args.command in ("verify-ci", "verify-codeql"):
             verify = verify_ci_run if args.command == "verify-ci" else verify_codeql_run
             result = verify(
-                json.loads(args.input.read_text(encoding="utf-8")), repository=args.repository,
-                expected_sha=args.expected_sha, current_sha=args.current_sha, run_id=args.run_id,
+                json.loads(args.input.read_text(encoding="utf-8")),
+                repository=args.repository,
+                expected_sha=args.expected_sha,
+                current_sha=args.current_sha,
+                run_id=args.run_id,
             )
             args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         else:

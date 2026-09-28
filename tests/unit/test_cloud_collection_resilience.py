@@ -29,10 +29,17 @@ def test_aws_late_page_failure_retains_lambda_inventory(index):
     ctx = context(index)
     connector = AwsConnector(ctx)
     client = Mock()
-    client.get_paginator.return_value.paginate.return_value = failing_pages({"Functions": [{
-        "FunctionName": "worker", "FunctionArn": "arn:aws:lambda:us-east-1:123:function:worker",
-        "Environment": {"Variables": {"OPENAI_API_KEY": "${SECRET}"}},
-    }]})
+    client.get_paginator.return_value.paginate.return_value = failing_pages(
+        {
+            "Functions": [
+                {
+                    "FunctionName": "worker",
+                    "FunctionArn": "arn:aws:lambda:us-east-1:123:function:worker",
+                    "Environment": {"Variables": {"OPENAI_API_KEY": "${SECRET}"}},
+                }
+            ]
+        }
+    )
     client.list_tags.return_value = {"Tags": {}}
     connector._client = Mock(return_value=client)
     records = list(connector._collect_lambda("us-east-1"))
@@ -47,10 +54,23 @@ def test_aws_late_iam_page_failure_retains_inline_permission_evidence(index):
     ctx = context(index)
     connector = AwsConnector(ctx)
     client = Mock()
-    client.get_paginator.return_value.paginate.return_value = failing_pages({"RoleDetailList": [{
-        "Arn": "arn:aws:iam::123:role/worker", "RoleName": "worker",
-        "RolePolicyList": [{"PolicyDocument": {"Statement": [{"Effect": "Allow", "Action": "bedrock:InvokeModel"}]}}],
-    }]})
+    client.get_paginator.return_value.paginate.return_value = failing_pages(
+        {
+            "RoleDetailList": [
+                {
+                    "Arn": "arn:aws:iam::123:role/worker",
+                    "RoleName": "worker",
+                    "RolePolicyList": [
+                        {
+                            "PolicyDocument": {
+                                "Statement": [{"Effect": "Allow", "Action": "bedrock:InvokeModel"}]
+                            }
+                        }
+                    ],
+                }
+            ]
+        }
+    )
     connector._client = Mock(return_value=client)
     records = list(connector._collect_iam())
     assert [record["actions"] for record in records] == [["bedrock:InvokeModel"]]
@@ -79,7 +99,9 @@ def test_aws_malformed_pages_are_incomplete_and_preserve_valid_records(index, pa
     client = Mock()
     client.get_paginator.return_value.paginate.return_value = iter([page])
     records = list(connector._paginate(client, "list_items", "items"))
-    assert records == ([{"id": "valid"}] if isinstance(page, dict) and isinstance(page["items"], list) else [])
+    assert records == (
+        [{"id": "valid"}] if isinstance(page, dict) and isinstance(page["items"], list) else []
+    )
     assert ctx.stats.incomplete
 
 
@@ -108,9 +130,13 @@ def test_azure_valid_empty_resource_graph_inventory_is_complete(index):
 
 @pytest.mark.parametrize("second_page", [None, {"error": {}}, HttpError(429, "https://management.azure.com")])
 def test_azure_failed_later_resource_graph_page_retains_observed_resources(index, second_page):
-    connector, ctx = azure_connector(index, [
-        {"data": [{"id": "/known-resource"}], "$skipToken": "next"}, second_page,
-    ])
+    connector, ctx = azure_connector(
+        index,
+        [
+            {"data": [{"id": "/known-resource"}], "$skipToken": "next"},
+            second_page,
+        ],
+    )
     assert [record["id"] for record in connector.collect()] == ["/known-resource"]
     assert ctx.stats.incomplete
 
@@ -125,10 +151,20 @@ def test_azure_invalid_resource_graph_cursor_preserves_page_and_marks_incomplete
 
 def test_gcp_caller_observations_do_not_merge_across_resource_projects(index):
     connector = GcpConnector(context(index))
-    records = [{"_kind": "audit-event", "principal": "worker@example.iam.gserviceaccount.com",
-                "_project": project, "method": "Predict", "resource": f"projects/{project}/locations/us/endpoints/a"}
-               for project in ("project-a", "project-a", "project-b")]
+    records = [
+        {
+            "_kind": "audit-event",
+            "principal": "worker@example.iam.gserviceaccount.com",
+            "_project": project,
+            "method": "Predict",
+            "resource": f"projects/{project}/locations/us/endpoints/a",
+        }
+        for project in ("project-a", "project-a", "project-b")
+    ]
     findings = list(connector.analyze(records))
-    assert {finding.account: finding.metadata["events"] for finding in findings} == {"project-a": 2, "project-b": 1}
+    assert {finding.account: finding.metadata["events"] for finding in findings} == {
+        "project-a": 2,
+        "project-b": 1,
+    }
     assert len({finding.id for finding in findings}) == 2
     assert not connector.ctx.stats.incomplete

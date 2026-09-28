@@ -23,10 +23,10 @@ from typing import Any
 # (never valid JSON) is consumed as one token instead of failing and being
 # retried from every quote inside it, which made hostile files quadratic.
 _STRING = r'"(?:[^"\\\n]|\\.)*"?'
-_COMMENT_TOKENS = re.compile(_STRING + r'|//[^\n]*|/\*.*?\*/|/\*', re.DOTALL)
+_COMMENT_TOKENS = re.compile(_STRING + r"|//[^\n]*|/\*.*?\*/|/\*", re.DOTALL)
 # A string literal, or a comma followed only by whitespace before a closing
 # bracket. A comma at the end of the document stays and remains an error.
-_TRAILING_COMMA_TOKENS = re.compile(_STRING + r'|,(?=\s*[}\]])')
+_TRAILING_COMMA_TOKENS = re.compile(_STRING + r"|,(?=\s*[}\]])")
 
 
 def _strip_comment(match: re.Match[str]) -> str:

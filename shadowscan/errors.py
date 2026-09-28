@@ -23,9 +23,26 @@ from __future__ import annotations
 
 import yaml
 
+from shadowscan.utils.redaction import SanitizationLimitError, sanitize_text
+
 
 class SetupError(Exception):
-    """A scan cannot start; the message is credential-free and safe to print."""
+    """A scan cannot start; the message is credential-free and safe to print.
+
+    The message is redacted the same way scan diagnostics are, so a future
+    call site that builds this from an interpolated third-party exception or
+    configuration value cannot leak a credential just by forgetting to wrap
+    it in ``sanitize_text`` by hand; existing call sites that already do so
+    are unaffected, since sanitization is idempotent.
+    """
+
+    def __init__(self, message: object = "", *args: object) -> None:
+        if isinstance(message, str) and not args:
+            try:
+                message = sanitize_text(message)
+            except SanitizationLimitError:
+                message = "setup error (message too large to redact safely)"
+        super().__init__(message, *args)
 
 
 class SetupPathError(SetupError, FileNotFoundError):

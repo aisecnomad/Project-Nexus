@@ -90,7 +90,7 @@ def _artifact_location(path: str, root: str) -> dict[str, str]:
     normalized = path.replace("\\", "/")
     base = root.replace("\\", "/").rstrip("/")
     if base and (normalized == base or normalized.startswith(base + "/")):
-        return {"uri": quote(normalized[len(base):].lstrip("/") or ".", safe="/"), "uriBaseId": "%SRCROOT%"}
+        return {"uri": quote(normalized[len(base) :].lstrip("/") or ".", safe="/"), "uriBaseId": "%SRCROOT%"}
     if PurePosixPath(normalized).is_absolute():
         # Outside the scan root: an absolute URI must not carry a uriBaseId.
         return {"uri": "file://" + quote(normalized, safe="/")}
@@ -183,21 +183,23 @@ def _result(f: Finding, rid: str) -> dict[str, Any]:
         "level": _LEVEL[f.risk.level],
         "message": {"text": message + (f". Risk factors: {factors}" if factors else "")},
         "partialFingerprints": {"shadowscan/finding": f.id},
-        "properties": _compact({
-            "surface": f.surface.value,
-            "kind": f.kind.value,
-            "resource": f.resource,
-            "provider": f.provider,
-            "owner": f.owner,
-            "frameworks": f.frameworks,
-            "model_providers": f.model_providers,
-            "capabilities": f.capabilities,
-            # A property bag's reserved ``tags`` key is a set of distinct strings.
-            "tags": list(dict.fromkeys(f.tags)),
-            "shadow": f.shadow,
-            "risk_score": f.risk.score,
-            "confidence": f.confidence,
-        }),
+        "properties": _compact(
+            {
+                "surface": f.surface.value,
+                "kind": f.kind.value,
+                "resource": f.resource,
+                "provider": f.provider,
+                "owner": f.owner,
+                "frameworks": f.frameworks,
+                "model_providers": f.model_providers,
+                "capabilities": f.capabilities,
+                # A property bag's reserved ``tags`` key is a set of distinct strings.
+                "tags": list(dict.fromkeys(f.tags)),
+                "shadow": f.shadow,
+                "risk_score": f.risk.score,
+                "confidence": f.confidence,
+            }
+        ),
     }
     locations = _physical_locations(f) if f.surface == Surface.CODE else []
     if locations:
@@ -220,12 +222,14 @@ def _invocation(result: ScanResult) -> dict[str, Any]:
         for st in result.stats
         for msg in dict.fromkeys(st.errors + st.warnings + ([st.skip_reason] if st.skip_reason else []))
     ]
-    return _compact({
-        "executionSuccessful": result.complete,
-        "startTimeUtc": _utc_timestamp(result.started_at),
-        "endTimeUtc": _utc_timestamp(result.finished_at),
-        "toolExecutionNotifications": notifications,
-    })
+    return _compact(
+        {
+            "executionSuccessful": result.complete,
+            "startTimeUtc": _utc_timestamp(result.started_at),
+            "endTimeUtc": _utc_timestamp(result.finished_at),
+            "toolExecutionNotifications": notifications,
+        }
+    )
 
 
 def render_sarif(result: ScanResult) -> str:

@@ -80,7 +80,9 @@ def test_bounded_diagnostics_summarise_after_the_limit():
     for number in range(5):
         limited(f"problem {number}")
     assert reports == [
-        "problem 0", "problem 1", "further invalid records in this export are not listed individually",
+        "problem 0",
+        "problem 1",
+        "further invalid records in this export are not listed individually",
     ]
 
 
@@ -128,15 +130,32 @@ def test_native_resource_with_id_name_and_items_is_not_unwrapped():
 
 def test_csv_native_log_event_with_error_column_is_preserved():
     errors: list[str] = []
-    records = list(BaseConnector._csv_records("id,name,error,timestamp\nlog-1,OpenAI,timeout,2026-01-01\n", errors.append))
+    records = list(
+        BaseConnector._csv_records(
+            "id,name,error,timestamp\nlog-1,OpenAI,timeout,2026-01-01\n", errors.append
+        )
+    )
     assert len(records) == 1 and records[0]["id"] == "log-1" and not errors
 
 
-@pytest.mark.parametrize("record", [
-    {"_kind": "cloudtrail-event", "eventName": "InvokeModel", "eventTime": "2026-01-01", "error": "AccessDenied"},
-    {"_kind": "audit-event", "principal": "agent@example.test", "timestamp": "2026-01-01", "error": "AccessDenied"},
-    {"_kind": "integration_log", "change_type": "enabled", "app_id": "A1", "error": "install-failed"},
-])
+@pytest.mark.parametrize(
+    "record",
+    [
+        {
+            "_kind": "cloudtrail-event",
+            "eventName": "InvokeModel",
+            "eventTime": "2026-01-01",
+            "error": "AccessDenied",
+        },
+        {
+            "_kind": "audit-event",
+            "principal": "agent@example.test",
+            "timestamp": "2026-01-01",
+            "error": "AccessDenied",
+        },
+        {"_kind": "integration_log", "change_type": "enabled", "app_id": "A1", "error": "install-failed"},
+    ],
+)
 def test_known_native_error_event_is_preserved(record):
     assert list(BaseConnector._unwrap(record)) == [record]
     assert list(BaseConnector._unwrap([record])) == [record]
@@ -149,7 +168,7 @@ def test_base_json_lines_caps_per_line_errors():
     assert records == [{"id": "ok"}]
     assert len(reports) == BaseConnector._MAX_INVALID_LINE_ERRORS + 1
     reports.clear()
-    assert list(BaseConnector._json_lines("[\n  {\"a\": 1},\n", reports.append)) == []
+    assert list(BaseConnector._json_lines('[\n  {"a": 1},\n', reports.append)) == []
     assert reports == ["invalid JSON export"]
 
 

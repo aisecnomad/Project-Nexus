@@ -18,7 +18,14 @@ from typing import Any
 SIGNATURE_STRINGS = {"id", "name", "category", "vendor", "homepage", "description"}
 SIGNATURE_LISTS = {"tags", "capabilities", "risk_notes", "references"}
 SIGNAL_LISTS = {
-    "languages", "names", "prefixes", "exclude_names", "exclude_prefixes", "patterns", "globs", "values",
+    "languages",
+    "names",
+    "prefixes",
+    "exclude_names",
+    "exclude_prefixes",
+    "patterns",
+    "globs",
+    "values",
     "capabilities",
 }
 SIGNAL_COMMON = {"type", "weight", "capabilities", "agent_indicator", "description"}
@@ -41,21 +48,53 @@ SIGNAL_FIELDS = {
 
 # Dependency ecosystems the manifest parsers emit. ``any`` matches every
 # ecosystem; an omitted ecosystem is treated as ``any`` by the matcher.
-ECOSYSTEMS = frozenset({
-    "pypi", "npm", "nuget", "maven", "go", "cargo", "rubygems", "composer", "conda", "any",
-})
+ECOSYSTEMS = frozenset(
+    {
+        "pypi",
+        "npm",
+        "nuget",
+        "maven",
+        "go",
+        "cargo",
+        "rubygems",
+        "composer",
+        "conda",
+        "any",
+    }
+)
 
 # Canonical language names produced by ``matcher.language_for_path``.
-LANGUAGES = frozenset({
-    "python", "javascript", "go", "rust", "java", "dotnet", "ruby", "php", "swift", "dart",
-})
+LANGUAGES = frozenset(
+    {
+        "python",
+        "javascript",
+        "go",
+        "rust",
+        "java",
+        "dotnet",
+        "ruby",
+        "php",
+        "swift",
+        "dart",
+    }
+)
 
 # Capability vocabulary scored by ``shadowscan.risk.CAPABILITY_WEIGHTS``. The
 # risk engine keys on these exact strings; anything else would never score.
-CAPABILITIES = frozenset({
-    "code-exec", "autonomous", "saas-actions", "browsing", "memory", "multi-agent", "delegated-identity",
-    "tool-use", "rag", "data-access",
-})
+CAPABILITIES = frozenset(
+    {
+        "code-exec",
+        "autonomous",
+        "saas-actions",
+        "browsing",
+        "memory",
+        "multi-agent",
+        "delegated-identity",
+        "tool-use",
+        "rag",
+        "data-access",
+    }
+)
 
 # Signature id namespaces (the part before the first dot) and the category each
 # one requires. ``cloud.*`` keeps its historical spelling for the cloud-service
@@ -80,6 +119,7 @@ NAMESPACE_CATEGORIES = {
     "policy": "policy",
 }
 
+
 def require_mapping(value: Any, context: str) -> dict[str, Any]:
     if not isinstance(value, dict) or not all(isinstance(k, str) for k in value):
         raise ValueError(f"{context}: expected a mapping with string keys")
@@ -102,7 +142,8 @@ def _unknown(value: dict[str, Any], allowed: set[str], context: str) -> None:
     if unknown:
         suffix = (
             "; severity is derived by the risk engine; use weight for confidence"
-            if "severity" in unknown else ""
+            if "severity" in unknown
+            else ""
         )
         raise ValueError(f"{context}: unknown fields {', '.join(sorted(unknown))}{suffix}")
 

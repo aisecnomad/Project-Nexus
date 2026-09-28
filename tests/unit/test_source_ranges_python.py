@@ -8,10 +8,13 @@ from shadowscan.connectors.code import source_ranges
 from shadowscan.connectors.code.source_ranges import noncode_ranges
 
 
-@pytest.mark.parametrize("source, ambiguous", [
-    ("x = '''never closed\nimport openai\n", False),  # EOF in a multi-line literal masks the rest
-    ("import openai\nx = (1,\n", False),
-])
+@pytest.mark.parametrize(
+    "source, ambiguous",
+    [
+        ("x = '''never closed\nimport openai\n", False),  # EOF in a multi-line literal masks the rest
+        ("import openai\nx = (1,\n", False),
+    ],
+)
 def test_python_eof_errors_remain_unambiguous(source, ambiguous):
     spans, flagged = noncode_ranges(source, "python")
     assert flagged is ambiguous
@@ -23,9 +26,9 @@ def test_unclosed_one_line_string_masks_only_its_line():
     # scanning the rest of the file as complete coverage.
     source = (
         'a = "never closed; StateGraph(\n'
-        'import openai\n'
+        "import openai\n"
         "b = 'also open\n"
-        'from langgraph.graph import StateGraph\n'
+        "from langgraph.graph import StateGraph\n"
     )
     spans, flagged = noncode_ranges(source, "python")
     assert flagged is False
@@ -41,7 +44,7 @@ def test_unclosed_one_line_string_masks_only_its_line():
 def test_many_unclosed_one_line_strings_reuse_a_single_reader(monkeypatch):
     # Recreating StringIO from every remaining suffix makes malformed source
     # quadratic within the normal one-megabyte file limit.
-    source = ('value = "never closed; StateGraph(\n' * 8_000) + 'import openai\n'
+    source = ('value = "never closed; StateGraph(\n' * 8_000) + "import openai\n"
     original = source_ranges.io.StringIO
     allocations = []
 
@@ -73,4 +76,6 @@ def test_resumed_python_lexing_keeps_offsets_after_unicode_separators():
     assert not incomplete
     assert not any(start <= source.index("import openai") < end for start, end in spans)
     secret_start = source.index("opaque-credential")
-    assert any(start <= secret_start and secret_start + len("opaque-credential") <= end for start, end in spans)
+    assert any(
+        start <= secret_start and secret_start + len("opaque-credential") <= end for start, end in spans
+    )

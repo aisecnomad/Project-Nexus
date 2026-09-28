@@ -11,8 +11,15 @@ KEY = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
 
 
 def _finding(title: str, **kwargs) -> Finding:
-    return Finding(surface=Surface.CODE, connector="test.records", kind=Kind.AGENT, title=title,
-                   resource=f"repo:{title}", resource_type="repository", **kwargs)
+    return Finding(
+        surface=Surface.CODE,
+        connector="test.records",
+        kind=Kind.AGENT,
+        title=title,
+        resource=f"repo:{title}",
+        resource_type="repository",
+        **kwargs,
+    )
 
 
 class _Oversized(BaseConnector):

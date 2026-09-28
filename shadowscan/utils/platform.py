@@ -9,9 +9,7 @@ UNSUPPORTED_WINDOWS_MESSAGE = (
     "ShadowScan is validated on Linux x86_64 with Python 3.11–3.13. "
     "Windows is unsupported: file confinement uses O_NOFOLLOW and dir_fd."
 )
-MISSING_NOFOLLOW_MESSAGE = (
-    "ShadowScan requires os.O_NOFOLLOW to refuse symbolic links while opening files."
-)
+MISSING_NOFOLLOW_MESSAGE = "ShadowScan requires os.O_NOFOLLOW to refuse symbolic links while opening files."
 
 
 class UnsupportedPlatformError(RuntimeError):

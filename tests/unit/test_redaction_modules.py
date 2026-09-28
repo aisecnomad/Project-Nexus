@@ -28,8 +28,13 @@ from shadowscan.utils import (
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 
 SPLIT = [
-    redaction_rules, redaction_formats, redaction_statements, redaction_assignments,
-    redaction_calls, redaction_commands, redaction_markup,
+    redaction_rules,
+    redaction_formats,
+    redaction_statements,
+    redaction_assignments,
+    redaction_calls,
+    redaction_commands,
+    redaction_markup,
 ]
 MODULES = [redaction, *SPLIT]
 
@@ -51,7 +56,9 @@ def _defined(module: types.ModuleType) -> set[str]:
 def _bound() -> set[str]:
     """Every non-dunder name some split module binds, except imported modules."""
     return {
-        name for module in SPLIT for name, value in vars(module).items()
+        name
+        for module in SPLIT
+        for name, value in vars(module).items()
         if not name.startswith("__") and not isinstance(value, types.ModuleType)
     }
 
@@ -140,7 +147,8 @@ def test_policy_token_sees_a_rule_replaced_in_any_single_module(monkeypatch, mod
     # names it imports from another redaction module, is part of the token.
     machinery = {"_POLICY_BINDINGS", "_policy_value", "policy_token"}  # what computes the token
     policies = [
-        name for name, value in vars(module).items()
+        name
+        for name, value in vars(module).items()
         if not name.startswith("__") and redaction._is_policy(value) and name not in machinery
     ]
     assert policies

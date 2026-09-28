@@ -43,9 +43,17 @@ def test_rejects_invalid_weight_without_coercion(weight):
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("category", "unknown"), ("tags", "tag"), ("agent_indicator", "false"), ("id", 123),
-     ("signals", []), ("signals", {}), ("severity", "critical"), ("severity", "urgent"),
-     ("weigth", 0.9)],
+    [
+        ("category", "unknown"),
+        ("tags", "tag"),
+        ("agent_indicator", "false"),
+        ("id", 123),
+        ("signals", []),
+        ("signals", {}),
+        ("severity", "critical"),
+        ("severity", "urgent"),
+        ("weigth", 0.9),
+    ],
 )
 def test_rejects_invalid_signature_shapes_and_unsupported_severity(field, value):
     sig = _signature()
@@ -56,12 +64,18 @@ def test_rejects_invalid_signature_shapes_and_unsupported_severity(field, value)
 
 @pytest.mark.parametrize(
     "signal",
-    [None, [], {"type": "bogus"}, {"type": "code", "patterns": "bad"},
-     {"type": "code", "patterns": [123]}, {"type": "code", "patterns": ["["]},
-     {"type": "domain", "values": ["re:["]},
-     {"type": "dependency", "names": ["example"], "patterns": ["unused"]},
-     {"type": "code", "patterns": ["example"], "severity": "high"},
-     {"type": "env", "names": [], "patterns": []}],
+    [
+        None,
+        [],
+        {"type": "bogus"},
+        {"type": "code", "patterns": "bad"},
+        {"type": "code", "patterns": [123]},
+        {"type": "code", "patterns": ["["]},
+        {"type": "domain", "values": ["re:["]},
+        {"type": "dependency", "names": ["example"], "patterns": ["unused"]},
+        {"type": "code", "patterns": ["example"], "severity": "high"},
+        {"type": "env", "names": [], "patterns": []},
+    ],
 )
 def test_rejects_invalid_signal_shapes_and_regexes(signal):
     sig = _signature()
@@ -70,9 +84,20 @@ def test_rejects_invalid_signal_shapes_and_regexes(signal):
         signature_from_dict(sig)
 
 
-@pytest.mark.parametrize("content", ["42", "null", "[]", "", "signatures: []", "signatures: {}",
-                                      "signatures: null", "signatures: []\nversion: 1",
-                                      "signatures: []\nsignatures: []"])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "42",
+        "null",
+        "[]",
+        "",
+        "signatures: []",
+        "signatures: {}",
+        "signatures: null",
+        "signatures: []\nversion: 1",
+        "signatures: []\nsignatures: []",
+    ],
+)
 def test_invalid_yaml_pack_fails_closed(tmp_path, content):
     path = tmp_path / "bad.yaml"
     path.write_text(content)
@@ -198,7 +223,7 @@ def test_regex_iterator_consumes_only_the_remaining_match_quota():
 def test_untrusted_regex_execution_is_preempted(signal_type):
     # A subprocess timeout also bounds the regression test if runtime preemption
     # is accidentally removed. Thread timeouts cannot stop a running regex.
-    code = r'''
+    code = r"""
 import sys
 from shadowscan.signatures.loader import signature_from_dict
 from shadowscan.signatures.matcher import MatchTimeoutError, SignatureIndex
@@ -212,8 +237,10 @@ except MatchTimeoutError:
     print("incomplete")
 else:
     raise AssertionError("expected matching to time out")
-'''
-    result = subprocess.run([sys.executable, "-c", code, signal_type], capture_output=True, text=True, timeout=3)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, signal_type], capture_output=True, text=True, timeout=3
+    )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "incomplete"
 
@@ -231,7 +258,18 @@ def test_language_vocabulary_matches_the_matcher_aliases():
 
 def test_namespace_table_covers_every_category_and_manifest_ecosystems_are_closed():
     assert set(NAMESPACE_CATEGORIES.values()) == VALID_CATEGORIES
-    assert {"pypi", "npm", "nuget", "maven", "go", "cargo", "rubygems", "composer", "conda", "any"} == ECOSYSTEMS
+    assert {
+        "pypi",
+        "npm",
+        "nuget",
+        "maven",
+        "go",
+        "cargo",
+        "rubygems",
+        "composer",
+        "conda",
+        "any",
+    } == ECOSYSTEMS
 
 
 @pytest.mark.parametrize(
@@ -283,7 +321,9 @@ def test_accepts_well_formed_signals(signal):
 
 def test_empty_string_and_glob_helpers():
     assert matches_empty_string("a*") and matches_empty_string("^$") and matches_empty_string("")
-    assert not matches_empty_string(r"\bagent\b") and not matches_empty_string("[")  # loader reports the compile error
+    assert not matches_empty_string(r"\bagent\b") and not matches_empty_string(
+        "["
+    )  # loader reports the compile error
     check_glob("**/[!.]*.md", "ok")
     with pytest.raises(ValueError, match="unbalanced"):
         check_glob("[abc", "bad")
@@ -291,7 +331,11 @@ def test_empty_string_and_glob_helpers():
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("capabilities", ["tool_use"]), ("capabilities", ["tool-use", "tool-use"]), ("tags", ["coding", "coding"])],
+    [
+        ("capabilities", ["tool_use"]),
+        ("capabilities", ["tool-use", "tool-use"]),
+        ("tags", ["coding", "coding"]),
+    ],
 )
 def test_rejects_signature_level_vocabulary_and_duplicates(field, value):
     sig = _signature()
@@ -341,7 +385,9 @@ def test_uniqueness_is_per_signal_so_distinct_signals_may_layer_capabilities():
 
 def _named(sig_id: str, category: str, patterns: list[str], signal_type: str = "code"):
     field = "values" if signal_type == "domain" else "patterns"
-    return signature_from_dict({"id": sig_id, "category": category, "signals": [{"type": signal_type, field: patterns}]})
+    return signature_from_dict(
+        {"id": sig_id, "category": category, "signals": [{"type": signal_type, field: patterns}]}
+    )
 
 
 def test_cross_signature_duplicate_regexes_are_errors_unless_one_side_is_heuristic():
@@ -370,7 +416,10 @@ def test_cli_reports_competing_regexes_in_custom_packs(tmp_path, capsys):
     (tmp_path / "pack.yaml").write_text(yaml.safe_dump({"signatures": [first, second]}))
     assert main(["--no-builtin", str(tmp_path)]) == 1
     err = capsys.readouterr().err
-    assert "Signature validation failed" in err and "competing signatures framework.example, framework.other" in err
+    assert (
+        "Signature validation failed" in err
+        and "competing signatures framework.example, framework.other" in err
+    )
     second["signals"][0]["patterns"] = [r"\bOtherAgent\b"]
     (tmp_path / "pack.yaml").write_text(yaml.safe_dump({"signatures": [first, second]}))
     assert main(["--no-builtin", str(tmp_path)]) == 0

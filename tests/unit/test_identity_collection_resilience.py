@@ -20,18 +20,27 @@ def _auth0_client(client_id="good"):
 
 
 def _okta_app(app_id="good", **overrides):
-    return {"id": app_id, "name": "oidc_client", "label": "Otter.ai worker", "status": "ACTIVE",
-            "signOnMode": "OPENID_CONNECT", **overrides}
+    return {
+        "id": app_id,
+        "name": "oidc_client",
+        "label": "Otter.ai worker",
+        "status": "ACTIVE",
+        "signOnMode": "OPENID_CONNECT",
+        **overrides,
+    }
 
 
-@pytest.mark.parametrize("bad", [
-    {"client_id": "bad", "client_metadata": ["invalid"]},
-    {"client_id": ["bad"]},
-    {"client_id": "bad", "grant_types": [1]},
-    {"client_id": "bad", "callbacks": {"invalid": True}},
-    {"name": "LangGraph agent"},
-    {"error": "denied"},
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"client_id": "bad", "client_metadata": ["invalid"]},
+        {"client_id": ["bad"]},
+        {"client_id": "bad", "grant_types": [1]},
+        {"client_id": "bad", "callbacks": {"invalid": True}},
+        {"name": "LangGraph agent"},
+        {"error": "denied"},
+    ],
+)
 def test_auth0_malformed_neighbor_preserves_valid_client(tmp_path, run_connector, bad):
     source = tmp_path / "clients.json"
     source.write_text(json.dumps([bad, _auth0_client()]))
@@ -41,12 +50,15 @@ def test_auth0_malformed_neighbor_preserves_valid_client(tmp_path, run_connector
     assert bool(ctx.stats.errors) is ("error" in bad)
 
 
-@pytest.mark.parametrize("bad", [
-    {"id": "bad", "settings": ["invalid"]},
-    {"id": "bad", "settings": {"oauthClient": {"grant_types": [1]}}},
-    {"id": {"invalid": True}},
-    {"error": "denied"},
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"id": "bad", "settings": ["invalid"]},
+        {"id": "bad", "settings": {"oauthClient": {"grant_types": [1]}}},
+        {"id": {"invalid": True}},
+        {"error": "denied"},
+    ],
+)
 def test_okta_malformed_neighbor_preserves_valid_app(tmp_path, run_connector, bad):
     source = tmp_path / "apps.json"
     source.write_text(json.dumps([bad, _okta_app()]))
@@ -104,9 +116,10 @@ def test_auth0_page_cap_marks_inventory_incomplete(monkeypatch, run_connector):
         self.http = HttpClient("https://tenant.auth0.com")
 
     monkeypatch.setattr(Auth0Connector, "_auth", auth)
-    responses.get("https://tenant.auth0.com/api/v2/clients", json=[
-        {**_auth0_client(str(i)), "name": f"Example {i}"} for i in range(100)
-    ])
+    responses.get(
+        "https://tenant.auth0.com/api/v2/clients",
+        json=[{**_auth0_client(str(i)), "name": f"Example {i}"} for i in range(100)],
+    )
     responses.get("https://tenant.auth0.com/api/v2/clients", json=[])
     responses.get("https://tenant.auth0.com/api/v2/client-grants", json=[])
     findings, ctx = run_connector("identity.auth0", max_pages=1)
@@ -119,8 +132,11 @@ def test_auth0_page_cap_marks_inventory_incomplete(monkeypatch, run_connector):
 def test_okta_grants_pagination_and_failed_enrichment_keep_apps(run_connector):
     base = "https://tenant.okta.com"
     responses.get(base + "/api/v1/apps", json=[_okta_app("first"), _okta_app("second")])
-    responses.get(base + "/api/v1/apps/first/grants", json=[{"scopeId": "okta.users.read"}],
-                  headers={"Link": f'<{base}/api/v1/apps/first/grants?after=2>; rel="next"'})
+    responses.get(
+        base + "/api/v1/apps/first/grants",
+        json=[{"scopeId": "okta.users.read"}],
+        headers={"Link": f'<{base}/api/v1/apps/first/grants?after=2>; rel="next"'},
+    )
     responses.get(base + "/api/v1/apps/first/grants?after=2", json=[{"scopeId": "okta.groups.manage"}])
     responses.get(base + "/api/v1/apps/first/tokens", status=403)
     responses.get(base + "/api/v1/apps/second/grants", status=403)
@@ -139,10 +155,28 @@ def context(index, **config):
     return ctx
 
 
-@pytest.mark.parametrize("connector_class,method,records", [
-    (Auth0Connector, "_client_finding", [{"client_id": "a"}, {"client_id": "b", "app_type": "non_interactive"}]),
-    (OktaConnector, "_app_finding", [{"id": "a"}, {"id": "b", "signOnMode": "OPENID_CONNECT", "settings": {"oauthClient": {"application_type": "service"}}}]),
-])
+@pytest.mark.parametrize(
+    "connector_class,method,records",
+    [
+        (
+            Auth0Connector,
+            "_client_finding",
+            [{"client_id": "a"}, {"client_id": "b", "app_type": "non_interactive"}],
+        ),
+        (
+            OktaConnector,
+            "_app_finding",
+            [
+                {"id": "a"},
+                {
+                    "id": "b",
+                    "signOnMode": "OPENID_CONNECT",
+                    "settings": {"oauthClient": {"application_type": "service"}},
+                },
+            ],
+        ),
+    ],
+)
 def test_identity_match_timeout_is_isolated(index, monkeypatch, connector_class, method, records):
     ctx = context(index)
     connector = connector_class(ctx)
@@ -171,11 +205,15 @@ def _ctx(index, **config):
 
 def _okta_service_app(app_id: str, **overrides):
     app = {
-        "id": app_id, "name": "oidc_client", "label": f"Service {app_id}", "status": "ACTIVE",
+        "id": app_id,
+        "name": "oidc_client",
+        "label": f"Service {app_id}",
+        "status": "ACTIVE",
         "signOnMode": "OPENID_CONNECT",
         "settings": {"oauthClient": {"application_type": "service", "grant_types": ["client_credentials"]}},
         "credentials": {"oauthClient": {"client_id": f"client-{app_id}"}},
-        "_grants": [{"scopeId": "okta.users.read"}], "_tokens": [],
+        "_grants": [{"scopeId": "okta.users.read"}],
+        "_tokens": [],
     }
     app.update(overrides)
     return app
@@ -184,8 +222,11 @@ def _okta_service_app(app_id: str, **overrides):
 def test_okta_isolates_a_malformed_application_record(index):
     ctx = _ctx(index)
     connector = OktaConnector(ctx)
-    records = [_okta_service_app("a"), _okta_service_app("b", settings="not-an-object"),
-               _okta_service_app("c")]
+    records = [
+        _okta_service_app("a"),
+        _okta_service_app("b", settings="not-an-object"),
+        _okta_service_app("c"),
+    ]
     findings = list(connector.analyze(records))
     assert [f.title for f in findings] == ["Okta service app: Service a", "Okta service app: Service c"]
     assert ctx.stats.incomplete and any("malformed application record" in w for w in ctx.stats.warnings)
@@ -194,7 +235,13 @@ def test_okta_isolates_a_malformed_application_record(index):
 def test_auth0_isolates_a_malformed_client_record(index):
     ctx = _ctx(index)
     connector = Auth0Connector(ctx)
-    good = {"_kind": "client", "client_id": "c1", "name": "support-agent-m2m", "app_type": "non_interactive", "grant_types": ["client_credentials"]}
+    good = {
+        "_kind": "client",
+        "client_id": "c1",
+        "name": "support-agent-m2m",
+        "app_type": "non_interactive",
+        "grant_types": ["client_credentials"],
+    }
     bad = {**good, "client_id": "c2", "name": "broken", "client_metadata": ["x"]}
     findings = list(connector.analyze([good, bad, {**good, "client_id": "c3", "name": "other-m2m"}]))
     assert len(findings) == 2

@@ -74,7 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("directories", nargs="*", help="Additional signature pack directories")
     parser.add_argument("--no-builtin", action="store_true", help="Validate only the supplied directories")
     parser.add_argument(
-        "--allow-signature-override", action="store_true",
+        "--allow-signature-override",
+        action="store_true",
         help="Allow custom packs to replace built-in signature IDs",
     )
     args = parser.parse_args(argv)
@@ -82,7 +83,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--no-builtin requires at least one directory")
     try:
         signatures = load_signatures(
-            args.directories, include_builtin=not args.no_builtin,
+            args.directories,
+            include_builtin=not args.no_builtin,
             allow_override=args.allow_signature_override,
         )
         if not signatures:

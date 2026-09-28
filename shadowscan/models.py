@@ -63,8 +63,11 @@ def _invalidate_on_change(instance: Any, name: str, value: Any) -> None:
     same object changes nothing the digest does not already cover, so a
     connector re-stamping its own name keeps the finding clean.
     """
-    if name != "_clean_digest" and getattr(instance, "_clean_digest", None) is not None \
-            and getattr(instance, name, _UNSET) is not value:
+    if (
+        name != "_clean_digest"
+        and getattr(instance, "_clean_digest", None) is not None
+        and getattr(instance, name, _UNSET) is not value
+    ):
         object.__setattr__(instance, "_clean_digest", None)
     object.__setattr__(instance, name, value)
 
@@ -99,8 +102,16 @@ def _validate_number(
 
 
 _TEXT_FIELDS = (
-    "provider", "account", "region", "owner", "registry_match", "first_seen", "last_seen",
-    "id", "identity_discriminator", "identity_schema",
+    "provider",
+    "account",
+    "region",
+    "owner",
+    "registry_match",
+    "first_seen",
+    "last_seen",
+    "id",
+    "identity_discriminator",
+    "identity_schema",
 )
 _TEXT_LIST_FIELDS = ("frameworks", "model_providers", "models", "capabilities", "permissions", "tags")
 
@@ -310,10 +321,20 @@ class Finding:
                 f"{self.provider}|{self.account}|{self.resource}"
             )
         else:
-            raw = json.dumps([
-                self.identity_schema, self.surface.value, self.connector, self.provider,
-                self.account, self.region, self.resource, self.identity_discriminator,
-            ], separators=(",", ":"), ensure_ascii=True)
+            raw = json.dumps(
+                [
+                    self.identity_schema,
+                    self.surface.value,
+                    self.connector,
+                    self.provider,
+                    self.account,
+                    self.region,
+                    self.resource,
+                    self.identity_discriminator,
+                ],
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
         return "ss-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def sanitize(self) -> None:
@@ -329,8 +350,14 @@ class Finding:
         if _verified_clean(self):
             return
         identity_names = (
-            "connector", "resource", "resource_type", "provider", "account", "region",
-            "identity_discriminator", "identity_schema",
+            "connector",
+            "resource",
+            "resource_type",
+            "provider",
+            "account",
+            "region",
+            "identity_discriminator",
+            "identity_schema",
         )
         identity_before = tuple(getattr(self, name) for name in identity_names)
         # A generated digest is an opaque identifier, even if a one-character
@@ -338,25 +365,40 @@ class Finding:
         # arbitrary IDs must still pass through the sanitizer.
         generated_id = self.id == self.compute_id()
         trusted_schema = self.identity_schema in {FINDING_IDENTITY_SCHEMA, LEGACY_FINDING_IDENTITY_SCHEMA}
-        names = [name for name in _FINDING_SCALAR_FIELDS
-                 if not (generated_id and name == "id")
-                 and not (trusted_schema and name == "identity_schema")]
-        values, evidence_values, risk_values = sanitize((
-            [(getattr(self, name),) for name in names],
-            [[(getattr(ev, name),) for name in _EVIDENCE_FIELDS] for ev in self.evidence],
-            [[(factor.id,), (factor.description,)] for factor in self.risk.factors],
-        ))
+        names = [
+            name
+            for name in _FINDING_SCALAR_FIELDS
+            if not (generated_id and name == "id") and not (trusted_schema and name == "identity_schema")
+        ]
+        values, evidence_values, risk_values = sanitize(
+            (
+                [(getattr(self, name),) for name in names],
+                [[(getattr(ev, name),) for name in _EVIDENCE_FIELDS] for ev in self.evidence],
+                [[(factor.id,), (factor.description,)] for factor in self.risk.factors],
+            )
+        )
         for name, (value,) in zip(names, values, strict=True):
             setattr(self, name, value)
-        changed = {name for name, original in zip(identity_names, identity_before, strict=True)
-                   if getattr(self, name) != original}
+        changed = {
+            name
+            for name, original in zip(identity_names, identity_before, strict=True)
+            if getattr(self, name) != original
+        }
         # A verified raw-identity digest distinguishes redacted resources and
         # scopes; registry matching already rejects their placeholders. Never
         # allow a changed connector/type/discriminator or an arbitrary ID to
         # yield a misleading or colliding finding.
-        if self.id == "[REDACTED]" or changed & {
-            "connector", "resource_type", "identity_discriminator", "identity_schema",
-        } or (changed and not generated_id):
+        if (
+            self.id == "[REDACTED]"
+            or changed
+            & {
+                "connector",
+                "resource_type",
+                "identity_discriminator",
+                "identity_schema",
+            }
+            or (changed and not generated_id)
+        ):
             raise SanitizationLimitError("finding identity includes a credential; finding omitted")
         for ev, clean in zip(self.evidence, evidence_values, strict=True):
             for name, (value,) in zip(_EVIDENCE_FIELDS, clean, strict=True):
@@ -466,8 +508,16 @@ class Finding:
             score=risk.get("score", 0),
             level=RiskLevel(risk.get("level", "info")),
             danger_score=risk.get("danger_score", 0),
-            factors=[RiskFactor(**{name: value for name, value in factor.items()
-                                   if name in {"id", "description", "weight"}}) for factor in factors],
+            factors=[
+                RiskFactor(
+                    **{
+                        name: value
+                        for name, value in factor.items()
+                        if name in {"id", "description", "weight"}
+                    }
+                )
+                for factor in factors
+            ],
         )
         evidence = d.get("evidence", [])
         if not isinstance(evidence, list) or any(not isinstance(item, dict) for item in evidence):

@@ -26,7 +26,10 @@ def _live(index, cls, responses, **config):
     return connector
 
 
-@pytest.mark.parametrize("page", [{}, {"records": None}, {"records": [], "done": False}, {"records": [], "done": True, "error": "denied"}])
+@pytest.mark.parametrize(
+    "page",
+    [{}, {"records": None}, {"records": [], "done": False}, {"records": [], "done": True, "error": "denied"}],
+)
 def test_salesforce_invalid_or_truncated_page_is_incomplete(index, monkeypatch, page):
     monkeypatch.setattr(salesforce, "QUERIES", {"BotDefinition": ("data", "query")})
     connector = _live(index, salesforce.SalesforceConnector, [page])
@@ -35,14 +38,28 @@ def test_salesforce_invalid_or_truncated_page_is_incomplete(index, monkeypatch, 
     assert connector.ctx.stats.warnings and not connector.ctx.stats.errors
 
 
-@pytest.mark.parametrize("failure", [HttpError(403, "https://example.test/opaque-secret"), ConnectionError("opaque-secret")])
+@pytest.mark.parametrize(
+    "failure", [HttpError(403, "https://example.test/opaque-secret"), ConnectionError("opaque-secret")]
+)
 def test_salesforce_later_page_failure_preserves_previous_records(index, monkeypatch, failure):
-    monkeypatch.setattr(salesforce, "QUERIES", {"BotDefinition": ("data", "query"), "GenAiPlannerDefinition": ("tooling", "query")})
-    connector = _live(index, salesforce.SalesforceConnector, [
-        {"records": [{"Id": "bot-1", "DeveloperName": "Assistant"}], "done": False, "nextRecordsUrl": "/next"},
-        failure,
-        {"records": [{"Id": "planner-1", "DeveloperName": "Planner"}], "done": True},
-    ])
+    monkeypatch.setattr(
+        salesforce,
+        "QUERIES",
+        {"BotDefinition": ("data", "query"), "GenAiPlannerDefinition": ("tooling", "query")},
+    )
+    connector = _live(
+        index,
+        salesforce.SalesforceConnector,
+        [
+            {
+                "records": [{"Id": "bot-1", "DeveloperName": "Assistant"}],
+                "done": False,
+                "nextRecordsUrl": "/next",
+            },
+            failure,
+            {"records": [{"Id": "planner-1", "DeveloperName": "Planner"}], "done": True},
+        ],
+    )
     findings = connector.run()
     assert {f.resource for f in findings} == {"salesforce:bot:bot-1", "salesforce:genai-planner:planner-1"}
     assert connector.ctx.stats.incomplete
@@ -53,8 +70,17 @@ def test_salesforce_later_page_failure_preserves_previous_records(index, monkeyp
 @pytest.mark.parametrize("max_pages,expected_calls", [(1, 1), (10, 2)])
 def test_salesforce_page_limit_and_repeated_links_are_bounded(index, monkeypatch, max_pages, expected_calls):
     monkeypatch.setattr(salesforce, "QUERIES", {"BotDefinition": ("data", "query")})
-    page = {"records": [{"Id": "bot-1", "DeveloperName": "Assistant"}], "done": False, "nextRecordsUrl": "/next"}
-    connector = _live(index, salesforce.SalesforceConnector, [page, page, RuntimeError("guard against unbounded loop")], max_pages=max_pages)
+    page = {
+        "records": [{"Id": "bot-1", "DeveloperName": "Assistant"}],
+        "done": False,
+        "nextRecordsUrl": "/next",
+    }
+    connector = _live(
+        index,
+        salesforce.SalesforceConnector,
+        [page, page, RuntimeError("guard against unbounded loop")],
+        max_pages=max_pages,
+    )
     findings = connector.run()
     assert len(findings) == 1
     assert connector.http.get_json.call_count == expected_calls
@@ -62,7 +88,9 @@ def test_salesforce_page_limit_and_repeated_links_are_bounded(index, monkeypatch
     assert not connector.ctx.stats.errors
 
 
-@pytest.mark.parametrize("page", [{}, {"result": None}, {"result": "invalid"}, {"result": [], "error": "denied"}])
+@pytest.mark.parametrize(
+    "page", [{}, {"result": None}, {"result": "invalid"}, {"result": [], "error": "denied"}]
+)
 def test_servicenow_invalid_page_is_incomplete(index, monkeypatch, page):
     monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
     connector = _live(index, servicenow.ServiceNowConnector, [page])
@@ -79,7 +107,12 @@ def test_servicenow_page_limit_and_repeated_pages_are_bounded(index, monkeypatch
     match_names = Mock(return_value=[])
     monkeypatch.setattr(servicenow, "name_matches", match_names)
     page = {"result": [{"sys_id": f"agent-{number}", "name": "Assistant"} for number in range(500)]}
-    connector = _live(index, servicenow.ServiceNowConnector, [page, page, RuntimeError("guard against unbounded loop")], max_pages=max_pages)
+    connector = _live(
+        index,
+        servicenow.ServiceNowConnector,
+        [page, page, RuntimeError("guard against unbounded loop")],
+        max_pages=max_pages,
+    )
     findings = connector.run()
     assert not connector.ctx.stats.errors, connector.ctx.stats.errors
     assert len(findings) == 500
@@ -114,17 +147,24 @@ def test_servicenow_name_matching_timeout_preserves_native_agents(index, monkeyp
     assert "untrusted display name" not in " ".join(connector.ctx.stats.warnings)
 
 
-def test_servicenow_flow_name_timeout_preserves_accumulated_native_agents(tmp_path, run_connector, monkeypatch):
+def test_servicenow_flow_name_timeout_preserves_accumulated_native_agents(
+    tmp_path, run_connector, monkeypatch
+):
     match_names = Mock(side_effect=MatchTimeoutError("opaque input must not be logged"))
     monkeypatch.setattr(servicenow, "name_matches", match_names)
     source = tmp_path / "servicenow.json"
-    source.write_text(json.dumps([
-        {"_table": "sn_aia_agent", "sys_id": "agent-1", "name": "Assistant"},
-        {"_table": "sys_hub_flow", "sys_id": "flow-1", "name": "Now Assist flow"},
-    ]))
+    source.write_text(
+        json.dumps(
+            [
+                {"_table": "sn_aia_agent", "sys_id": "agent-1", "name": "Assistant"},
+                {"_table": "sys_hub_flow", "sys_id": "flow-1", "name": "Now Assist flow"},
+            ]
+        )
+    )
     findings, ctx = run_connector("lowcode.servicenow", input=str(source))
     assert {finding.resource for finding in findings} == {
-        "servicenow:sn_aia_agent:agent-1", "servicenow:sys_hub_flow:flow-1",
+        "servicenow:sn_aia_agent:agent-1",
+        "servicenow:sys_hub_flow:flow-1",
     }
     assert match_names.call_count == 1
     assert ctx.stats.incomplete and len(ctx.stats.warnings) == 1 and not ctx.stats.errors
@@ -136,11 +176,15 @@ def test_servicenow_oauth_timeout_preserves_accumulated_native_agents(tmp_path, 
     match_app = Mock(side_effect=MatchTimeoutError("opaque input must not be logged"))
     monkeypatch.setattr(servicenow, "assess_app", match_app)
     source = tmp_path / "servicenow.json"
-    source.write_text(json.dumps([
-        {"_table": "sn_aia_agent", "sys_id": "agent-1", "name": "Assistant"},
-        {"_table": "oauth_entity", "sys_id": "oauth-1", "name": "AI app"},
-        {"_table": "oauth_entity", "sys_id": "oauth-2", "name": "AI app"},
-    ]))
+    source.write_text(
+        json.dumps(
+            [
+                {"_table": "sn_aia_agent", "sys_id": "agent-1", "name": "Assistant"},
+                {"_table": "oauth_entity", "sys_id": "oauth-1", "name": "AI app"},
+                {"_table": "oauth_entity", "sys_id": "oauth-2", "name": "AI app"},
+            ]
+        )
+    )
     findings, ctx = run_connector("lowcode.servicenow", input=str(source))
     assert {finding.resource for finding in findings} == {"servicenow:sn_aia_agent:agent-1"}
     assert match_app.call_count == 1
@@ -150,10 +194,18 @@ def test_servicenow_oauth_timeout_preserves_accumulated_native_agents(tmp_path, 
 
 def test_servicenow_native_table_export_keeps_valid_neighbors(tmp_path, run_connector):
     source = tmp_path / "table.json"
-    source.write_text(json.dumps({"table": "sn_aia_agent", "result": [
-        "bad-row", {"sys_id": "bad", "description": ["invalid"]},
-        {"sys_id": "agent-1", "name": "Assistant"},
-    ]}))
+    source.write_text(
+        json.dumps(
+            {
+                "table": "sn_aia_agent",
+                "result": [
+                    "bad-row",
+                    {"sys_id": "bad", "description": ["invalid"]},
+                    {"sys_id": "agent-1", "name": "Assistant"},
+                ],
+            }
+        )
+    )
     findings, ctx = run_connector("lowcode.servicenow", input=str(source))
     assert [f.resource for f in findings] == ["servicenow:sn_aia_agent:agent-1"]
     assert ctx.stats.incomplete and not ctx.stats.errors
@@ -161,11 +213,25 @@ def test_servicenow_native_table_export_keeps_valid_neighbors(tmp_path, run_conn
 
 def test_salesforce_malformed_token_keeps_bot_and_valid_token(tmp_path, run_connector):
     source = tmp_path / "salesforce.json"
-    source.write_text(json.dumps([
-        {"attributes": {"type": "BotDefinition"}, "Id": "bot-1", "DeveloperName": "Assistant"},
-        {"attributes": {"type": "OauthToken"}, "AppName": "Claude", "UserId": "user-1", "UseCount": "not-a-count"},
-        {"attributes": {"type": "OauthToken"}, "AppName": "Claude", "UserId": "user-2", "UseCount": 2},
-    ]))
+    source.write_text(
+        json.dumps(
+            [
+                {"attributes": {"type": "BotDefinition"}, "Id": "bot-1", "DeveloperName": "Assistant"},
+                {
+                    "attributes": {"type": "OauthToken"},
+                    "AppName": "Claude",
+                    "UserId": "user-1",
+                    "UseCount": "not-a-count",
+                },
+                {
+                    "attributes": {"type": "OauthToken"},
+                    "AppName": "Claude",
+                    "UserId": "user-2",
+                    "UseCount": 2,
+                },
+            ]
+        )
+    )
     findings, ctx = run_connector("lowcode.salesforce", input=str(source))
     assert len(findings) == 2
     assert any(f.resource == "salesforce:bot:bot-1" for f in findings)
@@ -174,10 +240,20 @@ def test_salesforce_malformed_token_keeps_bot_and_valid_token(tmp_path, run_conn
 
 def test_servicenow_reference_uses_sys_id_before_display_name(tmp_path, run_connector):
     source = tmp_path / "servicenow.json"
-    source.write_text(json.dumps([
-        {"_table": "sn_aia_agent", "sys_id": "agent-1", "name": "New display name"},
-        {"_table": "sn_aia_tool", "sys_id": "tool-1", "name": "Execute", "tool_type": "script", "agent": {"value": "agent-1", "display_value": "Old display name"}},
-    ]))
+    source.write_text(
+        json.dumps(
+            [
+                {"_table": "sn_aia_agent", "sys_id": "agent-1", "name": "New display name"},
+                {
+                    "_table": "sn_aia_tool",
+                    "sys_id": "tool-1",
+                    "name": "Execute",
+                    "tool_type": "script",
+                    "agent": {"value": "agent-1", "display_value": "Old display name"},
+                },
+            ]
+        )
+    )
     findings, ctx = run_connector("lowcode.servicenow", input=str(source))
     assert len(findings) == 1 and not ctx.stats.incomplete
     assert "code-exec" in findings[0].capabilities
@@ -187,18 +263,28 @@ def test_servicenow_reference_uses_sys_id_before_display_name(tmp_path, run_conn
 @pytest.mark.parametrize("markers", [{"done": False}, {"done": "true"}, {"nextRecordsUrl": "/next"}])
 def test_salesforce_offline_query_continuation_preserves_partial_findings(tmp_path, run_connector, markers):
     source = tmp_path / "query.json"
-    source.write_text(json.dumps({"records": [
-        {"attributes": {"type": "BotDefinition"}, "Id": "bot-1", "DeveloperName": "Assistant"},
-    ], **markers}))
+    source.write_text(
+        json.dumps(
+            {
+                "records": [
+                    {"attributes": {"type": "BotDefinition"}, "Id": "bot-1", "DeveloperName": "Assistant"},
+                ],
+                **markers,
+            }
+        )
+    )
     findings, ctx = run_connector("lowcode.salesforce", input=str(source))
     assert [f.resource for f in findings] == ["salesforce:bot:bot-1"]
     assert ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("connector,empty", [
-    ("lowcode.salesforce", {"records": [], "done": True}),
-    ("lowcode.servicenow", {"table": "sn_aia_agent", "result": []}),
-])
+@pytest.mark.parametrize(
+    "connector,empty",
+    [
+        ("lowcode.salesforce", {"records": [], "done": True}),
+        ("lowcode.servicenow", {"table": "sn_aia_agent", "result": []}),
+    ],
+)
 def test_explicit_empty_provider_exports_remain_complete(tmp_path, run_connector, connector, empty):
     source = tmp_path / "empty.json"
     source.write_text(json.dumps(empty))
@@ -208,23 +294,39 @@ def test_explicit_empty_provider_exports_remain_complete(tmp_path, run_connector
 
 def test_salesforce_normal_query_pagination_is_complete(index, monkeypatch):
     monkeypatch.setattr(salesforce, "QUERIES", {"BotDefinition": ("data", "query")})
-    connector = _live(index, salesforce.SalesforceConnector, [
-        {"records": [{"Id": "bot-1", "DeveloperName": "Assistant"}], "done": False, "nextRecordsUrl": "/next"},
-        {"records": [{"Id": "bot-2", "DeveloperName": "Assistant"}], "done": True},
-    ])
+    connector = _live(
+        index,
+        salesforce.SalesforceConnector,
+        [
+            {
+                "records": [{"Id": "bot-1", "DeveloperName": "Assistant"}],
+                "done": False,
+                "nextRecordsUrl": "/next",
+            },
+            {"records": [{"Id": "bot-2", "DeveloperName": "Assistant"}], "done": True},
+        ],
+    )
     assert len(connector.run()) == 2
     assert not connector.ctx.stats.incomplete
     assert connector.http.get_json.call_args.kwargs == {"params": None}
 
 
-@pytest.mark.parametrize("graph", [{}, {"nodes": None}, {"nodes": {}}, {"nodes": [] , "error": "denied"}])
+@pytest.mark.parametrize("graph", [{}, {"nodes": None}, {"nodes": {}}, {"nodes": [], "error": "denied"}])
 def test_n8n_missing_or_invalid_graph_preserves_next_workflow(index, graph):
     connector = N8nConnector(ConnectorContext(index=index))
-    connector.collect = Mock(return_value=iter([
-        {"id": "bad", "name": "unknown", **graph},
-        {"id": "good", "name": "assistant", "nodes": [{"type": "@n8n/n8n-nodes-langchain.agent", "name": "Agent"}]},
-    ]))
-    finding, = connector.run()
+    connector.collect = Mock(
+        return_value=iter(
+            [
+                {"id": "bad", "name": "unknown", **graph},
+                {
+                    "id": "good",
+                    "name": "assistant",
+                    "nodes": [{"type": "@n8n/n8n-nodes-langchain.agent", "name": "Agent"}],
+                },
+            ]
+        )
+    )
+    (finding,) = connector.run()
     assert finding.resource == "n8n:workflow:good"
     assert connector.ctx.stats.incomplete and not connector.ctx.stats.errors
 
@@ -266,11 +368,15 @@ def test_servicenow_pagination_stops_on_a_repeated_page(index, monkeypatch):
     monkeypatch.setattr(connector, "_auth", lambda: None)
     connector.http = Mock()
     # Every response is a fresh object, as it would be from the transport.
-    connector.http.get_json.side_effect = lambda *args, **kwargs: {"result": [{"sys_id": str(i)} for i in range(kwargs["params"]["sysparm_limit"])]}
+    connector.http.get_json.side_effect = lambda *args, **kwargs: {
+        "result": [{"sys_id": str(i)} for i in range(kwargs["params"]["sysparm_limit"])]
+    }
     records = list(connector.collect())
     assert len(records) == 500
     assert connector.http.get_json.call_count == 2
-    assert ctx.stats.incomplete and any("repeated pagination page" in warning for warning in ctx.stats.warnings)
+    assert ctx.stats.incomplete and any(
+        "repeated pagination page" in warning for warning in ctx.stats.warnings
+    )
 
 
 def test_make_missing_blueprint_and_agents_marks_scan_incomplete(monkeypatch, run_connector):
@@ -280,7 +386,12 @@ def test_make_missing_blueprint_and_agents_marks_scan_incomplete(monkeypatch, ru
 
         def get_json(self, path, params=None):
             if path == "/scenarios":
-                return {"scenarios": [{"id": "with-blueprint", "name": "Classification flow"}, {"id": "without-blueprint", "name": "Routine backup"}]}
+                return {
+                    "scenarios": [
+                        {"id": "with-blueprint", "name": "Classification flow"},
+                        {"id": "without-blueprint", "name": "Routine backup"},
+                    ]
+                }
             if path == "/scenarios/with-blueprint/blueprint":
                 return {"response": {"blueprint": {"flow": [{"module": "openai:CreateCompletion"}]}}}
             if path == "/scenarios/without-blueprint/blueprint":
@@ -290,7 +401,9 @@ def test_make_missing_blueprint_and_agents_marks_scan_incomplete(monkeypatch, ru
             raise AssertionError(path)
 
     monkeypatch.setattr(automation, "HttpClient", MakeAPI)
-    findings, ctx = run_connector("lowcode.make", api_url="https://eu1.make.com/api/v2", token="dummy", team_id="team-1")
+    findings, ctx = run_connector(
+        "lowcode.make", api_url="https://eu1.make.com/api/v2", token="dummy", team_id="team-1"
+    )
     assert any(f.resource == "make:scenario:with-blueprint" for f in findings)
     assert ctx.stats.incomplete
     assert not ctx.stats.errors
@@ -299,7 +412,12 @@ def test_make_missing_blueprint_and_agents_marks_scan_incomplete(monkeypatch, ru
 
 
 def test_make_invalid_page_is_incomplete_not_fatal(index, monkeypatch):
-    connector = MakeConnector(ConnectorContext(config={"api_url": "https://eu1.make.com/api/v2", "token": "synthetic", "team_id": "1"}, index=index))
+    connector = MakeConnector(
+        ConnectorContext(
+            config={"api_url": "https://eu1.make.com/api/v2", "token": "synthetic", "team_id": "1"},
+            index=index,
+        )
+    )
     http = Mock()
     http.get_json.side_effect = ValueError("Invalid JSON response")
     monkeypatch.setattr("shadowscan.connectors.lowcode.automation.HttpClient", Mock(return_value=http))

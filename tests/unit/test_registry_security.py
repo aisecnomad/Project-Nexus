@@ -2,18 +2,38 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from shadowscan import registry
 from shadowscan.models import Finding, Kind, Surface
 from shadowscan.registry import Inventory, InventoryEntry, card_stub_for
+from shadowscan.utils import identity
 
 
 def finding(**kwargs):
-    return Finding(surface=Surface.CLOUD, connector="aws.bedrock", kind=Kind.AGENT,
-                   title="Agent: trusted-agent", resource="arn:aws:bedrock:us-east-1:111111111111:agent/OTHER",
-                   resource_type="agent", provider="aws", account="111111111111", region="us-east-1", **kwargs)
+    return Finding(
+        surface=Surface.CLOUD,
+        connector="aws.bedrock",
+        kind=Kind.AGENT,
+        title="Agent: trusted-agent",
+        resource="arn:aws:bedrock:us-east-1:111111111111:agent/OTHER",
+        resource_type="agent",
+        provider="aws",
+        account="111111111111",
+        region="us-east-1",
+        **kwargs,
+    )
 
 
 def test_spoofed_name_and_agent_id_only_suggest_review():
-    inv = Inventory([InventoryEntry(agent_id="trusted-agent", owner="Approved Team", resources=["arn:aws:bedrock:*:111111111111:agent/APPROVED"], names=["trusted-agent"])])
+    inv = Inventory(
+        [
+            InventoryEntry(
+                agent_id="trusted-agent",
+                owner="Approved Team",
+                resources=["arn:aws:bedrock:*:111111111111:agent/APPROVED"],
+                names=["trusted-agent"],
+            )
+        ]
+    )
     item = finding(metadata={"agent_name": "trusted-agent"})
     assert inv.match(item) is None
     assert item.metadata["registry_suggestions"] == ["trusted-agent"]
@@ -23,13 +43,25 @@ def test_spoofed_name_and_agent_id_only_suggest_review():
 
 
 def test_explicit_resource_requires_all_scope_constraints():
-    entry = InventoryEntry(agent_id="trusted-agent", resources=["arn:aws:bedrock:*:111111111111:agent/*"],
-                           surfaces=["cloud"], providers=["aws"], accounts=["111111111111"], regions=["us-east-1"])
+    entry = InventoryEntry(
+        agent_id="trusted-agent",
+        resources=["arn:aws:bedrock:*:111111111111:agent/*"],
+        surfaces=["cloud"],
+        providers=["aws"],
+        accounts=["111111111111"],
+        regions=["us-east-1"],
+    )
     inv = Inventory([entry])
     item = finding()
     assert inv.match(item) is entry
-    for attribute, wrong in (("surface", Surface.CODE), ("provider", "other"), ("account", "222222222222"),
-                             ("account", None), ("region", "eu-west-1"), ("region", None)):
+    for attribute, wrong in (
+        ("surface", Surface.CODE),
+        ("provider", "other"),
+        ("account", "222222222222"),
+        ("account", None),
+        ("region", "eu-west-1"),
+        ("region", None),
+    ):
         saved = getattr(item, attribute)
         setattr(item, attribute, wrong)
         assert inv.match(item) is None
@@ -47,14 +79,21 @@ def test_resource_matching_is_case_sensitive_and_ambiguity_fails_closed():
 
 
 def test_inventory_constraints_load_from_card_simple_and_csv(tmp_path):
-    values = {"surfaces": ["cloud"], "providers": ["aws"], "accounts": ["111111111111"], "regions": ["us-east-1"]}
+    values = {
+        "surfaces": ["cloud"],
+        "providers": ["aws"],
+        "accounts": ["111111111111"],
+        "regions": ["us-east-1"],
+    }
     simple = Inventory._entry_from_simple({"id": "x", **values}, Path("inventory.yaml"))
     card = Inventory._entry_from_card({"metadata": {"agent_id": "x"}, "discovery": values}, Path("card.yaml"))
     path = tmp_path / "inventory.csv"
     path.write_text("agent_id,surfaces,providers,accounts,regions\nx,cloud,aws,111111111111,us-east-1\n")
     csv_entry = Inventory.load([path]).entries[0]
     for entry in (simple, card, csv_entry):
-        assert entry.surfaces == ["cloud"] and entry.providers == ["aws"] and entry.accounts == ["111111111111"]
+        assert (
+            entry.surfaces == ["cloud"] and entry.providers == ["aws"] and entry.accounts == ["111111111111"]
+        )
         assert entry.regions == ["us-east-1"]
     stub = card_stub_for(finding())
     assert stub["discovery"]["accounts"] == ["111111111111"]
@@ -66,8 +105,14 @@ def test_name_only_inventory_never_auto_approves():
 
 
 def _finding():
-    return Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-                   title="sample", resource="repo:sample", resource_type="repository")
+    return Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="sample",
+        resource="repo:sample",
+        resource_type="repository",
+    )
 
 
 def test_inventory_pattern_cache_is_bounded_and_does_not_confer_approval(monkeypatch):
@@ -83,16 +128,64 @@ def test_inventory_pattern_cache_is_bounded_and_does_not_confer_approval(monkeyp
 
 
 def _bedrock_finding(**kwargs) -> Finding:
-    base = dict(surface=Surface.CLOUD, connector="cloud.aws", kind=Kind.AGENT,
-                title="Bedrock Agent: ops", resource="arn:aws:bedrock:us-east-1:123456789012:agent/A1",
-                resource_type="bedrock-agent")
+    base = dict(
+        surface=Surface.CLOUD,
+        connector="cloud.aws",
+        kind=Kind.AGENT,
+        title="Bedrock Agent: ops",
+        resource="arn:aws:bedrock:us-east-1:123456789012:agent/A1",
+        resource_type="bedrock-agent",
+    )
     base.update(kwargs)
     return Finding(**base)
 
 
 def test_inventory_name_patterns_are_reused(tmp_path):
-    (tmp_path / "agents.yaml").write_text("agents:\n  - id: reviewer\n    names: [coderabbitai]\n    resources: ['x:*']\n")
+    (tmp_path / "agents.yaml").write_text(
+        "agents:\n  - id: reviewer\n    names: [coderabbitai]\n    resources: ['x:*']\n"
+    )
     inventory = Inventory.load([str(tmp_path)])
     for _ in range(3):
         assert inventory.suggest(_bedrock_finding(title="Slack app: CodeRabbitAI", resource="slack:app:1"))
     assert set(inventory._name_patterns) == {"reviewer", "coderabbitai"}
+
+
+def test_card_account_scope_requirement_is_a_real_extension_point(monkeypatch):
+    """requires_card_account_scope must be a live lookup, not a renamed hardcode.
+
+    Registering a new provider (without touching registry.py) must change
+    _scope_matches' behavior for that provider, exactly as it already does
+    for google-workspace.
+    """
+    assert identity.requires_card_account_scope("aws") is False
+    assert identity.requires_card_account_scope("google-workspace") is True
+    assert identity.requires_card_account_scope("acme-saas") is False
+
+    unscoped_entry = InventoryEntry(
+        agent_id="approved", providers=["acme-saas"], resources=["acme-saas:client:*"]
+    )
+    item = Finding(
+        surface=Surface.SAAS,
+        connector="saas.acme",
+        kind=Kind.AGENT,
+        title="Agent: acme bot",
+        resource="acme-saas:client:shared-vendor-id",
+        resource_type="oauth-client",
+        provider="acme-saas",
+    )
+    assert Inventory([unscoped_entry]).match(item) is not None
+
+    # registry._scope_matches calls the same function object imported from
+    # identity, so patching the set it reads is enough to prove the lookup
+    # is live rather than baked in at import time.
+    monkeypatch.setattr(
+        identity, "PROVIDERS_REQUIRING_CARD_ACCOUNT_SCOPE", frozenset({"google-workspace", "acme-saas"})
+    )
+    assert registry.requires_card_account_scope("acme-saas") is True
+    assert Inventory([unscoped_entry]).match(item) is None
+
+    scoped_entry = InventoryEntry(
+        agent_id="approved", providers=["acme-saas"], accounts=["tenant-1"], resources=["acme-saas:client:*"]
+    )
+    item.account = "tenant-1"
+    assert Inventory([scoped_entry]).match(item) is not None

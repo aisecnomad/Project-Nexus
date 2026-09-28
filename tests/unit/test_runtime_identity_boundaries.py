@@ -16,24 +16,35 @@ from shadowscan.models import Finding, Kind, Surface
 
 def _code(resource="github:acme/agent", **identity):
     return Finding(
-        surface=Surface.CODE, connector="code.filesystem", kind=Kind.FRAMEWORK_USAGE,
-        title="LangChain dependencies", resource=resource, resource_type="project",
-        frameworks=["framework.langchain"], **identity,
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.FRAMEWORK_USAGE,
+        title="LangChain dependencies",
+        resource=resource,
+        resource_type="project",
+        frameworks=["framework.langchain"],
+        **identity,
     )
 
 
 def _event():
     return {
-        "service": "workload-one", "model": "gpt-4o", "provider": "openai",
-        "user_agent": "langchain/0.3", "timestamp": "2026-01-01T00:00:00Z",
+        "service": "workload-one",
+        "model": "gpt-4o",
+        "provider": "openai",
+        "user_agent": "langchain/0.3",
+        "timestamp": "2026-01-01T00:00:00Z",
         "environment": "production",
     }
 
 
 def _gateway(index, resource="github:acme/agent"):
-    config = {"input": "export.jsonl", "correlation_bindings": [
-        {"code_resource": resource, "caller": "principal:workload-one", "scope": {}},
-    ]}
+    config = {
+        "input": "export.jsonl",
+        "correlation_bindings": [
+            {"code_resource": resource, "caller": "principal:workload-one", "scope": {}},
+        ],
+    }
     findings = list(GatewayLogConnector(ConnectorContext(config=config, index=index)).analyze([_event()]))
     for finding in findings:
         finding.sanitize()
@@ -42,8 +53,10 @@ def _gateway(index, resource="github:acme/agent"):
 
 def test_engine_never_attributes_colliding_redacted_resource_bindings(tmp_path, index):
     specs = []
-    resources = ["github:acme/private?api_key=first-private-resource-value",
-                 "github:acme/private?api_key=second-private-resource-value"]
+    resources = [
+        "github:acme/private?api_key=first-private-resource-value",
+        "github:acme/private?api_key=second-private-resource-value",
+    ]
     for number, resource in enumerate(resources):
         repo = tmp_path / f"repo-{number}"
         repo.mkdir()
@@ -51,11 +64,17 @@ def test_engine_never_attributes_colliding_redacted_resource_bindings(tmp_path, 
         specs.append(ConnectorSpec("code.filesystem", {"path": str(repo)}, label=resource))
     export = tmp_path / "gateway.jsonl"
     export.write_text(json.dumps(_event()) + "\n")
-    specs.append(ConnectorSpec("gateway.logs", {
-        "input": str(export), "correlation_bindings": [
-            {"code_resource": resources[0], "caller": "principal:workload-one", "scope": {}},
-        ],
-    }))
+    specs.append(
+        ConnectorSpec(
+            "gateway.logs",
+            {
+                "input": str(export),
+                "correlation_bindings": [
+                    {"code_resource": resources[0], "caller": "principal:workload-one", "scope": {}},
+                ],
+            },
+        )
+    )
 
     result = Engine(ScanConfig(connectors=specs), index=index).run()
     code = [finding for finding in result.findings if finding.surface == Surface.CODE]

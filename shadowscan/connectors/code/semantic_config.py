@@ -4,6 +4,7 @@ These are discovery checks, not substitutes for a vendor's versioned schema
 validator. Descriptive strings are never evaluated as source code. A filename
 only selects a parser; it does not establish an agent or a deployment.
 """
+
 from __future__ import annotations
 
 import json
@@ -33,6 +34,7 @@ class AgentManifestResult:
 
 
 _TEMPLATE_MARKER_RX = re.compile(r"\{\{-?\s*[.$a-zA-Z_\"']|\{%-?\s*[a-z]")
+
 
 def agent_manifest_kind(rel: str) -> str | None:
     path = PurePosixPath(rel)
@@ -75,9 +77,14 @@ def _service_endpoint(value: Any, transport: Any = None) -> bool:
         return False
     try:
         address = urlsplit("//" + value)
-        return bool(address.hostname) and address.port is not None and not (
-            address.path or address.query or address.fragment or address.username or address.password
-        ) and not any(char.isspace() for char in value)
+        return (
+            bool(address.hostname)
+            and address.port is not None
+            and not (
+                address.path or address.query or address.fragment or address.username or address.password
+            )
+            and not any(char.isspace() for char in value)
+        )
     except ValueError:
         return False
 
@@ -97,7 +104,8 @@ def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
     result = AgentManifestResult()
     try:
         data = (
-            bounded_safe_load(text) if PurePosixPath(rel).suffix.lower() in {".yaml", ".yml"}
+            bounded_safe_load(text)
+            if PurePosixPath(rel).suffix.lower() in {".yaml", ".yml"}
             else json.loads(text)
         )
     except (ValueError, RecursionError, yaml.YAMLError):
@@ -142,8 +150,10 @@ def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
         if not isinstance(data.get("capabilities"), dict):
             errors.append("A2A card requires a capabilities object")
         skills = data.get("skills")
-        if not _list_of_objects(skills) or not skills or any(
-            not _nonempty(skill.get("id")) or not _nonempty(skill.get("name")) for skill in skills
+        if (
+            not _list_of_objects(skills)
+            or not skills
+            or any(not _nonempty(skill.get("id")) or not _nonempty(skill.get("name")) for skill in skills)
         ):
             errors.append("A2A card requires nonempty skills with string id and name")
         for key in ("defaultInputModes", "defaultOutputModes"):
@@ -160,7 +170,8 @@ def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
                 errors.append(f"M365 {key} must be an array of objects")
     elif kind == "crewai":
         if not data or any(
-            not _nonempty(name) or not isinstance(agent, dict)
+            not _nonempty(name)
+            or not isinstance(agent, dict)
             or not all(_nonempty(agent.get(key)) for key in ("role", "goal", "backstory"))
             for name, agent in data.items()
         ):
@@ -216,8 +227,9 @@ def _node_graph_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
         if _choice(
             node_data.get("category"), {"Agents", "Multi Agents", "Sequential Agents", "Agentflow"}
         ) and _nonempty(node_data.get("name")):
-            yield "platform.flowise", json.dumps(
-                {"category": node_data["category"], "name": node_data["name"]}
+            yield (
+                "platform.flowise",
+                json.dumps({"category": node_data["category"], "name": node_data["name"]}),
             )
         if node_data.get("type") == "Agent" and isinstance(node_data.get("node"), dict):
             yield "platform.langflow", json.dumps({"type": "Agent", "display_name": "Agent"})
@@ -225,13 +237,15 @@ def _node_graph_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
     # shape, not descriptions, samples, or arbitrary nested dictionaries.
     graph = data.get("data")
     if (
-        isinstance(graph, dict) and isinstance(graph.get("nodes"), list)
+        isinstance(graph, dict)
+        and isinstance(graph.get("nodes"), list)
         and isinstance(graph.get("edges"), list)
     ):
         for node in _objects(graph["nodes"]):
             node_data = node.get("data")
             if (
-                isinstance(node_data, dict) and node_data.get("type") == "Agent"
+                isinstance(node_data, dict)
+                and node_data.get("type") == "Agent"
                 and isinstance(node_data.get("node"), dict)
             ):
                 yield "platform.langflow", json.dumps({"type": "Agent", "display_name": "Agent"})
@@ -240,15 +254,18 @@ def _node_graph_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
 def _dify_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
     """Dify's top-level app identity plus an actual model/workflow declaration."""
     app = data.get("app")
-    if data.get("kind") == "app" and isinstance(app, dict) and _choice(
-        app.get("mode"), {"agent-chat", "advanced-chat", "workflow", "completion", "chat"}
+    if (
+        data.get("kind") == "app"
+        and isinstance(app, dict)
+        and _choice(app.get("mode"), {"agent-chat", "advanced-chat", "workflow", "completion", "chat"})
     ):
         model = data.get("model_config")
         workflow = data.get("workflow")
         model_spec = model.get("model") if isinstance(model, dict) else None
         graph_spec = workflow.get("graph") if isinstance(workflow, dict) else None
         has_model = (
-            isinstance(model_spec, dict) and _nonempty(model_spec.get("provider"))
+            isinstance(model_spec, dict)
+            and _nonempty(model_spec.get("provider"))
             and _nonempty(model_spec.get("name"))
         )
         has_nodes = isinstance(graph_spec, dict) and any(
@@ -285,12 +302,17 @@ def _workflow_step_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
     for step in _objects(data.get("code", data.get("steps"))):
         if _nonempty(step.get("provider")) and _nonempty(step.get("name", step.get("operation"))):
             yield "platform.workato", json.dumps({"provider": step["provider"]})
-    if _choice(data.get("kind"), {
-        "AdaptiveDialog", "GptComponentMetadata", "OnRecognizedIntent", "CustomTopic", "TaskDialog",
-        "ConversationalTopic",
-    }) and (
-        isinstance(data.get("beginDialog"), dict) or isinstance(data.get("actions"), list)
-    ):
+    if _choice(
+        data.get("kind"),
+        {
+            "AdaptiveDialog",
+            "GptComponentMetadata",
+            "OnRecognizedIntent",
+            "CustomTopic",
+            "TaskDialog",
+            "ConversationalTopic",
+        },
+    ) and (isinstance(data.get("beginDialog"), dict) or isinstance(data.get("actions"), list)):
         yield "platform.copilot-studio", "kind: " + data["kind"]
 
 
@@ -298,7 +320,8 @@ def _gateway_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
     """Gateways: structural configuration, without promoting arbitrary prompts."""
     models = data.get("model_list")
     if isinstance(models, list) and any(
-        _nonempty(model.get("model_name")) and isinstance(model.get("litellm_params"), dict)
+        _nonempty(model.get("model_name"))
+        and isinstance(model.get("litellm_params"), dict)
         and _nonempty(model["litellm_params"].get("model"))
         for model in _objects(models)
     ):
@@ -325,11 +348,13 @@ def _workflow_action_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
             connection = inputs.get("serviceProviderConfiguration")
             projection: dict[str, Any] = {
                 "host": {
-                    key: host[key] for key in ("apiId", "operationId", "connectionName")
+                    key: host[key]
+                    for key in ("apiId", "operationId", "connectionName")
                     if isinstance(host.get(key), str)
                 },
                 "serviceProviderConfiguration": {
-                    key: connection[key] for key in ("serviceProviderId", "operationId", "connectionName")
+                    key: connection[key]
+                    for key in ("serviceProviderId", "operationId", "connectionName")
                     if isinstance(connection, dict) and isinstance(connection.get(key), str)
                 },
             }
@@ -356,7 +381,8 @@ def _coding_agent_signals(rel: str, data: dict[str, Any]) -> Iterator[tuple[str,
         active = data.copy()
         profiles, profile = data.get("profiles"), data.get("profile")
         if (
-            isinstance(profiles, dict) and isinstance(profile, str)
+            isinstance(profiles, dict)
+            and isinstance(profile, str)
             and isinstance(profiles.get(profile), dict)
         ):
             active.update(profiles[profile])
@@ -394,7 +420,10 @@ _XML_AMPLIFICATION_LIMIT = expat_errors.codes.get(
 
 
 def structured_code_matches(
-    index: SignatureIndex, rel: str, text: str, errors: list[str] | None = None,
+    index: SignatureIndex,
+    rel: str,
+    text: str,
+    errors: list[str] | None = None,
     limit_errors: list[str] | None = None,
 ) -> list[Match]:
     """Match recognized operational config shapes, preserving signature policy.
@@ -430,7 +459,11 @@ def structured_code_matches(
             root = ET.fromstring(text)
             tag = root.tag.rsplit("}", 1)[-1]
             if tag in {
-                "GenAiPlanner", "GenAiPlugin", "GenAiFunction", "GenAiPromptTemplate", "BotDefinition",
+                "GenAiPlanner",
+                "GenAiPlugin",
+                "GenAiFunction",
+                "GenAiPromptTemplate",
+                "BotDefinition",
                 "BotVersion",
             } and len(root):
                 return _matches(index, "platform.salesforce-agentforce", "<" + tag + ">")
@@ -464,7 +497,8 @@ def structured_code_matches(
 
 def _matches(index: SignatureIndex, signature: str, projection: str) -> list[Match]:
     matches = [
-        match for match in index.match_code(projection, None)
+        match
+        for match in index.match_code(projection, None)
         # n8n model nodes (lmChatOpenAi, lmChatAnthropic...) also name the
         # provider that receives the workflow's data.
         if match.signature_id == signature
@@ -478,7 +512,8 @@ def _matches(index: SignatureIndex, signature: str, projection: str) -> list[Mat
         if signature == "platform.n8n":
             node_type = json.loads(projection).get("type", "")
             match.extra["verified_agent"] = match.signature_id == signature and node_type in {
-                "@n8n/n8n-nodes-langchain.agent", "@n8n/n8n-nodes-langchain.agentTool",
+                "@n8n/n8n-nodes-langchain.agent",
+                "@n8n/n8n-nodes-langchain.agentTool",
                 "@n8n/n8n-nodes-langchain.openAiAssistant",
             }
         elif signature == "platform.dify":

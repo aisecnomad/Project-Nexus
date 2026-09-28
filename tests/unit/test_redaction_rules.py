@@ -18,7 +18,10 @@ KEY = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
 
 
 def test_sanitize_env_values_policy_distinguishes_configuration_from_secrets():
-    record = {"arn": f"arn:aws:lambda:us-east-1:{ACCOUNT}:function:prod-agent", "env": {"STAGE": "prod", "N": "4"}}
+    record = {
+        "arn": f"arn:aws:lambda:us-east-1:{ACCOUNT}:function:prod-agent",
+        "env": {"STAGE": "prod", "N": "4"},
+    }
     # Tool/agent configuration keeps the strict default: env values are credentials everywhere.
     assert sanitize(record)["arn"] == REDACTED
     inventory = sanitize(record, env_values_are_secrets=False)
@@ -30,7 +33,9 @@ def test_sanitize_env_values_policy_distinguishes_configuration_from_secrets():
     assert KEY not in clean["note"] and "opaque-configured-value" not in clean["note"]
 
 
-@pytest.mark.parametrize("name", ["AZURE_OPENAI_KEY", "DATABRICKS_TOKEN", "MODAL_TOKEN_SECRET", "LITELLM_MASTER_KEY"])
+@pytest.mark.parametrize(
+    "name", ["AZURE_OPENAI_KEY", "DATABRICKS_TOKEN", "MODAL_TOKEN_SECRET", "LITELLM_MASTER_KEY"]
+)
 @pytest.mark.parametrize("shape", ["mapping", "variables", "list", "aliased"])
 def test_configuration_environment_still_redacts_named_secrets_from_siblings(name, shape):
     secret = "opaque-configured-secret-material"
@@ -56,27 +61,38 @@ def test_repeated_sanitization_observes_lowered_resource_budgets(monkeypatch):
         redaction.sanitize_text(value)
 
 
-@pytest.mark.parametrize("line, value", [
-    ('AZURE_OPENAI_KEY = "0123456789abcdef0123456789abcdef"', "0123456789abcdef"),
-    ("export DATABRICKS_TOKEN=synthetic-databricks-token-value-0000", "synthetic-databricks"),
-    ('modal_token_secret = "as-deadbeefcafe0123456789"', "as-deadbeefcafe"),
-    ("LITELLM_MASTER_KEY: sk-1234", "sk-1234"),
-    ('"OPENAI_ADMIN_KEY": "fedcba9876543210fedcba9876543210"', "fedcba9876543210"),
-    ("CLAUDE_CODE_OAUTH_TOKEN=abcdefabcdefabcdefabcdef", "abcdefabcdef"),
-    ("hugging_face_hub_token = 'hf_synthetic_value_without_known_prefix_shape'", "synthetic_value"),
-    ("https://example.com/callback?litellm_master_key=sk-1234&model=gpt", "sk-1234"),
-    ('os.environ["DATABRICKS_TOKEN"] = "synthetic-databricks-token-value-0000"', "synthetic-databricks"),
-    ("process.env['AZURE_OPENAI_KEY'] = '0123456789abcdef0123456789abcdef'", "0123456789abcdef"),
-])
+@pytest.mark.parametrize(
+    "line, value",
+    [
+        ('AZURE_OPENAI_KEY = "0123456789abcdef0123456789abcdef"', "0123456789abcdef"),
+        ("export DATABRICKS_TOKEN=synthetic-databricks-token-value-0000", "synthetic-databricks"),
+        ('modal_token_secret = "as-deadbeefcafe0123456789"', "as-deadbeefcafe"),
+        ("LITELLM_MASTER_KEY: sk-1234", "sk-1234"),
+        ('"OPENAI_ADMIN_KEY": "fedcba9876543210fedcba9876543210"', "fedcba9876543210"),
+        ("CLAUDE_CODE_OAUTH_TOKEN=abcdefabcdefabcdefabcdef", "abcdefabcdef"),
+        ("hugging_face_hub_token = 'hf_synthetic_value_without_known_prefix_shape'", "synthetic_value"),
+        ("https://example.com/callback?litellm_master_key=sk-1234&model=gpt", "sk-1234"),
+        ('os.environ["DATABRICKS_TOKEN"] = "synthetic-databricks-token-value-0000"', "synthetic-databricks"),
+        ("process.env['AZURE_OPENAI_KEY'] = '0123456789abcdef0123456789abcdef'", "0123456789abcdef"),
+    ],
+)
 def test_environment_style_credential_names_are_redacted_in_text(line, value):
     clean = sanitize_text(line)
     assert value not in clean and REDACTED in clean
 
 
-@pytest.mark.parametrize("line", [
-    "sort_key_fn = compute()", "key = 1", 'nextPageToken = "abc"', 'partition = "id"',
-    'AWS_REGION = "us-east-1"', 'OPENAI_BASE_URL = "https://api.openai.com/v1"', "MAX_TOKENS = 4096",
-])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "sort_key_fn = compute()",
+        "key = 1",
+        'nextPageToken = "abc"',
+        'partition = "id"',
+        'AWS_REGION = "us-east-1"',
+        'OPENAI_BASE_URL = "https://api.openai.com/v1"',
+        "MAX_TOKENS = 4096",
+    ],
+)
 def test_non_credential_assignments_are_preserved(line):
     assert sanitize_text(line) == line
 
@@ -96,11 +112,25 @@ def test_ssws_scheme_and_repr_escaped_values_are_redacted():
     assert "SuperSecretOktaApiToken" not in message
 
 
-@pytest.mark.parametrize("secret", [
-    "pplx-" + "a" * 45, "gsk_" + "A" * 45, "xai-" + "b" * 64, "nvapi-" + "c" * 64, "r8_" + "d" * 32,
-    "csk-" + "e" * 32, "tgp_v1_" + "f" * 32, "e2b_" + "0" * 40, "lsv2_pt_" + "a" * 32 + "_" + "b" * 10,
-    "tvly-dev-" + "g" * 24, "pcsk_" + "h" * 24, "fc-" + "1" * 32, "app-" + "A" * 24, "sk-lf-" + "0" * 36,
-])
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "pplx-" + "a" * 45,
+        "gsk_" + "A" * 45,
+        "xai-" + "b" * 64,
+        "nvapi-" + "c" * 64,
+        "r8_" + "d" * 32,
+        "csk-" + "e" * 32,
+        "tgp_v1_" + "f" * 32,
+        "e2b_" + "0" * 40,
+        "lsv2_pt_" + "a" * 32 + "_" + "b" * 10,
+        "tvly-dev-" + "g" * 24,
+        "pcsk_" + "h" * 24,
+        "fc-" + "1" * 32,
+        "app-" + "A" * 24,
+        "sk-lf-" + "0" * 36,
+    ],
+)
 def test_every_detectable_credential_format_is_redacted_by_the_text_sanitizer(secret):
     assert secret not in redaction.sanitize_text(f"value {secret} trailing")
 

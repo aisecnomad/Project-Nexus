@@ -66,7 +66,8 @@ class Auth0Connector(BaseConnector):
         self._auth()
         assert self.http
         yield from self._pages(
-            "/api/v2/clients", "client",
+            "/api/v2/clients",
+            "client",
             include_fields="true",
             fields=(
                 "client_id,name,description,app_type,grant_types,callbacks,allowed_origins,web_origins,"

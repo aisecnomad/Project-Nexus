@@ -32,22 +32,35 @@ def test_bedrock_agent_reads_action_group_details_for_deployed_versions(index):
     ctx = context(index)
     connector = AwsConnector(ctx)
     bedrock_agent = Mock()
-    bedrock_agent.get_agent.return_value = {"agent": {"agentId": "A1", "agentName": "ops", "agentStatus": "PREPARED"}}
+    bedrock_agent.get_agent.return_value = {
+        "agent": {"agentId": "A1", "agentName": "ops", "agentStatus": "PREPARED"}
+    }
 
     def get_action_group(*, agentId, agentVersion, actionGroupId):
         assert agentId == "A1"
-        return {"agentActionGroup": {"actionGroupId": actionGroupId, "agentVersion": agentVersion,
-                                     "actionGroupState": "ENABLED", **{
-                                         "LAMBDA": {"actionGroupExecutor": {"lambda": "arn:aws:lambda:us-east-1:123:function:tool"}},
-                                         "CODE": {"parentActionSignature": "AMAZON.CodeInterpreter"},
-                                         "USER": {"parentActionSignature": "AMAZON.UserInput"},
-                                     }[actionGroupId]}}
+        return {
+            "agentActionGroup": {
+                "actionGroupId": actionGroupId,
+                "agentVersion": agentVersion,
+                "actionGroupState": "ENABLED",
+                **{
+                    "LAMBDA": {
+                        "actionGroupExecutor": {"lambda": "arn:aws:lambda:us-east-1:123:function:tool"}
+                    },
+                    "CODE": {"parentActionSignature": "AMAZON.CodeInterpreter"},
+                    "USER": {"parentActionSignature": "AMAZON.UserInput"},
+                }[actionGroupId],
+            }
+        }
 
     bedrock_agent.get_agent_action_group.side_effect = get_action_group
-    bedrock_agent.get_agent_version.return_value = {"agentVersion": {
-        "version": "3", "foundationModel": "anthropic.claude-3-haiku-20240307-v1:0",
-        "guardrailConfiguration": {"guardrailIdentifier": "G1", "guardrailVersion": "1"},
-    }}
+    bedrock_agent.get_agent_version.return_value = {
+        "agentVersion": {
+            "version": "3",
+            "foundationModel": "anthropic.claude-3-haiku-20240307-v1:0",
+            "guardrailConfiguration": {"guardrailIdentifier": "G1", "guardrailVersion": "1"},
+        }
+    }
     bedrock = Mock()
     bedrock.get_model_invocation_logging_configuration.return_value = {"loggingConfig": {}}
     connector._client = lambda service, region: bedrock_agent if service == "bedrock-agent" else bedrock
@@ -58,20 +71,33 @@ def test_bedrock_agent_reads_action_group_details_for_deployed_versions(index):
         if op == "list_agent_aliases":
             return iter([{"agentAliasName": "prod", "routingConfiguration": [{"agentVersion": "3"}]}])
         if op == "list_agent_action_groups":
-            return iter([{"actionGroupId": id_, "actionGroupName": id_.lower()} for id_ in (
-                ["LAMBDA", "CODE", "USER"] if kw["agentVersion"] == "3" else ["USER"]
-            )])
+            return iter(
+                [
+                    {"actionGroupId": id_, "actionGroupName": id_.lower()}
+                    for id_ in (["LAMBDA", "CODE", "USER"] if kw["agentVersion"] == "3" else ["USER"])
+                ]
+            )
         if op == "list_agent_knowledge_bases":
-            return iter([{"knowledgeBaseId": "KB3", "knowledgeBaseState": "ENABLED"}] if kw["agentVersion"] == "3" else [])
+            return iter(
+                [{"knowledgeBaseId": "KB3", "knowledgeBaseState": "ENABLED"}]
+                if kw["agentVersion"] == "3"
+                else []
+            )
         if op == "list_agent_collaborators":
-            return iter([{"collaboratorId": "C3", "collaboratorName": "reviewer"}] if kw["agentVersion"] == "3" else [])
+            return iter(
+                [{"collaboratorId": "C3", "collaboratorName": "reviewer"}]
+                if kw["agentVersion"] == "3"
+                else []
+            )
         return iter([])
 
     connector._paginate = pages
     records = list(connector._collect_bedrock("us-east-1"))
     agent = next(r for r in records if r["_kind"] == "bedrock-agent")
     assert {a["agentVersion"] for a in agent["_action_groups"]} == {"DRAFT", "3"}
-    assert agent["_knowledge_bases"] == [{"knowledgeBaseId": "KB3", "knowledgeBaseState": "ENABLED", "_agentVersion": "3"}]
+    assert agent["_knowledge_bases"] == [
+        {"knowledgeBaseId": "KB3", "knowledgeBaseState": "ENABLED", "_agentVersion": "3"}
+    ]
     assert agent["_collaborators"][0]["_agentVersion"] == "3"
     assert bedrock_agent.get_agent_action_group.call_count == 4
     finding = connector._h_bedrock_agent(agent)
@@ -94,7 +120,10 @@ def test_agentcore_gateway_reads_target_detail_for_lambda(index):
     connector = AwsConnector(ctx)
     client = Mock()
     client.get_gateway_target.return_value = {
-        "targetId": "t1", "targetConfiguration": {"mcp": {"lambda": {"lambdaArn": "arn:aws:lambda:us-east-1:123:function:tool"}}}
+        "targetId": "t1",
+        "targetConfiguration": {
+            "mcp": {"lambda": {"lambdaArn": "arn:aws:lambda:us-east-1:123:function:tool"}}
+        },
     }
     connector._client = lambda service, region: client
 
@@ -115,27 +144,47 @@ def test_agentcore_gateway_reads_target_detail_for_lambda(index):
 
 def test_disabled_bedrock_actions_and_knowledge_bases_do_not_grant_capabilities(index):
     connector = AwsConnector(context(index))
-    finding = connector._h_bedrock_agent({
-        "agentId": "A1", "agentName": "ops", "_region": "us-east-1",
-        "_action_groups": [{"actionGroupName": "code", "actionGroupState": "DISABLED",
-                            "parentActionSignature": "AMAZON.CodeInterpreter"}],
-        "_knowledge_bases": [{"knowledgeBaseId": "K1", "knowledgeBaseState": "DISABLED"}],
-    })
+    finding = connector._h_bedrock_agent(
+        {
+            "agentId": "A1",
+            "agentName": "ops",
+            "_region": "us-east-1",
+            "_action_groups": [
+                {
+                    "actionGroupName": "code",
+                    "actionGroupState": "DISABLED",
+                    "parentActionSignature": "AMAZON.CodeInterpreter",
+                }
+            ],
+            "_knowledge_bases": [{"knowledgeBaseId": "K1", "knowledgeBaseState": "DISABLED"}],
+        }
+    )
     assert "code-exec" not in finding.capabilities
     assert "rag" not in finding.capabilities
 
 
 def test_bedrock_agent_draft_details_are_a_snapshot_that_survives_export(tmp_path, index):
     pytest.importorskip("boto3")  # live collection path needs the [aws] extra
+
     class FakeAgents:
         def get_agent(self, agentId):
-            return {"agent": {"agentId": agentId, "agentArn": f"arn:aws:bedrock:us-east-1:{ACCOUNT}:agent/{agentId}",
-                              "agentName": "ops", "agentStatus": "PREPARED",
-                              "foundationModel": "anthropic.claude-3-haiku-20240307-v1:0",
-                              "guardrailConfiguration": {"guardrailIdentifier": "g1", "guardrailVersion": "1"}}}
+            return {
+                "agent": {
+                    "agentId": agentId,
+                    "agentArn": f"arn:aws:bedrock:us-east-1:{ACCOUNT}:agent/{agentId}",
+                    "agentName": "ops",
+                    "agentStatus": "PREPARED",
+                    "foundationModel": "anthropic.claude-3-haiku-20240307-v1:0",
+                    "guardrailConfiguration": {"guardrailIdentifier": "g1", "guardrailVersion": "1"},
+                }
+            }
 
     def paginate(client, op, key, **kwargs):
-        return iter([{"agentId": "AGENT1", "agentName": "ops", "agentStatus": "PREPARED"}] if op == "list_agents" else [])
+        return iter(
+            [{"agentId": "AGENT1", "agentName": "ops", "agentStatus": "PREPARED"}]
+            if op == "list_agents"
+            else []
+        )
 
     dump = tmp_path / "aws.jsonl"
     ctx = _context(index, services=["bedrock"], regions=["us-east-1"], _dump_path=str(dump))
@@ -148,25 +197,48 @@ def test_bedrock_agent_draft_details_are_a_snapshot_that_survives_export(tmp_pat
         result = original_safe(fn, *args, **kwargs)
         return None if isinstance(result, mock.MagicMock) else result
 
-    with mock.patch.object(connector, "_client", lambda svc, region=None: FakeAgents() if svc == "bedrock-agent" else mock.MagicMock()), \
-            mock.patch.object(connector, "_paginate", paginate), mock.patch.object(connector, "_safe", safe), \
-            mock.patch.object(connector, "_session_", lambda: None), mock.patch.object(connector, "_regions", lambda: ["us-east-1"]):
+    with (
+        mock.patch.object(
+            connector,
+            "_client",
+            lambda svc, region=None: FakeAgents() if svc == "bedrock-agent" else mock.MagicMock(),
+        ),
+        mock.patch.object(connector, "_paginate", paginate),
+        mock.patch.object(connector, "_safe", safe),
+        mock.patch.object(connector, "_session_", lambda: None),
+        mock.patch.object(connector, "_regions", lambda: ["us-east-1"]),
+    ):
         live = connector.run()
-    assert not ctx.stats.warnings and [f.metadata["version_models"] for f in live] == [{"DRAFT": "anthropic.claude-3-haiku-20240307-v1:0"}]
+    assert not ctx.stats.warnings and [f.metadata["version_models"] for f in live] == [
+        {"DRAFT": "anthropic.claude-3-haiku-20240307-v1:0"}
+    ]
     exported = next(json.loads(line) for line in dump.read_text().splitlines() if '"bedrock-agent"' in line)
-    assert exported["_version_details"]["DRAFT"]["foundationModel"] == "anthropic.claude-3-haiku-20240307-v1:0"
+    assert (
+        exported["_version_details"]["DRAFT"]["foundationModel"] == "anthropic.claude-3-haiku-20240307-v1:0"
+    )
     assert not any(key.startswith("_") for key in exported["_version_details"]["DRAFT"])
     offline_ctx = _context(index, input=str(dump))
     offline = AwsConnector(offline_ctx).run()
     assert offline_ctx.stats.incomplete is False and not offline_ctx.stats.warnings
-    assert offline[0].metadata["version_guardrails"] == {"DRAFT": {"guardrailIdentifier": "g1", "guardrailVersion": "1"}}
+    assert offline[0].metadata["version_guardrails"] == {
+        "DRAFT": {"guardrailIdentifier": "g1", "guardrailVersion": "1"}
+    }
 
 
 def test_bedrock_agent_reads_collapsed_draft_from_older_exports_without_incomplete_coverage(index):
-    record = {"_kind": "bedrock-agent", "_region": "us-east-1", "agentId": "AGENT1",
-              "agentArn": f"arn:aws:bedrock:us-east-1:{ACCOUNT}:agent/AGENT1", "agentName": "ops", "agentStatus": "PREPARED",
-              "foundationModel": "amazon.nova-pro-v1:0", "_version_details": {"DRAFT": REDACTED}, "_action_groups": [],
-              "_knowledge_bases": [], "_aliases": []}
+    record = {
+        "_kind": "bedrock-agent",
+        "_region": "us-east-1",
+        "agentId": "AGENT1",
+        "agentArn": f"arn:aws:bedrock:us-east-1:{ACCOUNT}:agent/AGENT1",
+        "agentName": "ops",
+        "agentStatus": "PREPARED",
+        "foundationModel": "amazon.nova-pro-v1:0",
+        "_version_details": {"DRAFT": REDACTED},
+        "_action_groups": [],
+        "_knowledge_bases": [],
+        "_aliases": [],
+    }
     ctx = _context(index)
     connector = AwsConnector(ctx)
     connector.account = ACCOUNT
@@ -178,10 +250,17 @@ def test_bedrock_logging_record_without_configuration_is_unknown_coverage(index)
     ctx = _context(index)
     connector = AwsConnector(ctx)
     connector.account = ACCOUNT
-    findings = list(connector.analyze([
-        {"_kind": "bedrock-logging", "_region": "us-east-1", "error": {"code": "AccessDenied"}},
-        {"_kind": "bedrock-logging", "_region": "eu-west-1"},
-        {"_kind": "bedrock-logging", "_region": "us-west-2", "loggingConfig": None},
-    ]))
+    findings = list(
+        connector.analyze(
+            [
+                {"_kind": "bedrock-logging", "_region": "us-east-1", "error": {"code": "AccessDenied"}},
+                {"_kind": "bedrock-logging", "_region": "eu-west-1"},
+                {"_kind": "bedrock-logging", "_region": "us-west-2", "loggingConfig": None},
+            ]
+        )
+    )
     assert [f.region for f in findings] == ["us-west-2"] and "no-invocation-logging" in findings[0].tags
-    assert ctx.stats.incomplete and sum("logging configuration unavailable" in w for w in ctx.stats.warnings) == 2
+    assert (
+        ctx.stats.incomplete
+        and sum("logging configuration unavailable" in w for w in ctx.stats.warnings) == 2
+    )

@@ -1,4 +1,5 @@
 """Collection failures must never become clean CLI or SARIF reports."""
+
 from __future__ import annotations
 
 import json
@@ -47,13 +48,18 @@ def test_gcp_iam_collection_failure_is_incomplete(index, status):
     connector._auth = Mock()
     connector.http = Mock()
     connector.http.get_json.return_value = {}
-    connector.http.post_json.side_effect = HttpError(status, "https://cloudresourcemanager.googleapis.com/iam")
+    connector.http.post_json.side_effect = HttpError(
+        status, "https://cloudresourcemanager.googleapis.com/iam"
+    )
     findings = connector.run()
     _assert_incomplete(connector, findings)
     assert any("IAM policy" in warning for warning in connector.ctx.stats.warnings)
 
 
-@pytest.mark.parametrize("failure", [HttpError(403, "https://example.com"), HttpError(429, "https://example.com"), ConnectionError("failed")])
+@pytest.mark.parametrize(
+    "failure",
+    [HttpError(403, "https://example.com"), HttpError(429, "https://example.com"), ConnectionError("failed")],
+)
 def test_gcp_get_failures_are_incomplete(index, failure):
     connector = GcpConnector(_context(index))
     connector.http = Mock()
@@ -78,7 +84,14 @@ def test_gcp_audit_page_cap_preserves_observed_caller(index):
     connector = GcpConnector(_context(index, audit_days=1, max_pages=1))
     connector.http = Mock()
     connector.http.post_json.return_value = {
-        "entries": [{"protoPayload": {"authenticationInfo": {"principalEmail": "agent@example.com"}, "methodName": "GenerateContent"}}],
+        "entries": [
+            {
+                "protoPayload": {
+                    "authenticationInfo": {"principalEmail": "agent@example.com"},
+                    "methodName": "GenerateContent",
+                }
+            }
+        ],
         "nextPageToken": "more",
     }
     records = list(connector._collect_audit("demo"))
@@ -92,10 +105,20 @@ def test_google_workspace_denied_tokens_are_incomplete_with_valid_apps_preserved
     connector = GoogleWorkspaceConnector(_context(index))
     connector._auth = Mock()
     connector.http = Mock()
-    connector.http.paginate_token.return_value = iter([{"primaryEmail": "allowed@example.com"}, {"primaryEmail": "denied@example.com"}])
+    connector.http.paginate_token.return_value = iter(
+        [{"primaryEmail": "allowed@example.com"}, {"primaryEmail": "denied@example.com"}]
+    )
     connector.http.get_json.side_effect = [
         {"id": "C01234567"},
-        {"items": [{"clientId": "agent", "displayText": "Fireflies.ai Notetaker", "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]}]},
+        {
+            "items": [
+                {
+                    "clientId": "agent",
+                    "displayText": "Fireflies.ai Notetaker",
+                    "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+                }
+            ]
+        },
         HttpError(status, "https://admin.googleapis.com/tokens"),
     ]
     findings = connector.run()
@@ -123,7 +146,10 @@ def test_google_workspace_later_user_page_failure_preserves_apps(index):
     _assert_incomplete(connector, findings)
 
 
-@pytest.mark.parametrize("detail", ["NotAuthenticated", "NotAuthorizedOrNotFound", "404", "service not available", "retry exhausted"])
+@pytest.mark.parametrize(
+    "detail",
+    ["NotAuthenticated", "NotAuthorizedOrNotFound", "404", "service not available", "retry exhausted"],
+)
 def test_oci_failures_no_longer_look_like_empty_inventories(index, detail):
     connector = OciConnector(_context(index))
     call = Mock(side_effect=RuntimeError(detail))
@@ -133,7 +159,12 @@ def test_oci_failures_no_longer_look_like_empty_inventories(index, detail):
 
 def test_oci_later_page_failure_retains_successes(index):
     connector = OciConnector(_context(index))
-    call = Mock(side_effect=[SimpleNamespace(data=[{"id": "agent"}], has_next_page=True, next_page="next"), RuntimeError("NotAuthenticated")])
+    call = Mock(
+        side_effect=[
+            SimpleNamespace(data=[{"id": "agent"}], has_next_page=True, next_page="next"),
+            RuntimeError("NotAuthenticated"),
+        ]
+    )
     assert connector._all(call, "compartment") == [{"id": "agent"}]
     assert call.call_args.kwargs["page"] == "next"
     _assert_incomplete(connector, [])
@@ -142,13 +173,25 @@ def test_oci_later_page_failure_retains_successes(index):
 @pytest.mark.parametrize("max_pages", [1, 10])
 def test_oci_caps_and_repeated_pages_are_incomplete(index, max_pages):
     connector = OciConnector(_context(index, max_pages=max_pages))
-    call = Mock(return_value=SimpleNamespace(data=SimpleNamespace(items=[{"id": "agent"}]), has_next_page=True, next_page="repeat"))
+    call = Mock(
+        return_value=SimpleNamespace(
+            data=SimpleNamespace(items=[{"id": "agent"}]), has_next_page=True, next_page="repeat"
+        )
+    )
     assert connector._all(call)
     assert call.call_count == min(max_pages, 2)
     _assert_incomplete(connector, [])
 
 
-@pytest.mark.parametrize("failure_path", ["/servicePrincipals", "/oauth2PermissionGrants", "/servicePrincipals/sp-1/appRoleAssignments", "/applications"])
+@pytest.mark.parametrize(
+    "failure_path",
+    [
+        "/servicePrincipals",
+        "/oauth2PermissionGrants",
+        "/servicePrincipals/sp-1/appRoleAssignments",
+        "/applications",
+    ],
+)
 def test_entra_partial_collection_retains_observed_apps(index, failure_path):
     connector = EntraConnector(_context(index))
     connector._auth = Mock()
@@ -188,7 +231,9 @@ def test_teams_partial_collection_retains_catalog_apps(index, failure_path):
 
 @pytest.mark.parametrize("failed_path", ["/scenarios/one/blueprint", "/ai-agents/v1/agents"])
 def test_make_collection_failures_are_incomplete(index, monkeypatch, failed_path):
-    connector = MakeConnector(_context(index, api_url="https://eu1.make.com/api/v2", token="test", team_id="team"))
+    connector = MakeConnector(
+        _context(index, api_url="https://eu1.make.com/api/v2", token="test", team_id="team")
+    )
 
     def get(path, **kwargs):
         if path == failed_path:
@@ -199,7 +244,9 @@ def test_make_collection_failures_are_incomplete(index, monkeypatch, failed_path
             "/ai-agents/v1/agents": [{"id": "agent", "name": "Agent", "defaultModel": "gpt-4o"}],
         }[path]
 
-    monkeypatch.setattr("shadowscan.connectors.lowcode.automation.HttpClient", Mock(return_value=Mock(get_json=get)))
+    monkeypatch.setattr(
+        "shadowscan.connectors.lowcode.automation.HttpClient", Mock(return_value=Mock(get_json=get))
+    )
     findings = connector.run()
     assert findings
     _assert_incomplete(connector, findings)
@@ -223,11 +270,18 @@ def test_make_repeated_pages_stop(index):
     _assert_incomplete(connector, [])
 
 
-@pytest.mark.parametrize("cls,config,responses", [
-    (ZapierConnector, {"token": "test"}, [{"data": [], "links": {"next": "/v2/zaps"}}]),
-    (WorkatoConnector, {"token": "test"}, [{"items": [{"id": n} for n in range(100)]}]),
-    (N8nConnector, {"api_url": "https://n8n.example.com", "api_key": "test"}, [{"data": [], "nextCursor": "repeat"}]),
-])
+@pytest.mark.parametrize(
+    "cls,config,responses",
+    [
+        (ZapierConnector, {"token": "test"}, [{"data": [], "links": {"next": "/v2/zaps"}}]),
+        (WorkatoConnector, {"token": "test"}, [{"items": [{"id": n} for n in range(100)]}]),
+        (
+            N8nConnector,
+            {"api_url": "https://n8n.example.com", "api_key": "test"},
+            [{"data": [], "nextCursor": "repeat"}],
+        ),
+    ],
+)
 def test_automation_pagination_is_bounded(index, monkeypatch, cls, config, responses):
     connector = cls(_context(index, **config))
     http = HttpClient("https://example.com")

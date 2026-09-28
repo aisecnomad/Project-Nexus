@@ -40,8 +40,8 @@ def test_group_listing_malformed_project_id_is_an_error_and_never_requested(inde
         hostile["id"] = project_id
     valid = {"id": 8, "path_with_namespace": "acme/valid", "default_branch": "main"}
     connector.http = Mock()
-    connector.http.paginate_link.side_effect = (
-        lambda path, **_: [hostile, valid] if path == "/groups/acme/projects" else []
+    connector.http.paginate_link.side_effect = lambda path, **_: (
+        [hostile, valid] if path == "/groups/acme/projects" else []
     )
     connector.http.try_get_json.return_value = {}
 
@@ -95,6 +95,7 @@ def test_valid_project_id_is_used_verbatim(tmp_path, index):
     dest = connector._fetch_via_api({"id": 12345, "default_branch": "main"}, str(tmp_path))
     assert dest == str(tmp_path / "repo")
     assert _requested_paths(connector.http) == [
-        "/projects/12345/repository/commits/main", "/projects/12345/repository/tree",
+        "/projects/12345/repository/commits/main",
+        "/projects/12345/repository/tree",
     ]
     assert not connector.ctx.stats.incomplete

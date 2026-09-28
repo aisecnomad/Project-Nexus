@@ -135,8 +135,8 @@ class OktaConnector(BaseConnector):
     def _app_finding(self, app: dict[str, Any]) -> Finding | None:
         app_id = app.get("id") or app.get("name")
         label = app.get("label") or app.get("name") or str(app_id)
-        oauth = ((app.get("settings") or {}).get("oauthClient") or {})
-        creds = ((app.get("credentials") or {}).get("oauthClient") or {})
+        oauth = (app.get("settings") or {}).get("oauthClient") or {}
+        creds = (app.get("credentials") or {}).get("oauthClient") or {}
         grant_types = oauth.get("grant_types") or []
         app_type = oauth.get("application_type")
         machine = app_type == "service" or "client_credentials" in grant_types

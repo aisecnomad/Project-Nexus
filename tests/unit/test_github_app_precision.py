@@ -13,9 +13,17 @@ from shadowscan.models import Likelihood
 
 
 def _installation(slug: str, permissions: dict[str, str], selection: str = "all", **extra) -> dict:
-    return {"id": abs(hash(slug)) % 10_000, "app_id": 1, "app_slug": slug, "repository_selection": selection,
-            "permissions": permissions, "events": ["push"], "html_url": f"https://github.com/apps/{slug}",
-            "target_type": "Organization", **extra}
+    return {
+        "id": abs(hash(slug)) % 10_000,
+        "app_id": 1,
+        "app_slug": slug,
+        "repository_selection": selection,
+        "permissions": permissions,
+        "events": ["push"],
+        "html_url": f"https://github.com/apps/{slug}",
+        "target_type": "Organization",
+        **extra,
+    }
 
 
 def _run(index, tmp_path, installations, **config):
@@ -26,8 +34,12 @@ def _run(index, tmp_path, installations, **config):
 
 
 DEPENDENCY_BOT = _installation("renovate", {"contents": "write", "pull_requests": "write"})
-AI_REVIEWER = _installation("coderabbitai", {"contents": "write", "pull_requests": "write", "issues": "write"})
-CODING_AGENT = _installation("claude", {"contents": "write", "pull_requests": "write", "actions": "write"}, "selected")
+AI_REVIEWER = _installation(
+    "coderabbitai", {"contents": "write", "pull_requests": "write", "issues": "write"}
+)
+CODING_AGENT = _installation(
+    "claude", {"contents": "write", "pull_requests": "write", "actions": "write"}, "selected"
+)
 
 
 def test_write_access_without_ai_evidence_is_not_an_agent(index, tmp_path):
@@ -50,8 +62,12 @@ def test_workflow_control_is_code_execution(index, tmp_path, permission):
 
 
 def test_unrecognised_apps_are_opt_in_and_capped(index, tmp_path):
-    found = _run(index, tmp_path, [DEPENDENCY_BOT, _installation("readme-badge", {"metadata": "read"})],
-                 include_unrecognized_apps=True)
+    found = _run(
+        index,
+        tmp_path,
+        [DEPENDENCY_BOT, _installation("readme-badge", {"metadata": "read"})],
+        include_unrecognized_apps=True,
+    )
     assert set(found) == {"renovate"}  # read-only apps are never reported
     bot = found["renovate"]
     assert "unrecognized-app" in bot.tags
@@ -71,12 +87,25 @@ def test_include_unrecognized_apps_must_be_boolean(index, tmp_path):
 
 def _installations(index, tmp_path, slugs):
     path = tmp_path / "installations.json"
-    path.write_text(json.dumps({"installations": [
-        {"id": number, "app_id": number, "app_slug": slug, "repository_selection": "all",
-         "permissions": {"contents": "write", "pull_requests": "write"}, "events": ["push"],
-         "html_url": f"https://github.com/apps/{slug}", "target_type": "Organization"}
-        for number, slug in enumerate(slugs, 1)
-    ]}))
+    path.write_text(
+        json.dumps(
+            {
+                "installations": [
+                    {
+                        "id": number,
+                        "app_id": number,
+                        "app_slug": slug,
+                        "repository_selection": "all",
+                        "permissions": {"contents": "write", "pull_requests": "write"},
+                        "events": ["push"],
+                        "html_url": f"https://github.com/apps/{slug}",
+                        "target_type": "Organization",
+                    }
+                    for number, slug in enumerate(slugs, 1)
+                ]
+            }
+        )
+    )
     ctx = ConnectorContext(config={"input": str(path)}, index=index)
     return {f.metadata["app_slug"]: f for f in GitHubAppsConnector(ctx).run()}
 

@@ -93,8 +93,7 @@ def _literal_excluded_directories(spec: ConnectorSpec) -> frozenset[str]:
     if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
         return frozenset()
     return frozenset(
-        name for name in raw
-        if name not in _OWNERSHIP_DIRECTORIES and "*" not in name and "/" not in name
+        name for name in raw if name not in _OWNERSHIP_DIRECTORIES and "*" not in name and "/" not in name
     )
 
 
@@ -140,8 +139,9 @@ def _file_digest(
         after = os.fstat(stream.fileno())
     current = path.stat()
     attrs = _FILE_STAT_ATTRS
-    if any(getattr(before, a) != getattr(after, a) or getattr(after, a) != getattr(current, a)
-           for a in attrs):
+    if any(
+        getattr(before, a) != getattr(after, a) or getattr(after, a) != getattr(current, a) for a in attrs
+    ):
         raise ValueError("input changed while hashing")
     # Change time and inode identity catch ordinary replace/restore changes.
     # These checks are not an atomic snapshot or a defense against an adversary
@@ -163,7 +163,10 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
         budget.check()
         result = subprocess.run(
             [*metadata_git_argv_prefix(), "-C", str(root), *args],
-            check=False, capture_output=True, timeout=10, env=metadata_git_env(),
+            check=False,
+            capture_output=True,
+            timeout=10,
+            env=metadata_git_env(),
         )
         budget.check(size=len(result.stdout))
         if result.returncode:
@@ -175,9 +178,18 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     head = git("rev-parse", "--verify", "HEAD")
     if git("for-each-ref", "--format=%(refname)", "refs/replace").strip():
         raise ValueError("git history has replacement refs")
-    history_paths = git(
-        "rev-parse", "--path-format=absolute", "--git-path", "shallow", "--git-path", "info/grafts",
-    ).decode().splitlines()
+    history_paths = (
+        git(
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "shallow",
+            "--git-path",
+            "info/grafts",
+        )
+        .decode()
+        .splitlines()
+    )
     if len(history_paths) != 2:
         raise ValueError("cannot resolve git history paths")
     shallow, grafts = [Path(p) for p in history_paths]
@@ -188,8 +200,14 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
 
 
 def _tree_digest(
-    root: Path, *, code: bool, use_git: bool, budget: _HashBudget, max_file_bytes: int,
-    excluded_dir_names: frozenset[str] = frozenset(), unread_above: int | None = None,
+    root: Path,
+    *,
+    code: bool,
+    use_git: bool,
+    budget: _HashBudget,
+    max_file_bytes: int,
+    excluded_dir_names: frozenset[str] = frozenset(),
+    unread_above: int | None = None,
 ) -> str:
     """Digest a tree's content and metadata.
 
@@ -259,7 +277,12 @@ def _tree_digest(
 
 
 def _checkout_container_digest(
-    root: Path, *, use_git: bool, budget: _HashBudget, max_file_bytes: int, unread_above: int | None = None,
+    root: Path,
+    *,
+    use_git: bool,
+    budget: _HashBudget,
+    max_file_bytes: int,
+    unread_above: int | None = None,
 ) -> str:
     """Offline provider inputs contain repositories; their names are not exclusions."""
     if not root.is_dir():
@@ -273,10 +296,21 @@ def _checkout_container_digest(
         if child.is_symlink():
             raise ValueError("symlink in checkout container")
         if child.is_dir():
-            digest.update(_json([child.name, _tree_digest(
-                child, code=True, use_git=use_git, budget=budget, max_file_bytes=max_file_bytes,
-                unread_above=unread_above,
-            )]))
+            digest.update(
+                _json(
+                    [
+                        child.name,
+                        _tree_digest(
+                            child,
+                            code=True,
+                            use_git=use_git,
+                            budget=budget,
+                            max_file_bytes=max_file_bytes,
+                            unread_above=unread_above,
+                        ),
+                    ]
+                )
+            )
     after = root.stat(follow_symlinks=False)
     if any(getattr(before, attr) != getattr(after, attr) for attr in attrs):
         raise ValueError("checkout container changed while hashing")
@@ -357,25 +391,37 @@ class IncrementalCache:
             for root in roots:
                 if spec.name in {"code.github", "code.gitlab"}:
                     digest = _checkout_container_digest(
-                        root, use_git=use_git, budget=budget, max_file_bytes=max_bytes,
+                        root,
+                        use_git=use_git,
+                        budget=budget,
+                        max_file_bytes=max_bytes,
                         unread_above=unread_above,
                     )
                 else:
                     digest = _tree_digest(
-                        root, code=code, use_git=use_git, budget=budget, max_file_bytes=max_bytes,
-                        excluded_dir_names=excluded_dir_names, unread_above=unread_above,
+                        root,
+                        code=code,
+                        use_git=use_git,
+                        budget=budget,
+                        max_file_bytes=max_bytes,
+                        excluded_dir_names=excluded_dir_names,
+                        unread_above=unread_above,
                     )
                 inputs.append([str(root), digest])
-            fingerprint = hashlib.sha256(_json({
-                "format": _FORMAT,
-                "version": __version__,
-                "scanner": self.scanner_digest,
-                "signatures": self.signature_digest,
-                "connector": spec.name,
-                "id": spec.id,
-                "config": spec.config,
-                "inputs": inputs,
-            })).hexdigest()
+            fingerprint = hashlib.sha256(
+                _json(
+                    {
+                        "format": _FORMAT,
+                        "version": __version__,
+                        "scanner": self.scanner_digest,
+                        "signatures": self.signature_digest,
+                        "connector": spec.name,
+                        "id": spec.id,
+                        "config": spec.config,
+                        "inputs": inputs,
+                    }
+                )
+            ).hexdigest()
             slot = hashlib.sha256(_json([spec.name, spec.id, [str(p) for p in roots]])).hexdigest()
             return Snapshot(slot, fingerprint)
         except (OSError, ValueError, TypeError, subprocess.SubprocessError):
@@ -389,8 +435,11 @@ class IncrementalCache:
         if fcntl is None or not valid_slot:
             raise ValueError("invalid or unsupported incremental lock")
         self._secure_directory()
-        fd = os.open(self.directory / f"{snapshot.slot}.lock", os.O_CREAT | os.O_RDWR
-                     | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), 0o600)
+        fd = os.open(
+            self.directory / f"{snapshot.slot}.lock",
+            os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+            0o600,
+        )
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
@@ -436,16 +485,24 @@ class IncrementalCache:
             for finding in findings:
                 finding.sanitize()
             stats = ScanStats(
-                connector=spec.id, started_at=now_iso(), finished_at=now_iso(),
-                findings=len(findings), objects_examined=0,
-                warnings=sanitize(payload["warnings"]), cached=True,
+                connector=spec.id,
+                started_at=now_iso(),
+                finished_at=now_iso(),
+                findings=len(findings),
+                objects_examined=0,
+                warnings=sanitize(payload["warnings"]),
+                cached=True,
             )
             return findings, stats
         except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
             return None
 
     def save(
-        self, snapshot: Snapshot, findings: list[Finding], stats: ScanStats, *,
+        self,
+        snapshot: Snapshot,
+        findings: list[Finding],
+        stats: ScanStats,
+        *,
         check_deadline: Callable[[], None] | None = None,
         publish_replace: Callable[[str | Path, str | Path], None] | None = None,
     ) -> None:
@@ -453,13 +510,18 @@ class IncrementalCache:
             return
         try:
             with self._slot_lock(snapshot, exclusive=True):
-                self._save_unlocked(snapshot, findings, stats, check_deadline=check_deadline,
-                                    publish_replace=publish_replace)
+                self._save_unlocked(
+                    snapshot, findings, stats, check_deadline=check_deadline, publish_replace=publish_replace
+                )
         except (OSError, ValueError):
             log.warning("incremental state is locked or unavailable; next scan will run in full")
 
     def _save_unlocked(
-        self, snapshot: Snapshot, findings: list[Finding], stats: ScanStats, *,
+        self,
+        snapshot: Snapshot,
+        findings: list[Finding],
+        stats: ScanStats,
+        *,
         check_deadline: Callable[[], None] | None = None,
         publish_replace: Callable[[str | Path, str | Path], None] | None = None,
     ) -> None:
@@ -471,10 +533,14 @@ class IncrementalCache:
             for finding in findings:
                 finding.sanitize()
             payload = {"findings": [f.to_dict() for f in findings], "warnings": sanitize(stats.warnings)}
-            data = _json({
-                "format": _FORMAT, "fingerprint": snapshot.fingerprint,
-                "payload": payload, "payload_sha256": hashlib.sha256(_json(payload)).hexdigest(),
-            })
+            data = _json(
+                {
+                    "format": _FORMAT,
+                    "fingerprint": snapshot.fingerprint,
+                    "payload": payload,
+                    "payload_sha256": hashlib.sha256(_json(payload)).hexdigest(),
+                }
+            )
             if len(data) > _MAX_CACHE_BYTES:
                 return
             if check_deadline is not None:

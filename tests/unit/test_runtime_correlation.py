@@ -10,14 +10,27 @@ from shadowscan.utils.redaction import credential_id
 
 
 def static(resource="github:acme/agent", framework="framework.langchain"):
-    return Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.FRAMEWORK_USAGE,
-                   title="LangChain dependencies", resource=resource, resource_type="project",
-                   frameworks=[framework], model_providers=["provider.openai"])
+    return Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.FRAMEWORK_USAGE,
+        title="LangChain dependencies",
+        resource=resource,
+        resource_type="project",
+        frameworks=[framework],
+        model_providers=["provider.openai"],
+    )
 
 
 def event(**kwargs):
-    return {"service": "workload-1", "model": "gpt-4o", "provider": "openai",
-            "user_agent": "langchain/0.3", "timestamp": "2026-01-01T00:00:00Z", **kwargs}
+    return {
+        "service": "workload-1",
+        "model": "gpt-4o",
+        "provider": "openai",
+        "user_agent": "langchain/0.3",
+        "timestamp": "2026-01-01T00:00:00Z",
+        **kwargs,
+    }
 
 
 def gateways(index, records, bindings=None):
@@ -42,7 +55,11 @@ def test_global_provider_framework_or_display_name_is_not_a_workload_binding(ind
 
 def test_exact_binding_records_window_provenance_and_explicit_production(index):
     code = static()
-    logs = gateways(index, [event(environment="production"), event(environment="production", timestamp="2026-01-02T00:00:00Z")], [binding()])
+    logs = gateways(
+        index,
+        [event(environment="production"), event(environment="production", timestamp="2026-01-02T00:00:00Z")],
+        [binding()],
+    )
     correlate_runtime([code, *logs])
     activity = code.metadata["runtime_activity"]
     assert activity["status"] == "observed" and activity["events"] == 2
@@ -79,7 +96,11 @@ def test_shared_provider_without_runtime_framework_is_unobserved(index):
 
 def test_tenant_collisions_are_separate_and_cannot_bypass_binding(index):
     code = static()
-    logs = gateways(index, [event(tenant_id="a"), event(tenant_id="b", environment="production")], [binding({"tenant": "a"})])
+    logs = gateways(
+        index,
+        [event(tenant_id="a"), event(tenant_id="b", environment="production")],
+        [binding({"tenant": "a"})],
+    )
     assert len(logs) == 2 and logs[0].id != logs[1].id
     correlate_runtime([code, *logs])
     activity = code.metadata["runtime_activity"]
@@ -99,6 +120,7 @@ def test_missing_or_incomplete_scope_never_matches(index):
 
 def test_invalid_binding_fails_with_explicit_configuration_error(index):
     from shadowscan.connectors.base import ConnectorError
+
     with pytest.raises(ConnectorError, match="scope"):
         gateways(index, [], [{"caller": "principal:workload-1", "code_resource": "github:acme/agent"}])
 
@@ -112,7 +134,10 @@ def test_ambiguous_static_resource_across_accounts_does_not_attribute_both(index
         assert code.metadata["runtime_activity"]["reason"] == "ambiguous-code-resource"
 
 
-@pytest.mark.parametrize("schema,extra", [("generic", {}), ("litellm", {"spend": 1}), ("portkey", {"trace_id": "t"}), ("access-log", {})])
+@pytest.mark.parametrize(
+    "schema,extra",
+    [("generic", {}), ("litellm", {"spend": 1}), ("portkey", {"trace_id": "t"}), ("access-log", {})],
+)
 def test_gateway_raw_credentials_never_survive_normalisation_or_report(index, schema, extra):
     secret = "opaque-key-that-has-no-vendor-pattern-123456"
     record = {**event(), "api_key": secret, "metadata": {"note": secret}, **extra}

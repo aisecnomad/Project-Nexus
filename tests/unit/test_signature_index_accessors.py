@@ -46,8 +46,12 @@ def test_signals_of_type_returns_a_copy() -> None:
 
 
 def test_signals_of_type_follows_pack_order_of_the_loaded_index(index: SignatureIndex) -> None:
-    expected = [(sig, signal) for sig in index.signatures.values() for signal in sig.signals
-                if signal.type == "import"]
+    expected = [
+        (sig, signal)
+        for sig in index.signatures.values()
+        for signal in sig.signals
+        if signal.type == "import"
+    ]
     assert index.signals_of_type("import") == expected
     assert expected
 

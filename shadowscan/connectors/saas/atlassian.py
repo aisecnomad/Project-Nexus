@@ -91,8 +91,10 @@ class AtlassianConnector(BaseConnector):
 
     def _valid_provider_record(self, p: Any) -> bool:
         if not self._record_fields_valid(
-            p, strings=("name", "key", "description", "version", "_product"),
-            mappings=("links",), arrays=("scopes",),
+            p,
+            strings=("name", "key", "description", "version", "_product"),
+            mappings=("links",),
+            arrays=("scopes",),
         ):
             return False
         vendor = p.get("vendor")

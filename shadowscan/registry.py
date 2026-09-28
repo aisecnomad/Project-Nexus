@@ -41,16 +41,45 @@ import yaml
 from shadowscan.errors import SetupError, SetupPathError
 from shadowscan.models import Finding, Surface
 from shadowscan.utils.files import policy_files, policy_glob, read_policy_text, require_no_symlinks
-from shadowscan.utils.identity import has_aws_account_scope, has_google_workspace_account_scope
+from shadowscan.utils.identity import (
+    has_aws_account_scope,
+    has_google_workspace_account_scope,
+    requires_card_account_scope,
+)
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
 NAME_FIELDS = (
-    "agent_name", "name", "names", "display_name", "displayName", "app_slug", "okta_name", "developer_name",
-    "schema_name", "caller", "principal", "function_name", "repository", "project", "agents",
+    "agent_name",
+    "name",
+    "names",
+    "display_name",
+    "displayName",
+    "app_slug",
+    "okta_name",
+    "developer_name",
+    "schema_name",
+    "caller",
+    "principal",
+    "function_name",
+    "repository",
+    "project",
+    "agents",
     "agent_definitions",
 )
 _MAX_NAME_PATTERNS = 4096
+
+
+def _has_valid_account_scope(finding: Finding) -> bool:
+    """Whether the finding's own account/resource pairing is internally consistent.
+
+    Shared by ``Inventory.match`` (which also reports which specific check
+    failed) and ``card_stub_for`` (which only needs the yes/no answer before
+    deciding whether a generated card may bind account/resource evidence).
+    """
+    return has_aws_account_scope(
+        finding.provider, finding.account, finding.resource
+    ) and has_google_workspace_account_scope(finding.provider, finding.account)
 
 
 def _has_usable_resource_identity(finding: Finding) -> bool:
@@ -235,7 +264,14 @@ class Inventory:
             raise _invalid(path, f"{location}.discovery", "expected a mapping")
         _check_fields(disc, _LIST_FIELDS - {"tags"}, path, f"{location}.discovery")
         for name in (
-            "agent_id", "id", "name", "display_name", "owner_team", "owner", "owner_email", "classification"
+            "agent_id",
+            "id",
+            "name",
+            "display_name",
+            "owner_team",
+            "owner",
+            "owner_email",
+            "classification",
         ):
             _optional_string(meta, name, path, f"{location}.metadata")
         aid = meta.get("agent_id") or meta.get("id") or meta.get("name")
@@ -320,7 +356,8 @@ class Inventory:
             finding.metadata["registry_match_reason"] = "unresolved-resource-identity"
             return None
         matches = [
-            entry for entry in self.entries
+            entry
+            for entry in self.entries
             if self._scope_matches(entry, finding)
             and any(fnmatch.fnmatchcase(finding.resource or "", pattern) for pattern in entry.resources)
         ]
@@ -345,7 +382,7 @@ class Inventory:
             and (not entry.accounts or finding.account in entry.accounts)
             # Older generated cards omitted the tenant. A global OAuth client
             # resource cannot confer approval across unrelated customers.
-            and (finding.provider != "google-workspace" or bool(entry.accounts))
+            and (not requires_card_account_scope(finding.provider) or bool(entry.accounts))
             and (not entry.regions or finding.region in entry.regions)
         )
 
@@ -389,7 +426,15 @@ def _invalid(path: Path, location: str, message: str) -> InventoryValidationErro
 
 
 _LIST_FIELDS = {
-    "resources", "names", "aliases", "frameworks", "surfaces", "providers", "accounts", "regions", "tags"
+    "resources",
+    "names",
+    "aliases",
+    "frameworks",
+    "surfaces",
+    "providers",
+    "accounts",
+    "regions",
+    "tags",
 }
 _SIMPLE_FIELDS = _LIST_FIELDS | {"id", "agent_id", "name", "owner", "owner_team"}
 
@@ -401,8 +446,10 @@ def _check_fields(value: dict, allowed: set[str], path: Path, location: str) -> 
 
 
 def _optional_string(value: dict, name: str, path: Path, location: str) -> None:
-    if name in value and value[name] is not None and (
-        not isinstance(value[name], str) or not value[name].strip()
+    if (
+        name in value
+        and value[name] is not None
+        and (not isinstance(value[name], str) or not value[name].strip())
     ):
         raise _invalid(path, f"{location}.{name}", "expected a nonempty string")
 
@@ -472,7 +519,7 @@ def _strip_cite_markers(text: str) -> str:
     preamble = True
     for line in text.splitlines(keepends=True):
         if preamble and line == line.lstrip() and _CITE.fullmatch(line.strip()):
-            result.append(line[len(line.rstrip("\r\n")):])
+            result.append(line[len(line.rstrip("\r\n")) :])
             continue
         result.append(line)
         if line.strip() and not line.lstrip().startswith("#"):
@@ -487,7 +534,8 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
     return {
         "metadata": {
             "agent_id": _slug(
-                finding.metadata.get("agent_name") or finding.metadata.get("name")
+                finding.metadata.get("agent_name")
+                or finding.metadata.get("name")
                 or finding.title.split(":")[-1].strip()
             ),
             "version": "0.1.0",
@@ -503,12 +551,15 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
             "velocity_limit": None,
         },
         "identity_and_delegation": {
-            "spiffe_id": None, "auth_mechanism": None,
+            "spiffe_id": None,
+            "auth_mechanism": None,
             "privileged_account": "policy.privileged-scopes" in finding.tags,
         },
         "capability_surface (Tools)": {"authorized_tools": [{"name": c} for c in caps]},
         "security_controls": {
-            "egress_proxy_required": True, "sandbox_type": None, "kill_switch_enabled": False
+            "egress_proxy_required": True,
+            "sandbox_type": None,
+            "kill_switch_enabled": False,
         },
         "risk_scoring": {"AARS_initial_score": finding.risk.score, "blast_radius": finding.risk.level.value},
         "discovery": {
@@ -516,15 +567,14 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
             # still deliberately use wildcards; generated approvals never do.
             # Redacted resource or scope values can collide across objects.
             # Leave this approval unbound pending an exact, reviewed identity.
-            "resources": [] if not (
+            "resources": []
+            if not (
                 _has_usable_resource_identity(finding)
                 and _has_usable_scope_identity(finding)
-                and has_aws_account_scope(finding.provider, finding.account, finding.resource)
-                and has_google_workspace_account_scope(finding.provider, finding.account)
+                and _has_valid_account_scope(finding)
                 and finding.metadata.get("identity_unresolved") is not True
-            ) else [
-                finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})
-            ],
+            )
+            else [finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})],
             "names": sorted({str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}),
             "frameworks": finding.frameworks,
             "surfaces": [finding.surface.value],

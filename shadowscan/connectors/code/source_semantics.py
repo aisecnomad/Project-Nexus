@@ -128,21 +128,35 @@ _TOOL_ARGUMENTS = re.compile(r"(?<![\w$])(?:tools|toolConfig|functions|function_
 _LOOP_REQUESTS: dict[str, tuple[str, frozenset[str]]] = {
     # Plain, raw-response (``.parse()`` returns the message) and streaming
     # (``get_final_message()`` / ``get_final_completion()``) request forms.
-    "openai": ("provider.openai", frozenset({
-        f"{client}.{api}chat.completions.{method}"
-        for client in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI")
-        for api in ("", "beta.")
-        for method in ("create", "with_raw_response.create", "stream")
-    })),
-    "anthropic": ("provider.anthropic", frozenset({
-        f"{client}.{api}messages.{method}"
-        for client in (
-            "Anthropic", "AsyncAnthropic", "AnthropicBedrock", "AsyncAnthropicBedrock", "AnthropicVertex",
-            "AsyncAnthropicVertex",
-        )
-        for api in ("", "beta.")
-        for method in ("create", "with_raw_response.create", "stream")
-    })),
+    "openai": (
+        "provider.openai",
+        frozenset(
+            {
+                f"{client}.{api}chat.completions.{method}"
+                for client in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI")
+                for api in ("", "beta.")
+                for method in ("create", "with_raw_response.create", "stream")
+            }
+        ),
+    ),
+    "anthropic": (
+        "provider.anthropic",
+        frozenset(
+            {
+                f"{client}.{api}messages.{method}"
+                for client in (
+                    "Anthropic",
+                    "AsyncAnthropic",
+                    "AnthropicBedrock",
+                    "AsyncAnthropicBedrock",
+                    "AnthropicVertex",
+                    "AsyncAnthropicVertex",
+                )
+                for api in ("", "beta.")
+                for method in ("create", "with_raw_response.create", "stream")
+            }
+        ),
+    ),
 }
 # Keyword arguments that evidence a specific capability of a bound construction.
 _KEYWORD_CAPABILITIES: dict[str, tuple[tuple[str, str], ...]] = {
@@ -243,9 +257,15 @@ class _PythonBindings(ast.NodeVisitor):
             start = self._offset(node.func.end_lineno or node.lineno, node.func.end_col_offset or 0)
             end = self._offset(node.end_lineno or node.lineno, node.end_col_offset or 0)
             keywords = " ".join(f"{keyword.arg}=" for keyword in node.keywords if keyword.arg)
-            self.calls.append(_Call(
-                binding, self.text[start:min(end, start + MAX_CALL_TEXT)], node.lineno, keywords, node=node
-            ))
+            self.calls.append(
+                _Call(
+                    binding,
+                    self.text[start : min(end, start + MAX_CALL_TEXT)],
+                    node.lineno,
+                    keywords,
+                    node=node,
+                )
+            )
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
@@ -474,7 +494,8 @@ def _collect_import_hints(index: SignatureIndex) -> tuple[_LiteralGroups, ...] |
             if hints.fold or not hints.groups:
                 return None
             groups = tuple(
-                group for group in hints.groups
+                group
+                for group in hints.groups
                 if not any(" " in literal or literal in "from" or literal in "import" for literal in group)
             )
             if not groups:
@@ -528,7 +549,9 @@ def _by_mask(masks: dict[str, int]) -> dict[int, list[str]]:
 
 
 def _attribute_statements(
-    hints: tuple[_LiteralGroups, ...], modules: set[str], attributes: set[str],
+    hints: tuple[_LiteralGroups, ...],
+    modules: set[str],
+    attributes: set[str],
 ) -> set[tuple[str, str]] | None:
     """Return each (M, A) whose ``from M import A`` holds an alternative of every group of some pattern.
 
@@ -619,7 +642,9 @@ def _python_bindable(index: SignatureIndex, tree: ast.AST) -> bool:
 
 
 def _python_bindings(
-    text: str, relevant: Callable[[_Binding], bool] | None = None, max_nodes: int | None = None,
+    text: str,
+    relevant: Callable[[_Binding], bool] | None = None,
+    max_nodes: int | None = None,
     bindable: Callable[[ast.AST], bool] | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
@@ -637,7 +662,9 @@ def _python_bindings(
 
 
 def _javascript_bindings(
-    text: str, ignored: list[tuple[int, int]], relevant: Callable[[_Binding], bool] | None = None,
+    text: str,
+    ignored: list[tuple[int, int]],
+    relevant: Callable[[_Binding], bool] | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]]]:
     starts = [start for start, _ in ignored]
 
@@ -703,7 +730,9 @@ def _javascript_bindings(
 
 
 def _drop_uncertain_bindings(
-    bindings: dict[str, _Binding], masked: str, declaration_spans: list[tuple[int, int]],
+    bindings: dict[str, _Binding],
+    masked: str,
+    declaration_spans: list[tuple[int, int]],
 ) -> None:
     """Forget each binding that is declared again, reassigned or shadowed outside its import declaration."""
     # Treat any local shadow/reassignment as uncertain across this source. This
@@ -731,7 +760,10 @@ def _drop_uncertain_bindings(
 
 
 def _javascript_calls(
-    text: str, masked: str, bindings: dict[str, _Binding], relevant: Callable[[_Binding], bool] | None,
+    text: str,
+    masked: str,
+    bindings: dict[str, _Binding],
+    relevant: Callable[[_Binding], bool] | None,
 ) -> list[_Call]:
     """Return the calls through ``bindings`` in code, each with its balanced argument text."""
     calls: list[_Call] = []
@@ -755,10 +787,14 @@ def _javascript_calls(
         if depth:
             continue
         symbol = ".".join(filter(None, (binding.symbol, *parts[1:])))
-        calls.append(_Call(
-            _Binding(binding.module, symbol), text[opening:end], text.count("\n", 0, match.start()) + 1,
-            masked[opening:end],
-        ))
+        calls.append(
+            _Call(
+                _Binding(binding.module, symbol),
+                text[opening:end],
+                text.count("\n", 0, match.start()) + 1,
+                masked[opening:end],
+            )
+        )
     return calls
 
 
@@ -766,7 +802,10 @@ class _ModuleMatches:
     """The import signature matches of each bound module, looked up once per file."""
 
     def __init__(
-        self, index: SignatureIndex, language: str, is_local_module: Callable[[str], bool] | None,
+        self,
+        index: SignatureIndex,
+        language: str,
+        is_local_module: Callable[[str], bool] | None,
     ) -> None:
         self.index = index
         self.language = language
@@ -797,13 +836,23 @@ class _ModuleMatches:
         return matches
 
 
-_JAVASCRIPT_OPENAI_CONSTRUCTORS = frozenset({
-    "default", "OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI",
-})
-_RESPONSES_CREATE = frozenset({
-    "OpenAI.responses.create", "AsyncOpenAI.responses.create",
-    "AzureOpenAI.responses.create", "AsyncAzureOpenAI.responses.create",
-})
+_JAVASCRIPT_OPENAI_CONSTRUCTORS = frozenset(
+    {
+        "default",
+        "OpenAI",
+        "AsyncOpenAI",
+        "AzureOpenAI",
+        "AsyncAzureOpenAI",
+    }
+)
+_RESPONSES_CREATE = frozenset(
+    {
+        "OpenAI.responses.create",
+        "AsyncOpenAI.responses.create",
+        "AzureOpenAI.responses.create",
+        "AsyncAzureOpenAI.responses.create",
+    }
+)
 
 
 @dataclass
@@ -816,23 +865,38 @@ class _LoopRequests:
 
     def record(self, language: str, call: _Call, signatures: dict[str, Signature], parsed: bool) -> None:
         """Remember ``call`` if a recognizer follows it; ``parsed`` says a Python tree exists."""
-        if (language == "javascript" and "provider.openai" in signatures and call.binding.module == "openai"
-                and call.binding.symbol in _JAVASCRIPT_OPENAI_CONSTRUCTORS):
+        if (
+            language == "javascript"
+            and "provider.openai" in signatures
+            and call.binding.module == "openai"
+            and call.binding.symbol in _JAVASCRIPT_OPENAI_CONSTRUCTORS
+        ):
             self.javascript_constructors.add(call.line)
         if not parsed or call.node is None:
             return
         loop_request = _LOOP_REQUESTS.get(call.binding.module)
-        if (loop_request is not None and loop_request[0] in signatures
-                and call.binding.symbol in loop_request[1]):
+        if (
+            loop_request is not None
+            and loop_request[0] in signatures
+            and call.binding.symbol in loop_request[1]
+        ):
             self.provider.add(id(call.node))
-        if ("provider.openai" in signatures and call.binding.module == "openai"
-                and call.binding.symbol in _RESPONSES_CREATE):
+        if (
+            "provider.openai" in signatures
+            and call.binding.module == "openai"
+            and call.binding.symbol in _RESPONSES_CREATE
+        ):
             self.responses.add(id(call.node))
 
 
 def bound_source_matches(
-    index: SignatureIndex, text: str, language: str, ignored: list[tuple[int, int]],
-    *, is_local_module: Callable[[str], bool] | None = None, max_ast_nodes: int | None = None,
+    index: SignatureIndex,
+    text: str,
+    language: str,
+    ignored: list[tuple[int, int]],
+    *,
+    is_local_module: Callable[[str], bool] | None = None,
+    max_ast_nodes: int | None = None,
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
@@ -844,7 +908,9 @@ def bound_source_matches(
     try:
         if language == "python":
             calls, imports, tree = _python_bindings(
-                text, module_matches.relevant, max_ast_nodes,
+                text,
+                module_matches.relevant,
+                max_ast_nodes,
                 bindable=lambda parsed: _python_bindable(index, parsed),
             )
         else:
@@ -865,15 +931,25 @@ def bound_source_matches(
 
 
 def _import_evidence(
-    index: SignatureIndex, language: str, imports: list[tuple[_Binding, int]], module_matches: _ModuleMatches,
+    index: SignatureIndex,
+    language: str,
+    imports: list[tuple[_Binding, int]],
+    module_matches: _ModuleMatches,
 ) -> list[Match]:
     """Return the evidence of each bound import: its module's signatures and their import-line code."""
     found: list[Match] = []
     for binding, line in imports:
         for match in module_matches(binding):
-            found.append(Match(match.signature, Signal(type="import", weight=match.weight),
-                               sanitize_text(binding.module), match.weight, line=line,
-                               extra={"verified_agent": False}))
+            found.append(
+                Match(
+                    match.signature,
+                    Signal(type="import", weight=match.weight),
+                    sanitize_text(binding.module),
+                    match.weight,
+                    line=line,
+                    extra={"verified_agent": False},
+                )
+            )
         # Some signatures describe capabilities conveyed by a particular
         # imported tool. Retain those as supporting evidence, never an agent.
         resolved = {m.signature_id for m in module_matches(binding)}
@@ -881,7 +957,8 @@ def _import_evidence(
             # Only matches of signatures this import resolves to are kept, so
             # an unresolved import (most of them) needs no code pass at all.
             statement = (
-                f"from {binding.module} import {binding.symbol}" if binding.symbol
+                f"from {binding.module} import {binding.symbol}"
+                if binding.symbol
                 else f"import {binding.module}"
             )
             for match in index.match_code(statement, language):
@@ -904,21 +981,44 @@ def _call_evidence(language: str, call: _Call, signatures: dict[str, Signature])
             # Options belong to a resolved SDK call, not unrelated config.
             verified = bool(re.search(r"\btools\s*:\s*\{", call.structural_arguments))
         if (
-            signature.category == "provider" and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
+            signature.category == "provider"
+            and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
             and _TOOL_ARGUMENTS.search(call.structural_arguments)
         ):
             # Schema-only requests stay tool-enabled LLM usage: the loop
             # evidence below decides whether selected tools are executed.
-            found.append(Match(signature, Signal(type="code", weight=0.7, capabilities=["tool-use"],
-                                                 description="import-bound request offering tools"),
-                               sanitize_text(f"{call.binding.module}:{symbol}(tools="), 0.7, line=call.line,
-                               extra={"verified_agent": False}))
+            found.append(
+                Match(
+                    signature,
+                    Signal(
+                        type="code",
+                        weight=0.7,
+                        capabilities=["tool-use"],
+                        description="import-bound request offering tools",
+                    ),
+                    sanitize_text(f"{call.binding.module}:{symbol}(tools="),
+                    0.7,
+                    line=call.line,
+                    extra={"verified_agent": False},
+                )
+            )
         for keyword, capability in _KEYWORD_CAPABILITIES.get(signature.id, ()):
             if re.search(rf"(?<![\w$]){keyword}\s*[=:]", call.structural_arguments):
-                found.append(Match(signature, Signal(type="code", weight=0.6, capabilities=[capability],
-                                                     description=f"{keyword} argument"),
-                                   sanitize_text(f"{symbol}({keyword}="), 0.6, line=call.line,
-                                   extra={"verified_agent": False}))
+                found.append(
+                    Match(
+                        signature,
+                        Signal(
+                            type="code",
+                            weight=0.6,
+                            capabilities=[capability],
+                            description=f"{keyword} argument",
+                        ),
+                        sanitize_text(f"{symbol}({keyword}="),
+                        0.6,
+                        line=call.line,
+                        extra={"verified_agent": False},
+                    )
+                )
         for signal in signature.signals:
             if signal.type != "code" or signal.languages and language not in signal.languages:
                 continue
@@ -929,19 +1029,41 @@ def _call_evidence(language: str, call: _Call, signatures: dict[str, Signature])
                 # A known factory list excludes memory/model utility calls
                 # from inherited broad agent_indicator declarations.
                 indicator = verified if factory else signature.agent_indicator or signal.agent_indicator
-                found.append(Match(signature, signal, sanitize_text(canonical[:len(symbol) + 1]),
-                                   signal.weight, line=call.line, extra={"verified_agent": indicator}))
+                found.append(
+                    Match(
+                        signature,
+                        signal,
+                        sanitize_text(canonical[: len(symbol) + 1]),
+                        signal.weight,
+                        line=call.line,
+                        extra={"verified_agent": indicator},
+                    )
+                )
                 break
         if verified:
-            found.append(Match(signature, Signal(type="code", weight=0.9, agent_indicator=True,
-                                                 description="import-bound agent construction"),
-                               sanitize_text(f"{call.binding.module}:{symbol}("), 0.9, line=call.line,
-                               extra={"verified_agent": True}))
+            found.append(
+                Match(
+                    signature,
+                    Signal(
+                        type="code",
+                        weight=0.9,
+                        agent_indicator=True,
+                        description="import-bound agent construction",
+                    ),
+                    sanitize_text(f"{call.binding.module}:{symbol}("),
+                    0.9,
+                    line=call.line,
+                    extra={"verified_agent": True},
+                )
+            )
     return found
 
 
 def _protocol_evidence(
-    index: SignatureIndex, tree: ast.AST | None, text: str, ignored: list[tuple[int, int]],
+    index: SignatureIndex,
+    tree: ast.AST | None,
+    text: str,
+    ignored: list[tuple[int, int]],
     requests: _LoopRequests,
 ) -> list[Match]:
     """Return tool-calling protocol evidence from the loops and dispatch around bound requests."""
@@ -951,32 +1073,60 @@ def _protocol_evidence(
     found: list[Match] = []
     if tree is not None:
         for line in provider_tool_loop_lines(tree, requests.provider):
-            found.append(Match(
-                protocol,
-                Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
-                       description="import-bound model-selected tool dispatch with conversation feedback"),
-                "provider tool-selection/dispatch/feedback loop", 0.9, line=line,
-                extra={"verified_agent": True},
-            ))
+            found.append(
+                Match(
+                    protocol,
+                    Signal(
+                        type="code",
+                        weight=0.9,
+                        agent_indicator=True,
+                        capabilities=["tool-use", "autonomous"],
+                        description="import-bound model-selected tool dispatch with conversation feedback",
+                    ),
+                    "provider tool-selection/dispatch/feedback loop",
+                    0.9,
+                    line=line,
+                    extra={"verified_agent": True},
+                )
+            )
         for line in responses_tool_loop_lines(tree, requests.responses):
-            found.append(Match(
-                protocol,
-                Signal(type="code", weight=0.9, agent_indicator=True, capabilities=["tool-use", "autonomous"],
-                       description="import-bound Responses function dispatch with ordered "
-                                   "conversation feedback"),
-                "OpenAI Responses tool-selection/dispatch/feedback loop", 0.9, line=line,
-                extra={"verified_agent": True},
-            ))
+            found.append(
+                Match(
+                    protocol,
+                    Signal(
+                        type="code",
+                        weight=0.9,
+                        agent_indicator=True,
+                        capabilities=["tool-use", "autonomous"],
+                        description="import-bound Responses function dispatch with ordered "
+                        "conversation feedback",
+                    ),
+                    "OpenAI Responses tool-selection/dispatch/feedback loop",
+                    0.9,
+                    line=line,
+                    extra={"verified_agent": True},
+                )
+            )
     dispatch_lines = (
-        responses_dispatch_lines(tree, requests.responses) if tree is not None else
-        javascript_responses_dispatch_lines(text, ignored, requests.javascript_constructors)
+        responses_dispatch_lines(tree, requests.responses)
+        if tree is not None
+        else javascript_responses_dispatch_lines(text, ignored, requests.javascript_constructors)
     )
     for line in dispatch_lines:
-        found.append(Match(
-            protocol,
-            Signal(type="code", weight=0.85, agent_indicator=True, capabilities=["tool-use"],
-                   description="import-bound Responses selected-action dispatch"),
-            "OpenAI Responses selected-action dispatch", 0.85, line=line,
-            extra={"verified_agent": True, "agent_classification": "openai-responses-tool-dispatch"},
-        ))
+        found.append(
+            Match(
+                protocol,
+                Signal(
+                    type="code",
+                    weight=0.85,
+                    agent_indicator=True,
+                    capabilities=["tool-use"],
+                    description="import-bound Responses selected-action dispatch",
+                ),
+                "OpenAI Responses selected-action dispatch",
+                0.85,
+                line=line,
+                extra={"verified_agent": True, "agent_classification": "openai-responses-tool-dispatch"},
+            )
+        )
     return found

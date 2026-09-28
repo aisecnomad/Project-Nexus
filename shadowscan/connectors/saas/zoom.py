@@ -167,7 +167,8 @@ class ZoomConnector(BaseConnector):
             category = None
         source = (
             {"public": "approved public", "account_created": "account-created"}.get(category, "exported")
-            if category else "exported"
+            if category
+            else "exported"
         )
         users = app.get("installed_users_count")
         if users is None:

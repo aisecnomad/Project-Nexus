@@ -50,10 +50,19 @@ def _record(**extra):
 
 
 # ------------------------------------------------------------ shared code
-@pytest.mark.parametrize("method", [
-    "load_offline", "_analyze_repository", "_scan_local", "_fetch", "_clone", "_set_clone_snapshot",
-    "_api_ref", "_write_api_snapshot",
-])
+@pytest.mark.parametrize(
+    "method",
+    [
+        "load_offline",
+        "_analyze_repository",
+        "_scan_local",
+        "_fetch",
+        "_clone",
+        "_set_clone_snapshot",
+        "_api_ref",
+        "_write_api_snapshot",
+    ],
+)
 def test_providers_run_one_shared_implementation(method):
     shared = getattr(RemoteRepositoryConnector, method)
     assert getattr(GitHubConnector, method) is shared
@@ -66,13 +75,25 @@ def test_github_fetch_repo_is_the_shared_fetch():
 
 def test_api_selection_keeps_high_signal_files_before_shallow_sources():
     paths = [
-        "src/pkg/sub/deep/agent.py", "README.md", "app.py", "pkg/mod.ts", "docs/notes.txt",
-        ".github/workflows/ci.yml", "sub/CLAUDE.md", "infra/main.tf", "requirements.txt",
+        "src/pkg/sub/deep/agent.py",
+        "README.md",
+        "app.py",
+        "pkg/mod.ts",
+        "docs/notes.txt",
+        ".github/workflows/ci.yml",
+        "sub/CLAUDE.md",
+        "infra/main.tf",
+        "requirements.txt",
         "tools/.cursor/rules.mdc",
     ]
     assert select_api_paths(paths) == [
-        ".github/workflows/ci.yml", "sub/CLAUDE.md", "infra/main.tf", "requirements.txt",
-        "tools/.cursor/rules.mdc", "app.py", "pkg/mod.ts",
+        ".github/workflows/ci.yml",
+        "sub/CLAUDE.md",
+        "infra/main.tf",
+        "requirements.txt",
+        "tools/.cursor/rules.mdc",
+        "app.py",
+        "pkg/mod.ts",
     ]
 
 
@@ -173,8 +194,11 @@ def test_unfetched_repository_reports_nothing_further(index, monkeypatch, cls):
 def test_checkout_findings_carry_provider_metadata_and_timestamps(tmp_path, index):
     (tmp_path / "requirements.txt").write_text("langchain\n")
     record = _record(
-        owner={"login": "acme"}, namespace={"full_path": "acme"}, private=True,
-        pushed_at="2026-09-01T00:00:00Z", created_at="2026-01-01T00:00:00Z",
+        owner={"login": "acme"},
+        namespace={"full_path": "acme"},
+        private=True,
+        pushed_at="2026-09-01T00:00:00Z",
+        created_at="2026-01-01T00:00:00Z",
     )
     github = list(_connector(index, GitHubConnector)._scan_local(record, str(tmp_path)))
     assert github and all(f.connector == "code.github" and f.provider == "github" for f in github)
@@ -212,7 +236,8 @@ def test_gitlab_project_without_clone_url_is_not_cloned(tmp_path, index, monkeyp
 def test_clone_launch_failure_falls_back(tmp_path, index, monkeypatch, cls):
     monkeypatch.setattr(remote, "run_bounded_clone", Mock(side_effect=OSError("git missing")))
     record = _record(
-        clone_url="https://github.com/acme/app.git", http_url_to_repo="https://gitlab.com/acme/app.git",
+        clone_url="https://github.com/acme/app.git",
+        http_url_to_repo="https://gitlab.com/acme/app.git",
     )
     assert not _connector(index, cls)._clone(record, str(tmp_path / "repo"))
 
@@ -221,7 +246,10 @@ def test_github_enterprise_clone_stays_on_the_api_origin(tmp_path, index, monkey
     run = Mock(return_value=True)
     monkeypatch.setattr(remote, "run_bounded_clone", run)
     connector = _connector(
-        index, GitHubConnector, api_url="https://ghe.example.com/api/v3", token="synthetic",
+        index,
+        GitHubConnector,
+        api_url="https://ghe.example.com/api/v3",
+        token="synthetic",
     )
     assert connector._clone({"full_name": "acme/app"}, str(tmp_path / "repo"))
     cmd, env = run.call_args.args[:2]
@@ -252,11 +280,14 @@ def test_github_unreadable_tree_skips_content(tmp_path, index):
 
 def test_github_malformed_tree_metadata_is_partial_coverage(tmp_path, index):
     good = b"from crewai import Agent\n"
-    tree = {"sha": COMMIT, "tree": [
-        "not-an-entry",
-        {"path": "agent.py", "type": "blob", "sha": _sha(good), "size": len(good)},
-        {"path": "big.py", "type": "blob", "sha": _sha(b"big"), "size": -1},
-    ]}
+    tree = {
+        "sha": COMMIT,
+        "tree": [
+            "not-an-entry",
+            {"path": "agent.py", "type": "blob", "sha": _sha(good), "size": len(good)},
+            {"path": "big.py", "type": "blob", "sha": _sha(b"big"), "size": -1},
+        ],
+    }
     blobs = {_sha(good): {"encoding": "base64", "content": base64.b64encode(good).decode()}}
     connector = _github_api(index, tree, blobs)
     dest = connector._fetch_via_api(_record(), str(tmp_path))
@@ -267,14 +298,17 @@ def test_github_malformed_tree_metadata_is_partial_coverage(tmp_path, index):
     assert "code.github: invalid blob size metadata in acme/app; source coverage partial" in warnings
 
 
-@pytest.mark.parametrize("blob,warning", [
-    (None, "code.github: cannot read content in acme/app"),
-    ({"encoding": "utf-8", "content": "x"}, "code.github: cannot read content in acme/app"),
-    (
-        {"encoding": "base64", "content": base64.b64encode(b"x" * (API_MAX_BLOB_BYTES + 1)).decode()},
-        "code.github: oversized API content in acme/app",
-    ),
-])
+@pytest.mark.parametrize(
+    "blob,warning",
+    [
+        (None, "code.github: cannot read content in acme/app"),
+        ({"encoding": "utf-8", "content": "x"}, "code.github: cannot read content in acme/app"),
+        (
+            {"encoding": "base64", "content": base64.b64encode(b"x" * (API_MAX_BLOB_BYTES + 1)).decode()},
+            "code.github: oversized API content in acme/app",
+        ),
+    ],
+)
 def test_github_unusable_blob_is_skipped(tmp_path, index, blob, warning):
     object_id = _sha(b"x")
     tree = {"sha": COMMIT, "tree": [{"path": "agent.py", "type": "blob", "sha": object_id, "size": 1}]}
@@ -291,11 +325,16 @@ def test_github_repository_without_provider_secret_names_has_no_finding(index, n
     connector.http.paginate_link.return_value = [{"name": name}]
     assert list(connector._repo_level_findings(_record())) == []
     assert [call.args[0] for call in connector.http.paginate_link.call_args_list] == [
-        "/repos/acme/app/actions/secrets", "/repos/acme/app/actions/variables",
-        "/repos/acme/app/codespaces/secrets", "/repos/acme/app/dependabot/secrets",
+        "/repos/acme/app/actions/secrets",
+        "/repos/acme/app/actions/variables",
+        "/repos/acme/app/codespaces/secrets",
+        "/repos/acme/app/dependabot/secrets",
     ]
     assert [call.kwargs["item_key"] for call in connector.http.paginate_link.call_args_list] == [
-        "secrets", "variables", "secrets", "secrets",
+        "secrets",
+        "variables",
+        "secrets",
+        "secrets",
     ]
 
 
@@ -311,12 +350,16 @@ def _gitlab_api(index, tree, content=b""):
 
 def test_gitlab_malformed_and_unselected_tree_entries_are_partial_coverage(tmp_path, index):
     good = b"from crewai import Agent\n"
-    connector = _gitlab_api(index, [
-        {"type": "blob"},
-        {"path": "agent.py", "type": "blob", "id": _sha(good)},
-        {"path": "notes.txt", "type": "blob", "id": _sha(b"notes")},
-        {"path": "src", "type": "tree", "id": COMMIT},
-    ], good)
+    connector = _gitlab_api(
+        index,
+        [
+            {"type": "blob"},
+            {"path": "agent.py", "type": "blob", "id": _sha(good)},
+            {"path": "notes.txt", "type": "blob", "id": _sha(b"notes")},
+            {"path": "src", "type": "tree", "id": COMMIT},
+        ],
+        good,
+    )
     dest = connector._fetch_via_api(_record(), str(tmp_path))
     assert (Path(dest) / "agent.py").read_bytes() == good
     assert not (Path(dest) / "notes.txt").exists()
@@ -326,19 +369,25 @@ def test_gitlab_malformed_and_unselected_tree_entries_are_partial_coverage(tmp_p
     ]
 
 
-@pytest.mark.parametrize("failure,warning", [
-    (
-        HttpError(404, "https://gitlab.com/api/v4/projects/7"),
-        "code.gitlab: repository content HTTP 404; coverage partial",
-    ),
-    (ValueError("oversized"), "code.gitlab: oversized or invalid API content skipped"),
-])
+@pytest.mark.parametrize(
+    "failure,warning",
+    [
+        (
+            HttpError(404, "https://gitlab.com/api/v4/projects/7"),
+            "code.gitlab: repository content HTTP 404; coverage partial",
+        ),
+        (ValueError("oversized"), "code.gitlab: oversized or invalid API content skipped"),
+    ],
+)
 def test_gitlab_blob_download_failure_keeps_neighbours(tmp_path, index, failure, warning):
     good = b"from crewai import Agent\n"
-    connector = _gitlab_api(index, [
-        {"path": "bad.py", "type": "blob", "id": _sha(b"bad")},
-        {"path": "good.py", "type": "blob", "id": _sha(good)},
-    ])
+    connector = _gitlab_api(
+        index,
+        [
+            {"path": "bad.py", "type": "blob", "id": _sha(b"bad")},
+            {"path": "good.py", "type": "blob", "id": _sha(good)},
+        ],
+    )
     connector.http.read_response_bytes.side_effect = [failure, good]
     dest = connector._fetch_via_api(_record(), str(tmp_path))
     assert not (Path(dest) / "bad.py").exists()
@@ -348,10 +397,14 @@ def test_gitlab_blob_download_failure_keeps_neighbours(tmp_path, index, failure,
 
 def test_gitlab_unusual_tree_path_costs_only_that_file(tmp_path, index):
     good = b"from crewai import Agent\n"
-    connector = _gitlab_api(index, [
-        {"path": "C:/agent.py", "type": "blob", "id": _sha(good)},
-        {"path": "agent.py", "type": "blob", "id": _sha(good)},
-    ], good)
+    connector = _gitlab_api(
+        index,
+        [
+            {"path": "C:/agent.py", "type": "blob", "id": _sha(good)},
+            {"path": "agent.py", "type": "blob", "id": _sha(good)},
+        ],
+        good,
+    )
     dest = connector._fetch_via_api(_record(), str(tmp_path))
     assert [p.name for p in Path(dest).iterdir()] == ["agent.py"]
     assert connector.ctx.stats.warnings == [
@@ -367,7 +420,8 @@ def test_gitlab_project_level_reports_variables_tokens_and_bots_without_values(i
         ],
         "/projects/7/access_tokens": [{"id": 3, "name": "deploy", "scopes": ["api"]}],
         "/projects/7/members": [
-            {"id": 4, "username": "project_7_bot_1a2b"}, {"id": 5, "username": "alice"},
+            {"id": 4, "username": "project_7_bot_1a2b"},
+            {"id": 5, "username": "alice"},
             {"id": 6, "username": "helper", "bot": True},
         ],
     }
@@ -375,7 +429,10 @@ def test_gitlab_project_level_reports_variables_tokens_and_bots_without_values(i
     connector.http.paginate_link.side_effect = lambda path, **_: listings[path]
     findings = list(connector._project_level({"id": 7, "path_with_namespace": "acme/app"}))
     assert [f.resource_type for f in findings] == [
-        "ci-variables", "project_access_token", "project_bot", "project_bot",
+        "ci-variables",
+        "project_access_token",
+        "project_bot",
+        "project_bot",
     ]
     assert "unmasked-ci-variable" in findings[0].tags
     assert findings[1].permissions == ["api"]
@@ -399,7 +456,11 @@ def test_collect_without_targets_is_a_configuration_error(index, cls, monkeypatc
 
 def test_github_collect_filters_deduplicates_and_caps_listings(index):
     connector = _connector(
-        index, GitHubConnector, repos=["acme/one", "acme/one", "acme/gone"], user="octo", max_repos=3,
+        index,
+        GitHubConnector,
+        repos=["acme/one", "acme/one", "acme/gone"],
+        user="octo",
+        max_repos=3,
     )
     connector.http = Mock()
     connector.http.try_get_json.side_effect = [{"full_name": "acme/one"}, None]
@@ -418,7 +479,8 @@ def test_github_collect_filters_deduplicates_and_caps_listings(index):
     capped = _connector(index, GitHubConnector, user="octo", max_repos=1, topics=["ai"])
     capped.http = Mock()
     capped.http.paginate_link.return_value = [
-        {"full_name": "octo/a", "topics": ["ai"]}, {"full_name": "octo/b"},
+        {"full_name": "octo/a", "topics": ["ai"]},
+        {"full_name": "octo/b"},
         {"full_name": "octo/c", "topics": ["ai"]},
     ]
     assert [record["full_name"] for record in capped.collect()] == ["octo/a"]
@@ -427,14 +489,21 @@ def test_github_collect_filters_deduplicates_and_caps_listings(index):
 
 def test_gitlab_collect_deduplicates_and_caps_group_listing(index):
     connector = _connector(
-        index, GitLabConnector, projects=["acme/one", "acme/one"], group="acme", max_projects=2,
+        index,
+        GitLabConnector,
+        projects=["acme/one", "acme/one"],
+        group="acme",
+        max_projects=2,
     )
     connector.http = Mock()
     connector.http.try_get_json.side_effect = [{"id": 1, "path_with_namespace": "acme/one"}, {}]
-    listings = {"/groups/acme/projects": [
-        {"id": 1, "path_with_namespace": "acme/one"}, {"id": 2, "path_with_namespace": "acme/two"},
-        {"id": 3, "path_with_namespace": "acme/three"},
-    ]}
+    listings = {
+        "/groups/acme/projects": [
+            {"id": 1, "path_with_namespace": "acme/one"},
+            {"id": 2, "path_with_namespace": "acme/two"},
+            {"id": 3, "path_with_namespace": "acme/three"},
+        ]
+    }
     connector.http.paginate_link.side_effect = lambda path, **_: listings.get(path, [])
     records = list(connector.collect())
     assert [record["id"] for record in records] == [1, 2]
@@ -458,7 +527,9 @@ def test_gitlab_duo_setting_becomes_an_agent_config_finding(index):
     connector.http = Mock()
     connector.http.paginate_link.return_value = []
     connector.http.try_get_json.return_value = {
-        "full_path": "acme", "duo_features_enabled": True, "lock_duo_features_enabled": False,
+        "full_path": "acme",
+        "duo_features_enabled": True,
+        "lock_duo_features_enabled": False,
     }
     records = list(connector._group_identities("acme"))
     assert [record.kind for record in records] == ["duo"]
@@ -468,11 +539,16 @@ def test_gitlab_duo_setting_becomes_an_agent_config_finding(index):
     assert findings[0].kind is Kind.AGENT_CONFIG and "code-exec" in findings[0].capabilities
 
 
-@pytest.mark.parametrize("cls, fetch_method, metadata_method", [
-    (GitHubConnector, "_fetch_repo", "_repo_level_findings"),
-    (GitLabConnector, "_fetch", "_project_level"),
-])
-def test_live_download_under_symlinked_temp_parent_is_scanned(tmp_path, index, monkeypatch, cls, fetch_method, metadata_method):
+@pytest.mark.parametrize(
+    "cls, fetch_method, metadata_method",
+    [
+        (GitHubConnector, "_fetch_repo", "_repo_level_findings"),
+        (GitLabConnector, "_fetch", "_project_level"),
+    ],
+)
+def test_live_download_under_symlinked_temp_parent_is_scanned(
+    tmp_path, index, monkeypatch, cls, fetch_method, metadata_method
+):
     actual = tmp_path / "actual"
     actual.mkdir()
     alias = tmp_path / "alias"
@@ -499,11 +575,17 @@ def test_live_download_under_symlinked_temp_parent_is_scanned(tmp_path, index, m
 
 
 @pytest.mark.parametrize("cls", [GitHubConnector, GitLabConnector])
-def test_nested_repository_scan_inherits_cancellation_and_publication_fence(tmp_path, index, monkeypatch, cls):
+def test_nested_repository_scan_inherits_cancellation_and_publication_fence(
+    tmp_path, index, monkeypatch, cls
+):
     cancelled, publication_lock = Event(), Lock()
     parent = ConnectorContext(
-        config={"use_git": False}, index=index, workdir=str(tmp_path),
-        deadline=monotonic() + 30, cancelled=cancelled, publication_lock=publication_lock,
+        config={"use_git": False},
+        index=index,
+        workdir=str(tmp_path),
+        deadline=monotonic() + 30,
+        cancelled=cancelled,
+        publication_lock=publication_lock,
     )
     child_contexts = []
 
@@ -529,10 +611,13 @@ def test_nested_repository_scan_inherits_cancellation_and_publication_fence(tmp_
         child.check_deadline()
 
 
-@pytest.mark.parametrize("cls, record", [
-    (GitHubConnector, {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"}),
-    (GitLabConnector, {"http_url_to_repo": "https://gitlab.com/org/repo.git"}),
-])
+@pytest.mark.parametrize(
+    "cls, record",
+    [
+        (GitHubConnector, {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"}),
+        (GitLabConnector, {"http_url_to_repo": "https://gitlab.com/org/repo.git"}),
+    ],
+)
 def test_clone_process_is_bounded_by_connector_deadline(tmp_path, index, monkeypatch, cls, record):
     timeouts = []
 
@@ -561,8 +646,7 @@ def test_explicit_repository_caps_are_enforced(cls, key, records, identity, inde
     connector = cls(ctx)
     connector.http = Mock()
     connector.http.try_get_json.return_value = (
-        {identity: "acme/one"} if cls is GitHubConnector
-        else {identity: 1, "path_with_namespace": "acme/one"}
+        {identity: "acme/one"} if cls is GitHubConnector else {identity: 1, "path_with_namespace": "acme/one"}
     )
     assert len(list(connector.collect())) == 1
     assert connector.http.try_get_json.call_count == 1
@@ -591,7 +675,9 @@ def test_offline_repo_caps_mark_partial_coverage(tmp_path: Path, connector: str,
 
 @pytest.mark.parametrize("connector", ["code.github", "code.gitlab"])
 @pytest.mark.parametrize("file_only", [False, True], ids=["empty-root", "files-without-clones"])
-def test_empty_offline_clone_input_marks_scan_incomplete(tmp_path: Path, connector: str, file_only: bool, run_connector):
+def test_empty_offline_clone_input_marks_scan_incomplete(
+    tmp_path: Path, connector: str, file_only: bool, run_connector
+):
     if file_only:
         (tmp_path / "README.md").write_text("No checkout was exported here.\n")
     findings, ctx = run_connector(connector, input=str(tmp_path), use_git=False)
@@ -618,7 +704,9 @@ def test_per_repository_contexts_share_the_diagnostic_cap(tmp_path, index):
         repo.mkdir()
         for i in range(1100):
             (repo / f"f{i}.py").write_text("ab")
-    ctx = ConnectorContext(config={"input": str(tmp_path), "max_file_size": 1, "strict_coverage": True}, index=index)
+    ctx = ConnectorContext(
+        config={"input": str(tmp_path), "max_file_size": 1, "strict_coverage": True}, index=index
+    )
     GitHubConnector(ctx).run()
     assert len(ctx.stats.errors) == ConnectorContext._MAX_DIAGNOSTICS + 1
     assert sum("diagnostic limit reached" in e for e in ctx.stats.errors) == 1

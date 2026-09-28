@@ -44,8 +44,10 @@ _SECRET_TOKEN = re.compile(
 # withheld. Query parameters (e.g. Power Automate's ``sig``) are handled by the
 # ordinary query-field rules.
 _PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
-    (re.compile(r"hooks\.slack(?:-gov)?\.com"),
-     re.compile(r"/(?:services|workflows|triggers|actions|commands)/")),
+    (
+        re.compile(r"hooks\.slack(?:-gov)?\.com"),
+        re.compile(r"/(?:services|workflows|triggers|actions|commands)/"),
+    ),
     (re.compile(r"(?:(?:ptb|canary)\.)?discord(?:app)?\.com"), re.compile(r"/api(?:/v\d+)?/webhooks/")),
     (re.compile(r"(?:[a-z0-9-]+\.)*webhook\.office\.com"), re.compile(r"/webhook(?:b2)?/")),
     (re.compile(r"outlook\.office(?:365)?\.com"), re.compile(r"/webhook(?:b2)?/")),
@@ -69,7 +71,7 @@ _QUERY_SEPARATOR = re.compile(r"[&#]")
 def _url_host(authority: str) -> str:
     host = authority.rsplit("@", 1)[-1]
     if host.startswith("["):
-        host = host[1:host.find("]")] if "]" in host else host[1:]
+        host = host[1 : host.find("]")] if "]" in host else host[1:]
     else:
         host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
     return host.rstrip(".").lower()
@@ -87,7 +89,7 @@ def _redact_path_secret(host: str, path: str) -> str:
             continue
         prefix = prefix_rx.match(path)
         if prefix and prefix.end() < len(path):
-            return path[:prefix.end()] + REDACTED
+            return path[: prefix.end()] + REDACTED
     return path
 
 
@@ -110,7 +112,12 @@ def _sanitize_url(match: re.Match[str]) -> str:
             return field
         decoded = unquote(key).lower()
         sensitive = _sensitive_assignment_key(decoded) or decoded in {
-            "key", "sig", "signature", "code", "x-amz-signature", "x-goog-signature",
+            "key",
+            "sig",
+            "signature",
+            "code",
+            "x-amz-signature",
+            "x-goog-signature",
         }
         return key + equals + (REDACTED if sensitive else value)
 
@@ -121,10 +128,10 @@ def _sanitize_url(match: re.Match[str]) -> str:
     start = min((pos for c in "?&#" if (pos := url.find(c)) >= 0), default=len(url))
     if start == len(url):
         return url
-    parts = [url[:start + 1]]
+    parts = [url[: start + 1]]
     cursor = start + 1
     for separator in _QUERY_SEPARATOR.finditer(url, cursor):
-        parts.append(query_value(url[cursor:separator.start()]))
+        parts.append(query_value(url[cursor : separator.start()]))
         parts.append(separator.group(0))
         cursor = separator.end()
     parts.append(query_value(url[cursor:]))

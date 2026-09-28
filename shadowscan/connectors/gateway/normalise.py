@@ -319,8 +319,10 @@ def _looks_vertex(rec: dict[str, Any]) -> bool:
         return False
     service, method = payload.get("serviceName"), payload.get("methodName")
     return (
-        isinstance(service, str) and "aiplatform" in service
-        or isinstance(method, str) and method.startswith("google.cloud.aiplatform.")
+        isinstance(service, str)
+        and "aiplatform" in service
+        or isinstance(method, str)
+        and method.startswith("google.cloud.aiplatform.")
         or "aiplatform" in json.dumps(payload)[:500]
     )
 
@@ -384,9 +386,8 @@ def _looks_openai_usage(rec: dict[str, Any]) -> bool:
 
 
 def _looks_anthropic_usage(rec: dict[str, Any]) -> bool:
-    return (
-        ("workspace_id" in rec and "api_key_id" in rec and "uncached_input_tokens" in rec)
-        or ("uncached_input_tokens" in rec and "model" in rec)
+    return ("workspace_id" in rec and "api_key_id" in rec and "uncached_input_tokens" in rec) or (
+        "uncached_input_tokens" in rec and "model" in rec
     )
 
 
@@ -835,12 +836,27 @@ def _access_log_path(rec: dict[str, Any]) -> Any:
 
 def _normalise_access_log(rec: dict[str, Any]) -> Event:
     ua = get_path(
-        rec, "http_user_agent", "user_agent", "userAgent", "http.user_agent", "request.headers.user-agent",
-        "cs(User-Agent)", "cs-user-agent", "useragent",
+        rec,
+        "http_user_agent",
+        "user_agent",
+        "userAgent",
+        "http.user_agent",
+        "request.headers.user-agent",
+        "cs(User-Agent)",
+        "cs-user-agent",
+        "useragent",
     )
     ip = get_path(
-        rec, "remote_addr", "client_ip", "clientIp", "c-ip", "x_forwarded_for", "http.client_ip", "source_ip",
-        "src_ip", "client.ip",
+        rec,
+        "remote_addr",
+        "client_ip",
+        "clientIp",
+        "c-ip",
+        "x_forwarded_for",
+        "http.client_ip",
+        "source_ip",
+        "src_ip",
+        "client.ip",
     )
     user = get_path(
         rec, "remote_user", "user", "username", "auth_user", "principal", "sub", "x_user", "http.user"
@@ -849,12 +865,28 @@ def _normalise_access_log(rec: dict[str, Any]) -> Event:
     kind, caller = _identity(("api-key", api_key), ("user", user), ("user-agent", ua), ("ip", ip))
     caller = caller or "unknown"
     timestamp = get_path(
-        rec, "time", "timestamp", "@timestamp", "time_local", "time_iso8601", "start_time", "date", "ts",
+        rec,
+        "time",
+        "timestamp",
+        "@timestamp",
+        "time_local",
+        "time_iso8601",
+        "start_time",
+        "date",
+        "ts",
         "datetime",
     )
     host = get_path(
-        rec, "host", "http_host", "server_name", "upstream_host", "authority", "http.host", "cs-host",
-        "x-forwarded-host", "domain",
+        rec,
+        "host",
+        "http_host",
+        "server_name",
+        "upstream_host",
+        "authority",
+        "http.host",
+        "cs-host",
+        "x-forwarded-host",
+        "domain",
     )
     return Event(
         caller=f"access:{caller}",
@@ -879,7 +911,12 @@ def _normalise_access_log(rec: dict[str, Any]) -> Event:
 
 
 _GENERIC_TOOL_KEYS = (
-    "tools", "functions", "function_declarations", "tool_choice", "toolConfig", "tool_config",
+    "tools",
+    "functions",
+    "function_declarations",
+    "tool_choice",
+    "toolConfig",
+    "tool_config",
 )
 
 
@@ -903,16 +940,44 @@ def _generic_tool_calls(rec: dict[str, Any]) -> bool | None:
 
 def _normalise_generic(rec: dict[str, Any]) -> Event | None:
     key = _scalar_path(
-        rec, "api_key", "apiKey", "api_key_id", "key", "key_id", "key_alias", "virtual_key", "token_id",
-        "client_id", "clientId",
+        rec,
+        "api_key",
+        "apiKey",
+        "api_key_id",
+        "key",
+        "key_id",
+        "key_alias",
+        "virtual_key",
+        "token_id",
+        "client_id",
+        "clientId",
     )
     principal = _scalar_path(
-        rec, "principal", "principal_id", "identity.arn", "identity", "caller", "service", "service_name",
-        "app", "application", "app_name", "source", "team", "team_id", "org", "project",
+        rec,
+        "principal",
+        "principal_id",
+        "identity.arn",
+        "identity",
+        "caller",
+        "service",
+        "service_name",
+        "app",
+        "application",
+        "app_name",
+        "source",
+        "team",
+        "team_id",
+        "org",
+        "project",
     )
     user = get_path(rec, "user", "user_id", "userId", "username", "email", "end_user", "sub", "actor")
     ua = get_path(
-        rec, "user_agent", "userAgent", "http_user_agent", "headers.user-agent", "request.headers.user-agent",
+        rec,
+        "user_agent",
+        "userAgent",
+        "http_user_agent",
+        "headers.user-agent",
+        "request.headers.user-agent",
         "metadata.user_agent",
     )
     ip = get_path(rec, "ip", "client_ip", "source_ip", "remote_addr", "callerIp")
@@ -922,20 +987,48 @@ def _normalise_generic(rec: dict[str, Any]) -> Event | None:
     if who is None:
         return None
     timestamp = get_path(
-        rec, "timestamp", "time", "@timestamp", "ts", "created_at", "createdAt", "start_time", "startTime",
-        "date", "datetime", "event_time",
+        rec,
+        "timestamp",
+        "time",
+        "@timestamp",
+        "ts",
+        "created_at",
+        "createdAt",
+        "start_time",
+        "startTime",
+        "date",
+        "datetime",
+        "event_time",
     )
     model = get_path(
-        rec, "model", "model_id", "modelId", "model_name", "deployment", "engine", "llm", "response.model",
+        rec,
+        "model",
+        "model_id",
+        "modelId",
+        "model_name",
+        "deployment",
+        "engine",
+        "llm",
+        "response.model",
         "request.model",
     )
     tokens_in = get_path(
-        rec, "prompt_tokens", "input_tokens", "tokens_in", "usage.prompt_tokens", "usage.input_tokens",
+        rec,
+        "prompt_tokens",
+        "input_tokens",
+        "tokens_in",
+        "usage.prompt_tokens",
+        "usage.input_tokens",
         "promptTokens",
     )
     tokens_out = get_path(
-        rec, "completion_tokens", "output_tokens", "tokens_out", "usage.completion_tokens",
-        "usage.output_tokens", "completionTokens",
+        rec,
+        "completion_tokens",
+        "output_tokens",
+        "tokens_out",
+        "usage.completion_tokens",
+        "usage.output_tokens",
+        "completionTokens",
     )
     return Event(
         caller=f"{kind}:{who}",

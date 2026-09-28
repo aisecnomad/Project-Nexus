@@ -483,9 +483,10 @@ def _has_kubernetes_service_account_claims(claims: dict[str, Any]) -> bool:
     structured = claims.get("kubernetes.io")
     if isinstance(structured, dict) and structured:
         return True
-    return any(isinstance(value, str) and bool(value.strip()) for value in (
-        claims.get(key) for key in _KUBERNETES_LEGACY_CLAIMS
-    ))
+    return any(
+        isinstance(value, str) and bool(value.strip())
+        for value in (claims.get(key) for key in _KUBERNETES_LEGACY_CLAIMS)
+    )
 
 
 def _issuer_family(iss: str, claims: dict[str, Any]) -> str:

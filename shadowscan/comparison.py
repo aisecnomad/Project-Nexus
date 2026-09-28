@@ -31,6 +31,7 @@ MAX_REPORT_BYTES = 64 * 1024 * 1024
 
 def load_report(path: str | Path) -> dict[str, Any]:
     """Read an unambiguous, bounded report without following input symlinks."""
+
     def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in pairs:
@@ -45,7 +46,8 @@ def load_report(path: str | Path) -> dict[str, Any]:
     try:
         report = json.loads(
             read_policy_text(Path(path), max_bytes=MAX_REPORT_BYTES),
-            object_pairs_hook=unique_object, parse_constant=invalid_number,
+            object_pairs_hook=unique_object,
+            parse_constant=invalid_number,
         )
         if not isinstance(report, dict):
             raise ValueError("report must be a JSON object")
@@ -91,7 +93,9 @@ def _scanner_digest() -> str:
 
 
 def build_collection_scope(
-    config: ScanConfig, index: SignatureIndex, specs: list[ConnectorSpec],
+    config: ScanConfig,
+    index: SignatureIndex,
+    specs: list[ConnectorSpec],
 ) -> dict[str, Any]:
     """Describe selected static inputs without exposing any configuration values.
 
@@ -124,22 +128,25 @@ def build_collection_scope(
         if spec.name == "gateway.logs":
             return {**unavailable, "reason": "configuration contains private comparison values"}
         try:
-            if (
-                sanitize((options, spec.label)) != (options, spec.label)
-                or _has_private_scope_values((options, spec.label))
+            if sanitize((options, spec.label)) != (options, spec.label) or _has_private_scope_values(
+                (options, spec.label)
             ):
                 return {**unavailable, "reason": "configuration contains private comparison values"}
         except (RecursionError, TypeError, ValueError):
             return {**unavailable, "reason": "configuration contains private comparison values"}
         inputs.append({"name": spec.name, "label": spec.label, "config": options})
     try:
-        fingerprint = hashlib.sha256(_canonical({
-            "inputs": sorted(inputs, key=_canonical),
-            "min_confidence": config.min_confidence,
-            "signatures": index.fingerprint(),
-            "scanner": _scanner_digest(),
-            "version": __version__,
-        })).hexdigest()
+        fingerprint = hashlib.sha256(
+            _canonical(
+                {
+                    "inputs": sorted(inputs, key=_canonical),
+                    "min_confidence": config.min_confidence,
+                    "signatures": index.fingerprint(),
+                    "scanner": _scanner_digest(),
+                    "version": __version__,
+                }
+            )
+        ).hexdigest()
     except (OSError, TypeError, ValueError):
         return {**unavailable, "reason": "collection scope could not be fingerprinted"}
     return {"schema": _SCHEMA, "comparable": True, "fingerprint": fingerprint}
@@ -148,15 +155,21 @@ def build_collection_scope(
 def _complete(report: dict[str, Any]) -> bool:
     summary, stats = report.get("summary"), report.get("stats")
     return (
-        isinstance(summary, dict) and summary.get("complete") is True
-        and isinstance(stats, list) and bool(stats)
+        isinstance(summary, dict)
+        and summary.get("complete") is True
+        and isinstance(stats, list)
+        and bool(stats)
         and all(
-            isinstance(s, dict) and isinstance(s.get("connector"), str) and bool(s["connector"].strip())
+            isinstance(s, dict)
+            and isinstance(s.get("connector"), str)
+            and bool(s["connector"].strip())
             # Missing or malformed completion fields are not evidence that a
             # connector succeeded. In particular, falsey null/0/"" values must
             # not let truncated or transformed reports resolve prior findings.
-            and isinstance(s.get("errors"), list) and not s["errors"]
-            and s.get("skipped") is False and s.get("incomplete") is False
+            and isinstance(s.get("errors"), list)
+            and not s["errors"]
+            and s.get("skipped") is False
+            and s.get("incomplete") is False
             for s in stats
         )
     )
@@ -182,9 +195,11 @@ def _findings(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if (
             not isinstance(risk, dict)
             or risk.get("level") not in {"critical", "high", "medium", "low", "info"}
-            or not isinstance(risk.get("score"), (int, float)) or isinstance(risk.get("score"), bool)
+            or not isinstance(risk.get("score"), (int, float))
+            or isinstance(risk.get("score"), bool)
             or not 0 <= risk["score"] <= 100
-            or not isinstance(record.get("title"), str) or not isinstance(record.get("resource"), str)
+            or not isinstance(record.get("title"), str)
+            or not isinstance(record.get("resource"), str)
         ):
             raise ValueError("each finding must have valid risk, title and resource fields")
         if record["id"] in result:
@@ -256,9 +271,8 @@ def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[s
                 "collect a fresh baseline after upgrade"
             )
     if _complete(baseline) and _complete(current):
-        if (
-            sorted(s["connector"] for s in baseline["stats"])
-            != sorted(s["connector"] for s in current["stats"])
+        if sorted(s["connector"] for s in baseline["stats"]) != sorted(
+            s["connector"] for s in current["stats"]
         ):
             reasons.append("connector completion coverage differs")
     bs, cs = _scope_digest(baseline), _scope_digest(current)

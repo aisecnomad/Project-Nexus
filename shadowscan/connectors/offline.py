@@ -63,25 +63,80 @@ MAX_INVALID_LINE_ERRORS = 20
 OFFLINE_SUFFIXES = frozenset({".json", ".jsonl", ".ndjson", ".yaml", ".yml", ".csv"})
 
 # Envelope keys that hold a record collection.
-_WRAPPERS = frozenset({
-    "records", "items", "value", "data", "results", "resources", "logs", "entries",
-    "plugins", "installations", "apps", "users", "members", "workflows", "scenarios",
-    "aiAgents", "teamsApps", "servicePrincipals", "clients", "tokens", "agents", "bots",
-    "flows", "Records", "logEvents", "hits",
-})
-_COLLECTIONS = frozenset({"items", "records", "value", "data", "results", "resources", "logEvents"})
-_PAGINATION = frozenset({
-    "has_more", "IsTruncated", "next_page", "nextPage", "next_page_token",
-    "nextPageToken", "nextToken", "NextToken", "NextMarker", "@odata.nextLink",
-    "nextLink", "nextCursor", "next_cursor", "response_metadata",
-})
-_STRING_CURSORS = (
-    "next_page_token", "nextPageToken", "nextToken", "NextToken",
-    "NextMarker", "@odata.nextLink", "nextLink", "nextCursor", "next_cursor",
+_WRAPPERS = frozenset(
+    {
+        "records",
+        "items",
+        "value",
+        "data",
+        "results",
+        "resources",
+        "logs",
+        "entries",
+        "plugins",
+        "installations",
+        "apps",
+        "users",
+        "members",
+        "workflows",
+        "scenarios",
+        "aiAgents",
+        "teamsApps",
+        "servicePrincipals",
+        "clients",
+        "tokens",
+        "agents",
+        "bots",
+        "flows",
+        "Records",
+        "logEvents",
+        "hits",
+    }
 )
-_CSV_ERROR_FIELDS = frozenset({
-    "id", "name", "error", "ok", "code", "message", "status", "requestid", "request_id", "traceid",
-})
+_COLLECTIONS = frozenset({"items", "records", "value", "data", "results", "resources", "logEvents"})
+_PAGINATION = frozenset(
+    {
+        "has_more",
+        "IsTruncated",
+        "next_page",
+        "nextPage",
+        "next_page_token",
+        "nextPageToken",
+        "nextToken",
+        "NextToken",
+        "NextMarker",
+        "@odata.nextLink",
+        "nextLink",
+        "nextCursor",
+        "next_cursor",
+        "response_metadata",
+    }
+)
+_STRING_CURSORS = (
+    "next_page_token",
+    "nextPageToken",
+    "nextToken",
+    "NextToken",
+    "NextMarker",
+    "@odata.nextLink",
+    "nextLink",
+    "nextCursor",
+    "next_cursor",
+)
+_CSV_ERROR_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "error",
+        "ok",
+        "code",
+        "message",
+        "status",
+        "requestid",
+        "request_id",
+        "traceid",
+    }
+)
 # Fields that let a known log event describing an upstream error stay a record.
 _EVENT_FIELDS = frozenset({"attempt", "timestamp", "message", "status", "operation", "duration_ms"})
 
@@ -172,8 +227,9 @@ def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | N
         ctx.error(f"{name}: offline directory contains no supported export files")
 
 
-def iter_offline_files(conn: BaseConnector, path: str, budget: OfflineInputBudget,
-                       suffixes: AbstractSet[str] | None = None) -> Iterator[Path]:
+def iter_offline_files(
+    conn: BaseConnector, path: str, budget: OfflineInputBudget, suffixes: AbstractSet[str] | None = None
+) -> Iterator[Path]:
     """Yield export files while the budget's file count allows, warning once when it does not."""
     for source in conn._offline_files(path, suffixes):
         if budget.files_seen >= budget.max_files:
@@ -186,8 +242,13 @@ def iter_offline_files(conn: BaseConnector, path: str, budget: OfflineInputBudge
 
 
 # -------------------------------------------------------------------- readers
-def read_offline_bytes(conn: BaseConnector, path: Path, budget: OfflineInputBudget | None = None,
-                       *, changed: ChangeCheck = changed_since) -> bytes | None:
+def read_offline_bytes(
+    conn: BaseConnector,
+    path: Path,
+    budget: OfflineInputBudget | None = None,
+    *,
+    changed: ChangeCheck = changed_since,
+) -> bytes | None:
     """Read one whole offline file through the confined opener.
 
     The file is rejected as a whole when it exceeds the per-file cap or the
@@ -199,8 +260,12 @@ def read_offline_bytes(conn: BaseConnector, path: Path, budget: OfflineInputBudg
         with open_confined_file(path.expanduser().absolute(), label="offline input") as (stream, before):
             used = budget.bytes_read if budget is not None else getattr(conn, "_offline_bytes_read", 0)
             remaining = (budget.max_bytes - used) if budget is not None else (conn.max_input_bytes - used)
-            limit = min(conn.max_input_file_bytes, remaining, conn._MAX_OFFLINE_FILE_BYTES,
-                        conn._MAX_OFFLINE_TOTAL_BYTES - used)
+            limit = min(
+                conn.max_input_file_bytes,
+                remaining,
+                conn._MAX_OFFLINE_FILE_BYTES,
+                conn._MAX_OFFLINE_TOTAL_BYTES - used,
+            )
 
             def oversized() -> None:
                 if budget is None:
@@ -231,8 +296,9 @@ def read_offline_bytes(conn: BaseConnector, path: Path, budget: OfflineInputBudg
         return None
 
 
-def read_offline_text(conn: BaseConnector, path: Path,
-                      budget: OfflineInputBudget | None = None) -> str | None:
+def read_offline_text(
+    conn: BaseConnector, path: Path, budget: OfflineInputBudget | None = None
+) -> str | None:
     """Read one whole offline file as UTF-8 text (a byte-order mark is dropped)."""
     raw = conn._read_offline_bytes(path, budget)
     if raw is None:
@@ -244,8 +310,14 @@ def read_offline_text(conn: BaseConnector, path: Path,
         return None
 
 
-def iter_bounded_lines(conn: BaseConnector, path: Path, budget: OfflineInputBudget, *,
-                       compressed: bool = False, changed: ChangeCheck = changed_since) -> Iterator[str]:
+def iter_bounded_lines(
+    conn: BaseConnector,
+    path: Path,
+    budget: OfflineInputBudget,
+    *,
+    compressed: bool = False,
+    changed: ChangeCheck = changed_since,
+) -> Iterator[str]:
     """Read UTF-8 lines with secure opens and per-file, aggregate, and line caps.
 
     Only the per-file cap is checked before reading. The aggregate budget
@@ -304,8 +376,9 @@ def load_offline(conn: BaseConnector, path: str) -> Iterator[dict[str, Any]]:
         yield from conn._load_offline_file(source, budget)
 
 
-def load_offline_file(conn: BaseConnector, source: Path,
-                      budget: OfflineInputBudget) -> Iterator[dict[str, Any]]:
+def load_offline_file(
+    conn: BaseConnector, source: Path, budget: OfflineInputBudget
+) -> Iterator[dict[str, Any]]:
     """Parse one export by its suffix: JSONL, CSV, YAML, or JSON with a JSONL fallback."""
     suffix = source.suffix.lower()
     report = conn._bounded_diagnostics(lambda message: conn.ctx.error(f"{conn.name}: {message}"))
@@ -326,8 +399,11 @@ def load_offline_file(conn: BaseConnector, source: Path,
             report("empty offline export; use [] for an empty inventory")
         return
     if suffix == ".csv":
-        yield from _csv_rows(csv.DictReader(conn._iter_bounded_lines(source, budget), strict=True),
-                             report, conn._is_csv_provider_error)
+        yield from _csv_rows(
+            csv.DictReader(conn._iter_bounded_lines(source, budget), strict=True),
+            report,
+            conn._is_csv_provider_error,
+        )
         return
     text = conn._read_offline_text(source, budget)
     if text is None:
@@ -400,8 +476,9 @@ def csv_records(text: str, report: Report) -> Iterator[dict[str, Any]]:
     yield from _csv_rows(csv.DictReader(io.StringIO(text), strict=True), report, is_csv_provider_error)
 
 
-def _csv_rows(reader: csv.DictReader[str], report: Report,
-              is_provider_error: Callable[[dict[str, str]], bool]) -> Iterator[dict[str, Any]]:
+def _csv_rows(
+    reader: csv.DictReader[str], report: Report, is_provider_error: Callable[[dict[str, str]], bool]
+) -> Iterator[dict[str, Any]]:
     try:
         fields = reader.fieldnames
         if not fields or any(not field.strip() for field in fields) or len(set(fields)) != len(fields):
@@ -476,19 +553,25 @@ def _is_native_error_record(data: dict[str, Any]) -> bool:
         return True
     if kind == "audit-event" and data.get("principal") and data.get("timestamp"):
         return True
-    if kind == "integration_log" and data.get("change_type") and (
-        data.get("app_id") or data.get("service_id")
+    if (
+        kind == "integration_log"
+        and data.get("change_type")
+        and (data.get("app_id") or data.get("service_id"))
     ):
         return True
     # A known log event can legitimately describe an upstream error.
     # Preserve it only when its nested payload has event attributes;
     # an error with page records remains a failed partial export.
     return (
-        "id" in data and isinstance(data.get("error"), dict)
-        and isinstance(payload, list) and bool(payload)
+        "id" in data
+        and isinstance(data.get("error"), dict)
+        and isinstance(payload, list)
+        and bool(payload)
         and all(
-            isinstance(item, dict) and bool(_EVENT_FIELDS.intersection(item))
-            and not _COLLECTIONS.intersection(item) and not _PAGINATION.intersection(item)
+            isinstance(item, dict)
+            and bool(_EVENT_FIELDS.intersection(item))
+            and not _COLLECTIONS.intersection(item)
+            and not _PAGINATION.intersection(item)
             for item in payload
         )
     )
@@ -524,8 +607,12 @@ def is_native_offline_record(data: dict[str, Any]) -> bool:
 
 
 def record_fields_valid(
-    data: Any, *, strings: tuple[str, ...] = (), mappings: tuple[str, ...] = (),
-    arrays: tuple[str, ...] = (), required: tuple[str, ...] = (),
+    data: Any,
+    *,
+    strings: tuple[str, ...] = (),
+    mappings: tuple[str, ...] = (),
+    arrays: tuple[str, ...] = (),
+    required: tuple[str, ...] = (),
 ) -> bool:
     """Check fields consumed by a provider without disclosing rejected values."""
     if not isinstance(data, dict) or is_error_record(data):
@@ -564,9 +651,7 @@ def offline_pagination_issue(data: dict[str, Any]) -> str | None:
         # Providers use either an opaque link/token or a positive page
         # number. Falsey containers/booleans are malformed, not a proof
         # that collection reached its terminal page.
-        if page is not None and not (
-            isinstance(page, str) or (type(page) is int and page > 0)
-        ):
+        if page is not None and not (isinstance(page, str) or (type(page) is int and page > 0)):
             return "offline export has invalid pagination metadata"
     keys = ("has_more", "IsTruncated", "next_page", "nextPage", *_STRING_CURSORS)
     if any(data.get(key) for key in keys) or metadata.get("next_cursor"):

@@ -43,9 +43,28 @@ from shadowscan.utils.git import (
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 
 INTERESTING_DIRS = (
-    ".github/", ".claude/", ".cursor/", ".vscode/", ".windsurf/", ".codex/", ".gemini/", ".kiro/",
-    ".amazonq/", ".continue/", ".roo/", ".well-known/", "config/", "infra/", "terraform/", "deploy/",
-    "k8s/", "helm/", "flows/", "workflows/", "agents/", "prompts/",
+    ".github/",
+    ".claude/",
+    ".cursor/",
+    ".vscode/",
+    ".windsurf/",
+    ".codex/",
+    ".gemini/",
+    ".kiro/",
+    ".amazonq/",
+    ".continue/",
+    ".roo/",
+    ".well-known/",
+    "config/",
+    "infra/",
+    "terraform/",
+    "deploy/",
+    "k8s/",
+    "helm/",
+    "flows/",
+    "workflows/",
+    "agents/",
+    "prompts/",
 )
 API_MODE_MAX_FILES = 400
 SOURCE_SAMPLE = 150
@@ -53,11 +72,25 @@ SOURCE_SAMPLE = 150
 API_MAX_BLOB_BYTES = 512_000
 
 # Agent instruction and tool manifests that API mode always fetches.
-_AGENT_FILE_NAMES = frozenset({
-    "claude.md", "agents.md", "gemini.md", "codex.md", "warp.md", ".cursorrules", ".windsurfrules",
-    ".clinerules", ".mcp.json", "mcp.json", "langgraph.json", "agent.json", "agent-card.json",
-    "declarativeagent.json", "modelfile",
-})
+_AGENT_FILE_NAMES = frozenset(
+    {
+        "claude.md",
+        "agents.md",
+        "gemini.md",
+        "codex.md",
+        "warp.md",
+        ".cursorrules",
+        ".windsurfrules",
+        ".clinerules",
+        ".mcp.json",
+        "mcp.json",
+        "langgraph.json",
+        "agent.json",
+        "agent-card.json",
+        "declarativeagent.json",
+        "modelfile",
+    }
+)
 _CONFIG_SUFFIXES = (".tf", ".bicep", ".yml", ".yaml", ".ipynb")
 _SOURCE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs", ".go", ".rs", ".java", ".kt", ".cs", ".rb", ".php")
 
@@ -196,7 +229,9 @@ class RemoteRepositoryConnector(BaseConnector):
     def _api_client(self, headers: dict[str, str]) -> HttpClient:
         # Denied or unavailable optional endpoints mark coverage incomplete.
         return HttpClient(
-            self.api_url, headers=headers, on_warning=lambda msg: self.ctx.warn(msg, incomplete=True),
+            self.api_url,
+            headers=headers,
+            on_warning=lambda msg: self.ctx.warn(msg, incomplete=True),
         )
 
     def _cap_reached(self) -> None:
@@ -306,11 +341,17 @@ class RemoteRepositoryConnector(BaseConnector):
                 **({"source_snapshot": snapshot} if isinstance(snapshot, dict) else {}),
             },
         }
-        fs = FilesystemConnector(ConnectorContext(
-            config=cfg, index=self.index, logger=self.log, workdir=self.ctx.workdir,
-            deadline=self.ctx.deadline, cancelled=self.ctx.cancelled,
-            publication_lock=self.ctx.publication_lock,
-        ))
+        fs = FilesystemConnector(
+            ConnectorContext(
+                config=cfg,
+                index=self.index,
+                logger=self.log,
+                workdir=self.ctx.workdir,
+                deadline=self.ctx.deadline,
+                cancelled=self.ctx.cancelled,
+                publication_lock=self.ctx.publication_lock,
+            )
+        )
         fs.ctx.stats = self.ctx.stats
         # Share the diagnostic budget so repositories cannot each fill 1000 entries.
         fs.ctx._diagnostic_counts = self.ctx._diagnostic_counts
@@ -361,7 +402,8 @@ class RemoteRepositoryConnector(BaseConnector):
                     self._set_clone_snapshot(repo, dest)
                     return dest
                 self.ctx.warn(
-                    f"{self.name}: clone failed for {full}; using sampled API mode", incomplete=True,
+                    f"{self.name}: clone failed for {full}; using sampled API mode",
+                    incomplete=True,
                 )
                 # Never mix bytes from a partial clone into the API checkout.
                 if os.path.lexists(dest):
@@ -370,7 +412,8 @@ class RemoteRepositoryConnector(BaseConnector):
                     shutil.rmtree(dest)
         elif self.mode == "clone":
             self.ctx.warn(
-                f"{self.name}: git is unavailable for {full}; using sampled API mode", incomplete=True,
+                f"{self.name}: git is unavailable for {full}; using sampled API mode",
+                incomplete=True,
             )
         self.ctx.check_deadline()
         return self._fetch_via_api(repo, tmp)
@@ -402,8 +445,13 @@ class RemoteRepositoryConnector(BaseConnector):
         url = validate_url(candidate, origin)
         env = clone_environment(origin, self.token, self.clone_username)
         cmd = [
-            *git_argv_prefix(), "clone", "--quiet", "--depth", str(self.depth),
-            "--no-tags", "--single-branch",
+            *git_argv_prefix(),
+            "clone",
+            "--quiet",
+            "--depth",
+            str(self.depth),
+            "--no-tags",
+            "--single-branch",
         ]
         branch = validate_git_ref(repo.get("default_branch"))
         if branch:
@@ -427,7 +475,8 @@ class RemoteRepositoryConnector(BaseConnector):
         ref = validate_git_ref(repo.get("default_branch") or "main")
         if ref is None:
             self.ctx.warn(
-                f"{self.name}: unsupported default branch; repository content skipped", incomplete=True,
+                f"{self.name}: unsupported default branch; repository content skipped",
+                incomplete=True,
             )
         return ref
 

@@ -433,7 +433,8 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     _check_sanitization_structure(value)
     for extended in (False, True):
         sanitizer = _Sanitizer(
-            redact_short_secrets=redact_short_secrets, env_values_are_secrets=env_values_are_secrets,
+            redact_short_secrets=redact_short_secrets,
+            env_values_are_secrets=env_values_are_secrets,
             extended=extended,
         )
         sanitizer.discover(value)
@@ -523,8 +524,13 @@ class _RedactionNamespace(types.ModuleType):
     # (Class attributes: module objects are no rule, and the policy token of a
     # finding is copied with it.)
     _modules: tuple[types.ModuleType, ...] = (
-        redaction_rules, redaction_formats, redaction_statements, redaction_assignments,
-        redaction_calls, redaction_commands, redaction_markup,
+        redaction_rules,
+        redaction_formats,
+        redaction_statements,
+        redaction_assignments,
+        redaction_calls,
+        redaction_commands,
+        redaction_markup,
     )
     # The modules, this one included, that bind each name once all are loaded.
     _binders: dict[str, tuple[types.ModuleType, ...]] = {}

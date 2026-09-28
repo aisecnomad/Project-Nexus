@@ -11,8 +11,11 @@ from shadowscan.utils.redaction import credential_id, sanitize
 from shadowscan.utils.text import parse_timestamp, redact
 
 
-@pytest.mark.parametrize("value", [True, False, float("inf"), float("nan"), 10**400, "9" * 5000],
-                         ids=["true", "false", "infinity", "nan", "huge-number", "huge-string"])
+@pytest.mark.parametrize(
+    "value",
+    [True, False, float("inf"), float("nan"), 10**400, "9" * 5000],
+    ids=["true", "false", "infinity", "nan", "huge-number", "huge-string"],
+)
 def test_untrusted_invalid_timestamps_do_not_raise_or_become_valid_dates(value):
     assert parse_timestamp(value) is None
 

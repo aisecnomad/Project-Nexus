@@ -64,15 +64,18 @@ def test_an_added_rule_never_hides_the_context_an_established_rule_reads(source,
 CROWDED = "-u=#" * 17
 
 
-@pytest.mark.parametrize("source", [
-    f'tool {CROWDED}--password "{SECRET}" --verbose',
-    f"tool {CROWDED}--password {SECRET} --verbose",
-    f'tool {CROWDED}api_key="{SECRET}"',
-    f"tool {CROWDED}--api-key={SECRET}",
-    f"tool {CROWDED}-u=svc:{SECRET}",
-    f"mysql {CROWDED}-p{SECRET} app",
-    f"tool {CROWDED}--key={SECRET} --model gpt-4o",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        f'tool {CROWDED}--password "{SECRET}" --verbose',
+        f"tool {CROWDED}--password {SECRET} --verbose",
+        f'tool {CROWDED}api_key="{SECRET}"',
+        f"tool {CROWDED}--api-key={SECRET}",
+        f"tool {CROWDED}-u=svc:{SECRET}",
+        f"mysql {CROWDED}-p{SECRET} app",
+        f"tool {CROWDED}--key={SECRET} --model gpt-4o",
+    ],
+)
 def test_a_word_crowded_with_options_never_shows_a_value(source):
     safe = sanitize_text(source)
     assert SECRET not in safe
@@ -85,8 +88,31 @@ def test_a_crowded_word_keeps_the_text_after_it():
 
 
 _RUN_PIECES = [
-    "a", "Z", "9", "٣", "²", ":", "=", "#", "-", "--", "/", "//", "_", "$A", "$", "%K%", "%", "+",
-    "X-Api-Key", "Authorization", "Bearer", "user", "svc", "a1B2c3D4e5", "credential:sha256:" + "a" * 64,
+    "a",
+    "Z",
+    "9",
+    "٣",
+    "²",
+    ":",
+    "=",
+    "#",
+    "-",
+    "--",
+    "/",
+    "//",
+    "_",
+    "$A",
+    "$",
+    "%K%",
+    "%",
+    "+",
+    "X-Api-Key",
+    "Authorization",
+    "Bearer",
+    "user",
+    "svc",
+    "a1B2c3D4e5",
+    "credential:sha256:" + "a" * 64,
 ]
 
 
@@ -110,7 +136,9 @@ def test_reading_a_run_once_decides_as_reading_its_copy():
                 for strict in (True, False):
                     expected = redaction._cli_secret_span(mode, text[position:end], position, strict)
                     assert redaction._run_secret_span(mode, runs, position, end, strict) == expected, (
-                        mode, strict, text[position:end],
+                        mode,
+                        strict,
+                        text[position:end],
                     )
 
 
@@ -130,13 +158,17 @@ def _only_adds_markers(before: str, after: str) -> bool:
     return after.endswith(REDACTED) or before.endswith(after.split(REDACTED)[-1].lstrip("\n"))
 
 
-@pytest.mark.parametrize("source", [source for source, _ in GLUED_FORMS] + [
-    '<token key="openai.token" value="ignored">a8f3c91d7e2b4f6a9d0c</token>',
-    "{name: OpenAIKey, value: a8f3c91d7e2b4f6a9d0c}\nKEY1=b7e2c4d6f8a0b2c4d6e8\n",
-    "llm --key a8f3c91d7e2b4f6a9d0c --model gpt-4o\nopenaiKey: b7e2c4d6f8a0b2c4d6e8\n",
-    'dotnet user-secrets set "AzureOpenAI:Key" "a8f3c91d7e2b4f6a9d0c"',
-    f"tool {CROWDED}--key={SECRET} --model gpt-4o",
-])
+@pytest.mark.parametrize(
+    "source",
+    [source for source, _ in GLUED_FORMS]
+    + [
+        '<token key="openai.token" value="ignored">a8f3c91d7e2b4f6a9d0c</token>',
+        "{name: OpenAIKey, value: a8f3c91d7e2b4f6a9d0c}\nKEY1=b7e2c4d6f8a0b2c4d6e8\n",
+        "llm --key a8f3c91d7e2b4f6a9d0c --model gpt-4o\nopenaiKey: b7e2c4d6f8a0b2c4d6e8\n",
+        'dotnet user-secrets set "AzureOpenAI:Key" "a8f3c91d7e2b4f6a9d0c"',
+        f"tool {CROWDED}--key={SECRET} --model gpt-4o",
+    ],
+)
 def test_the_added_passes_only_add_markers_to_what_the_established_ones_leave(source):
     established = redaction._sanitize_established(source)
     assert _only_adds_markers(established, sanitize_text(source))

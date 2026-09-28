@@ -49,8 +49,12 @@ def _recording_connector(**hooks: Any) -> tuple[type[BaseConnector], list[Connec
     return Recorder, contexts
 
 
-def _run(monkeypatch: pytest.MonkeyPatch, connector: type[BaseConnector], specs: list[ConnectorSpec],
-         **options: Any) -> Engine:
+def _run(
+    monkeypatch: pytest.MonkeyPatch,
+    connector: type[BaseConnector],
+    specs: list[ConnectorSpec],
+    **options: Any,
+) -> Engine:
     monkeypatch.setattr(engine_module, "get_connector_class", lambda name: connector)
     engine = Engine(ScanConfig(connectors=specs, **options), SignatureIndex([]))
     assert engine.run().complete
@@ -64,7 +68,8 @@ def test_engine_source_names_no_connector_and_imports_no_connector_module():
     connector_modules = {module for module in imported if module.startswith("shadowscan.connectors.")}
     assert connector_modules <= {"shadowscan.connectors.base", "shadowscan.connectors.common"}
     strings = {
-        node.value for node in ast.walk(tree)
+        node.value
+        for node in ast.walk(tree)
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
     assert not {value for value in strings if value.partition(".")[0] in namespaces and "." in value}
@@ -80,14 +85,18 @@ def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_co
     classes = {name: get_connector_class(name) for name in builtin_connector_names()}
     assert {name for name, cls in classes.items() if cls.uses_run_identity_key} == {"gateway.logs"}
     assert {name for name, cls in classes.items() if cls.inherits_instance_credentials_approval()} == {
-        "cloud.aws", "cloud.azure", "cloud.gcp", "cloud.oci",
+        "cloud.aws",
+        "cloud.azure",
+        "cloud.gcp",
+        "cloud.oci",
     }
     # The cloud surface covers every name the engine used to match by prefix.
     assert {name for name, cls in classes.items() if cls.surface == Surface.CLOUD} == {
         name for name in classes if name.partition(".")[0] == Surface.CLOUD.value
     }
     splitting = {
-        name for name, cls in classes.items()
+        name
+        for name, cls in classes.items()
         if any("cache_roots_separately" in vars(klass) for klass in cls.__mro__ if klass is not BaseConnector)
     }
     assert splitting == {"code.filesystem"}

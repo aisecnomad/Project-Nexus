@@ -130,7 +130,6 @@ PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
 }
 
 
-
 GOVERNANCE_WEIGHTS: dict[str, int] = {"shadow": 25, "registered": -10, "no-owner": 10}
 GOVERNANCE_FACTORS = frozenset(GOVERNANCE_WEIGHTS)
 RISK_BASES = frozenset({"combined", "danger"})
@@ -244,7 +243,9 @@ def _strings(values: Any) -> list[str]:
 
 
 def assess(
-    finding: Finding, index: SignatureIndex | None = None, inventory_present: bool = False,
+    finding: Finding,
+    index: SignatureIndex | None = None,
+    inventory_present: bool = False,
     policy: RiskPolicy | None = None,
 ) -> Risk:
     """Score one finding, recording every contribution as a :class:`RiskFactor`.
@@ -273,20 +274,24 @@ def assess(
         # Scaling lowers a positive subtotal. A subtotal at or below zero is
         # already floored at 0, so the adjustment must never read as added risk.
         adjustment = min(0, scaled - total)
-        factors.append(RiskFactor(
-            "confidence-scaling",
-            f"score multiplied by {scale:.2f} because confidence is {finding.confidence:.2f}; "
-            "this only ever lowers risk",
-            adjustment,
-        ))
+        factors.append(
+            RiskFactor(
+                "confidence-scaling",
+                f"score multiplied by {scale:.2f} because confidence is {finding.confidence:.2f}; "
+                "this only ever lowers risk",
+                adjustment,
+            )
+        )
     else:
         adjustment = 0
     explained = total + adjustment
     if score != explained:
         # Keep the explanation exact: listed factors always sum to the score.
-        factors.append(RiskFactor(
-            "bounds", "score floored at 0" if explained < 0 else "score capped at 100", score - explained
-        ))
+        factors.append(
+            RiskFactor(
+                "bounds", "score floored at 0" if explained < 0 else "score capped at 100", score - explained
+            )
+        )
     danger_score = max(0, min(100, int(round(danger_total * scale))))
     return Risk(score=score, level=RiskLevel.from_score(score), factors=factors, danger_score=danger_score)
 
@@ -295,23 +300,22 @@ def _governance_factors(finding: Finding, inventory_present: bool, policy: RiskP
     """Inventory approval and ownership factors."""
     factors: list[RiskFactor] = []
     # Governance factors describe approval and ownership, not capability. Under
-    # the "danger" basis they are reported with zero weight.
+    # the "danger" basis they weigh nothing, so they are omitted like any other
+    # zero-weight governance factor.
     governance_scale = 0 if policy.basis == "danger" else 1
     if inventory_present:
         if finding.shadow:
-            factors.append(RiskFactor(
-                "shadow", "not present in the sanctioned agent inventory",
-                policy.governance["shadow"] * governance_scale,
-            ))
+            w = policy.governance["shadow"] * governance_scale
+            if w:
+                factors.append(RiskFactor("shadow", "not present in the sanctioned agent inventory", w))
         elif finding.shadow is False:
-            factors.append(RiskFactor(
-                "registered", f"registered as {finding.registry_match}",
-                policy.governance["registered"] * governance_scale,
-            ))
+            w = policy.governance["registered"] * governance_scale
+            if w:
+                factors.append(RiskFactor("registered", f"registered as {finding.registry_match}", w))
     if not finding.owner:
-        factors.append(RiskFactor(
-            "no-owner", "no identifiable owner", policy.governance["no-owner"] * governance_scale
-        ))
+        w = policy.governance["no-owner"] * governance_scale
+        if w:
+            factors.append(RiskFactor("no-owner", "no identifiable owner", w))
     return factors
 
 
@@ -378,8 +382,11 @@ def _metadata_factors(finding: Finding) -> list[RiskFactor]:
             factors.append(RiskFactor("volume", f"high call volume ({events})", 5))
     if finding.kind in {Kind.OAUTH_GRANT, Kind.BOT_APP}:
         users = _as_int(
-            metadata.get("user_count") or metadata.get("consenting_users") or metadata.get("users")
-            or metadata.get("install_count") or 0,
+            metadata.get("user_count")
+            or metadata.get("consenting_users")
+            or metadata.get("users")
+            or metadata.get("install_count")
+            or 0,
             0,
         )
         if users >= 100:

@@ -42,49 +42,82 @@ def _projects(findings):
 AIOHTTP = "import aiohttp\n\nasync def fetch(url):\n    async with aiohttp.ClientSession() as session:\n        async with session.get(url) as r:\n            return await r.text()\n"
 
 
-@pytest.mark.parametrize("files", [
-    {"client.py": AIOHTTP},
-    {"client.py": AIOHTTP, "requirements.txt": "aiohttp==3.12.15\n"},
-    {"client.py": "from aiohttp import ClientSession\n\nasync def go():\n    async with ClientSession() as s:\n        return s\n"},
-    {"src/AgentCard.jsx": "export function AgentCard({ agent }) {\n  return <div>{agent.name}</div>;\n}\n",
-     "package.json": '{"dependencies": {"react": "^18.3.1"}}'},
-    {"routing.py": "def invoke_agent(agent_id, call):\n    return (agent_id, call)\n\ninvoke_agent('amy', 'call-1')\n"},
-    {"skills.py": "class AgentSkill:\n    pass\n\ndef train(x):\n    return AgentSkill()\n"},
-])
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"client.py": AIOHTTP},
+        {"client.py": AIOHTTP, "requirements.txt": "aiohttp==3.12.15\n"},
+        {
+            "client.py": "from aiohttp import ClientSession\n\nasync def go():\n    async with ClientSession() as s:\n        return s\n"
+        },
+        {
+            "src/AgentCard.jsx": "export function AgentCard({ agent }) {\n  return <div>{agent.name}</div>;\n}\n",
+            "package.json": '{"dependencies": {"react": "^18.3.1"}}',
+        },
+        {
+            "routing.py": "def invoke_agent(agent_id, call):\n    return (agent_id, call)\n\ninvoke_agent('amy', 'call-1')\n"
+        },
+        {"skills.py": "class AgentSkill:\n    pass\n\ndef train(x):\n    return AgentSkill()\n"},
+    ],
+)
 def test_common_identifiers_alone_are_not_ai_evidence(tmp_path, index, files):
     findings, _ = _run(index, _write(tmp_path, files))
     assert _projects(findings) == []
 
 
-@pytest.mark.parametrize(("files", "signature"), [
-    ({"client.py": "from mcp import ClientSession\nfrom mcp.client.stdio import stdio_client\n\n"
-                   "async def main(params):\n    async with stdio_client(params) as (r, w):\n"
-                   "        async with ClientSession(r, w) as session:\n            await session.initialize()\n"},
-     "protocol.mcp"),
-    ({"agent.py": "import boto3\n\nclient = boto3.client('bedrock-agent-runtime')\n"
-                  "reply = client.invoke_agent(agentId='A', agentAliasId='B', sessionId='s', inputText='hi')\n"},
-     "cloud.aws-bedrock-agents"),
-    ({"card.py": "from a2a.types import AgentCard, AgentSkill\n\ncard = AgentCard(name='x', skills=[AgentSkill(id='s', name='s')])\n"},
-     "protocol.a2a"),
-])
+@pytest.mark.parametrize(
+    ("files", "signature"),
+    [
+        (
+            {
+                "client.py": "from mcp import ClientSession\nfrom mcp.client.stdio import stdio_client\n\n"
+                "async def main(params):\n    async with stdio_client(params) as (r, w):\n"
+                "        async with ClientSession(r, w) as session:\n            await session.initialize()\n"
+            },
+            "protocol.mcp",
+        ),
+        (
+            {
+                "agent.py": "import boto3\n\nclient = boto3.client('bedrock-agent-runtime')\n"
+                "reply = client.invoke_agent(agentId='A', agentAliasId='B', sessionId='s', inputText='hi')\n"
+            },
+            "cloud.aws-bedrock-agents",
+        ),
+        (
+            {
+                "card.py": "from a2a.types import AgentCard, AgentSkill\n\ncard = AgentCard(name='x', skills=[AgentSkill(id='s', name='s')])\n"
+            },
+            "protocol.a2a",
+        ),
+    ],
+)
 def test_corroborated_identifiers_still_count(tmp_path, index, files, signature):
     findings, _ = _run(index, _write(tmp_path, files))
     assert any(signature in f.frameworks for f in _projects(findings))
 
 
 def test_uncorroborated_lexical_evidence_is_capped_in_every_category(tmp_path, index):
-    findings, _ = _run(index, _write(tmp_path, {"App.java": "class App { void run() { var c = new MCPClient(); } }\n"}))
+    findings, _ = _run(
+        index, _write(tmp_path, {"App.java": "class App { void run() { var c = new MCPClient(); } }\n"})
+    )
     project = next(f for f in _projects(findings))
     assert "protocol.mcp" in project.frameworks and project.confidence <= 0.6
-    _write(tmp_path, {"pom.xml": "<project><dependencies><dependency><groupId>io.modelcontextprotocol.sdk</groupId>"
-                                 "<artifactId>mcp</artifactId><version>0.10.0</version></dependency></dependencies></project>"})
+    _write(
+        tmp_path,
+        {
+            "pom.xml": "<project><dependencies><dependency><groupId>io.modelcontextprotocol.sdk</groupId>"
+            "<artifactId>mcp</artifactId><version>0.10.0</version></dependency></dependencies></project>"
+        },
+    )
     findings, _ = _run(index, tmp_path)
     assert next(f for f in _projects(findings)).confidence > 0.6
 
 
 def test_supporting_tools_alone_are_not_titled_as_an_llm_sdk(tmp_path, index):
-    files = {"search.py": "from serpapi import GoogleSearch\n\ndef top(q, key):\n    return GoogleSearch({'q': q, 'api_key': key}).get_dict()\n",
-             "requirements.txt": "google-search-results==2.4.2\n"}
+    files = {
+        "search.py": "from serpapi import GoogleSearch\n\ndef top(q, key):\n    return GoogleSearch({'q': q, 'api_key': key}).get_dict()\n",
+        "requirements.txt": "google-search-results==2.4.2\n",
+    }
     project = next(f for f in _projects(_run(index, _write(tmp_path, files))[0]))
     assert project.title.startswith("AI tooling in repository root: Web search")
 
@@ -96,32 +129,44 @@ def test_every_ambiguous_signal_can_be_corroborated():
         for data in documents:
             signature = signature_from_dict(data, path)
             if any(signal.ambiguous for signal in signature.signals):
-                assert any(signal.type in {"import", "dependency"} or signal.type == "code" and not signal.ambiguous
-                           for signal in signature.signals), signature.id
+                assert any(
+                    signal.type in {"import", "dependency"} or signal.type == "code" and not signal.ambiguous
+                    for signal in signature.signals
+                ), signature.id
 
 
-@pytest.mark.parametrize("signal", [
-    {"type": "code", "patterns": ["\\bX\\s*\\("], "ambiguous": "yes"},
-    {"type": "domain", "values": ["example.com"], "ambiguous": True},
-])
+@pytest.mark.parametrize(
+    "signal",
+    [
+        {"type": "code", "patterns": ["\\bX\\s*\\("], "ambiguous": "yes"},
+        {"type": "domain", "values": ["example.com"], "ambiguous": True},
+    ],
+)
 def test_ambiguous_is_a_boolean_on_code_signals_only(signal):
     with pytest.raises(ValueError):
-        signature_from_dict({"id": "custom.sample", "name": "S", "category": "framework", "signals": [signal]})
+        signature_from_dict(
+            {"id": "custom.sample", "name": "S", "category": "framework", "signals": [signal]}
+        )
 
 
 # ------------------------------------------------ MCP paths on shared hosts
-@pytest.mark.parametrize(("text", "expected"), [
-    ('url = "https://api.githubcopilot.com/mcp/"', {"protocol.mcp"}),
-    ("https://api.githubcopilot.com:443/mcp", {"protocol.mcp"}),
-    ("x https://api.githubcopilot.com/chat/completions", {"coding-agent.github-copilot"}),
-    ("https://mcp.notion.com/sse", {"protocol.mcp"}),
-])
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('url = "https://api.githubcopilot.com/mcp/"', {"protocol.mcp"}),
+        ("https://api.githubcopilot.com:443/mcp", {"protocol.mcp"}),
+        ("x https://api.githubcopilot.com/chat/completions", {"coding-agent.github-copilot"}),
+        ("https://mcp.notion.com/sse", {"protocol.mcp"}),
+    ],
+)
 def test_mcp_endpoints_on_shared_hosts_are_decided_by_path(index, text, expected):
     assert {m.signature_id for m in index.match_domains_in_text(text)} == expected
 
 
 def test_hosts_named_for_mcp_keep_every_match(index):
-    assert "protocol.mcp" in {m.signature_id for m in index.match_domains_in_text("https://mcp.zapier.com/api/mcp/a")}
+    assert "protocol.mcp" in {
+        m.signature_id for m in index.match_domains_in_text("https://mcp.zapier.com/api/mcp/a")
+    }
 
 
 # ------------------------------------------------------ manifest folding
@@ -142,14 +187,19 @@ def test_manifest_inside_a_reported_project_is_folded_into_it(tmp_path, index):
 
 
 def test_manifest_without_a_project_finding_stays_separate(tmp_path, index):
-    findings, _ = _run(index, _write(tmp_path, {"config/agents.yaml": CREW["crews/research/src/research/config/agents.yaml"]}))
+    findings, _ = _run(
+        index,
+        _write(tmp_path, {"config/agents.yaml": CREW["crews/research/src/research/config/agents.yaml"]}),
+    )
     assert [f.resource_type for f in findings] == ["agent-manifest"]
 
 
 def test_manifest_makes_its_project_an_agent(tmp_path, index):
-    files = {"pyproject.toml": '[project]\nname = "svc"\ndependencies = ["langgraph>=0.3", "openai>=1"]\n',
-             "app.py": "from openai import OpenAI\nclient = OpenAI()\n",
-             "langgraph.json": '{"graphs": {"agent": "./app.py:graph"}, "dependencies": ["."]}'}
+    files = {
+        "pyproject.toml": '[project]\nname = "svc"\ndependencies = ["langgraph>=0.3", "openai>=1"]\n',
+        "app.py": "from openai import OpenAI\nclient = OpenAI()\n",
+        "langgraph.json": '{"graphs": {"agent": "./app.py:graph"}, "dependencies": ["."]}',
+    }
     findings, _ = _run(index, _write(tmp_path, files))
     assert [(f.resource_type, f.kind) for f in findings] == [("project", Kind.AGENT)]
     assert findings[0].title.startswith("Agent in repository root")
@@ -157,8 +207,10 @@ def test_manifest_makes_its_project_an_agent(tmp_path, index):
 
 # ------------------------------------------------------------ capabilities
 def test_test_only_evidence_implies_no_capability(tmp_path, index):
-    files = {"app.py": "from openai import OpenAI\nclient = OpenAI()\nprint(client.chat.completions.create(model='m', messages=[]))\n",
-             "tests/run_test.py": "import subprocess\nfrom openai import OpenAI\n\ndef run(cmd):\n    OpenAI()\n    return subprocess.run(cmd, shell=True)\n"}
+    files = {
+        "app.py": "from openai import OpenAI\nclient = OpenAI()\nprint(client.chat.completions.create(model='m', messages=[]))\n",
+        "tests/run_test.py": "import subprocess\nfrom openai import OpenAI\n\ndef run(cmd):\n    OpenAI()\n    return subprocess.run(cmd, shell=True)\n",
+    }
     project = next(f for f in _projects(_run(index, _write(tmp_path, files))[0]))
     assert "code-exec" not in project.capabilities
     assert any(e.location and e.location.startswith("tests/") for e in project.evidence)
@@ -168,13 +220,13 @@ def test_mcp_server_capabilities_come_from_registered_tools(tmp_path, index):
     files = {
         "fs/package.json": '{"dependencies": {"@modelcontextprotocol/sdk": "^1.17.0"}}',
         "fs/index.ts": 'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";\n'
-                       'const server = new McpServer({ name: "fs", version: "1" });\n'
-                       'server.registerTool(\n  "write_file",\n  { description: "Write" },\n  async () => ({ content: [] }),\n);\n',
+        'const server = new McpServer({ name: "fs", version: "1" });\n'
+        'server.registerTool(\n  "write_file",\n  { description: "Write" },\n  async () => ({ content: [] }),\n);\n',
         "thinking/package.json": '{"dependencies": {"@modelcontextprotocol/sdk": "^1.17.0"}}',
         "thinking/index.ts": 'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";\n'
-                             'const server = new McpServer({ name: "t", version: "1" });\n'
-                             'const schema = { thought: "string", nextThoughtNeeded: true };\n'
-                             'server.registerTool("sequentialthinking", { description: "Think" }, async () => ({ content: [] }));\n',
+        'const server = new McpServer({ name: "t", version: "1" });\n'
+        'const schema = { thought: "string", nextThoughtNeeded: true };\n'
+        'server.registerTool("sequentialthinking", { description: "Think" }, async () => ({ content: [] }));\n',
     }
     found = {f.metadata["path"]: f for f in _projects(_run(index, _write(tmp_path, files))[0])}
     assert "data-access" in found["fs"].capabilities and found["fs"].metadata["mcp_tools"] == ["write_file"]
@@ -182,11 +234,20 @@ def test_mcp_server_capabilities_come_from_registered_tools(tmp_path, index):
     assert found["fs"].risk.score >= found["thinking"].risk.score
 
 
-@pytest.mark.parametrize(("name", "expected"), [
-    ("write_file", {"data-access"}), ("git_commit", {"data-access"}), ("fetch", {"browsing"}),
-    ("create_entities", {"memory"}), ("run_command", {"code-exec"}), ("runPythonCode", {"code-exec"}),
-    ("send_slack_message", {"saas-actions"}), ("sequentialthinking", set()), ("get_current_time", set()),
-])
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("write_file", {"data-access"}),
+        ("git_commit", {"data-access"}),
+        ("fetch", {"browsing"}),
+        ("create_entities", {"memory"}),
+        ("run_command", {"code-exec"}),
+        ("runPythonCode", {"code-exec"}),
+        ("send_slack_message", {"saas-actions"}),
+        ("sequentialthinking", set()),
+        ("get_current_time", set()),
+    ],
+)
 def test_tool_name_vocabulary(name, expected):
     assert mcp_tool_capabilities(name) == expected
 
@@ -198,7 +259,10 @@ def test_tool_names_are_read_from_common_registration_forms():
         "TOOLS = [Tool(name=Tools.STATUS, description='d'), Tool(name='fetch', description='d')]\n"
     )
     assert set(mcp_tool_names(python)) == {"read_file", "run_query", "git_status", "fetch"}
-    assert mcp_tool_names("server.tool('echo', {}, fn)\nconst t = { name: 'add', description: 'Add' }\n") == ["echo", "add"]
+    assert mcp_tool_names("server.tool('echo', {}, fn)\nconst t = { name: 'add', description: 'Add' }\n") == [
+        "echo",
+        "add",
+    ]
 
 
 # ------------------------------------------------------------- loop forms
@@ -223,10 +287,18 @@ while True:
 {feedback}"""
 FEEDBACK = '    messages.append({"role": "user", "content": results})\n'
 REQUESTS = {
-    "raw": ("", "    raw = client.beta.messages.with_raw_response.create(model='m', max_tokens=9, tools=tools, messages=messages)\n    resp = raw.parse()"),
-    "stream": ("", "    with client.messages.stream(model='m', max_tokens=9, tools=tools, messages=messages) as stream:\n        resp = stream.get_final_message()"),
-    "helper": ("\ndef call_model(history):\n    return client.messages.create(model='m', max_tokens=9, tools=tools, messages=history)\n\n",
-               "    resp = call_model(messages)"),
+    "raw": (
+        "",
+        "    raw = client.beta.messages.with_raw_response.create(model='m', max_tokens=9, tools=tools, messages=messages)\n    resp = raw.parse()",
+    ),
+    "stream": (
+        "",
+        "    with client.messages.stream(model='m', max_tokens=9, tools=tools, messages=messages) as stream:\n        resp = stream.get_final_message()",
+    ),
+    "helper": (
+        "\ndef call_model(history):\n    return client.messages.create(model='m', max_tokens=9, tools=tools, messages=history)\n\n",
+        "    resp = call_model(messages)",
+    ),
 }
 
 
@@ -250,7 +322,10 @@ def test_request_forms_without_tool_feedback_are_not_agents(index, tmp_path, for
 
 
 def test_unused_stream_and_unparsed_raw_response_prove_nothing(index, tmp_path):
-    assert _loop_kind(index, tmp_path, "stream", **{"resp = stream.get_final_message()": "resp = stream"}) == Kind.FRAMEWORK_USAGE
+    assert (
+        _loop_kind(index, tmp_path, "stream", **{"resp = stream.get_final_message()": "resp = stream"})
+        == Kind.FRAMEWORK_USAGE
+    )
     assert _loop_kind(index, tmp_path, "raw", **{"resp = raw.parse()": "resp = raw"}) == Kind.FRAMEWORK_USAGE
 
 

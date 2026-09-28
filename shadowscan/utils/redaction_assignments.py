@@ -52,7 +52,8 @@ _YAML_MAPPING_LINE = re.compile(
     r"^(?P<prefix>[ \t]*(?:-[ \t]+)*)(?:(?P<quote>[\"'])"
     r"(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
     r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*:[ \t]*"
-    r"(?P<value>[^\r\n]*)", re.MULTILINE,
+    r"(?P<value>[^\r\n]*)",
+    re.MULTILINE,
 )
 _YAML_CONTINUATION_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n|\Z)")
 
@@ -170,7 +171,7 @@ def _redact_mapping_values(text: str) -> str:
         if len(bare) > 1 and bare[0] in "\"'" and bare[-1] == bare[0] and _FINGERPRINT.fullmatch(bare[1:-1]):
             continue
         pieces.append(text[cursor:start])
-        trailing_space = raw[len(raw.rstrip(" \t")):]
+        trailing_space = raw[len(raw.rstrip(" \t")) :]
         pieces.append('"' + REDACTED + '"' + "\n" * raw.count("\n") + trailing_space)
         cursor = end
     if not pieces:
@@ -267,9 +268,13 @@ def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
             continue
         group = "quoted" if match.group("quoted") is not None else "bare"
         value = match.group(group)
-        if group == "bare" and ((match.group("separator") == ":" and not (
-            extended and text.startswith((" ", "\t"), match.end("separator"))
-        )) or _wordy(value)):
+        if group == "bare" and (
+            (
+                match.group("separator") == ":"
+                and not (extended and text.startswith((" ", "\t"), match.end("separator")))
+            )
+            or _wordy(value)
+        ):
             continue
         if match.group("quote") and _interpolated(match.group("prefix") or "", match.group("quote"), value):
             continue  # interpolated text is assembled elsewhere
@@ -312,7 +317,7 @@ def _fallback_name(text: str, operator: int) -> str:
     if end == 0 or text[end - 1] not in "\"'":
         return ""
     opening = text.rfind(text[end - 1], max(0, end - 1 - _FALLBACK_NAME_LITERAL), end - 1)
-    return text[opening + 1:end - 1] if opening >= 0 else ""
+    return text[opening + 1 : end - 1] if opening >= 0 else ""
 
 
 def _redact_fallback_defaults(text: str, *, extended: bool = False) -> str:
@@ -351,6 +356,7 @@ def _redact_plain_assignments(value: str, depth: int = 0) -> str:
     carry a nested credential ('config = "api_key=opaque-value"'); nesting
     past eight levels is withheld.
     """
+
     def assignment(m: re.Match[str]) -> str:
         full: str = m.group(0)
         if _FINGERPRINT.fullmatch(full):

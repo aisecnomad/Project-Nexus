@@ -52,7 +52,8 @@ OPENAI_MODULE = (
 # binding can resolve to a signature.
 EDGE_CASES = {
     "attribute-of-plain-import": (
-        "import transformers\nagent = transformers.ReactCodeAgent(tools=[])\n", True,
+        "import transformers\nagent = transformers.ReactCodeAgent(tools=[])\n",
+        True,
     ),
     "attribute-names-the-module": ("import google\nclient = google.genai.Client()\n", True),
     "aliased-import": ("import swarm as s\nteam = s.Swarm(client=None)\n", True),
@@ -61,7 +62,8 @@ EDGE_CASES = {
     "spaced-dotted-name": ("from google . adk import Agent\nAgent(name='a')\n", True),
     "continued-dotted-name": ("from google.\\\n    adk import Agent\nAgent(name='a')\n", True),
     "names-only-in-strings": (
-        '"""from openai import OpenAI"""\nimport os\nkey = os.environ["OPENAI_API_KEY"]\n', False,
+        '"""from openai import OpenAI"""\nimport os\nkey = os.environ["OPENAI_API_KEY"]\n',
+        False,
     ),
     "near-miss-attributes": ("import os\nos.nat_tool = 1\nos.signature_eval()\nos.path.cli_agent()\n", False),
     # The module name alone holds every literal "from M import A" needs.
@@ -74,8 +76,15 @@ EDGE_CASES = {
 
 def _key(match: Match) -> tuple[Any, ...]:
     extra = tuple(sorted((name, repr(value)) for name, value in match.extra.items()))
-    return (match.signature_id, match.signal.type, match.signal.description, match.value, match.weight,
-            match.line, extra)
+    return (
+        match.signature_id,
+        match.signal.type,
+        match.signal.description,
+        match.value,
+        match.weight,
+        match.line,
+        extra,
+    )
 
 
 def _bound(index: SignatureIndex, text: str) -> list[tuple[Any, ...]] | str:
@@ -99,7 +108,9 @@ def _repository_sources() -> list[tuple[str, str]]:
 
 
 def _compare(
-    index: SignatureIndex, text: str, monkeypatch: pytest.MonkeyPatch,
+    index: SignatureIndex,
+    text: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[bool | None, Any, Any]:
     """Return the proof's verdict and the binder's results with and without it, unbudgeted."""
     verdicts: list[bool] = []
@@ -140,19 +151,28 @@ def test_proof_follows_python_import_semantics(index, monkeypatch, text, expecte
         assert reference == []
 
 
-@pytest.mark.parametrize("pattern", [
-    r"(?i)^[^\S\r\n]*from\s+os\s+import\s+Agent\b",  # case-insensitive: no literal hints
-    r"^from os import Agent$",  # the literal may span the module and the name
-])
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        r"(?i)^[^\S\r\n]*from\s+os\s+import\s+Agent\b",  # case-insensitive: no literal hints
+        r"^from os import Agent$",  # the literal may span the module and the name
+    ],
+)
 def test_patterns_the_proof_cannot_rule_out_keep_the_binder(pattern):
-    index = SignatureIndex([signature_from_dict({
-        "id": "framework.custom",
-        "category": "framework",
-        "signals": [
-            {"type": "import", "languages": ["python"], "patterns": [pattern]},
-            {"type": "code", "languages": ["python"], "patterns": [r"\bAgent\("]},
-        ],
-    })])
+    index = SignatureIndex(
+        [
+            signature_from_dict(
+                {
+                    "id": "framework.custom",
+                    "category": "framework",
+                    "signals": [
+                        {"type": "import", "languages": ["python"], "patterns": [pattern]},
+                        {"type": "code", "languages": ["python"], "patterns": [r"\bAgent\("]},
+                    ],
+                }
+            )
+        ]
+    )
     text = "import os\nos.Agent()\n"
     assert source_semantics._python_bindable(index, ast.parse(text))
     assert [m.signature_id for m in bound_source_matches(index, text, "python", [])] == ["framework.custom"]
@@ -161,31 +181,47 @@ def test_patterns_the_proof_cannot_rule_out_keep_the_binder(pattern):
 def test_proof_covers_every_import_signal_the_matcher_runs():
     # ``index.signatures`` keeps one signature per id, but the matcher runs the
     # import signals of both; the first one's pattern must not be missed.
-    index = SignatureIndex([
-        signature_from_dict({
-            "id": "framework.custom",
-            "category": "framework",
-            "signals": [
-                {"type": "import", "languages": ["python"], "patterns": [pattern]},
-                {"type": "code", "languages": ["python"], "patterns": [code]},
-            ],
-        })
-        for pattern, code in ((r"^from\s+alpha\s+import\s+Agent\b", r"\bAgent\("),
-                              (r"^from\s+beta\s+import\s+Crew\b", r"\bCrew\("))
-    ])
+    index = SignatureIndex(
+        [
+            signature_from_dict(
+                {
+                    "id": "framework.custom",
+                    "category": "framework",
+                    "signals": [
+                        {"type": "import", "languages": ["python"], "patterns": [pattern]},
+                        {"type": "code", "languages": ["python"], "patterns": [code]},
+                    ],
+                }
+            )
+            for pattern, code in (
+                (r"^from\s+alpha\s+import\s+Agent\b", r"\bAgent\("),
+                (r"^from\s+beta\s+import\s+Crew\b", r"\bCrew\("),
+            )
+        ]
+    )
     text = "import alpha\nalpha.Agent()\n"
     assert source_semantics._python_bindable(index, ast.parse(text))
     assert [m.signature_id for m in bound_source_matches(index, text, "python", [])] == ["framework.custom"]
 
 
 def test_too_many_candidate_names_keep_the_binder():
-    index = SignatureIndex([signature_from_dict({
-        "id": "framework.custom",
-        "category": "framework",
-        "signals": [
-            {"type": "import", "languages": ["python"], "patterns": [r"^from\s+os\s+import\s+Agent\w*X\b"]},
-        ],
-    })])
+    index = SignatureIndex(
+        [
+            signature_from_dict(
+                {
+                    "id": "framework.custom",
+                    "category": "framework",
+                    "signals": [
+                        {
+                            "type": "import",
+                            "languages": ["python"],
+                            "patterns": [r"^from\s+os\s+import\s+Agent\w*X\b"],
+                        },
+                    ],
+                }
+            )
+        ]
+    )
     names = "".join(f"os.AgentX{number}()\n" for number in range(source_semantics._MAX_PROOF_STATEMENTS + 1))
     assert source_semantics._python_bindable(index, ast.parse("import os\n" + names))
     assert not source_semantics._python_bindable(index, ast.parse("import os\nos.AgentX1()\n"))
@@ -205,7 +241,9 @@ def _dotted_imports(count: int) -> str:
 
 
 def _proof_work(
-    index: SignatureIndex, text: str, monkeypatch: pytest.MonkeyPatch,
+    index: SignatureIndex,
+    text: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[bool, int, int, int]:
     """Return the verdict, the statements matched, the literal searches and the names they returned."""
     statements: list[str] = []
@@ -245,14 +283,23 @@ def test_proof_work_is_linear_in_the_modules_and_names(index, monkeypatch):
 
 
 def test_attribute_statements_are_bounded_across_patterns_and_matched_once(monkeypatch):
-    index = SignatureIndex([signature_from_dict({
-        "id": "framework.custom",
-        "category": "framework",
-        "signals": [{
-            "type": "import", "languages": ["python"],
-            "patterns": [r"^from\s+os\s+import\s+Alpha\b", r"^from\s+os\s+import\s+Beta\b"],
-        }],
-    })])
+    index = SignatureIndex(
+        [
+            signature_from_dict(
+                {
+                    "id": "framework.custom",
+                    "category": "framework",
+                    "signals": [
+                        {
+                            "type": "import",
+                            "languages": ["python"],
+                            "patterns": [r"^from\s+os\s+import\s+Alpha\b", r"^from\s+os\s+import\s+Beta\b"],
+                        }
+                    ],
+                }
+            )
+        ]
+    )
     # Each pattern qualifies 300 statements; together they exceed what the proof matches.
     names = "".join(f"os.Alpha{number}()\nos.Beta{number}()\n" for number in range(300))
     assert source_semantics._python_bindable(index, ast.parse("import os\n" + names))
@@ -296,7 +343,9 @@ MANY_IMPORTS = {
 
 
 @pytest.mark.parametrize(
-    ("text", "oversized", "exit_code", "errors"), MANY_IMPORTS.values(), ids=list(MANY_IMPORTS),
+    ("text", "oversized", "exit_code", "errors"),
+    MANY_IMPORTS.values(),
+    ids=list(MANY_IMPORTS),
 )
 def test_many_imports_keep_lexical_evidence_and_the_file_budget(tmp_path, text, oversized, exit_code, errors):
     assert (sum(1 for _ in ast.walk(ast.parse(text))) > MAX_AST_NODES) is oversized

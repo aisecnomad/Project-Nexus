@@ -45,19 +45,25 @@ class _UniqueKeyLoader(yaml.SafeLoader):
                 seen.add(key)
             except TypeError as exc:
                 raise yaml.constructor.ConstructorError(
-                    "while constructing a mapping", node.start_mark,
-                    "found an unhashable key", key_node.start_mark,
+                    "while constructing a mapping",
+                    node.start_mark,
+                    "found an unhashable key",
+                    key_node.start_mark,
                 ) from exc
             if duplicate:
                 raise yaml.constructor.ConstructorError(
-                    "while constructing a mapping", node.start_mark,
-                    f"found duplicate key {key!r}", key_node.start_mark,
+                    "while constructing a mapping",
+                    node.start_mark,
+                    f"found duplicate key {key!r}",
+                    key_node.start_mark,
                 )
         return super().construct_mapping(node, deep=deep)
 
 
 _UniqueKeyLoader.add_implicit_resolver(
-    "tag:yaml.org,2002:bool", re.compile(r"^(?:true|false)$", re.IGNORECASE), list("tTfF"),
+    "tag:yaml.org,2002:bool",
+    re.compile(r"^(?:true|false)$", re.IGNORECASE),
+    list("tTfF"),
 )
 
 
@@ -69,12 +75,15 @@ def _load(path: Path) -> Any:
     return _parse(path.read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("text", [
-    "labels: [bug]\nlabels: [detection]\n",
-    "jobs:\n  check:\n    permissions: {}\n    permissions: {contents: write}\n",
-    "permissions:\n  contents: read\n  contents: write\n",
-    "on: [push]\non: [workflow_dispatch]\n",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "labels: [bug]\nlabels: [detection]\n",
+        "jobs:\n  check:\n    permissions: {}\n    permissions: {contents: write}\n",
+        "permissions:\n  contents: read\n  contents: write\n",
+        "on: [push]\non: [workflow_dispatch]\n",
+    ],
+)
 def test_yaml_policy_loading_rejects_duplicate_keys(text: str) -> None:
     with pytest.raises(yaml.constructor.ConstructorError, match="duplicate key"):
         _parse(text)
@@ -131,8 +140,13 @@ def test_workflows_use_pinned_actions_and_scoped_permissions(path: Path) -> None
 def test_workflows_do_not_publish_releases_packages_or_tags(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     for marker in (
-        "pypa/gh-action-pypi-publish", "softprops/action-gh-release", "ncipollo/release-action",
-        "twine upload", "gh release create", "git push --tags", "git push origin v",
+        "pypa/gh-action-pypi-publish",
+        "softprops/action-gh-release",
+        "ncipollo/release-action",
+        "twine upload",
+        "gh release create",
+        "git push --tags",
+        "git push origin v",
     ):
         assert marker not in text, f"publication is a manual maintainer action: {marker}"
 
@@ -147,7 +161,9 @@ def test_pages_requires_explicit_manual_publication_from_main() -> None:
     expression = deploy.get("if", "").strip().removeprefix("${{").removesuffix("}}").strip()
     clauses = {re.sub(r"\s+", " ", clause.strip()).replace('"', "'") for clause in expression.split("&&")}
     assert clauses == {
-        "github.event_name == 'workflow_dispatch'", "inputs.publish", "github.ref == 'refs/heads/main'",
+        "github.event_name == 'workflow_dispatch'",
+        "inputs.publish",
+        "github.ref == 'refs/heads/main'",
     }, "Pages deployment must require a manual dispatch, publish=true, and the main branch"
     assert "build" in ([deploy["needs"]] if isinstance(deploy["needs"], str) else deploy["needs"])
 
@@ -155,7 +171,9 @@ def test_pages_requires_explicit_manual_publication_from_main() -> None:
 def test_stale_automation_never_closes_issues_or_pull_requests() -> None:
     workflow = _load(GITHUB / "workflows" / "stale.yml")
     steps = [
-        step for job in workflow["jobs"].values() for step in job.get("steps", [])
+        step
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
         if step.get("uses", "").startswith("actions/stale@")
     ]
     assert steps

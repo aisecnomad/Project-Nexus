@@ -20,9 +20,13 @@ from shadowscan.utils.text import parse_timestamp, to_iso
 def _usable_code_identity(code: Finding) -> bool:
     """Lossy report identities must never establish an exact workload binding."""
     return (
-        isinstance(code.resource, str) and bool(code.resource) and REDACTED not in code.resource
-        and all(value is None or (isinstance(value, str) and REDACTED not in value)
-                for value in (code.provider, code.account, code.region))
+        isinstance(code.resource, str)
+        and bool(code.resource)
+        and REDACTED not in code.resource
+        and all(
+            value is None or (isinstance(value, str) and REDACTED not in value)
+            for value in (code.provider, code.account, code.region)
+        )
     )
 
 
@@ -88,11 +92,12 @@ def _trusted_bindings(findings: list[Finding]) -> dict[str, list[tuple[Finding, 
         if not isinstance(observations, list):
             continue
         for observation in observations:
-            if (not isinstance(observation, dict)
-                    or observation.get("identity_basis") != "configured-exact-caller-and-scope"
-                    or observation.get("identity_assurance") not in (
-                        "operator-asserted", "provider-authenticated-field"
-                    )):
+            if (
+                not isinstance(observation, dict)
+                or observation.get("identity_basis") != "configured-exact-caller-and-scope"
+                or observation.get("identity_assurance")
+                not in ("operator-asserted", "provider-authenticated-field")
+            ):
                 continue
             resources = observation.get("code_resources", [])
             if isinstance(resources, list):
@@ -103,7 +108,8 @@ def _trusted_bindings(findings: list[Finding]) -> dict[str, list[tuple[Finding, 
 
 
 def _framework_matches(
-    code: Finding, relevant: list[tuple[Finding, dict[str, Any]]],
+    code: Finding,
+    relevant: list[tuple[Finding, dict[str, Any]]],
 ) -> tuple[list[dict[str, Any]], bool]:
     """Return timestamped observations sharing a framework with ``code`` and whether any lacked timestamps."""
     matches: list[dict[str, Any]] = []
@@ -123,20 +129,22 @@ def _framework_matches(
         if not first or not last or last < first or not isinstance(events, int) or events <= 0:
             missing_timestamps = True
             continue
-        matches.append({
-            "gateway_finding_id": gateway.id,
-            "gateway_resource": gateway.resource,
-            "source": observation.get("source", gateway.metadata.get("runtime_source", {})),
-            "scope": observation.get("scope", {}),
-            "frameworks": frameworks,
-            "events": events,
-            "first_seen": to_iso(first),
-            "last_seen": to_iso(last),
-            "environment": observation.get("environment"),
-            "identity_basis": observation["identity_basis"],
-            "identity_assurance": observation.get("identity_assurance", "unspecified"),
-            "environment_assurance": observation.get("environment_assurance", "unspecified"),
-        })
+        matches.append(
+            {
+                "gateway_finding_id": gateway.id,
+                "gateway_resource": gateway.resource,
+                "source": observation.get("source", gateway.metadata.get("runtime_source", {})),
+                "scope": observation.get("scope", {}),
+                "frameworks": frameworks,
+                "events": events,
+                "first_seen": to_iso(first),
+                "last_seen": to_iso(last),
+                "environment": observation.get("environment"),
+                "identity_basis": observation["identity_basis"],
+                "identity_assurance": observation.get("identity_assurance", "unspecified"),
+                "environment_assurance": observation.get("environment_assurance", "unspecified"),
+            }
+        )
     return matches, missing_timestamps
 
 
@@ -163,8 +171,7 @@ def _observed_activity(code: Finding, matches: list[dict[str, Any]]) -> dict[str
         "production_label_verified": False,
         "sources": matches,
         "event_counting": (
-            "Source observations; distinct exports may overlap and are not deduplicated "
-            "into unique requests."
+            "Source observations; distinct exports may overlap and are not deduplicated into unique requests."
         ),
         "limitations": (
             "Export-window telemetry and spoofable framework fingerprints, not an execution "
@@ -172,16 +179,18 @@ def _observed_activity(code: Finding, matches: list[dict[str, Any]]) -> dict[str
             "generic log identities require an operator assertion."
         ),
     }
-    code.add_evidence(Evidence(
-        signal="runtime:gateway-observed",
-        description=(
-            f"Linked gateway recorded {activity['events']} timestamped request(s) with matching "
-            f"framework fingerprints between {first_seen} and {last_seen}"
-        ),
-        weight=0.0,
-        attributes={
-            "gateway_finding_ids": sorted({match["gateway_finding_id"] for match in matches}),
-            "frameworks": activity["frameworks"],
-        },
-    ))
+    code.add_evidence(
+        Evidence(
+            signal="runtime:gateway-observed",
+            description=(
+                f"Linked gateway recorded {activity['events']} timestamped request(s) with matching "
+                f"framework fingerprints between {first_seen} and {last_seen}"
+            ),
+            weight=0.0,
+            attributes={
+                "gateway_finding_ids": sorted({match["gateway_finding_id"] for match in matches}),
+                "frameworks": activity["frameworks"],
+            },
+        )
+    )
     return activity

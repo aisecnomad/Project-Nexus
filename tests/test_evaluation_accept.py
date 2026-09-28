@@ -141,36 +141,77 @@ def test_cli_refuses_bundled_independent_corpus(tmp_path: Path):
 # A release holdout must not reuse development labels, gaps or source bytes.
 def _inputs(root: Path) -> tuple[Path, Path, Path, dict]:
     cases = [
-        {"id": "positive", "family": "agent", "description": "Positive holdout",
-         "files": {"agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# private fixture\n"},
-         "target": {"kind": "agent"}, "present": True},
-        {"id": "negative", "family": "agent", "description": "Negative holdout",
-         "files": {"plain.py": "def quiet():\n    return 'private fixture'\n"},
-         "target": {"kind": "agent"}, "present": False},
+        {
+            "id": "positive",
+            "family": "agent",
+            "description": "Positive holdout",
+            "files": {
+                "agent.py": "from langgraph.graph import StateGraph\ngraph = StateGraph(dict)\n# private fixture\n"
+            },
+            "target": {"kind": "agent"},
+            "present": True,
+        },
+        {
+            "id": "negative",
+            "family": "agent",
+            "description": "Negative holdout",
+            "files": {"plain.py": "def quiet():\n    return 'private fixture'\n"},
+            "target": {"kind": "agent"},
+            "present": False,
+        },
     ]
-    corpus = {"schema": 1, "metadata": {"name": "fixture", "type": "adjudicated",
-              "provenance": "Unit fixture, not representative field evidence"}, "cases": cases}
+    corpus = {
+        "schema": 1,
+        "metadata": {
+            "name": "fixture",
+            "type": "adjudicated",
+            "provenance": "Unit fixture, not representative field evidence",
+        },
+        "cases": cases,
+    }
     return root / "holdout.json", root / "policy.json", root / "annotations.json", corpus
 
 
 def _freeze(corpus: Path, policy: Path, annotations: Path, data: dict) -> None:
     corpus.write_text(json.dumps(data), encoding="utf-8")
     digest = hashlib.sha256(corpus.read_bytes()).hexdigest()
-    bounds = {"min_positive_cases": 1, "min_negative_cases": 1,
-              "min_precision_lower95": 0.01, "min_recall_lower95": 0.01,
-              "min_specificity_lower95": 0.01}
-    policy.write_text(json.dumps({"schema": 1, "corpus_sha256": digest,
-                                  "groups": {"all": bounds, "agent": bounds}}), encoding="utf-8")
-    annotations.write_text(json.dumps({
-        "schema": 1, "corpus_sha256": digest,
-        "method": "independent-human-double-label-before-scan",
-        "selection": "Unit fixture selected before scoring, not field evidence",
-        "reviewers": [{"id": reviewer, "labels": [
-            {"case_id": case["id"], "present": case["present"], "reason": "Reviewed the fixture"}
-            for case in data["cases"]]}
-            for reviewer in ("reviewer_one", "reviewer_two")],
-        "adjudications": [],
-    }), encoding="utf-8")
+    bounds = {
+        "min_positive_cases": 1,
+        "min_negative_cases": 1,
+        "min_precision_lower95": 0.01,
+        "min_recall_lower95": 0.01,
+        "min_specificity_lower95": 0.01,
+    }
+    policy.write_text(
+        json.dumps({"schema": 1, "corpus_sha256": digest, "groups": {"all": bounds, "agent": bounds}}),
+        encoding="utf-8",
+    )
+    annotations.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "corpus_sha256": digest,
+                "method": "independent-human-double-label-before-scan",
+                "selection": "Unit fixture selected before scoring, not field evidence",
+                "reviewers": [
+                    {
+                        "id": reviewer,
+                        "labels": [
+                            {
+                                "case_id": case["id"],
+                                "present": case["present"],
+                                "reason": "Reviewed the fixture",
+                            }
+                            for case in data["cases"]
+                        ],
+                    }
+                    for reviewer in ("reviewer_one", "reviewer_two")
+                ],
+                "adjudications": [],
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_ai_labeled_adjudicated_corpus_is_rejected_before_scan(tmp_path: Path) -> None:
@@ -181,11 +222,23 @@ def test_ai_labeled_adjudicated_corpus_is_rejected_before_scan(tmp_path: Path) -
     source.write_bytes(DEFAULT_CORPUS.with_name("independent_corpus.json").read_bytes())
     annotations.write_bytes(DEFAULT_CORPUS.with_name("independent_annotations.json").read_bytes())
     policy = tmp_path / "policy.json"
-    bounds = {"min_positive_cases": 1, "min_negative_cases": 1,
-              "min_precision_lower95": 0.01, "min_recall_lower95": 0.01,
-              "min_specificity_lower95": 0.01}
-    policy.write_text(json.dumps({"schema": 1, "corpus_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-                                  "groups": {"all": bounds}}), encoding="utf-8")
+    bounds = {
+        "min_positive_cases": 1,
+        "min_negative_cases": 1,
+        "min_precision_lower95": 0.01,
+        "min_recall_lower95": 0.01,
+        "min_specificity_lower95": 0.01,
+    }
+    policy.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "corpus_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "groups": {"all": bounds},
+            }
+        ),
+        encoding="utf-8",
+    )
     with pytest.raises(CorpusError, match="human-labeled holdout"):
         accept(source, policy, annotations)
 

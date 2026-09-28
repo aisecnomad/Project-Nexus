@@ -13,8 +13,14 @@ _MARKDOWN_META = re.compile(r"([\\`*_\[\]~|])")
 _BACKTICKS = re.compile(r"`+")
 _AUTOLINK = re.compile(r"(?i)\b(?:(https?)://|(www)\.)")
 _LINE_BREAKS = {
-    "\r": r"\r", "\n": r"\n", "\t": r"\t", "\f": r"\f", "\v": r"\v",
-    "\x85": r"\u0085", "\u2028": r"\u2028", "\u2029": r"\u2029",
+    "\r": r"\r",
+    "\n": r"\n",
+    "\t": r"\t",
+    "\f": r"\f",
+    "\v": r"\v",
+    "\x85": r"\u0085",
+    "\u2028": r"\u2028",
+    "\u2029": r"\u2029",
 }
 
 
@@ -25,8 +31,13 @@ def _one_line(value: object) -> str:
         code = ord(char)
         if char in _LINE_BREAKS:
             out.append(_LINE_BREAKS[char])
-        elif (code < 32 or 0x7F <= code <= 0x9F or 0x202A <= code <= 0x202E
-              or 0x2066 <= code <= 0x2069 or code in (0x061C, 0x200E, 0x200F)):
+        elif (
+            code < 32
+            or 0x7F <= code <= 0x9F
+            or 0x202A <= code <= 0x202E
+            or 0x2066 <= code <= 0x2069
+            or code in (0x061C, 0x200E, 0x200F)
+        ):
             out.append(f"\\u{code:04x}")
         else:
             out.append(char)
@@ -92,17 +103,19 @@ def render_markdown(result: ScanResult) -> str:
     lines.append(f"_Generated {generated} by ShadowScan {_text(result.version)}_")
     lines.append("")
     if not result.complete:
-        lines.extend([
-            "**INCOMPLETE SCAN:** some required inputs could not be assessed. Review connector statistics.",
-            "",
-        ])
+        lines.extend(
+            [
+                "**INCOMPLETE SCAN:** some required inputs could not be assessed. Review connector "
+                "statistics.",
+                "",
+            ]
+        )
     lines.append("## Summary")
     lines.append("")
     shadow_note = ""
     if result.inventory_size:
         shadow_note = (
-            f" (**{s['shadow']} shadow** — not in the inventory of"
-            f" {result.inventory_size} registered agents)"
+            f" (**{s['shadow']} shadow** — not in the inventory of {result.inventory_size} registered agents)"
         )
     lines.append(f"- **Findings:** {s['total']}" + shadow_note)
     by_risk = sorted(s["by_risk_level"].items(), key=lambda kv: _LEVEL_ORDER.index(kv[0]))

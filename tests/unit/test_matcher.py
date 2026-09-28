@@ -11,11 +11,17 @@ from shadowscan.signatures.matcher import MatchTimeoutError
 
 
 def _index(pattern="token"):
-    return SignatureIndex([signature_from_dict({
-        "id": "custom.test",
-        "category": "framework",
-        "signals": [{"type": "code", "patterns": [pattern]}],
-    })])
+    return SignatureIndex(
+        [
+            signature_from_dict(
+                {
+                    "id": "custom.test",
+                    "category": "framework",
+                    "signals": [{"type": "code", "patterns": [pattern]}],
+                }
+            )
+        ]
+    )
 
 
 def test_explicit_scan_budget_is_not_silently_capped_at_default(monkeypatch):

@@ -122,12 +122,17 @@ def test_raw_response_retains_bounded_content_after_closing_transport():
     result.close.assert_called_once()
 
 
-@pytest.mark.parametrize("headers,expected_range", [
-    # A malformed hint falls back to the jittered exponential step for attempt 1.
-    ({"Retry-After": "²"}, (1, 2)),
-    ({"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "9" * 5000}, (120, 120)),
-])
-def test_malformed_or_extreme_retry_headers_remain_bounded_and_close_response(headers, expected_range, monkeypatch):
+@pytest.mark.parametrize(
+    "headers,expected_range",
+    [
+        # A malformed hint falls back to the jittered exponential step for attempt 1.
+        ({"Retry-After": "²"}, (1, 2)),
+        ({"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "9" * 5000}, (120, 120)),
+    ],
+)
+def test_malformed_or_extreme_retry_headers_remain_bounded_and_close_response(
+    headers, expected_range, monkeypatch
+):
     first = response(status=429, headers=headers)
     http, _ = client(first, response({"ok": True}))
     sleep = Mock()
@@ -205,11 +210,16 @@ def test_error_envelope_with_empty_items_cannot_claim_complete(paginator, kwargs
 
 
 @pytest.mark.parametrize("token", [False, 0, [], {}, 123, " "])
-@pytest.mark.parametrize("paginator,key,continuation", [
-    ("paginate_odata", "value", "@odata.nextLink"),
-    ("paginate_token", "items", "nextPageToken"),
-])
-def test_continuations_cannot_coerce_malformed_values_to_end_of_collection(paginator, key, continuation, token):
+@pytest.mark.parametrize(
+    "paginator,key,continuation",
+    [
+        ("paginate_odata", "value", "@odata.nextLink"),
+        ("paginate_token", "items", "nextPageToken"),
+    ],
+)
+def test_continuations_cannot_coerce_malformed_values_to_end_of_collection(
+    paginator, key, continuation, token
+):
     http, _ = client(response({key: [], continuation: token}))
     with pytest.raises(RuntimeError, match="collection incomplete"):
         list(getattr(http, paginator)("/items"))
@@ -217,17 +227,23 @@ def test_continuations_cannot_coerce_malformed_values_to_end_of_collection(pagin
 
 def test_google_empty_collection_exception_requires_documented_kind():
     http, _ = client(response({"kind": "admin#directory#users", "etag": "opaque-etag"}))
-    assert list(http.paginate_token("/users", items_key="users", expected_empty_kind="admin#directory#users")) == []
+    assert (
+        list(http.paginate_token("/users", items_key="users", expected_empty_kind="admin#directory#users"))
+        == []
+    )
 
 
-@pytest.mark.parametrize("body", [
-    {},
-    {"kind": "unexpected"},
-    {"kind": "admin#directory#users", "nextPageToken": "next"},
-    {"kind": "admin#directory#users", "error": "denied"},
-    {"kind": "admin#directory#users", "users": None},
-    {"kind": "admin#directory#users", "ok": False},
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"kind": "unexpected"},
+        {"kind": "admin#directory#users", "nextPageToken": "next"},
+        {"kind": "admin#directory#users", "error": "denied"},
+        {"kind": "admin#directory#users", "users": None},
+        {"kind": "admin#directory#users", "ok": False},
+    ],
+)
 def test_google_empty_collection_exception_does_not_suppress_malformed_pages(body):
     http, _ = client(response(body))
     with pytest.raises(RuntimeError, match="collection incomplete"):

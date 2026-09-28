@@ -22,12 +22,18 @@ from shadowscan.utils.git import clone_environment, safe_git_env, validate_git_r
 
 def test_codeowners_overlapping_stars_finish_in_a_bounded_subprocess():
     # Both adjacent and separated stars previously backtracked exponentially.
-    result = subprocess.run([
-        sys.executable, "-c",
-        "from shadowscan.connectors.code.ownership import codeowners_match; "
-        "assert not codeowners_match('*' * 12 + 'b', 'a' * 45 + '.py'); "
-        "assert not codeowners_match('*a' * 24 + 'b', 'a' * 80 + '.py')",
-    ], capture_output=True, timeout=5, check=False)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from shadowscan.connectors.code.ownership import codeowners_match; "
+            "assert not codeowners_match('*' * 12 + 'b', 'a' * 45 + '.py'); "
+            "assert not codeowners_match('*a' * 24 + 'b', 'a' * 80 + '.py')",
+        ],
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
     assert result.returncode == 0, result.stderr.decode()
 
 
@@ -40,7 +46,9 @@ def test_codeowners_work_limit_stops_polynomial_worst_case():
         codeowners_match("*" + "a" * 200 + "b", "a" * 1_000, OwnershipBudget(2_000))
 
 
-def test_codeowners_exhaustion_keeps_findings_and_marks_ownership_incomplete(tmp_path, run_connector, monkeypatch):
+def test_codeowners_exhaustion_keeps_findings_and_marks_ownership_incomplete(
+    tmp_path, run_connector, monkeypatch
+):
     (tmp_path / "CODEOWNERS").write_text("*.py @owner\n")
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     monkeypatch.setattr(filesystem, "OwnershipBudget", lambda _remaining: OwnershipBudget(1))
@@ -68,11 +76,17 @@ def test_git_ref_validation_never_rewrites_or_accepts_invalid_components(branch)
 
 def test_git_environment_discards_injected_configs_and_execution_overrides(monkeypatch):
     hostile = {
-        "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "url.file:///tmp/evil.insteadOf",
-        "GIT_CONFIG_VALUE_0": "https://github.com/", "GIT_CONFIG_KEY_999": "core.hooksPath",
-        "GIT_CONFIG_VALUE_999": "/tmp/evil", "GIT_TEMPLATE_DIR": "/tmp/evil",
-        "GIT_DIR": "/tmp/evil", "GIT_EXEC_PATH": "/tmp/evil", "GIT_ASKPASS": "/tmp/evil",
-        "SSH_ASKPASS": "/tmp/evil", "GIT_SSL_NO_VERIFY": "true",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "url.file:///tmp/evil.insteadOf",
+        "GIT_CONFIG_VALUE_0": "https://github.com/",
+        "GIT_CONFIG_KEY_999": "core.hooksPath",
+        "GIT_CONFIG_VALUE_999": "/tmp/evil",
+        "GIT_TEMPLATE_DIR": "/tmp/evil",
+        "GIT_DIR": "/tmp/evil",
+        "GIT_EXEC_PATH": "/tmp/evil",
+        "GIT_ASKPASS": "/tmp/evil",
+        "SSH_ASKPASS": "/tmp/evil",
+        "GIT_SSL_NO_VERIFY": "true",
     }
     for key, value in hostile.items():
         monkeypatch.setenv(key, value)
@@ -88,7 +102,10 @@ def test_git_environment_discards_injected_configs_and_execution_overrides(monke
     assert config["protocol.https.allow"] == "always"
     assert config["credential.helper"] == ""
     assert config["http.followRedirects"] == "false"
-    assert base64.b64decode(config["http.https://github.com/.extraheader"].split()[-1]) == b"x-access-token:synthetic-token"
+    assert (
+        base64.b64decode(config["http.https://github.com/.extraheader"].split()[-1])
+        == b"x-access-token:synthetic-token"
+    )
     assert "GIT_CONFIG_KEY_999" not in clone_env
 
 
@@ -107,7 +124,8 @@ def test_clone_callers_enforce_hooks_auth_and_branch_validation(provider, branch
 
     monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", fake_clone)
     repo = {
-        "full_name": "acme/app", "default_branch": branch,
+        "full_name": "acme/app",
+        "default_branch": branch,
         "clone_url": "https://github.com/acme/app.git",
         "http_url_to_repo": "https://gitlab.com/acme/app.git",
     }
@@ -131,7 +149,10 @@ def test_api_fetch_never_silently_changes_unsupported_branch(provider, index, mo
 
     monkeypatch.setattr(connector.http, "try_get_json", unexpected)
     monkeypatch.setattr(connector.http, "paginate_link", unexpected)
-    assert connector._fetch_via_api({"full_name": "acme/app", "id": 1, "default_branch": " main"}, "/tmp/unused") is None
+    assert (
+        connector._fetch_via_api({"full_name": "acme/app", "id": 1, "default_branch": " main"}, "/tmp/unused")
+        is None
+    )
     assert ctx.stats.incomplete
 
 
@@ -142,8 +163,10 @@ def test_metadata_and_incremental_git_ignore_inherited_repo_and_config(tmp_path,
     env = safe_git_env()
     (repo / "agent.py").write_text("from crewai import Agent\n")
     for args in (
-        ["init", "--quiet"], ["config", "user.email", "expected@example.test"],
-        ["config", "user.name", "Expected Author"], ["add", "agent.py"],
+        ["init", "--quiet"],
+        ["config", "user.email", "expected@example.test"],
+        ["config", "user.name", "Expected Author"],
+        ["add", "agent.py"],
         ["-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "initial"],
     ):
         subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, env=env)

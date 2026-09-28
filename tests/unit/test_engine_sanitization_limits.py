@@ -15,8 +15,15 @@ from shadowscan.utils.redaction import REDACTED, SanitizationLimitError
 
 
 def _finding(resource="same", **metadata):
-    return Finding(surface=Surface.CODE, connector="test.probe", kind=Kind.AGENT,
-                   title="Agent", resource=resource, resource_type="test", metadata=metadata)
+    return Finding(
+        surface=Surface.CODE,
+        connector="test.probe",
+        kind=Kind.AGENT,
+        title="Agent",
+        resource=resource,
+        resource_type="test",
+        metadata=metadata,
+    )
 
 
 def _run(monkeypatch, index, connector, **config):

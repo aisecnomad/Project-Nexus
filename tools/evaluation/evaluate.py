@@ -182,8 +182,7 @@ def _case_assertions(value: Any, where: str) -> dict[str, Any]:
         not isinstance(assertions["server_names"], list)
         or len(assertions["server_names"]) > 20
         or any(
-            not isinstance(name, str) or not name or len(name) > 100
-            for name in assertions["server_names"]
+            not isinstance(name, str) or not name or len(name) > 100 for name in assertions["server_names"]
         )
         or len(set(assertions["server_names"])) != len(assertions["server_names"])
     ):
@@ -363,8 +362,7 @@ def calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
             ece += bucket["count"] / total * abs(mean_score - observed_fraction)
     return {
         "note": (
-            "Descriptive selected-case score reliability only; "
-            "confidence is not a calibrated probability."
+            "Descriptive selected-case score reliability only; confidence is not a calibrated probability."
         ),
         "brier_proxy": statistics.mean((row["score"] - int(row["present"])) ** 2 for row in rows),
         "ece_proxy": ece,

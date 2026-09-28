@@ -15,10 +15,12 @@ from shadowscan.utils.redaction import REDACTED
 def test_github_wrong_explicit_repository_does_not_hide_valid_neighbor(index, fixtures, monkeypatch):
     ctx = ConnectorContext(config={"repos": ["acme/agent", "acme/valid"], "use_git": False}, index=index)
     connector = GitHubConnector(ctx)
-    connector.http.try_get_json = Mock(side_effect=[
-        {"full_name": "acme/other"},
-        {"full_name": "acme/valid", "owner": {"login": "acme"}},
-    ])
+    connector.http.try_get_json = Mock(
+        side_effect=[
+            {"full_name": "acme/other"},
+            {"full_name": "acme/valid", "owner": {"login": "acme"}},
+        ]
+    )
     fetch = Mock(return_value=str(fixtures / "sample_repo"))
     monkeypatch.setattr(connector, "_fetch_repo", fetch)
     monkeypatch.setattr(connector, "_repo_level_findings", lambda _repo: iter(()))
@@ -32,10 +34,16 @@ def test_github_wrong_explicit_repository_does_not_hide_valid_neighbor(index, fi
     assert any("does not match the requested name" in warning for warning in ctx.stats.warnings)
 
 
-@pytest.mark.parametrize("response", [
-    {"full_name": "acme/other"}, {"full_name": "acme/agent/extra"},
-    {"full_name": []}, {"name": "agent"}, ["acme/agent"],
-])
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"full_name": "acme/other"},
+        {"full_name": "acme/agent/extra"},
+        {"full_name": []},
+        {"name": "agent"},
+        ["acme/agent"],
+    ],
+)
 def test_github_invalid_explicit_repository_response_marks_incomplete(response, index):
     ctx = ConnectorContext(config={"repos": ["acme/agent"]}, index=index)
     ctx.stats = ScanStats(connector="code.github", started_at="2026-01-01T00:00:00Z")

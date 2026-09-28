@@ -63,14 +63,33 @@ log = logging.getLogger("shadowscan.config")
 
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 PATH_KEYS = (
-    "input", "path", "paths", "service_account_file", "credentials_file", "config_file", "token_file"
+    "input",
+    "path",
+    "paths",
+    "service_account_file",
+    "credentials_file",
+    "config_file",
+    "token_file",
 )
 _CONFIG_FIELDS = {"connectors", "inventory", "signatures", "options"}
 _OPTION_FIELDS = {
-    "min_confidence", "fail_on", "dump_records", "workdir", "parallel", "incremental",
-    "state_dir", "plugins", "allow_signature_override", "allow_private_origin",
-    "allow_instance_credentials", "allow_credential_mixing", "connector_timeout_seconds", "connector_timeout",
-    "risk_basis", "risk_weights", "job_deadline_seconds",
+    "min_confidence",
+    "fail_on",
+    "dump_records",
+    "workdir",
+    "parallel",
+    "incremental",
+    "state_dir",
+    "plugins",
+    "allow_signature_override",
+    "allow_private_origin",
+    "allow_instance_credentials",
+    "allow_credential_mixing",
+    "connector_timeout_seconds",
+    "connector_timeout",
+    "risk_basis",
+    "risk_weights",
+    "job_deadline_seconds",
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 # Keys every connector accepts: BaseConnector / ConnectorContext read the input
@@ -146,7 +165,8 @@ def accepted_connector_keys(name: str) -> frozenset[str] | None:
         return None
     cls = get_connector_class(name)
     return (
-        frozenset(cls.config_keys) | SHARED_CONNECTOR_KEYS
+        frozenset(cls.config_keys)
+        | SHARED_CONNECTOR_KEYS
         | _UNDOCUMENTED_CONNECTOR_KEYS.get(name, frozenset())
     )
 
@@ -181,6 +201,7 @@ def validate_connector_config(name: str, config: Mapping[Any, Any]) -> None:
 
 def expand_env(value: Any) -> Any:
     if isinstance(value, str):
+
         def repl(m: re.Match[str]) -> str:
             name, fallback = m.group(1), m.group(2)
             resolved = os.environ.get(name)
@@ -284,12 +305,19 @@ class ScanConfig:
         if self.allow_credential_mixing:
             return
         code = [spec for spec in specs if spec.name.startswith("code.")]
-        live = [spec for spec in specs if not spec.config.get("input") and (
-            spec.name in {"code.github", "code.gitlab"}
-            or (spec.name.startswith(("cloud.", "identity.", "saas.", "lowcode."))
-                and spec.name != "identity.jwt")
-            or spec.name in self.plugins
-        )]
+        live = [
+            spec
+            for spec in specs
+            if not spec.config.get("input")
+            and (
+                spec.name in {"code.github", "code.gitlab"}
+                or (
+                    spec.name.startswith(("cloud.", "identity.", "saas.", "lowcode."))
+                    and spec.name != "identity.jwt"
+                )
+                or spec.name in self.plugins
+            )
+        ]
         if any(source is not credentialed for source in code for credentialed in live):
             raise ConfigValidationError(
                 "code scanning and live credentialed connectors require separate scans; "
@@ -485,7 +513,8 @@ def _node_position(node: yaml.Node) -> str:
     """Line and column of a YAML node for diagnostics; never its text."""
     mark = getattr(node, "start_mark", None)
     if (
-        mark is None or not isinstance(getattr(mark, "line", None), int)
+        mark is None
+        or not isinstance(getattr(mark, "line", None), int)
         or not isinstance(getattr(mark, "column", None), int)
     ):
         return ""

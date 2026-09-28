@@ -11,9 +11,13 @@ from shadowscan.utils.redaction import REDACTED
 @pytest.mark.parametrize("field", ["signal", "description", "location", "snippet", "signature"])
 def test_evidence_flag_shaped_attribute_does_not_redact_its_neighbor(field):
     values = {
-        "signal": "observation", "description": "Observed an agent",
-        "location": "agent.py:1", "snippet": "ordinary source",
-        "weight": 0.5, "signature": "framework.example", "attributes": {"label": "ordinary"},
+        "signal": "observation",
+        "description": "Observed an agent",
+        "location": "agent.py:1",
+        "snippet": "ordinary source",
+        "weight": 0.5,
+        "signature": "framework.example",
+        "attributes": {"label": "ordinary"},
     }
     values[field] = "--token"
     evidence = Evidence(**values)
@@ -24,8 +28,14 @@ def test_evidence_flag_shaped_attribute_does_not_redact_its_neighbor(field):
 
 
 def test_finding_flag_shaped_title_preserves_resource_identity_and_serialization():
-    finding = Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-                      title="--token", resource="repository/agent", resource_type="repository")
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="--token",
+        resource="repository/agent",
+        resource_type="repository",
+    )
     identity = finding.id
     finding.evidence.append(Evidence("signal", "description", snippet="--token", weight=0.5))
     finding.risk = Risk(factors=[RiskFactor("--token", "Independent description", 5)])
@@ -40,20 +50,31 @@ def test_finding_flag_shaped_title_preserves_resource_identity_and_serialization
 
 def test_singleton_wrappers_preserve_real_nested_argv_and_cross_field_redaction():
     secret = "opaque-argument-credential-value"
-    evidence = Evidence("observation", f"Failure echoed {secret}",
-                        attributes={"argv": ["--token", secret]})
+    evidence = Evidence("observation", f"Failure echoed {secret}", attributes={"argv": ["--token", secret]})
     assert evidence.description == f"Failure echoed {REDACTED}"
     assert evidence.attributes["argv"] == ["--token", REDACTED]
-    finding = Finding(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT,
-                      title=f"Echoed {secret}", resource="repository/agent", resource_type="repository",
-                      metadata={"argv": ["--token", secret]})
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title=f"Echoed {secret}",
+        resource="repository/agent",
+        resource_type="repository",
+        metadata={"argv": ["--token", secret]},
+    )
     assert finding.title == f"Echoed {REDACTED}"
     assert finding.metadata["argv"] == ["--token", REDACTED]
 
 
 def _finding(**overrides) -> Finding:
-    values = dict(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT, title="Agent",
-                  resource="github:acme/app", resource_type="repository")
+    values = dict(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="Agent",
+        resource="github:acme/app",
+        resource_type="repository",
+    )
     values.update(overrides)
     return Finding(**values)
 
@@ -83,17 +104,19 @@ def test_sanitize_verifies_unchanged_state_by_digest_and_redacts_every_later_mut
     assert "abcdef0123456789" not in finding.to_dict()["evidence"][0]["description"] and len(calls) == 5
     finding.risk = Risk(score=10, factors=[RiskFactor("f", "password=hunter2-value", 1)])
     assert (
-        finding.to_dict()["risk"]["factors"][0]["description"] == f"password={REDACTED}"
-        and len(calls) == 6
+        finding.to_dict()["risk"]["factors"][0]["description"] == f"password={REDACTED}" and len(calls) == 6
     )
     finding.to_dict()
     assert len(calls) == 6
 
 
-@pytest.mark.parametrize("pattern_name,source", [
-    ("_INDEXED_ASSIGNMENT_KEY", 'config["password"] = "opaque-cached-value"'),
-    ("_TARGET_ATTRIBUTE", 'config["password"].primary = "opaque-cached-value"'),
-])
+@pytest.mark.parametrize(
+    "pattern_name,source",
+    [
+        ("_INDEXED_ASSIGNMENT_KEY", 'config["password"] = "opaque-cached-value"'),
+        ("_TARGET_ATTRIBUTE", 'config["password"].primary = "opaque-cached-value"'),
+    ],
+)
 def test_replaced_indexed_redaction_pattern_invalidates_sanitized_state(monkeypatch, pattern_name, source):
     from shadowscan.utils import redaction
 
@@ -110,8 +133,13 @@ def test_sanitization_bookkeeping_never_enters_reports_and_cannot_be_imported():
     finding = _finding()
     exported = finding.to_dict()
     assert "_clean_digest" not in exported
-    forged = Finding.from_dict({**exported, "_clean_digest": "0" * 64,
-                                "title": "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"})
+    forged = Finding.from_dict(
+        {
+            **exported,
+            "_clean_digest": "0" * 64,
+            "title": "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN",
+        }
+    )
     assert forged.title == REDACTED
     assert forged == Finding.from_dict(forged.to_dict()), "cache state is excluded from equality"
 

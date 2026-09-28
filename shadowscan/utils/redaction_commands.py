@@ -114,7 +114,7 @@ def _cli_password_mode(text: str, option: re.Match[str], logins: bool, mysql: bo
     """
     if not option.group().startswith("-p") or option.group().startswith("--"):
         return ""
-    following = text[option.end():option.end() + 1]
+    following = text[option.end() : option.end() + 1]
     rules: tuple[re.Pattern[str], ...]
     if option.group() == "-p" and following in {" ", "\t", "\\"}:
         mode, rules = "secret", ((_CLI_REGISTRY_LOGIN, _CLI_SSHPASS) if logins else ())
@@ -124,8 +124,8 @@ def _cli_password_mode(text: str, option: re.Match[str], logins: bool, mysql: bo
         return ""
     if not rules:
         return ""
-    head = _CLI_CONTINUATION.sub(" ", text[max(0, option.start() - _CLI_COMMAND_CONTEXT):option.start()])
-    command = head[max(head.rfind(separator) for separator in ";&|\n\r") + 1:]
+    head = _CLI_CONTINUATION.sub(" ", text[max(0, option.start() - _CLI_COMMAND_CONTEXT) : option.start()])
+    command = head[max(head.rfind(separator) for separator in ";&|\n\r") + 1 :]
     return mode if any(rule.search(command) for rule in rules) else ""
 
 
@@ -218,7 +218,11 @@ class _ValueRuns:
 
 
 def _run_secret_span(
-    mode: str, runs: _ValueRuns, start: int, end: int, strict: bool,
+    mode: str,
+    runs: _ValueRuns,
+    start: int,
+    end: int,
+    strict: bool,
 ) -> tuple[int, int] | None:
     """``_cli_secret_span`` of the unquoted value text[start:end] of a 'secret', 'user' or 'header' option."""
     text = runs.text
@@ -247,7 +251,11 @@ def _run_secret_span(
 
 
 def _cli_value_span(
-    mode: str, text: str, position: int, strict: bool, runs: _ValueRuns | None = None,
+    mode: str,
+    text: str,
+    position: int,
+    strict: bool,
+    runs: _ValueRuns | None = None,
 ) -> tuple[int, int] | None:
     """The credential in the option value at ``position``; ``runs`` reads unquoted ones (see _ValueRuns)."""
     if text.startswith("-", position):
@@ -366,7 +374,11 @@ def _redact_options(text: str, *, opaque: bool) -> str:
 
 
 def _option_value_span(
-    text: str, match: re.Match[str], mode: str, quote: str, runs: _ValueRuns | None,
+    text: str,
+    match: re.Match[str],
+    mode: str,
+    quote: str,
+    runs: _ValueRuns | None,
 ) -> tuple[int, int] | None:
     """The credential that the option ``match`` of ``mode`` passes, if any.
 
@@ -381,11 +393,11 @@ def _option_value_span(
         limit = text.find("\n", position, position + _CLI_VALUE_LIMIT)
         closing = text.find(quote, position + 1, position + _CLI_VALUE_LIMIT if limit < 0 else limit)
         if closing >= 0:
-            return _cli_secret_span(mode, text[position + 1:closing], position + 1, True)
+            return _cli_secret_span(mode, text[position + 1 : closing], position + 1, True)
     elif quote and text.startswith(quote, position):
         # An argv list or a quoted shell word names its value in quotes.
         gap = _CLI_LIST_GAP.match(text, position + 1)
-        if gap is None or not text.startswith(("\"", "'"), gap.end()):
+        if gap is None or not text.startswith(('"', "'"), gap.end()):
             return None
         return _cli_value_span(mode, text, gap.end(), False, runs)
     # Plain text, or a quote that does not delimit this option.
@@ -414,8 +426,8 @@ def _redact_environment_commands(text: str) -> str:
         command = match.group("command")
         start = match.start("value")
         raw = match.group("value").rstrip()
-        if raw.startswith(("\"", "'")) and raw.find(raw[0], 1) > 0:
-            start, raw = start + 1, raw[1:raw.find(raw[0], 1)]
+        if raw.startswith(('"', "'")) and raw.find(raw[0], 1) > 0:
+            start, raw = start + 1, raw[1 : raw.find(raw[0], 1)]
         elif command == "ENV":
             raw = raw.removesuffix("\\").rstrip()  # the legacy form's value is the rest of the line
         else:

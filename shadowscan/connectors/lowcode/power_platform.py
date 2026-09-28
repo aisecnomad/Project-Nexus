@@ -63,9 +63,15 @@ def _dataverse_origin(instance_url: Any, environment: dict[str, Any], tenant: An
     except ValueError:
         raise ValueError("invalid Dataverse organization URL") from None
     if (
-        parsed.scheme != "https" or not hostname or not _DATAVERSE_HOST.fullmatch(hostname.lower())
-        or parsed.username is not None or parsed.password is not None or port is not None
-        or parsed.path not in ("", "/") or parsed.query or parsed.fragment
+        parsed.scheme != "https"
+        or not hostname
+        or not _DATAVERSE_HOST.fullmatch(hostname.lower())
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
         or parsed.netloc.lower() != hostname.lower()
     ):
         raise ValueError("invalid Dataverse organization URL")
@@ -90,11 +96,13 @@ def _dataverse_origin(instance_url: Any, environment: dict[str, Any], tenant: An
         metadata.get("tenantId"),
     ):
         if declared_tenant is not None and (
-            not isinstance(declared_tenant, str) or not isinstance(tenant, str)
+            not isinstance(declared_tenant, str)
+            or not isinstance(tenant, str)
             or declared_tenant.casefold() != tenant.casefold()
         ):
             raise ValueError("Dataverse environment tenant disagrees with token tenant")
     return "https://" + hostname.lower()
+
 
 AI_CONNECTORS = {
     "shared_openai": "OpenAI (independent publisher)",
@@ -312,8 +320,11 @@ class PowerPlatformConnector(BaseConnector):
             return None
         kind = rec.get("_kind") or _infer(rec)
         identifiers = {
-            "environment": ("name", "id"), "flow": ("name", "id"), "app": ("name", "id"),
-            "bot": ("botid", "id", "schemaname"), "botcomponent": ("botcomponentid", "id"),
+            "environment": ("name", "id"),
+            "flow": ("name", "id"),
+            "app": ("name", "id"),
+            "bot": ("botid", "id", "schemaname"),
+            "botcomponent": ("botcomponentid", "id"),
         }
         if kind not in identifiers or not any(
             isinstance(rec.get(key), str) and rec[key].strip() for key in identifiers[kind]
@@ -441,8 +452,7 @@ class PowerPlatformConnector(BaseConnector):
             connector=self.name,
             kind=Kind.WORKFLOW,
             title=(
-                "Power App using "
-                f"{', '.join(sorted({label for _, label in refs})) or 'AI services'}: {name}"
+                f"Power App using {', '.join(sorted({label for _, label in refs})) or 'AI services'}: {name}"
             ),
             resource=f"power-platform:app:{app.get('name') or app.get('id')}",
             resource_type="power-app",
@@ -603,11 +613,18 @@ class PowerPlatformConnector(BaseConnector):
 
 # Lower-cased markers in Copilot Studio component definitions.
 _GENERATIVE_MARKERS = (
-    "gptcomponentmetadata", "generativeanswers", "searchandsummarizecontent", "kind: gptcomponentmetadata",
+    "gptcomponentmetadata",
+    "generativeanswers",
+    "searchandsummarizecontent",
+    "kind: gptcomponentmetadata",
 )
 _ACTION_MARKERS = (
-    "kind: invokeflowaction", "invokeflowaction", "kind: invokeconnectoraction", "httprequestaction",
-    "invokeaiskill", "kind: invokeskillaction",
+    "kind: invokeflowaction",
+    "invokeflowaction",
+    "kind: invokeconnectoraction",
+    "httprequestaction",
+    "invokeaiskill",
+    "kind: invokeskillaction",
 )
 _KNOWLEDGE_STORES = ("sharepoint", "dataverse", "publicwebsite", "file")
 

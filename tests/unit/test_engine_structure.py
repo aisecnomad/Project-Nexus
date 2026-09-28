@@ -42,10 +42,16 @@ PACK = "id: org.example\nname: Example\ncategory: framework\nsignals:\n  - type:
 
 
 def _finding(**kwargs) -> Finding:
-    base = dict(surface=Surface.CODE, connector="code.filesystem", kind=Kind.AGENT, title="Agent",
-                resource="repo/agent", resource_type="repository",
-                evidence=[Evidence("signal", "clean", snippet="ordinary", attributes={"label": "x"})],
-                metadata={"nested": {"key": "value"}, "names": ["a"]})
+    base = dict(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="Agent",
+        resource="repo/agent",
+        resource_type="repository",
+        evidence=[Evidence("signal", "clean", snippet="ordinary", attributes={"label": "x"})],
+        metadata={"nested": {"key": "value"}, "names": ["a"]},
+    )
     base.update(kwargs)
     return Finding(**base)
 
@@ -93,19 +99,31 @@ def test_unmutated_finding_is_not_reprocessed(sanitizer_calls):
     assert "_clean_digest" not in serialized and REDACTED not in serialized
 
 
-@pytest.mark.parametrize("mutate", [
-    pytest.param(lambda f: setattr(f, "title", f"leaked {SECRET}"), id="attribute"),
-    pytest.param(lambda f: f.metadata.__setitem__("note", f"Authorization: Bearer {SECRET}"), id="metadata-in-place"),
-    pytest.param(lambda f: f.metadata["nested"].__setitem__("api_key", SECRET), id="nested-metadata"),
-    pytest.param(lambda f: f.metadata["names"].append(SECRET), id="metadata-list-append"),
-    pytest.param(lambda f: f.update_metadata(password=SECRET), id="update_metadata"),
-    pytest.param(lambda f: setattr(f.evidence[0], "snippet", f"key = '{SECRET}'"), id="evidence-attribute"),
-    pytest.param(lambda f: f.evidence[0].attributes.__setitem__("token", SECRET), id="evidence-attributes"),
-    pytest.param(lambda f: f.tags.append(SECRET), id="tags-in-place"),
-    pytest.param(lambda f: f.add_tag(SECRET), id="add_tag"),
-    pytest.param(lambda f: setattr(f, "risk", Risk(factors=[RiskFactor("factor", SECRET, 1)])), id="risk"),
-    pytest.param(lambda f: f.permissions.append(f"Bearer {SECRET}"), id="permissions-in-place"),
-])
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda f: setattr(f, "title", f"leaked {SECRET}"), id="attribute"),
+        pytest.param(
+            lambda f: f.metadata.__setitem__("note", f"Authorization: Bearer {SECRET}"),
+            id="metadata-in-place",
+        ),
+        pytest.param(lambda f: f.metadata["nested"].__setitem__("api_key", SECRET), id="nested-metadata"),
+        pytest.param(lambda f: f.metadata["names"].append(SECRET), id="metadata-list-append"),
+        pytest.param(lambda f: f.update_metadata(password=SECRET), id="update_metadata"),
+        pytest.param(
+            lambda f: setattr(f.evidence[0], "snippet", f"key = '{SECRET}'"), id="evidence-attribute"
+        ),
+        pytest.param(
+            lambda f: f.evidence[0].attributes.__setitem__("token", SECRET), id="evidence-attributes"
+        ),
+        pytest.param(lambda f: f.tags.append(SECRET), id="tags-in-place"),
+        pytest.param(lambda f: f.add_tag(SECRET), id="add_tag"),
+        pytest.param(
+            lambda f: setattr(f, "risk", Risk(factors=[RiskFactor("factor", SECRET, 1)])), id="risk"
+        ),
+        pytest.param(lambda f: f.permissions.append(f"Bearer {SECRET}"), id="permissions-in-place"),
+    ],
+)
 def test_every_mutation_path_is_resanitized(sanitizer_calls, mutate):
     finding = _finding()
     finding.sanitize()
@@ -161,8 +179,9 @@ def test_clean_marker_is_private_process_state():
     assert "_clean_digest" not in {attr.name for attr in fields(Finding) if attr.init}
     with pytest.raises(TypeError):
         Evidence("signal", "description", _clean_digest="forged")  # type: ignore[call-arg]
-    restored = Finding.from_dict({**data, "_clean_digest": "forged",
-                                  "evidence": [{**data["evidence"][0], "_clean_digest": "forged"}]})
+    restored = Finding.from_dict(
+        {**data, "_clean_digest": "forged", "evidence": [{**data["evidence"][0], "_clean_digest": "forged"}]}
+    )
     assert restored.id == finding.id and restored == finding
     copied = deepcopy(finding)
     assert copied == finding and copied._clean_digest == finding._clean_digest
@@ -204,7 +223,9 @@ def test_undigestable_state_falls_back_to_full_passes(sanitizer_calls, monkeypat
 def test_signature_index_and_inventory_load_once_per_lifecycle(monkeypatch, tmp_path):
     index_loads = []
     inventory_loads = []
-    monkeypatch.setattr(engine_module, "get_index", lambda **kwargs: index_loads.append(kwargs) or SignatureIndex([]))
+    monkeypatch.setattr(
+        engine_module, "get_index", lambda **kwargs: index_loads.append(kwargs) or SignatureIndex([])
+    )
 
     class CountingInventory(Inventory):
         @classmethod
@@ -229,7 +250,9 @@ def test_signature_index_and_inventory_load_once_per_lifecycle(monkeypatch, tmp_
 
 def test_reused_engine_reloads_index_only_when_pack_sources_change(monkeypatch, tmp_path):
     loads = []
-    monkeypatch.setattr(engine_module, "get_index", lambda **kwargs: loads.append(kwargs) or SignatureIndex([]))
+    monkeypatch.setattr(
+        engine_module, "get_index", lambda **kwargs: loads.append(kwargs) or SignatureIndex([])
+    )
     monkeypatch.setattr(engine_module, "get_connector_class", lambda name: _Connector)
     extra = tmp_path / "signatures"
     extra.mkdir()
@@ -257,7 +280,9 @@ def test_reused_engine_reloads_index_only_when_pack_sources_change(monkeypatch, 
 
 
 def test_supplied_index_is_never_reloaded(monkeypatch):
-    monkeypatch.setattr(engine_module, "get_index", lambda **kwargs: pytest.fail("supplied index must be kept"))
+    monkeypatch.setattr(
+        engine_module, "get_index", lambda **kwargs: pytest.fail("supplied index must be kept")
+    )
     monkeypatch.setattr(engine_module, "get_connector_class", lambda name: _Connector)
     index = SignatureIndex([])
     engine = Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem")]), index)
@@ -294,15 +319,23 @@ def test_invalid_inventory_still_fails_at_construction(tmp_path):
     inventory = tmp_path / "agents.yaml"
     inventory.write_text("agents:\n  - id: agent\n    resources: 'not-a-list'\n")
     with pytest.raises(InventoryValidationError, match="resources"):
-        Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem")], inventory=[str(inventory)]), SignatureIndex([]))
+        Engine(
+            ScanConfig(connectors=[ConnectorSpec("code.filesystem")], inventory=[str(inventory)]),
+            SignatureIndex([]),
+        )
 
 
 # ------------------------------------------------------------------ seams
 
 
 def test_selection_seams(monkeypatch):
-    cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem", label="a"), ConnectorSpec("code.filesystem", label="b"),
-                                 ConnectorSpec("cloud.aws", enabled=False)])
+    cfg = ScanConfig(
+        connectors=[
+            ConnectorSpec("code.filesystem", label="a"),
+            ConnectorSpec("code.filesystem", label="b"),
+            ConnectorSpec("cloud.aws", enabled=False),
+        ]
+    )
     engine = Engine(cfg, SignatureIndex([]))
     assert engine._invalid_selectors(None) == []
     assert engine._invalid_selectors(["code.filesystem", "cloud.aws", "typo"]) == ["cloud.aws", "typo"]
@@ -310,8 +343,11 @@ def test_selection_seams(monkeypatch):
     assert [spec.label for _, spec in engine._select_jobs(["b"])] == ["b"]
     assert [spec.label for _, spec in engine._select_jobs(["code.filesystem"])] == ["a", "b"]
     rejected = Engine._reject_selection(ScanResult(), ["typo"])
-    assert rejected.collection_scope == {"schema": "shadowscan.collection-scope/v1", "comparable": False,
-                                         "reason": "requested connectors are unknown or disabled"}
+    assert rejected.collection_scope == {
+        "schema": "shadowscan.collection-scope/v1",
+        "comparable": False,
+        "reason": "requested connectors are unknown or disabled",
+    }
     assert not rejected.complete and rejected.stats[0].connector == "engine.selection"
     assert Engine._selection_stats([ConnectorSpec("code.filesystem")]) == []
     empty = Engine._selection_stats([])
@@ -323,17 +359,54 @@ def test_export_ledger_drops_cancelled_and_timed_out_entries():
     live, cancelled = _JobState(), _JobState(cancelled=Event())
     cancelled.cancelled.set()
     jobs = [(1, ConnectorSpec("cloud.aws", label="one")), (2, ConnectorSpec("cloud.aws", label="two"))]
-    ledger.record(live, {"config_ordinal": 1, "part": "0001", "connector": "cloud.aws", "label": "one",
-                         "filename": "0001-cloud_aws.jsonl", "complete": True, "exported": True})
-    ledger.record(cancelled, {"config_ordinal": 2, "part": "0002", "connector": "cloud.aws", "label": "two",
-                              "filename": "0002-cloud_aws.jsonl", "complete": True, "exported": True})
-    ledger.record(live, {"config_ordinal": 2, "part": "0002", "connector": "cloud.aws", "label": "two",
-                         "filename": "stale.jsonl", "complete": True, "exported": True})
+    ledger.record(
+        live,
+        {
+            "config_ordinal": 1,
+            "part": "0001",
+            "connector": "cloud.aws",
+            "label": "one",
+            "filename": "0001-cloud_aws.jsonl",
+            "complete": True,
+            "exported": True,
+        },
+    )
+    ledger.record(
+        cancelled,
+        {
+            "config_ordinal": 2,
+            "part": "0002",
+            "connector": "cloud.aws",
+            "label": "two",
+            "filename": "0002-cloud_aws.jsonl",
+            "complete": True,
+            "exported": True,
+        },
+    )
+    ledger.record(
+        live,
+        {
+            "config_ordinal": 2,
+            "part": "0002",
+            "connector": "cloud.aws",
+            "label": "two",
+            "filename": "stale.jsonl",
+            "complete": True,
+            "exported": True,
+        },
+    )
     entries = ledger.entries(jobs, timed_out={2})
     assert [entry["part"] for entry in entries] == ["0001", "0002"]
     assert entries[0]["exported"] is True
-    assert entries[1] == {"config_ordinal": 2, "part": "0002", "connector": "cloud.aws", "label": "two",
-                          "filename": None, "complete": False, "exported": False}
+    assert entries[1] == {
+        "config_ordinal": 2,
+        "part": "0002",
+        "connector": "cloud.aws",
+        "label": "two",
+        "filename": None,
+        "complete": False,
+        "exported": False,
+    }
 
 
 def test_retain_sanitizable_counts_omissions_without_losing_neighbors():
@@ -354,13 +427,17 @@ def test_postprocess_reports_runtime_and_omission_errors_in_order(monkeypatch, i
     findings, errors = engine._postprocess([_finding(resource="safe"), unsafe])
     assert [finding.resource for finding in findings] == ["safe"]
     assert findings[0].risk.score > 0 and findings[0].shadow is None
-    assert errors == ["runtime correlation incomplete: sanitization safety limit exceeded",
-                      "1 finding(s) omitted after aggregation: sanitization safety limit exceeded"]
+    assert errors == [
+        "runtime correlation incomplete: sanitization safety limit exceeded",
+        "1 finding(s) omitted after aggregation: sanitization safety limit exceeded",
+    ]
 
 
 def test_run_keeps_configured_order_and_finishes_incomplete_results(monkeypatch):
     monkeypatch.setattr(engine_module, "get_connector_class", lambda name: _Connector)
-    cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem", label=label) for label in ("z", "a")], parallel=2)
+    cfg = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem", label=label) for label in ("z", "a")], parallel=2
+    )
     result = Engine(cfg, SignatureIndex([])).run()
     assert result.complete and result.finished_at is not None
     assert [stat.connector for stat in result.stats] == ["a", "z"]
@@ -375,7 +452,9 @@ def test_scanner_digest_is_shared_by_comparison_and_incremental_cache(tmp_path):
     assert re.fullmatch(r"[0-9a-f]{64}", digest) and digest == scanner_source_digest() == _scanner_digest()
     if os.name != "posix":
         pytest.skip("incremental state requires POSIX flock")
-    cache = IncrementalCache(ScanConfig(incremental=True, state_dir=str(tmp_path / "state")), SignatureIndex([]))
+    cache = IncrementalCache(
+        ScanConfig(incremental=True, state_dir=str(tmp_path / "state")), SignatureIndex([])
+    )
     assert cache.enabled and cache.scanner_digest == digest
 
 
@@ -417,8 +496,13 @@ def test_signature_source_digest_tracks_pack_content_and_approval(tmp_path):
 
 
 def test_signal_compiled_view_is_lazy_and_outside_the_fingerprint():
-    signature = signature_from_dict({"id": "org.example", "category": "framework",
-                                     "signals": [{"type": "import", "patterns": [r"^import example\b"]}]})
+    signature = signature_from_dict(
+        {
+            "id": "org.example",
+            "category": "framework",
+            "signals": [{"type": "import", "patterns": [r"^import example\b"]}],
+        }
+    )
     signal = signature.signals[0]
     assert "compiled" not in {attr.name for attr in fields(Signal)}
     fingerprint = SignatureIndex([signature]).fingerprint()
@@ -426,8 +510,10 @@ def test_signal_compiled_view_is_lazy_and_outside_the_fingerprint():
     assert all(isinstance(rx, re.Pattern) for rx in signal.compiled) and len(signal.compiled) == 1
     assert SignatureIndex([signature]).fingerprint() == fingerprint
     with pytest.raises(ValueError, match="invalid regex"):
-        signature_from_dict({"id": "org.broken", "category": "framework",
-                             "signals": [{"type": "import", "patterns": ["("]}]})
+        signature_from_dict(
+            {"id": "org.broken", "category": "framework", "signals": [{"type": "import", "patterns": ["("]}]}
+        )
     with pytest.raises(ValueError, match="invalid domain regex"):
-        signature_from_dict({"id": "org.broken", "category": "provider",
-                             "signals": [{"type": "domain", "values": ["re:("]}]})
+        signature_from_dict(
+            {"id": "org.broken", "category": "provider", "signals": [{"type": "domain", "values": ["re:("]}]}
+        )
