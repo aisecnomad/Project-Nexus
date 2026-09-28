@@ -223,6 +223,9 @@ def test_ci_gate_executes_fail_closed(
         ("divergent", True),
         ("unsigned", False),
         ("forged", False),
+        ("dependabot", True),
+        ("dependabot_unsigned", False),
+        ("dependabot_forged", False),
         ("missing_base", False),
         ("missing_head", False),
         ("malformed_base", False),
@@ -270,6 +273,20 @@ def test_dco_executes_against_real_commit_ranges(tmp_path: Path, case: str, pass
     if case == "disconnected":
         git("checkout", "--orphan", "unrelated")
     extra = {"GIT_AUTHOR_EMAIL": ".*", "GIT_COMMITTER_EMAIL": ".*"} if case == "forged" else {}
+    if case.startswith("dependabot"):
+        # Dependabot commits are authored by GitHub's app identity and signed
+        # off as support@github.com. Only that pairing passes: an unsigned
+        # Dependabot commit fails, and so does a human commit that borrows the
+        # bot's sign-off.
+        bot_signed = "Bump\n\nSigned-off-by: dependabot[bot] <support@github.com>"
+        message = "Bump" if case == "dependabot_unsigned" else bot_signed
+        if case != "dependabot_forged":
+            extra = {
+                "GIT_AUTHOR_NAME": "dependabot[bot]",
+                "GIT_AUTHOR_EMAIL": "49699333+dependabot[bot]@users.noreply.github.com",
+                "GIT_COMMITTER_NAME": "GitHub",
+                "GIT_COMMITTER_EMAIL": "noreply@github.com",
+            }
     git("commit", "--allow-empty", "-qm", message, extra_env=extra)
     head = git("rev-parse", "HEAD")
     if case == "divergent":
