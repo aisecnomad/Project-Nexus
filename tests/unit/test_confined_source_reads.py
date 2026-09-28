@@ -191,6 +191,10 @@ def _search_only(directory: Path) -> bool:
     return False  # root, or CAP_DAC_READ_SEARCH: directory permissions are not enforced
 
 
+# Where neither exists, a directory above the root is opened for reading.
+_SEARCH_ONLY_ANCESTORS = hasattr(os, "O_PATH") or hasattr(os, "O_NOFOLLOW_ANY")
+
+
 def test_scan_below_a_real_search_only_ancestor_is_complete(tmp_path, index):
     repository = _repository_below_traverse_only_home(tmp_path)
     home = tmp_path / "home" / "alice"
@@ -201,6 +205,12 @@ def test_scan_below_a_real_search_only_ancestor_is_complete(tmp_path, index):
         single_findings, single_ctx = _run(index, repository / "agents" / "crew.py")
     finally:
         home.chmod(0o755)
+    if not _SEARCH_ONLY_ANCESTORS:
+        # Such a platform cannot open the root below this ancestor: it fails closed.
+        for scan in (ctx, single_ctx):
+            assert scan.stats.incomplete and len(scan.stats.errors) == 1
+            assert scan.stats.errors[0].endswith("could not open the scan root safely (permission denied)")
+        return
     assert not ctx.stats.incomplete and ctx.stats.errors == []
     assert any("framework.crewai" in finding.frameworks for finding in findings)
     project = next(finding for finding in findings if finding.resource_type == "project")
@@ -241,12 +251,37 @@ def test_read_text_below_a_directory_refuses_links_in_every_component(tmp_path):
 
 
 def test_confined_directory_refuses_a_linked_ancestor(tmp_path):
-    (tmp_path / "real").mkdir()
+    (tmp_path / "real" / "nested").mkdir(parents=True)
     (tmp_path / "linked").symlink_to(tmp_path / "real", target_is_directory=True)
-    with pytest.raises(OSError):
-        os.close(open_confined_directory(tmp_path / "linked"))
-    directory = open_confined_directory(tmp_path / "real")
+    for linked in (tmp_path / "linked", tmp_path / "linked" / "nested"):
+        with pytest.raises(OSError):
+            os.close(open_confined_directory(linked))
+    directory = open_confined_directory(tmp_path / "real" / "nested")
     os.close(directory)
+
+
+def test_without_o_path_the_root_is_opened_in_one_no_follow_any_call(tmp_path, monkeypatch):
+    # macOS has no O_PATH. Its O_NOFOLLOW_ANY makes the kernel refuse a link in
+    # any component of the path, which, like an open by path, needs only
+    # search permission on the ancestors.
+    native = hasattr(os, "O_NOFOLLOW_ANY")
+    nofollow_any = getattr(os, "O_NOFOLLOW_ANY", 0x20000000)
+    monkeypatch.delattr(os, "O_PATH", raising=False)
+    monkeypatch.setattr(os, "O_NOFOLLOW_ANY", nofollow_any, raising=False)
+    real_open = os.open
+    calls: list[tuple[str, int, int | None]] = []
+
+    def opener(path, flags, mode=0o777, *, dir_fd=None):
+        calls.append((os.fspath(path), flags, dir_fd))
+        # A kernel without the flag does not get it; the recorded call is the check.
+        return real_open(path, flags if native else flags & ~nofollow_any, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", opener)
+    monkeypatch.setattr(os, "supports_dir_fd", {*os.supports_dir_fd, opener})
+    os.close(open_confined_directory(tmp_path))
+    assert calls == [
+        (str(tmp_path.absolute()), os.O_RDONLY | os.O_NOFOLLOW | nofollow_any | os.O_DIRECTORY, None)
+    ]
 
 
 def test_confined_file_below_a_directory_leaves_the_directory_open(tmp_path):
