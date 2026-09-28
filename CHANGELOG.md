@@ -2,6 +2,58 @@
 
 ## 0.1.1 — Unreleased
 
+### Completeness, report safety and credential policy (2026-09-28)
+
+Behavior changes to review before upgrading (see
+[production](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#completeness-report-and-credential-changes)):
+
+- **New incomplete scans (exit 3):**
+  - `code.filesystem` opens each scan root once and reads every file, and
+    `CODEOWNERS`, relative to it without following a link in any path
+    component; before, only the final component was protected. A directory
+    replaced by a link during the scan fails the reads below it
+    (`file could not be read`). A root that cannot be opened this way is
+    reported, by its `label` when one is set, as
+    `could not open the scan root safely (<reason>)`.
+- **Changed diagnostics (these scans were already incomplete):**
+  - A YAML value PyYAML cannot construct, such as an impossible date or an
+    integer over 4,300 digits, is reported as malformed YAML: `invalid YAML`
+    for conda environment files (was `manifest parsing failed (ValueError)`)
+    and `invalid agent definition YAML` for agent front matter (was
+    `file analysis incomplete (ValueError)`). The agent definition is now
+    listed where it used to be dropped, which adds `agent_definitions`
+    metadata and can raise the finding's risk score. Scan configuration and
+    inventory files with such a value still fail at setup (exit 1), now with
+    `ConfigValidationError` and `InventoryValidationError` instead of an
+    unclassified `ValueError`.
+  - A cancellation or connector deadline while `code.filesystem` builds a
+    credential finding ends the connector, as it does everywhere else,
+    instead of becoming that file's `credential analysis incomplete` error.
+- **Scans that now complete:**
+  - A Python module none of whose imports can resolve to a signature no
+    longer makes a scan incomplete when it exceeds `max_ast_nodes` or the
+    import binder's nesting limit: the binder, which could add no evidence
+    there, is skipped. The check is linear in the module and matches at most
+    4,096 distinct import statements; other modules keep the
+    `import-bound analysis skipped (…); lexical evidence retained`
+    diagnostic. A scan of installed libraries such as mypy, pip, requests and
+    rich, which exited 3 because of `mypy/checker.py`, now completes.
+  - Configuration, inventory, signature pack, `diff` report and offline
+    export files below a traverse-only directory (mode `0711`) now open:
+    directories are opened for traversal only (`O_PATH` on Linux), not for
+    reading.
+  - An unrendered Helm, Jinja or Go-template YAML file, whose placeholders
+    read as mapping keys (`image: {{ .Values.image }}`) or whose conditional
+    branches repeat a field, no longer reports `structured parsing incomplete
+    (YAMLIntegrityError)`. Such a file is not YAML until rendered, so its
+    excerpts use lexical redaction, as for any template the YAML parser
+    rejects. Plain YAML with duplicate or non-finite data still fails closed.
+- **Plugins and embedders:**
+  - `shadowscan.utils.text.sanitize_record` is removed; call
+    `shadowscan.utils.redaction.sanitize`.
+  - `SignatureIndex.signals_of_type(kind)` returns the (signature, signal)
+    pairs of one signal type in pack order.
+
 ### September 27 review follow-up
 
 - Opaque values nested under a sensitive credential container are now remembered
@@ -326,8 +378,9 @@ Development:
   that cannot enforce the documented path confinement (Windows, or a platform
   without `O_NOFOLLOW`); `--help` and `--version` still work everywhere.
   `shadowscan.utils.platform.require_supported_platform()` performs the same
-  check for embedding callers. `redact` and `sanitize_record` in
-  `shadowscan.utils.text` stay as documented compatibility aliases.
+  check for embedding callers. `redact` in `shadowscan.utils.text` stays as
+  a documented compatibility alias. `sanitize_record` was removed later in
+  this release; call `shadowscan.utils.redaction.sanitize`.
 
 ### Community policy consistency
 

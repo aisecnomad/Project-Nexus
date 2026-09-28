@@ -131,6 +131,15 @@ over CODEOWNERS and inventory attribution; leave it unset to attribute by
 CODEOWNERS, then the git author when `use_git` is on, then the inventory.
 `metadata` is a mapping merged into every finding's metadata.
 
+Each root is opened once, and every file, including `CODEOWNERS`, is read
+relative to it without following a link in any path component. A root that
+cannot be opened this way is reported as
+`could not open the scan root safely (<reason>)` and makes the scan
+incomplete. A Python module none of whose imports can resolve to a signature
+skips import-bound analysis at any size; any other module over
+`max_ast_nodes` keeps its lexical evidence (a warning in test code, an error
+elsewhere). See the [code connector guide](connectors/code.md) for details.
+
 ### `code.github`
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded
