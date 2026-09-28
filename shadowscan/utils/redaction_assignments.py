@@ -36,12 +36,14 @@ from shadowscan.utils.redaction_rules import (
 # be assigned with '=' (PowerShell hashtables, TOML quoted keys). An unquoted
 # value stops at ']' unless that ']' closes a marker: cut inside the marker, a
 # nested sensitive assignment ('Value: a.api_key=[REDACTED]') withheld
-# '[REDACTED' again and grew the marker by one ']' on every pass.
+# '[REDACTED' again and grew the marker by one ']' on every pass. After such a
+# marker it also stops at a query separator: 'sv=1&sig=[REDACTED]&Authorization:'
+# must leave the next parameter's name to be read with its own value.
 _ASSIGNMENT = re.compile(
     r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
     r"(?P<sep>[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+|:[ \t]*(?=[\"']))"
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'"
-    r"|[^\s,;\}\]\)\"']+(?:(?<=\[REDACTED)\][^\s,;\}\]\)\"']*)*)"
+    r"|[^\s,;\}\]\)\"']+(?:(?<=\[REDACTED)\][^\s,;\}\]\)\"'&]*)*)"
 )
 _MAPPING_VALUE = re.compile(
     r"(?<![\w.-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"

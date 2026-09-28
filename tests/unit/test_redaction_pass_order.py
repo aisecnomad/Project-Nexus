@@ -62,6 +62,47 @@ def test_an_added_rule_never_hides_the_context_an_established_rule_reads(source,
     assert sanitize_text(safe) == safe
 
 
+# Forms that main (b40ac3c) withholds, shrunk from a differential of these
+# passes against it. Each hid a name from the rule that withholds by it.
+MAIN_WITHHELD_FORMS = [
+    # A record value in JSON-escaped YAML ran past the escaped line break and
+    # took the next line's name with it.
+    (
+        '{"cmd": "- name: access_token\\n  value: sbKXLhjisp\\n\\n$env:auth_token = \\"' + SECRET + '\\""}',
+        "record value across an escaped line break",
+    ),
+    # After a withheld query value, an ordinary parameter's value ran past the
+    # marker and the '&' into the next parameter's name.
+    (
+        f"https://x.blob.core.windows.net/c?sv=2020&sig=esDrvsxl3d&Authorization: Bearer igM^{SECRET}",
+        "query value past a marker",
+    ),
+    (
+        f"https://x.blob.core.windows.net/c?sv=2020&sig=esDrvsxl3d&Authorization: Bearer KTLn {SECRET}",
+        "query value past a marker",
+    ),
+    # A statement withheld to the end of its line took a record name that
+    # followed it there; the value on the next line lost its name.
+    (
+        f"credential=AzureKeyCredential(`k3Jd92LmQpXz7Rv4Wn8T`), - name: GITHUB_TOKEN\n  value: {SECRET}\n",
+        "record name after a statement",
+    ),
+    (
+        "export credential='k3Jd92LmQpXz7Rv4Wn8T', echo Pa$$w0rd3371 | "
+        f"docker login -u x --password-stdin, - name: auth_token\n  value: {SECRET}\n",
+        "record name after a statement",
+    ),
+]
+
+
+@pytest.mark.parametrize(("source", "rule"), MAIN_WITHHELD_FORMS)
+def test_what_main_withholds_stays_withheld(source, rule):
+    assert SECRET in source
+    safe = sanitize_text(source)
+    assert SECRET not in safe, rule
+    assert sanitize_text(safe) == safe
+
+
 # More than _CLI_WORD_OPTIONS options inside one unquoted word. The first fix
 # round withheld the rest of such a word in the established option pass,
 # which hid what follows from the other passes. That pass now decides every
