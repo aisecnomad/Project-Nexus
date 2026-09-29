@@ -6,6 +6,8 @@ from collections import Counter
 import pytest
 import regex
 
+from shadowscan.connectors import ConnectorContext
+from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.signatures import SignatureIndex, load_signatures
 from shadowscan.signatures.loader import VALID_CATEGORIES, VALID_SIGNAL_TYPES
 
@@ -527,3 +529,46 @@ def test_langchain_prefix_keeps_partners_and_carves_out_utilities(index, ecosyst
     assert ("framework.langchain" in ids) is expected, ids
     if name.startswith("@langchain/langgraph"):
         assert "framework.langgraph" in ids
+
+
+def _scan(index, root, files: dict[str, str], **config):
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    ctx = ConnectorContext(config={"path": str(root), "use_git": False, **config}, index=index)
+    return FilesystemConnector(ctx).run(), ctx
+
+
+@pytest.mark.parametrize(
+    "client",
+    [
+        'boto3.client("bedrock-agent-runtime", region_name="us-east-1")',
+        'boto3.client(service_name="bedrock-agent-runtime", region_name="us-east-1")',
+        'boto3.client(region_name="us-east-1", service_name="bedrock-agent-runtime")',
+    ],
+)
+def test_bedrock_agent_clients_corroborate_invoke_agent(tmp_path, index, client):
+    findings, _ = _scan(
+        index,
+        tmp_path,
+        {
+            "agent.py": (
+                "import boto3\n\n"
+                f"client = {client}\n"
+                'response = client.invoke_agent(agentId="A1", agentAliasId="B1", sessionId="s", inputText="hi")\n'
+            )
+        },
+    )
+    assert any("cloud.aws-bedrock-agents" in f.frameworks for f in findings)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'boto3.client(service_name="bedrock-agentcore", region_name="us-east-1")',
+        "session.client(region_name=region, service_name='bedrock-agentcore-control')",
+    ],
+)
+def test_agentcore_clients_match_by_keyword(index, text):
+    assert any(m.signature_id == "cloud.aws-bedrock-agents" for m in index.match_code(text, "python"))

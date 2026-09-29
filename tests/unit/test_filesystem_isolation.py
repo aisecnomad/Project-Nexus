@@ -8,6 +8,8 @@ skipped and incomplete instead of as one "incomplete" error per file.
 
 from __future__ import annotations
 
+import json
+import threading
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
@@ -18,7 +20,7 @@ import pytest
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
-from shadowscan.models import Finding
+from shadowscan.models import Finding, Kind
 from shadowscan.signatures import SignatureIndex
 
 CANCELLED = "connector completion deadline exceeded"
@@ -125,3 +127,95 @@ def test_credential_detection_failure_keeps_the_content_passes(
     findings, ctx = _run(index, tmp_path)
     assert any("framework.crewai" in f.frameworks for f in findings)
     assert ctx.stats.errors == ["code.filesystem: agent.py: credential detection incomplete (RuntimeError)"]
+
+
+SECRET = "sk-proj-aP9rVv3qN4zY7bC2hJ8Lm5Qw6Dt0KsX1eR7uT4p"
+
+
+def _scan(index, root: Path, **config):
+    ctx = ConnectorContext(config={"path": str(root), **config}, index=index)
+    return FilesystemConnector(ctx).run(), ctx
+
+
+def test_cancellation_stops_the_tree_walk(tmp_path, index):
+    for i in range(300):
+        directory = tmp_path / f"d{i % 10}"
+        directory.mkdir(exist_ok=True)
+        (directory / f"f{i}.py").write_text("import openai\n")
+    cancelled = threading.Event()
+    ctx = ConnectorContext(config={"path": str(tmp_path)}, index=index, cancelled=cancelled)
+    connector = FilesystemConnector(ctx)
+    walked = 0
+    original = connector._iter_entries
+
+    def counting(root):
+        nonlocal walked
+        for item in original(root):
+            walked += 1
+            if walked == 10:
+                cancelled.set()
+            yield item
+
+    connector._iter_entries = counting  # type: ignore[method-assign]
+    assert connector.run() == []
+    assert walked == 10 and ctx.stats is not None and ctx.stats.skipped
+    assert len(ctx.stats.errors) == 1 and "deadline" in ctx.stats.errors[0]
+
+
+def test_credentials_are_reported_when_a_content_pass_times_out(tmp_path, index, monkeypatch):
+    (tmp_path / "app.js").write_text(f'const k = "{SECRET}"; const model = "gpt-4";\n')
+
+    # Force a failure after the independent credential pass. Wall-clock timing
+    # depends on the machine and on #47's optimized matchers.
+    def exhausted(*args, **kwargs):
+        raise TimeoutError("simulated content budget")
+
+    monkeypatch.setattr(index, "match_domains_in_text", exhausted)
+    findings, ctx = _scan(index, tmp_path, scan_timeout=60)
+    assert any(f.kind == Kind.SECRET for f in findings)
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert SECRET not in json.dumps([f.to_dict() for f in findings])
+
+
+def test_credentials_are_reported_when_structured_sanitization_exceeds_its_budget(tmp_path, index):
+    (tmp_path / "fixture.json").write_text(
+        json.dumps({"OPENAI_API_KEY": SECRET, "values": list(range(110_000))})
+    )
+    findings, ctx = _scan(index, tmp_path)
+    secret = next(f for f in findings if f.kind == Kind.SECRET)
+    assert ctx.stats is not None and any("excerpts withheld" in e for e in ctx.stats.errors)
+    assert all(not e.snippet for e in secret.evidence)
+    assert SECRET not in json.dumps([f.to_dict() for f in findings])
+
+
+def _run_configured(index, root, **config):
+    ctx = ConnectorContext(config={"path": str(root), "use_git": False, **config}, index=index)
+    return FilesystemConnector(ctx).run(), ctx
+
+
+def test_emit_phase_failures_are_isolated_per_finding(tmp_path, index, monkeypatch):
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    (tmp_path / "config.py").write_text(
+        "OPENAI_API_KEY = 'sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h'\n"
+    )
+
+    def boom(self, *args, **kwargs):
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setattr(FilesystemConnector, "_secret_finding", boom)
+    findings, ctx = _run_configured(index, tmp_path)
+    assert any("framework.crewai" in f.frameworks for f in findings)
+    assert any("credential analysis incomplete (RuntimeError)" in error for error in ctx.stats.errors)
+
+
+def test_project_isolation_error_names_the_project(tmp_path, index, monkeypatch):
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+
+    def boom(self, *args, **kwargs):
+        raise RuntimeError("synthetic")
+        yield  # pragma: no cover - generator shape
+
+    monkeypatch.setattr(FilesystemConnector, "_emit_project", boom)
+    findings, ctx = _run_configured(index, tmp_path)
+    assert findings == []
+    assert any("project analysis incomplete (RuntimeError)" in error for error in ctx.stats.errors)

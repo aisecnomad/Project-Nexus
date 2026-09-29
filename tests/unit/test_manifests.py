@@ -1,8 +1,20 @@
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 
-from shadowscan.connectors.code.manifests import parse_manifest
+import pytest
+
+from shadowscan.connectors.code.manifests import (
+    _LineIndex,
+    is_manifest_name,
+    parse_manifest,
+    parse_requirements,
+)
+from shadowscan.signatures import SignatureIndex
+from shadowscan.signatures import matcher as matcher_module
+from shadowscan.signatures.loader import signature_from_dict
+from shadowscan.signatures.matcher import MatchTimeoutError
 
 
 def _deps(rel, text):
@@ -138,3 +150,65 @@ def test_yaml_artifacts_keep_source_lines_across_chunks():
         ("action", "actions/checkout@v4", 125),
         ("secret_ref", "CI_TOKEN", 126),
     }
+
+
+def _index(pattern="token"):
+    return SignatureIndex(
+        [
+            signature_from_dict(
+                {
+                    "id": "custom.test",
+                    "category": "framework",
+                    "signals": [{"type": "code", "patterns": [pattern]}],
+                }
+            )
+        ]
+    )
+
+
+def test_manifest_regex_respects_outer_input_deadline(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(matcher_module.time, "monotonic", lambda: clock[0])
+    with pytest.raises(MatchTimeoutError, match="input execution budget"), _index().scan_budget(seconds=0.1):
+        clock[0] = 0.2
+        parse_manifest("Dockerfile", "FROM python:3.12\n")
+
+
+@pytest.mark.parametrize("offset, expected", [(0, 1), (1, 1), (2, 2), (3, 2), (4, 3)])
+def test_manifest_line_index_matches_original_source_offsets(offset, expected):
+    assert _LineIndex("a\nb\nc").at(offset) == expected
+
+
+def test_vcs_egg_fragments_and_editable_dependencies():
+    result = parse_requirements(
+        "git+https://github.com/acme/other.git#egg=crewai\n"
+        "-e git+https://github.com/acme/other.git@main#egg=langgraph\n"
+        "langchain>=0.3 # explanatory comment\n"
+    )
+    assert {(dep.name, dep.line) for dep in result.deps} == {
+        ("crewai", 1),
+        ("langgraph", 2),
+        ("langchain", 3),
+    }
+
+
+def test_containerfile_is_parsed_like_a_dockerfile():
+    text = "FROM ghcr.io/berriai/litellm:main-latest\nENV OPENAI_API_KEY=\n"
+    assert is_manifest_name("Containerfile")
+    assert [(a.kind, a.value) for a in parse_manifest("Containerfile", text).artifacts] == [
+        (a.kind, a.value) for a in parse_manifest("Dockerfile", text).artifacts
+    ]
+
+
+def test_manifest_line_index_and_dockerfile_dedupe():
+    result = parse_manifest("Dockerfile", "FROM python:3.12\nENV OPENAI_API_KEY=\nENV AA=1 BB=2\n")
+    assert result is not None
+    env = [(a.value, a.line) for a in result.artifacts if a.kind == "env"]
+    assert env == [("OPENAI_API_KEY", 2), ("AA", 3), ("BB", 3)]
+    values = "".join(f"APP_SETTING_{i}: value\n" for i in range(4000))
+    started = time.monotonic()
+    result = parse_manifest("values.yaml", values)
+    assert time.monotonic() - started < 5
+    assert result is not None and not result.errors
+    env = [a for a in result.artifacts if a.kind == "env"]
+    assert len(env) == 4000 and env[-1].line == 4000

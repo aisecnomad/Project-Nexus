@@ -74,9 +74,13 @@ This validates that the bundled signatures load successfully. It needs no cloud
 credentials. When iterating on a change, replace the path and test name with the
 relevant test; a single-test pass does not establish full-suite coverage.
 
-A test that replaces a redaction rule must patch it through
-`shadowscan.utils.redaction`, which rebinds the name in every `redaction_*`
-module; patching a `redaction_*` module directly changes only that module.
+Unit tests live in `tests/unit/`, in files named after the module or feature
+they exercise (`test_http_security.py`, `test_gitlab_connector.py`,
+`test_csv_injection.py`). Add a regression test to the file for the code it
+covers rather than a new file per change. A test that replaces a redaction
+rule must patch it through `shadowscan.utils.redaction`, which rebinds the
+name in every `redaction_*` module; patching a `redaction_*` module directly
+changes only that module.
 
 Existing Make targets provide the next steps:
 

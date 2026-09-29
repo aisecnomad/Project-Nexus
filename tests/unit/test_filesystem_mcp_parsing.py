@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from shadowscan.connectors.code.filesystem import _parse_mcp_servers
+from shadowscan.models import Kind
 
 
 def _parse(document: object, rel: str = ".mcp.json") -> tuple[list[dict[str, object]], list[str]]:
@@ -155,3 +157,20 @@ def test_document_shape_errors_stop_parsing() -> None:
         ],
         [],
     )
+
+
+def test_generic_server_urls_are_not_mcp_configs(tmp_path: Path, run_connector):
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"servers": {"prod": {"url": "https://api.example.test"}}})
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert not [f for f in findings if f.kind == Kind.MCP_SERVER or "protocol.mcp" in f.frameworks]
+
+
+def test_explicit_mcp_servers_remain_detected(tmp_path: Path, run_connector):
+    (tmp_path / "mcp.json").write_text(
+        json.dumps({"servers": {"prod": {"url": "https://api.example.test/mcp"}}})
+    )
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path))
+    assert [f.metadata["servers"][0]["name"] for f in findings if f.kind == Kind.MCP_SERVER] == ["prod"]
