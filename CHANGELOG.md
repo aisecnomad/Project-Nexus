@@ -194,6 +194,18 @@ Development:
   code. The cloud connector guide lists each connector's offline `_kind`
   values, and the architecture guide the engine hooks.
 
+### September 28 repository hygiene
+
+- The DCO check accepts Dependabot's app-authored commits with GitHub's fixed
+  `support@github.com` sign-off, and only that pairing; every other commit
+  still needs a sign-off matching its author or committer.
+- CodeQL, Scorecard and the operator example workflow use `github/codeql-action`
+  4.38.2 in every step, and Dependabot groups GitHub Actions updates so
+  sub-actions of one repository move together instead of failing analysis with
+  mixed versions.
+- The development toolchain moves to ruff 0.16.9 with the regenerated hash
+  lock and the matching pre-commit revision.
+
 ### September 27 review follow-up
 
 - Opaque values nested under a sensitive credential container are now remembered

@@ -2,7 +2,9 @@ name: DCO
 
 # Checks that every non-merge commit in a pull request carries a
 # Signed-off-by trailer matching that commit's author or committer email, per
-# CONTRIBUTING.md's Developer Certificate of Origin section. Read-only: it
+# CONTRIBUTING.md's Developer Certificate of Origin section. Commits authored
+# by GitHub's Dependabot app carry GitHub's fixed sign-off instead, and only
+# that exact pairing is accepted for them. Read-only: it
 # only inspects commit metadata already present in the fetched history and
 # never checks out or executes the pull request's changed files.
 #
@@ -53,6 +55,12 @@ jobs:
             echo "DCO requires a nonempty pull-request commit range" >&2
             exit 1
           fi
+          # Dependabot commits are authored by GitHub's Dependabot app (user id
+          # 49699333) and signed off by GitHub as support@github.com. Accept
+          # exactly that pairing, compared as literal strings like every other
+          # sign-off; any other author must sign off as itself.
+          dependabot_author='49699333+dependabot[bot]@users.noreply.github.com'
+          dependabot_signoff='support@github.com'
           missing=0
           while IFS= read -r sha; do
             [ -z "$sha" ] && continue
@@ -69,6 +77,10 @@ jobs:
               email="${email%%>*}"
               email="$(printf '%s' "$email" | tr '[:upper:]' '[:lower:]')"
               if [ "$email" = "$author_email" ] || [ "$email" = "$committer_email" ]; then
+                ok=1
+                break
+              fi
+              if [ "$author_email" = "$dependabot_author" ] && [ "$email" = "$dependabot_signoff" ]; then
                 ok=1
                 break
               fi

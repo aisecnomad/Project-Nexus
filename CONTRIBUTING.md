@@ -294,6 +294,9 @@ The `CI gate` check requires successful DCO, documentation, and every Python
 matrix job, including the container smoke test. Whether that check is configured
 to block merges follows the live repository rules (see
 [review and merge policy](#review-and-merge-policy)).
+Dependabot commits are authored by GitHub's Dependabot app and signed off by
+GitHub as `support@github.com`; the workflow accepts exactly that pairing and
+no other mismatched sign-off.
 
 ## License
 

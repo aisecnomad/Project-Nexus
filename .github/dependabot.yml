@@ -48,6 +48,13 @@ updates:
     labels:
       - dependencies
       - github-actions
+    groups:
+      # One pull request per weekly run. Sub-actions of one repository (for
+      # example codeql-action init, analyze and upload-sarif) must move
+      # together: a workflow that mixes their versions fails at analysis time.
+      actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /
