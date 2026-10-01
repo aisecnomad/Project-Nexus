@@ -707,6 +707,68 @@ output:
   behavior that differs by connector is a class hook (see
   [architecture](architecture.md#engine-hooks)).
 
+## October 1 review changes
+
+These changes follow the 2026-10-01 repository review. Several change exit codes
+or what scans report, so compare a pinned baseline with a candidate before
+enforcing policy on the new output:
+
+- **Exit codes.** Command-line usage errors (an unknown option or command, an
+  invalid value such as `--min-confidence 1.5`, a missing path or
+  configuration file) exit 1, like configuration and setup errors, instead of
+  2. Exit 2 now only means a complete scan reached `--fail-on`, and exit 3 an
+  incomplete scan or comparison. Fail CI on every non-zero exit: a script that
+  treats only 2 and 3 as failures passes a scan that never ran.
+- **Gateway identity.** Gateway finding IDs stay scan-local by default, and
+  `diff` lists them under `not_comparable` (exit 3) instead of reporting them as
+  new. To compare gateway callers across scans, inject the same
+  `SHADOWSCAN_IDENTITY_KEY` (at least 32 bytes, hex or base64, for example from
+  `openssl rand -hex 32`) from a secret store into every comparable scan.
+  Findings then carry `identity_scope: keyed` and keep their IDs, and gateway
+  inputs join the collection scope through a keyed digest. Treat the key as a
+  secret: anyone who holds it can link reports and test guesses of short labels
+  or keys against them. It is read only from the environment and is never
+  written to reports, record exports, incremental state or git child
+  processes. An invalid value stops the command with exit 1 before collection,
+  findings recorded under one key never resolve against another, and rotating
+  the key requires a fresh baseline.
+- **Confidence.** Outside the code surface, repeated evidence of one signal
+  counts once, so some identity, gateway, low-code, SaaS and cloud findings
+  report lower confidence or a lower likelihood band. n8n, Make and Zapier
+  findings now score their model and step-name evidence before they are
+  finalized, so their confidence can rise: the demo's Zapier "Support agent"
+  moves from 0.8 (`likely`) to 0.901 (`confirmed`). Re-check `--min-confidence`
+  thresholds against a candidate run.
+- **Inventory.** Cards accept `discovery.discriminators`, enforced like
+  `regions`. `inventory stubs` writes each finding's discriminator, so findings
+  that share a resource (a repository's agent project and its coding-agent
+  configuration) are each registered by their own card. Cards generated
+  earlier still approve every finding on their resource: regenerate them or
+  add `discriminators`. Stub `names` are now plain strings.
+- **AWS trust policies.** `cloud.aws` parses role trust policies instead of
+  matching substrings. `Deny`, `NotAction` and `NotPrincipal` statements, and
+  service names that appear only in a `Sid` or `Condition`, no longer tag a
+  role `agent-execution-role`. A malformed trust policy is reported as unknown
+  trust (`malformed-trust-policy`) and makes the scan incomplete.
+- **Paging limits.** Every connector validates `max_pages` the same way: 0,
+  negative, fractional, boolean and non-numeric values are configuration
+  errors, and values above 1000 are capped at 1000. Fix such configurations
+  before upgrading.
+- **OCI exports.** `cloud.oci` converts SDK models with `oci.util.to_dict`, or
+  through their declared fields when the SDK is absent. An object that cannot
+  be converted is skipped and makes the scan incomplete instead of silently
+  losing fields.
+- **Detection.** Vercel AI SDK `generateText`/`streamText` calls that loop over
+  tools past the first step (`stopWhen`, including AI SDK 7 `isStepCount`, or
+  `maxSteps` above 1) are agents. Custom-pack `framework` code patterns now
+  take effect in Python and JavaScript. Detection-rule files (ShadowScan
+  signature packs, Semgrep, Sigma and gitleaks rules) are treated as data and
+  listed in `metadata.detection_rule_files`, so a rescan can close findings
+  that came only from such files.
+- **Threshold filtering.** With `--min-confidence`, `related` links and
+  `runtime_activity` references to findings below the threshold are removed.
+  The runtime observations themselves remain.
+
 ## October field scan changes
 
 These corrections change what some scans report. Compare a pinned baseline with
