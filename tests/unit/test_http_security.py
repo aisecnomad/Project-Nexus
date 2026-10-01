@@ -163,8 +163,7 @@ def test_repository_symlink_escape_is_rejected(tmp_path):
 )
 def test_clone_refuses_metadata_credential_destination(cls, record, tmp_path, index, monkeypatch):
     run = Mock()
-    monkeypatch.setattr("shadowscan.connectors.code.github.run_bounded_clone", run)
-    monkeypatch.setattr("shadowscan.connectors.code.gitlab.run_bounded_clone", run)
+    monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", run)
     connector = cls(ConnectorContext(config={"token": "synthetic-token"}, index=index))
     with pytest.raises(ValueError):
         connector._clone(record, str(tmp_path))
@@ -188,8 +187,7 @@ def test_clone_refuses_metadata_credential_destination(cls, record, tmp_path, in
 )
 def test_clone_credential_header_is_origin_scoped(cls, record, origin, tmp_path, index, monkeypatch):
     run = Mock(return_value=True)
-    monkeypatch.setattr("shadowscan.connectors.code.github.run_bounded_clone", run)
-    monkeypatch.setattr("shadowscan.connectors.code.gitlab.run_bounded_clone", run)
+    monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", run)
     connector = cls(ConnectorContext(config={"token": "synthetic-token"}, index=index))
     assert connector._clone(record, str(tmp_path))
     env = run.call_args.args[1]
@@ -473,8 +471,6 @@ def test_post_json_uses_the_default_streamed_body_limit():
         ("paginate_odata", {"value": {}}, {}),
         ("paginate_token", {"nextPageToken": None}, {}),
         ("paginate_token", {"items": None}, {}),
-        ("paginate_cursor", {"ok": True}, {}),
-        ("paginate_cursor", {"results": {}}, {}),
     ],
 )
 def test_paginators_fail_closed_on_missing_or_invalid_collection(paginator, data, kwargs):

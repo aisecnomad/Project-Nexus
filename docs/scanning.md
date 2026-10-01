@@ -13,7 +13,11 @@ Two situations are deliberately outside a repository's own content:
   directory links, whose alias paths are not inspected; configuration and
   document aliases, whose parsing can depend on their path; source aliases into
   another project or test directory; links into excluded or unread content;
-  links outside the root; and unresolved links.
+  links outside the root; and unresolved links. Files are read relative to the
+  opened scan root without following a link in any path component, so a
+  directory replaced by a link after the walk listed it fails that file's read
+  (incomplete) instead of reading content outside the root. Like a read by
+  path, this needs only search permission on the directories above each file.
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
@@ -28,6 +32,14 @@ Analysis limits are reported with their reason, for example
 `file analysis incomplete (MatchTimeoutError: source binding call limit exceeded)`.
 The import binder only counts calls into modules that a signature describes,
 so large ordinary files (test suites, HTTP clients) no longer hit the limit.
+Its node budget (`max_ast_nodes`) and nesting limit likewise apply only to a
+Python module with an import that can resolve to a signature. The binder is
+skipped for any other module, of any size, because it could not contribute
+evidence there. Deciding that is linear in the module and matches at most
+4,096 distinct import statements, so it cannot exhaust a file's matching budget.
+A large module that does import such a library, or has more imports than that,
+still reports
+`import-bound analysis skipped (source binding AST limit exceeded); lexical evidence retained`.
 
 ## Test and fixture code
 

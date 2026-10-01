@@ -1,4 +1,4 @@
-"""Hardening follow-up from the 2026-09-25 external grade: platform preflight and shim aliases."""
+"""Hardening follow-up from the 2026-09-25 external grade: platform preflight."""
 
 from __future__ import annotations
 
@@ -12,8 +12,6 @@ from shadowscan.utils.platform import (
     UnsupportedPlatformError,
     require_supported_platform,
 )
-from shadowscan.utils.redaction import credential_id
-from shadowscan.utils.text import redact, sanitize_record
 
 
 def test_require_supported_platform_accepts_the_validated_host():
@@ -54,9 +52,3 @@ def test_cli_commands_fail_closed_without_nofollow(monkeypatch, tmp_path):
     result = CliRunner().invoke(main, ["code", str(tmp_path)])
     assert result.exit_code == 1
     assert MISSING_NOFOLLOW_MESSAGE in result.output
-
-
-def test_text_shims_remain_compatibility_aliases():
-    token = "sk-proj-exampletokenvalue"
-    assert redact(token, keep=8) == credential_id(token)
-    assert sanitize_record({"token": token})["token"] != token

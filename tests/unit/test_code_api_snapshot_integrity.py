@@ -242,11 +242,9 @@ def test_source_snapshot_is_carried_into_code_findings(tmp_path, index, cls, pro
 
 @pytest.mark.parametrize("cls,provider", [(GitHubConnector, "github"), (GitLabConnector, "gitlab")])
 def test_clone_snapshot_is_immutable_and_provider_scoped(tmp_path, index, monkeypatch, cls, provider):
-    import importlib
-
-    module = importlib.import_module(cls.__module__)
     monkeypatch.setattr(
-        module, "read_git_snapshot", lambda path, timeout: {"commit_sha": COMMIT, "tree_sha": "b" * 40}
+        "shadowscan.connectors.code.remote.read_git_snapshot",
+        lambda path, timeout: {"commit_sha": COMMIT, "tree_sha": "b" * 40},
     )
     connector = _connector(index, cls)
     record = {"full_name": "org/repo", "path_with_namespace": "org/repo", "default_branch": "release/stable"}

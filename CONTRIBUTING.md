@@ -74,6 +74,10 @@ This validates that the bundled signatures load successfully. It needs no cloud
 credentials. When iterating on a change, replace the path and test name with the
 relevant test; a single-test pass does not establish full-suite coverage.
 
+A test that replaces a redaction rule must patch it through
+`shadowscan.utils.redaction`, which rebinds the name in every `redaction_*`
+module; patching a `redaction_*` module directly changes only that module.
+
 Existing Make targets provide the next steps:
 
 ```bash
@@ -188,6 +192,10 @@ contract. In brief:
 5. Achieve ≥ 75% statement coverage.
 6. Document in `docs/connectors.md` with configuration keys, required API
    scopes, and offline export format.
+
+`BaseConnector.load_offline` already reads `input` exports. Declare an
+[engine hook](docs/architecture.md#engine-hooks) only when the engine must
+treat the connector differently; the engine never special-cases a name.
 
 ## Writing signatures
 

@@ -9,7 +9,9 @@ exported. Every connector instance has a collision-resistant export filename,
 including repeated connector names or labels that normalize to the same text. Redaction
 removes sensitive values, so an export is not a lossless copy of the API response.
 Live HTTP endpoints require HTTPS; redirects and pagination cannot send credentials
-to another origin. Denied access, collection failures and pagination limits make
+to another origin. Denied access, collection failures, pagination limits and
+oversized or slow responses (see
+[resource limits](production.md#resource-limits-and-incomplete-scans)) make
 the scan incomplete rather than producing a clean result.
 
 Offline file and directory inputs use shared safety limits: 10,000 files,
@@ -131,6 +133,15 @@ over CODEOWNERS and inventory attribution; leave it unset to attribute by
 CODEOWNERS, then the git author when `use_git` is on, then the inventory.
 `metadata` is a mapping merged into every finding's metadata.
 
+Each root is opened once, and every file, including `CODEOWNERS`, is read
+relative to it without following a link in any path component. A root that
+cannot be opened this way is reported as
+`could not open the scan root safely (<reason>)` and makes the scan
+incomplete. A Python module none of whose imports can resolve to a signature
+skips import-bound analysis at any size; any other module over
+`max_ast_nodes` keeps its lexical evidence (a warning in test code, an error
+elsewhere). See the [code connector guide](connectors/code.md) for details.
+
 ### `code.github`
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded
@@ -144,7 +155,9 @@ An offline clone directory containing no repositories makes the scan incomplete;
 verify the export or select an intended nonempty directory.
 An explicit `repos:` response with a missing or mismatched repository identity
 also makes coverage incomplete; the connector will not scan a different repo
-as a substitute for the requested one.
+as a substitute for the requested one. An org or user listing entry whose
+`full_name` is not a plain `owner/name` is an error that makes the scan
+incomplete; that repository is never requested or cloned.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) checks GitHub's reported repository size
@@ -183,6 +196,9 @@ without launching Git.
 A missing, malformed or mismatched response for an explicitly named project
 marks coverage incomplete; an empty offline clone directory is also incomplete. Check the
 configured project names and export before treating an empty result as clean.
+A group listing entry whose project `id` is not a positive integer is an
+error that makes the scan incomplete; that project is skipped before any
+request is made for it, and the other projects are still scanned.
 Polling cannot provide a hard disk or network-transfer limit; enforce a writable
 disk quota on the worker.
 

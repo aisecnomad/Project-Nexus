@@ -781,9 +781,8 @@ class SignatureIndex:
                     for v in s.values:
                         v = v.strip()
                         if v.startswith("re:"):
-                            self._domain_regex.append(
-                                (regex.compile(v[3:], regex.IGNORECASE | regex.VERSION0), sig, s)
-                            )
+                            compiled_domain = regex.compile(v[3:], regex.IGNORECASE | regex.VERSION0)
+                            self._domain_regex.append((compiled_domain, sig, s))
                             continue
                         v = v.lower()
                         if v.startswith("*."):
@@ -826,6 +825,15 @@ class SignatureIndex:
     def by_category(self, category: str) -> list[Signature]:
         return [s for s in self.signatures.values() if s.category == category]
 
+    def signals_of_type(self, kind: str) -> list[tuple[Signature, Signal]]:
+        """Every (signature, signal) pair of signal type ``kind``, in pack order.
+
+        These are the pairs the matchers run. Unlike ``signatures``, which is
+        keyed by id, a signature id shared by two loaded signatures keeps both.
+        The list is a copy; changing it leaves the index untouched.
+        """
+        return list(self._by_type.get(kind, ()))
+
     def __len__(self) -> int:
         return len(self.signatures)
 
@@ -843,9 +851,8 @@ class SignatureIndex:
                 for signal in sig.signals
             ]
             values.append(value)
-        return hashlib.sha256(
-            json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-        ).hexdigest()
+        canonical = json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        return hashlib.sha256(canonical.encode()).hexdigest()
 
     @contextmanager
     def scan_budget(self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS) -> Iterator[None]:
@@ -969,9 +976,8 @@ class SignatureIndex:
                 # redaction. Dedicated secret detectors need the raw match
                 # to create their redacted evidence/fingerprint downstream.
                 value = excerpt if signal_type == "secret" else sanitize_text(excerpt)[:200]
-                out.append(
-                    Match(sig, s, value, s.weight, line=line, extra={"start": m.start(), "end": m.end()})
-                )
+                span = {"start": m.start(), "end": m.end()}
+                out.append(Match(sig, s, value, s.weight, line=line, extra=span))
                 hits += 1
                 if hits >= max_per_signal:
                     break
@@ -1153,13 +1159,15 @@ class SignatureIndex:
                 continue
             # Tokens never carry a port, path or newline; only case folding of
             # non-ASCII letters needs the exhaustive path.
-            matches = (
-                self._match_plain_host(host, _plain_search) if host.isascii() else self.match_domain(host)
-            )
+            if host.isascii():
+                matches = self._match_plain_host(host, _plain_search)
+            else:
+                matches = self.match_domain(host)
             if not matches:
                 continue
+            shared = len({match.signature_id for match in matches}) > 1
             if (
-                len({match.signature_id for match in matches}) > 1
+                shared
                 and not any("mcp" in label for label in labels)
                 and any(match.signature_id == _MCP_SIGNATURE for match in matches)
             ):

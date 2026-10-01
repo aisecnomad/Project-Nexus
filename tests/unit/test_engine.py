@@ -7,7 +7,8 @@ from threading import Event
 import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
-from shadowscan.engine import Engine, _unique_records, correlate, merge
+from shadowscan.connectors.common import unique_records
+from shadowscan.engine import Engine, correlate, merge
 from shadowscan.models import Evidence, Finding, Kind, RiskLevel, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.risk import assess
@@ -195,7 +196,7 @@ def test_merge_deduplicates_all_evidence_and_nested_gateway_observations():
 
 
 def test_nested_observations_preserve_boolean_and_numeric_values():
-    assert _unique_records([{"trusted": True}, {"trusted": 1}, {"trusted": False}, {"trusted": 0}]) == [
+    assert unique_records([{"trusted": True}, {"trusted": 1}, {"trusted": False}, {"trusted": 0}]) == [
         {"trusted": True},
         {"trusted": 1},
         {"trusted": False},

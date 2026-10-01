@@ -49,7 +49,19 @@ Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
 by default; `strict_coverage` promotes their diagnostics to errors. Declared
-oversize skip globs remain visible omissions.
+oversize skip globs remain visible omissions. Each root is opened once, and every
+file (including `CODEOWNERS`) is read relative to it without following a link in
+any path component. A directory replaced by a link while the scan runs therefore
+fails the reads below it, which makes the scan incomplete, instead of redirecting
+them outside the root. Like reading a file by its path, this needs only search
+permission on the directories above a file, so a checkout below a traverse-only
+directory, such as a mode `0711` home directory, can be scanned. A root that
+cannot be opened this way is reported, by its `label` when one is set, as `could
+not open the scan root safely (<reason>)`, with a reason such as `permission
+denied`, `not found` or `a path component is a link or not a directory`; nothing
+below it is scanned and the scan is incomplete. Findings describe
+one consistent state of the tree only when the checkout does not change during
+the scan.
 
 Configuration files are parsed as JSONC where their format allows comments.
 A syntax error in a file that is not coding-agent settings only skips its
@@ -57,9 +69,20 @@ structured checks, with a warning; `.claude`, `.codex` and `.gemini` settings
 and `strict_coverage` keep such an error incomplete. A notebook larger than
 `max_file_size` because of saved outputs is analyzed by its code cells up to
 `max_notebook_size` (default 20 MiB); its outputs are then not scanned for
-credentials, which leaves coverage incomplete unless `scan_secrets` is off. A Python module over `max_ast_nodes` (default 50000) keeps its
-lexical evidence without import-bound analysis: a warning in test code, an error
-elsewhere.
+credentials, which leaves coverage incomplete unless `scan_secrets` is off.
+Import-bound analysis is skipped for a Python module none of whose imports can
+resolve to a signature: no import, and no attribute of an imported module, forms
+an import statement that a signature's import pattern could match. Such a module
+cannot contribute import-bound evidence, so its size or nesting depth never makes
+the scan incomplete. Deciding this takes time linear in the module and at most
+4,096 distinct import statement matches, 512 of them for attributes; a module
+that needs more, which ordinary code does not, is treated like one that imports
+a signature's library. Any other Python module over `max_ast_nodes` (default
+50000) keeps its lexical evidence without import-bound analysis: a warning in
+test code, an error elsewhere. Malformed YAML front matter in an agent
+definition, including a YAML value PyYAML cannot construct (an impossible date,
+an integer over 4,300 digits), is reported as `invalid agent definition YAML`;
+the definition is still listed by its file name.
 
 A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding and listed under `metadata.manifests`. MCP server
@@ -78,6 +101,9 @@ enumerated Git object IDs.
 An offline input with no clone directories is incomplete.
 An explicit `repos:` response whose repository identity does not match the
 requested name is incomplete, and that response is not scanned.
+An org or user listing entry whose `full_name` is not a plain `owner/name`
+(letters, digits, `.`, `_` and `-`, never a `.` or `..` segment) is an error
+that makes the scan incomplete; that repository is never requested or cloned.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) first checks the provider's repository
@@ -102,6 +128,9 @@ findings retain the scanned Git tree/commit identity in
 commit before downloading files.
 Missing, malformed or mismatched details for an explicitly named project, and an offline
 input with no clone directories, make the scan incomplete.
+A group listing entry whose project `id` is not a positive integer is an error
+that makes the scan incomplete; that project is skipped before any request is
+made for it, and the other projects in the listing are still scanned.
 GitLab clones use the same observed `clone_max_bytes` and timeout behavior as
 GitHub clones above. GitLab's reported size is a preflight estimate in bytes;
 it does not replace a filesystem/container disk quota.

@@ -70,7 +70,7 @@ def test_known_size_below_cap_can_complete(tmp_path, monkeypatch, index, cls, re
     connector = cls(ctx)
     monkeypatch.setattr(connector, "_clone", lambda repo, dest: True)
     monkeypatch.setattr(
-        f"{cls.__module__}.read_git_snapshot",
+        "shadowscan.connectors.code.remote.read_git_snapshot",
         lambda path, timeout: {"commit_sha": "a" * 40, "tree_sha": "b" * 40},
     )
     fetch = connector._fetch_repo if cls is GitHubConnector else connector._fetch
@@ -147,7 +147,7 @@ def test_zero_size_is_a_valid_estimate(tmp_path, monkeypatch, index, cls, record
         )
     monkeypatch.setattr(connector, "_clone", lambda repo, dest: True)
     monkeypatch.setattr(
-        f"{cls.__module__}.read_git_snapshot",
+        "shadowscan.connectors.code.remote.read_git_snapshot",
         lambda path, timeout: {"commit_sha": "a" * 40, "tree_sha": "b" * 40},
     )
     fetch = connector._fetch_repo if cls is GitHubConnector else connector._fetch
@@ -293,7 +293,8 @@ def test_clone_timeout_marks_api_fallback_incomplete(tmp_path, monkeypatch, inde
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
     connector = cls(ctx)
     monkeypatch.setattr(
-        f"{cls.__module__}.run_bounded_clone", Mock(side_effect=CloneTimeoutError("timed out"))
+        "shadowscan.connectors.code.remote.run_bounded_clone",
+        Mock(side_effect=CloneTimeoutError("timed out")),
     )
     monkeypatch.setattr(connector, "_fetch_via_api", lambda repo, tmp: tmp)
     fetch = connector._fetch_repo if cls is GitHubConnector else connector._fetch
