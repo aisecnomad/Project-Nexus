@@ -116,6 +116,7 @@ nav:
           - "ADR-004: Source parsing strategy": adrs/004-source-parsing-strategy.md
           - "ADR-005: Code scanner module boundaries": adrs/005-code-scanner-module-boundaries.md
   - Security: security.md
+  - Release notes: release-notes.md
   - Changelog: changelog.md
 
 extra:

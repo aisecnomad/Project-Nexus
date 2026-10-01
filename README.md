@@ -423,7 +423,7 @@ A small documentation fix or a reproducible false-positive report is useful.
 | Understand decisions, review and release requirements | [Governance](GOVERNANCE.md), [Maintainers](MAINTAINERS.md), [Roadmap](ROADMAP.md) |
 | Report a vulnerability privately | [Security policy](SECURITY.md#reporting) |
 | Understand participation standards or report harmful conduct | [Code of conduct](CODE_OF_CONDUCT.md) |
-| See what changed, or cite the project | [Changelog](CHANGELOG.md), [CITATION.cff](CITATION.cff) |
+| See what changed, or cite the project | [Release notes](RELEASE_NOTES.md), [Changelog](CHANGELOG.md), [CITATION.cff](CITATION.cff) |
 
 Use synthetic, minimal examples in public reports. Scan results can contain
 credentials, personal data, and sensitive inventory even after redaction.
