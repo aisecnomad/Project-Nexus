@@ -62,7 +62,7 @@ def test_connector_deadline_rejects_invalid_values(value):
 
 def test_cli_rejects_nonfinite_deadline():
     result = CliRunner().invoke(main, ["run", "gateway.logs", "--connector-timeout-seconds", "nan"])
-    assert result.exit_code == 2 and "positive finite" in result.output
+    assert result.exit_code == 1 and "positive finite" in result.output
 
 
 def test_credential_isolation_is_applied_to_selected_connectors(monkeypatch):

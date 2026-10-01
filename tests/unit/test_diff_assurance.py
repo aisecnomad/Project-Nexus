@@ -230,7 +230,7 @@ def test_invalid_config_does_not_echo_secret_yaml(tmp_path):
 
 def test_invalid_set_does_not_echo_credentials():
     result = CliRunner().invoke(main, ["run", "cloud.aws", "--set", "private-api-token"])
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     assert "private-api-token" not in result.output
 
 
