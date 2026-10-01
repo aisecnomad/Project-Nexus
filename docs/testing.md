@@ -71,6 +71,11 @@ SDKs installed, so run it after `make install` rather than `make install-dev`.
 - **No outbound connections.** A socket connection to anything other than
   loopback fails, and the test fails at teardown even if the code under test
   handled the error. Serve test traffic from a loopback server.
+- **Signature-matching budgets.** Regex operations and inputs normally get
+  100 ms and two seconds. On a busy machine an expired budget silently drops
+  matches, so tests run with generous budgets. A test about the budgets
+  themselves is marked `@pytest.mark.production_budgets` and keeps the shipped
+  values; `--strict-markers` rejects a misspelt marker.
 - **Signature packs.** An `Engine` built without an index reparses the
   signature packs. The suite reuses one index of the built-in packs, parsed at
   session start, while their source digest is unchanged; organization pack

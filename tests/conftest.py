@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 import shadowscan.engine as engine_module
+import shadowscan.signatures.matcher as matcher
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
@@ -33,6 +34,30 @@ for _address in STUB_PUBLIC_ADDRESSES.values():
     assert not http._blocked_ip(ipaddress.ip_address(_address)), _address
 # Top-level domains that no resolver answers (RFC 2606 and RFC 6761).
 UNRESOLVABLE_TLDS = frozenset({"example", "invalid", "test"})
+
+# Signature matching runs under wall-clock and CPU budgets (100 ms per regex
+# operation, two seconds per input). On a loaded CI runner a budget can expire
+# and silently drop matches from a test that is not about budgets, so ordinary
+# tests run with these generous values. Tests that exercise the budgets are
+# marked ``production_budgets`` and keep the shipped values.
+PRODUCTION_REGEX_TIMEOUT_SECONDS = matcher.REGEX_TIMEOUT_SECONDS
+PRODUCTION_SCAN_BUDGET_SECONDS = matcher.DEFAULT_SCAN_BUDGET_SECONDS
+TEST_REGEX_TIMEOUT_SECONDS = 5.0
+TEST_SCAN_BUDGET_SECONDS = 30.0
+# pattern_timeout() and SignatureIndex.scan_budget() bind these constants as
+# default arguments when the module loads; their defaults are raised as well.
+_BUDGET_DEFAULTS: tuple[tuple[Callable[..., Any], float, float], ...] = (
+    (matcher.pattern_timeout, PRODUCTION_REGEX_TIMEOUT_SECONDS, TEST_REGEX_TIMEOUT_SECONDS),
+    (
+        matcher.SignatureIndex.scan_budget.__wrapped__,
+        PRODUCTION_SCAN_BUDGET_SECONDS,
+        TEST_SCAN_BUDGET_SECONDS,
+    ),
+)
+for _function, _production, _ in _BUDGET_DEFAULTS:
+    # Fail loudly if the matcher stops binding the constant this way, rather
+    # than leaving ordinary tests on the tight production budgets.
+    assert _function.__defaults__ == (_production,), _function
 
 
 @functools.lru_cache(maxsize=1)
@@ -69,6 +94,10 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
         "requires_git_2_45: the test runs real git enrichment, which needs Git >= 2.45 on the host",
+    )
+    config.addinivalue_line(
+        "markers",
+        "production_budgets: the test exercises signature-matching budgets and keeps their shipped values",
     )
 
 
@@ -185,6 +214,17 @@ def blocked_connections(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
     yield attempts
     if attempts:
         pytest.fail(f"test attempted outbound connections: {sorted(set(attempts))}", pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def generous_signature_budgets(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Raise signature-matching budgets unless the test is marked ``production_budgets``."""
+    if request.node.get_closest_marker("production_budgets") is not None:
+        return
+    monkeypatch.setattr(matcher, "REGEX_TIMEOUT_SECONDS", TEST_REGEX_TIMEOUT_SECONDS)
+    monkeypatch.setattr(matcher, "DEFAULT_SCAN_BUDGET_SECONDS", TEST_SCAN_BUDGET_SECONDS)
+    for function, _, generous in _BUDGET_DEFAULTS:
+        monkeypatch.setattr(function, "__defaults__", (generous,))
 
 
 # --- Shared fixtures -------------------------------------------------------------

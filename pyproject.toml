@@ -80,7 +80,9 @@ ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# Unknown markers fail collection: a misspelt opt-out marker such as
+# production_budgets would otherwise be ignored without a warning.
+addopts = "-q --strict-markers"
 
 [tool.ruff.format]
 quote-style = "double"
