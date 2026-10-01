@@ -264,6 +264,7 @@ class AwsConnector(BaseConnector):
         try:
             regions = string_list(ctx.get("regions"), "regions", pattern=r"[a-z0-9-]+")
             self.regions = regions or DEFAULT_REGIONS
+            self._default_regions = not regions
             services = string_list(ctx.get("services"), "services") or sorted(KNOWN_SERVICES)
         except ValueError as exc:
             raise ConnectorError(f"cloud.aws: {exc}") from None
@@ -469,6 +470,14 @@ class AwsConnector(BaseConnector):
         self._session_()
         regions = self._regions()
         acct = self.account
+        if self._default_regions and self.services - {"iam"}:
+            # Informational: the operator chose no scope, so name what was and was not covered.
+            self.ctx.warn(
+                f"cloud.aws: no 'regions' option set; scanned only the default regions ({', '.join(regions)}). "
+                "Resources in other regions were not scanned. Set 'regions' to a list, or "
+                "'regions: all' for every enabled region, to change the scope",
+                incomplete=False,
+            )
         yield {"_kind": "account", "account": acct, "regions": regions}
         if "iam" in self.services:
             yield from self._collect_iam()
@@ -774,10 +783,13 @@ class AwsConnector(BaseConnector):
                 if item.get("PermissionsBoundary"):
                     limitations.add("permissions-boundary-not-evaluated")
                 if limitations:
+                    # Documented as incomplete: conditions, denies and boundaries can remove
+                    # access that the evidence shows, so effective authorization is unknown.
                     self.ctx.warn(
-                        "cloud.aws: IAM policy analysis is partial ("
+                        f"cloud.aws: IAM policy analysis is partial for {item.get('Arn')} ("
                         + ", ".join(sorted(limitations))
-                        + "); effective authorization is not evaluated"
+                        + "); these limits are not evaluated, so effective authorization is unknown "
+                        "and the scan is marked incomplete"
                     )
                 if potential_actions or ai_patterns:
                     last_used = item.get("RoleLastUsed")
@@ -816,7 +828,7 @@ class AwsConnector(BaseConnector):
             f"cloud.aws: CloudTrail LookupEvents in {region} covers management events only; "
             "model/agent invocation data events require a CloudTrail Lake or trail export. "
             "No returned callers does not establish absence of runtime activity.",
-            incomplete=True,
+            incomplete=False,
         )
         ct = self._client("cloudtrail", region)
         start = datetime.now(UTC) - timedelta(days=min(self.cloudtrail_days, 90))

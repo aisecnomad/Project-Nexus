@@ -130,7 +130,11 @@ class AzureConnector(BaseConnector):
         "foundry_token": (
             "token for https://ai.azure.com/.default to list Foundry agents (auto-minted with azure-identity)"
         ),
-        "include_app_settings": "read App Service settings (names + credential detection) (default true)",
+        "include_app_settings": (
+            "read App Service settings for names and credential detection (default true). The "
+            "config/appsettings/list call returns plaintext values and needs "
+            "Microsoft.Web/sites/config/list/action (Contributor-class); false skips it"
+        ),
         "input": "offline: JSONL dump of records",
     }
     offline_formats: ClassVar[str] = "JSONL dump of records"
@@ -405,7 +409,13 @@ class AzureConnector(BaseConnector):
                     "environment": settings["properties"],
                 }
             except (HttpError, RequestException, ValueError) as exc:
-                self.ctx.warn(f"cloud.azure: appsettings {_failure(exc)} for {rid}", incomplete=True)
+                hint = ""
+                if isinstance(exc, HttpError) and exc.status in (401, 403):
+                    hint = (
+                        " (needs Microsoft.Web/sites/config/list/action; "
+                        "set include_app_settings: false to skip app settings)"
+                    )
+                self.ctx.warn(f"cloud.azure: appsettings {_failure(exc)} for {rid}{hint}", incomplete=True)
 
     def _collect_agents(self, account: dict[str, Any], project: dict[str, Any]) -> Iterator[dict[str, Any]]:
         token = self._foundry()

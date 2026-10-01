@@ -514,7 +514,9 @@ def test_alias_whose_own_name_is_never_read_keeps_complete(tmp_path, run_connect
     alias.symlink_to(real)
 
     _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=True)
-    assert not ctx.stats.incomplete and not ctx.stats.errors and not ctx.stats.warnings
+    # The default-exclude notice for build/dist is informational, not a link gap.
+    warnings = [w for w in ctx.stats.warnings if "default directory excludes" not in w]
+    assert not ctx.stats.incomplete and not ctx.stats.errors and not warnings
 
 
 def test_analyzable_alias_to_a_lockfile_marks_incomplete(tmp_path, run_connector):

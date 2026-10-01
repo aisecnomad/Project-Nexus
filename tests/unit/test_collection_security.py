@@ -74,13 +74,14 @@ def test_unresolved_iam_policy_is_not_silently_clean(index):
     assert "unresolved" in ctx.stats.warnings[0]
 
 
-def test_cloudtrail_lookup_cannot_claim_complete_runtime_visibility(index):
+def test_cloudtrail_lookup_discloses_management_events_only_visibility_without_failing_the_scan(index):
     ctx = context(index)
     connector = AwsConnector(ctx)
     connector._client = Mock()
     connector._paginate = Mock(return_value=iter([]))
     assert list(connector._collect_cloudtrail("us-east-1")) == []
-    assert ctx.stats.incomplete
+    # An informational notice: the lookup itself succeeded, so completeness is unaffected.
+    assert not ctx.stats.incomplete
     assert "data events" in ctx.stats.warnings[0]
 
 

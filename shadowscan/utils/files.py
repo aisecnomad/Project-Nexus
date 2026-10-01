@@ -28,21 +28,33 @@ def require_no_symlinks(path: Path) -> Path:
     return absolute
 
 
-def policy_files(root: Path, suffixes: set[str]) -> Iterator[Path]:
-    """Walk a policy directory without following links or special files."""
+def policy_files(root: Path, suffixes: set[str], *, reject_links: bool = False) -> Iterator[Path]:
+    """Walk a policy directory without following links or special files.
+
+    A symlinked directory, or a symlinked file with a wanted suffix, is skipped
+    silently unless ``reject_links`` is set; then it raises ``ValueError``, as
+    an explicit symlinked input does (:func:`require_no_symlinks`), so a card
+    that was not loaded cannot shrink the policy unnoticed.
+    """
     root = require_no_symlinks(root)
     if not root.is_dir():
         raise FileNotFoundError(f"policy directory not found: {root}")
     count = 0
     for directory, dirs, files in os.walk(root, followlinks=False):
         count += len(dirs)
+        if reject_links and any((Path(directory) / d).is_symlink() for d in dirs):
+            raise ValueError("policy directory must not contain symbolic links")
         dirs[:] = sorted(d for d in dirs if not (Path(directory) / d).is_symlink())
         for name in sorted(files):
             count += 1
             if count > MAX_POLICY_FILES:
                 raise ValueError("policy directory exceeds file limit")
             path = Path(directory) / name
-            if path.suffix.lower() not in suffixes or path.is_symlink():
+            if path.suffix.lower() not in suffixes:
+                continue
+            if path.is_symlink():
+                if reject_links:
+                    raise ValueError("policy directory must not contain symbolic links")
                 continue
             if stat.S_ISREG(path.stat(follow_symlinks=False).st_mode):
                 yield path

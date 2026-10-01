@@ -126,6 +126,11 @@ def _location(name: str) -> str | None:
     return name.split("/locations/")[1].split("/")[0] if "/locations/" in name else None
 
 
+def _api_host(service: str, location: str) -> str:
+    """Google's documented host for a location: global uses ``<service>``, others ``<location>-<service>``."""
+    return f"{service}.googleapis.com" if location == "global" else f"{location}-{service}.googleapis.com"
+
+
 def _failure(exc: Exception) -> str:
     return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
 
@@ -170,6 +175,7 @@ class GcpConnector(BaseConnector):
             # Locations are interpolated into API hostnames.
             locations = string_list(ctx.get("locations"), "locations", pattern=r"[a-z0-9-]+")
             self.locations = locations or DEFAULT_LOCATIONS
+            self._default_locations = not locations
             self.projects = string_list(ctx.get("projects"), "projects", pattern=r"[A-Za-z0-9._:-]+") or []
         except ValueError as exc:
             raise ConnectorError(f"cloud.gcp: {exc}") from None
@@ -179,6 +185,7 @@ class GcpConnector(BaseConnector):
             raise ConnectorError("cloud.gcp: max_projects must be positive")
         self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
         self.http: HttpClient | None = None
+        self._locations_noted = False
 
     def _auth(self) -> None:
         token = self.ctx.get("access_token", env="GOOGLE_OAUTH_ACCESS_TOKEN")
@@ -353,17 +360,20 @@ class GcpConnector(BaseConnector):
         enabled = [s.get("config", {}).get("name") for s in services]
         ai_enabled = [s for s in enabled if s in AI_SERVICES]
         yield {"_kind": "project", "project": project, "ai_services": ai_enabled}
+        if _uses(enabled, "aiplatform.googleapis.com") or _uses(enabled, "dialogflow.googleapis.com"):
+            self._note_default_locations()
         if _uses(enabled, "aiplatform.googleapis.com"):
             yield from self._collect_vertex(project)
         if _uses(enabled, "dialogflow.googleapis.com"):
-            for loc in ["global", *self.locations]:
-                url = f"https://dialogflow.googleapis.com/v3/projects/{project}/locations/{loc}/agents"
+            for loc in dict.fromkeys(["global", *self.locations]):
+                host = _api_host("dialogflow", loc)
+                url = f"https://{host}/v3/projects/{project}/locations/{loc}/agents"
                 for agent in self._pages(url, "agents"):
                     yield {"_kind": "dialogflow-agent", "_project": project, "_location": loc, **agent}
         if _uses(enabled, "discoveryengine.googleapis.com"):
             for loc in ["global", "us", "eu"]:
                 url = (
-                    f"https://discoveryengine.googleapis.com/v1/projects/{project}/locations/{loc}"
+                    f"https://{_api_host('discoveryengine', loc)}/v1/projects/{project}/locations/{loc}"
                     "/collections/default_collection/engines"
                 )
                 for eng in self._pages(url, "engines"):
@@ -392,6 +402,19 @@ class GcpConnector(BaseConnector):
                 }
         if self.audit_days > 0 and _uses(enabled, "aiplatform.googleapis.com"):
             yield from self._collect_audit(project)
+
+    def _note_default_locations(self) -> None:
+        """Once per scan, say which locations a default (unset ``locations``) scan covered."""
+        if not self._default_locations or self._locations_noted:
+            return
+        self._locations_noted = True
+        # Informational: the operator chose no scope, so name what was and was not covered.
+        self.ctx.warn(
+            "cloud.gcp: no 'locations' option set; Vertex AI and Dialogflow CX were queried only in "
+            f"the default locations ({', '.join(self.locations)}). Resources in other locations were "
+            "not scanned. Set 'locations' to a list to change the scope",
+            incomplete=False,
+        )
 
     def _collect_vertex(self, project: str) -> Iterator[dict[str, Any]]:
         for loc in self.locations:

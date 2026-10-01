@@ -240,11 +240,12 @@ def test_gcp_project_collection_walks_every_enabled_ai_service(index):
         "discoveryengine.googleapis.com",
     ]
     urls = [url for url, _ in fake.gets]
-    # Vertex uses regional hosts; Dialogflow covers global plus every location; Discovery
-    # Engine covers its three multi-regions.
+    # Vertex and Dialogflow use regional hosts for regional locations (Dialogflow's global location
+    # keeps the global host); Discovery Engine covers its three multi-regions.
     vertex = f"https://us-central1-aiplatform.googleapis.com/v1/projects/{PROJECT}/locations/us-central1"
     assert f"{vertex}/reasoningEngines" in urls and f"{vertex}/endpoints" in urls
-    assert sum(urlsplit(url).hostname == "dialogflow.googleapis.com" for url in urls) == 2
+    assert sum(urlsplit(url).hostname == "dialogflow.googleapis.com" for url in urls) == 1
+    assert sum(urlsplit(url).hostname == "us-central1-dialogflow.googleapis.com" for url in urls) == 1
     assert [url.split("/locations/")[1].split("/")[0] for url in urls if "discoveryengine" in url] == [
         "global",
         "us",

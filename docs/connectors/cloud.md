@@ -24,7 +24,12 @@ registered definitions, SageMaker endpoints (LLM containers), Step Functions wit
 states, Q Business, Lex, Secrets Manager / SSM names, IAM principals with LLM
 actions (via `get_account_authorization_details`), CloudTrail LLM callers.
 Options: `profile`, `role_arn`, `regions` (`all`), `services`, `cloudtrail_days`,
-`max_ecs_api_calls` (default 2000 per region). ECS uses exact task-definition ARNs
+`max_ecs_api_calls` (default 2000 per region). Without `regions`, only six
+default regions are scanned (`us-east-1`, `us-west-2`, `eu-west-1`,
+`eu-central-1`, `ap-southeast-1`, `ap-northeast-1`). The report then carries a
+notice that names them and says other regions were not scanned; the notice does
+not mark the scan incomplete. Set `regions` to a list, or `regions: all` for
+every enabled region, to choose the scope. ECS uses exact task-definition ARNs
 for deployed references, including referenced inactive revisions. Findings
 separate running-task/service references from registered-only definitions; a
 reference does not establish successful AI execution. Exhausted API budgets or
@@ -43,7 +48,10 @@ IAM analysis includes both local and AWS-managed attached policies. Unresolved
 attachments make collection incomplete. CloudTrail LookupEvents only supplies
 management events: `InvokeAgent` / `InvokeInlineAgent` data events require a
 separately configured trail or event data store and an export to `gateway.logs`.
-The collector reports this coverage gap when CloudTrail collection is enabled.
+The collector reports this coverage gap as an informational notice when
+CloudTrail collection is enabled. The notice does not mark the scan incomplete:
+no returned callers still does not establish absence of runtime activity. A
+failed or denied `LookupEvents` call does mark it incomplete.
 
 Lambda `Environment.Error` is unknown environment coverage, not an empty set of
 variables. The `environment_coverage` marker survives sanitized exports and replay;
@@ -53,9 +61,13 @@ IAM findings are policy evidence, not effective authorization. `Allow/NotAction`
 is inspected against representative AI operations and resource service scope,
 with potential actions and explicit limitations recorded. Conditions, denies,
 policy boundaries, unsupported resource semantics and the full action universe
-are not evaluated; partial semantics make coverage incomplete. S3/IAM-only
-wildcards do not independently produce LLM grants. Effective access also depends
-on applicable policies outside this collector's view.
+are not evaluated; partial semantics make coverage incomplete. A principal whose
+policies carry any of these limits produces one warning that names it and the
+limits (`policy_limitations` on its finding), and the scan exits 3. Accounts that
+use conditions, denies or permissions boundaries widely therefore exit 3 by
+design: review the listed principals rather than treating the scan as empty.
+S3/IAM-only wildcards do not independently produce LLM grants. Effective access
+also depends on applicable policies outside this collector's view.
 
 AWS clients ignore configured endpoint URL overrides and use bundled SDK models;
 external model paths (`AWS_DATA_PATH`, user SDK model directories) cannot replace
@@ -71,6 +83,15 @@ Manager names, optional Cloud Audit Log callers (`audit_days`). Auth: ADC via
 `google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
 retained as privileged access findings even without an AI-specific role. A grant
 shows access, not observed agent execution.
+Vertex AI and Dialogflow CX are queried per location. Without `locations`, only
+seven default locations are queried (`us-central1`, `us-east4`, `us-west1`,
+`europe-west1`, `europe-west4`, `asia-southeast1`, `asia-northeast1`); the report
+carries one notice that names them and says other locations were not scanned. The
+notice does not mark the scan incomplete. Set `locations` to a list to choose the
+scope; there is no `all` option. Dialogflow CX uses the global host for the
+`global` location and `<location>-dialogflow.googleapis.com` for regional ones;
+Discovery Engine uses `discoveryengine.googleapis.com` for `global` and
+`us-` / `eu-discoveryengine.googleapis.com` for the `us` and `eu` multi-regions.
 Cloud Run discovery enumerates project locations and then lists services in each
 concrete region (`run.locations.list` and `run.services.list` permissions).
 Unreachable locations reported by GCP make the scan incomplete. `max_projects`
@@ -85,6 +106,16 @@ accounts + deployments + diagnostic settings, AI Foundry accounts/projects
 Logic Apps (AI connectors / agent loops), Web & Function app settings,
 Container Apps, user-assigned identities, role assignments with AI roles.
 Auth: `DefaultAzureCredential` or `access_token` (+ `foundry_token`).
+App settings are read by default (`include_app_settings: true`) with a POST to
+`<site>/config/appsettings/list`. That call returns plaintext setting values and
+needs `Microsoft.Web/sites/config/list/action`, a Contributor-class permission
+that Reader and the usual discovery roles lack. Values are held in memory for
+analysis only: findings keep setting names and redacted previews, and dumps
+redact every value. A denied call is one warning per web app that names the
+permission, and it marks the scan incomplete because those apps were not
+inspected; the rest of the scan continues. Set `include_app_settings: false` to
+skip the call and the permission; web and function apps are then not inspected
+for credentials.
 Resource Graph, ARM and Foundry collections follow pagination. A denied or failed
 diagnostic-settings request is reported as unknown; only a successful empty
 response supports a missing-diagnostics finding.
@@ -106,6 +137,16 @@ fields and `source_details.image`. Denied or invalid detail reads mark coverage
 incomplete while preserving available resource evidence. Audit credentials need
 the corresponding application/function read permissions; list-only access is
 insufficient to inspect configuration.
+
+### Scaling
+
+Cloud collection issues its detail calls one at a time: Lambda tags per
+function, SageMaker, Step Functions and OCI details per resource, GCP keys per
+service account. Large estates can exceed the connector deadline, and an
+overrun marks the scan incomplete. Raise `connector_timeout_seconds` for such
+scans, and bound the work with scope options (`regions`, `locations`,
+`projects`, `subscriptions`, `compartments`, `services`) or split the estate
+into several connector entries.
 
 ### Offline record kinds
 Offline exports are JSONL files with one record per line. Each record's `_kind`
