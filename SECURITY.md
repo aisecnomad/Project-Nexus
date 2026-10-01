@@ -78,7 +78,10 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   intermediate path components. YAML construction bounds nodes, aliases, depth,
   merge expansion and expanded content before Python objects are constructed.
   Sanitization bounds expanded structure and total replacement work. Ownership
-  patterns use bounded matching instead of backtracking regexes. Limit hits and
+  patterns use bounded matching instead of backtracking regexes, and the code
+  scanner's IaC and agent front-matter patterns run on the bounded engine under
+  the per-input matching budget. Symbolic links count toward `max_files` and
+  their checks stop at the connector deadline. Limit hits and
   malformed inputs make coverage incomplete while retaining valid neighboring
   findings. These are resource safeguards, not process isolation or a universal
   deadline across every external SDK call.

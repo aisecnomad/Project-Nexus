@@ -42,6 +42,7 @@ from shadowscan.config import ConfigValidationError, connector_boolean
 from shadowscan.connectors.base import ConnectorError
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, SignatureIndex
+from shadowscan.utils.http import HttpError
 from shadowscan.utils.text import redact
 
 TECH_CATEGORIES = {
@@ -72,6 +73,15 @@ _SIGNAL_LABEL = {
     "secret": "credential",
     "client_id": "client id",
 }
+
+
+def failure_summary(exc: BaseException) -> str:
+    """Name a collection failure without its text: the HTTP status, else the exception type.
+
+    Provider error documents and SDK messages can echo request arguments or
+    credentials, so connector diagnostics never include them.
+    """
+    return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
 
 
 def config_boolean(value: Any, name: str) -> bool:

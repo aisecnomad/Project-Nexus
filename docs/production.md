@@ -428,6 +428,17 @@ separate expanded-structure and total-work budget, so valid YAML aliases cannot
 cause unbounded report serialization. CODEOWNERS patterns use bounded iterative
 matching with a per-lookup work budget.
 
+The code scanner's IaC wildcard-action and agent front-matter patterns run on
+the bounded regex engine under the same per-input matching budget as the
+signature patterns, so a planted file costs at most that budget and is
+reported as an incomplete file rather than holding the connector. Symbolic
+links count toward `max_files` together with regular files, and the link
+checks stop at the connector deadline with the error `connector deadline
+reached while checking symbolic links`; findings collected before that point
+are kept and the scan is incomplete (exit 3). A checkout with more links than
+the remaining `max_files` budget needs a larger `max_files` or an `exclude`
+entry for the link directories.
+
 YAML manifest artifact matching uses a shared one-second deadline and gives
 each bounded line chunk no more than the remaining manifest pattern budget.
 Concurrent collection can take over the signature matcher’s separate 100 ms
@@ -827,7 +838,12 @@ revision of each family as a separate evidence category. Stopped tasks and unuse
 historical revisions are outside this collection scope. A registered-only label
 does not prove a definition is undeployed when discovery is incomplete.
 Late AWS list-page failures retain earlier observations, mark coverage incomplete,
-and cap pagination; a missing collection field is not an empty inventory.
+and cap pagination; a missing collection field is not an empty inventory. A
+malformed AWS or GCP record (a function without an ARN, a service without a
+config name) skips that record with a warning and incomplete coverage; the
+remaining resources, services and regions are still collected. AWS diagnostics
+for a failed SDK call name the operation and the provider's error code, never
+the provider's message text.
 The per-region `max_ecs_api_calls` limit defaults
 to 2000; exceeding it or encountering denied/partial calls marks coverage
 incomplete. Add the read permissions listed in [connectors.md](connectors.md).

@@ -38,3 +38,12 @@ def test_ordered_permissions_preserve_provider_order(index):
     classify_permissions(index, finding, ["repo:write", "read:user", "admin:org"])
 
     assert finding.permissions == ["repo:write", "read:user", "admin:org"]
+
+
+def test_failure_summary_names_status_or_type_without_message_text():
+    from shadowscan.connectors.common import failure_summary
+    from shadowscan.utils.http import HttpError
+
+    assert failure_summary(HttpError(403, "https://api.example/v1/apps?token=secret")) == "HTTP 403"
+    assert failure_summary(ValueError("Bearer secret-token echoed")) == "ValueError"
+    assert "secret" not in failure_summary(RuntimeError("secret"))

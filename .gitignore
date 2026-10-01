@@ -10,7 +10,12 @@ venv/
 .ruff_cache/
 .mypy_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
+.tox/
+.idea/
+.vscode/
 *.sarif
 report.*
 shadowscan-report*

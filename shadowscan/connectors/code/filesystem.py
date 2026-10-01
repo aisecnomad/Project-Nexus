@@ -45,11 +45,13 @@ import subprocess
 import time
 import tomllib
 from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
+import regex
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
@@ -85,7 +87,12 @@ from shadowscan.connectors.common import (
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
-from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
+from shadowscan.signatures.matcher import (
+    SOURCE_EXTENSIONS,
+    MatchTimeoutError,
+    language_for_path,
+    pattern_timeout,
+)
 from shadowscan.utils.files import open_confined_directory, open_confined_file
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
@@ -376,11 +383,31 @@ _WORKFLOW_EXTENSIONS = frozenset({".json", ".yaml", ".yml"})
 # Coding-agent sub-agent and rule definitions (Markdown with YAML front matter).
 _AGENT_DEFINITION_DIRS = (".claude/agents/", ".github/agents/", ".cursor/rules/", ".windsurf/rules/")
 
-_FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
+# Agent definition front matter. Only horizontal whitespace may follow a
+# marker: ``\s*`` before a required newline backtracks quadratically over a
+# run of blank lines, which a planted file makes as long as it likes. The
+# possessive quantifier never backtracks, and the bounded engine applies the
+# per-input matching budget where the pattern runs (_parse_agent_definition).
+_FRONTMATTER = regex.compile(r"^---[ \t\r]*+\n(.*?)\n---[ \t\r]*+\n", regex.S)
 # Files whose parsed structure supplies credential context for excerpt
 # redaction (see _structured_context).
 _JSON_SUFFIXES = (".json", ".jsonc", ".json5")
 _YAML_SUFFIXES = (".yaml", ".yml")
+# File names that only ever hold MCP client/server configuration. Any other
+# file is MCP configuration only when its parsed structure configures a server.
+_DEDICATED_MCP_CONFIG_NAMES = frozenset(
+    {
+        ".mcp.json",
+        "mcp.json",
+        "mcp-config.json",
+        "mcp_config.json",
+        "mcp-servers.json",
+        "claude_desktop_config.json",
+        "cline_mcp_settings.json",
+        "mcp_settings.json",
+        "smithery.yaml",
+    }
+)
 
 # Documentation placeholders are informational: enough to be listed, never
 # enough to establish a technology or raise risk.
@@ -593,8 +620,12 @@ _LLM_CATEGORIES = frozenset({"provider", "framework", "protocol", "platform", "c
 # Signatures that are only meaningful when the same file also invokes an LLM.
 _COLOCATED_SIGNATURES = frozenset({"heuristic.llm-command-execution"})
 # IAM statements granting every action (Terraform, CloudFormation, ARM/Bicep JSON).
-_IAM_WILDCARD_RE = re.compile(
-    r"""(?i)["']?\bActions?["']?\s*[:=]\s*\[?\s*["']\*["']"""
+# Whitespace runs are matched possessively: ``\s*\[?\s*`` backtracks
+# quadratically over a long run of blank space after ``Action:``, and the
+# stdlib engine cannot be interrupted. The bounded engine applies the
+# per-input matching budget where the pattern runs (_scan_iac).
+_IAM_WILDCARD_RE = regex.compile(
+    r"""(?i)["']?\bActions?["']?\s*+[:=]\s*+(?:\[\s*+)?["']\*["']"""
     r"""|["'](?:bedrock|iam|sts|lambda|s3|secretsmanager|kms):\*["']"""
 )
 _IAC_MODEL_RE = re.compile(
@@ -803,7 +834,7 @@ class FilesystemConnector(BaseConnector):
             "warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, "
             "fonts, archives and compiled artifacts)"
         ),
-        "max_files": "stop after this many files (default 100000)",
+        "max_files": "stop after this many files and symbolic links (default 100000)",
         "max_notebook_size": (
             "bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even "
             "when saved outputs make the file larger than max_file_size (default 20 MiB); outputs of such a "
@@ -980,7 +1011,9 @@ class FilesystemConnector(BaseConnector):
             incomplete=False,
         )
 
-    def _link_target_is_scanned(self, rel: str, target: Path, root: Path) -> bool:
+    def _link_target_is_scanned(
+        self, rel: str, target: Path, root: Path, walk: _WalkCounters | None = None
+    ) -> bool:
         """Whether skipping the (never followed) link at ``rel`` loses no coverage.
 
         Coverage is kept when nothing would ever be read at the alias path, or
@@ -1027,9 +1060,10 @@ class FilesystemConnector(BaseConnector):
             return False
         # The real path must keep the alias's project ownership and evidence
         # weight; another project or a test directory would change both.
-        if _project_root(root, rel) != _project_root(root, target_rel) or _is_test_path(rel) != _is_test_path(
-            target_rel
-        ):
+        cache = walk.project_roots if walk is not None else None
+        if _project_root(root, rel, cache) != _project_root(root, target_rel, cache) or _is_test_path(
+            rel
+        ) != _is_test_path(target_rel):
             return False
         # File-name signatures can apply to the alias but not the real file.
         target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
@@ -1053,7 +1087,15 @@ class FilesystemConnector(BaseConnector):
         # ancestors, so assigning a project is amortized constant time even in
         # monorepos with thousands of sibling projects.
         roots: list[str] = ["."]
-        count = 0
+        # Files and links both count toward max_files: a link is never
+        # followed, but deciding whether skipping it loses coverage costs a
+        # project lookup and file-name matching. Link checks also stop at the
+        # connector deadline, as file analysis does in _walk_entries, so a tree
+        # planted with links cannot hold the walk past it.
+        deadline = self.ctx.deadline
+        walk = _WalkCounters(
+            stop_at=None if deadline is None else deadline - deadline_margin(deadline - time.monotonic())
+        )
 
         resolved_root = Path(os.path.realpath(root))
 
@@ -1075,7 +1117,10 @@ class FilesystemConnector(BaseConnector):
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=walk_error):
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else rel_dir
-            dirnames[:] = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames)
+            kept = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames, walk)
+            if kept is None:
+                return
+            dirnames[:] = kept
             proj = _nearest_root(rel_dir, roots)
             if rel_dir != "." and _marks_project(Path(dirpath), filenames):
                 roots.append(rel_dir)
@@ -1087,7 +1132,8 @@ class FilesystemConnector(BaseConnector):
                 p = Path(dirpath) / fn
                 try:
                     if p.is_symlink():
-                        self._skip_link(root, resolved_root, rel, p)
+                        if not self._skip_link(root, resolved_root, rel, p, walk):
+                            return
                         continue
                     info = p.stat()
                 except OSError as exc:
@@ -1102,9 +1148,7 @@ class FilesystemConnector(BaseConnector):
                     continue
                 if _never_read_by_name(fn):
                     continue
-                count += 1
-                if count > self.max_files:
-                    self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
+                if not self._count_entry(walk, root):
                     return
                 yield rel, p, proj, info.st_size
 
@@ -1115,8 +1159,13 @@ class FilesystemConnector(BaseConnector):
         dirpath: str,
         rel_dir: str,
         dirnames: list[str],
-    ) -> list[str]:
-        """Return the subdirectories of ``dirpath`` the walk descends into, in name order."""
+        walk: _WalkCounters,
+    ) -> list[str] | None:
+        """Return the subdirectories of ``dirpath`` the walk descends into, in name order.
+
+        None means the walk must stop: a directory link reached ``max_files``
+        or the connector deadline (see ``_skip_link``).
+        """
         kept = []
         for name in sorted(dirnames):
             rel = name if rel_dir == "." else f"{rel_dir}/{name}"
@@ -1125,7 +1174,8 @@ class FilesystemConnector(BaseConnector):
             path = Path(dirpath) / name
             try:
                 if path.is_symlink():
-                    self._skip_link(root, resolved_root, rel, path)
+                    if not self._skip_link(root, resolved_root, rel, path, walk):
+                        return None
                     continue
             except OSError:
                 self.ctx.error(f"code.filesystem: could not inspect {rel}")
@@ -1133,13 +1183,33 @@ class FilesystemConnector(BaseConnector):
             kept.append(name)
         return kept
 
-    def _skip_link(self, root: Path, resolved_root: Path, rel: str, link: Path) -> None:
-        """Record the coverage gap of a symbolic link, which the walk never follows."""
+    def _count_entry(self, walk: _WalkCounters, root: Path) -> bool:
+        """Count one examined entry (a file or a link); False once ``max_files`` is reached."""
+        walk.examined += 1
+        if walk.examined > self.max_files:
+            self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
+            return False
+        return True
+
+    def _skip_link(self, root: Path, resolved_root: Path, rel: str, link: Path, walk: _WalkCounters) -> bool:
+        """Record the coverage gap of a symbolic link, which the walk never follows.
+
+        Returns False, with the reason recorded as an error, when the walk
+        must stop: the link reached ``max_files`` or the connector deadline.
+        """
+        if not self._count_entry(walk, root):
+            return False
+        if walk.stop_at is not None and time.monotonic() >= walk.stop_at:
+            self.ctx.error(
+                f"code.filesystem: connector deadline reached while checking symbolic links under {root}; "
+                "results incomplete"
+            )
+            return False
         # A link that resolves inside the scan root loses no coverage only if
         # the target is scanned at its real path.
         target = _resolved_link_target(link, resolved_root)
-        if target is not None and self._link_target_is_scanned(rel, target, resolved_root):
-            return
+        if target is not None and self._link_target_is_scanned(rel, target, resolved_root, walk):
+            return True
         # A single representative diagnostic per root keeps hostile trees
         # from filling the report with thousands of link names.
         if root not in self._symlink_warnings:
@@ -1149,6 +1219,7 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"{message}; coverage incomplete")
             else:
                 self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+        return True
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
         """Return the share of ``budget`` a file must have left before the walk may start it.
@@ -1461,10 +1532,13 @@ class FilesystemConnector(BaseConnector):
         """
         with self._isolated(file.rel, "credential detection"):
             seen_secrets: set[tuple[str, str, int | None]] = set()
-            for raw in (file.text, file.raw_notebook):
-                if raw is None or (raw == file.text and seen_secrets):
-                    continue
-                self._detect_secrets_in(scan, file, raw, seen_secrets)
+            self._detect_secrets_in(scan, file, file.text, seen_secrets)
+            if file.raw_notebook is not None and file.raw_notebook != file.text:
+                # The raw document repeats every code cell at other line
+                # numbers, so a credential found in the cells is not a second
+                # observation there; only outputs and markdown cells are new.
+                cell_values = {(signature, value) for signature, value, _ in seen_secrets}
+                self._detect_secrets_in(scan, file, file.raw_notebook, seen_secrets, skip_values=cell_values)
 
     def _detect_secrets_in(
         self,
@@ -1472,6 +1546,7 @@ class FilesystemConnector(BaseConnector):
         file: _SourceFile,
         raw: str,
         seen_secrets: set[tuple[str, str, int | None]],
+        skip_values: AbstractSet[tuple[str, str]] = frozenset(),
     ) -> None:
         # Excerpts of a notebook's raw document come from its own sanitized
         # lines; the redacted source lines describe the code cells only.
@@ -1486,6 +1561,8 @@ class FilesystemConnector(BaseConnector):
                     "excerpts withheld"
                 )
         for m in self.index.match_secrets(raw):
+            if (m.signature_id, m.value) in skip_values:
+                continue
             key = (m.signature_id, m.value, m.line)
             if key in seen_secrets:
                 continue
@@ -1510,6 +1587,15 @@ class FilesystemConnector(BaseConnector):
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors)
             self._file_errors(file.rel, dict.fromkeys(mcp_errors))
+            dedicated = file.name.lower() in _DEDICATED_MCP_CONFIG_NAMES
+            if not file.mcp_servers and not mcp_errors and not dedicated:
+                # The content heuristic (an "mcp" and a "servers" key anywhere
+                # in a JSON/YAML/TOML file) selected a file whose parsed
+                # structure configures no server: an exported workflow tagged
+                # "mcp", a template with such a comment. It is ordinary
+                # configuration, so the IaC, configuration and lexical passes
+                # read it as usual instead of skipping it without a diagnostic.
+                file.is_mcp = False
         file.mcp_active = any(not server["disabled"] for server in file.mcp_servers)
         if file.mcp_active:
             for m in file.file_matches:
@@ -1555,9 +1641,9 @@ class FilesystemConnector(BaseConnector):
         rel, text = file.rel, file.text
         # Excerpts come from the redacted source, which is only
         # produced for files that actually contain a wildcard.
-        if _IAM_WILDCARD_RE.search(text):
+        if _IAM_WILDCARD_RE.search(text, timeout=pattern_timeout(), concurrent=False):
             for number, line_text in enumerate(self._redacted_lines(file), start=1):
-                if _IAM_WILDCARD_RE.search(line_text):
+                if _IAM_WILDCARD_RE.search(line_text, timeout=pattern_timeout(), concurrent=False):
                     wildcard_hits = scan.iam_wildcards.setdefault(file.proj_root, [])
                     if len(wildcard_hits) < 20:
                         wildcard_hits.append((rel, number, truncate(line_text.strip(), 160) or ""))
@@ -1950,17 +2036,7 @@ class FilesystemConnector(BaseConnector):
                     for r in remotes
                 )
             )
-        if lower in {
-            ".mcp.json",
-            "mcp.json",
-            "mcp-config.json",
-            "mcp_config.json",
-            "mcp-servers.json",
-            "claude_desktop_config.json",
-            "cline_mcp_settings.json",
-            "mcp_settings.json",
-            "smithery.yaml",
-        }:
+        if lower in _DEDICATED_MCP_CONFIG_NAMES:
             return True
         if lower in MCP_CONFIG_NAMES or rel.endswith((".json", ".toml", ".yaml", ".yml")):
             head = text[:200_000]
@@ -2767,7 +2843,7 @@ class FilesystemConnector(BaseConnector):
 
     def _parse_agent_definition(self, rel: str, text: str) -> dict[str, Any]:
         info: dict[str, Any] = {"file": rel, "name": PurePosixPath(rel).stem}
-        m = _FRONTMATTER.match(text)
+        m = _FRONTMATTER.match(text, timeout=pattern_timeout(), concurrent=False)
         if m:
             try:
                 fm = strict_bounded_safe_load(m.group(1)) or {}
@@ -2832,23 +2908,48 @@ def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int 
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-def _project_root(root: Path, rel: str) -> str:
+@dataclass
+class _WalkCounters:
+    """What one directory walk has examined so far, shared with its link checks."""
+
+    examined: int = 0  # files and links counted toward max_files
+    stop_at: float | None = None  # monotonic time after which link checks stop (deadline minus margin)
+    # Directory (POSIX, relative to the root) -> project root of the files in
+    # it, so a directory holding many links lists its ancestors once.
+    project_roots: dict[str, str] = field(default_factory=dict)
+
+
+def _project_root(root: Path, rel: str, cache: dict[str, str] | None = None) -> str:
     """The project a file at ``rel`` belongs to, as ``_iter_entries`` assigns it.
 
     That is the deepest ancestor directory below the scan root holding a
-    project marker, or ``"."``. Used for the rare symlink checks only.
+    project marker, or ``"."``. Used for the symlink checks only; ``cache``
+    remembers the answer for every directory the lookup passed through, so a
+    tree planted with links costs one listing per directory, not per link.
     """
+    directory = PurePosixPath(rel).parent.as_posix()
+    if cache is not None and directory in cache:
+        return cache[directory]
+    passed: list[str] = []
+    result = "."
     for parent in PurePosixPath(rel).parents:
-        directory = parent.as_posix()
-        if directory == ".":
+        ancestor = parent.as_posix()
+        if ancestor == ".":
             break
+        passed.append(ancestor)
         try:
-            names = os.listdir(root / directory)
+            names = os.listdir(root / ancestor)
         except OSError:
             continue
-        if _marks_project(root / directory, names):
-            return directory
-    return "."
+        if _marks_project(root / ancestor, names):
+            result = ancestor
+            break
+    if cache is not None:
+        # Every directory between the file and its project root (or the scan
+        # root) shares the answer: no marker was found below the result.
+        for ancestor in passed:
+            cache.setdefault(ancestor, result)
+    return result
 
 
 def _nearest_root(rel_dir: str, roots: list[str]) -> str:

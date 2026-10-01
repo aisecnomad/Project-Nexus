@@ -338,6 +338,11 @@ aggregated). Auth: `access_token` or client-credentials connected app.
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
 `sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer.
 
+Options: `instance` (env `SNOW_INSTANCE`), `username` and `password` (env
+`SNOW_USERNAME`, `SNOW_PASSWORD`) or `token` (env `SNOW_TOKEN`) for a bearer
+token instead of basic auth; `max_pages` (per table, at most 1000); `input`
+for an offline JSON export of the table records.
+
 ### `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
 Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
@@ -390,6 +395,10 @@ or used the app; for that question, obtain a separate tenant activity or
 installation export. Notion rejects a missing/repeated pagination cursor and
 caps live pages (`max_pages`, at most 1000); either condition makes the scan
 incomplete. Zoom likewise marks denied, invalid, or truncated pages incomplete.
+
+Notion options: `token` (env `NOTION_TOKEN`), an internal integration secret
+whose integration has the *read user information* capability for
+`GET /v1/users`; `max_pages`; `input` for an offline `/v1/users` export.
 
 ### `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
@@ -511,9 +520,15 @@ All connectors are read-only. Prefer dedicated audit credentials:
 
 | Connector | Minimum |
 |---|---|
-| GitHub | fine-grained PAT: contents/metadata read (`secrets:read` optional) |
+| GitHub | fine-grained PAT: contents/metadata read; `secrets:read` for Actions secret names, plus `variables:read`, Codespaces `secrets:read` and Dependabot `secrets:read` for the other credential-name listings (each optional; a denied listing marks coverage incomplete) |
 | GitLab | PAT `read_api`, `read_repository` |
 | Okta | API token from a read-only admin, or OAuth `okta.apps.read` |
+| Slack | token with `users:read`; the `admin.apps.*` lists and `team.integrationLogs` need an org admin user token (`admin.apps:read`, `admin`) |
+| ServiceNow | basic or bearer credentials with read access to the `sn_aia_*`, `sys_hub_flow` and `oauth_entity` tables through the Table API |
+| Notion | internal integration token with the *read user information* capability (`GET /v1/users`) |
+| Zoom | Server-to-Server OAuth app with `marketplace:read:list_apps:admin` |
+| Atlassian | site admin basic auth with an API token for the Universal Plugin Manager listing |
+| Auth0 | Management API v2 token with `read:clients`, `read:client_grants` |
 | Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user |
 | Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly` |
 | AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition` |

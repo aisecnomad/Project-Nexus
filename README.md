@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/aisecnomad/Project-Nexus/badge)](https://scorecard.dev/viewer/?uri=github.com/aisecnomad/Project-Nexus)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue.svg)](https://www.python.org/downloads/)
 [![Coverage ≥80%](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](CONTRIBUTING.md#quality-gates)
@@ -253,8 +254,13 @@ not scanned. Evidence found only in test or fixture code cannot establish an
 agent unless `--include-tests` is set.
 
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
-`--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
-scans as unsuccessful, while preserving findings from successfully assessed inputs.
+`--fail-on`, and **0** for a completed scan that passes. A command-line usage
+error also exits **2** and a configuration or setup error exits **1**, so a
+gate that distinguishes "risk reached" from "could not run" should read the
+report's `summary.complete` and findings rather than the exit code alone.
+`shadowscan diff` exits **3** when the two reports are not comparable. SARIF
+records incomplete scans as unsuccessful, while preserving findings from
+successfully assessed inputs.
 Enable `--fail-on` only after a [frozen, independently adjudicated holdout](docs/evaluation.md#gate-a-frozen-holdout)
 and [read-only tenant canary](docs/evaluation.md#read-only-tenant-canary-procedure)
 establish an acceptable threshold for that environment. A complete static scan

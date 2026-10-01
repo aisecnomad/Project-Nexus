@@ -323,3 +323,58 @@ def test_aws_signed_endpoint_rules_ignore_external_sdk_models(index, monkeypatch
     assert str(tmp_path / "models") not in loader.search_paths
     assert "127.0.0.1" not in json.dumps(loader.load_service_model("sts", "endpoint-rule-set-1"))
     assert sts.assume_role.call_count == int(assume_role)
+
+
+# --------------------------------------------------- untrusted response shapes
+def test_safe_call_diagnostic_names_the_operation_and_code_never_the_message(index):
+    class SDKError(Exception):
+        response = {"Error": {"Code": "AccessDeniedException", "Message": "arn:aws:iam::123:role/secret-ctx"}}
+
+    def get_agent(**kwargs):
+        raise SDKError("User is not authorized to perform get_agent on arn:aws:iam::123:role/secret-ctx")
+
+    def list_tags(**kwargs):
+        raise ValueError("Invalid parameter Resource=arn:aws:lambda:us-east-1:123:function:internal-name")
+
+    connector = aws(index, "lambda")
+    connector.ctx.stats = ScanStats(connector="cloud.aws", started_at="2026-01-01")
+    assert connector._safe(get_agent, agentId="A1") is None
+    assert connector._safe(list_tags, Resource="x") is None
+    denied, failed = connector.ctx.stats.warnings
+    assert denied == "cloud.aws: get_agent access denied (AccessDeniedException)"
+    assert failed == "cloud.aws: list_tags request failed (ValueError)"
+    assert "secret-ctx" not in denied and "internal-name" not in failed
+    assert connector.ctx.stats.incomplete
+
+
+def test_malformed_lambda_record_is_skipped_and_the_others_survive(index):
+    connector = aws(index, "lambda")
+    connector.ctx.stats = ScanStats(connector="cloud.aws", started_at="2026-01-01")
+    good = {"FunctionName": "worker", "FunctionArn": f"arn:aws:lambda:us-east-1:{ACCOUNT}:function:worker"}
+    connector._paginate = Mock(return_value=iter([{"FunctionName": "no-arn"}, good]))
+    records = [record for record in connector.collect() if record.get("_kind") == "lambda"]
+    assert [record["FunctionName"] for record in records] == ["worker"]
+    assert any(
+        "malformed Lambda function record skipped (KeyError)" in w for w in connector.ctx.stats.warnings
+    )
+    assert connector.ctx.stats.incomplete
+
+
+def test_non_string_alias_version_does_not_abort_the_bedrock_agent(index):
+    items = {
+        "list_agents": [{"agentId": "A1", "agentName": "ops"}],
+        "list_agent_aliases": [{"routingConfiguration": [{"agentVersion": 1}, {"agentVersion": "2"}]}],
+    }
+    connector = aws(index, "bedrock")
+    connector.ctx.stats = ScanStats(connector="cloud.aws", started_at="2026-01-01")
+    connector._paginate = Mock(side_effect=lambda client, op, key, **kwargs: iter(items.get(op, [])))
+    client = connector._client.return_value
+    client.get_agent = Mock(return_value={"agent": {"agentId": "A1", "agentName": "ops"}})
+    client.get_agent_version = Mock(return_value={"agentVersion": {"agentId": "A1", "agentVersion": "2"}})
+    client.get_model_invocation_logging_configuration = Mock(return_value={"loggingConfig": {}})
+    agents = [
+        record for record in connector._collect_bedrock("us-east-1") if record["_kind"] == "bedrock-agent"
+    ]
+    assert len(agents) == 1
+    assert agents[0]["_versions_scanned"] == ["2", "DRAFT"]
+    assert any("invalid alias version for agent A1" in w for w in connector.ctx.stats.warnings)
