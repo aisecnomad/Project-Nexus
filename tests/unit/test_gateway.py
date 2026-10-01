@@ -223,6 +223,36 @@ def test_known_llm_host_keeps_unlisted_operation_paths(tmp_path, run_connector):
     assert findings[0].metadata["hosts"] == {"api.openai.com": 1}
 
 
+def test_cloudflare_workers_ai_inference_is_llm_traffic_but_other_cloudflare_api_calls_are_not(
+    tmp_path, run_connector
+):
+    # api.cloudflare.com is a general REST API: only its Workers AI paths are inference.
+    line = (
+        '10.0.0.5 - - [10/Oct/2025:13:55:{sec:02d} +0000] "{method} {path} HTTP/1.1" 200 2326 "-" "{ua}"'
+        " host=api.cloudflare.com"
+    )
+    account = "/client/v4/accounts/0123456789abcdef"
+    requests = [
+        ("POST", f"{account}/ai/run/@cf/meta/llama-3.1-8b-instruct", "python-requests/2.31"),
+        ("POST", f"{account}/ai/run/@cf/baai/bge-base-en-v1.5", "python-requests/2.31"),
+        ("POST", f"{account}/ai/v1/chat/completions", "httpx/0.27"),
+        ("GET", "/client/v4/zones", "terraform/1.9"),
+        ("GET", f"{account}/workers/scripts", "terraform/1.9"),
+        ("GET", f"{account}/ai/models/search", "terraform/1.9"),
+    ]
+    path = tmp_path / "access.log"
+    path.write_text(
+        "".join(
+            line.format(sec=sec, method=method, path=target, ua=ua) + "\n"
+            for sec, (method, target, ua) in enumerate(requests)
+        )
+    )
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert not ctx.stats.incomplete
+    callers = {finding.metadata["caller"]: finding.metadata["events"] for finding in findings}
+    assert callers == {"python-requests/2.31": 2, "httpx/0.27": 1}
+
+
 def test_vertex_detection_does_not_depend_on_serialized_prefix():
     delegation = [
         {"firstPartyPrincipal": {"principalEmail": f"hop-{i}@example-project.iam.gserviceaccount.com"}}
