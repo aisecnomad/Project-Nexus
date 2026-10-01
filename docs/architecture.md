@@ -87,7 +87,7 @@ defaults, which describe an ordinary connector.
 |---|---|---|---|
 | `cache_roots_separately(roots, root_ids, *, labelled)` | `False` | `code.filesystem` | an incremental scan of several `paths` runs and caches one job per root; raising `ConnectorError` runs the connector once so its own validation reports the scan incomplete |
 | `inherits_instance_credentials_approval()` | `True` for a connector on the cloud surface or one whose `config_keys` documents `allow_instance_credentials` | every `cloud.*` connector, plugins included, through its surface: the registry holds `cloud.*` names to it | the connector's `allow_instance_credentials` is set from `options.allow_instance_credentials`, whether or not it documents the key; a value in any connector entry is replaced the same way, so it never takes effect |
-| `uses_run_identity_key` | `False` | `gateway.logs` | the connector's jobs share one private key per scan run (`ConnectorContext.gateway_identity_key`), so identical sources in one report share opaque caller and scope IDs that separate runs cannot link |
+| `uses_run_identity_key` | `False` | `gateway.logs` | the connector's jobs share one private key per scan run (`ConnectorContext.gateway_identity_key`), so identical sources in one report share opaque caller and scope IDs that separate runs cannot link; when the operator sets `SHADOWSCAN_IDENTITY_KEY`, every run uses that stable key instead (`gateway_identity_key_stable`) and its IDs can be compared across runs |
 
 The engine looks up the connector class once per configured entry and reads
 these hooks from it. As in collection, the lookup, which imports an approved

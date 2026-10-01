@@ -308,7 +308,8 @@ exact `api-key:credential:sha256:...` binding computed privately from the raw
 key, which the connector checks in memory without writing that public digest to
 findings. Keep binding configuration private: publishing a public digest of a
 guessable key would itself disclose the key. The exported HMAC is scan-local
-and cannot be pasted into a future binding. Other caller names changed by
+unless a stable identity key is set (below), and in either case cannot be
+pasted into a binding. Other caller names changed by
 credential redaction remain `unverified` for runtime attribution. Do not put
 raw API keys into bindings.
 
@@ -326,6 +327,25 @@ key for each scan. Direct connector instances use independent keys. Redacted sco
 marked incomplete; gateway exports are noncomparable across independent runs.
 Resolve the scope/credential overlap before interpreting a report comparison
 as evidence that a finding was resolved.
+
+To compare gateway callers across scans, set `SHADOWSCAN_IDENTITY_KEY` to at
+least 32 random bytes, hex or base64 encoded (for example the output of
+`openssl rand -hex 32`), in the environment of every scan that should be
+comparable. Hex is tried first. The engine then uses this key instead of a new
+key per scan: identical inputs and configuration give identical caller, scope
+and source pseudonyms and finding IDs, findings carry
+`metadata.identity_scope: keyed`, and the `collection_scope` fingerprint covers
+the gateway configuration through an HMAC under the key. The key is read only
+from the environment, never from a configuration file, and is never logged or
+written to reports, caches or record exports. A set value that does not decode
+to at least 32 bytes stops the command before any collection (exit 1). Treat
+the key as a secret: with it and a report, anyone can test guesses of short API
+keys, labels and bindings against the pseudonyms, and reports made under one key
+can be linked to each other. A different key changes every gateway ID and the
+collection scope, so `diff` never resolves findings across keys; rotating the key
+requires a fresh baseline. A caller that is missing from a complete export of
+the same source under the same key is reported resolved: the new export has no
+requests from it, which does not prove that the workload was removed.
 
 Code findings with frameworks gain `metadata.runtime_activity`:
 
@@ -354,10 +374,10 @@ Gateway finding IDs include the canonical input path and relevant connector
 configuration (label, format, filters and bindings). This changes IDs from older
 reports. Repeating an identical configured source within one connector instance
 is idempotent for nonredacted principal/service callers; API-key callers and
-redacted scopes use connector-local HMAC IDs. Gateway exports are noncomparable
-across independent scans to avoid claiming that a missing scan-local ID is a
-resolved finding: their findings carry `metadata.identity_scope: run`, and
-`diff` lists them as not comparable (see
+redacted scopes use connector-local HMAC IDs. Without `SHADOWSCAN_IDENTITY_KEY`,
+gateway exports are noncomparable across independent scans to avoid claiming
+that a missing scan-local ID is a resolved finding: their findings carry
+`metadata.identity_scope: run`, and `diff` lists them as not comparable (see
 [comparing reports](#comparing-reports)). Distinct exports retain
 separate provenance. Overlapping exports count observations from each source,
 so aggregate counts are not guaranteed to represent unique requests.
@@ -416,9 +436,11 @@ selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public
 digest does not hide guessable paths or labels; keep these settings nonsecret.
-Credential-bearing configurations omit the digest, and gateway exports cannot
-attest comparable scope because private caller/scope identities may change
-between scans.
+Credential-bearing configurations omit the digest. Gateway exports attest
+comparable scope only when `SHADOWSCAN_IDENTITY_KEY` is set: an HMAC under that
+key stands in for their configuration, which can hold guessable labels and
+bindings. Without the key their private caller/scope identities change between
+scans.
 
 Incomplete scans, changed scope, older reports without provenance, live provider
 collections and third-party connectors cannot establish equivalent coverage.
@@ -427,14 +449,15 @@ changed findings remain visible. Currently only local repositories and offline
 exports from built-in connectors can attest comparable scope; live account and
 permission coverage require additional provider-specific provenance.
 
-A finding with `metadata.identity_scope: run`, which every `gateway.logs`
-finding carries, has an ID derived from a key that is random for each scan:
-the same caller has a different ID in the next report. Diff therefore never
-reports such a finding as new, resolved or unknown because the other report
-lacks its ID. It lists it under `not_comparable` (`baseline` or `current`;
-marked `<` or `>` in text output), states the reason and exits 3. A finding
-whose ID appears in both reports is compared as usual. Any other declared
-`identity_scope` is treated the same way.
+A finding with `metadata.identity_scope: run`, which `gateway.logs` findings
+carry unless `SHADOWSCAN_IDENTITY_KEY` is set, has an ID derived from a key that
+is random for each scan: the same caller has a different ID in the next report.
+Diff therefore never reports such a finding as new, resolved or unknown because
+the other report lacks its ID. It lists it under `not_comparable` (`baseline` or
+`current`; marked `<` or `>` in text output), states the reason and exits 3. A
+finding whose ID appears in both reports is compared as usual. Any declared
+`identity_scope` other than `keyed`, the scope of findings made under
+`SHADOWSCAN_IDENTITY_KEY`, is treated the same way.
 
 Finding IDs do not depend on inferred kind. Stable resource-type families (or an
 explicit plugin `identity_discriminator`) separate distinct observations on a

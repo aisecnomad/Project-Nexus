@@ -95,7 +95,8 @@ def test_scan_local_findings_never_resolve_even_under_a_matching_scope():
     assert [f["resource"] for f in comparison["not_comparable"]["baseline"]] == ["service:a"]
     assert [f["resource"] for f in comparison["not_comparable"]["current"]] == ["service:b"]
     assert comparison["reasons"] == [
-        "2 finding(s) have scan-local identities (metadata.identity_scope) and cannot be matched across scans"
+        "2 finding(s) have scan-local identities (metadata.identity_scope) and cannot be matched across "
+        "scans; set SHADOWSCAN_IDENTITY_KEY for both scans to compare gateway callers"
     ]
 
 
@@ -115,9 +116,12 @@ def test_same_scan_local_identity_in_both_reports_is_compared_normally():
     assert comparison["changed"][0]["changed_fields"] == ["permissions"]
 
 
-def test_findings_without_identity_scope_keep_their_comparison_semantics():
-    comparison = compare_reports(_report(_finding("service:gone")), _report(_finding("service:new")))
-    assert comparison["comparable"]
+@pytest.mark.parametrize("metadata", [{}, {"identity_scope": "keyed"}], ids=["undeclared", "keyed"])
+def test_stable_identities_keep_their_comparison_semantics(metadata):
+    comparison = compare_reports(
+        _report(_finding("service:gone", **metadata)), _report(_finding("service:new", **metadata))
+    )
+    assert comparison["comparable"] and comparison["not_comparable"] == {"baseline": [], "current": []}
     assert [f["resource"] for f in comparison["resolved"]] == ["service:gone"]
     assert [f["resource"] for f in comparison["new"]] == ["service:new"]
 

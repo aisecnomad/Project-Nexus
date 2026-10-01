@@ -130,7 +130,9 @@ report or add `discriminators`.
 Track drift between runs with `shadowscan diff last.json today.json`: new
 findings, risk-level changes and resolved findings from complete, comparable
 scans. Missing findings from incomplete or differently scoped scans remain
-unknown. See [comparison semantics](scanning.md#comparing-reports).
+unknown. Gateway callers keep their finding IDs between runs only when both
+scans set `SHADOWSCAN_IDENTITY_KEY`; otherwise diff lists them as not
+comparable. See [comparison semantics](scanning.md#comparing-reports).
 
 Generated stub files use mode 0600 in a 0700 output directory. Deliberate wildcard
 approvals remain supported in manually reviewed inventory entries. Do not remove
