@@ -29,7 +29,8 @@ including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
 Confidence groups cap repeated observations of the same technology. Unsupported
 dynamic imports, re-exports and uncertain bindings remain usage evidence. Other
-languages use lexical signatures and require matching framework import/dependency
+languages, and framework code patterns from custom signature packs in any
+language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.

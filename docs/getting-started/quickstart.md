@@ -88,6 +88,7 @@ shadowscan diff last-week.json today.json
 | Code | Meaning |
 |------|---------|
 | `0`  | Completed scan, passed `--fail-on` threshold |
+| `1`  | No scan result: invalid option, value, path or configuration, or a setup or output error |
 | `2`  | Completed scan, findings reached `--fail-on` level |
 | `3`  | Incomplete scan (API failures, timeouts, permission denials) |
 

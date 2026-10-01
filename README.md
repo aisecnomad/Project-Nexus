@@ -279,7 +279,9 @@ not scanned. Evidence found only in test or fixture code cannot establish an
 agent unless `--include-tests` is set.
 
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
-`--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
+`--fail-on`, **1** when the command produced no scan result (an invalid option,
+value, path or configuration, or a setup or output error), and **0** for a
+completed scan that passes. Gate CI on any non-zero exit. SARIF records incomplete
 scans as unsuccessful, while preserving findings from successfully assessed inputs.
 Enable `--fail-on` only after a [frozen, independently adjudicated holdout](docs/evaluation.md#gate-a-frozen-holdout)
 and [read-only tenant canary](docs/evaluation.md#read-only-tenant-canary-procedure)
@@ -326,7 +328,7 @@ See [deployment and migration](docs/production.md) for the rollout checks.
 }
 ```
 
-* **confidence** combines evidence weights with noisy-OR. It groups correlated source evidence first, so repeated matches cannot inflate the score. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
+* **confidence** combines evidence weights with noisy-OR after grouping correlated evidence, so each group counts once at its strongest weight. A code project groups its matches by technology; on identity, gateway, low-code, SaaS and cloud surfaces, repeated matches of one signal form one group. A single-file code finding (a workflow export, IaC, agent configuration) still counts each distinct matched pattern. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
 * **potential_capabilities** in static finding metadata records framework features supported only by availability evidence, such as an import or dependency. These are excluded from capability risk factors until stronger source evidence supports them.
 * **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence. The listed factors always add up to `score`; confidence scaling and the 0–100 bounds appear as factors.
 * **danger_score** is the same model without the governance factors (inventory registration and ownership): what the agent can do, independent of whether anyone approved it. Set `options.risk_basis: danger` to base `level` and `--fail-on` on it, and `options.risk_weights` to tune weights (see [Risk policy](#risk-policy)).
