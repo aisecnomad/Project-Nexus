@@ -81,6 +81,9 @@ SDKs installed, so run it after `make install` rather than `make install-dev`.
   session start, while their source digest is unchanged; organization pack
   directories and override approval always load for real.
 
+Timing assertions use generous bounds, thread CPU time, or a fixed clock, so a
+loaded runner does not fail them.
+
 Useful pytest patterns:
 
 ```bash
