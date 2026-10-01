@@ -366,6 +366,7 @@ def test_ai_only_workflows_are_not_agents(tmp_path, run_connector, index, data):
 
 
 LIMITS = "structured configuration exceeds parser limits"
+ENTITIES = "structured configuration declares XML entities or attribute defaults; not parsed"
 
 
 def _scan(index, root, files: dict[str, str], **config):
@@ -398,14 +399,79 @@ XML_BOMB = (
     ids=["json-depth", "yaml-depth", "toml-depth", "xml-expansion"],
 )
 def test_parser_limits_are_not_syntax_errors(index, rel, text):
+    # XML entity declarations are refused before parsing, so the bomb never
+    # depends on the runtime Expat's amplification limit.
+    expected = [ENTITIES if rel.endswith(".xml") else LIMITS]
     errors: list[str] = []
     limits: list[str] = []
     assert structured_code_matches(index, rel, text, errors, limits) == []
-    assert limits == [LIMITS] and errors == []
+    assert limits == expected and errors == []
     # A caller that does not separate them still fails closed.
     fallback: list[str] = []
     structured_code_matches(index, rel, text, fallback)
-    assert fallback == [LIMITS]
+    assert fallback == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<?xml version="1.0"?><!DOCTYPE p [<!ENTITY n "Planner">]><GenAiPlanner><a>&n;</a></GenAiPlanner>',
+        '<!DOCTYPE p [<!ENTITY % ext "x">]><GenAiPlanner><a/></GenAiPlanner>',
+        # Attribute defaults are applied to every element: the same amplification.
+        '<!DOCTYPE GenAiPlanner [<!ATTLIST a v CDATA "xxxxxxxx">]><GenAiPlanner><a/><a/></GenAiPlanner>',
+    ],
+    ids=["general-entity", "parameter-entity", "attribute-default"],
+)
+def test_xml_entity_declarations_are_refused_without_parsing(index, monkeypatch, text):
+    def fail(*_: object) -> None:
+        raise AssertionError("entity-declaring XML must not reach the parser")
+
+    monkeypatch.setattr("shadowscan.connectors.code.semantic_config.ET.fromstring", fail)
+    errors: list[str] = []
+    limits: list[str] = []
+    assert structured_code_matches(index, "force-app/agent.genAiPlanner-meta.xml", text, errors, limits) == []
+    assert limits == [ENTITIES] and errors == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<!DOCTYPE project [<!ENTITY common SYSTEM "common.xml">]><project>&common;</project>',
+        '<?xml version="1.0"?><!DOCTYPE book [<!ENTITY product "Widget">]><book>&product;</book>',
+        '<!DOCTYPE x [<!ATTLIST item id CDATA "0">]><x><item/></x>',
+    ],
+    ids=["ant-build", "docbook", "attribute-default"],
+)
+def test_other_xml_declaring_entities_is_skipped_unparsed(index, monkeypatch, text):
+    def fail(*_: object) -> None:
+        raise AssertionError("entity-declaring XML must not reach the parser")
+
+    monkeypatch.setattr("shadowscan.connectors.code.semantic_config.ET.fromstring", fail)
+    errors: list[str] = []
+    limits: list[str] = []
+    assert structured_code_matches(index, "build/build.xml", text, errors, limits) == []
+    assert not errors and not limits
+
+
+def test_ordinary_xml_with_entities_keeps_the_scan_complete(tmp_path, index):
+    _, ctx = _scan(
+        index,
+        tmp_path,
+        {
+            "build.xml": '<!DOCTYPE project [<!ENTITY common SYSTEM "common.xml">]><project>&common;</project>',
+            "docs/manual.xml": '<!DOCTYPE book [<!ENTITY product "Widget">]><book>&product;</book>',
+        },
+    )
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+
+
+def test_xml_doctype_without_entities_is_still_parsed(index):
+    text = '<?xml version="1.0"?><!DOCTYPE GenAiPlanner SYSTEM "x.dtd"><GenAiPlanner><a/></GenAiPlanner>'
+    errors: list[str] = []
+    limits: list[str] = []
+    matches = structured_code_matches(index, "force-app/agent.genAiPlanner-meta.xml", text, errors, limits)
+    assert [m.signature_id for m in matches] == ["platform.salesforce-agentforce"]
+    assert not errors and not limits
 
 
 def test_parser_limits_keep_an_ordinary_config_scan_incomplete(tmp_path, index):
