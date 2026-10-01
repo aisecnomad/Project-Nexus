@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
+from shadowscan.cli import main
+from shadowscan.config import ConfigValidationError, normalize_connector_config, validate_connector_config
 from shadowscan.connectors.base import ConnectorContext
-from shadowscan.connectors.code.filesystem import FilesystemConnector, _nearest_root
+from shadowscan.connectors.code.filesystem import (
+    DEFAULT_EXCLUDES,
+    DISCLOSED_DEFAULT_EXCLUDES,
+    FilesystemConnector,
+    _nearest_root,
+)
+from shadowscan.connectors.code.github import GitHubConnector
+from shadowscan.connectors.code.gitlab import GitLabConnector
 from shadowscan.models import Kind
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.loader import signature_from_dict
@@ -282,3 +293,167 @@ def test_packaging_setup_py_still_marks_a_project(tmp_path: Path, run_connector,
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert str(tool) in _project_resources(findings)
+
+
+# ------------------------------------------------- default-excluded directories
+def _frameworks(findings):
+    return {framework for finding in findings for framework in finding.frameworks}
+
+
+def _default_exclusion_repo(root: Path, name: str) -> None:
+    (root / name).mkdir()
+    (root / name / "agent.py").write_text("from crewai import Agent\n")
+    (root / "src").mkdir()
+    (root / "src" / "app.py").write_text("from langgraph.graph import StateGraph\n")
+
+
+def test_disclosed_names_are_a_subset_of_the_default_excludes():
+    assert DISCLOSED_DEFAULT_EXCLUDES < DEFAULT_EXCLUDES
+    quiet = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "site-packages", "__pycache__", ".idea"}
+    assert quiet <= DEFAULT_EXCLUDES and not quiet & DISCLOSED_DEFAULT_EXCLUDES
+
+
+@pytest.mark.parametrize("name", sorted(DISCLOSED_DEFAULT_EXCLUDES))
+def test_default_excluded_directory_is_disclosed_and_can_be_scanned(tmp_path, run_connector, name):
+    _default_exclusion_repo(tmp_path, name)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    # `src/` is unaffected; the skipped directory is named, and the scan is still complete.
+    assert "framework.langgraph" in _frameworks(findings) and "framework.crewai" not in _frameworks(findings)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    assert ctx.stats.warnings == [
+        f"code.filesystem: default-excluded directories not scanned: {name} (1); "
+        "set default_excludes: false to scan them"
+    ]
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, default_excludes=False
+    )
+    assert {"framework.langgraph", "framework.crewai"} <= _frameworks(findings)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
+def test_default_excluded_directories_are_counted_by_name_at_any_depth(tmp_path, run_connector):
+    for rel in ("a/bin/x.py", "b/bin/y.py", "c/vendor/z.py", "d/node_modules/n.js", "e/.git/config"):
+        (tmp_path / rel).parent.mkdir(parents=True)
+        (tmp_path / rel).write_text("x = 1\n")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    # Quiet names (dependency trees, VCS metadata) are skipped without comment.
+    assert ctx.stats.warnings == [
+        "code.filesystem: default-excluded directories not scanned: bin (2), vendor (1); "
+        "set default_excludes: false to scan them"
+    ]
+
+
+def test_empty_or_absent_default_excluded_directories_are_not_disclosed(tmp_path, run_connector):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("from crewai import Agent\n")
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "dist" / "nested" / "deeper").mkdir(parents=True)
+    (tmp_path / "vendor").mkdir()
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.warnings and not ctx.stats.errors and not ctx.stats.incomplete
+
+
+def test_explicitly_excluded_default_name_is_not_disclosed(tmp_path, run_connector):
+    for name in ("vendor", "bin"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "x.py").write_text("x = 1\n")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, exclude=["vendor"])
+    assert ctx.stats.warnings == [
+        "code.filesystem: default-excluded directories not scanned: bin (1); "
+        "set default_excludes: false to scan them"
+    ]
+
+
+def test_explicit_exclude_still_applies_when_defaults_are_off(tmp_path, run_connector):
+    _default_exclusion_repo(tmp_path, "vendor")
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, default_excludes=False, exclude=["vendor"]
+    )
+    assert "framework.crewai" not in _frameworks(findings) and not ctx.stats.warnings
+
+
+def test_version_control_metadata_stays_excluded_when_defaults_are_off(tmp_path, run_connector):
+    # Its index and objects are binary: scanning them would make every checkout incomplete.
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "index").write_bytes(b"DIRC\x00\x00\x00\x02" + b"\x00" * 64)
+    (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
+    (tmp_path / "node_modules" / "pkg" / "agent.py").write_text("from crewai import Agent\n")
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, default_excludes=False
+    )
+    assert "framework.crewai" in _frameworks(findings)
+    assert not ctx.stats.errors and not ctx.stats.incomplete and not ctx.stats.warnings
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
+def test_symlink_named_like_a_disclosed_directory_is_not_probed(tmp_path, run_connector):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "agent.py").write_text("from crewai import Agent\n")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "vendor").symlink_to(outside, target_is_directory=True)
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert not findings and not ctx.stats.warnings
+
+
+def test_default_excludes_must_be_a_boolean(tmp_path, run_connector):
+    with pytest.raises(Exception, match="default_excludes must be a boolean"):
+        run_connector("code.filesystem", path=str(tmp_path), default_excludes="false")
+    assert "default_excludes" in FilesystemConnector.config_keys
+
+
+def test_default_exclusion_disclosure_is_per_root_and_names_the_root_of_a_multi_root_scan(
+    tmp_path, run_connector
+):
+    roots = []
+    for index_number in (1, 2):
+        root = tmp_path / f"repo{index_number}"
+        root.mkdir()
+        (root / "vendor").mkdir()
+        (root / "vendor" / "x.py").write_text("x = 1\n")
+        roots.append(str(root))
+    _, ctx = run_connector("code.filesystem", paths=roots, use_git=False)
+    assert len(ctx.stats.warnings) == 2
+    assert all("default-excluded directories not scanned: vendor (1)" in w for w in ctx.stats.warnings)
+    assert any("repo1" in w for w in ctx.stats.warnings) and any("repo2" in w for w in ctx.stats.warnings)
+
+
+def _cli_report(tmp_path: Path, *args: str) -> tuple[int, dict]:
+    output = tmp_path / "report.json"
+    argv = ["code", str(tmp_path / "repo"), *args, "--format", "json", "-o", str(output)]
+    result = CliRunner().invoke(main, argv)
+    return result.exit_code, json.loads(output.read_text())
+
+
+def test_cli_no_default_excludes_scans_the_built_in_excluded_directories(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _default_exclusion_repo(repo, "bin")
+    code, report = _cli_report(tmp_path)
+    assert code == 0 and report["summary"]["complete"] is True
+    assert "framework.crewai" not in report["summary"]["frameworks"]
+    warnings = [w for stats in report["stats"] for w in stats["warnings"]]
+    assert any("default-excluded directories not scanned: bin (1)" in w for w in warnings)
+
+    code, report = _cli_report(tmp_path, "--no-default-excludes")
+    assert code == 0 and report["summary"]["complete"] is True
+    assert {"framework.crewai", "framework.langgraph"} <= set(report["summary"]["frameworks"])
+    assert not [w for stats in report["stats"] for w in stats["warnings"]]
+
+
+@pytest.mark.parametrize("name", ["code.filesystem", "code.github", "code.gitlab"])
+def test_default_excludes_is_a_listed_boolean_option_of_every_code_connector(name):
+    validate_connector_config(name, {"default_excludes": False})
+    # Environment interpolation yields strings; they are normalized, not guessed.
+    assert normalize_connector_config(name, {"default_excludes": "false"})["default_excludes"] is False
+    with pytest.raises(ConfigValidationError, match="default_excludes"):
+        normalize_connector_config(name, {"default_excludes": "off"})
+
+
+@pytest.mark.parametrize(
+    ("cls", "config"), [(GitHubConnector, {"org": "acme"}), (GitLabConnector, {"group": "acme"})]
+)
+def test_remote_checkout_scans_receive_the_default_excludes_option(cls, config):
+    connector = cls(ConnectorContext(config={**config, "default_excludes": False}))
+    assert connector._filesystem_options()["default_excludes"] is False

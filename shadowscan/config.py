@@ -129,9 +129,12 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     "cloud.azure": frozenset({"allow_instance_credentials", "include_app_settings"}),
     "cloud.gcp": frozenset({"allow_instance_credentials"}),
     "cloud.oci": frozenset({"allow_instance_credentials"}),
-    "code.filesystem": frozenset({"include_tests", "scan_secrets", "strict_coverage", "use_git"}),
+    "code.filesystem": frozenset(
+        {"default_excludes", "include_tests", "scan_secrets", "strict_coverage", "use_git"}
+    ),
     "code.github": frozenset(
         {
+            "default_excludes",
             "include_archived",
             "include_forks",
             "include_tests",
@@ -141,7 +144,14 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
         }
     ),
     "code.gitlab": frozenset(
-        {"include_archived", "include_tests", "scan_secrets", "strict_coverage", "use_git"}
+        {
+            "default_excludes",
+            "include_archived",
+            "include_tests",
+            "scan_secrets",
+            "strict_coverage",
+            "use_git",
+        }
     ),
     "gateway.logs": frozenset({"llm_hosts_only"}),
     "identity.entra": frozenset({"include_first_party"}),

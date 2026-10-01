@@ -135,7 +135,7 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
-Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
+Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`,
 `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
 `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
 supply unique `root_ids` aligned with those paths for IDs that survive moving
@@ -143,7 +143,13 @@ checkouts. `account`, `owner` and `provider` set the corresponding finding
 fields. A configured `owner` is recorded on every finding and takes precedence
 over CODEOWNERS and inventory attribution; leave it unset to attribute by
 CODEOWNERS, then the git author when `use_git` is on, then the inventory.
-`metadata` is a mapping merged into every finding's metadata.
+`metadata` is a mapping merged into every finding's metadata. The walk skips a
+built-in list of directory names (`bin`, `build`, `dist`, `vendor`,
+`node_modules`, virtualenvs, caches, ...); a skipped non-empty `bin`, `build`,
+`dist`, `out`, `target`, `obj`, `coverage`, `vendor`, `third_party`,
+`thirdparty` or `external` directory is reported as a warning, and
+`default_excludes: false` (`--no-default-excludes`) scans them. The full list
+and the quiet/disclosed split are in [connectors/code.md](connectors/code.md).
 
 Each root is opened once, and every file, including `CODEOWNERS`, is read
 relative to it without following a link in any path component. A root that

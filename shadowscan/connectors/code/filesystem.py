@@ -167,6 +167,35 @@ DEFAULT_EXCLUDES = {
     "thirdparty",
     "external",
 }
+# The walk skips every DEFAULT_EXCLUDES name at any depth unless the connector
+# option `default_excludes` is false. Most are tool metadata, caches,
+# virtualenvs, dependency trees and IDE state that never hold a project's own
+# source: those are skipped without comment. The names here are build output or
+# vendored code by convention, but projects also keep first-party code in them
+# (scripts in bin/, an agent under vendor/ or build/). A directory with these
+# names that holds a file is reported as a scan warning (not incomplete) so the
+# omission is visible. This is the one definition of the split.
+DISCLOSED_DEFAULT_EXCLUDES = frozenset(
+    {
+        "bin",
+        "build",
+        "dist",
+        "out",
+        "target",
+        "obj",
+        "coverage",
+        "vendor",
+        "third_party",
+        "thirdparty",
+        "external",
+    }
+)
+# Version-control metadata is never project content (its index and objects are
+# binary, so each would be a coverage gap): it stays excluded even when
+# `default_excludes` is false.
+VCS_METADATA_EXCLUDES = frozenset({".git", ".hg", ".svn"})
+# Entries inspected to decide whether a skipped directory holds any file.
+_EMPTY_DIRECTORY_PROBE_ENTRIES = 256
 
 LOCK_FILES = {
     "package-lock.json",
@@ -290,6 +319,34 @@ def _marks_project(directory: Path, names: Iterable[str]) -> bool:
         name in PROJECT_ROOT_MARKERS and (name != "setup.py" or _packaging_setup_script(directory / name))
         for name in names
     )
+
+
+def _holds_file(directory: Path) -> bool:
+    """Whether a skipped ``directory`` holds anything that is not a directory.
+
+    Probes at most ``_EMPTY_DIRECTORY_PROBE_ENTRIES`` entries without following
+    a link (a link in place of the directory is not listed at all). A tree the
+    probe cannot finish or cannot list counts as non-empty, so the omission is
+    disclosed rather than assumed to be nothing.
+    """
+    try:
+        if directory.is_symlink():
+            return False
+    except OSError:
+        return True
+    pending = [directory]
+    inspected = 0
+    while pending:
+        try:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    inspected += 1
+                    if inspected > _EMPTY_DIRECTORY_PROBE_ENTRIES or not entry.is_dir(follow_symlinks=False):
+                        return True
+                    pending.append(Path(entry.path))
+        except OSError:
+            return True
+    return False
 
 
 TEXT_CONFIG_EXTENSIONS = {
@@ -801,6 +858,14 @@ class FilesystemConnector(BaseConnector):
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "extra directory names / glob patterns to skip",
+        "default_excludes": (
+            "skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE "
+            "state, and build-output or vendored names such as bin, build, dist, vendor) at any depth "
+            "(default true); a skipped non-empty bin/build/dist/out/target/obj/coverage/vendor/"
+            "third_party/thirdparty/external directory is reported as a warning. false scans all of "
+            "them, including node_modules and virtualenvs unless `exclude` names them; VCS metadata "
+            "(.git, .hg, .svn) is never scanned"
+        ),
         "max_file_size": (
             "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs "
             "matches it (default 1,000,000 bytes)"
@@ -877,8 +942,14 @@ class FilesystemConnector(BaseConnector):
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
         extra = ctx.get("exclude", []) or []
-        self.exclude_names = set(DEFAULT_EXCLUDES) | {e for e in extra if "*" not in e and "/" not in e}
+        self.default_excludes = config_boolean(ctx.get("default_excludes", True), "default_excludes")
+        self._explicit_exclude_names = frozenset(e for e in extra if "*" not in e and "/" not in e)
+        self.exclude_names = (
+            set(DEFAULT_EXCLUDES) if self.default_excludes else set(VCS_METADATA_EXCLUDES)
+        ) | self._explicit_exclude_names
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
+        # Default-excluded directory names the current walk skipped, with counts.
+        self._default_skipped: dict[str, int] = {}
         self.label: str | None = ctx.get("label")
         # Every labeled `paths` root has its own identity, even if the list
         # shrinks to one. The engine marks a child split for incremental reuse.
@@ -962,6 +1033,34 @@ class FilesystemConnector(BaseConnector):
             if PurePosixPath(rel).match(g) or PurePosixPath(rel).match(g.rstrip("/") + "/*"):
                 return True
         return False
+
+    def _disclosed_default_exclusion(self, rel: str, name: str) -> bool:
+        """Whether only a built-in exclusion of a disclosed name skips this directory.
+
+        A quiet name (``DISCLOSED_DEFAULT_EXCLUDES`` lists the others), and a
+        name or glob the operator excluded explicitly, skip without comment.
+        """
+        return (
+            self.default_excludes
+            and name in DISCLOSED_DEFAULT_EXCLUDES
+            and name not in self._explicit_exclude_names
+            and not self._excluded_file(rel)
+        )
+
+    def _report_default_excluded(self, scan: _ScanState) -> None:
+        """Warn once per root about the non-empty built-in-excluded directories the walk skipped."""
+        skipped, self._default_skipped = self._default_skipped, {}
+        if not skipped:
+            return
+        named = ", ".join(f"{name} ({count})" for name, count in sorted(skipped.items()))
+        paths = self.ctx.get("paths")
+        several = (isinstance(paths, list) and len(paths) > 1) or self.ctx.get("_shared_label_roots") is True
+        where = f"{scan.label}: " if several else ""
+        self.ctx.warn(
+            f"code.filesystem: {where}default-excluded directories not scanned: {named}; "
+            "set default_excludes: false to scan them",
+            incomplete=False,
+        )
 
     def _size_limit(self, name: str) -> int:
         """Bytes the reader accepts for ``name``: notebooks may carry large saved outputs."""
@@ -1127,9 +1226,11 @@ class FilesystemConnector(BaseConnector):
         kept = []
         for name in sorted(dirnames):
             rel = name if rel_dir == "." else f"{rel_dir}/{name}"
-            if self._excluded(rel, name):
-                continue
             path = Path(dirpath) / name
+            if self._excluded(rel, name):
+                if self._disclosed_default_exclusion(rel, name) and _holds_file(path):
+                    self._default_skipped[name] = self._default_skipped.get(name, 0) + 1
+                continue
             try:
                 if path.is_symlink():
                     self._skip_link(root, resolved_root, rel, path)
@@ -1257,11 +1358,13 @@ class FilesystemConnector(BaseConnector):
             reason = _root_open_failure(exc)
             self.ctx.error(f"code.filesystem: {scan.label}: could not open the scan root safely ({reason})")
             return
+        self._default_skipped = {}
         try:
             self._walk_entries(scan)
         finally:
             os.close(scan.root_fd)
             scan.root_fd = -1
+        self._report_default_excluded(scan)
 
     def _walk_entries(self, scan: _ScanState) -> None:
         """Start each file only while its matching budget fits before the connector deadline."""

@@ -45,9 +45,34 @@ reviewed local metadata. The metadata command must support `--no-lazy-fetch`;
 unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 
-Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
+Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`,
 `max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
+
+The walk skips a built-in list of directory names at any depth. `exclude` only
+adds to it; `default_excludes: false` (`--no-default-excludes`) turns the list
+off. Most names are tool metadata, caches, virtualenvs, dependency trees and IDE
+state that never hold a project's own source, and are skipped without comment:
+`.git`, `.hg`, `.svn`, `node_modules`, `bower_components`, `.yarn`,
+`.pnpm-store`, `Pods`, `.venv`, `venv`, `.virtualenv`, `site-packages`,
+`__pycache__`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.tox`, `.nox`,
+`.cache`, `.coverage`, `.dart_tool`, `.gradle`, `.terraform`, `.serverless`,
+`.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.parcel-cache`, `.idea` and `.vs`.
+The remaining names are build output or vendored code by convention, but
+projects also keep first-party code there (scripts in `bin/`, an agent under
+`vendor/` or `build/`): `bin`, `build`, `dist`, `out`, `target`, `obj`,
+`coverage`, `vendor`, `third_party`, `thirdparty` and `external`. When the walk
+skips one of these that holds at least one file, the scan records the warning
+`default-excluded directories not scanned: bin (2), vendor (1); set
+default_excludes: false to scan them` (the count is directories with that name,
+and a name listed in `exclude` is not repeated there). It is a warning, not
+incomplete coverage, because the exclusion is a documented default. With
+`default_excludes: false` only the explicit `exclude` entries apply, so
+dependency trees such as `node_modules` and virtualenvs are scanned too (add
+them to `exclude` unless that is intended); version-control metadata (`.git`,
+`.hg`, `.svn`) is never scanned, since its index and objects are binary. The
+same option is accepted by `code.github` and `code.gitlab` and forwarded to the
+scan of each checkout.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
 by default; `strict_coverage` promotes their diagnostics to errors. Declared
 oversize skip globs remain visible omissions. Each root is opened once, and every
