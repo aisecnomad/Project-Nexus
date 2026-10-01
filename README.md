@@ -16,20 +16,21 @@ registry of
 [Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
 Counts and severity labels need an analyst review before they drive enforcement.
 
-Example findings (totals vary as signatures evolve):
+Example output, abridged to the first columns (totals vary as signatures evolve;
+`--max-rows 5` shows the five highest-risk rows of the bundled offline demo):
 
 ```
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 99 findings  •  95 shadow (inventory: 3 registered agents)                  │
-│ critical 12  high 52  medium 35  •  code 11 identity 19 cloud 27 …          │
+│ critical 11  high 53  medium 35  •  cloud 27 identity 19 saas 17 …          │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
- CRITICAL 95  SHADOW  code      mcp-server   MCP configuration: .mcp.json (inline GitHub PAT, Zapier remote MCP, docker/postgres)
- CRITICAL 90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
- HIGH     73  SHADOW  lowcode   agent        Copilot Studio agent: HR Helper
- MEDIUM   33  ops-provisioning-04  cloud  agent  Bedrock Agent: ops-provisioning-04   ← registered via its card's resource binding; owner from the AWS resource tag
+ CRITICAL  95  SHADOW  code      mcp-server   MCP configuration: .mcp.json
+ CRITICAL  90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
+ CRITICAL  90  SHADOW  identity  oauth-grant  Entra service principal: Otter.ai
+ CRITICAL  83  SHADOW  cloud     mcp-server   AgentCore Gateway (MCP): tools-gateway
 ```
 
 ## Why
