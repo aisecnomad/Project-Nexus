@@ -14,6 +14,7 @@ the HTTP read deadline match the shipped code. Run both modules with
 from __future__ import annotations
 
 import functools
+import json
 import re
 import tomllib
 from collections.abc import Iterator
@@ -24,7 +25,7 @@ from urllib.parse import unquote
 import pytest
 import yaml
 
-from shadowscan.connectors import builtin_connector_names
+from shadowscan.connectors import builtin_connector_names, get_connector_class
 from shadowscan.reporters.csv_ import _safe_cell
 from shadowscan.utils import http
 
@@ -609,6 +610,44 @@ def test_documented_connector_counts_match_the_registry() -> None:
         assert int(match.group(1)) == actual, (
             f"{_relative(path)} claims {match.group(1)} connectors, registry has {actual}"
         )
+
+
+# Connector configuration keys that may stay undocumented, each with a reason.
+# Keep this empty unless a key is deliberately internal.
+_UNDOCUMENTED_CONNECTOR_KEYS: dict[str, str] = {}
+
+
+def test_every_connector_configuration_key_is_documented() -> None:
+    """Every key `shadowscan connectors --json` lists is named in docs/connectors*.md."""
+    docs = "\n".join(
+        _read(path)
+        for path in [ROOT / "docs" / "connectors.md", *sorted((ROOT / "docs" / "connectors").glob("*.md"))]
+    )
+    listed = set()
+    missing = []
+    for name in builtin_connector_names():
+        connector = get_connector_class(name)
+        for key in {**connector.config_keys, **connector.shared_config_keys}:
+            listed.add(f"{name}.{key}")
+            # Backticked as `key`, `key: value` or `key=value`.
+            if f"{name}.{key}" not in _UNDOCUMENTED_CONNECTOR_KEYS and not re.search(
+                rf"`{re.escape(key)}[`:= ]", docs
+            ):
+                missing.append(f"{name}.{key}")
+    assert not missing, f"document these connector configuration keys in docs/connectors*.md: {missing}"
+    assert _UNDOCUMENTED_CONNECTOR_KEYS.keys() <= listed, "stale undocumented-key exemptions"
+
+
+def test_documented_realistic_corpus_file_range_matches_the_corpus() -> None:
+    cases = json.loads(_read(ROOT / "tools" / "evaluation" / "realistic_corpus.json"))["cases"]
+    counts = [len(case["files"]) for case in cases]
+    match = re.search(
+        r"snapshots \((\d+) to (\d+) files each\)", " ".join(_read(ROOT / "docs" / "evaluation.md").split())
+    )
+    assert match is not None, "docs/evaluation.md should state the realistic corpus file range"
+    assert (int(match.group(1)), int(match.group(2))) == (min(counts), max(counts)), (
+        f"docs/evaluation.md claims {match.group(0)!r}; the corpus has {min(counts)} to {max(counts)} files per case"
+    )
 
 
 def test_gcp_pagination_caps_are_not_dropped_from_the_per_surface_page() -> None:

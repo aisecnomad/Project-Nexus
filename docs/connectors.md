@@ -144,6 +144,12 @@ fields. A configured `owner` is recorded on every finding and takes precedence
 over CODEOWNERS and inventory attribution; leave it unset to attribute by
 CODEOWNERS, then the git author when `use_git` is on, then the inventory.
 `metadata` is a mapping merged into every finding's metadata.
+`oversize_skip_globs` replaces the default list of case-insensitive file-name
+globs. The defaults cover lockfiles, minified bundles, source maps, images,
+fonts, archives and compiled artifacts, and a glob with `/` matches the relative
+path. A file over `max_file_size` that matches one is skipped with a warning
+and the scan stays complete, even under `strict_coverage`. Any other oversize
+analyzable file makes coverage incomplete.
 
 Each root is opened once, and every file, including `CODEOWNERS`, is read
 relative to it without following a link in any path component. A root that
@@ -228,6 +234,8 @@ match AI SaaS signatures or hold privileged scopes, and service apps
 Token: SSWS API token (`token`, env `OKTA_API_TOKEN`) or OAuth bearer
 (`bearer`, env `OKTA_ACCESS_TOKEN`) with `okta.apps.read`; `bearer` wins when
 both are set. Options: `include_inactive`, `fetch_tokens`.
+Live collection also needs `org_url` (`https://<org>.okta.com`, env
+`OKTA_ORG_URL`).
 
 ### `identity.entra`
 Microsoft Graph: service principals, delegated `oauth2PermissionGrants`,
@@ -241,6 +249,14 @@ coverage incomplete. Their permission evidence remains available for investigati
 and cannot establish an approved registry binding. A service principal exported
 with conflicting records is reported the same way, keeping AI evidence from up to
 16 of its snapshots (64 evidence items) without choosing one snapshot's identity.
+
+Client credentials: `tenant_id`, `client_id` and `client_secret` (env
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`).
+`include_first_party: true` also reports Microsoft first-party service
+principals that match no AI signature; Copilot ones are always kept.
+`max_app_role_lookups` caps the per-service-principal `appRoleAssignments`
+calls (default 2000). Reaching the cap leaves app-only permissions partial and
+the scan incomplete.
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
@@ -263,11 +279,16 @@ unverifiable scope makes collection incomplete; retained observations cannot be
 approved or merged with observations from another unresolved connector instance.
 Google Workspace inventory bindings must include the matching customer in
 `discovery.accounts`. Regenerate older cards whose account list is empty.
+`max_users` caps the users enumerated (default 10000); reaching it makes the
+scan incomplete.
 
 ### `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their
 audiences and scopes, AI-named apps. Auth: M2M client for the Management API
 (`read:clients`, `read:client_grants`) or `token`.
+Options: `domain` (tenant domain such as `acme.eu.auth0.com`, env
+`AUTH0_DOMAIN`) and the M2M application's `client_id` and `client_secret` (env
+`AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`).
 
 ### `identity.jwt`
 Decodes tokens (never stored) and classifies the holder as `human`, `service`,
@@ -283,6 +304,9 @@ unverified token's issuer does not choose or authorize a key source. The JWKS UR
 is configured by the operator, so legitimate providers may host keys separately.
 Audience and historical-token expiry are not authorization checks here. Read
 `metadata.verified` as signature evidence, not permission to act.
+
+Tokens come from `input` (one token per line, or JSON) or from the `tokens`
+list in the connector entry. Keep live tokens out of committed configuration.
 
 CLI equivalents: `--jwks-url`, `--expected-issuer`, and repeatable
 `--jwt-algorithm`. The latter two require `--jwks-url`.
@@ -326,6 +350,11 @@ token audience. A denied child request or failed continuation marks coverage
 incomplete while retaining findings from other environments. Before relying on
 live coverage, verify the application's Power Platform roles and known apps
 in a read-only tenant canary.
+Options: `tenant_id`, `client_id` and `client_secret` (env `AZURE_TENANT_ID`,
+`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`; the client must be a Power Platform
+application user). `environments` restricts live collection to the listed
+environments, matched by name or display name. `include_bots` defaults to
+true; `false` skips the Dataverse query for Copilot Studio agents.
 
 ### `lowcode.salesforce`
 SOQL/Tooling: `BotDefinition`/`BotVersion` (Einstein bots & Agentforce
@@ -333,10 +362,20 @@ agents), `GenAiPlannerDefinition`/`GenAiPluginDefinition`/`GenAiFunctionDefiniti
 (topics, actions, Apex/Flow targets), `GenAiPromptTemplate`, `FlowDefinitionView`
 with AI hints, `ConnectedApplication` + `OauthToken` (user-authorised apps,
 aggregated). Auth: `access_token` or client-credentials connected app.
+Options: `instance_url` (`https://<org>.my.salesforce.com`, env
+`SFDC_INSTANCE_URL`), `access_token` (env `SFDC_ACCESS_TOKEN`) or the connected
+app's `client_id` and `client_secret` (env `SFDC_CLIENT_ID`,
+`SFDC_CLIENT_SECRET`), `api_version` (default `v62.0`) and `max_pages` (per
+query, at most 1000).
 
 ### `lowcode.servicenow`
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
 `sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer.
+
+Options: `instance` (env `SNOW_INSTANCE`), `username` and `password` (env
+`SNOW_USERNAME`, `SNOW_PASSWORD`) or `token` (env `SNOW_TOKEN`) for a bearer
+token instead of basic auth; `max_pages` (per table, at most 1000); `input`
+for an offline JSON export of the table records.
 
 ### `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
@@ -348,6 +387,9 @@ steps (→ code-exec), models. Live pagination is bounded by `max_pages`
 An n8n workflow needs a nonempty provider ID for a usable resource identity.
 Exported blueprints without an ID retain detected AI evidence under an unresolved
 identity, make collection incomplete, and cannot be approved by a registry card.
+n8n authenticates with `api_key`, sent as `X-N8N-API-KEY` (env `N8N_API_KEY`),
+against `api_url` (env `N8N_API_URL`, for example
+`https://n8n.example.com/api/v1`).
 
 ## SaaS
 
@@ -372,6 +414,10 @@ installed apps per team (capped by `max_teams`).
 Malformed app IDs, conflicting expanded identities and malformed nested
 definitions or permissions make collection incomplete. An installation ID is
 not a fallback catalog app ID. Valid neighboring records remain available.
+Options: `tenant_id`, `client_id` and `client_secret` (env `AZURE_TENANT_ID`,
+`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`) or `access_token` (env
+`GRAPH_ACCESS_TOKEN`). `include_store: true` also lists store apps in the
+catalog; installed apps are always inspected.
 
 ### `saas.github-apps`
 Org installations with permissions and repository selection (AI reviewers,
@@ -391,10 +437,20 @@ installation export. Notion rejects a missing/repeated pagination cursor and
 caps live pages (`max_pages`, at most 1000); either condition makes the scan
 incomplete. Zoom likewise marks denied, invalid, or truncated pages incomplete.
 
+Atlassian options: `site` (`https://<org>.atlassian.net`, env
+`ATLASSIAN_SITE`), a site admin `email` and `api_token` (env `ATLASSIAN_EMAIL`,
+`ATLASSIAN_API_TOKEN`), and `products` (`jira`, `confluence`; default both).
+Zoom options: `account_id`, `client_id` and `client_secret` (env
+`ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`) for a
+Server-to-Server OAuth app, or `access_token` (env `ZOOM_ACCESS_TOKEN`).
+
 ### `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
 exports…). Map columns with `fields:`; findings are produced for AI matches
 and privileged/data scopes (`keep_all: true` to emit everything).
+`platform` (default `saas`) names the export's source, for example
+`google-marketplace`, `hubspot` or `defender-mcas`. It prefixes finding titles
+and resource IDs and sets the provider, so keep it stable between scans.
 
 ## Cloud
 
@@ -407,6 +463,13 @@ container. Those values are ordinary configuration rather than credentials, so
 they are not also removed from sibling fields such as ARNs; values under
 sensitive names and recognizable credential formats are removed everywhere.
 Findings record environment variable names only.
+
+Instance and workload credentials are used only when the scan-wide
+`options.allow_instance_credentials` is true (default false). These are EC2 or
+ECS roles, Azure managed identity, GCP metadata Application Default
+Credentials, and OCI instance or resource principals. The engine replaces an
+`allow_instance_credentials` value in a connector entry with the scan-wide
+value; see [Production](production.md).
 
 ### `cloud.aws`
 Bedrock Agents (action groups, knowledge bases, aliases, collaborators,
@@ -471,6 +534,11 @@ Unreachable locations reported by GCP make the scan incomplete. `max_projects`
 limits discovery without loading all projects first; `max_pages` (default 1000)
 bounds every paginated call; resource lists stop at 500 pages and audit-log
 queries at 50 pages regardless.
+`locations` lists the Vertex AI and Dialogflow locations to query (default
+`us-central1`, `us-east4`, `us-west1`, `europe-west1`, `europe-west4`,
+`asia-southeast1`, `asia-northeast1`). `credentials_file` names an explicit
+Google credentials file (env `GOOGLE_APPLICATION_CREDENTIALS`); otherwise the
+local gcloud Application Default Credentials are used.
 
 ### `cloud.azure`
 Azure Resource Graph inventory across subscriptions, then: OpenAI/AI Services
@@ -487,6 +555,10 @@ Foundry agent discovery targets the classic Agent Service contract:
 require their own contract and are not implied by this support. Missing, denied
 or malformed collections remain incomplete; pagination must finish before
 absence can be inferred.
+`subscriptions` lists the subscription IDs to scan (default: every visible
+subscription). `include_app_settings` (default true) reads Web and Function
+app settings, recording names and checking values for credentials; `false`
+skips them.
 
 ### `cloud.oci`
 Generative AI Agents (agents, endpoints, tools, knowledge bases), Digital
