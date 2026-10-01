@@ -66,6 +66,7 @@ _PEM = re.compile(
 _AUTH = re.compile(r"(?i)\b(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 _QUERY_SEPARATOR = re.compile(r"[&#]")
+_QUERY_TEXT = re.compile(r"\?[^\s<>\"']+")
 
 
 def _url_host(authority: str) -> str:
@@ -106,21 +107,6 @@ def _sanitize_url(match: re.Match[str]) -> str:
     tail = _redact_path_secret(_url_host(authority), tail[:path_end]) + tail[path_end:]
     url = scheme + "://" + authority + tail
 
-    def query_value(field: str) -> str:
-        key, equals, value = field.partition("=")
-        if not equals:
-            return field
-        decoded = unquote(key).lower()
-        sensitive = _sensitive_assignment_key(decoded) or decoded in {
-            "key",
-            "sig",
-            "signature",
-            "code",
-            "x-amz-signature",
-            "x-goog-signature",
-        }
-        return key + equals + (REDACTED if sensitive else value)
-
     # Consume each field once. A regex that retries an unbounded key after every
     # '?' takes quadratic time on a URL containing many '?' and no '='. Keep '?'
     # within values (it is legal there) so redacting a secret never retains its
@@ -131,8 +117,46 @@ def _sanitize_url(match: re.Match[str]) -> str:
     parts = [url[: start + 1]]
     cursor = start + 1
     for separator in _QUERY_SEPARATOR.finditer(url, cursor):
-        parts.append(query_value(url[cursor : separator.start()]))
+        parts.append(_query_value(url[cursor : separator.start()]))
         parts.append(separator.group(0))
         cursor = separator.end()
-    parts.append(query_value(url[cursor:]))
+    parts.append(_query_value(url[cursor:]))
     return "".join(parts)
+
+
+def _query_value(field: str, *, bare: bool = False) -> str:
+    """Withhold a credential-named query field; bare query text uses explicit names.
+
+    Generic key/code parameters need a full URL context. Signature and
+    credential-specific names also identify a secret in a relative URL or
+    copied query string, without guessing whether arbitrary prose is a URL.
+    """
+    key, equals, value = field.partition("=")
+    if not equals:
+        return field
+    decoded = unquote(key).lower()
+    sensitive = _sensitive_assignment_key(decoded) or decoded in {
+        "sig",
+        "signature",
+        "x-amz-signature",
+        "x-goog-signature",
+    }
+    if not bare:
+        sensitive = sensitive or decoded in {"key", "code"}
+    return key + equals + (REDACTED if sensitive else value)
+
+
+def _redact_query_text(text: str) -> str:
+    """Withhold explicit credential fields in scheme-less URLs and query excerpts."""
+
+    def replace(match: re.Match[str]) -> str:
+        query = match.group()
+        pieces = ["?"]
+        cursor = 1
+        for separator in _QUERY_SEPARATOR.finditer(query, cursor):
+            pieces.extend((_query_value(query[cursor : separator.start()], bare=True), separator.group()))
+            cursor = separator.end()
+        pieces.append(_query_value(query[cursor:], bare=True))
+        return "".join(pieces)
+
+    return _QUERY_TEXT.sub(replace, text) if "?" in text else text

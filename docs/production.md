@@ -10,6 +10,42 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 1 review migration
+
+Collect a fresh baseline after adopting the review corrections. Named Python
+direct-reference dependencies now use their declared package identity, and
+Python source analysis excludes provably unreachable local statements and loop
+bodies. Findings may appear or disappear, or change framework attribution;
+inspect those differences before using a comparison to enforce policy. The
+analysis remains bounded and does not prove runtime or interprocedural behavior.
+
+Opt-in Git enrichment now limits combined command output to 16 KiB, author and
+email fields to 1,024 characters each, and timestamps to 64 characters. Exceeded
+limits, malformed metadata, cancellation and deadlines retain source findings
+while making coverage incomplete. Re-run affected repositories with reviewed
+metadata or with history enrichment disabled; an incomplete scan cannot establish
+resolution of earlier findings.
+
+Credential redaction recognizes more constructor, environment fallback, record,
+command and query forms. The redaction policy token changes automatically with
+these rules. Regenerate persisted reports, exports and incremental baselines
+before sharing or reusing them, because an older artifact can contain values
+now withheld. Reports remain sensitive: ambiguous comment-only credential hints
+and arbitrary computed expressions do not establish safe public disclosure.
+
+Production acceptance policies may now freeze aggregate and per-kind
+`min_precision_lower95`, `min_recall_lower95` and `min_specificity_lower95`
+thresholds together. Successful decisions expose the recomputed 95% Wilson lower endpoints;
+the revised example also sets per-kind sample floors. Existing point-estimate
+policies retain their behavior. Freeze confidence thresholds before collecting
+new independently human-labeled holdout evidence, rather than tuning a policy to
+a previously observed result. A small perfect sample need not pass these gates.
+
+The [versioned merge policy](operations/merge-policy.md) and offline snapshot
+checker prepare the requested review and CI enforcement. They cannot activate
+live settings through the connected GitHub App. Administrator activation,
+independent human approval and approved tenant acceptance remain outstanding.
+
 ## September 27 migration and acceptance
 
 The distribution metadata now names `project-nexus-shadowscan`. Install a wheel
@@ -861,6 +897,13 @@ lost user attribution before using their counts as governance evidence.
 
 ### Merge gate and review status
 
+The [versioned policy and activation procedure](operations/merge-policy.md)
+retain the existing required checks and add `CI gate`, bind them to GitHub
+Actions, and require fresh non-author approval with no bypass actors. Use
+`python -m tools.governance_check RULESET_JSON` on a fresh API snapshot before
+relying on enforcement. Neither the policy file nor this checker updates live
+repository administration settings.
+
 Ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
 is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an
@@ -875,6 +918,13 @@ at that moment; and on 2026-09-27 (10:40 UTC) both rulesets were read back with
 no observation as permanent; only the live commands below describe the current
 state. Keep the CodeQL job's displayed name `analyze` consistent with the
 required check.
+
+Both visible rulesets were again observed disabled on 2026-10-01. The review/CI
+ruleset had no bypass actors; the separate `Protect main` object did contain
+bypass actors. Classic branch protection was not readable through the app
+integration, so that observation does not establish whether another protection
+layer existed. Read and retain the current configuration before activating the
+reviewed policy.
 
 Whatever the ruleset's state, the history is unchanged: the repository has a
 single maintainer, and no change merged to `main` through 2026-09-25 (including

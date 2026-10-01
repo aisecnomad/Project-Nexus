@@ -87,7 +87,12 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
 from shadowscan.utils.files import open_confined_directory, open_confined_file
-from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
+from shadowscan.utils.git import (
+    MetadataOutputLimitError,
+    metadata_git_argv_prefix,
+    metadata_git_env,
+    run_bounded_metadata,
+)
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize, sanitize_text
@@ -106,6 +111,11 @@ _PROJECT_MANIFESTS = frozenset({"crewai", "langgraph"})
 
 # Registered MCP tool names retained per project.
 _MAX_MCP_TOOLS = 200
+
+# Git identities must not turn a small compressed commit into a large report.
+_MAX_GIT_AUTHOR_CHARS = 1024
+_MAX_GIT_EMAIL_CHARS = 1024
+_MAX_GIT_TIMESTAMP_CHARS = 64
 
 # Signal types that establish a library in a project (see _emit_project).
 _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
@@ -1990,7 +2000,7 @@ class FilesystemConnector(BaseConnector):
             return {}
         target = "." if rel_root == "." else rel_root
         try:
-            out = subprocess.run(
+            out = run_bounded_metadata(
                 [
                     *metadata_git_argv_prefix(),
                     "-C",
@@ -2004,18 +2014,27 @@ class FilesystemConnector(BaseConnector):
                     "--",
                     target,
                 ],
-                capture_output=True,
-                # Author bytes follow the repository's i18n.logOutputEncoding;
-                # a strict decode would abort the whole project's findings.
-                encoding="utf-8",
-                errors="replace",
                 env=metadata_git_env(),
+                ctx=self.ctx,
                 timeout=20,
-                check=False,
             )
             if out.returncode == 0 and out.stdout.strip():
                 # NUL separators: an author name may itself contain "|".
-                an, ae, ci = (out.stdout.strip("\r\n").split("\x00") + ["", "", ""])[:3]
+                fields = out.stdout.strip("\r\n").split("\x00")
+                if len(fields) != 3:
+                    self.ctx.warn("code.filesystem: git metadata has invalid fields; enrichment skipped")
+                    return {}
+                an, ae, ci = fields
+                if any(
+                    len(value) > limit
+                    for value, limit in zip(
+                        fields,
+                        (_MAX_GIT_AUTHOR_CHARS, _MAX_GIT_EMAIL_CHARS, _MAX_GIT_TIMESTAMP_CHARS),
+                        strict=True,
+                    )
+                ):
+                    self.ctx.warn("code.filesystem: git metadata field limit exceeded; enrichment skipped")
+                    return {}
                 if parse_timestamp(ci) is None:
                     self.ctx.warn(
                         "code.filesystem: git metadata has an unparseable commit timestamp; "
@@ -2025,6 +2044,9 @@ class FilesystemConnector(BaseConnector):
                 return {"last_author": an, "last_author_email": ae, "last_commit": ci}
             if out.returncode == 0:
                 return {}
+        except MetadataOutputLimitError:
+            self.ctx.warn("code.filesystem: git metadata output limit exceeded; enrichment skipped")
+            return {}
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
         self.ctx.warn(

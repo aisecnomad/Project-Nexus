@@ -84,7 +84,9 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   deadline across every external SDK call.
 * Git history enrichment is disabled by default. Explicit `use_git: true`
   uses metadata-only commands with lazy fetching and every transport disabled;
-  unsupported Git behavior or failed metadata reads makes coverage incomplete.
+  stdout and stderr share a 16 KiB limit, identity fields are capped, and
+  cancellation or deadlines terminate the metadata process group. Unsupported
+  Git behavior, malformed metadata or exceeded limits makes coverage incomplete.
   Clone calls have a separate HTTPS-only policy: credentials stay scoped to the
   approved origin and redirects are disabled. Hooks and inherited Git overrides
   are suppressed. Unsafe branch values are dropped with incomplete diagnostics.
@@ -143,33 +145,38 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   `OpenAIKey`); an environment-style name there (`PAGE_TOKEN`) withholds only
   an opaque value. The rules added for settings, options, numbered names and
   YAML values run after the earlier rules, on their output, so they only
-  withhold more.
+  withhold more. Credential constructor calls also accept whitespace and
+  comments before the parenthesis, redundant parentheses, static C# `$`
+  strings, verbatim multiline C# strings with doubled quotes, and multiline
+  triple-quoted literals. Recognized unterminated quoted flow-record values
+  and credential-call literals are withheld through their bounded text tail.
+  Known environment lookup
+  fallback literals inherit the credential constructor's context even when
+  their environment variable name is ordinary. Textual flow records support
+  either name/value field order, braces and escaped quotes inside quoted
+  values; preceding YAML sibling values are read within sixteen lines without
+  crossing a list-item or mapping boundary. Explicit signature and credential
+  query fields are withheld in scheme-less URLs and copied query strings too.
+  Command-specific `llm -k` and credential options glued after another option
+  value are recognized; unrelated `-k` flags stay visible. Under key-like
+  assignment names, an opaque identifier with at least three digit runs and
+  only short letter fragments is also withheld; ordinary type names and
+  `--key users` values remain visible.
 * Redaction cannot withhold a credential that nothing names or shapes as one,
   so treat reports as confidential. These forms can remain: an unprefixed
   literal passed to an ordinary function or nested in another call inside a
-  credential constructor (`AzureKeyCredential(str("..."))`); a literal in a
-  credential call written in a form the call rules do not read: after a space
-  or comment before the parenthesis (`AzureKeyCredential ("...")`, since
-  prose writes a space there), inside redundant parentheses
-  (`AzureKeyCredential(("..."))`), as a C# interpolated string (`$"..."`) or
-  as a triple-quoted string spanning lines; a credential query parameter
-  outside a URL with a scheme (`?sig=...`); a word-like or short value under
-  a name that is not itself sensitive (an unquoted value made only of
-  capitalized words, digits and underscores reads as an identifier, so
-  `KEY1=Gh4Hj9Kl8Zx2Qw` and `openaiKey: Zx9Kq2Lm8Np4` stay); a lowercase word
+  credential constructor (`AzureKeyCredential(str("..."))`); a value assembled
+  by actual interpolation or another computed expression; a word-like or
+  short value under a name that is not itself sensitive; a lowercase word
   after a space-separated option or as a fallback default; an option this
-  list does not name, including a one-letter option (`-k ...`) and an option
-  glued to the value before it (`--key=...--password "..."`); a positional
+  list does not name, including command-specific one-letter options other
+  than the recognized forms above; a positional
   argument of any other command; the part of an unquoted option value after a
   bracket, brace or comma; a literal fallback of a name that is not a
-  credential's, even inside a credential constructor
-  (`new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "...")`);
-  a value named only by a comment (`x = "..."  # openai key`); a name/value
-  record in text whose value field comes before its name
-  (`{"value": "...", "name": "Password"}`, `- value: ...` above
-  `name: DB_PASSWORD`); the part of a quoted record value after a `}` inside
-  it under a name sensitive as a whole (`{"name": "Password", "value":
-  "p}..."}`); a value split across concatenated strings; and sensitive
+  credential's outside a credential constructor, or read through an
+  unrecognized environment API inside one; a value named only by a comment
+  (`x = "..."  # openai key`); a record outside the bounded sibling/flow
+  rules above; a value assembled across separate expressions; and sensitive
   business data.
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,

@@ -202,6 +202,20 @@ _OPAQUE_VALUE = re.compile(
 # long run of one class every possible way before it failed, so
 # 'key: ' + 'a' * 56 + '.' took minutes.
 _WORD_RUN = re.compile(r"[A-Z]+|[a-z]+|[0-9_]+|[^A-Za-z0-9_]")
+_IDENTIFIER_DIGITS = re.compile(r"[0-9]+")
+_IDENTIFIER_LETTERS = re.compile(r"[A-Za-z]+")
+
+
+def _opaque_identifier(value: str) -> bool:
+    """A word-shaped key with repeated short fragments separated by digits.
+
+    Types such as Ed25519PrivateKey and labels such as NextPage2 remain
+    identifiers. Multiple short fragments with interleaved digit runs are
+    stronger evidence of key material when the assigned name names a key.
+    """
+    return len(_IDENTIFIER_DIGITS.findall(value)) >= 3 and all(
+        len(fragment) <= 3 for fragment in _IDENTIFIER_LETTERS.findall(value)
+    )
 
 
 def _wordy(value: str) -> bool:
@@ -275,7 +289,7 @@ def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
                 match.group("separator") == ":"
                 and not (extended and text.startswith((" ", "\t"), match.end("separator")))
             )
-            or _wordy(value)
+            or (_wordy(value) and not (extended and _opaque_identifier(value)))
         ):
             continue
         if match.group("quote") and _interpolated(match.group("prefix") or "", match.group("quote"), value):

@@ -53,12 +53,13 @@ def write_manifest(root: Path, manifest: dict) -> Path:
 
 
 @pytest.fixture
-def evidence(tmp_path, monkeypatch):
+def evidence(tmp_path, monkeypatch, request):
     monkeypatch.setattr(gate, "_source_fingerprint", lambda: SOURCE)
     monkeypatch.setattr(gate, "_source_provenance", lambda: {"source_sha256": CANARY})
     monkeypatch.setattr(gate, "get_index", lambda **kwargs: SimpleNamespace(fingerprint=lambda: SIGNATURE))
+    positive_cases, negative_cases = getattr(request, "param", (7, 14))
     cases = []
-    for number in range(21):
+    for number in range(positive_cases + negative_cases):
         contents = f"# Synthetic unit-test snapshot {number}; never field evidence.\n"
         source_path = f"main-{number}.py"
         repo = f"synthetic-test/repo-{number % 3}"
@@ -70,7 +71,7 @@ def evidence(tmp_path, monkeypatch):
                 "description": "Simulated gate evidence",
                 "files": {source_path: contents},
                 "target": {"kind": "agent"},
-                "present": number < 7,
+                "present": number < positive_cases,
                 "source": {
                     "repo": repo,
                     "commit": commit,
@@ -299,9 +300,136 @@ def test_consistent_code_only_evidence_is_scoped_and_explicitly_not_certificatio
     assert result["status"] == "EVIDENCE_CONSISTENT"
     assert result["live_receipt_count"] == 0
     assert result["evaluation"]["cases"] == 21
+    # Existing point-estimate policies remain compatible while exposing the
+    # uncertainty that seven perfect positives cannot establish 95% accuracy.
+    assert result["evaluation"]["precision"] == 1
+    assert result["evaluation"]["lower95"]["precision"] < 0.95
+    assert result["evaluation"]["by_kind"]["agent"]["lower95"] == result["evaluation"]["lower95"]
     assert "not authenticated proof" in result["limitations"]
     assert "test-operator" not in json.dumps(result)
     assert "test-only" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("evidence,passes", [((7, 14), False), ((75, 75), True)], indirect=["evidence"])
+def test_confidence_gate_rejects_tiny_perfect_sample_but_accepts_supported_sample(evidence, passes):
+    root, manifest, _ = evidence
+    manifest["policy"].update(
+        min_precision_lower95=0.95, min_recall_lower95=0.95, min_specificity_lower95=0.95
+    )
+    if not passes:
+        with pytest.raises(gate.EvidenceError, match="^confidence_threshold_not_met$"):
+            gate.verify(write_manifest(root, manifest), now=NOW)
+        return
+    result = gate.verify(write_manifest(root, manifest), now=NOW)
+    assert result["evaluation"]["cases"] == 150
+    assert result["evaluation"]["lower95"]["precision"] == pytest.approx(0.951276158, abs=1e-8)
+
+
+@pytest.mark.parametrize("scope", ["aggregate", "kind"])
+@pytest.mark.parametrize("invalid", [None, True, 0, 1.01, "0.95"])
+def test_confidence_thresholds_reject_ambiguous_and_out_of_range_values(evidence, scope, invalid):
+    root, manifest, _ = evidence
+    limits = manifest["policy"]
+    if scope == "kind":
+        limits = {
+            "min_positive_cases": 1,
+            "min_negative_cases": 1,
+            "max_false_positives": 0,
+            "max_false_negatives": 0,
+        }
+        manifest["policy"]["per_kind"] = {"agent": limits}
+    limits.update(min_precision_lower95=invalid, min_recall_lower95=0.95, min_specificity_lower95=0.95)
+    with pytest.raises(gate.EvidenceError, match="^invalid_confidence_threshold$"):
+        gate.verify(write_manifest(root, manifest), now=NOW)
+
+
+@pytest.mark.parametrize("scope", ["aggregate", "kind"])
+def test_confidence_policy_requires_all_three_lower_bounds(evidence, scope):
+    root, manifest, _ = evidence
+    limits = manifest["policy"]
+    if scope == "kind":
+        limits = {
+            "min_positive_cases": 1,
+            "min_negative_cases": 1,
+            "max_false_positives": 0,
+            "max_false_negatives": 0,
+        }
+        manifest["policy"]["per_kind"] = {"agent": limits}
+    limits["min_precision_lower95"] = 0.95
+    with pytest.raises(gate.EvidenceError, match="^incomplete_confidence_policy$"):
+        gate.verify(write_manifest(root, manifest), now=NOW)
+
+
+@pytest.mark.parametrize("evidence,passes", [((76, 76), False), ((150, 150), True)], indirect=["evidence"])
+def test_kind_confidence_gate_prevents_large_aggregate_hiding_tiny_kind(evidence, passes):
+    root, manifest, report = evidence
+    corpus = json.loads((root / "corpus.json").read_text())
+    positives = report["metrics"]["all"]["positive_cases"]
+    for number in (*range(75, positives), *range(positives + 75, len(corpus["cases"]))):
+        corpus["cases"][number]["target"]["kind"] = "framework-usage"
+        for finding in report["cases"][number]["findings"]:
+            finding["kind"] = "framework-usage"
+    refresh_evaluation(root, manifest, report, corpus)
+    thresholds = {"min_precision_lower95": 0.95, "min_recall_lower95": 0.95, "min_specificity_lower95": 0.95}
+    manifest["policy"].update(thresholds)
+    manifest["policy"]["per_kind"] = {
+        kind: {
+            "min_positive_cases": 1,
+            "min_negative_cases": 1,
+            "max_false_positives": 0,
+            "max_false_negatives": 0,
+            **thresholds,
+        }
+        for kind in ("agent", "framework-usage")
+    }
+    if not passes:
+        with pytest.raises(gate.EvidenceError, match="^kind_confidence_threshold_not_met$"):
+            gate.verify(write_manifest(root, manifest), now=NOW)
+        # A permissive confidence target cannot waive the separately declared
+        # minimum number of positive and negative examples for this kind.
+        limited = manifest["policy"]["per_kind"]["framework-usage"]
+        limited.update(
+            min_positive_cases=2,
+            min_negative_cases=2,
+            min_precision_lower95=0.2,
+            min_recall_lower95=0.2,
+            min_specificity_lower95=0.2,
+        )
+        with pytest.raises(gate.EvidenceError, match="^kind_sample_threshold_not_met$"):
+            gate.verify(write_manifest(root, manifest), now=NOW)
+        return
+    result = gate.verify(write_manifest(root, manifest), now=NOW)
+    assert result["evaluation"]["by_kind"]["framework-usage"]["lower95"]["recall"] >= 0.95
+
+
+def test_kind_confidence_gate_rejects_undefined_precision_even_with_permitted_miss(evidence):
+    root, manifest, report = evidence
+    corpus = json.loads((root / "corpus.json").read_text())
+    for number in (0, 7):
+        corpus["cases"][number]["target"]["kind"] = "framework-usage"
+    report["cases"][0].update(predicted=False, findings=[], score=0)
+    refresh_evaluation(root, manifest, report, corpus)
+    manifest["policy"]["min_recall"] = 0.8
+    thresholds = {"min_precision_lower95": 0.1, "min_recall_lower95": 0.1, "min_specificity_lower95": 0.1}
+    manifest["policy"]["per_kind"] = {
+        kind: {
+            "min_positive_cases": 1,
+            "min_negative_cases": 1,
+            "max_false_positives": 0,
+            "max_false_negatives": 1,
+            **thresholds,
+        }
+        for kind in ("agent", "framework-usage")
+    }
+    with pytest.raises(gate.EvidenceError, match="^kind_confidence_threshold_not_met$"):
+        gate.verify(write_manifest(root, manifest), now=NOW)
+    # Removing the optional bounds preserves the original error-budget policy;
+    # the undefined endpoint remains visible rather than becoming a perfect rate.
+    for limits in manifest["policy"]["per_kind"].values():
+        for key in thresholds:
+            del limits[key]
+    result = gate.verify(write_manifest(root, manifest), now=NOW)
+    assert result["evaluation"]["by_kind"]["framework-usage"]["lower95"]["precision"] is None
 
 
 def test_optional_per_kind_policy_counts_and_error_caps(evidence):

@@ -496,16 +496,17 @@ def test_an_opaque_option_value_never_hides_a_following_assignment(separator):
     assert safe.startswith("tool --key ") and sanitize_text(safe) == safe
 
 
-# Forms SECURITY.md lists as not withheld: nothing in them names a credential
-# the way the rules above read names. When one is closed, move it to FORMS
-# and update SECURITY.md.
-@pytest.mark.xfail(strict=True, reason="documented redaction gap (SECURITY.md)")
+# Recognizable forms formerly documented as gaps now have ordinary regressions.
+# A comment alone still does not make an ordinary variable a credential.
 @pytest.mark.parametrize(
     "source",
     [
         f"llm -k {HEX}",
         f'new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "{HEX}")',
-        f'x = "{HEX}"  # openai key',
+        pytest.param(
+            f'x = "{HEX}"  # openai key',
+            marks=pytest.mark.xfail(strict=True, reason="comment-only credential context remains ambiguous"),
+        ),
         # A record whose value field comes before its name field.
         f'{{"value": "{HEX}", "name": "Password"}}',
         f"- value: {HEX}\n  name: DB_PASSWORD\n",
@@ -526,11 +527,13 @@ def test_an_opaque_option_value_never_hides_a_following_assignment(separator):
         f"account.blob.core.windows.net/container?sig={HEX}&se=2030-01-01",
     ],
 )
-def test_documented_gaps_are_still_open(source):
-    assert HEX not in sanitize_text(source)
+def test_review_credential_forms_are_withheld(source):
+    safe = sanitize_text(source)
+    assert HEX not in safe
+    assert sanitize_text(safe) == safe
+    assert safe.count("\n") == source.count("\n")
 
 
-@pytest.mark.xfail(strict=True, reason="documented redaction gap (SECURITY.md)")
 @pytest.mark.parametrize(
     ("source", "value"),
     [
@@ -543,8 +546,10 @@ def test_documented_gaps_are_still_open(source):
         (f'tool --key={HEX}--password "{PASSWORD}"', PASSWORD),
     ],
 )
-def test_documented_value_gaps_are_still_open(source, value):
-    assert value not in sanitize_text(source)
+def test_review_opaque_values_and_glued_credential_options_are_withheld(source, value):
+    safe = sanitize_text(source)
+    assert value not in safe
+    assert sanitize_text(safe) == safe
 
 
 @pytest.mark.parametrize(

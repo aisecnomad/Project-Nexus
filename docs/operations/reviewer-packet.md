@@ -37,6 +37,7 @@ stop and name one SHA. Operators who later deploy must pin that same SHA.
 5. [Evaluation](../evaluation.md) — what the corpora do and do not prove
 6. [Contributor review policy](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy)
 7. [Connector maturity and validation status](../connectors.md#validation-maturity-and-evidence-status) — check the published evidence level before treating a connector as production-accepted.
+8. [Merge policy enforcement](merge-policy.md) — compare the versioned policy with live settings; a policy file does not activate repository rules.
 
 ## What to run
 

@@ -26,14 +26,20 @@ from shadowscan.utils.redaction_rules import (
     _interpolated,
     _kept_value,
     _name_before,
+    _placeholder,
     _sensitive_assignment_key,
 )
 
 _CALL_START = re.compile(r"(?<![\w.])[A-Za-z_][A-Za-z0-9_.]*[ \t]*\(")
+# Comments or a physical line break may separate a callee from its opening
+# parenthesis. Read their ends with the bounded lexer rather than a wildcard
+# expression that repeatedly searches the remainder of the text.
+_CALL_TRIVIA_START = re.compile(r"(?<![\w.])[A-Za-z_][A-Za-z0-9_.]*[ \t]*(?=/\*|//|#|\r?\n)")
 # A method reached through a call result or a chain continued on a new line:
 # 'builder().apiKey(', '\n    .apiKey(', 'client?.token('. The leading literal
 # '.' lets the regex engine skip ahead quickly.
 _CALL_CHAIN = re.compile(r"\.(?<=[\s)\]}?!]\.)[ \t]*[A-Za-z_][A-Za-z0-9_.]*[ \t]*\(")
+_CALL_CHAIN_TRIVIA = re.compile(r"\.(?<=[\s)\]}?!]\.)[ \t]*[A-Za-z_][A-Za-z0-9_.]*[ \t]*(?=/\*|//|#|\r?\n)")
 _CALL_KEYWORD = re.compile(r"\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)")
 _CALL_INTERPOLATED = re.compile(r"(?i)(?<!\w)(?:[ft]r?|r[ft])$")
 _CALL_LITERAL = re.compile(r"(?i)(?:[rub]{0,2})[\"']")
@@ -83,6 +89,22 @@ class _CallLexer:
         index = bisect_left(self._block_ends, position + 2)
         return self._block_ends[index] + 2 if index < len(self._block_ends) else len(self.text)
 
+    def argument_start(self, start: int, end: int) -> int:
+        """Skip argument trivia using indexed comment ends and the shared budget."""
+        while start < end:
+            self.tick()
+            if self.text[start].isspace():
+                start += 1
+            elif self.text.startswith(("\\\n", "\\\r\n"), start):
+                start += 3 if self.text.startswith("\\\r\n", start) else 2
+            elif self.text.startswith("/*", start):
+                start = min(self.block_end(start), end)
+            elif self.text[start] == "#" or self.text.startswith("//", start):
+                start = min(self.line_end(start), end)
+            else:
+                break
+        return start
+
     def string_end(self, start: int, depth: int = 0) -> int:
         """Consume a string, including nested interpolation, on all supported Pythons."""
         cached = self._strings.get(start)
@@ -93,15 +115,19 @@ class _CallLexer:
         text = self.text
         char = text[start]
         delimiter = char * 3 if char != "`" and text.startswith(char * 3, start) else char
-        single_line = char != "`" and len(delimiter) == 1
-        interpolated = _CALL_INTERPOLATED.search(text, max(0, start - 3), start) is not None
+        csharp_prefix = text[max(0, start - 2) : start]
+        verbatim = char == '"' and csharp_prefix.endswith(("@", "@$"))
+        single_line = char != "`" and len(delimiter) == 1 and not verbatim
+        interpolated = _CALL_INTERPOLATED.search(text, max(0, start - 3), start) is not None or (
+            char == '"' and csharp_prefix.endswith(("$", "$@"))
+        )
         position = start + len(delimiter)
         braces = 0
         end = len(text)
         while position < len(text):
             self.tick()
             char = text[position]
-            if char == "\\":
+            if char == "\\" and not verbatim:
                 position += 2
                 continue
             if braces:
@@ -117,6 +143,9 @@ class _CallLexer:
                         raise SanitizationLimitError("credential call nesting limit exceeded")
                 elif char == "}":
                     braces -= 1
+            elif verbatim and delimiter == '"' and text.startswith('""', position):
+                position += 2
+                continue
             elif text.startswith(delimiter, position):
                 end = position + len(delimiter)
                 break
@@ -296,19 +325,36 @@ def _redact_credential_calls(text: str) -> str:
     values: list[tuple[int, int]] = []
     literals: list[tuple[int, int]] = []
     skip_until = 0
-    calls = heapq.merge(_CALL_START.finditer(text), _CALL_CHAIN.finditer(text), key=lambda call: call.start())
+    calls = heapq.merge(
+        _CALL_START.finditer(text),
+        _CALL_CHAIN.finditer(text),
+        _CALL_TRIVIA_START.finditer(text),
+        _CALL_CHAIN_TRIVIA.finditer(text),
+        key=lambda call: call.start(),
+    )
     for call in calls:
         if call.start() < skip_until:
             continue
-        spans, state, skipped_comment = lexer.arguments(call.end(), comments=True)
+        argument_start = call.end()
+        if not call.group().endswith("("):
+            opening = lexer.argument_start(argument_start, len(text))
+            if opening >= len(text) or text[opening] != "(":
+                continue
+            argument_start = opening + 1
+        spans, state, skipped_comment = lexer.arguments(argument_start, comments=True)
         if state != "closed" and skipped_comment:
-            retry = lexer.arguments(call.end(), comments=False)
+            retry = lexer.arguments(argument_start, comments=False)
             if retry[1] == "closed":
                 spans, state, _ = retry
         callee = _qualified_callee(text, call)
-        # Prose puts a space before a parenthesis ("Login ('log|n')"); code rarely does.
-        level = 0 if callee[-1:].isspace() else _credential_callee(callee)
+        level = _credential_callee(callee)
+        # A lone spaced "Login ('log|n')" occurs in prose. Treat its literal
+        # like a lookup's, while qualified SDK logins retain password context.
+        if callee.lower() == "login" and argument_start - call.start() > len(callee) + 1:
+            level = min(level, 1)
         if level:
+            if state in {"nesting", "length"}:
+                raise SanitizationLimitError(f"credential call {state} limit exceeded")
             # Literal credentials do not skip nested calls: a call inside
             # another argument can still pair a credential key with a value.
             literals.extend(_credential_literals(lexer, spans, state == "closed", level))
@@ -472,7 +518,7 @@ def _qualified_callee(text: str, call: re.Match[str]) -> str:
     'AzureKeyCredential.new'. Names are read backwards from the call, so
     each costs only its own length.
     """
-    callee = call.group()[:-1]
+    callee = call.group().removesuffix("(").rstrip()
     start = call.start()
     if callee.startswith("."):
         return _chained_callee(text, start) + callee
@@ -520,23 +566,22 @@ def _credential_literals(
     """Spans of credential string literals among one credential-named call's arguments.
 
     A literal that starts a longer expression ("key" + suffix) withholds the
-    whole argument. An unterminated literal is withheld to its line end. The
-    argument after an unclosed call runs to the end of the text, so there only
-    the literal itself is withheld.
+    whole argument. Recognized unterminated literals withhold the bounded
+    remaining text. A terminated literal in an unclosed call withholds only
+    the literal itself rather than consuming an unrelated trailing expression.
     """
     text = lexer.text
-    arguments: list[tuple[int, re.Match[str] | None, bool, bool]] = []
+    arguments: list[tuple[int, re.Match[str] | None, bool, bool, int]] = []
     for number, (start, end) in enumerate(spans):
         begin = _call_argument_start(text, start, end)
         if begin >= end:
             continue
-        literal = _CALL_ARGUMENT_LITERAL.match(text, begin, end)
-        named = bool(literal and literal.group("label")) or _CALL_KEYWORD.match(text, begin, end) is not None
-        arguments.append((end, literal, named, closed or number < len(spans) - 1))
-    positional_count = sum(1 for _, _, named, _ in arguments if not named)
+        literal, named, wrappers = _credential_argument_literal(lexer, begin, end)
+        arguments.append((end, literal, named, closed or number < len(spans) - 1, wrappers))
+    positional_count = sum(1 for _, _, named, _, _ in arguments if not named)
     found: list[tuple[int, int]] = []
     position = 0
-    for end, literal, named, bounded in arguments:
+    for end, literal, named, bounded, wrappers in arguments:
         index = position
         position += not named
         if literal is None:
@@ -548,16 +593,103 @@ def _credential_literals(
         closing = stop - len(delimiter)
         terminated = closing >= opening + len(delimiter) and text.startswith(delimiter, closing)
         value = text[opening + len(delimiter) : closing if terminated else stop]
-        if _interpolated(literal.group("prefix") or "", char, value):
+        prefix = literal.group("prefix") or ""
+        multiline = len(delimiter) == 3 or "@" in prefix
+        # A C# interpolation prefix can hold a plain literal. Only a real
+        # replacement field makes the string a computed value.
+        if "$" in prefix and not _csharp_replacement(value):
+            prefix = prefix.replace("$", "")
+        if _interpolated(prefix, char, value):
             continue  # interpolated text is assembled elsewhere
         positional = level == 2 and not named and not (index == 0 and positional_count > 1)
-        if not _credential_literal(value, positional=positional):
+        # Multiline literals may wrap a credential across physical lines. Do
+        # not let those line breaks hide its shape or its constructor context;
+        # placeholders are checked before compacting their separate words.
+        tested = "".join(value.split()) if multiline else value
+        if multiline and _placeholder(value):
+            continue
+        if not _credential_literal(tested, positional=positional):
             continue
         conversion = _LITERAL_CONVERSION.match(text, stop, end)
-        whole = conversion is not None and _call_argument_start(text, conversion.end(), end) >= end
+        tail = _call_argument_start(text, conversion.end() if conversion else stop, end)
+        for _ in range(wrappers):
+            if tail >= end or text[tail] != ")":
+                break
+            tail = _call_argument_start(text, tail + 1, end)
+        whole = tail >= end
         literal_start = literal.start("prefix") if literal.group("prefix") else opening
         found.append((literal_start, stop if whole or not (bounded and terminated) else end))
     return found
+
+
+_CALL_ARGUMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*[ \t]*(?:=(?!=)|:(?![:=]))")
+_CALL_FALLBACK = re.compile(r"\?\?|\|\||\?:|or\b")
+_ENVIRONMENT_CALLEES = frozenset(
+    {
+        "environment.getenvironmentvariable",
+        "system.getenv",
+        "os.getenv",
+        "os.environ.get",
+        "getenv",
+    }
+)
+
+
+def _credential_argument_literal(
+    lexer: _CallLexer, begin: int, end: int
+) -> tuple[re.Match[str] | None, bool, int]:
+    """A direct credential literal, including wrappers and environment fallbacks.
+
+    Read no arbitrary nested function: only known environment lookups establish
+    a fallback literal here. Their variable names remain visible. The caller's
+    credential context decides whether the fallback value should be withheld.
+    """
+    text = lexer.text
+    name = _CALL_ARGUMENT_NAME.match(text, begin, end)
+    named = name is not None
+    if name:
+        begin = lexer.argument_start(name.end(), end)
+    wrappers = 0
+    while begin < end and text[begin] == "(":
+        lexer.tick()
+        wrappers += 1
+        if wrappers > _MAX_CALL_DEPTH:
+            raise SanitizationLimitError("credential call nesting limit exceeded")
+        begin = lexer.argument_start(begin + 1, end)
+    literal = _CALL_ARGUMENT_LITERAL.match(text, begin, end)
+    if literal:
+        return literal, named or bool(literal.group("label")), wrappers
+    lookup = _CALL_START.match(text, begin, end)
+    if lookup is None or lookup.group().removesuffix("(").strip().lower() not in _ENVIRONMENT_CALLEES:
+        return None, named, wrappers
+    spans, state, _ = lexer.arguments(lookup.end(), comments=True)
+    if state != "closed" or not spans or spans[-1][1] >= end:
+        return None, named, wrappers
+    fallback_start = lexer.argument_start(spans[-1][1] + 1, end)
+    fallback = _CALL_FALLBACK.match(text, fallback_start, end)
+    if fallback is None:
+        return None, named, wrappers
+    begin = lexer.argument_start(fallback.end(), end)
+    while begin < end and text[begin] == "(":
+        lexer.tick()
+        wrappers += 1
+        if wrappers > _MAX_CALL_DEPTH:
+            raise SanitizationLimitError("credential call nesting limit exceeded")
+        begin = lexer.argument_start(begin + 1, end)
+    return _CALL_ARGUMENT_LITERAL.match(text, begin, end), named, wrappers
+
+
+def _csharp_replacement(value: str) -> bool:
+    """Whether a C# string has an opening replacement brace, rather than '{{'."""
+    position = 0
+    while position < len(value):
+        if value.startswith("{{", position):
+            position += 2
+        elif value[position] == "{":
+            return True
+        else:
+            position += 1
+    return False
 
 
 # requests/httpx/Elasticsearch basic authentication tuples: auth=("user", "v").

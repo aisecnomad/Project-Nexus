@@ -2,6 +2,35 @@
 
 ## 0.1.1 — Unreleased
 
+### October 1 review corrections
+
+- Named Python direct-reference requirements retain their declared package
+  identity before URL or VCS inference. Extras, fragments, environment markers
+  and source lines remain available as evidence.
+- Python semantic analysis ignores constant-false loop bodies, preserves the
+  applicable loop `else` path, joins uncertain loop bindings conservatively,
+  and stops unreachable statements after explicit local control transfers.
+  This is bounded source analysis, not interprocedural execution proof.
+- Optional Git enrichment streams stdout and stderr under a combined 16 KiB
+  limit, caps accepted identity fields, and terminates children on overflow,
+  cancellation or deadline. Limit hits retain code findings and mark coverage
+  incomplete rather than publishing unbounded metadata.
+- Credential redaction covers additional constructor syntax, environment
+  fallback literals, credential records and explicitly named command/query
+  values. Regenerate stored reports and incremental baselines under the revised
+  policy before sharing them; ambiguous comments and arbitrary computed values
+  still require confidential handling.
+- Production evidence policies can add aggregate and per-kind 95% Wilson
+  lower-endpoint thresholds. Legacy point-estimate policies remain compatible;
+  successful decisions expose the lower endpoints. The example uses confidence
+  gates and per-kind sample floors; these are operator-selected targets, not
+  evidence of measured production accuracy.
+- Added a versioned active merge policy and bounded snapshot checker requiring
+  the aggregate CI gate, bound check origins, final-push review and no bypass
+  actors. They do not change live repository settings. Administrator activation,
+  independent human review, fresh holdout labels and tenant acceptance remain
+  external requirements.
+
 ### October 1 code.filesystem coverage and precision
 
 - A coding-agent instruction document that links to another one in the same
