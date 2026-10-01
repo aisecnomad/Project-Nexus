@@ -13,8 +13,14 @@ from shadowscan.utils.redaction import credential_id
 from shadowscan.utils.safe_json import strict_json_loads
 
 _BINARY_SNIFF = 8192
-# Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
+# Epoch seconds, milliseconds, microseconds or nanoseconds, optionally
+# fractional (nginx $msec, Kong, OpenTelemetry *UnixNano fields).
 _EPOCH_RX = re.compile(r"\d{1,19}(?:\.\d{1,9})?")
+# (lower bound, upper bound, units per second). Since 2001-09-09 an epoch
+# value has 13 digits in milliseconds, 16 in microseconds and 19 in
+# nanoseconds, so magnitude identifies the unit. Smaller values are seconds;
+# larger ones are not a timestamp in any of these units and stay invalid.
+_EPOCH_UNITS = ((1e12, 1e15, 1e3), (1e15, 1e18, 1e6), (1e18, 1e19, 1e9))
 
 
 def redact(value: str, keep: int = 4) -> str:
@@ -108,7 +114,7 @@ def notebook_to_source(text: str, errors: list[str] | None = None) -> str:
 
 
 def parse_timestamp(value: Any) -> datetime | None:
-    """Best-effort timestamp parsing (ISO 8601, epoch seconds / millis)."""
+    """Best-effort timestamp parsing (ISO 8601, epoch seconds to nanoseconds)."""
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
@@ -122,8 +128,10 @@ def parse_timestamp(value: Any) -> datetime | None:
             return None
         if not math.isfinite(v):
             return None
-        if v > 1e12:
-            v /= 1000.0
+        for lower, upper, per_second in _EPOCH_UNITS:
+            if lower <= v < upper:
+                v /= per_second
+                break
         try:
             return datetime.fromtimestamp(v, tz=UTC)
         except (OverflowError, OSError, ValueError):
