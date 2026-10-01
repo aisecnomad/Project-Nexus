@@ -56,7 +56,12 @@ make coverage-gate  # 75% per-connector floor; run after make test
 
 `make coverage-gate` exports the coverage data recorded by the preceding
 `make test`. The per-connector floor needs the cloud SDKs installed, so run it
-after `make install` rather than `make install-dev`.
+after `make install` rather than `make install-dev`. The gate does not skip a
+connector module that its per-connector rule does not cover. A module in a
+connector family that `tools/coverage_gate.py` does not list, a module in a
+nested package, or an unlisted module directly under `shadowscan/connectors/`
+fails the gate. The exceptions are package `__init__` files and modules
+without statements.
 
 Useful pytest patterns:
 
