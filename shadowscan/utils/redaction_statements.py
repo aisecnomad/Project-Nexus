@@ -467,11 +467,13 @@ class _AssignmentScanner:
                     previous_operator = ""
             else:
                 stopped = None
-        except (tokenize.TokenError, IndentationError, SyntaxError) as exc:
+        except (tokenize.TokenError, IndentationError, SyntaxError, UnicodeError) as exc:
             # Once '=' is seen, incomplete source must not expose any RHS,
             # including credential fragments on subsequent physical lines.
-            # Indentation and nesting errors depend on where a scan started.
-            definitive = not isinstance(exc, IndentationError) and "nest" not in str(exc)
+            # Indentation and nesting errors depend on where a scan started,
+            # and so may the codec errors Python 3.12+ tokenizers raise for a
+            # lone surrogate or a non-ASCII character after a lone '\r'.
+            definitive = not isinstance(exc, (IndentationError, UnicodeError)) and "nest" not in str(exc)
             stopped = None
         if lines.undecided(stopped):
             return None
