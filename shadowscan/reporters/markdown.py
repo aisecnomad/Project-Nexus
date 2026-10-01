@@ -6,7 +6,11 @@ import html
 import re
 
 from shadowscan.models import Finding, ScanResult
-from shadowscan.reporters._publication import publication_stats, related_finding_ids
+from shadowscan.reporters._publication import (
+    publication_stats,
+    related_finding_ids,
+    without_connector_prefix,
+)
 
 _LEVEL_ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": "⚪"}
 _MARKDOWN_META = re.compile(r"([\\`*_\[\]~|])")
@@ -169,7 +173,9 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("")
     for st in stats:
         for diagnostic in [*st["errors"], *st["warnings"]]:
-            lines.append(f"- **{_text(st['connector'])}:** {_text(diagnostic)}")
+            lines.append(
+                f"- **{_text(st['connector'])}:** {_text(without_connector_prefix(st['connector'], diagnostic))}"
+            )
     lines.append("")
     return "\n".join(lines)
 

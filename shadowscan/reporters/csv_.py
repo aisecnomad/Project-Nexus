@@ -6,6 +6,7 @@ import csv
 import io
 
 from shadowscan.models import ScanResult
+from shadowscan.reporters._publication import publication_stats, visible_controls
 
 COLUMNS = [
     "id",
@@ -40,18 +41,44 @@ COLUMNS = [
 
 
 def _safe_cell(value: object) -> object:
-    """Force formula-like untrusted strings to spreadsheet text cells."""
+    """Force formula-like untrusted strings to spreadsheet text cells and show terminal controls."""
     if isinstance(value, str):
+        # Tab, CR and LF stay: they are cell data, and the formula guard below needs them.
+        value = visible_controls(value, keep="\t\r\n")
         stripped = value.lstrip(" \t\r\n\v\f\ufeff")
         if stripped.startswith(("=", "+", "-", "@")) or value.startswith(("\t", "\r", "\n")):
             return "'" + value
     return value
 
 
+def _status_row(result: ScanResult) -> dict[str, object]:
+    """First record of an incomplete scan, so a partial file cannot pass for an empty one.
+
+    The header stays the first line, so ``csv.DictReader`` consumers keep their
+    column names. The row carries no finding data and no diagnostic text; the
+    JSON report has the connector errors.
+    """
+    unfinished = [
+        st["connector"]
+        for st in publication_stats(result)
+        if st["errors"] or st["skipped"] or st["incomplete"]
+    ]
+    return {
+        "id": "SCAN-INCOMPLETE",
+        "kind": "scan-status",
+        "resource_type": "scan-status",
+        "title": "INCOMPLETE SCAN: some required inputs could not be assessed; "
+        "missing rows are not evidence of absence (exit code 3)",
+        "connector": "|".join(unfinished),
+    }
+
+
 def render_csv(result: ScanResult) -> str:
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=COLUMNS, extrasaction="ignore")
     w.writeheader()
+    if not result.complete:
+        w.writerow({key: _safe_cell(value) for key, value in _status_row(result).items()})
     for f in result.findings:
         f.sanitize()
         row = {

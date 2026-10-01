@@ -58,7 +58,9 @@ hr-helper,HR Helper,erin@acme.com,power-platform:bot:bot-1|okta:app:0oa9x,HR bot
 ```
 
 Pass any mix with `--inventory` (repeatable) or `inventory:` in the config;
-directories are searched recursively.
+directories are searched recursively. A symbolic link inside an inventory directory
+is rejected and stops setup (exit 1) rather than being skipped, so an approved
+agent cannot silently disappear from the registry.
 
 YAML and JSON list fields (`resources`, `names`, `surfaces`, `providers`,
 `accounts`, `regions`, `frameworks`, `tags`) must be arrays of nonempty strings. Quote
@@ -85,6 +87,14 @@ Names, aliases, and agent-ID similarities produce `registry_suggestions` only.
 They never confer registered status, inherit an owner, or reduce risk. An
 explicit resource mismatch cannot fall through to name-based approval. Multiple
 matching inventory entries require review and leave the resource unregistered.
+
+A gateway finding's resource (for example `principal:svc-ops`) is a caller name
+the log producer supplied, often the caller itself. When its identity assurance
+is `operator-asserted` or `unverified` (generic and access-log exports, shared or
+missing names), a matching card still registers it, but the finding carries
+`metadata.registry_match_assurance` and the `registry-identity-unverified` tag:
+the registration is only as trustworthy as the log's caller field. Review such
+registrations before treating the agent as sanctioned.
 
 **Migration:** cards that previously matched by name need explicit resource
 bindings. The bundled `agent-card.yaml` contains example bindings for offline AWS

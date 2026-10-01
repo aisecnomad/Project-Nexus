@@ -113,11 +113,10 @@ def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_r
             write_private_text(output, text)
         except (OSError, ValueError):
             raise click.ClickException("could not write report; check output path and permissions") from None
-        err_console.print(
-            Text(
-                terminal_text(f"wrote {fmt if fmt != 'table' else 'json'} report to {output}"), style="green"
-            )
-        )
+        note = f"wrote {fmt if fmt != 'table' else 'json'} report to {output}"
+        if fmt == "table":
+            note += " (the table format saves JSON to a file; pass --format for another file type)"
+        err_console.print(Text(terminal_text(note), style="green"))
         if fmt == "table":
             try:
                 print_table(result, console=console, verbose=verbose, max_rows=max_rows)
@@ -1251,7 +1250,12 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
 @click.argument("baseline", type=click.Path(exists=True, dir_okay=False))
 @click.argument("current", type=click.Path(exists=True, dir_okay=False))
 @click.option("--json", "as_json", is_flag=True)
-def diff(baseline: str, current: str, as_json: bool) -> None:
+@click.option(
+    "--fail-on-new",
+    is_flag=True,
+    help="exit 2 if the comparison has new findings or findings whose risk level rose; an incomplete comparison still exits 3",
+)
+def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
     """Compare reports; missing findings require complete, comparable scans to resolve."""
     try:
         comparison = compare_reports(
@@ -1288,6 +1292,13 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
             )
     if not comparison["comparable"]:
         raise click.exceptions.Exit(3)
+    if fail_on_new and (comparison["new"] or any(_risk_rose(change) for change in comparison["changed"])):
+        raise click.exceptions.Exit(2)
+
+
+def _risk_rose(change: dict[str, Any]) -> bool:
+    """Whether a changed finding moved to a more severe risk level (LEVELS runs most to least severe)."""
+    return LEVELS.index(change["after"]["risk"]["level"]) < LEVELS.index(change["before"]["risk"]["level"])
 
 
 if __name__ == "__main__":  # pragma: no cover

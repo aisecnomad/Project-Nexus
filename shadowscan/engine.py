@@ -240,8 +240,13 @@ class _ConnectorRunner:
             st, reused = self._collect(spec, ctx, started_at, fs)
             if reused:
                 return spec, fs, st
-        except Exception as exc:  # noqa: BLE001 - isolate construction as well as collection failures
-            message = ctx.sanitize_message(f"{spec.name}: {type(exc).__name__}: {exc}")
+        except BaseException as exc:  # noqa: BLE001 - isolate construction as well as collection failures
+            # A plugin or SDK calling sys.exit() (or raising another
+            # BaseException) must not end the scan with its own exit status or
+            # a raw traceback: it is a connector failure like any other.
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            message = ctx.sanitize_message(_failure_message(spec, exc))
             st = ctx.stats or ScanStats(connector=spec.id, started_at=started_at)
             st.connector = spec.id
             st.finished_at = now_iso()
@@ -332,6 +337,18 @@ class _ConnectorRunner:
                 st.incomplete = True
                 st.errors.append("static input changed during the scan; rerun required")
         return st, False
+
+
+def _failure_message(spec: ConnectorSpec, exc: BaseException) -> str:
+    """Describe a connector failure once, without a repr-quoted KeyError or a doubled connector prefix."""
+    if isinstance(exc, KeyError) and len(exc.args) == 1 and isinstance(exc.args[0], str):
+        return f"{spec.name}: {exc.args[0]}"
+    if type(exc) is ConnectorError:
+        # The message a connector writes for itself, as BaseConnector.run reports it.
+        text = str(exc)
+        return text if text.startswith(f"{spec.name}:") else f"{spec.name}: {text}"
+    detail = str(exc)
+    return f"{spec.name}: {type(exc).__name__}" + (f": {detail}" if detail else "")
 
 
 def _sanitize_diagnostics(st: ScanStats) -> None:
@@ -568,6 +585,20 @@ class Engine:
             if spec.enabled and (not only or spec.id in only or spec.name in only)
         ]
 
+    def _not_run(self, jobs: list[_Job]) -> list[dict[str, str]]:
+        """Configured connectors that were deliberately not run, for the report's reader.
+
+        Disabling a connector or narrowing with ``--only`` is operator intent
+        and never makes a scan incomplete, but the report would otherwise show
+        no trace that a configured source was left out.
+        """
+        selected = {number for number, _ in jobs}
+        return [
+            {"connector": spec.id, "reason": "disabled" if not spec.enabled else "not selected by --only"}
+            for number, spec in enumerate(self.config.connectors, 1)
+            if number not in selected
+        ]
+
     @staticmethod
     def _reject_selection(result: ScanResult, invalid: list[str]) -> ScanResult:
         result.collection_scope = {
@@ -702,6 +733,10 @@ class Engine:
         specs = [spec for _, spec in jobs]
         self.config.validate_connector_isolation(specs)
         result.collection_scope = build_collection_scope(self.config, self.index, specs)
+        not_run = self._not_run(jobs)
+        if not_run:
+            # Outside the fingerprint and comparability: operator intent only.
+            result.collection_scope["not_run"] = not_run
         stats = self._selection_stats(specs)
         cache = IncrementalCache(self.config, self.index)
         dump_directory = (

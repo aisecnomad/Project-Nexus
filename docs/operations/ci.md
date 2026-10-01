@@ -19,11 +19,28 @@ canary support a threshold. An incomplete scan exits 3 in either mode.
 | Code | CI interpretation |
 |------|-------------------|
 | `0` | Pass — scan completed, no findings above threshold |
-| `2` | Fail — scan completed, findings reached `--fail-on` level |
+| `1` | Fail — setup or configuration error (invalid config, missing inventory or signature path, unwritable report, unhandled error); nothing was scanned |
+| `2` | Fail — scan completed, findings reached `--fail-on` level (Click also exits 2 for command-line usage errors, such as an invalid option value) |
 | `3` | Fail — incomplete scan, some connectors failed |
 
-For `--fail-on` gating, fail on exit codes 2 and 3. An incomplete scan may omit
-findings above the threshold and cannot establish that the policy passed.
+Fail the job on any non-zero exit. Do not whitelist only 2 and 3: a
+`case 2|3) fail` check lets exit 1, a scan that never ran, pass. An incomplete
+scan may omit findings above the threshold and cannot establish that the policy
+passed. When an incomplete scan also reaches the `--fail-on` threshold, the exit
+code is 3.
+
+```bash
+# Remember the exit code, then fail on every non-zero value (1, 2 and 3).
+status=0
+shadowscan scan -c shadowscan.yaml --fail-on high --format sarif -o shadowscan.sarif || status=$?
+[ "$status" -eq 0 ] || { echo "shadowscan failed with exit $status" >&2; exit "$status"; }
+```
+
+To gate on drift between two reports, `shadowscan diff baseline.json current.json
+--fail-on-new` exits 2 when the current report has new findings or findings
+whose risk level rose, and 3 when the comparison is incomplete (differing scope
+or an incomplete scan). Without the flag, `diff` exits 0 unless the comparison
+is incomplete.
 
 ## Container-based scanning
 
@@ -67,3 +84,5 @@ reviewed scanner revision and restore that exact path:
     shadowscan scan -c shadowscan.yaml --incremental \
       --state-dir "$RUNNER_TEMP/shadowscan-cache" --fail-on high
 ```
+
+The repository's own `audit.yml` workflow also runs `pip-audit` against every hash lock weekly and on demand, independent of commits.

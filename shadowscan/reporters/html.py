@@ -8,7 +8,7 @@ import html
 import json
 
 from shadowscan.models import ScanResult
-from shadowscan.reporters._publication import publication_stats, related_finding_ids
+from shadowscan.reporters._publication import publication_stats, related_finding_ids, visible_controls
 
 _CSS = """
 :root{--bg:#0f1117;--card:#171a23;--fg:#e6e6e6;--muted:#9aa0ad;--line:#262a36;--critical:#ff4d4f;--critical-text:#ff4d4f;--high:#ff9c2b;--medium:#f5d90a;--low:#3ddc84;--info:#8c8c8c;--accent:#7aa2f7}
@@ -42,7 +42,9 @@ apply();
 
 
 def _e(s: object) -> str:
-    return html.escape("" if s is None else str(s))
+    """Escape markup and show terminal controls, so ``cat report.html`` cannot run escape sequences."""
+    text = "" if s is None else str(s).replace("\r\n", "\n")
+    return html.escape(visible_controls(text, keep="\t\n"))
 
 
 def render_html(result: ScanResult) -> str:
