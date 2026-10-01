@@ -522,11 +522,18 @@ def test_oci_pages_accept_item_collections_and_reject_unknown_shapes(index, sdk)
     assert scanner.ctx.stats.incomplete
 
 
-def test_oci_record_conversion_falls_back_to_plain_attributes(sdk, monkeypatch):
+def test_oci_record_conversion_failure_fails_closed(sdk, monkeypatch):
+    # SDK models store fields as private attributes; a raw __dict__ fallback
+    # would yield records whose id and display_name read as missing.
     monkeypatch.setattr(sdk.util, "to_dict", Mock(side_effect=ValueError("unsupported model")))
-    plain = SimpleNamespace(id="ocid1.x", display_name="x")
-    assert OciConnector._d(plain) == {"id": "ocid1.x", "display_name": "x"}
-    assert OciConnector._d(object()) == {}
+    model = SimpleNamespace(_id="ocid1.x", _display_name="x")
+    with pytest.raises(ValueError, match=r"could not be converted \(ValueError\)"):
+        OciConnector._d(model)
+    monkeypatch.setattr(sdk.util, "to_dict", Mock(return_value=None))
+    with pytest.raises(ValueError, match="not an object"):
+        OciConnector._d(model)
+    monkeypatch.setattr(sdk.util, "to_dict", vars)
+    assert OciConnector._d(SimpleNamespace(id="ocid1.x")) == {"id": "ocid1.x"}
 
 
 def context(index, **config):

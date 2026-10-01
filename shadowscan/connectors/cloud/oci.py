@@ -225,13 +225,25 @@ class OciConnector(BaseConnector):
 
     @staticmethod
     def _d(obj: Any) -> dict[str, Any]:
+        """Convert an SDK model to its documented field names.
+
+        SDK models keep their fields in private attributes (``_id``,
+        ``_display_name``); a raw ``__dict__`` would hand the analysis records
+        whose ``id`` and ``display_name`` read as missing. A record the
+        installed SDK cannot convert raises instead of being analyzed without
+        its fields: a detail lookup that guards its call skips that record
+        with a warning, and anywhere else collection ends with an error;
+        either way the connector is incomplete.
+        """
         import oci
 
         try:
-            result: dict[str, Any] = oci.util.to_dict(obj)
-            return result
-        except Exception:  # noqa: BLE001
-            return dict(getattr(obj, "__dict__", {}) or {})
+            result = oci.util.to_dict(obj)
+        except Exception as exc:  # noqa: BLE001 - reported below as an incompatible SDK model
+            raise ValueError(f"OCI SDK record could not be converted ({type(exc).__name__})") from None
+        if not isinstance(result, dict):
+            raise ValueError("OCI SDK record could not be converted (not an object)")
+        return result
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
