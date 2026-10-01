@@ -30,7 +30,8 @@ from shadowscan.utils import http
 
 ROOT = Path(__file__).resolve().parents[1]
 GITHUB = ROOT / ".github"
-WORKFLOWS = sorted((GITHUB / "workflows").glob("*.yml"))
+# GitHub runs both YAML spellings; test_repository_policy.py checks the glob.
+WORKFLOWS = sorted(path for path in (GITHUB / "workflows").glob("*.y*ml") if path.is_file())
 FORMS = sorted(path for path in (GITHUB / "ISSUE_TEMPLATE").glob("*.yml") if path.name != "config.yml")
 ADVISORY_URL = "https://github.com/aisecnomad/Project-Nexus/security/advisories/new"
 
