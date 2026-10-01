@@ -138,7 +138,6 @@ from shadowscan.utils.safe_yaml import (
     strict_bounded_safe_load,
 )
 from shadowscan.utils.text import (
-    BINARY_CONTENT_ERROR,
     notebook_to_source,
     parse_timestamp,
     read_text,
@@ -324,6 +323,9 @@ DEADLINE_MARGIN_MIN_SECONDS = 0.25
 
 # Generated or locked files the walker never reads at any size.
 _NEVER_READ_SUFFIXES = (".min.js", ".min.css", ".map", ".pyc", ".lock")
+# A name no real file can have (a path component cannot contain NUL), so only
+# a wildcard glob segment such as ``**`` matches it.
+_ANY_FILE_NAME = "\x00"
 
 
 def _never_read_by_name(name: str) -> bool:
@@ -1744,9 +1746,11 @@ class FilesystemConnector(BaseConnector):
 
         # 1. file-name signals (config files of agents / MCP / A2A ...)
         file_matches = self.index.match_file(rel)
-        if not (_analyzed_by_name(path.name) or file_matches):
+        by_name = _analyzed_by_name(path.name)
+        if not (by_name or file_matches):
             return
-        loaded = self._read_source(rel, path, scan.root_fd, scan.base)
+        named = by_name or self._named_by_signature(rel, file_matches)
+        loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
         if loaded is None:
             return
         text, raw_notebook = loaded
@@ -1782,23 +1786,24 @@ class FilesystemConnector(BaseConnector):
         self._record_special_files(scan, file)
 
     def _read_source(
-        self, rel: str, path: Path, root_fd: int, base: Path | None = None
+        self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
     ) -> tuple[str, str | None] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document.
 
         The file is read relative to the open scan root ``root_fd``: by its on-disk
         name (``path`` below ``base``), while ``rel`` is the report-safe name used in
         diagnostics. A notebook's text is its code cells. None means nothing is
-        analyzed; the recorded diagnostics say why.
+        analyzed; the recorded diagnostics say why. ``named`` is False when only a
+        directory-wide signature glob selects the file, so a recognised binary
+        artifact there (an image beside coding-agent rules) is skipped without a
+        coverage gap.
         """
         read_errors: list[str] = []
         on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
-        text = read_text(on_disk, self._size_limit(path.name), read_errors, dir_fd=root_fd)
+        text = read_text(
+            on_disk, self._size_limit(path.name), read_errors, dir_fd=root_fd, analyzable_name=named
+        )
         for issue in read_errors:
-            if issue == BINARY_CONTENT_ERROR and not _analyzed_by_name(path.name):
-                # Read only because a file-name signature matched (an image under
-                # a rules directory): binary content there was never analyzed.
-                continue
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
                 self.ctx.warn(
                     f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
@@ -1811,6 +1816,19 @@ class FilesystemConnector(BaseConnector):
         if path.suffix.lower() != ".ipynb":
             return text, None
         return self._notebook_source(rel, text)
+
+    def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
+        """Whether a file-name signature selects ``rel`` by its name, not only by its directory.
+
+        A signal that also matches a name no file can have, in the same
+        directory, comes from a directory-wide glob such as ``.cursor/rules/**``:
+        it says nothing about this file, which may be an image kept beside the
+        rules. A literal name such as ``.cursorrules`` selects the file itself.
+        """
+        parent = rel.rpartition("/")[0]
+        probe = f"{parent}/{_ANY_FILE_NAME}" if parent else _ANY_FILE_NAME
+        directory_wide = {(m.signature.id, id(m.signal)) for m in self.index.match_file(probe)}
+        return any((m.signature.id, id(m.signal)) not in directory_wide for m in file_matches)
 
     def _notebook_source(self, rel: str, document: str) -> tuple[str, str | None] | None:
         """Return a notebook's code cells and, when within max_file_size, its raw document."""
