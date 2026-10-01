@@ -126,7 +126,7 @@ exact supported Python matrix and dependency pins.
 | Lint | `ruff check shadowscan tests tools` | No errors |
 | Types | `mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release` | No errors |
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate |
-| Connectors | `make coverage-gate` (after tests) | ≥ 75% per connector |
+| Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/` |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |

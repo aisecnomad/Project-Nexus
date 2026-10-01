@@ -51,12 +51,14 @@ operator-run procedure described in [Tenant canaries](canaries.md).
 ```bash
 make test-fast      # stop at the first failure, no coverage
 make test           # full suite with the 80% aggregate coverage floor
-make coverage-gate  # 75% per-connector floor; run after make test
+make coverage-gate  # 75% floor for every connector module; run after make test
 ```
 
 `make coverage-gate` exports the coverage data recorded by the preceding
-`make test`. The per-connector floor needs the cloud SDKs installed, so run it
-after `make install` rather than `make install-dev`.
+`make test`. The per-connector floor covers every module under
+`shadowscan/connectors/`, including the shared `base`, `common` and `offline`
+modules. It needs the cloud SDKs installed, so run it after `make install`
+rather than `make install-dev`.
 
 `tests/conftest.py` keeps the suite independent of the host:
 
