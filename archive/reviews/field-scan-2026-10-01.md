@@ -196,7 +196,10 @@ repositories.
 
 The four clearest defects were fixed on this branch, each with regression tests
 in `tests/unit/test_field_scan_followups.py` (17 of the 21 tests fail on the
-original code; the other four are controls):
+original code; the other four are controls). Those tests have since moved to
+the files for the code they cover: `test_source_ranges_javascript.py`,
+`test_filesystem_mcp_parsing.py`, `test_signatures.py` and
+`test_code_scan.py`.
 
 1. JSX lexer: type arguments after a tag name are skipped, comments inside an
    opening tag are skipped, and `<Name>(...)` is a generic arrow only when the

@@ -547,6 +547,11 @@ class _JavaScriptLexer:
     def _jsx_tag(self, i: int, start: int) -> int:
         """Walk a JSX tag that began at ``start`` to an attribute expression or its closing ``>``."""
         text, size, spans, modes = self.text, self.size, self.spans, self.modes
+        # Whether the last significant character was ``/``. Each walk starts
+        # after the tag name, its type arguments or an attribute expression's
+        # ``}``, none of which ends in ``/``. Comments do not count, so
+        # ``<div /* note */>`` is not self-closing.
+        slash = False
         while i < size:
             # Comments may separate attributes; their text is never an
             # attribute string or expression.
@@ -570,6 +575,7 @@ class _JavaScriptLexer:
                 if i >= size:
                     return self._unterminated(start)
                 i += 1
+                slash = False
                 continue
             if text[i] == "{":
                 spans.append((start, i + 1))
@@ -578,7 +584,7 @@ class _JavaScriptLexer:
             if text[i] == ">":
                 spans.append((start, i + 1))
                 name = self.pending_jsx_tags.pop()
-                self_closing = text[start:i].rstrip().endswith("/")
+                self_closing = slash
                 i += 1
                 modes.pop()
                 if self_closing:
@@ -588,6 +594,8 @@ class _JavaScriptLexer:
                     self.open_jsx_tags.append(name)
                     modes.append(("jsx_text", i))
                 return i
+            if not text[i].isspace():
+                slash = text[i] == "/"
             i += 1
             if i == size:
                 return self._unterminated(start)

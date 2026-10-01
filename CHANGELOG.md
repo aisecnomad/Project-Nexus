@@ -9,7 +9,8 @@ Fixes for defects found by scanning five public agent repositories (see
 
 - The JSX lexer no longer marks valid TSX incomplete. It skips explicit type
   arguments on elements (`<Select<Option> ...>`, `<Form<{ email: string }>>`),
-  comments between attributes, and treats `<Text>(...)</Text>` as an element
+  comments between attributes (a comment just before `>` no longer makes the
+  tag self-closing), and treats `<Text>(...)</Text>` as an element
   unless the parenthesized group is followed by `=>` or a return type. In the
   field scan this removed 139 false incomplete files; unbalanced tags still
   fail closed.
