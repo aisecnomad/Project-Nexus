@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/aisecnomad/Project-Nexus/badge)](https://securityscorecards.dev/viewer/?uri=github.com/aisecnomad/Project-Nexus)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue.svg)](https://www.python.org/downloads/)
 [![Coverage ≥80%](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](CONTRIBUTING.md#quality-gates)
@@ -60,8 +61,11 @@ misses, not a field precision or recall estimate. See
 threshold as a production gate.
 
 The [assurance results](docs/assurance-results.md) preserve the baseline and
-subsequent results on a frozen, independently AI-labeled corpus of 42 public
-files (30 negatives). [Read-only AWS and Slack canaries](docs/canaries.md)
+subsequent results on a frozen corpus of 42 public files (30 negatives) that
+two AI reviewers labeled before evaluation. The labelers share model
+capabilities, so the labels are not independent human ground truth, and the
+corpus has since informed the implementation; only the baseline is out of
+sample. [Read-only AWS and Slack canaries](docs/canaries.md)
 validate named tenant controls when approved credentials are supplied; offline
 replay does not establish live tenant acceptance.
 
@@ -108,6 +112,27 @@ Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export
 `shadowscan signatures list` shows everything; `shadowscan signatures test <value>`
 tells you what a package, host, user agent, model id, scope or file path maps to.
 
+## Project status
+
+* **Unreleased.** `0.1.1` is a candidate version string: there is no tag, no
+  published package and no signed artifact. The package classifier is
+  `Development Status :: 3 - Alpha`.
+* **Single maintainer, AI-assisted development.** One account merges every
+  change. Apart from Dependabot updates, every commit was written by that
+  maintainer or generated with an AI coding assistant, often in large batches,
+  and reviewed by that same maintainer. The logs under
+  [archive/reviews/](archive/reviews/) are AI-assisted, not third-party reviews.
+* **What is independently reviewed: nothing yet.** Every pull request runs CI
+  and CodeQL, but no merged pull request carries an approval from a second
+  person. Independent human review is required before any tagged release; see
+  the [review and merge policy](CONTRIBUTING.md#review-and-merge-policy). The
+  intended branch ruleset is versioned in
+  [.github/rulesets/main.json](.github/rulesets/main.json).
+* **Recommendation.** Review the revision yourself or have it reviewed, then
+  pin that full commit SHA as shown below. Review state cannot be established
+  from a checkout; verify it with the commands in
+  [merge gate and review status](docs/production.md#merge-gate-and-review-status).
+
 
 ## Install
 
@@ -136,7 +161,8 @@ or a reserved namespace: install the reviewed source or built wheel below.
 The current `0.1.1` source version is an unreleased candidate; the version
 string does not imply a published or signed artifact. These VCS installs resolve
 transitive dependencies at install time. For deployment, use the locked install
-below. Python 3.11, 3.12, or 3.13 is required and covered by CI. Core dependencies
+below. Python 3.11, 3.12, or 3.13 is required and covered by CI; 3.14 is
+excluded until the CI matrix and the hash-locked dependency sets cover it. Core dependencies
 include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
