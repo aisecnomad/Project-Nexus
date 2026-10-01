@@ -227,6 +227,23 @@ sanitizer redacts the argument `GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credenti
 a file path. That is pre-existing behavior (the same argument in `.mcp.json`
 is flagged on the original code) and is listed below.
 
+## False-positive fixes
+
+Three further corrections address every false positive in the assessment
+below, again with regression tests in `tests/unit/test_field_scan_followups.py`:
+
+1. Exported workflows under test or fixture paths follow the project test-code
+   policy: half weight and the `test-code-only` tag. The 10 Dify fixtures now
+   read confidence 0.51 and risk 4 (were 0.84 and 14).
+2. `setup.py` marks a project only when it references setuptools, distutils or
+   scikit-build, or calls `setup(...)`. Both spurious roots
+   (`src/agents/tracing`, `api/controllers/console`) are gone; their evidence
+   joins the enclosing project.
+3. A credential-file path argument (`GOOGLE_APPLICATION_CREDENTIALS=/app/...`)
+   or an argument repeating a variable reference from `env` stays redacted but
+   is no longer an inline secret. The two gemini-cli workflow MCP servers drop
+   from high 64 to medium 49. Literal values remain inline secrets.
+
 ## True and false positives
 
 There is no labeled ground truth; each finding was judged by reading the
@@ -239,9 +256,12 @@ or contradicts the scanner's documented policy.
 | --- | --- | --- | --- | --- | --- | --- |
 | Original scanner | 66 | 7 | 12 | 85 | 78% | 86% |
 | With the four fixes | 70 | 6 | 12 | 88 | 80% | 86% |
+| With all seven fixes | 82 | 4 | 0 | 86 | 95% | 100% |
 
 Strict precision counts partials as wrong; lenient precision counts them as
-right. FP:TP is 12:66 (about 1:5.5) before and 12:70 (about 1:5.8) after.
+right. FP:TP is 12:66 (about 1:5.5) before, 12:70 (about 1:5.8) after the
+first four fixes, and 0:82 after all seven. A fixture workflow now reported as
+`test-code-only` counts as correctly classified.
 
 - **FP (12):** 10 Dify DSL test fixtures reported as workflows without the
   test-code policy, and 2 spurious `setup.py` project roots.
@@ -249,8 +269,10 @@ right. FP:TP is 12:66 (about 1:5.5) before and 12:70 (about 1:5.8) after.
   Dify observability exporters (Aliyun, Arize Phoenix, MLflow) credited with
   function calling or Databricks from OpenTelemetry attribute names; Dify's
   generated `packages/contracts` types credited with browsing and autonomy.
-- **Partial, after fixes (6):** the 4 observability/contracts findings and the
-  2 workflow MCP servers with the wrong `inline-secrets` tag.
+- **Partial, after the first four fixes (6):** the 4 observability/contracts
+  findings and the 2 workflow MCP servers with the wrong `inline-secrets` tag.
+- **Partial, after all seven fixes (4):** the observability/contracts findings
+  (improvement 8 below).
 - **Missed findings:** 3 MCP servers (the Gemini `httpUrl` remote and two
   workflow-embedded servers), all reported after the fixes.
 - **Under-classified (not counted as FP):** Gemini CLI's core loop and the
@@ -259,7 +281,10 @@ right. FP:TP is 12:66 (about 1:5.5) before and 12:70 (about 1:5.8) after.
   cannot classify as agents by design.
 
 These rates describe 85 to 88 findings from five agent-heavy repositories,
-judged by one AI reviewer. They are not field precision estimates.
+judged by one AI reviewer. They are not field precision estimates. The last
+row in particular measures the scanner on the same repositories its fixes
+were derived from; it shows that the observed defects are gone, not how the
+scanner performs on unseen code. Re-measure on a fresh set of repositories.
 
 ## Recommended improvements
 
@@ -273,12 +298,12 @@ In priority order. Each needs a regression case written from scratch.
    symlinks; oversize JSON test data (`tests/fixtures/`, `memory-tests/`) and
    Dify's directory symlink would still need an operator exclusion, or a policy
    that test-path data files are declared omissions.
-2. **Test-path policy everywhere.** Apply the test/fixture rule to workflow
-   exports and other non-project findings.
-3. **Project roots.** Require a `setup(` call or a setuptools/distutils import
-   before treating `setup.py` as a manifest.
-4. **Credential paths.** Do not flag `*_CREDENTIALS=/path` file-path arguments
-   as inline secrets.
+2. **Test-path policy everywhere.** Done for workflow exports; review other
+   non-project findings (A2A cards, M365 agents, IaC) for the same rule.
+3. **Project roots.** Done: `setup.py` needs packaging evidence.
+4. **Credential paths.** Done for file paths and repeated variable references.
+   Separately, `--token=<literal>` arguments are not redacted at all; review
+   the argument sanitizer for flag-style credentials.
 5. **Agent recall.** Recognize hand-written tool loops on `@google/genai` and
    `google-genai` (request with function declarations, function-call branch,
    function-response turn), as already done for Anthropic and OpenAI.
