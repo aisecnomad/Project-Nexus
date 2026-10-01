@@ -169,6 +169,8 @@ Development:
   `type: ignore` comments (`warn_unused_ignores`). Only `regex`, `boto3`,
   `botocore` and `oci`, which ship neither stubs nor a `py.typed` marker, may
   be imported untyped.
+- Unit tests live in files named after the module or feature they exercise,
+  not the review round that added them; test bodies are unchanged.
 - The evaluation, benchmark, canary and acceptance tools resolve the temporary
   directories they create before handing paths to the scanner, so they pass on
   macOS, where `/var` and `/tmp` are links into `/private`. The symbolic-link

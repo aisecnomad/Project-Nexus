@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import json
+
 import jwt
 import pytest
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.identity.jwt import JwtConnector, _issuer_family
+from shadowscan.models import ScanStats, now_iso
 
 
 @pytest.mark.parametrize(
@@ -160,3 +164,73 @@ def test_kubernetes_claim_label_does_not_establish_signature_or_issuer_trust(ind
     assert finding.metadata["verified"] is False
     assert finding.metadata["issuer_verified"] is False
     assert finding.metadata["authorization_validated"] is False
+
+
+def _unsigned(claims: dict) -> str:
+    def part(data: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+
+    return f"{part({'alg': 'none', 'typ': 'JWT'})}.{part(claims)}."
+
+
+def _ctx(index, **config):
+    ctx = ConnectorContext(config=config, index=index)
+    ctx.stats = ScanStats(connector="test", started_at=now_iso())
+    return ctx
+
+
+def test_service_account_username_only_marks_keycloak_issuers(index):
+    claims = {"sub": "u1", "iss": "https://id.example/oauth", "preferred_username": "service-account-ci"}
+    keycloak = {**claims, "iss": "https://id.example/realms/prod"}
+    other, kc = (JwtConnector(_ctx(index, tokens=[_unsigned(c)])).run()[0] for c in (claims, keycloak))
+    assert other.metadata["identity_type"] == "human"
+    assert kc.metadata["identity_type"] == "service" and "Keycloak service account" in str(kc.metadata)
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "kubernetes.io/serviceaccount/namespace",
+        "kubernetes.io/serviceaccount/secret.name",
+        "kubernetes.io/serviceaccount/service-account.name",
+        "kubernetes.io/serviceaccount/service-account.uid",
+    ],
+)
+def test_exact_legacy_kubernetes_claims_identify_the_issuer_family(claim):
+    assert _issuer_family("https://issuer.example", {claim: "default"}) == "kubernetes"
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "kubernetes.io/arbitrary",
+        "kubernetes.io/serviceaccount/namespace/extra",
+        "kubernetes.io.evil/serviceaccount/namespace",
+        "kubernetes.io%2Fserviceaccount%2Fnamespace",
+    ],
+)
+def test_kubernetes_claim_lookalikes_do_not_identify_the_issuer_family(claim):
+    assert _issuer_family("https://issuer.example", {claim: "default"}) == "custom"
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"kubernetes.io": {"namespace": "default"}},
+        {"kubernetes.io/serviceaccount/namespace": "default"},
+    ],
+)
+def test_structured_and_legacy_kubernetes_claims_keep_the_display_label(claims):
+    assert _issuer_family("https://issuer.example", claims) == "kubernetes"
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"kubernetes.io": {}},
+        {"kubernetes.io": "not a structured claim"},
+        {"kubernetes.io/serviceaccount/namespace": "  "},
+    ],
+)
+def test_malformed_kubernetes_claims_do_not_set_the_display_label(claims):
+    assert _issuer_family("https://issuer.example", claims) == "custom"

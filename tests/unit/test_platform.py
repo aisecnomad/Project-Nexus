@@ -1,4 +1,4 @@
-"""Hardening follow-up from the 2026-09-25 external grade: platform preflight."""
+"""Platform preflight: unsupported hosts fail closed, help and version still work."""
 
 from __future__ import annotations
 

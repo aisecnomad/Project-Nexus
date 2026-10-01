@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.gateway import logs
-from shadowscan.connectors.gateway.logs import GatewayLogConnector
-from shadowscan.models import ScanStats
+from shadowscan.connectors.gateway.logs import Event, GatewayLogConnector
+from shadowscan.models import ScanStats, now_iso
 
 
 def _scan(index, records, **config):
@@ -186,3 +188,192 @@ def test_global_detail_budget_does_not_promote_a_partial_owner(index, monkeypatc
     assert finding.metadata["distribution_events_dropped"] == {"end_users": 1}
     assert finding.metadata["classification_incomplete"] is True
     assert ctx.stats.incomplete
+
+
+def context(index, **config):
+    ctx = ConnectorContext(index=index, config=config)
+    ctx.stats = ScanStats(connector="test", started_at="now")
+    return ctx
+
+
+def test_gateway_overflow_is_atomic_and_keeps_later_callers(index):
+    ctx = context(index, format="litellm")
+    records = [
+        {"api_key": "a", "model": "gpt-4o", "spend": 1e308},
+        {"api_key": "a", "model": "gpt-4o", "spend": 1e308},
+        {"api_key": "b", "model": "gpt-4o", "spend": 1},
+    ]
+    findings = list(GatewayLogConnector(ctx).analyze(records))
+    assert len(findings) == 2
+    assert sum(f.metadata["events"] for f in findings) == 2
+    assert sorted(f.metadata["cost"] for f in findings) == [1, 1e308]
+    json.dumps([f.metadata for f in findings], allow_nan=False)
+    assert ctx.stats.incomplete
+
+
+def test_gateway_usage_interval_details_are_bounded_and_totals_preserved(index, monkeypatch):
+    monkeypatch.setattr("shadowscan.connectors.gateway.logs._MAX_DISTINCT_KEYS", 2)
+    callers = {}
+    event = Event("principal:worker", "principal", "worker", aggregated=True, request_count=10)
+    for _ in range(5):
+        GatewayLogConnector._accumulate(callers, event)
+    caller = next(iter(callers.values()))
+    finding = GatewayLogConnector(context(index))._finding(caller)
+    assert finding.metadata["events"] == 50
+    assert len(finding.metadata["usage_intervals"]) == 2
+    assert finding.metadata["usage_intervals_dropped"] == 3
+
+
+def test_gateway_distribution_limit_reports_lost_classification_and_owner(index, monkeypatch):
+    monkeypatch.setattr("shadowscan.connectors.gateway.logs._MAX_DISTINCT_KEYS", 2)
+    ctx = context(index, format="litellm")
+    values = [("unknown-a", "a"), ("unknown-b", "b")] + [("gpt-4o", "real-owner")] * 5
+    # Previously retained labels must keep accumulating after the limit.
+    values.append(("unknown-a", "a"))
+    records = [{"api_key": "one", "model": model, "user": user} for model, user in values]
+    (finding,) = list(GatewayLogConnector(ctx).analyze(records))
+    assert finding.metadata["events"] == 8
+    assert finding.metadata["distribution_events_dropped"] == {"models": 5, "end_users": 5}
+    assert finding.metadata["models"] == {"unknown-a": 2, "unknown-b": 1}
+    assert finding.metadata["end_users"] == {"a": 2, "b": 1}
+    assert finding.metadata["classification_incomplete"] is True
+    assert finding.metadata["distribution_limit"] == 2
+    assert finding.owner is None
+    assert "<other>" not in finding.models and "<other>" not in finding.title
+    assert ctx.stats.incomplete
+    assert any("distribution limit" in warning for warning in ctx.stats.warnings)
+
+
+def test_gateway_all_distribution_limits_count_omitted_requests_without_labels(index, monkeypatch):
+    monkeypatch.setattr("shadowscan.connectors.gateway.logs._MAX_DISTINCT_KEYS", 2)
+    callers = {}
+    for n in range(5):
+        event = Event(
+            "principal:worker",
+            "principal",
+            "worker",
+            request_count=10,
+            model=f"model-{n}",
+            provider=f"provider-{n}",
+            host=f"host-{n}.example",
+            user_agent=f"agent-{n}",
+            ip=f"10.0.0.{n}",
+            user=f"user-{n}",
+            team=f"team-{n}",
+            path=f"/operation-{n}",
+        )
+        GatewayLogConnector._accumulate(callers, event)
+    caller = next(iter(callers.values()))
+    finding = GatewayLogConnector(context(index))._finding(caller)
+    dimensions = (
+        "models",
+        "providers",
+        "hosts",
+        "user_agents",
+        "source_ips",
+        "end_users",
+        "teams",
+        "operations",
+    )
+    assert finding.metadata["distribution_events_dropped"] == dict.fromkeys(dimensions, 30)
+    assert finding.metadata["events"] == 50
+    assert all(
+        len(getattr(caller, attr)) == 2
+        for attr in (
+            "models",
+            "providers",
+            "hosts",
+            "user_agents",
+            "ips",
+            "users",
+            "teams",
+            "paths",
+        )
+    )
+    for dimension in dimensions:
+        assert (
+            sum(finding.metadata[dimension].values())
+            + finding.metadata["distribution_events_dropped"][dimension]
+            == 50
+        )
+    assert finding.owner is None
+    assert finding.metadata["classification_incomplete"] is True
+
+
+def _scan_export(index, records, **config):
+    ctx = ConnectorContext(config={"input": "export.jsonl", **config}, index=index)
+    ctx.stats = ScanStats(connector="gateway.logs", started_at="now")
+    findings = list(GatewayLogConnector(ctx).analyze(records))
+    return findings, ctx
+
+
+def _litellm(i=0, **extra):
+    return {
+        "request_id": str(i),
+        "call_type": "acompletion",
+        "api_key": "opaque-key-one",
+        "api_key_alias": "svc-agent",
+        "model": "gpt-4o",
+        "custom_llm_provider": "openai",
+        "spend": 0.01,
+        "startTime": "2026-01-05T09:00:00Z",
+        **extra,
+    }
+
+
+def test_retained_labels_and_samples_are_bounded(index):
+    findings, _ = _scan_export(
+        index, [_litellm(model="m" * 5000, custom_llm_provider="p" * 5000)], format="litellm"
+    )
+    assert len(findings[0].title) < 1000
+    assert all(len(model) <= logs._MAX_LABEL_CHARS for model in findings[0].metadata["models"])
+    assert all(len(provider) <= logs._MAX_LABEL_CHARS for provider in findings[0].metadata["providers"])
+    record = {
+        "virtual_key": "vk-1",
+        "trace_id": "t" * 5000,
+        "model": "gpt-4o",
+        "created_at": "2026-01-05T09:00:00Z",
+    }
+    findings, _ = _scan_export(index, [record], format="portkey")
+    assert len(findings[0].metadata["samples"]["trace_id"]) == logs._MAX_SAMPLE_CHARS
+
+
+def test_first_distribution_label_survives_an_exhausted_detail_budget(index, monkeypatch):
+    monkeypatch.setattr(logs, "_MAX_TOTAL_DETAIL_KEYS", 3)
+    findings, ctx = _scan_export(
+        index,
+        [
+            {"service": "one", "model": "gpt-4o", "user": "alice", "environment": "production"},
+            {"service": "two", "model": "gpt-5", "user": "bob"},
+            {"service": "two", "model": "gpt-4o", "user": "bob"},
+        ],
+        format="generic",
+    )
+    by_caller = {finding.resource: finding for finding in findings}
+    second = by_caller["principal:two"]
+    assert second.metadata["models"] == {"gpt-5": 1}
+    assert second.metadata["end_users"] == {"bob": 2}
+    assert second.models == ["gpt-5"] and second.metadata["distribution_events_dropped"] == {"models": 1}
+    assert ctx.stats.incomplete
+
+
+def _ctx(index, **config):
+    ctx = ConnectorContext(config=config, index=index)
+    ctx.stats = ScanStats(connector="test", started_at=now_iso())
+    return ctx
+
+
+def test_gateway_observation_buckets_are_bounded(index, tmp_path):
+    export = tmp_path / "gateway.jsonl"
+    with export.open("w") as stream:
+        for i in range(logs._MAX_DISTINCT_KEYS + 10):
+            stream.write(
+                json.dumps(
+                    {"api_key": "key-one", "model": "gpt-4o", "spend": 0.01, "environment": f"env-{i}"}
+                )
+                + "\n"
+            )
+    findings = GatewayLogConnector(_ctx(index, input=str(export), format="litellm")).run()
+    assert len(findings) == 1
+    assert len(findings[0].metadata["runtime_observations"]) == logs._MAX_DISTINCT_KEYS
+    assert findings[0].metadata["runtime_observations_dropped"] == 10

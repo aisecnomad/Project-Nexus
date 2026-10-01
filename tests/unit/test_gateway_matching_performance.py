@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.gateway.logs import Event, GatewayLogConnector
-from shadowscan.models import ScanStats
+from shadowscan.models import ScanStats, now_iso
 from shadowscan.signatures.matcher import MatchTimeoutError
 
 
@@ -126,3 +127,86 @@ def test_framework_cache_is_discarded_between_analyses(index, monkeypatch):
     for _ in range(2):
         assert list(connector.analyze([record(), record()]))
     assert calls == 4
+
+
+def _scan(index, records, **config):
+    ctx = ConnectorContext(config={"input": "export.jsonl", **config}, index=index)
+    ctx.stats = ScanStats(connector="gateway.logs", started_at="now")
+    findings = list(GatewayLogConnector(ctx).analyze(records))
+    return findings, ctx
+
+
+def _litellm(i=0, **extra):
+    return {
+        "request_id": str(i),
+        "call_type": "acompletion",
+        "api_key": "opaque-key-one",
+        "api_key_alias": "svc-agent",
+        "model": "gpt-4o",
+        "custom_llm_provider": "openai",
+        "spend": 0.01,
+        "startTime": "2026-01-05T09:00:00Z",
+        **extra,
+    }
+
+
+class _Spy:
+    def __init__(self, index):
+        self._index = index
+        self.names: list[str] = []
+
+    def match_name(self, name):
+        self.names.append(name)
+        return self._index.match_name(name)
+
+    def __getattr__(self, attr):
+        return getattr(self._index, attr)
+
+
+def test_opaque_caller_labels_skip_display_name_matching(index):
+    spy = _Spy(index)
+    findings, _ = _scan(
+        spy, [_litellm(api_key_alias=None), _litellm(1, api_key="opaque-key-two")], format="litellm"
+    )
+    labels = {finding.metadata["caller"] for finding in findings}
+    assert any(label.startswith("credential:hmac-sha256:") for label in labels) and "svc-agent" in labels
+    assert "svc-agent" in spy.names
+    assert not any(name.startswith("credential:hmac-sha256:") for name in spy.names)
+
+
+def _ctx(index, **config):
+    ctx = ConnectorContext(config=config, index=index)
+    ctx.stats = ScanStats(connector="test", started_at=now_iso())
+    return ctx
+
+
+def test_gateway_memoizes_user_agents_and_strips_query_strings(index, tmp_path, monkeypatch):
+    export = tmp_path / "gateway.jsonl"
+    with export.open("w") as stream:
+        for i in range(60):
+            stream.write(
+                json.dumps(
+                    {
+                        "api_key": "key-one",
+                        "model": "gpt-4o",
+                        "metadata": {"user_agent": "langchain/0.3"},
+                        "spend": 0.01,
+                        "call_type": f"/v1/chat/completions?session={i}",
+                        "startTime": f"2026-01-01T10:{i % 60:02d}:00Z",
+                    }
+                )
+                + "\n"
+            )
+    original = index.match_user_agent
+    calls = []
+
+    def count_user_agent_matches(user_agent):
+        calls.append(user_agent)
+        return original(user_agent)
+
+    monkeypatch.setattr(index, "match_user_agent", count_user_agent_matches)
+    connector = GatewayLogConnector(_ctx(index, input=str(export), format="litellm"))
+    findings = connector.run()
+    assert len(findings) == 1
+    assert list(findings[0].metadata["operations"]) == ["/v1/chat/completions"]
+    assert findings[0].metadata["events"] == 60

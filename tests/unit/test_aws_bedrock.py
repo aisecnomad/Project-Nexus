@@ -1,22 +1,30 @@
-"""Live provider response-shape regressions, without cloud credentials."""
+"""Bedrock agents, AgentCore gateways and invocation logging, from provider-shaped responses."""
 
 from __future__ import annotations
 
-import sys
-from types import SimpleNamespace
+import json
+from unittest import mock
 from unittest.mock import Mock
+
+import pytest
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.cloud.aws import AwsConnector
-from shadowscan.connectors.cloud.gcp import GcpConnector
-from shadowscan.connectors.cloud.oci import OciConnector
 from shadowscan.models import ScanStats
-from shadowscan.utils.http import HttpError
+from shadowscan.utils.redaction import REDACTED
+
+ACCOUNT = "123456789012"
 
 
 def context(index, **config):
     ctx = ConnectorContext(config=config, index=index)
     ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
+    return ctx
+
+
+def _context(index, **config) -> ConnectorContext:
+    ctx = ConnectorContext(config=config, index=index)
+    ctx.stats = ScanStats(connector="cloud.aws", started_at="2026-01-01T00:00:00+00:00")
     return ctx
 
 
@@ -155,116 +163,104 @@ def test_disabled_bedrock_actions_and_knowledge_bases_do_not_grant_capabilities(
     assert "rag" not in finding.capabilities
 
 
-def test_oci_collections_and_keyword_only_genai_calls(index, monkeypatch):
-    """GenAI Agent list APIs return Collection(items), which OCI pagination flattens."""
+def test_bedrock_agent_draft_details_are_a_snapshot_that_survives_export(tmp_path, index):
+    pytest.importorskip("boto3")  # live collection path needs the [aws] extra
 
-    class Client:
-        def __getattr__(self, name):
-            if name.startswith("list_"):
-                return lambda *args, **kwargs: []
-            raise AttributeError(name)
+    class FakeAgents:
+        def get_agent(self, agentId):
+            return {
+                "agent": {
+                    "agentId": agentId,
+                    "agentArn": f"arn:aws:bedrock:us-east-1:{ACCOUNT}:agent/{agentId}",
+                    "agentName": "ops",
+                    "agentStatus": "PREPARED",
+                    "foundationModel": "anthropic.claude-3-haiku-20240307-v1:0",
+                    "guardrailConfiguration": {"guardrailIdentifier": "g1", "guardrailVersion": "1"},
+                }
+            }
 
-        def list_agents(self, *, compartment_id):
-            assert compartment_id == "comp"
-            return SimpleNamespace(items=[SimpleNamespace(id="a1", display_name="assistant")])
+    def paginate(client, op, key, **kwargs):
+        return iter(
+            [{"agentId": "AGENT1", "agentName": "ops", "agentStatus": "PREPARED"}]
+            if op == "list_agents"
+            else []
+        )
 
-        def list_tools(self, *, compartment_id, agent_id):
-            assert (compartment_id, agent_id) == ("comp", "a1")
-            return SimpleNamespace(items=[SimpleNamespace(id="tool1")])
+    dump = tmp_path / "aws.jsonl"
+    ctx = _context(index, services=["bedrock"], regions=["us-east-1"], _dump_path=str(dump))
+    connector = AwsConnector(ctx)
+    connector.account = ACCOUNT
+    connector._session = object()
+    original_safe = connector._safe
 
-        def list_agent_endpoints(self, *, compartment_id):
-            assert compartment_id == "comp"
-            return SimpleNamespace(items=[SimpleNamespace(id="e1", agent_id="a1")])
+    def safe(fn, *args, **kwargs):
+        result = original_safe(fn, *args, **kwargs)
+        return None if isinstance(result, mock.MagicMock) else result
 
-        def list_knowledge_bases(self, *, compartment_id):
-            assert compartment_id == "comp"
-            return SimpleNamespace(items=[SimpleNamespace(id="kb1")])
-
-    client = Client()
-    oci = SimpleNamespace(
-        generative_ai_agent=SimpleNamespace(GenerativeAiAgentClient=Client),
-        generative_ai=SimpleNamespace(GenerativeAiClient=Client),
-        oda=SimpleNamespace(OdaClient=Client),
-        data_science=SimpleNamespace(DataScienceClient=Client),
-        functions=SimpleNamespace(FunctionsManagementClient=Client),
-        container_instances=SimpleNamespace(ContainerInstanceClient=Client),
-        vault=SimpleNamespace(VaultsClient=Client),
-        pagination=SimpleNamespace(
-            list_call_get_all_results=lambda fn, *args, **kw: SimpleNamespace(data=fn(*args, **kw))
+    with (
+        mock.patch.object(
+            connector,
+            "_client",
+            lambda svc, region=None: FakeAgents() if svc == "bedrock-agent" else mock.MagicMock(),
         ),
-        util=SimpleNamespace(to_dict=vars),
+        mock.patch.object(connector, "_paginate", paginate),
+        mock.patch.object(connector, "_safe", safe),
+        mock.patch.object(connector, "_session_", lambda: None),
+        mock.patch.object(connector, "_regions", lambda: ["us-east-1"]),
+    ):
+        live = connector.run()
+    assert not ctx.stats.warnings and [f.metadata["version_models"] for f in live] == [
+        {"DRAFT": "anthropic.claude-3-haiku-20240307-v1:0"}
+    ]
+    exported = next(json.loads(line) for line in dump.read_text().splitlines() if '"bedrock-agent"' in line)
+    assert (
+        exported["_version_details"]["DRAFT"]["foundationModel"] == "anthropic.claude-3-haiku-20240307-v1:0"
     )
-    monkeypatch.setitem(sys.modules, "oci", oci)
-    ctx = context(index)
-    connector = OciConnector(ctx)
-    connector._client = lambda cls, region: client
-    records = list(connector._collect_region_comp("us-ashburn-1", "comp"))
-    assert {r["_kind"] for r in records} >= {"genai-agent", "genai-agent-endpoint", "genai-knowledge-base"}
-    assert records[0]["_tools"] == [{"id": "tool1"}]
-    assert not ctx.stats.incomplete
+    assert not any(key.startswith("_") for key in exported["_version_details"]["DRAFT"])
+    offline_ctx = _context(index, input=str(dump))
+    offline = AwsConnector(offline_ctx).run()
+    assert offline_ctx.stats.incomplete is False and not offline_ctx.stats.warnings
+    assert offline[0].metadata["version_guardrails"] == {
+        "DRAFT": {"guardrailIdentifier": "g1", "guardrailVersion": "1"}
+    }
 
 
-def test_oci_denied_inventory_is_incomplete(index):
-    ctx = context(index)
-    connector = OciConnector(ctx)
-    assert connector._all(Mock(side_effect=RuntimeError("NotAuthorizedOrNotFound: 404"))) == []
-    assert ctx.stats.incomplete
-    assert "collection failed" in ctx.stats.warnings[0]
+def test_bedrock_agent_reads_collapsed_draft_from_older_exports_without_incomplete_coverage(index):
+    record = {
+        "_kind": "bedrock-agent",
+        "_region": "us-east-1",
+        "agentId": "AGENT1",
+        "agentArn": f"arn:aws:bedrock:us-east-1:{ACCOUNT}:agent/AGENT1",
+        "agentName": "ops",
+        "agentStatus": "PREPARED",
+        "foundationModel": "amazon.nova-pro-v1:0",
+        "_version_details": {"DRAFT": REDACTED},
+        "_action_groups": [],
+        "_knowledge_bases": [],
+        "_aliases": [],
+    }
+    ctx = _context(index)
+    connector = AwsConnector(ctx)
+    connector.account = ACCOUNT
+    (finding,) = list(connector.analyze([record]))
+    assert finding.metadata["version_models"] == {"DRAFT": "amazon.nova-pro-v1:0"} and not ctx.stats.warnings
 
 
-def test_gcp_repeated_pagination_token_preserves_partial_data_but_marks_incomplete(index):
-    ctx = context(index)
-    connector = GcpConnector(ctx)
-    connector.http = Mock()
-    connector.http.get_json.side_effect = [
-        {"items": [{"id": "first"}], "nextPageToken": "same"},
-        {"items": [{"id": "second"}], "nextPageToken": "same"},
-    ]
-    assert [item["id"] for item in connector._pages("https://example.googleapis.com/v1/items", "items")] == [
-        "first",
-        "second",
-    ]
-    assert connector.http.get_json.call_count == 2
-    assert ctx.stats.incomplete
-
-
-def test_gcp_malformed_continuation_keeps_observed_resources_without_leaking_payload(index):
-    ctx = context(index)
-    connector = GcpConnector(ctx)
-    connector.http = Mock()
-    secret = "sk-proj-" + "x" * 40
-    connector.http.get_json.side_effect = [
-        {"items": [{"id": "observed-agent"}], "nextPageToken": "next"},
-        {"items": secret},  # malformed successful response on the next page
-    ]
-
-    records = list(connector._pages("https://example.googleapis.com/v1/agents", "items"))
-
-    assert records == [{"id": "observed-agent"}]
-    assert connector.http.get_json.call_count == 2
-    assert ctx.stats.incomplete
-    assert any("invalid items page" in warning for warning in ctx.stats.warnings)
-    assert secret not in str(ctx.stats.warnings)
-
-
-def test_gcp_page_cap_marks_incomplete(index, monkeypatch):
-    monkeypatch.setattr("shadowscan.connectors.cloud.gcp.MAX_LIST_PAGES", 2)
-    ctx = context(index)
-    connector = GcpConnector(ctx)
-    connector.http = Mock()
-    connector.http.get_json.side_effect = [
-        {"items": [{"id": "first"}], "nextPageToken": "t1"},
-        {"items": [{"id": "second"}], "nextPageToken": "t2"},
-    ]
-    assert len(list(connector._pages("https://example.googleapis.com/v1/items", "items"))) == 2
-    assert connector.http.get_json.call_count == 2
-    assert ctx.stats.incomplete
-
-
-def test_gcp_suppressed_rate_limit_does_not_report_clean_inventory(index):
-    ctx = context(index)
-    connector = GcpConnector(ctx)
-    connector.http = Mock()
-    connector.http.get_json.side_effect = HttpError(429, "https://example.googleapis.com/v1/items")
-    assert list(connector._pages("https://example.googleapis.com/v1/items", "items")) == []
-    assert ctx.stats.incomplete
+def test_bedrock_logging_record_without_configuration_is_unknown_coverage(index):
+    ctx = _context(index)
+    connector = AwsConnector(ctx)
+    connector.account = ACCOUNT
+    findings = list(
+        connector.analyze(
+            [
+                {"_kind": "bedrock-logging", "_region": "us-east-1", "error": {"code": "AccessDenied"}},
+                {"_kind": "bedrock-logging", "_region": "eu-west-1"},
+                {"_kind": "bedrock-logging", "_region": "us-west-2", "loggingConfig": None},
+            ]
+        )
+    )
+    assert [f.region for f in findings] == ["us-west-2"] and "no-invocation-logging" in findings[0].tags
+    assert (
+        ctx.stats.incomplete
+        and sum("logging configuration unavailable" in w for w in ctx.stats.warnings) == 2
+    )
