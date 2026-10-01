@@ -15,6 +15,19 @@ from shadowscan.connectors.code.source_semantics import (
 IMPORT = 'import OpenAI from "openai";\n'
 
 
+@pytest.fixture(autouse=True)
+def _pattern_budget_beyond_runner_stalls(monkeypatch):
+    # These tests exercise the binder's call and text limits. Without a scan
+    # deadline each regex call gets the 0.1 s per-pattern budget, a separate
+    # fail-closed guard with its own matcher tests; a garbage-collection pause
+    # or runner stall past it ended the binder with TimeoutError before the
+    # limit under test was reached (test 3.12 on CI). The work itself takes
+    # about 5 ms here.
+    monkeypatch.setattr(
+        "shadowscan.connectors.code.source_semantics.pattern_timeout", lambda default=0.1: 5.0
+    )
+
+
 def _matches(index, text: str) -> list[tuple[str, str, int | None]]:
     ignored, _ = noncode_ranges(text, "javascript")
     matches = bound_source_matches(index, text, "javascript", ignored)
