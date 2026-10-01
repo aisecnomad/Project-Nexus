@@ -67,6 +67,16 @@ SDK_CALLS: list[tuple[str, str, str]] = [
     (f'builder.AddOpenAITextToAudio("tts-1", "{BASE62}");', BASE62, '"tts-1"'),
     (f'var chat = new OpenAIChatCompletionService("gpt-4o", "{BASE62}");', BASE62, '("gpt-4o", '),
     (f'var embed = new OpenAITextEmbeddingGenerationService("ada", "{BASE62}");', BASE62, '("ada", '),
+    # The endpoint overloads, (modelId, endpoint Uri, apiKey, orgId): the endpoint
+    # expression is no literal, so the key third is withheld.
+    (
+        f'builder.AddOpenAIChatCompletion("llama3", new Uri("https://api.groq.com/openai/v1"), "{BASE62}");',
+        BASE62,
+        'new Uri("https://api.groq.com/openai/v1"), ',
+    ),
+    (f'var chat = new OpenAIChatCompletionService("gpt-4o", endpoint, "{BASE62}");', BASE62, "endpoint, "),
+    # AddOpenAITextToImage takes (apiKey, orgId, modelId).
+    (f'builder.AddOpenAITextToImage("{BASE62}", "org-contoso", "dall-e-3");', BASE62, '"dall-e-3"'),
     # A builder chain across lines, and the chained call on one line.
     (
         "var kernel = Kernel.CreateBuilder()\n"

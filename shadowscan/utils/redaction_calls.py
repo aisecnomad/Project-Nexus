@@ -313,8 +313,8 @@ def _redact_credential_calls(text: str) -> str:
         # Prose puts a space before a parenthesis ("Login ('log|n')"); code rarely does.
         prose = callee[-1:].isspace()
         level = 0 if prose else _credential_callee(callee)
-        known = None if prose else _sdk_credential_position(callee)
-        if level or known is not None:
+        known = () if prose else _sdk_credential_positions(callee)
+        if level or known:
             # Literal credentials do not skip nested calls: a call inside
             # another argument can still pair a credential key with a value.
             literals.extend(_credential_literals(lexer, spans, state == "closed", level, known))
@@ -417,50 +417,55 @@ _LOOKUP_VERBS = frozenset(
 # AwsBasicCredentials.create("id", "v") and Ruby's Cohere::Client.new("v").
 _CALLEE_FACTORIES = frozenset({"basic", "create", "from", "new", "of"})
 # Well-known LLM SDK calls that take a credential at a fixed position although
-# no word of their name names one. A string literal at that zero-based position
-# among the positional arguments is withheld as a credential constructor's is
-# (named arguments such as C#'s 'apiKey: "v"' are left to the mapping rules).
+# no word of their name names one. Each lists the zero-based positions where
+# its overloads take the key as a string; the first of them that holds a string
+# literal among the positional arguments is withheld as a credential
+# constructor's is (named arguments such as C#'s 'apiKey: "v"' are left to the
+# mapping rules).
 # A distinctive name counts wherever it is called from (a builder variable,
 # 'services.', a chain); a generic one only through its package's own name
-# ('openai.DefaultConfig'), so an aliased import is not recognized. The
-# position is that of the overload that takes the key as a string; the notes
-# below say what other overloads pass there.
-_SDK_CREDENTIAL_ARGUMENTS: dict[str, int] = {
+# ('openai.DefaultConfig'), so an aliased import is not recognized. The notes
+# below say what other overloads pass at those positions. Positions were
+# checked against the SDKs' public signatures on 2026-10-01.
+_SDK_CREDENTIAL_ARGUMENTS: dict[str, tuple[int, ...]] = {
     # Semantic Kernel for .NET. Azure OpenAI connectors, as IKernelBuilder and
     # IServiceCollection extensions and services: (deploymentName, endpoint,
     # apiKey, ...). The overloads taking a TokenCredential there pass no
     # string; those taking a client second pass a service or model ID third,
     # which is withheld too when it is given positionally.
-    "AddAzureOpenAIChatCompletion": 2,
-    "AddAzureOpenAIChatClient": 2,
-    "AddAzureOpenAITextEmbeddingGeneration": 2,
-    "AddAzureOpenAIEmbeddingGenerator": 2,
-    "AddAzureOpenAITextToImage": 2,
-    "AddAzureOpenAIAudioToText": 2,
-    "AddAzureOpenAITextToAudio": 2,
-    "AzureOpenAIChatCompletionService": 2,
-    "AzureOpenAITextEmbeddingGenerationService": 2,
+    "AddAzureOpenAIChatCompletion": (2,),
+    "AddAzureOpenAIChatClient": (2,),
+    "AddAzureOpenAITextEmbeddingGeneration": (2,),
+    "AddAzureOpenAIEmbeddingGenerator": (2,),
+    "AddAzureOpenAITextToImage": (2,),
+    "AddAzureOpenAIAudioToText": (2,),
+    "AddAzureOpenAITextToAudio": (2,),
+    "AzureOpenAIChatCompletionService": (2,),
+    "AzureOpenAITextEmbeddingGenerationService": (2,),
     # OpenAI connectors: (modelId, apiKey, orgId, ...). The overloads taking a
-    # client second pass no string there; those taking an endpoint Uri second
-    # take the key third, which is not read. AddOpenAITextToImage takes the key
-    # first and is not listed.
-    "AddOpenAIChatCompletion": 1,
-    "AddOpenAIChatClient": 1,
-    "AddOpenAITextEmbeddingGeneration": 1,
-    "AddOpenAIEmbeddingGenerator": 1,
-    "AddOpenAIAudioToText": 1,
-    "AddOpenAITextToAudio": 1,
-    "OpenAIChatCompletionService": 1,
-    "OpenAITextEmbeddingGenerationService": 1,
+    # client second pass no string there. Chat completion and chat client also
+    # take (modelId, endpoint Uri, apiKey, orgId): an endpoint expression is no
+    # literal, so the key third is the first literal candidate. When the key
+    # second is a variable, a literal orgId third is withheld instead, which
+    # only over-redacts. AddOpenAITextToImage takes (apiKey, orgId, modelId).
+    "AddOpenAIChatCompletion": (1, 2),
+    "AddOpenAIChatClient": (1, 2),
+    "AddOpenAITextEmbeddingGeneration": (1,),
+    "AddOpenAIEmbeddingGenerator": (1,),
+    "AddOpenAIAudioToText": (1,),
+    "AddOpenAITextToAudio": (1,),
+    "AddOpenAITextToImage": (0,),
+    "OpenAIChatCompletionService": (1, 2),
+    "OpenAITextEmbeddingGenerationService": (1,),
     # go-openai (github.com/sashabaranov/go-openai): DefaultConfig(authToken),
     # DefaultAzureConfig(apiKey, baseURL) and NewClient(authToken).
-    "openai.DefaultConfig": 0,
-    "openai.DefaultAzureConfig": 0,
-    "openai.NewClient": 0,
+    "openai.DefaultConfig": (0,),
+    "openai.DefaultAzureConfig": (0,),
+    "openai.NewClient": (0,),
     # openai-java (com.theokanning.openai): new OpenAiService(token[, timeout]).
-    "OpenAiService": 0,
+    "OpenAiService": (0,),
     # Google AI JavaScript SDK (@google/generative-ai): new GoogleGenerativeAI(apiKey).
-    "GoogleGenerativeAI": 0,
+    "GoogleGenerativeAI": (0,),
 }
 # C#'s target-typed 'new(' constructs the type declared before the variable:
 # 'AzureKeyCredential credential = new("...")'. A generic type's arguments
@@ -495,12 +500,12 @@ def _credential_callee(name: str) -> int:
     return 1 if not _CREDENTIAL_CALLEE_WORDS.isdisjoint(words) else 0
 
 
-def _sdk_credential_position(name: str) -> int | None:
-    """The position of a well-known SDK call's credential argument (see ``_SDK_CREDENTIAL_ARGUMENTS``)."""
+def _sdk_credential_positions(name: str) -> tuple[int, ...]:
+    """Candidate credential positions of a well-known SDK call (see ``_SDK_CREDENTIAL_ARGUMENTS``)."""
     receiver, _, method = name.rpartition(".")
     qualified = receiver.rpartition(".")[2] + "." + method
-    position = _SDK_CREDENTIAL_ARGUMENTS.get(qualified)
-    return _SDK_CREDENTIAL_ARGUMENTS.get(method) if position is None else position
+    positions = _SDK_CREDENTIAL_ARGUMENTS.get(qualified)
+    return _SDK_CREDENTIAL_ARGUMENTS.get(method, ()) if positions is None else positions
 
 
 def _chained_callee(text: str, dot: int) -> str:
@@ -576,14 +581,14 @@ def _credential_literals(
     spans: list[tuple[int, int]],
     closed: bool,
     level: int,
-    known: int | None = None,
+    known: tuple[int, ...] = (),
 ) -> list[tuple[int, int]]:
     """Spans of credential string literals among one credential-named or well-known SDK call's arguments.
 
-    ``level`` is the callee's ``_credential_callee`` level. ``known`` is the
-    position of a well-known SDK call's credential argument, whose literal is
-    withheld as a credential constructor's is, whatever the level; at level 0
-    no other argument is read.
+    ``level`` is the callee's ``_credential_callee`` level. ``known`` lists the
+    candidate positions of a well-known SDK call's credential argument; the
+    literal at the first of them that holds one is withheld as a credential
+    constructor's is, whatever the level. At level 0 no other argument is read.
 
     A literal that starts a longer expression ("key" + suffix) withholds the
     whole argument. An unterminated literal is withheld to its line end. The
@@ -600,12 +605,18 @@ def _credential_literals(
         named = bool(literal and literal.group("label")) or _CALL_KEYWORD.match(text, begin, end) is not None
         arguments.append((end, literal, named, closed or number < len(spans) - 1))
     positional_count = sum(1 for _, _, named, _ in arguments if not named)
-    found: list[tuple[int, int]] = []
+    indexed: list[tuple[int, int, re.Match[str] | None, bool, bool]] = []
     position = 0
     for end, literal, named, bounded in arguments:
-        index = position
+        indexed.append((position, end, literal, named, bounded))
         position += not named
-        sdk = not named and index == known
+    # An overload with an expression where another takes the key (an endpoint
+    # Uri) moves the key to its next candidate position.
+    literal_positions = {index for index, _, literal, named, _ in indexed if literal and not named}
+    target = next((index for index in known if index in literal_positions), None)
+    found: list[tuple[int, int]] = []
+    for index, end, literal, named, bounded in indexed:
+        sdk = not named and index == target
         if literal is None or not (level or sdk):
             continue
         opening = literal.start("quote")
