@@ -4,7 +4,10 @@ Internal to :mod:`shadowscan.utils.redaction`, which re-exports every name
 here. ``name=value`` and ``name: value`` pairs under sensitive names, whole
 mapping expressions and indented YAML blocks under sensitive keys, opaque
 literals given to names whose last word names a credential, and literal
-defaults of credentials read from the environment.
+defaults of credentials read from the environment. After the established
+passes, pairs written with escaped quotes (JSON inside a string literal),
+unquoted values that hold a ';' and ``name:value`` under header and password
+names are read as well.
 """
 
 from __future__ import annotations
@@ -14,6 +17,8 @@ import re
 from shadowscan.utils.redaction_rules import (
     _CLI_WORD,
     _FINGERPRINT,
+    _GLUED_SEMICOLON,
+    _KEY_NORMALISE,
     REDACTED,
     SanitizationLimitError,
     _blanks_before,
@@ -39,9 +44,9 @@ from shadowscan.utils.redaction_rules import (
 # '[REDACTED' again and grew the marker by one ']' on every pass. After such a
 # marker it also stops at a query separator: 'sv=1&sig=[REDACTED]&Authorization:'
 # must leave the next parameter's name to be read with its own value.
+_ASSIGNMENT_KEY = r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
 _ASSIGNMENT = re.compile(
-    r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
-    r"(?P<sep>[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+|:[ \t]*(?=[\"']))"
+    _ASSIGNMENT_KEY + r"(?P<sep>[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+|:[ \t]*(?=[\"']))"
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'"
     r"|[^\s,;\}\]\)\"']+(?:(?<=\[REDACTED)\][^\s,;\}\]\)\"'&]*)*)"
 )
@@ -379,3 +384,116 @@ def _redact_plain_assignments(value: str, depth: int = 0) -> str:
         return key + sep + quote + clean + quote
 
     return _ASSIGNMENT.sub(assignment, value)
+
+
+# Past a ';' glued to an unquoted value (see _GLUED_SEMICOLON) the value runs
+# to the next ';' or the end of the line, as far as the mapping rules read a
+# value they withhold: withheld only to a blank, the rest of it was withheld
+# again by those rules on the next pass, which then found the next glued ';'.
+_GLUED_VALUE = _GLUED_SEMICOLON + r"[^;\r\n]*"
+# What the established assignment rules leave of two forms they do not read.
+# Quotes escaped up to eight levels deep (JSON inside a string literal:
+# '\\"api_key\\": \\"v\\"'), where the closing delimiter repeats the opening
+# one exactly, or the value runs to the end of the line; and the rest of an
+# unquoted value after a ';' glued to it, behind the marker that withheld the
+# value's start ('db-password=[REDACTED];cd', 'password: "[REDACTED]";cd').
+# The statement rules read most of the '=' forms first. The established
+# passes write that marker bare after '=' only for an unquoted value; after
+# ': ' they quote it either way.
+_ADDED_ASSIGNMENT = re.compile(
+    _ASSIGNMENT_KEY + r"(?P<sep>\\{0,8}[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+"
+    r"|:[ \t]*(?=\\{1,8}[\"']))"
+    r"(?P<value>(?P<escaped>\\{1,8}[\"'])(?:(?!(?P=escaped))[^\r\n])*(?P=escaped)"
+    r"|(?P<unclosed>\\{1,8}[\"'])[^\r\n]*"
+    r"|(?P<glued>\"?\[REDACTED\]\"?(?:" + _GLUED_VALUE + r")+))"
+)
+
+
+def _redact_added_assignments(text: str) -> str:
+    """Withhold sensitive values the established assignment rules leave (see ``_ADDED_ASSIGNMENT``).
+
+    Runs after every established pass, on their output. A value with a glued
+    ';' is withheld as one quoted marker, as the statement rules withhold a
+    value that is not a simple word.
+    """
+
+    def assignment(m: re.Match[str]) -> str:
+        full: str = m.group(0)
+        if not _sensitive_assignment_key(m.group("key")):
+            return full
+        sep: str = m.group("sep")
+        raw: str = m.group("value")
+        glued = m.group("glued")
+        if glued is not None:
+            if "=" in sep and raw.startswith('"'):
+                return full  # a quoted value, then a statement glued to its ';'
+            return m.group("key") + sep + '"' + REDACTED + '"'
+        opener = m.group("escaped") or m.group("unclosed")
+        closer = m.group("escaped") or ""
+        bare = raw[len(opener) : len(raw) - len(closer)]
+        withheld: str = _redact_value(bare)
+        return m.group("key") + sep + opener + withheld + closer
+
+    return _ADDED_ASSIGNMENT.sub(assignment, text)
+
+
+# 'api-key:value' with no space: an HTTP header written inline, or a password
+# field. Limited to these names: a suffix rule would also rewrite identifiers
+# such as 'example-credential:provider.openai' or 'arn:...:secret:name'.
+_COMPACT_NAMES = frozenset(
+    {
+        "apikey",
+        "xapikey",
+        "xgoogapikey",
+        "ocpapimsubscriptionkey",
+        "xauthtoken",
+        "xaccesstoken",
+        "xapitoken",
+        "authorization",
+        "proxyauthorization",
+        "password",
+        "passwd",
+    }
+)
+_COMPACT_COLON = re.compile(r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*):(?=[^\s\"'\\])")
+_COMPACT_VALUE = re.compile(r"\[REDACTED\]|[^\s,;\}\]\)\"']+(?:" + _GLUED_VALUE + r")*")
+# Report identifiers written in place of a caller's key (credential_id and the
+# gateway connector's keyed fingerprints).
+_OPAQUE_IDENTITY = re.compile(r"(?:credential|caller):(?:hmac-)?sha256:[a-f0-9]{64}")
+
+
+def _redact_compact_colons(text: str) -> str:
+    """Withhold 'api-key:value' (no space) after a header or password name.
+
+    Runs after every established pass. The marker is left bare; the mapping
+    rules quote it ('password:"[REDACTED]"'), as for 'password: value'.
+    """
+    pieces: list[str] = []
+    cursor = 0
+    position = 0
+    while match := _COMPACT_COLON.search(text, position):
+        position = match.end()
+        key = match.group("key")
+        if _KEY_NORMALISE.sub("", key.lower()) not in _COMPACT_NAMES:
+            continue
+        value = _COMPACT_VALUE.match(text, position)
+        if value is None:
+            continue
+        # Escaped JSON ('\\"api-key:v\\"') leaves the delimiter's backslash behind.
+        raw = value.group(0)
+        bare = raw.rstrip("\\")
+        if (
+            not bare
+            or _OPAQUE_IDENTITY.fullmatch(bare)
+            or _OPAQUE_IDENTITY.fullmatch(key + ":" + bare)
+            or _redact_value(bare) == bare
+        ):
+            position = value.end()
+            continue
+        pieces.append(text[cursor:position])
+        pieces.append(REDACTED + raw[len(bare) :])
+        cursor = position = value.end()
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)

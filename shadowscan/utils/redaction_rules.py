@@ -98,7 +98,7 @@ def _sensitive_assignment_key(key: str) -> bool:
 
 
 def _redact_value(value: Any) -> Any:
-    if value is None or value == "":
+    if value is None or value == "" or value == b"":
         return value
     if isinstance(value, str) and (value == REDACTED or _FINGERPRINT.fullmatch(value)):
         return value
@@ -155,6 +155,11 @@ _PLACEHOLDER_FILL = re.compile(r"(?i)x{4,}|\*{4,}|\.{3,}")
 _OPAQUE_RUN = re.compile(r"[A-Za-z0-9]{8,}")
 # A lowercase word: prose or an argument name rather than a value.
 _CLI_WORD = re.compile(r"[a-z][a-z_-]*")
+# A ';' ends an unquoted value only before whitespace, the end of the text or
+# another 'name=' pair (connection strings, shell lists): a password may hold
+# one ('PASSWORD=Ab;cd'). The established passes end the value at any ';';
+# the extended ones withhold the rest of the value past a ';' glued to it.
+_GLUED_SEMICOLON = r";(?!\s|\Z|[A-Za-z_][A-Za-z0-9_.-]*\s*=)"
 
 
 def _kept_value(value: str) -> bool:

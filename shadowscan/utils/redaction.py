@@ -38,6 +38,8 @@ from shadowscan.utils import (
     redaction_statements,
 )
 from shadowscan.utils.redaction_assignments import (
+    _redact_added_assignments,
+    _redact_compact_colons,
     _redact_fallback_defaults,
     _redact_mapping_values,
     _redact_opaque_assignments,
@@ -46,12 +48,23 @@ from shadowscan.utils.redaction_assignments import (
 )
 from shadowscan.utils.redaction_calls import _redact_auth_pairs, _redact_credential_calls
 from shadowscan.utils.redaction_commands import (
+    _cli_secret_option,
     _redact_command_credentials,
+    _redact_cookie_headers,
     _redact_environment_commands,
-    _redact_opaque_options,
+    _redact_extended_options,
     _redact_user_secrets,
 )
-from shadowscan.utils.redaction_formats import _AUTH, _JWT, _PEM, _SECRET_TOKEN, _URL, _sanitize_url
+from shadowscan.utils.redaction_formats import (
+    _AUTH,
+    _JWT,
+    _PEM,
+    _SECRET_TOKEN,
+    _URL,
+    _redact_added_formats,
+    _sanitize_url,
+    _sanitize_url_fields,
+)
 from shadowscan.utils.redaction_markup import (
     _redact_markup_credentials,
     _redact_markup_settings,
@@ -87,6 +100,9 @@ _CREDENTIAL_DESCRIPTORS = frozenset(
 # Descriptors that are opaque secret material inside a container named for
 # credentials ('credentials.id'), but name an identity elsewhere ('api_key.id').
 _CREDENTIAL_GROUP_IDS = frozenset({"id", "objectid"})
+# Values ``sanitize`` descends into: sets and frozensets are copied as lists
+# are (keeping their type), without the argv pairs that order gives a list.
+_CONTAINERS = (Mapping, list, tuple, set, frozenset)
 
 
 def credential_id(value: Any) -> str:
@@ -102,8 +118,8 @@ def sanitize_text(text: str) -> str:
 
     Context-named values are also withheld: XML elements and attributes,
     name/value records, command-line options, environment commands, basic
-    authentication pairs, literals passed to credential-named callees and
-    literal fallback defaults of credential names.
+    authentication pairs, literals passed to credential-named callees,
+    literal fallback defaults of credential names and cookie headers.
 
     The established passes run first, with the rules and in the order they
     had before the extended passes were added; the extended passes then read
@@ -133,17 +149,38 @@ def _redact_extended(text: str) -> str:
 
     Settings in markup and name/value records (hierarchical and
     credential-like names), 'dotnet user-secrets set', numbered names and
-    YAML values under credential-like names, and opaque values of options
-    named for a credential. The options come last: withheld earlier, a value
-    glued to a following name ('--key v#openaiKey = ...') would hide that
-    name from the others.
+    YAML values under credential-like names, and the options and option
+    values only the added rules read (opaque values of options named for a
+    credential, short credential names such as '--pat', quoted values that
+    never close). The options come after the others: withheld earlier, a
+    value glued to a following name ('--key v#openaiKey = ...') would hide
+    that name from them. Then come the values that run on past where the
+    established rules end one: added query fields, cookie headers, the rest
+    of an unquoted value past a glued ';', assignments with escaped quotes
+    and 'api-key:value' with no space; and last the added formats (PGP
+    private keys, tokens next to non-Latin text, Fireworks AI keys). A marker
+    these passes leave after a mapping colon is then quoted, as the
+    established passes end, so repeated sanitization does not change the
+    result.
     """
     text = _redact_markup_settings(text)
     text = _redact_record_settings(text)
     text = _redact_user_secrets(text)
     text = _redact_opaque_assignments(text, extended=True)
     text = _redact_fallback_defaults(text, extended=True)
-    return _redact_opaque_options(text)
+    text = _redact_extended_options(text)
+    # The added values run on past where the established rules end a value
+    # (a query field, a glued ';', a whole header line), so they come after
+    # every pass that reads a name. A cookie header comes first: the rest of
+    # its line holds the other cookies, past any ';' the others stop at.
+    text = _URL.sub(_sanitize_url_fields, text)
+    text = _redact_cookie_headers(text)
+    text = _redact_python_assignments(text, glued=True)
+    text = _redact_added_assignments(text)
+    text = _redact_compact_colons(text)
+    # Formats need no context, but a token glued to a name hides it, so the
+    # formats added since come last of all.
+    return _redact_mapping_values(_redact_added_formats(text))
 
 
 def _sanitize_established(text: str) -> str:
@@ -161,7 +198,8 @@ def _sanitize_established(text: str) -> str:
     text = _redact_yaml_multiline_values(text)
     text = _redact_mapping_values(text)
     text = _redact_opaque_assignments(text)
-    text = _JWT.sub(REDACTED, text)
+    # The text before a token in its run ('x-' of 'x-eyJ...') is kept.
+    text = _JWT.sub(r"\g<prefix>" + REDACTED, text)
     text = _SECRET_TOKEN.sub(REDACTED, text)
     # The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
     text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED + "\n" * m.group().count("\n"), text)
@@ -185,6 +223,33 @@ def _opaque_option(option: str) -> bool:
 def _opaque_literal(value: Any) -> bool:
     """A string that looks like an opaque key."""
     return isinstance(value, str) and _credential_literal(value, positional=False)
+
+
+def _decoded(item: bytes | bytearray) -> str:
+    """Bytes as text, decoded tolerantly: undecodable bytes become U+FFFD."""
+    return bytes(item).decode("utf-8", errors="replace")
+
+
+def _extended_argv_value(option: str, value: Any) -> bool:
+    """Whether the added rules withhold ``value``, the argv element after ``option``."""
+    return _cli_secret_option(option) or (_opaque_option(option) and _opaque_literal(value))
+
+
+def _inline_option_value(item: Any) -> str | None:
+    """The credential an argv element passes inline ('--api-key=v', '--pat=v'), if any.
+
+    Option names decide as they do for a separate argv value: a sensitive
+    name, a short credential name, or a name whose last word names a
+    credential when the value looks like an opaque key.
+    """
+    if isinstance(item, (bytes, bytearray)):
+        item = _decoded(item)
+    if not isinstance(item, str) or not item.startswith("-") or "=" not in item:
+        return None
+    option, _, value = item.partition("=")
+    if _sensitive_key(option.lstrip("-")) or _cli_secret_option(option):
+        return value
+    return value if _opaque_option(option) and _opaque_literal(value) else None
 
 
 def _record_has_secret_value(item: Mapping, *, environment: bool = False, extended: bool = False) -> bool:
@@ -215,7 +280,7 @@ def _credential_member(key: str, child: Any, *, group: bool) -> bool:
     'identity.authorization.objectId'), and a copied short ID must not taint
     otherwise independent caller labels or report identities.
     """
-    if isinstance(child, (Mapping, list, tuple)):
+    if isinstance(child, _CONTAINERS):
         return True
     return key not in _CREDENTIAL_DESCRIPTORS or (group and key in _CREDENTIAL_GROUP_IDS)
 
@@ -251,6 +316,13 @@ class _Sanitizer:
             raise SanitizationLimitError("credential replacement work limit exceeded")
 
     def remember(self, child: Any) -> None:
+        if isinstance(child, (bytes, bytearray)):
+            if not self.extended:
+                # Known before the established text passes, a value they did not
+                # know before would be removed from a sibling ahead of them and
+                # could hide a name they read there; later passes remember it.
+                return
+            child = _decoded(child)
         if isinstance(child, str) and child:
             if child != REDACTED and not _FINGERPRINT.fullmatch(child):
                 self.known.add(child)
@@ -262,9 +334,9 @@ class _Sanitizer:
 
     def discover(self, item: Any, depth: int = 0, *, environment: bool = False) -> None:
         identity = (id(item), environment)
-        if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in self.discovered):
+        if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.discovered):
             return
-        if isinstance(item, (Mapping, list, tuple)):
+        if isinstance(item, _CONTAINERS):
             self.discovered.add(identity)
         # The extended pass knows only the values the added rules find: the
         # established pass already withheld and removed the others.
@@ -291,11 +363,14 @@ class _Sanitizer:
             for child in item:
                 if isinstance(previous, str) and previous.startswith("-"):
                     if (established and _sensitive_key(previous.lstrip("-"))) or (
-                        self.extended and _opaque_option(previous) and _opaque_literal(child)
+                        self.extended and _extended_argv_value(previous, child)
                     ):
                         self.remember(child)
                 self.discover(child, depth + 1, environment=environment)
                 previous = child
+        elif isinstance(item, (set, frozenset)):
+            for child in item:
+                self.discover(child, depth + 1, environment=environment)
 
     def text_passes(self, text: str) -> str:
         """This pass's text passes: the established ones, or the extended ones on their result.
@@ -369,14 +444,14 @@ class _Sanitizer:
             raise SanitizationLimitError("sanitization work limit exceeded")
         if depth > 64:
             return REDACTED
-        if isinstance(item, (Mapping, list, tuple)):
+        if isinstance(item, _CONTAINERS):
             if id(item) in self.cleaning:
                 return REDACTED
             self.cleaning.add(id(item))
         try:
             return self.clean_value(item, depth)
         finally:
-            if isinstance(item, (Mapping, list, tuple)):
+            if isinstance(item, _CONTAINERS):
                 self.cleaning.discard(id(item))
 
     def clean_value(self, item: Any, depth: int) -> Any:
@@ -393,9 +468,22 @@ class _Sanitizer:
                     sequence_out.append(self.clean(child, depth + 1))
                     opaque_next = False
                     if isinstance(child, str) and child.startswith("-") and "=" not in child:
-                        redact_next = _sensitive_key(child.lstrip("-"))
+                        redact_next = _sensitive_key(child.lstrip("-")) or (
+                            self.extended and _cli_secret_option(child)
+                        )
                         opaque_next = self.extended and _opaque_option(child)
             return tuple(sequence_out) if isinstance(item, tuple) else sequence_out
+        if isinstance(item, (set, frozenset)):
+            members = [self.clean(child, depth + 1) for child in item]
+            return frozenset(members) if isinstance(item, frozenset) else set(members)
+        if isinstance(item, (bytes, bytearray)):
+            # json's default=str would otherwise print the raw bytes. Content
+            # the text passes leave alone keeps its exact bytes.
+            decoded = _decoded(item)
+            cleaned = self.text(decoded)
+            if cleaned == decoded:
+                return item
+            return bytearray(cleaned.encode()) if isinstance(item, bytearray) else cleaned.encode()
         if isinstance(item, str):
             return self.text(item)
         return item
@@ -443,6 +531,10 @@ class _NestedSanitizer(_Sanitizer):
     ``clean`` removes them, with the spelling the text passes give them, from
     the copy the extended pass left, where they can only add markers. It is
     charged and bounded as the extended pass, which also reads a copy.
+
+    The credential an argv element passes inline ('--api-key=v') is read
+    here too: the earlier passes withhold it in place, reading their own
+    copy, so only the input still shows v to remove from other fields.
     """
 
     def __init__(self, *, redact_short_secrets: bool) -> None:
@@ -470,9 +562,9 @@ class _NestedSanitizer(_Sanitizer):
         ``credential_group`` marks a container named for credentials.
         """
         identity = (id(item), environment, credential, credential_group)
-        if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in self.containers):
+        if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.containers):
             return
-        if isinstance(item, (Mapping, list, tuple)):
+        if isinstance(item, _CONTAINERS):
             self.containers.add(identity)
         if isinstance(item, Mapping):
             named_secret = _record_has_secret_value(item, environment=environment) or (
@@ -493,7 +585,8 @@ class _NestedSanitizer(_Sanitizer):
                 member = (named_secret and lower_name == "value") or (
                     credential and _credential_member(lower_name, child, group=child_group)
                 )
-                if member:
+                # Bytes under a sensitive key: the established pass knows only text.
+                if member or (key_sensitive and isinstance(child, (bytes, bytearray))):
                     self.remember(child)
                 self.discover(
                     child,
@@ -502,10 +595,17 @@ class _NestedSanitizer(_Sanitizer):
                     credential=key_sensitive or member,
                     credential_group=child_group,
                 )
-        elif isinstance(item, (list, tuple)):
+        elif isinstance(item, (list, tuple, set, frozenset)):
             for child in item:
                 if credential:
                     self.remember(child)
+                elif isinstance(item, (list, tuple)):
+                    # '--api-key=v' in an argv list: the earlier passes withhold
+                    # it in place, read from their copy; here it is read from
+                    # the input, so a copy of v in another field goes as well.
+                    inline = _inline_option_value(child)
+                    if inline is not None:
+                        self.remember(inline)
                 self.discover(
                     child,
                     depth + 1,
@@ -553,6 +653,8 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
 
     Environment variable values are omitted regardless of name. Lists additionally
     recognize argv pairs, so ``["--token", "opaque-value"]`` is safe to retain.
+    Sets and frozensets keep their type; bytes are decoded tolerantly, sanitized
+    and returned as bytes (content the text passes leave alone keeps its bytes).
     Known credential values are also removed from other fields in the same object.
     Short credentials withhold a matching field by default. Diagnostics can opt
     into bounded substring replacement to retain surrounding diagnostic context.
@@ -617,8 +719,8 @@ def _check_sanitization_structure(value: Any) -> None:
     memo: dict[int, tuple[int, int, int]] = {}
 
     def cost(item: Any) -> tuple[int, int, int]:
-        if not isinstance(item, (Mapping, list, tuple)):
-            return 1, len(item) if isinstance(item, str) else 0, 1
+        if not isinstance(item, _CONTAINERS):
+            return 1, len(item) if isinstance(item, (str, bytes, bytearray)) else 0, 1
         identity = id(item)
         if identity in active:
             return 1, len(REDACTED), 1

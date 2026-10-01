@@ -4,7 +4,11 @@ Internal to :mod:`shadowscan.utils.redaction`, which re-exports every name
 here. Option values ('--api-key v', '-u user:v', '-H "X-Api-Key:v"', and an
 opaque '--key v'), a login's '-p v', a password echoed into
 '--password-stdin', the value 'dotnet user-secrets set NAME v' stores, and
-the values of 'ENV NAME v', 'setx NAME v' and '#define NAME v'.
+the values of 'ENV NAME v', 'setx NAME v' and '#define NAME v'. The last
+option pass also reads short credential option names ('--pat v',
+'--passphrase v', '--auth v') and a quoted value that never closes on its
+line; cookie headers and headers written without a space after the colon
+('x-api-key:v') are read after the established passes as well.
 """
 
 from __future__ import annotations
@@ -15,11 +19,13 @@ from shadowscan.utils.redaction_rules import (
     _ALPHANUMERIC,
     _CLI_WORD,
     _FINGERPRINT,
+    _KEY_NORMALISE,
     _REFERENCE,
     REDACTED,
     _credential_literal,
     _credential_name,
     _kept_value,
+    _redact_value,
     _sensitive_assignment_key,
     _sensitive_key,
     _setting_level,
@@ -38,10 +44,22 @@ _CLI_OPTION = re.compile(r"-(?<![\w./\\\]-]-)-?[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za
 _CLI_BOUNDARY = re.compile(r"[\w./\\\]-]")
 _CLI_USER_OPTIONS = frozenset({"a", "u", "U", "auth", "basic-auth", "proxy-user", "user"})
 _CLI_HEADER_OPTIONS = frozenset({"H", "header", "headers"})
+# Short option names that name a credential on a command line ('--pat v',
+# '--passphrase v', '-pass v', '--pwd v') but are too broad as record field
+# names, and '--auth', which passes user:password (httpie) or a token. Only the
+# last option pass reads them (see _redact_options), as an argv list's
+# extended pass does: their values are withheld as a '--password' value is.
+_CLI_SECRET_NAMES = frozenset({"pat", "pass", "passphrase", "pwd"})
+_CLI_AUTH_OPTIONS = frozenset({"auth"})
 _CLI_SPACE = re.compile(r"[ \t]*\\\r?\n[ \t]*|[ \t]*\r?\n[ \t]*-[ \t]+|[ \t]+")
 _CLI_LIST_GAP = re.compile(r"[ \t]*,[ \t]*|[ \t]*\r?\n[ \t]*-[ \t]+|[ \t]+")
+# A quote that never closes on its line ('--token 'v' in a cut excerpt) opens
+# the rest of the line; only the last option pass reads it ('unclosed'). It is
+# reached only at the last quote of its kind on a line, so the line is read
+# to its end at most twice.
 _CLI_VALUE = re.compile(
     r"\"(?P<double>[^\"\r\n]*)\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>(){}\[\],\\]+)"
+    r"|[\"'](?P<unclosed>[^\r\n]*)"
 )
 # One character of an unquoted value (the 'bare' group above), and a run of them.
 _CLI_BARE_CHARACTER = re.compile(r"[^\s\"'`;|&<>(){}\[\],\\]")
@@ -95,6 +113,7 @@ _USER_SECRETS_SET = re.compile(
 
 
 def _cli_option_mode(option: str) -> str:
+    """How the established option pass reads the value of ``option`` ('' when it does not)."""
     name = option.lstrip("-")
     if name in _CLI_USER_OPTIONS:
         return "user"
@@ -105,6 +124,23 @@ def _cli_option_mode(option: str) -> str:
     if _sensitive_assignment_key(re.sub(r"[-.]", "_", name)):
         return "secret"
     return "opaque" if _credential_name(name, numbered=True) else ""
+
+
+def _cli_added_mode(option: str) -> str:
+    """How the last option pass reads ``option`` beyond the established rules ('' when it does not).
+
+    'secret' for a short credential name ('--pat', '-pass'), 'auth' for
+    '--auth', whose value is user:password or a token.
+    """
+    name = option.lstrip("-")
+    if name in _CLI_AUTH_OPTIONS:
+        return "auth"
+    return "secret" if _KEY_NORMALISE.sub("", name.lower()) in _CLI_SECRET_NAMES else ""
+
+
+def _cli_secret_option(option: str) -> bool:
+    """Whether an argv option names a credential by one of the names only the last pass reads."""
+    return option.startswith("-") and bool(_cli_added_mode(option))
 
 
 def _cli_password_mode(text: str, option: re.Match[str], logins: bool, mysql: bool) -> str:
@@ -133,6 +169,8 @@ def _cli_secret_span(mode: str, value: str, start: int, strict: bool) -> tuple[i
     """The part of an option value ``value`` (at ``start``) that is a credential."""
     if value.startswith("-"):
         return None  # the next option, not a value
+    if mode == "auth":
+        mode = "user" if ":" in value else "secret"
     if mode == "opaque":
         # A value holding an assignment or ending in a mapping key
         # ('--key a.api_key=v', '--key a:Secret:') is left to the rules that
@@ -224,10 +262,16 @@ def _run_secret_span(
     end: int,
     strict: bool,
 ) -> tuple[int, int] | None:
-    """``_cli_secret_span`` of the unquoted value text[start:end] of a 'secret', 'user' or 'header' option."""
+    """``_cli_secret_span`` of the unquoted value text[start:end] of a 'secret', 'user' or 'header' option.
+
+    An 'auth' option's value is read as a 'user' one when it holds a ':',
+    else as a 'secret' one.
+    """
     text = runs.text
     if text.startswith("-", start):
         return None  # the next option, not a value
+    if mode == "auth":
+        mode = "user" if runs.find(":", start, end) >= 0 else "secret"
     if mode == "user":
         colon = runs.find(":", start, end)
         if colon < 0 or 0 <= runs.find("=", start, end) < colon or colon + 1 == end:
@@ -256,14 +300,22 @@ def _cli_value_span(
     position: int,
     strict: bool,
     runs: _ValueRuns | None = None,
+    extended: bool = False,
 ) -> tuple[int, int] | None:
-    """The credential in the option value at ``position``; ``runs`` reads unquoted ones (see _ValueRuns)."""
+    """The credential in the option value at ``position``; ``runs`` reads unquoted ones (see _ValueRuns).
+
+    The ``extended`` pass, which runs last, also reads a quote that does not
+    close on its line as opening the rest of the line, and an unquoted value
+    that an earlier pass withheld in part, as the 'opaque' options always do.
+    """
     if text.startswith("-", position):
         return None  # the next option: checked first so chained options are not rescanned
     if runs is not None and mode != "opaque" and _CLI_BARE_CHARACTER.match(text, position):
-        return _run_secret_span(mode, runs, position, runs.end(position), strict)
+        end = runs.end(position)
+        if not (extended and text.startswith(REDACTED, end)):
+            return _run_secret_span(mode, runs, position, end, strict)
     value = _CLI_VALUE.match(text, position)
-    if mode == "opaque" and (value is None or value.group("bare") is not None):
+    if (mode == "opaque" or extended) and (value is None or value.group("bare") is not None):
         # These options are read last, after an earlier pass may have withheld
         # part of an unquoted value ('--key sk-...:rest'): the rest decides.
         if text.startswith(REDACTED, position if value is None else value.end()):
@@ -271,9 +323,9 @@ def _cli_value_span(
             assert marked is not None
             rest = marked.group().replace(REDACTED, "")
             return marked.span() if rest and _cli_secret_span(mode, rest, position, strict) else None
-    if value is None:
+    if value is None or (value.group("unclosed") is not None and not extended):
         return None
-    group = next(name for name in ("double", "single", "bare") if value.group(name) is not None)
+    group = next(name for name in ("double", "single", "bare", "unclosed") if value.group(name) is not None)
     return _cli_secret_span(mode, value.group(group), value.start(group), strict)
 
 
@@ -304,43 +356,52 @@ def _redact_user_secrets(text: str) -> str:
 def _redact_command_credentials(text: str) -> str:
     """Withhold credentials passed as command-line option values (the established rules).
 
-    Opaque values of options whose last word names a credential are left to
-    ``_redact_opaque_options``, which runs after every established pass.
+    Opaque values of options whose last word names a credential, and the
+    options and values only the added rules read, are left to
+    ``_redact_extended_options``, which runs after every established pass.
     """
     if "-" not in text:
         return text
     if "--password-stdin" in text:
         text = _redact_piped_passwords(text)
-    return _redact_options(text, opaque=False)
+    return _redact_options(text, extended=False)
 
 
-def _redact_opaque_options(text: str) -> str:
-    """Withhold opaque values of options whose last word names a credential ('--key v').
+def _redact_extended_options(text: str) -> str:
+    """Withhold option values only the added rules read (see ``_redact_options``).
 
-    This runs after every pass that reads a name: an opaque value glued to a
-    following assignment ('--key v#password = "p"') would otherwise hide that
-    assignment's name from them. It also withholds the rest of a word crowded
-    with options (see _CLI_WORD_OPTIONS), which nothing reads after it.
+    Opaque values of options whose last word names a credential ('--key v'),
+    values of short credential names ('--pat v', '--auth v') and a quoted
+    value that never closes on its line ('--token 'v'). This runs after every
+    pass that reads a name: an opaque value glued to a following assignment
+    ('--key v#password = "p"') would otherwise hide that assignment's name
+    from them. It also withholds the rest of a word crowded with options (see
+    _CLI_WORD_OPTIONS), which nothing reads after it.
     """
-    return text if "-" not in text else _redact_options(text, opaque=True)
+    return text if "-" not in text else _redact_options(text, extended=True)
 
 
-def _redact_options(text: str, *, opaque: bool) -> str:
-    """Withhold values of 'opaque' options ('--key v') when ``opaque``, else of all other options.
+def _redact_options(text: str, *, extended: bool) -> str:
+    """Withhold credential option values by the established rules, and the added ones if ``extended``.
 
-    A login's '-p' and a MySQL client's '-pValue' are read first, so
+    The established pass reads every option but the 'opaque' ones ('--key v').
+    The ``extended`` pass, which runs last, reads every option again on what
+    the other passes left, with the added rules: 'opaque' options, the short
+    names of ``_cli_added_mode`` and quoted values that do not close on their
+    line. What the established pass withheld is a marker by then, which it
+    keeps. A login's '-p' and a MySQL client's '-pValue' are read first, so
     '-pS3cretKey' after 'mysql' is an attached password, not an 'opaque' option.
     """
     spans: list[tuple[int, int]] = []
     cursor = 0
     logins = "login" in text or "sshpass" in text
     mysql = "mysql" in text or "mariadb" in text
-    runs = None if opaque else _ValueRuns(text)
+    runs = _ValueRuns(text)
     # The unquoted word the current option starts in, and how many options start in it.
     word_end = word_options = 0
     for match in _CLI_OPTION.finditer(text):
         start = match.start()
-        if opaque:
+        if extended:
             if start < word_end:
                 word_options += 1
             else:
@@ -352,12 +413,12 @@ def _redact_options(text: str, *, opaque: bool) -> str:
                     cursor = word_end
                 continue
         mode = _cli_option_mode(match.group())
-        if opaque and mode != "opaque":
-            continue
         if mode in {"", "opaque"} and (logins or mysql):
             # A login's '-p' and a MySQL client's '-pValue' ('-pSecret') come first.
             mode = _cli_password_mode(text, match, logins, mysql) or mode
-        if not mode or (mode == "opaque") != opaque:
+        if extended and mode in {"", "opaque", "user"}:
+            mode = _cli_added_mode(match.group()) or mode
+        if not mode or (mode == "opaque" and not extended):
             continue
         # An opening quote belongs to the option unless it closes a preceding word.
         quote = text[start - 1] if start and text[start - 1] in "\"'" else ""
@@ -365,7 +426,7 @@ def _redact_options(text: str, *, opaque: bool) -> str:
             quote = ""
         if start - len(quote) < cursor:
             continue
-        span = _option_value_span(text, match, mode, quote, runs)
+        span = _option_value_span(text, match, mode, quote, runs, extended)
         if span is None:
             continue
         spans.append(span)
@@ -378,16 +439,18 @@ def _option_value_span(
     match: re.Match[str],
     mode: str,
     quote: str,
-    runs: _ValueRuns | None,
+    runs: _ValueRuns,
+    extended: bool,
 ) -> tuple[int, int] | None:
     """The credential that the option ``match`` of ``mode`` passes, if any.
 
     ``quote`` is the quote that opens the option ('"--api-key=v"'), or ''.
+    ``extended`` reads values as the last pass does (see ``_cli_value_span``).
     """
     start, position = match.start(), match.end()
     strict = text.startswith("=", position)
     if mode == "attached":
-        return _cli_value_span("secret", text, start + 2, True, runs)
+        return _cli_value_span("secret", text, start + 2, True, runs, extended)
     if quote and strict:
         # '"--api-key=value"' as one argv element.
         limit = text.find("\n", position, position + _CLI_VALUE_LIMIT)
@@ -399,12 +462,42 @@ def _option_value_span(
         gap = _CLI_LIST_GAP.match(text, position + 1)
         if gap is None or not text.startswith(('"', "'"), gap.end()):
             return None
-        return _cli_value_span(mode, text, gap.end(), False, runs)
+        return _cli_value_span(mode, text, gap.end(), False, runs, extended)
     # Plain text, or a quote that does not delimit this option.
     if strict:
-        return _cli_value_span(mode, text, position + 1, True, runs)
+        return _cli_value_span(mode, text, position + 1, True, runs, extended)
     gap = _CLI_SPACE.match(text, position)
-    return None if gap is None else _cli_value_span(mode, text, gap.end(), False, runs)
+    return None if gap is None else _cli_value_span(mode, text, gap.end(), False, runs, extended)
+
+
+# Cookie headers hold several 'name=value' pairs separated by ';', any of
+# which can be a session credential and may be quoted (sid="v"), so the whole
+# header value is withheld, to the end of the line. The established
+# assignment rules withhold only the first pair and quote it ('Cookie:
+# "[REDACTED]"; sid=v'), and the mapping rules then read a quoted marker
+# together with what follows it to the next ';', so a value cut at a quote
+# would grow on every pass.
+_COOKIE_HEADER = re.compile(
+    r"(?i)(?<![\w.-])(?P<key>set-cookie2?|cookie2?)(?P<sep>[ \t]*[:=][ \t]*)(?P<value>\S[^\r\n]*)"
+)
+
+
+def _redact_cookie_headers(text: str) -> str:
+    """Withhold the value of a Cookie or Set-Cookie header (see ``_COOKIE_HEADER``).
+
+    Runs after every established pass. The marker is left bare; the mapping
+    rules quote it after a colon ('Cookie: "[REDACTED]"').
+    """
+
+    def header(match: re.Match[str]) -> str:
+        raw = match.group("value")
+        bare = raw.rstrip(" \t")
+        if _ALPHANUMERIC.search(bare.replace(REDACTED, "")) is None:
+            return match.group(0)  # already withheld: only markers and punctuation are left
+        withheld: str = _redact_value(bare)
+        return match.group("key") + match.group("sep") + withheld + raw[len(bare) :]
+
+    return _COOKIE_HEADER.sub(header, text)
 
 
 # Dockerfile's legacy 'ENV NAME value', csh/Windows 'setenv NAME value' and

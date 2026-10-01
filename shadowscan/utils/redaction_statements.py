@@ -20,6 +20,7 @@ from collections.abc import Iterator
 from shadowscan.utils.redaction_formats import _URL
 from shadowscan.utils.redaction_rules import (
     _FINGERPRINT,
+    _GLUED_SEMICOLON,
     _MAX_REDACTION_WORK,
     REDACTED,
     SanitizationLimitError,
@@ -35,6 +36,10 @@ _INDEXED_ASSIGNMENT_KEY = re.compile(
     r"(?P=quote)"
 )
 _TARGET_ATTRIBUTE = re.compile(r"\.[A-Za-z_$][A-Za-z0-9_$]*")
+# What the established passes leave of an unquoted value with a glued ';'
+# ('PASSWORD=Ab;cd' becomes 'PASSWORD=[REDACTED];cd'), and that ';'.
+_GLUED_ASSIGNED = re.compile(r"[ \t]*\[REDACTED\]" + _GLUED_SEMICOLON)
+_GLUED_BREAK = re.compile(_GLUED_SEMICOLON)
 
 
 def _indexed_assignment_candidates(text: str) -> Iterator[tuple[int, str, str, int]]:
@@ -308,11 +313,20 @@ class _AssignmentScanner:
         """Whether an earlier annotation scan shows this annotation assigns nothing."""
         return any(scan.rescan.get(candidate_end) is False for scan in self.annotations)
 
-    def scan(self, start: int, candidate_end: int, annotated: bool) -> tuple[int | None, int, bool]:
-        """Locate one candidate's assigned value: (assigned_at, end, argument)."""
+    def scan(
+        self,
+        start: int,
+        candidate_end: int,
+        annotated: bool,
+        glued: bool = False,
+    ) -> tuple[int | None, int, bool]:
+        """Locate one candidate's assigned value: (assigned_at, end, argument).
+
+        With ``glued``, a ';' glued to an unquoted value does not end it.
+        """
         limit = _SCAN_LINE_LIMIT
         while True:
-            located = self._scan(start, candidate_end, annotated, limit)
+            located = self._scan(start, candidate_end, annotated, limit, glued)
             if located is not None:
                 return located
             limit *= 4
@@ -338,6 +352,7 @@ class _AssignmentScanner:
         candidate_end: int,
         annotated: bool,
         limit: int,
+        glued: bool = False,
     ) -> tuple[int | None, int, bool] | None:
         """One scan reading at most ``limit`` characters of each line; None if a cut may matter.
 
@@ -351,6 +366,8 @@ class _AssignmentScanner:
         brackets: list[str] = []
         argument = not annotated and _opens_argument(text, start)
         previous_operator = ""
+        # Whether a string has been read: a ';' after one ends the statement.
+        quoted = False
         record = _AnnotationScan() if annotated else None
         definitive = True
         stopped: tokenize.TokenInfo | None = None
@@ -358,6 +375,7 @@ class _AssignmentScanner:
             for item in tokenize.generate_tokens(lines.readline):
                 stopped = item
                 position = offsets[item.start[0] - 1] + item.start[1]
+                quoted = quoted or '"' in item.string or "'" in item.string
                 if item.type == token.ERRORTOKEN and not item.string.isspace():
                     # Incomplete single-quoted strings generate error tokens,
                     # not TokenError. A semicolon inside one is not a boundary.
@@ -396,6 +414,8 @@ class _AssignmentScanner:
                         and not brackets
                         and (item.string == ";" or (argument and item.string == ","))
                     ):
+                        if glued and item.string == ";" and not quoted and _GLUED_BREAK.match(text, position):
+                            continue
                         end = position
                         break
                     previous_operator = item.string
@@ -430,7 +450,7 @@ class _AssignmentScanner:
         return assigned_at, end, argument
 
 
-def _redact_python_assignments(text: str) -> str:
+def _redact_python_assignments(text: str, *, glued: bool = False) -> str:
     """Redact complete sensitive Python assignment expressions without evaluation.
 
     Tokenize only sensitive candidates, including indexed assignments and call
@@ -439,7 +459,15 @@ def _redact_python_assignments(text: str) -> str:
     withheld through EOF; the explicit work budget prevents hostile candidates
     from repeatedly tokenizing an unlimited amount of source, and annotations
     enclosed by an earlier annotation-only scan reuse its tokens.
+
+    The ``glued`` pass runs after every established pass, on their output. It
+    reads only the assignments those withheld up to a ';' glued to the rest
+    of an unquoted value ('PASSWORD=[REDACTED];cd'), and withholds that rest
+    as the statement goes on: to the next ';' that ends a value, or the end
+    of the statement.
     """
+    if glued and "[REDACTED];" not in text:
+        return text
     scanner = _AssignmentScanner(text)
     pieces: list[str] = []
     cursor = 0
@@ -447,6 +475,8 @@ def _redact_python_assignments(text: str) -> str:
     url = next(urls, None)
     for start, key, separator, candidate_end in _assignment_candidates(text):
         if start < cursor or not _sensitive_assignment_key(key):
+            continue
+        if glued and (separator != "=" or not _GLUED_ASSIGNED.match(text, candidate_end)):
             continue
         annotated = separator == ":"
         # URL fields use URL boundaries, not Python statement boundaries,
@@ -462,7 +492,7 @@ def _redact_python_assignments(text: str) -> str:
         if not annotated:
             while value_start < len(text) and text[value_start] in " \t":
                 value_start += 1
-        assigned_at, end, argument = scanner.scan(start, candidate_end, annotated)
+        assigned_at, end, argument = scanner.scan(start, candidate_end, annotated, glued)
         if assigned_at is not None:
             raw = text[assigned_at:end]
             bare = raw.strip()

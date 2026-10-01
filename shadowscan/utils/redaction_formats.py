@@ -4,20 +4,21 @@ Internal to :mod:`shadowscan.utils.redaction`, which re-exports every name
 here. These rules need no context: a prefixed provider token, a JWT, a PEM
 private key or an authorization scheme is withheld wherever it appears, and a
 URL loses its userinfo, credential-bearing webhook path and sensitive query
-fields.
+fields (some only in the extended pass, see ``_ADDED_QUERY_NAMES``).
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from urllib.parse import unquote
 
 from shadowscan.utils.redaction_rules import REDACTED, _sensitive_assignment_key
 
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
-_SECRET_TOKEN = re.compile(
-    r"\b(?:sk-(?:proj-|ant-|live-|or-v1-|lf-|litellm-|svcacct-|admin-)?[A-Za-z0-9_-]{8,}"
+_TOKEN_FORMATS = (
+    r"sk-(?:proj-|ant-|live-|or-v1-|lf-|litellm-|svcacct-|admin-)?[A-Za-z0-9_-]{8,}"
     r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
     # GitLab personal/runner/trigger/deploy/feed/SCIM/CI/mail/OAuth/agent tokens.
     r"|gl(?:pat|rt|ptt|dt|ft|soat|cbt|imt|oas|agent|ffct)-[A-Za-z0-9_-]{8,}|GR1348941[A-Za-z0-9_-]{20,}"
@@ -37,7 +38,19 @@ _SECRET_TOKEN = re.compile(
     r"|PMAK-[a-f0-9]{24}-[a-f0-9]{34}|dp\.(?:pt|st|sa|ct|scim|audit)\.[A-Za-z0-9]{40,}"
     r"|sbp_[a-f0-9]{40}|sb_secret_[A-Za-z0-9_-]{20,}|glsa_[A-Za-z0-9]{32}_[a-f0-9]{8}|glc_[A-Za-z0-9+/]{32,}"
     r"|sntry[su]_[A-Za-z0-9+/=_-]{30,}|hv[sbr]\.[A-Za-z0-9_-]{24,}"
-    r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,})\b"
+    r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,}"
+)
+_SECRET_TOKEN = re.compile(r"\b(?:" + _TOKEN_FORMATS + r")\b")
+# The extended pass reads the formats again with ASCII-only boundaries:
+# ``\b`` reads CJK and other letters as word characters, so a key written
+# directly before or after non-Latin text ('密钥sk-...') was kept. It also
+# reads Fireworks AI keys: the vendor prefix and a digit somewhere in a long
+# key, so an identifier such as 'fw_ConfigurationManagerFactory' is left
+# alone. Read in the established pass, a key glued to a following name
+# ('fw_...éKey: v', 'fw_...-2PASSWORD=v') hid that name from the rules that
+# withhold by it.
+_ADDED_SECRET_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_])(?:" + _TOKEN_FORMATS + r"|fw_(?=[A-Za-z]*\d)[A-Za-z0-9]{24,})(?<!-)(?![A-Za-z0-9_])"
 )
 # Webhook and bot endpoints whose *path* is the credential. The scheme, host
 # and a fixed prefix are kept for context; the remainder of the path is
@@ -58,9 +71,31 @@ _PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     # n8n (commonly self-hosted, so any host): /webhook/<id> and /webhook-test/<id>.
     (re.compile(r".+"), re.compile(r"(?:/[^/]+)*?/webhook(?:-test|-waiting)?/")),
 )
-_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
+# A token starts only at the beginning of a run of token characters or after a
+# '-' inside one, never mid-word ('abceyJ...'), and every quantifier is
+# possessive. The ``prefix`` group walks the run's '-' separated chunks once
+# and is kept by the replacement ('x-eyJ...' becomes 'x-[REDACTED]'), so each
+# character is read a bounded number of times: a long run of 'eyJ-eyJ-...'
+# with no '.' is linear, where '\beyJ[A-Za-z0-9_-]*\.' retried at every
+# 'eyJ' and was quadratic. The established ``_JWT`` withholds exactly what
+# that pattern did: '\b' before 'eyJ' becomes '(?<!\w)', which a '-' prefix
+# meets and a letter does not, so a run right after a non-Latin letter
+# ('密eyJa-eyJ...') first skips its first chunk, where no token can start.
+# ``_ADDED_JWT`` starts one there too ('密钥eyJ...'), in the extended pass.
+_JWT_BODY = r"eyJ[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+"
+_JWT = re.compile(
+    r"(?<![A-Za-z0-9_-])(?P<prefix>(?:(?<=\w)[A-Za-z0-9_]*+-)?+(?:(?!eyJ)[A-Za-z0-9_]*+-)*+)(?<!\w)"
+    + _JWT_BODY
+)
+_ADDED_JWT = re.compile(r"(?<![A-Za-z0-9_-])(?P<prefix>(?:(?!eyJ)[A-Za-z0-9_]*+-)*+)" + _JWT_BODY)
 _PEM = re.compile(
     r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)",
+    re.DOTALL,
+)
+# OpenPGP's armored 'PRIVATE KEY BLOCK', in the extended pass.
+_ADDED_PEM = re.compile(
+    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----.*?"
+    r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----|\Z)",
     re.DOTALL,
 )
 _AUTH = re.compile(r"(?i)\b(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
@@ -106,12 +141,8 @@ def _sanitize_url(match: re.Match[str]) -> str:
     tail = _redact_path_secret(_url_host(authority), tail[:path_end]) + tail[path_end:]
     url = scheme + "://" + authority + tail
 
-    def query_value(field: str) -> str:
-        key, equals, value = field.partition("=")
-        if not equals:
-            return field
-        decoded = unquote(key).lower()
-        sensitive = _sensitive_assignment_key(decoded) or decoded in {
+    def sensitive(name: str) -> bool:
+        return _sensitive_assignment_key(name) or name in {
             "key",
             "sig",
             "signature",
@@ -119,7 +150,30 @@ def _sanitize_url(match: re.Match[str]) -> str:
             "x-amz-signature",
             "x-goog-signature",
         }
-        return key + equals + (REDACTED if sensitive else value)
+
+    return _redact_query_fields(url, sensitive)
+
+
+# Query and fragment fields only the extended pass withholds, in a URL the
+# established passes left: an AWS STS session token and short credential
+# names. Withheld in the first URL pass, a value glued to a following name
+# ('?auth=AzureKeyCredential("v")') hid that name from the call rules.
+_ADDED_QUERY_NAMES = frozenset({"x-amz-security-token", "auth", "pwd", "pat"})
+
+
+def _sanitize_url_fields(match: re.Match[str]) -> str:
+    """Withhold the URL fields named in ``_ADDED_QUERY_NAMES`` (the extended pass)."""
+    return _redact_query_fields(match.group(0), lambda name: name in _ADDED_QUERY_NAMES)
+
+
+def _redact_query_fields(url: str, sensitive: Callable[[str], bool]) -> str:
+    """Withhold each query or fragment field of ``url`` whose decoded, lowercase name is ``sensitive``."""
+
+    def query_value(field: str) -> str:
+        key, equals, value = field.partition("=")
+        if not equals:
+            return field
+        return key + equals + (REDACTED if sensitive(unquote(key).lower()) else value)
 
     # Consume each field once. A regex that retries an unbounded key after every
     # '?' takes quadratic time on a URL containing many '?' and no '='. Keep '?'
@@ -136,3 +190,13 @@ def _sanitize_url(match: re.Match[str]) -> str:
         cursor = separator.end()
     parts.append(query_value(url[cursor:]))
     return "".join(parts)
+
+
+def _redact_added_formats(text: str) -> str:
+    """Withhold what the extended pass adds to the formats: PGP private keys, tokens next to non-Latin text.
+
+    Runs after every pass that reads a name (see ``_ADDED_SECRET_TOKEN``).
+    """
+    text = _ADDED_PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
+    text = _ADDED_JWT.sub(r"\g<prefix>" + REDACTED, text)
+    return _ADDED_SECRET_TOKEN.sub(REDACTED, text)
