@@ -47,9 +47,10 @@ Configured inventory is reloaded for every run, including the first run after
 engine construction, so an approval file changed between construction and
 execution cannot supply a stale match.
 
-When HTML or CSV is sent to stdout, terminal control and bidirectional-formatting
-characters are rendered visibly; artifacts explicitly written with `-o` retain
-their serialized data. Reporter boundaries sanitize copied diagnostics without
+HTML and CSV reports, whether sent to stdout or written with `-o`, render
+terminal control and bidirectional-formatting characters visibly (tab and line
+breaks remain data in CSV; tab and line feed in HTML), so `cat` or `less` on a
+saved report cannot execute escape sequences taken from a scanned log. Reporter boundaries sanitize copied diagnostics without
 mutating in-memory scan state, ignore malformed related-finding metadata, preserve
 valid SARIF source paths and reject non-finite JSON. Serialization failures stop
 before stdout or an existing output file is changed; table output preflights

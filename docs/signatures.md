@@ -188,12 +188,27 @@ risk scoring. `weight` controls confidence in the evidence, not finding severity
   is never treated as a clean non-match. A costly custom pattern should be
   rewritten rather than relying on a larger budget.
 * `domain` values: exact host, `*.suffix`, or `re:` regex (regexes may include a port, e.g. `re:.*:11434$`).
+  Domain signals match the host only, never a path. A host that also serves non-AI traffic (Cloudflare's
+  general `api.cloudflare.com`, the `huggingface.co` site) is corroboration only (weight 0.15 or less) in
+  its own signal; the AI-specific hosts (`gateway.ai.cloudflare.com`, `router.huggingface.co`) carry the
+  high weight, so a DNS script or a dataset download stays a low-confidence hint, not LLM usage.
+* Dependency names that are also unrelated packages (the PyPI name `swarm`, which is not OpenAI Swarm) are
+  not claimed; identify the product by its import, a vendor-qualified name or an idiom. A generic name that
+  is the product's real package (npm `weave`) gets a low weight.
+* `model` patterns are anchored and bounded: require the delimiter or digit that real ids carry
+  (`tts-1`, `o1` followed by a non-alphanumeric, a Bedrock `vendor.model-name`), so `amazon.com`, `o1ne` or
+  `tts-config` do not match.
+* `policy.*` scope lists match the bare scope name for every provider. Names that are routine for ordinary
+  apps (`offline_access`, `refresh_token`, `web`, `api`, `full`, `admin`, `workflow`) are not listed as
+  privileged; list the qualified permission instead (`admin:org`, `admin.users:write`, `okta.users.manage`).
 * `file` globs use `fnmatch` on the repository-relative POSIX path; `**/` prefixes match at any depth.
 * Dependency names are normalised PEP 503-style (`Foo_Bar` == `foo-bar`) for every ecosystem.
 * `secret` patterns must be specific enough not to match placeholders; matches are redacted before they reach any report.
   A prefix shared by several vendors (`sk-`) is only attributed when the rest of the key is vendor-specific
   (`sk-ant-`, `sk-or-v1-`, `sk-lf-`, `sk-litellm-`, OpenAI's `sk-proj-` / `T3BlbkFJ` marker); anything else is
-  reported by `heuristic.unattributed-api-key` at low weight.
+  reported by `heuristic.unattributed-api-key` at low weight. Anthropic API (`sk-ant-api03-`), admin
+  (`sk-ant-admin01-`) and Claude Code OAuth (`sk-ant-oat01-`) tokens are attributed to `provider.anthropic`;
+  other `sk-ant-` shapes match nothing, because the fallback deliberately excludes the prefix.
 * `name` patterns for products whose name is also a dictionary word or a first name (Otter, Devin, Jasper,
   Drift...) are context-guarded: the vendor form (`otter\.ai`) matches on its own; the bare word only when it is
   the whole display name (`^[^\S\r\n]*otter[^\S\r\n]*$`, an app called just "Otter") or with product context on

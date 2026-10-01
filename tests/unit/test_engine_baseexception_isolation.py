@@ -106,3 +106,29 @@ def test_keyboard_interrupt_still_aborts_the_scan(monkeypatch):
     monkeypatch.setattr(engine_module, "get_connector_class", lambda name: _connector(interrupt))
     with pytest.raises(KeyboardInterrupt):
         Engine(_config(), SignatureIndex([])).run()
+
+
+def test_engine_gives_http_clients_the_connector_deadline_and_cancellation(monkeypatch):
+    from shadowscan.utils.http import HttpClient
+
+    seen = {}
+
+    class Connector:
+        def __init__(self, ctx):
+            self.ctx = ctx
+
+        def run(self):
+            client = HttpClient()
+            seen["deadline"], seen["cancelled"] = client.deadline, client.cancelled
+            self.ctx.stats = ScanStats(
+                connector="code.filesystem", started_at=now_iso(), finished_at=now_iso()
+            )
+            return []
+
+    monkeypatch.setattr(engine_module, "get_connector_class", lambda name: Connector)
+
+    Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem", label="x")]), SignatureIndex([])).run()
+
+    assert seen["deadline"] is not None and seen["cancelled"] is not None
+    # The worker context is reset afterwards: clients made outside a connector have no limits.
+    assert HttpClient().deadline is None and HttpClient().cancelled is None

@@ -29,7 +29,12 @@ from shadowscan.registry import Inventory
 from shadowscan.risk import RiskPolicy, assess
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
-from shadowscan.utils.http import reset_allow_private_origin, set_allow_private_origin
+from shadowscan.utils.http import (
+    reset_allow_private_origin,
+    reset_request_deadline,
+    set_allow_private_origin,
+    set_request_deadline,
+)
 from shadowscan.utils.output import prepare_private_directory, write_private_text
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize
 
@@ -236,6 +241,7 @@ class _ConnectorRunner:
         fs: list[Finding] = []
         started_at = now_iso()
         origin_token = set_allow_private_origin(self._config.allow_private_origin)
+        limits_token = set_request_deadline(state.deadline, state.cancelled)
         try:
             st, reused = self._collect(spec, ctx, started_at, fs)
             if reused:
@@ -256,6 +262,7 @@ class _ConnectorRunner:
             st.errors.append(message)
             log.warning("connector failed; diagnostic recorded in incomplete scan stats")
         finally:
+            reset_request_deadline(limits_token)
             reset_allow_private_origin(origin_token)
         st.findings = len(fs)
         _sanitize_diagnostics(st)

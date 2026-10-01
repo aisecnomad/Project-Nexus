@@ -480,6 +480,8 @@ class _Caller:
 # provider, or owner. Memory remains bounded as record cardinality increases.
 _MAX_DISTINCT_KEYS = 2000
 _MAX_INVALID_LINE_ERRORS = 20
+# Domain signals weighted below this are hints, not evidence of inference traffic.
+_MIN_LLM_HOST_WEIGHT = 0.3
 _MAX_DISTINCT_CALLERS = 10_000
 _MAX_USAGE_INTERVALS = 2_000
 _MAX_TOTAL_USAGE_INTERVALS = 20_000
@@ -1448,7 +1450,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             # A known provider/agent host identifies inference traffic even
             # when the operation is not an enumerated endpoint; static assets
             # and health probes were excluded above.
-            return bool(ev.host and self.index.match_domain(ev.host))
+            return self._is_llm_host(ev.host)
         if ev.model:
             return True
         if ev.schema == "generic" and _provider_signature(self.index, ev.provider):
@@ -1460,7 +1462,14 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 return True
         # Domain-only egress logs can identify a model provider. A path such as
         # /favicon.ico on that host is not an inference transaction.
-        return bool(ev.host and not ev.path and self.index.match_domain(ev.host))
+        return bool(not ev.path and self._is_llm_host(ev.host))
+
+    def _is_llm_host(self, host: str | None) -> bool:
+        # Generic vendor hosts (a general REST API, a dataset site) carry hint weights below
+        # the threshold and do not identify inference traffic by themselves.
+        return bool(host) and any(
+            m.weight >= _MIN_LLM_HOST_WEIGHT for m in self.index.match_domain(host or "")
+        )
 
     @staticmethod
     def _accumulate(

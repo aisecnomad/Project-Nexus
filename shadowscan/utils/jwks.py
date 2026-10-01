@@ -59,12 +59,16 @@ def _signature_candidate(item: Any, *, alg: str, kid: str | None) -> bool:
     return True
 
 
-def fetch_jwks(jwks_url: str) -> dict[str, Any]:
-    """Fetch and shape-check a JWKS document over the shared, bounded transport."""
+def fetch_jwks(jwks_url: str, *, ca_bundle: str | None = None) -> dict[str, Any]:
+    """Fetch and shape-check a JWKS document over the shared, bounded transport.
+
+    ``ca_bundle`` is an operator-supplied PEM file trusted instead of the
+    default CA store for an endpoint behind private PKI; verification stays on.
+    """
     from shadowscan.utils.http import HttpClient, validate_url
 
     url = validate_url(jwks_url)
-    client = HttpClient()
+    client = HttpClient(ca_bundle=ca_bundle)
     try:
         document = client.get_json(url, max_bytes=MAX_JWKS_BYTES)
     finally:

@@ -41,6 +41,14 @@ def test_user_agent_host_token_cannot_hide_real_llm_traffic(run_connector, tmp_p
     assert not ctx.stats.incomplete
 
 
+@pytest.mark.parametrize("host", ["api.cloudflare.com", "huggingface.co"])
+def test_generic_vendor_hosts_are_not_llm_traffic(run_connector, tmp_path, host):
+    lines = _access_lines(ua="curl/8.0", trailer=f" host={host}", path="/client/v4/zones")
+    findings, ctx = _scan_access_log(run_connector, tmp_path, lines)
+    assert findings == []
+    assert not ctx.stats.errors
+
+
 def test_user_agent_host_token_cannot_fabricate_llm_traffic(run_connector, tmp_path):
     lines = _access_lines(ua="Mozilla/5.0 host=api.openai.com", trailer=" host=intranet.acme.com")
     findings, ctx = _scan_access_log(run_connector, tmp_path, lines)
