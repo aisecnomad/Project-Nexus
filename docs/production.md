@@ -876,6 +876,16 @@ no observation as permanent; only the live commands below describe the current
 state. Keep the CodeQL job's displayed name `analyze` consistent with the
 required check.
 
+The intended configuration is versioned in
+[`.github/rulesets/main.json`](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/rulesets/main.json).
+It requires `CI gate`, `test (3.11)`, `test (3.12)` and `analyze`, each
+reported by GitHub Actions, plus one approving review of the final revision,
+and it lists no bypass actors. `tests/test_ruleset_definition.py` fails if a
+required check no longer matches a workflow job. The file is not applied
+automatically and does not describe the live state: a repository administrator
+applies it under **Settings → Rules → Rulesets → New ruleset → Import a
+ruleset**, or edits ruleset 23913372 to match.
+
 Whatever the ruleset's state, the history is unchanged: the repository has a
 single maintainer, and no change merged to `main` through 2026-09-25 (including
 #62, #65 and #42) carries an approving review from a second person. A repository
