@@ -392,6 +392,10 @@ def test_pre_commit_hooks_are_immutable_and_match_ci_versions() -> None:
     for package in ("types-PyYAML", "types-requests"):
         pin = f"{package}=={constraints[package]}"
         assert pin in config_text, f"pre-commit additional dependency is not pinned: {package}"
+    runtime = dict(re.findall(r"^([A-Za-z0-9_.-]+)==(\S+)", _read(ROOT / "requirements.lock"), re.MULTILINE))
+    assert f"click=={runtime['click']}" in config_text, (
+        "pre-commit mypy must type-check against the locked click version"
+    )
 
 
 def test_docs_toolchain_is_hash_locked_everywhere_it_is_installed() -> None:
