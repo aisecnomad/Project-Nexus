@@ -105,6 +105,8 @@ _MAX_MCP_TOOLS = 200
 
 # Signal types that establish a library in a project (see _emit_project).
 _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
+# Signals that name a product without configuring it.
+_MENTION_SIGNALS = frozenset({"env", "name"})
 
 # Saved outputs (plots, tables, logs) routinely push small notebooks past
 # max_file_size. Their code cells are still analyzed up to this size.
@@ -199,6 +201,12 @@ DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
     "*.dylib",
     "*.dll",
     "*.pdf",
+    "*.cassette",
+    "*_cassette.yaml",
+    "*_cassette.yml",
+    "**/cassettes/**",
+    "*/cassettes/*",
+    "**/fixtures/*.json",
     "*.png",
     "*.jpg",
     "*.jpeg",
@@ -409,6 +417,22 @@ def _is_test_path(rel: str) -> bool:
     return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
 
 
+_CODING_AGENT_DOC_NAMES = frozenset(
+    {
+        "agents.md",
+        "agent.md",
+        "claude.md",
+        "claude.local.md",
+        "gemini.md",
+        "copilot-instructions.md",
+    }
+)
+
+
+def _is_coding_agent_doc(name: str) -> bool:
+    return name.lower() in _CODING_AGENT_DOC_NAMES
+
+
 def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
     """Resolve only to classify a link; never open it through the link path."""
     try:
@@ -510,7 +534,7 @@ class FilesystemConnector(BaseConnector):
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "extra directory names / glob patterns to skip",
         "max_file_size": "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs matches it (default 1,000,000 bytes)",
-        "oversize_skip_globs": "case-insensitive file name globs; a file over max_file_size matching one is skipped with a warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts)",
+        "oversize_skip_globs": "case-insensitive file name globs; a file over max_file_size matching one is skipped with a warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives, compiled artifacts and recorded cassettes)",
         "max_files": "stop after this many files (default 100000)",
         "max_notebook_size": "bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even when saved outputs make the file larger than max_file_size (default 20 MiB); outputs of such a notebook are not scanned for credentials",
         "max_ast_nodes": "Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger file keeps its lexical evidence and is reported as partially analyzed: a warning under test paths, an error elsewhere",
@@ -518,7 +542,7 @@ class FilesystemConnector(BaseConnector):
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false)",
         "strict_coverage": "report coverage gaps (unread analyzable oversize files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false)",
-        "include_tests": "let test and fixture code establish agents at full weight (default false)",
+        "include_tests": "let test and fixture code establish agents and credential findings at full weight (default false)",
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
         "account": "account label recorded on every finding (default none)",
@@ -649,11 +673,24 @@ class FilesystemConnector(BaseConnector):
         return self.max_file_size
 
     def _oversize_skippable(self, rel: str, name: str) -> bool:
-        """Whether an oversize file is generated, locked or binary content per ``oversize_skip_globs``."""
+        """Whether an oversize file is a declared omission.
+
+        True for generated, locked or binary content per ``oversize_skip_globs``
+        and for non-source recorded or seeded data under test, ``cassettes/`` and
+        ``seed-memory/`` paths. An analyzable source file is never skippable by path.
+        """
         lower = name.lower()
+        rel_lower = rel.lower()
+        # Recorded cassettes, test data and seed-memory binaries are not
+        # source. Skipping them must not fail-close the whole repository scan.
+        # An analyzable source file stays a coverage gap wherever it lives.
+        if Path(lower).suffix not in SOURCE_EXTENSIONS and (
+            _is_test_path(rel) or "/seed-memory/" in f"/{rel_lower}/" or "/cassettes/" in f"/{rel_lower}/"
+        ):
+            return True
         for pattern in self.oversize_skip_globs:
             if "/" in pattern:
-                if PurePosixPath(rel.lower()).match(pattern):
+                if PurePosixPath(rel_lower).match(pattern):
                     return True
             elif fnmatch.fnmatchcase(lower, pattern):
                 return True
@@ -674,7 +711,9 @@ class FilesystemConnector(BaseConnector):
         alias path would have had: same project, same test classification, same
         source type and no file-name signal that only the alias name carries.
         Directory links, links into excluded or unread content and config or
-        document aliases (whose parsing can depend on their path) are gaps.
+        document aliases (whose parsing can depend on their path) are gaps. A
+        coding-agent instruction document linked to another one is the exception:
+        the target keeps the alias's project and test classification.
         """
         relative = target.relative_to(root)
         target_rel = relative.as_posix()
@@ -703,6 +742,14 @@ class FilesystemConnector(BaseConnector):
                 return False
         if not target.is_file() or self._excluded_file(target_rel) or _never_read_by_name(target.name):
             return False
+        # Coding-agent instruction aliases (CLAUDE.md -> AGENTS.md) are the
+        # same document family. The real file is scanned and the alias hides no
+        # second agent definition, so the alias-only file-name signal is not a
+        # gap. Project ownership and test classification must still match.
+        if _is_coding_agent_doc(link_name) and _is_coding_agent_doc(target.name):
+            return _project_root(root, rel) == _project_root(root, target_rel) and _is_test_path(
+                rel
+            ) == _is_test_path(target_rel)
         # Only source aliases are equivalent without opening the link: config
         # and document parsing can depend on the file name and directory.
         if link_ext not in SOURCE_EXTENSIONS or Path(target.name).suffix.lower() != link_ext:
@@ -953,9 +1000,11 @@ class FilesystemConnector(BaseConnector):
                     text = read_text(path, self._size_limit(name), read_errors)
                     for issue in read_errors:
                         if issue == "file exceeds max_file_size" and not self.strict_coverage:
+                            skippable = self._oversize_skippable(rel, name)
                             self.ctx.warn(
-                                f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
-                                incomplete=True,
+                                f"code.filesystem: {rel}: skipped, {issue}"
+                                + ("" if skippable else "; coverage incomplete"),
+                                incomplete=not skippable,
                             )
                         else:
                             self.ctx.error(f"code.filesystem: {rel}: {issue}")
@@ -1073,6 +1122,11 @@ class FilesystemConnector(BaseConnector):
                                     reason = placeholder_reason(m.value)
                                     if reason:
                                         self._record_example_credential(proj, m, rel, reason)
+                                        continue
+                                    if not self.include_tests and _is_test_path(rel):
+                                        # Detector fixtures and recorded cassettes
+                                        # contain secret *shapes*, not live keys.
+                                        self._record_example_credential(proj, m, rel, "test-or-fixture-path")
                                         continue
                                     if raw is raw_notebook and raw_notebook != text:
                                         snippet = (
@@ -1460,6 +1514,13 @@ class FilesystemConnector(BaseConnector):
             return
         proj.seen.add(key)
         if m.signature.category == "coding-agent":
+            if (
+                not self.include_tests
+                and _is_test_path(rel)
+                and m.signal.type != "file"
+                and not _is_coding_agent_doc(PurePosixPath(rel).name)
+            ):
+                return
             proj.coding_agent_files.setdefault(m.signature_id, [])
             if rel not in proj.coding_agent_files[m.signature_id]:
                 proj.coding_agent_files[m.signature_id].append(rel)
@@ -1527,6 +1588,9 @@ class FilesystemConnector(BaseConnector):
     @staticmethod
     def _looks_like_mcp_config(rel: str, name: str, text: str) -> bool:
         lower = name.lower()
+        rel_lower = rel.lower()
+        if "{{" in rel or ".github/workflows" in rel_lower or lower.endswith((".lock.yml", ".lock.yaml")):
+            return False
         if lower == "server.json":
             # A generic service can use this filename. The MCP registry format
             # has a name and structured package or remote transport records.
@@ -1936,6 +2000,17 @@ class FilesystemConnector(BaseConnector):
             f.title = self._project_title(f, proj)
             yield f
         for sig_id, files in proj.coding_agent_files.items():
+            matches = proj.coding_agent_matches.get(sig_id, [])
+            # Env-name and display-name mentions (GOOSE_PROVIDER in a detector
+            # matrix, "GitHub Copilot" in an SDK adapter) are not configuration.
+            # Config files, instruction docs, dependencies and code such as a
+            # workflow step or a YOLO-mode flag still establish the agent.
+            has_config = any(
+                m.signal.type not in _MENTION_SIGNALS or _is_coding_agent_doc(PurePosixPath(rel).name)
+                for m, rel, _ in matches
+            )
+            if not has_config:
+                continue
             sig = self.index.get(sig_id)
             f = self._base(
                 label,
@@ -2328,6 +2403,8 @@ class FilesystemConnector(BaseConnector):
                 unique.setdefault((m.signature_id, m.value, m.line), (m, snip))
         hits = list(unique.values())
         if not hits:
+            return None
+        if not self.include_tests and _is_test_path(rel):
             return None
         f = self._base(label, root, rel, Kind.SECRET, f"LLM provider credential in {rel}", "file")
         for m, snip in hits:

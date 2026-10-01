@@ -9,11 +9,16 @@ Two situations are deliberately outside a repository's own content:
   own name is one the scanner never reads (a lockfile, generated bundle or
   image), or when it is a source file whose target is analyzed at its real path
   in the same project, with the same test classification, extension and
-  file-name signals. Every other link makes the scan incomplete (exit code 3):
-  directory links, whose alias paths are not inspected; configuration and
-  document aliases, whose parsing can depend on their path; source aliases into
-  another project or test directory; links into excluded or unread content;
-  links outside the root; and unresolved links.
+  file-name signals. A coding-agent instruction document (`AGENTS.md`,
+  `AGENT.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`,
+  `copilot-instructions.md`) that links to another instruction document in the
+  same project with the same test classification is also covered: the target is
+  scanned at its real path, so the alias is not a second agent definition and
+  its alias-only file name is not reported separately. Every other link makes
+  the scan incomplete (exit code 3): directory links, whose alias paths are not
+  inspected; other configuration and document aliases, whose parsing can depend
+  on their path; aliases into another project or test directory; links into
+  excluded or unread content; links outside the root; and unresolved links.
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
@@ -36,9 +41,18 @@ found only under test or fixture paths (`tests/`, `fixtures/`, `cassettes/`,
 `__mocks__/`, `test_*.py`, `*_test.go`, `*.spec.ts`, …) has half weight and cannot
 promote a project to an *agent*; a project whose evidence is entirely test code
 is tagged `test-code-only`. Set `include_tests: true` (`--include-tests`) to
-treat test code like any other source. Credentials are still reported from test
-paths unless they are recognisable placeholders (repeated characters, marker
-words such as `EXAMPLE`, or very low character diversity).
+treat test code like any other source. A credential-shaped value under a test
+path is detector, fixture or recorded-cassette content rather than a live key.
+Without `include_tests` it is not a `secret` finding; it is listed on the
+project finding, redacted, as low-weight `example-credential` evidence with the
+reason `test-or-fixture-path` when the project has other evidence. With
+`include_tests: true` a real-format credential in a test path is reported as a
+`secret` finding again. Recognisable placeholders (repeated characters, marker
+words such as `EXAMPLE`, or very low character diversity) are never reported.
+Evidence that only names a coding agent in a test path (an environment variable,
+a display name, a dependency or a code pattern) likewise does not establish a
+coding-agent configuration; instruction documents and coding-agent config
+files still do.
 
 ## Incremental scans
 
@@ -160,11 +174,16 @@ incomplete depends on what the file could hide:
   `*.parquet`), compiled or packaged artifacts (`*.wasm`, `*.so`, `*.dylib`,
   `*.dll`, `*.jar`, `*.pyc`, `*.class`), documents, images and fonts (`*.pdf`,
   `*.png`, `*.jpg`, `*.jpeg`, `*.gif`, `*.woff`, `*.woff2`, `*.ttf`) and archives
-  (`*.zip`, `*.gz`, `*.tar`). Such content is generated from sources the scanner
-  does inspect, or is binary, so no agent configuration, framework usage or
-  credential evidence is lost by skipping it. The warning still names each file
+  (`*.zip`, `*.gz`, `*.tar`) and recorded test fixtures (`*.cassette`,
+  `*_cassette.yaml`, `*_cassette.yml`, anything under `cassettes/`, and
+  `fixtures/*.json`). Such content is generated from sources the scanner does
+  inspect, is binary, or is recorded traffic, so no agent configuration,
+  framework usage or credential evidence is lost by skipping it. The warning still names each file
   so the omission is visible. Lockfiles, minified bundles, source maps and
   bytecode below the limit are skipped silently because they are never analyzed.
+* A non-source file under a test path, a `cassettes/` directory or a
+  `seed-memory/` directory is skipped the same way even when its name matches no
+  glob: it is recorded or seeded data, not source. A source file there is not.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
   document, is skipped and makes the scan incomplete (exit 3). With
   `strict_coverage: true` (`--strict-coverage`) it is recorded as an error
@@ -356,7 +375,12 @@ findings. A credential whose value looks like a documentation placeholder
 (`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
 sequences after the provider prefix) is never a `secret` finding; it is listed
 on the project finding as low-weight `example-credential` evidence. A key alone
-does not establish LLM usage, and vendor-neutral heuristics (agent loops,
+does not establish LLM usage, a coding-agent configuration needs more than an
+environment-variable or display-name mention (`GOOSE_PROVIDER` in a detector
+list is not "Goose configured"; a config file, instruction document,
+dependency or workflow step still is), MCP parsing skips
+`.github/workflows/` files, `*.lock.yml` / `*.lock.yaml` files and cookiecutter
+`{{...}}` template paths, and vendor-neutral heuristics (agent loops,
 `subprocess.run`, auto-approve flags) only count in a project that also matches
 a framework, provider, platform, protocol or cloud-service signature. When every
 observation for a project other than those heuristics is an environment-variable

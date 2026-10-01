@@ -448,21 +448,28 @@ group/container cleanup to reap child processes and bound native code that holds
 the interpreter lock indefinitely.
 
 Code scans follow a documented coverage policy. Links whose own names are never
-read, and source-file links whose real targets are analyzed in the same project
-with the same test classification, are skipped because nothing at the alias
-path is lost (see [scan semantics](scanning.md) for the exact rule). Directory
+read, source-file links whose real targets are analyzed in the same project
+with the same test classification, and coding-agent instruction-document links
+to another instruction document under the same condition, are skipped because
+nothing at the alias path is lost (see [scan semantics](scanning.md) for the
+exact rule). Directory
 links, configuration aliases, links into excluded or unread content, links
 leaving the root and oversized files the scanner would
 inspect make the scan incomplete (exit 3) by default, with a warning naming
 the omission. `strict_coverage: true` (`--strict-coverage`) records those
 conditions as errors; explicit `oversize_skip_globs` remain declared omissions
-in both modes. Raise `max_file_size` or add `exclude` patterns for known data files. Evidence found
+in both modes, and non-source recorded fixtures (test, `cassettes/` and
+`seed-memory/` data) are declared omissions by default. Raise `max_file_size` or add `exclude` patterns for known data files. Evidence found
 only in test or fixture paths has half weight and cannot promote a project to an
 agent unless `include_tests: true` (`--include-tests`) is set, and a project
 finding whose evidence is already reported by an MCP configuration, agent
 manifest, exported workflow, IaC or credential finding is not emitted again.
 Recognisable placeholder credentials (repeated characters, marker words such as
-`EXAMPLE`, very low character diversity) are no longer reported. Risk factors
+`EXAMPLE`, very low character diversity) are no longer reported. A
+credential-shaped value in a test or fixture path is no longer a `secret`
+finding unless `include_tests: true` is set, so a live key committed under
+`tests/` is not reported by default: keep a repository-wide secret scanner in
+the pipeline for that case. Risk factors
 always sum to the reported score; `risk.danger_score` excludes the governance
 factors and `options.risk_basis: danger` bases `level` and `--fail-on` on it.
 Review [scan state and runtime correlation](scanning.md) and the changelog
