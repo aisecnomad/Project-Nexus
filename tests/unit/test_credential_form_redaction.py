@@ -504,6 +504,10 @@ def test_an_opaque_option_value_never_hides_a_following_assignment(separator):
     "source",
     [
         f"llm -k {HEX}",
+        # A function no rule names, and a listed SDK call through an aliased
+        # import (see _SDK_CREDENTIAL_ARGUMENTS).
+        f'client = acme.Connect("{HEX}")',
+        f'config := gogpt.DefaultConfig("{HEX}")',
         f'new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "{HEX}")',
         f'x = "{HEX}"  # openai key',
         # A record whose value field comes before its name field.

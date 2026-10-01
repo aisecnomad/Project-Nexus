@@ -4,8 +4,9 @@ Internal to :mod:`shadowscan.utils.redaction`, which re-exports every name
 here. A call that pairs a literal credential key with a value
 ('os.environ.setdefault("OPENAI_API_KEY", "v")', 'Header("x-api-key", "v")')
 loses the value; a callee named for a credential ('AzureKeyCredential("v")',
-'setBearerToken("v")') loses its credential literals; and a literal
-(user, password) authentication pair loses the password.
+'setBearerToken("v")') loses its credential literals, and a well-known SDK
+call ('openai.DefaultConfig("v")') the literal at its credential position;
+and a literal (user, password) authentication pair loses the password.
 """
 
 from __future__ import annotations
@@ -286,9 +287,12 @@ def _redact_credential_calls(text: str) -> str:
     value; otherwise it is left alone.
 
     Independently, a callee named for a credential (AzureKeyCredential,
-    HTTPBasicAuth, setBearerToken) has its credential string literals withheld;
-    see ``_credential_literals``. Methods called on a call result or down a
-    builder chain ('builder().apiKey(...)') are calls like any other.
+    HTTPBasicAuth, setBearerToken) has its credential string literals withheld,
+    and a well-known SDK call ('AddAzureOpenAIChatCompletion("gpt-4o",
+    endpoint, "v")', 'openai.DefaultConfig("v")') the literal at its credential
+    position; see ``_credential_literals`` and ``_SDK_CREDENTIAL_ARGUMENTS``.
+    Methods called on a call result or down a builder chain
+    ('builder().apiKey(...)') are calls like any other.
     """
     if '"' not in text and "'" not in text and "`" not in text:
         return text
@@ -307,11 +311,13 @@ def _redact_credential_calls(text: str) -> str:
                 spans, state, _ = retry
         callee = _qualified_callee(text, call)
         # Prose puts a space before a parenthesis ("Login ('log|n')"); code rarely does.
-        level = 0 if callee[-1:].isspace() else _credential_callee(callee)
-        if level:
+        prose = callee[-1:].isspace()
+        level = 0 if prose else _credential_callee(callee)
+        known = None if prose else _sdk_credential_position(callee)
+        if level or known is not None:
             # Literal credentials do not skip nested calls: a call inside
             # another argument can still pair a credential key with a value.
-            literals.extend(_credential_literals(lexer, spans, state == "closed", level))
+            literals.extend(_credential_literals(lexer, spans, state == "closed", level, known))
         sensitive, call_values = _credential_call_values(text, spans, state == "closed")
         if not sensitive:
             continue
@@ -410,6 +416,52 @@ _LOOKUP_VERBS = frozenset(
 # Factory methods take their receiver's name: Credentials.basic("user", "v"),
 # AwsBasicCredentials.create("id", "v") and Ruby's Cohere::Client.new("v").
 _CALLEE_FACTORIES = frozenset({"basic", "create", "from", "new", "of"})
+# Well-known LLM SDK calls that take a credential at a fixed position although
+# no word of their name names one. A string literal at that zero-based position
+# among the positional arguments is withheld as a credential constructor's is
+# (named arguments such as C#'s 'apiKey: "v"' are left to the mapping rules).
+# A distinctive name counts wherever it is called from (a builder variable,
+# 'services.', a chain); a generic one only through its package's own name
+# ('openai.DefaultConfig'), so an aliased import is not recognized. The
+# position is that of the overload that takes the key as a string; the notes
+# below say what other overloads pass there.
+_SDK_CREDENTIAL_ARGUMENTS: dict[str, int] = {
+    # Semantic Kernel for .NET. Azure OpenAI connectors, as IKernelBuilder and
+    # IServiceCollection extensions and services: (deploymentName, endpoint,
+    # apiKey, ...). The overloads taking a TokenCredential there pass no
+    # string; those taking a client second pass a service or model ID third,
+    # which is withheld too when it is given positionally.
+    "AddAzureOpenAIChatCompletion": 2,
+    "AddAzureOpenAIChatClient": 2,
+    "AddAzureOpenAITextEmbeddingGeneration": 2,
+    "AddAzureOpenAIEmbeddingGenerator": 2,
+    "AddAzureOpenAITextToImage": 2,
+    "AddAzureOpenAIAudioToText": 2,
+    "AddAzureOpenAITextToAudio": 2,
+    "AzureOpenAIChatCompletionService": 2,
+    "AzureOpenAITextEmbeddingGenerationService": 2,
+    # OpenAI connectors: (modelId, apiKey, orgId, ...). The overloads taking a
+    # client second pass no string there; those taking an endpoint Uri second
+    # take the key third, which is not read. AddOpenAITextToImage takes the key
+    # first and is not listed.
+    "AddOpenAIChatCompletion": 1,
+    "AddOpenAIChatClient": 1,
+    "AddOpenAITextEmbeddingGeneration": 1,
+    "AddOpenAIEmbeddingGenerator": 1,
+    "AddOpenAIAudioToText": 1,
+    "AddOpenAITextToAudio": 1,
+    "OpenAIChatCompletionService": 1,
+    "OpenAITextEmbeddingGenerationService": 1,
+    # go-openai (github.com/sashabaranov/go-openai): DefaultConfig(authToken),
+    # DefaultAzureConfig(apiKey, baseURL) and NewClient(authToken).
+    "openai.DefaultConfig": 0,
+    "openai.DefaultAzureConfig": 0,
+    "openai.NewClient": 0,
+    # openai-java (com.theokanning.openai): new OpenAiService(token[, timeout]).
+    "OpenAiService": 0,
+    # Google AI JavaScript SDK (@google/generative-ai): new GoogleGenerativeAI(apiKey).
+    "GoogleGenerativeAI": 0,
+}
 # C#'s target-typed 'new(' constructs the type declared before the variable:
 # 'AzureKeyCredential credential = new("...")'. A generic type's arguments
 # are skipped within 256 characters.
@@ -441,6 +493,14 @@ def _credential_callee(name: str) -> int:
     if words[-1] in _CREDENTIAL_CONSTRUCTOR_WORDS and words[0] not in _LOOKUP_VERBS:
         return 2
     return 1 if not _CREDENTIAL_CALLEE_WORDS.isdisjoint(words) else 0
+
+
+def _sdk_credential_position(name: str) -> int | None:
+    """The position of a well-known SDK call's credential argument (see ``_SDK_CREDENTIAL_ARGUMENTS``)."""
+    receiver, _, method = name.rpartition(".")
+    qualified = receiver.rpartition(".")[2] + "." + method
+    position = _SDK_CREDENTIAL_ARGUMENTS.get(qualified)
+    return _SDK_CREDENTIAL_ARGUMENTS.get(method) if position is None else position
 
 
 def _chained_callee(text: str, dot: int) -> str:
@@ -516,8 +576,14 @@ def _credential_literals(
     spans: list[tuple[int, int]],
     closed: bool,
     level: int,
+    known: int | None = None,
 ) -> list[tuple[int, int]]:
-    """Spans of credential string literals among one credential-named call's arguments.
+    """Spans of credential string literals among one credential-named or well-known SDK call's arguments.
+
+    ``level`` is the callee's ``_credential_callee`` level. ``known`` is the
+    position of a well-known SDK call's credential argument, whose literal is
+    withheld as a credential constructor's is, whatever the level; at level 0
+    no other argument is read.
 
     A literal that starts a longer expression ("key" + suffix) withholds the
     whole argument. An unterminated literal is withheld to its line end. The
@@ -539,7 +605,8 @@ def _credential_literals(
     for end, literal, named, bounded in arguments:
         index = position
         position += not named
-        if literal is None:
+        sdk = not named and index == known
+        if literal is None or not (level or sdk):
             continue
         opening = literal.start("quote")
         char = text[opening]
@@ -550,7 +617,7 @@ def _credential_literals(
         value = text[opening + len(delimiter) : closing if terminated else stop]
         if _interpolated(literal.group("prefix") or "", char, value):
             continue  # interpolated text is assembled elsewhere
-        positional = level == 2 and not named and not (index == 0 and positional_count > 1)
+        positional = sdk or (level == 2 and not named and not (index == 0 and positional_count > 1))
         if not _credential_literal(value, positional=positional):
             continue
         conversion = _LITERAL_CONVERSION.match(text, stop, end)
