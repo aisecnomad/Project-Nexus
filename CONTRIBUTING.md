@@ -103,7 +103,9 @@ python -m tools.coverage_gate /tmp/shadowscan-coverage.json
 ```
 
 The gate requires the JSON report argument; running one test is not enough to
-measure every connector. See [quality gates](#quality-gates) for CI requirements.
+measure every connector. See [quality gates](#quality-gates) for CI requirements,
+and the [testing guide](docs/testing.md#the-full-suite) for the isolation every
+test runs under.
 
 ## Trust model
 
