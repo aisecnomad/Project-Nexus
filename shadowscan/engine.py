@@ -18,7 +18,7 @@ from typing import Any
 from shadowscan import __version__
 from shadowscan.comparison import build_collection_scope
 from shadowscan.config import ConnectorSpec, ScanConfig, validate_min_confidence
-from shadowscan.connectors import ConnectorContext, get_connector_class
+from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.common import merge_duplicate_metadata
 from shadowscan.correlation import correlate_runtime
@@ -57,6 +57,17 @@ class _JobState:
     completed_at: float | None = None
     cancelled: Event = field(default_factory=Event)
     publication_lock: Lock = field(default_factory=Lock)
+    isolated_process: bool = False
+    kill_process: Callable[[], None] | None = None
+
+    @property
+    def supervision_deadline(self) -> float | None:
+        if self.deadline is None:
+            return None
+        # The process runner enforces the original deadline, including IPC.
+        # Retain a last-resort parent guard while allowing bounded TERM/KILL
+        # cleanup to finish before treating its supervision thread as abandoned.
+        return self.deadline + (2.0 if self.isolated_process else 0.0)
 
 
 def _hooks(resolved: _Resolved) -> type[BaseConnector]:
@@ -143,6 +154,10 @@ class _ConnectorRunner:
         timeout = self._config.connector_timeout_seconds
         state.deadline = time.monotonic() + timeout
         try:
+            if state.isolated_process:
+                from shadowscan.plugin_process import run_plugin_process
+
+                return run_plugin_process(self, number, spec, state)
             return self._run_job(number, spec, state)
         finally:
             # Include sanitization, cache writes and callbacks in the
@@ -422,15 +437,16 @@ class _Supervisor:
                 state = self._states[number]
                 if (
                     state.completed_at is not None
-                    and state.deadline is not None
-                    and state.completed_at >= state.deadline
+                    and state.supervision_deadline is not None
+                    and state.completed_at >= state.supervision_deadline
                 ):
                     expired.append(future)
                 else:
                     self.completed[number] = future.result()
                     pending.remove(future)
             for future in pending - done:
-                deadline = self._states[self._futures[future][0]].deadline
+                state = self._states[self._futures[future][0]]
+                deadline = state.supervision_deadline
                 if deadline is not None and time.monotonic() >= deadline:
                     expired.append(future)
             for future in expired:
@@ -457,6 +473,8 @@ class _Supervisor:
         else:
             state.cancelled.set()
         self.timed_out.add(number)
+        if state.kill_process is not None:
+            state.kill_process()
         if future.running():
             self._engine.abandoned_workers.append(spec.id)
             self._engine._abandoned_futures.append(future)
@@ -662,7 +680,13 @@ class Engine:
         started_at: str,
     ) -> tuple[dict[int, _JobResult], set[int]]:
         """Run every selected connector under deadline supervision."""
-        states = {number: _JobState() for number, _ in jobs}
+        states = {
+            number: _JobState(
+                isolated_process=self.config.plugin_execution == "process"
+                and spec.name not in builtin_connector_names()
+            )
+            for number, spec in jobs
+        }
         runner = _ConnectorRunner(self, cache, dump_directory, exports)
         workers = max(1, min(self.config.parallel, len(jobs) or 1))
         # Supervise the single-worker path too. A ThreadPoolExecutor context

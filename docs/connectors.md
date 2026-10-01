@@ -39,6 +39,51 @@ accept 'fetch_tokenz'`), so a typo cannot silently disable an option. Keys
 starting with an underscore are reserved for the engine. Third-party plugins
 are not imported while parsing, so their keys are not checked at that point.
 
+## Third-party plugin execution
+
+Plugins still require an explicit allowlist in `options.plugins` or
+`--allow-plugin NAME`. The default `options.plugin_execution: thread` retains
+existing behavior. For reviewed plugins that can block inside an SDK or native
+extension, select a dedicated spawned process per connector:
+
+```yaml
+options:
+  plugins: [platform.example]
+  plugin_execution: process
+  connector_timeout_seconds: 120
+connectors:
+  - name: platform.example
+```
+
+The equivalent CLI override is `--plugin-execution process`. Built-in connectors
+continue to use the existing thread backend. A plugin is imported only inside
+its child process, and its original completion deadline includes import,
+collection, result serialization and transfer. The parent accepts only bounded
+JSON results (16 MiB maximum), validates their model and statistics, and discards
+results on timeout, crash, serialization failure or malformed output. These
+failures mark the scan incomplete (exit 3); they never fall back to threads.
+Each terminated worker frees capacity for queued connectors. Termination uses
+SIGTERM and, if needed, SIGKILL with at most 0.5 seconds of waiting at each step;
+the parent retains a separate deadline guard with two seconds for cleanup.
+
+This is **lifecycle isolation, not a security sandbox**. A child retains the
+scanner's operating-system privileges and environment, including credentials.
+Sibling connector configurations are not passed to it. Descendant subprocesses
+and external side effects are not rolled back by worker termination; plugins
+that launch other programs need external process-group/container supervision.
+A cache or record export published before termination may remain on disk; the
+failed connector's manifest entry is explicitly incomplete and not exported.
+Do not consume such artifacts as accepted results.
+
+The backend uses `spawn` on supported POSIX platforms (Linux and macOS); embedding
+applications must call the scanner behind Python's usual
+`if __name__ == "__main__":` guard. Plugin configuration and supplied signature
+objects must be serializable by Python's spawn machinery. Workers are daemonic,
+so a plugin cannot start its own `multiprocessing.Process` children. Choose the
+thread backend or an external supervised scanner process for such plugins.
+Neither backend enforces CPU/memory quotas or prevents deliberate malicious
+filesystem or network activity.
+
 ## Validation maturity and evidence status
 
 For the October 1 code-collection and capability corrections, review the

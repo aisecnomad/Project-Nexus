@@ -83,6 +83,7 @@ _OPTION_FIELDS = {
     "incremental",
     "state_dir",
     "plugins",
+    "plugin_execution",
     "allow_signature_override",
     "allow_private_origin",
     "allow_instance_credentials",
@@ -354,6 +355,7 @@ class ScanConfig:
     incremental: bool = False
     state_dir: str | None = None
     plugins: list[str] = field(default_factory=list)
+    plugin_execution: str = "thread"
     allow_signature_override: bool = False
     allow_private_origin: bool = False
     allow_instance_credentials: bool = False
@@ -383,6 +385,8 @@ class ScanConfig:
 
     def validate_security_options(self) -> None:
         self.plugins = validate_plugins(self.plugins)
+        if not isinstance(self.plugin_execution, str) or self.plugin_execution not in {"thread", "process"}:
+            raise ConfigValidationError("options.plugin_execution must be thread or process")
         self.allow_signature_override = _boolean_option(
             self.allow_signature_override, "allow_signature_override"
         )
@@ -534,6 +538,7 @@ class ScanConfig:
             incremental=_boolean_option(opts.get("incremental", False), "incremental"),
             state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
             plugins=validate_plugins(opts.get("plugins", [])),
+            plugin_execution=opts.get("plugin_execution", "thread"),
             allow_signature_override=_boolean_option(
                 opts.get("allow_signature_override", False), "allow_signature_override"
             ),
