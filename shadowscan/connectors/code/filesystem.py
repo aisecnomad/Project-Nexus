@@ -1521,11 +1521,11 @@ class FilesystemConnector(BaseConnector):
             except OSError:
                 self.ctx.error(f"code.filesystem: could not inspect {rel}")
                 continue
-            if name in MCP_CONFIG_NAMES or self.index.match_file(name):
-                # A directory is walked, but no client reads it as the
-                # configuration file its name implies. Only the directory's
-                # own name counts: file-name globs such as ``.kiro/specs/**``
-                # also match the directories they describe.
+            if name in MCP_CONFIG_NAMES:
+                # The walk descends into it, but no client reads a directory
+                # as the configuration file its name implies. A file-signature
+                # glob is not such a name: ``.roo/**`` or ``.clinerules`` also
+                # match directories that their clients read as directories.
                 self._skip_non_regular(walk, root, rel, "directory")
             kept.append(name)
         return kept

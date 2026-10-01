@@ -211,6 +211,30 @@ def test_ordinary_directories_with_source_like_names_stay_quiet(tmp_path, run_co
     assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
 
 
+@pytest.mark.parametrize(
+    "files",
+    [
+        (".roo/rules/01-style.md", ".roo/rules-code/naming.md"),
+        (".kiro/specs/login/requirements.md",),
+        (".clinerules/workflows/release.md",),
+        (".cursor/rules/frontend/style.mdc",),
+        ("force-app/main/default/genAiPlannerBundles/Planner/Planner.genAiPlannerBundle",),
+    ],
+    ids=["roo-rules", "kiro-specs", "clinerules", "cursor-rules", "agentforce-planner"],
+)
+def test_agent_config_directories_under_file_globs_stay_complete(tmp_path, run_connector, files):
+    # These clients read the directory as a directory; a file-signature glob
+    # such as ``.roo/**`` matching its path is not a file the client opens.
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("---\ndescription: Style\n---\nUse tabs.\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    assert not ctx.stats.warnings and not ctx.stats.errors
+    # The walk still reads the files inside those directories.
+    assert {e.location for f in findings for e in f.evidence} >= set(files)
+
+
 # ------------------------------------------------ default exclude disclosure
 
 
