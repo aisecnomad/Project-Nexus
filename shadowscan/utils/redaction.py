@@ -51,7 +51,14 @@ from shadowscan.utils.redaction_commands import (
     _redact_opaque_options,
     _redact_user_secrets,
 )
-from shadowscan.utils.redaction_formats import _AUTH, _JWT, _PEM, _SECRET_TOKEN, _URL, _sanitize_url
+from shadowscan.utils.redaction_formats import (
+    _AUTH,
+    _PEM,
+    _SECRET_TOKEN,
+    _URL,
+    _redact_jwts,
+    _sanitize_url,
+)
 from shadowscan.utils.redaction_markup import (
     _redact_markup_credentials,
     _redact_markup_settings,
@@ -161,7 +168,7 @@ def _sanitize_established(text: str) -> str:
     text = _redact_yaml_multiline_values(text)
     text = _redact_mapping_values(text)
     text = _redact_opaque_assignments(text)
-    text = _JWT.sub(REDACTED, text)
+    text = _redact_jwts(text)
     text = _SECRET_TOKEN.sub(REDACTED, text)
     # The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
     text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED + "\n" * m.group().count("\n"), text)

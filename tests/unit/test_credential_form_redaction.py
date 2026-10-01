@@ -334,6 +334,98 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
     assert sanitize_text(safe) == safe
 
 
+# Prefixes no ordinary word contains. Assembled at runtime, like TOKENS.
+_JWT_BODY = (
+    "eyJ"
+    + _random(string.ascii_letters + string.digits, 20)
+    + "."
+    + _random(ALNUM, 40)
+    + "."
+    + _random(ALNUM, 20)
+)
+SPECIFIC_TOKENS = [
+    "sk" + "-proj-" + _random(ALNUM, 40),
+    "sk" + "-ant-" + _random(ALNUM + "_-", 40),
+    "gh" + "p_" + _random(ALNUM, 36),
+    "gh" + "o_" + _random(ALNUM, 36),
+    "github" + "_pat_" + _random(ALNUM + "_", 50),
+    "gl" + "pat-" + _random(ALNUM + "_-", 20),
+    "xox" + "b-" + _random(string.digits, 11) + "-" + _random(ALNUM, 24),
+    "AI" + "za" + _random(ALNUM + "_-", 35),
+    "ya29" + "." + _random(ALNUM + "_-", 40),
+    "AK" + "IA" + _random(string.ascii_uppercase + string.digits, 16),
+    "AS" + "IA" + _random(string.ascii_uppercase + string.digits, 16),
+    "hf" + "_" + _random(ALNUM, 34),
+    _JWT_BODY,
+]
+# What may stand before a token without being part of a word: \n is the two
+# characters backslash and n, as in JSON text; %3D is a percent escape.
+TOKEN_GLUE = [
+    "key:\\n{t}",
+    "\\r\\n{t}",
+    "\\t{t}",
+    "?next=%2Fv1%3Fapi_key%3D{t}",
+    "a%0A{t}",
+    "\\u0022{t}",
+    "\\x22{t}",
+    "cfg_{t}",
+    "__{t}",
+    "id7{t}",
+    "42{t}",
+    "{t}",
+]
+
+
+@pytest.mark.parametrize("glue", TOKEN_GLUE)
+@pytest.mark.parametrize("secret", SPECIFIC_TOKENS)
+def test_specific_tokens_are_withheld_after_escapes_underscores_and_digits(glue, secret):
+    # '\b' hid them: 'n' (of an escaped line break), 'D' (of '%3D'), '_' and digits are word characters.
+    source = glue.format(t=secret)
+    safe = sanitize_text(source)
+    assert secret not in safe
+    assert REDACTED in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize("glue", TOKEN_GLUE[:7])
+def test_generic_tokens_are_withheld_after_escapes(glue):
+    for secret in ("sk" + "-" + BASE62, "app" + "-" + BASE62[:24], "npm" + "_" + BASE62[:36]):
+        safe = sanitize_text(glue.format(t=secret))
+        assert secret not in safe and REDACTED in safe
+
+
+@pytest.mark.parametrize("scheme", ["Bearer", "Basic", "SSWS"])
+@pytest.mark.parametrize("glue", ["header:\\n{s} {v}", "\\r\\n{s} {v}", "?h=%0A{s} {v}", "x {s} {v}"])
+def test_authorization_schemes_are_withheld_after_escaped_line_breaks(scheme, glue):
+    safe = sanitize_text(glue.format(s=scheme, v=HEX))
+    assert HEX not in safe and REDACTED in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # An ordinary word that ends in the prefix's text is not a token.
+        "risk-assessment-" + BASE62,
+        "disk-" + BASE62[:20],
+        "task-runner-0123456789",
+        "see the risk-management-framework-2024 overview",
+        "mask-image-" + BASE62[:10],
+        "weeksk-" + BASE62[:20],
+        "Xsk-proj-" + BASE62,
+        "xghp_" + BASE62[:36],
+        "oghp_" + BASE62[:36],
+        "qAKIA" + "IOSFODNN7EXAMPLE",
+        "pubeyJ" + BASE62[:20] + "." + BASE62[:30] + "." + BASE62[:10],
+        # Digits stay part of a word for the prefixes that ordinary text can contain.
+        "2sk-" + BASE62[:20],
+        "9app-" + BASE62[:24],
+    ],
+)
+def test_words_that_merely_contain_a_token_prefix_are_preserved(source):
+    assert sanitize_text(source) == source
+
+
 @pytest.mark.parametrize(
     "source",
     [

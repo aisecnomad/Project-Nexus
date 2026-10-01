@@ -14,17 +14,31 @@ from urllib.parse import unquote
 
 from shadowscan.utils.redaction_rules import REDACTED, _sensitive_assignment_key
 
+# A token inside a longer identifier ('risk-assessment-2024') is not one, so a
+# prefix needs a boundary before it. '\b' is too strict: 'n', 'D' and '_' are word
+# characters, so it hid a token behind an escaped line break ('...key:\nsk-proj-...'
+# in a trace or fixture), behind a percent escape ('?next=%2Fv1%3Fapi_key%3Dsk-proj-...')
+# and behind an underscore ('cfg_sk-proj-...'). Those count as boundaries. A prefix that
+# no ordinary word contains ('sk-proj-', 'ghp_', 'AKIA', JWT 'eyJ') also stands after a
+# digit; the others keep the usual rule so a word or number that ends in their text
+# ('disk-', 'task-', '2app-') is not read as a token.
+_ESCAPED_BOUNDARY = r"(?<=\\[nrt])|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\u[0-9A-Fa-f]{4})|(?<=%[0-9A-Fa-f]{2})"
+_TOKEN_START = r"(?:(?<![A-Za-z0-9])|" + _ESCAPED_BOUNDARY + ")"
+_SPECIFIC_TOKEN_START = r"(?:(?<![A-Za-z])|" + _ESCAPED_BOUNDARY + ")"
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
 _SECRET_TOKEN = re.compile(
-    r"\b(?:sk-(?:proj-|ant-|live-|or-v1-|lf-|litellm-|svcacct-|admin-)?[A-Za-z0-9_-]{8,}"
+    r"(?:"
+    + _SPECIFIC_TOKEN_START
+    + r"(?:sk-(?:proj|ant|live|or-v1|lf|litellm|svcacct|admin)-[A-Za-z0-9_-]{8,}"
     r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
     # GitLab personal/runner/trigger/deploy/feed/SCIM/CI/mail/OAuth/agent tokens.
     r"|gl(?:pat|rt|ptt|dt|ft|soat|cbt|imt|oas|agent|ffct)-[A-Za-z0-9_-]{8,}|GR1348941[A-Za-z0-9_-]{20,}"
     r"|xox[abeprs]-[A-Za-z0-9-]{8,}|xoxe\.xox[bp]-[A-Za-z0-9-]{8,}|xapp-[A-Za-z0-9-]{8,}"
     # Google API keys, OAuth access/refresh tokens and OAuth client secrets.
     r"|AIza[A-Za-z0-9_-]{16,}|ya29\.[A-Za-z0-9_-]{20,}|1//0[A-Za-z0-9_-]{30,}|GOCSPX-[A-Za-z0-9_-]{20,}"
-    r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,}"
+    r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,})"
+    r"|" + _TOKEN_START + r"(?:sk-[A-Za-z0-9_-]{8,}"
     r"|gsk_[A-Za-z0-9]{40,}|pcsk_[A-Za-z0-9_]{20,}|e2b_[a-f0-9]{40}|tgp_v1_[A-Za-z0-9_-]{30,}"
     r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}"
     r"|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}"
@@ -37,7 +51,7 @@ _SECRET_TOKEN = re.compile(
     r"|PMAK-[a-f0-9]{24}-[a-f0-9]{34}|dp\.(?:pt|st|sa|ct|scim|audit)\.[A-Za-z0-9]{40,}"
     r"|sbp_[a-f0-9]{40}|sb_secret_[A-Za-z0-9_-]{20,}|glsa_[A-Za-z0-9]{32}_[a-f0-9]{8}|glc_[A-Za-z0-9+/]{32,}"
     r"|sntry[su]_[A-Za-z0-9+/=_-]{30,}|hv[sbr]\.[A-Za-z0-9_-]{24,}"
-    r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,})\b"
+    r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,}))\b"
 )
 # Webhook and bot endpoints whose *path* is the credential. The scheme, host
 # and a fixed prefix are kept for context; the remainder of the path is
@@ -58,14 +72,31 @@ _PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     # n8n (commonly self-hosted, so any host): /webhook/<id> and /webhook-test/<id>.
     (re.compile(r".+"), re.compile(r"(?:/[^/]+)*?/webhook(?:-test|-waiting)?/")),
 )
-_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
+# A JWT starts at an 'eyJ' that follows the boundary rule above and runs to the end of
+# its third dotted segment. Each attempt starts at a run of base64url characters and
+# reads the characters before the first such 'eyJ' as 'lead', which is kept: an attempt
+# from every 'eyJ' would read a run of 'eyJ-eyJ-eyJ-...' without dots once per 'eyJ',
+# which takes quadratic time, and every run is read once here. Use ``_redact_jwts``.
+_JWT_HEADER = r"(?=eyJ)" + _SPECIFIC_TOKEN_START + "eyJ"
+_JWT = re.compile(
+    r"(?<![A-Za-z0-9_-])(?P<lead>(?:(?!" + _JWT_HEADER + r")[A-Za-z0-9_-])*+)"
+    r"(?P<jwt>" + _JWT_HEADER + r"[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+)"
+)
 _PEM = re.compile(
     r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)",
     re.DOTALL,
 )
-_AUTH = re.compile(r"(?i)\b(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
+# A scheme after an escaped line break or a percent escape ('...header:\nBearer v') is read as well.
+_AUTH = re.compile(r"(?i)(?:\b|" + _ESCAPED_BOUNDARY + r")(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 _QUERY_SEPARATOR = re.compile(r"[&#]")
+
+
+def _redact_jwts(text: str) -> str:
+    """Withhold every JSON Web Token in ``text``, keeping what precedes its 'eyJ'."""
+    if "eyJ" not in text:
+        return text
+    return _JWT.sub(lambda match: match.group("lead") + REDACTED, text)
 
 
 def _url_host(authority: str) -> str:

@@ -112,3 +112,21 @@ assert any('framework.crewai' in finding.frameworks for finding in findings), ct
 """,
         str(tmp_path),
     )
+
+
+def test_token_and_jwt_backstops_read_hostile_runs_in_linear_time():
+    # The boundary before a token admits '_' and escapes, so a run of repeated
+    # prefixes offers a start at every repeat. Reading the dots of 'eyJ-eyJ-...'
+    # once per 'eyJ' took about a minute for this input.
+    _bounded_process("""
+from shadowscan.utils.redaction import REDACTED, sanitize_text
+shapes = [
+    'eyJ-' * 100_000, 'eyJ_' * 100_000, 'eyJa.' * 80_000, 'sk-proj-' * 50_000, 'sk-' + '-' * 400_000,
+    'AKIA_' * 80_000, '%3D' * 130_000, '\\\\n' * 200_000, 'ghp_' * 100_000,
+    'a' * 14 + '.atlasv1' * 50_000, 'eyJ_' * 50_000 + '.' * 50_000,
+]
+for shape in shapes:
+    sanitize_text(shape)
+jwt = 'eyJ' + 'a' * 20 + '.' + 'b' * 30 + '.' + 'c' * 20
+assert sanitize_text('x ' + 'eyJ_' * 50_000 + jwt) == 'x ' + REDACTED
+""")
