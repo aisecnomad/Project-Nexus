@@ -535,6 +535,16 @@ class _ProjectEvidence:
         # idioms in an MCP tool server (whose tools are read below) is
         # kept as evidence but implies no capability.
         self.test_only = discount_tests and all(_is_test_path(rel) for _, rel, _ in self.matches)
+        java_tool_types = {
+            m.extra["java_tool_type"]
+            for m, rel, _ in self.matches
+            if m.extra.get("java_tool_type") and (self.test_only or not self.in_tests(rel))
+        }
+        for m, _, _ in self.matches:
+            if m.extra.get("java_tool_registration_type"):
+                verified = m.extra["java_tool_registration_type"] in java_tool_types
+                m.extra["verified_agent"] = verified
+                m.extra["source_capabilities"] = ["tool-use"] if verified else []
         # Tools registered only in tests imply nothing, like other test evidence.
         self.server_tools = {
             tool: rel for tool, rel in mcp_tools.items() if self.test_only or not self.in_tests(rel)

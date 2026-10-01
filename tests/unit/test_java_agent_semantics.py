@@ -209,6 +209,8 @@ def test_typed_field_registering_same_class_tools_is_an_agent(tmp_path: Path, ru
         ("tools(this)", "tools(other)"),
         ("String answer(String question)", "String answer(String question, OtherClient client)"),
         ("return client.prompt()", "OtherClient client = other; return client.prompt()"),
+        ("return client.prompt()", "OtherClient other = null, client = custom; return client.prompt()"),
+        ("String answer(String question)", "String answer(String question, Generic<OtherClient> client)"),
         ("return client.prompt()", "return other.client.prompt()"),
         ("return client.prompt()", "// return client.prompt()"),
         (
@@ -264,3 +266,120 @@ def test_java_registration_budget_exhaustion_marks_scan_incomplete(
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert any("Java tool registration token budget exceeded" in error for error in ctx.stats.errors)
     assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+_INJECTED_CONTROLLER = """\
+package example;
+import org.springframework.ai.chat.client.ChatClient;
+class AssistantController {
+    private final ChatClient client;
+    private final TicketTools ticketTools;
+    AssistantController(ChatClient.Builder builder, TicketTools ticketTools) {
+        this.client = builder.build();
+        this.ticketTools = ticketTools;
+    }
+    record Request(String message) {}
+    String answer(String question) {
+        return client.prompt()
+            .user(u -> u.text("User {user} asks: {message}").param("user", question).param("message", question))
+            .tools(ticketTools)
+            .advisors(a -> a.param("conversation", question))
+            .call().content();
+    }
+}
+"""
+_INJECTED_TOOLS = """\
+package example;
+import org.springframework.ai.tool.annotation.Tool;
+class TicketTools {
+    @Tool(description = "Look up a ticket")
+    String findTicket(String ticket) { return ticket; }
+}
+"""
+
+
+def test_injected_tool_class_is_resolved_across_project_files(tmp_path: Path, run_connector):
+    (tmp_path / "Controller.java").write_text(_INJECTED_CONTROLLER)
+    (tmp_path / "TicketTools.java").write_text(_INJECTED_TOOLS)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert len(findings) == 1
+    assert findings[0].kind == Kind.AGENT
+    assert findings[0].capabilities == ["tool-use"]
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("private final TicketTools ticketTools", "private final OtherTools ticketTools"),
+        ("this.ticketTools = ticketTools", "this.ticketTools = null"),
+        ("tools(ticketTools)", "tools(null)"),
+        ("tools(ticketTools)", "tools(List.of())"),
+        ("String answer(String question)", "String answer(String question, OtherTools ticketTools)"),
+        ("return client.prompt()", "OtherTools ticketTools = other; return client.prompt()"),
+        ("return client.prompt()", "Object[] ticketTools = new Object[0]; return client.prompt()"),
+        (
+            "return client.prompt()",
+            "Object other = new Object(), ticketTools = new Object(); return client.prompt()",
+        ),
+        (
+            "return client.prompt()",
+            "java.util.List<Object> ticketTools = java.util.List.of(); return client.prompt()",
+        ),
+        ("String answer(String question)", "String answer(String question, Object[] ticketTools)"),
+        ("return client.prompt()", "return (ticketTools) -> client.prompt()"),
+        ("return client.prompt()", "return (x, client) -> client.prompt()"),
+        (
+            "record Request(String message) {}",
+            "record Request(String message) {} static class TicketTools {}",
+        ),
+        ("package example;", "package example;\nimport elsewhere.TicketTools;"),
+        ("package example;", "package example;\nimport example.TicketTools;\nimport elsewhere.TicketTools;"),
+        ("String answer(String question)", "String answer(String question, OtherClient client)"),
+        ("return client.prompt()", "return new Other() { String answer() { return client.prompt()"),
+    ],
+)
+def test_injected_tool_resolution_rejects_unrelated_empty_and_shadowed_objects(
+    tmp_path: Path, run_connector, old: str, new: str
+):
+    source = _INJECTED_CONTROLLER.replace(old, new)
+    if "return new Other()" in source:
+        source = source.replace(".call().content();", ".call().content(); } };")
+    (tmp_path / "Controller.java").write_text(source)
+    (tmp_path / "TicketTools.java").write_text(_INJECTED_TOOLS)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert len(findings) == 1
+    assert findings[0].kind == Kind.FRAMEWORK_USAGE
+    assert "tool-use" not in findings[0].capabilities
+
+
+@pytest.mark.parametrize(
+    "tool_source",
+    [
+        _INJECTED_TOOLS.replace("package example;", "package elsewhere;"),
+        _INJECTED_TOOLS.replace('@Tool(description = "Look up a ticket")', ""),
+        _INJECTED_TOOLS.replace("org.springframework.ai.tool.annotation.Tool", "local.Tool"),
+    ],
+)
+def test_injected_tool_resolution_requires_exact_class_and_spring_annotation(
+    tmp_path: Path, run_connector, tool_source: str
+):
+    (tmp_path / "Controller.java").write_text(_INJECTED_CONTROLLER)
+    (tmp_path / "TicketTools.java").write_text(tool_source)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert len(findings) == 1
+    assert findings[0].kind == Kind.FRAMEWORK_USAGE
+    assert "tool-use" not in findings[0].capabilities
+
+
+def test_test_only_tool_class_does_not_promote_production_registration(tmp_path: Path, run_connector):
+    (tmp_path / "Controller.java").write_text(_INJECTED_CONTROLLER)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "TicketTools.java").write_text(_INJECTED_TOOLS)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert len(findings) == 1
+    assert findings[0].kind == Kind.FRAMEWORK_USAGE
+    assert "tool-use" not in findings[0].capabilities

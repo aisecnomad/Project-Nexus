@@ -37,6 +37,9 @@ that code ran or that a deployment is autonomous.
 Ordinary Spring `ChatClient` and LangChain4j `AiServices` construction, and
 standalone Java tool declarations, remain framework usage. Recognized explicit
 agent factories and supported concrete tool registration can establish agents.
+For Spring typed-field registrations, the registered class must have matching
+`@Tool` methods in the same project; unrelated or test-only tool declarations
+do not establish production capabilities.
 For supported import-bound constructors, empty or disabled tool/delegation
 options do not establish those workload capabilities; unresolved dynamic
 configuration remains potential evidence. Review capability assertions as well
