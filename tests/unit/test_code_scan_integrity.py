@@ -6,6 +6,7 @@ import json
 import os
 import socket
 import stat
+import time
 
 import pytest
 
@@ -281,6 +282,29 @@ def test_real_yaml_aliases_elsewhere_in_front_matter_are_unchanged(tmp_path):
     front = "base: &b one\nname: *b\nglobs: **/*.ts\n"
     fixed = _quote_glob_values(front)
     assert "name: *b" in fixed and "globs: '**/*.ts'" in fixed
+
+
+def test_glob_front_matter_rewrite_is_linear_in_blank_runs():
+    from shadowscan.connectors.code.filesystem import _quote_glob_values
+
+    blanks = " \t" * 100_000  # 200 KB inside one untrusted rule-file line
+    cases = [
+        ("scalar", f"globs: *a{blanks}b", f"globs: '*a{blanks}b'"),
+        ("plain scalar", f"paths: a{blanks}b", f"paths: a{blanks}b"),
+        ("comment", f"globs: *a{blanks}# note", "globs: '*a'"),
+        ("flow list", f"globs: [*a{blanks}b]", f"globs: ['*a{blanks}b']"),
+        ("block item", f"globs:\n  - *a{blanks}b", f"globs:\n  - '*a{blanks}b'"),
+        ("list line", f"globs:\n{blanks}x", f"globs:\n{blanks}x"),
+    ]
+    for label, front, expected in cases:
+        started = time.perf_counter()
+        fixed = _quote_glob_values(front)
+        elapsed = time.perf_counter() - started
+        # Linear string work takes milliseconds. The backtracking patterns
+        # took minutes per line at this size, holding the GIL past the
+        # connector deadline, which then discarded every finding.
+        assert elapsed < 1, (label, elapsed)
+        assert fixed == expected, label
 
 
 # ----------------------------------------------------------------- host_of

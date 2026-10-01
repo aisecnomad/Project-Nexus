@@ -509,9 +509,10 @@ _AGENT_DEFINITION_DIRS = (".claude/agents/", ".github/agents/", ".cursor/rules/"
 # possessive quantifier never backtracks, and the bounded engine applies the
 # per-input matching budget where the pattern runs (_parse_agent_definition).
 _FRONTMATTER = regex.compile(r"^---[ \t\r]*+\n(.*?)\n---[ \t\r]*+\n", regex.S)
-_GLOB_KEY = re.compile(r"(globs|paths)[ \t]*:[ \t]*(.*?)[ \t]*")
-_GLOB_ITEM = re.compile(r"([ \t]*-[ \t]+)(\*.*?)[ \t]*")
-_TRAILING_COMMENT = re.compile(r"(?<![ \t])[ \t]++#.*")
+# Front-matter keys whose bare glob values _quote_glob_values quotes.
+_GLOB_KEYS = ("globs", "paths")
+# A YAML comment starts at a "#" that follows a space or tab.
+_COMMENT_START = re.compile(r"[ \t]#")
 # Files whose parsed structure supplies credential context for excerpt
 # redaction (see _structured_context).
 _JSON_SUFFIXES = (".json", ".jsonc", ".json5")
@@ -3374,6 +3375,12 @@ class FilesystemConnector(BaseConnector):
         return info
 
 
+def _strip_comment(text: str) -> str:
+    """Remove a trailing YAML comment and the blanks before it."""
+    start = _COMMENT_START.search(text)
+    return text if start is None else text[: start.start()].rstrip(" \t")
+
+
 def _quote_glob_values(front_matter: str) -> str:
     """Quote bare ``globs``/``paths`` values that start with ``*``.
 
@@ -3381,6 +3388,9 @@ def _quote_glob_values(front_matter: str) -> str:
     unquoted, which YAML reads as an alias and rejects. Only those two keys
     (a scalar, a flow list or block list items) are rewritten, so a real alias
     elsewhere is untouched and the bounded loader still parses the result.
+    Lines are split with string methods, not backtracking patterns: the front
+    matter is untrusted, and the scan budget cannot interrupt stdlib ``re``,
+    so a long run of blanks must cost linear time.
     """
 
     def quote(value: str) -> str:
@@ -3390,13 +3400,14 @@ def _quote_glob_values(front_matter: str) -> str:
     in_list = False
     for raw in front_matter.split("\n"):
         line = raw.rstrip("\r")
-        key = _GLOB_KEY.fullmatch(line)
-        if key:
-            name, value = key.groups()
+        head, colon, rest = line.partition(":")
+        name = head.rstrip(" \t")
+        if colon and name in _GLOB_KEYS:
+            value = rest.strip(" \t")
             if value.startswith("#"):
                 value = ""
             elif value.startswith("*"):
-                value = _TRAILING_COMMENT.sub("", value)
+                value = _strip_comment(value)
             in_list = not value
             if value.startswith("*"):
                 raw = f"{name}: {quote(value)}"
@@ -3409,9 +3420,12 @@ def _quote_glob_values(front_matter: str) -> str:
                 items = [item.strip() for item in value[1:-1].split(",")]
                 raw = f"{name}: [{', '.join(quote(i) if i.startswith('*') else i for i in items)}]"
         elif in_list:
-            item = _GLOB_ITEM.fullmatch(_TRAILING_COMMENT.sub("", line))
-            if item:
-                raw = item.group(1) + quote(item.group(2))
+            # A block item is blanks, "-", at least one blank, then the glob.
+            item = _strip_comment(line)
+            body = item.lstrip(" \t")
+            glob = body[1:].lstrip(" \t")
+            if body.startswith("-") and glob.startswith("*") and len(glob) < len(body) - 1:
+                raw = item[: len(item) - len(glob)] + quote(glob.rstrip(" \t"))
             elif line[:1] not in ("", " ", "\t", "-", "#"):
                 in_list = False
         out.append(raw)
