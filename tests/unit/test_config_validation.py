@@ -370,3 +370,13 @@ def test_canonical_timeout_key_does_not_warn(caplog, monkeypatch):
     with caplog.at_level(logging.WARNING, logger="shadowscan.config"):
         ScanConfig.from_dict({"options": {"connector_timeout_seconds": 5}})
     assert not [record for record in caplog.records if "deprecated" in record.getMessage()]
+
+
+def test_config_relative_globs_and_workdir_use_configuration_directory(tmp_path):
+    directory = tmp_path / "deployment"
+    directory.mkdir()
+    config = directory / "scan.yaml"
+    config.write_text("inventory: [inventory/*.yaml]\noptions:\n  workdir: working\n")
+    loaded = ScanConfig.from_yaml(config)
+    assert loaded.inventory == [str(directory / "inventory" / "*.yaml")]
+    assert loaded.workdir == str(directory / "working")

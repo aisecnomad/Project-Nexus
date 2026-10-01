@@ -392,76 +392,72 @@ def required_literals(pattern: str) -> _LiteralHints:
         i = flags.end()
     if _INLINE_IGNORECASE_RX.search(pattern, i):
         return _LiteralHints()
-    groups: list[tuple[str, ...]] = []
-    run: list[str] = []
-    depth = 0
-    in_class = False
-    n = len(pattern)
+    groups = _LiteralScanner(pattern).scan(i)
+    if fold:
+        return _LiteralHints(True, tuple(tuple(_fold(alt) for alt in group) for group in groups))
+    return _LiteralHints(False, groups)
 
-    def flush() -> None:
-        nonlocal run
-        if run:
-            groups.append(("".join(run),))
-        run = []
 
-    def require(alternatives: tuple[str, ...], position: int) -> int:
-        """Record a group's alternatives unless its quantifier makes it optional; return the next index."""
-        after = pattern[position : position + 1]
-        if after in {"?", "*"}:
-            return skip_quantifier(position)
-        if after == "{":
-            brace = _BRACE_QUANTIFIER_RX.match(pattern, position)
-            minimum = brace.group(0)[1:-1].split(",")[0] if brace is not None else ""
-            if minimum and int(minimum) >= 1:
-                groups.append(alternatives)
-            return skip_quantifier(position)
-        groups.append(alternatives)
-        return skip_quantifier(position) if after == "+" else position
+def _brace_requires_one(pattern: str, position: int) -> bool:
+    """Whether the brace quantifier at ``position`` requires at least one repetition."""
+    brace = _BRACE_QUANTIFIER_RX.match(pattern, position)
+    minimum = brace.group(0)[1:-1].split(",")[0] if brace is not None else ""
+    return bool(minimum) and int(minimum) >= 1
 
-    def skip_quantifier(position: int) -> int:
-        """Return the index after a quantifier at ``position`` and its lazy/possessive suffix."""
-        if pattern[position] == "{":
-            brace = _BRACE_QUANTIFIER_RX.match(pattern, position)
-            position = brace.end() if brace is not None else position + 1
-        else:
-            position += 1
-        if pattern[position : position + 1] in {"?", "+"}:
-            position += 1
-        return position
 
-    def open_class(position: int) -> int:
-        position += 1
-        if pattern[position : position + 1] == "^":
-            position += 1
-        if pattern[position : position + 1] == "]":
-            position += 1
-        return position
+class _LiteralScanner:
+    """The single left-to-right pass of ``required_literals`` over a pattern ``_plain_shape`` accepted."""
 
-    while i < n:
-        c = pattern[i]
-        if in_class:
-            if c == "\\":
-                i += 2
-                continue
-            if c == "]":
-                in_class = False
-            i += 1
-            continue
-        if depth > 0:
-            if c == "\\":
-                i += 2
-            elif c == "[":
-                in_class = True
-                i = open_class(i)
-            elif c == "(":
-                depth += 1
+    __slots__ = ("depth", "groups", "in_class", "pattern", "run")
+
+    def __init__(self, pattern: str) -> None:
+        self.pattern = pattern
+        self.groups: list[tuple[str, ...]] = []
+        self.run: list[str] = []
+        self.depth = 0
+        self.in_class = False
+
+    def scan(self, i: int) -> tuple[tuple[str, ...], ...]:
+        """Collect the required literal groups from ``i`` to the end of the pattern."""
+        pattern = self.pattern
+        n = len(pattern)
+        while i < n:
+            c = pattern[i]
+            if self.in_class:
+                if c == "\\":
+                    i += 2
+                    continue
+                if c == "]":
+                    self.in_class = False
                 i += 1
-            elif c == ")":
-                depth -= 1
-                i += 1
+            elif self.depth > 0:
+                i = self._nested(i, c)
             else:
-                i += 1
-            continue
+                i = self._top_level(i, c)
+        self._flush()
+        return tuple(self.groups)
+
+    def _flush(self) -> None:
+        if self.run:
+            self.groups.append(("".join(self.run),))
+        self.run = []
+
+    def _nested(self, i: int, c: str) -> int:
+        """Step over one element inside a group that yields no hints."""
+        if c == "\\":
+            return i + 2
+        if c == "[":
+            self.in_class = True
+            return self._open_class(i)
+        if c == "(":
+            self.depth += 1
+        elif c == ")":
+            self.depth -= 1
+        return i + 1
+
+    def _top_level(self, i: int, c: str) -> int:
+        """Step over one element at group depth zero, recording what it requires."""
+        pattern = self.pattern
         literal: str | None = None
         width = 1
         if c == "\\":
@@ -472,54 +468,77 @@ def required_literals(pattern: str) -> _LiteralHints:
             else:
                 literal = _CONTROL_ESCAPES.get(following)
         elif c == "[":
-            flush()
-            in_class = True
-            i = open_class(i)
-            continue
+            self._flush()
+            self.in_class = True
+            return self._open_class(i)
         elif c == "(":
-            flush()
+            self._flush()
             parsed = _literal_alternatives(pattern, i)
             if parsed is not None:
                 alternatives, close = parsed
-                i = require(alternatives, close + 1)
-                continue
-            depth += 1
-            i += 1
-            continue
+                return self._require(alternatives, close + 1)
+            self.depth += 1
+            return i + 1
         elif c in _QUANTIFIER_STARTS:
-            flush()
-            i = skip_quantifier(i)
-            continue
+            self._flush()
+            return self._skip_quantifier(i)
         elif c not in ".^$)":
             literal = c
         if literal is None:
-            flush()
-            i += width
-            continue
-        after = pattern[i + width : i + width + 1]
+            self._flush()
+            return i + width
+        return self._literal(literal, i + width)
+
+    def _literal(self, literal: str, position: int) -> int:
+        """Record ``literal`` according to the quantifier, if any, at ``position``."""
+        after = self.pattern[position : position + 1]
         if after in {"?", "*"}:
-            flush()
-            i = skip_quantifier(i + width)
-            continue
+            self._flush()
+            return self._skip_quantifier(position)
         if after == "{":
-            brace = _BRACE_QUANTIFIER_RX.match(pattern, i + width)
-            minimum = brace.group(0)[1:-1].split(",")[0] if brace is not None else ""
-            if minimum and int(minimum) >= 1:
-                run.append(literal)
-            flush()
-            i = skip_quantifier(i + width)
-            continue
+            if _brace_requires_one(self.pattern, position):
+                self.run.append(literal)
+            self._flush()
+            return self._skip_quantifier(position)
         if after == "+":
-            run.append(literal)
-            flush()
-            i = skip_quantifier(i + width)
-            continue
-        run.append(literal)
-        i += width
-    flush()
-    if fold:
-        return _LiteralHints(True, tuple(tuple(_fold(alt) for alt in group) for group in groups))
-    return _LiteralHints(False, tuple(groups))
+            self.run.append(literal)
+            self._flush()
+            return self._skip_quantifier(position)
+        self.run.append(literal)
+        return position
+
+    def _require(self, alternatives: tuple[str, ...], position: int) -> int:
+        """Record a group's alternatives unless its quantifier makes it optional; return the next index."""
+        after = self.pattern[position : position + 1]
+        if after in {"?", "*"}:
+            return self._skip_quantifier(position)
+        if after == "{":
+            if _brace_requires_one(self.pattern, position):
+                self.groups.append(alternatives)
+            return self._skip_quantifier(position)
+        self.groups.append(alternatives)
+        return self._skip_quantifier(position) if after == "+" else position
+
+    def _skip_quantifier(self, position: int) -> int:
+        """Return the index after a quantifier at ``position`` and its lazy/possessive suffix."""
+        pattern = self.pattern
+        if pattern[position] == "{":
+            brace = _BRACE_QUANTIFIER_RX.match(pattern, position)
+            position = brace.end() if brace is not None else position + 1
+        else:
+            position += 1
+        if pattern[position : position + 1] in {"?", "+"}:
+            position += 1
+        return position
+
+    def _open_class(self, position: int) -> int:
+        pattern = self.pattern
+        position += 1
+        if pattern[position : position + 1] == "^":
+            position += 1
+        if pattern[position : position + 1] == "]":
+            position += 1
+        return position
 
 
 def _ordered_hints(source: Any) -> _LiteralHints:
@@ -781,9 +800,8 @@ class SignatureIndex:
                     for v in s.values:
                         v = v.strip()
                         if v.startswith("re:"):
-                            self._domain_regex.append(
-                                (regex.compile(v[3:], regex.IGNORECASE | regex.VERSION0), sig, s)
-                            )
+                            compiled_domain = regex.compile(v[3:], regex.IGNORECASE | regex.VERSION0)
+                            self._domain_regex.append((compiled_domain, sig, s))
                             continue
                         v = v.lower()
                         if v.startswith("*."):
@@ -826,6 +844,15 @@ class SignatureIndex:
     def by_category(self, category: str) -> list[Signature]:
         return [s for s in self.signatures.values() if s.category == category]
 
+    def signals_of_type(self, kind: str) -> list[tuple[Signature, Signal]]:
+        """Every (signature, signal) pair of signal type ``kind``, in pack order.
+
+        These are the pairs the matchers run. Unlike ``signatures``, which is
+        keyed by id, a signature id shared by two loaded signatures keeps both.
+        The list is a copy; changing it leaves the index untouched.
+        """
+        return list(self._by_type.get(kind, ()))
+
     def __len__(self) -> int:
         return len(self.signatures)
 
@@ -843,9 +870,8 @@ class SignatureIndex:
                 for signal in sig.signals
             ]
             values.append(value)
-        return hashlib.sha256(
-            json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-        ).hexdigest()
+        canonical = json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        return hashlib.sha256(canonical.encode()).hexdigest()
 
     @contextmanager
     def scan_budget(self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS) -> Iterator[None]:
@@ -969,9 +995,8 @@ class SignatureIndex:
                 # redaction. Dedicated secret detectors need the raw match
                 # to create their redacted evidence/fingerprint downstream.
                 value = excerpt if signal_type == "secret" else sanitize_text(excerpt)[:200]
-                out.append(
-                    Match(sig, s, value, s.weight, line=line, extra={"start": m.start(), "end": m.end()})
-                )
+                span = {"start": m.start(), "end": m.end()}
+                out.append(Match(sig, s, value, s.weight, line=line, extra=span))
                 hits += 1
                 if hits >= max_per_signal:
                     break
@@ -1153,13 +1178,15 @@ class SignatureIndex:
                 continue
             # Tokens never carry a port, path or newline; only case folding of
             # non-ASCII letters needs the exhaustive path.
-            matches = (
-                self._match_plain_host(host, _plain_search) if host.isascii() else self.match_domain(host)
-            )
+            if host.isascii():
+                matches = self._match_plain_host(host, _plain_search)
+            else:
+                matches = self.match_domain(host)
             if not matches:
                 continue
+            shared = len({match.signature_id for match in matches}) > 1
             if (
-                len({match.signature_id for match in matches}) > 1
+                shared
                 and not any("mcp" in label for label in labels)
                 and any(match.signature_id == _MCP_SIGNATURE for match in matches)
             ):

@@ -661,9 +661,8 @@ def provider_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[int
                 continue
             if isinstance(tools, ast.Name):
                 tools = schemas.get(tools.id, tools)  # unresolved names prove no tool names
-            if (
-                isinstance(tools, ast.Constant)
-                or isinstance(tools, (ast.List, ast.Tuple, ast.Dict))
+            if isinstance(tools, ast.Constant) or (
+                isinstance(tools, (ast.List, ast.Tuple, ast.Dict))
                 and not (tools.keys if isinstance(tools, ast.Dict) else tools.elts)
             ):
                 continue

@@ -34,7 +34,8 @@ _REGISTRATIONS = (
 )
 # Python decorators naming the tool after the function: @mcp.tool() / @server.tool
 _DECORATED = re.compile(
-    r"@\w+\.tool(?:\(\s*\))?[ \t]*\r?\n(?:[ \t]*@[^\n]{0,200}\n){0,3}[ \t]*(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w{0,63})\s*\("
+    r"@\w+\.tool(?:\(\s*\))?[ \t]*\r?\n(?:[ \t]*@[^\n]{0,200}\n){0,3}"
+    r"[ \t]*(?:async[ \t]+)?def[ \t]+([A-Za-z_]\w{0,63})\s*\("
 )
 _ENUM_CLASS = re.compile(
     r"^class[ \t]+(\w+)\((?:str,[ \t]*)?(?:Str)?Enum\):[ \t]*\r?\n((?:[ \t]+[^\n]*\n|[ \t]*\r?\n){1,200})",

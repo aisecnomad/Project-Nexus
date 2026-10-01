@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import traceback
 from unittest.mock import Mock
 
 import pytest
@@ -163,8 +164,7 @@ def test_repository_symlink_escape_is_rejected(tmp_path):
 )
 def test_clone_refuses_metadata_credential_destination(cls, record, tmp_path, index, monkeypatch):
     run = Mock()
-    monkeypatch.setattr("shadowscan.connectors.code.github.run_bounded_clone", run)
-    monkeypatch.setattr("shadowscan.connectors.code.gitlab.run_bounded_clone", run)
+    monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", run)
     connector = cls(ConnectorContext(config={"token": "synthetic-token"}, index=index))
     with pytest.raises(ValueError):
         connector._clone(record, str(tmp_path))
@@ -188,8 +188,7 @@ def test_clone_refuses_metadata_credential_destination(cls, record, tmp_path, in
 )
 def test_clone_credential_header_is_origin_scoped(cls, record, origin, tmp_path, index, monkeypatch):
     run = Mock(return_value=True)
-    monkeypatch.setattr("shadowscan.connectors.code.github.run_bounded_clone", run)
-    monkeypatch.setattr("shadowscan.connectors.code.gitlab.run_bounded_clone", run)
+    monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", run)
     connector = cls(ConnectorContext(config={"token": "synthetic-token"}, index=index))
     assert connector._clone(record, str(tmp_path))
     env = run.call_args.args[1]
@@ -473,8 +472,6 @@ def test_post_json_uses_the_default_streamed_body_limit():
         ("paginate_odata", {"value": {}}, {}),
         ("paginate_token", {"nextPageToken": None}, {}),
         ("paginate_token", {"items": None}, {}),
-        ("paginate_cursor", {"ok": True}, {}),
-        ("paginate_cursor", {"results": {}}, {}),
     ],
 )
 def test_paginators_fail_closed_on_missing_or_invalid_collection(paginator, data, kwargs):
@@ -482,3 +479,88 @@ def test_paginators_fail_closed_on_missing_or_invalid_collection(paginator, data
 
     with pytest.raises(RuntimeError, match="collection"):
         list(getattr(http, paginator)("/items", **kwargs))
+
+
+# TLS policy cannot be disabled through requests' other falsy settings.
+@pytest.mark.parametrize("setting", [False, 0, "", []])
+def test_falsy_per_request_tls_settings_never_reach_transport(setting):
+    session = Mock(headers={}, verify=True)
+    client = HttpClient("https://8.8.8.8", session=session)
+    with pytest.raises(ValueError, match="TLS certificate verification"):
+        client.get("/items", verify=setting)
+    session.request.assert_not_called()
+
+
+@pytest.mark.parametrize("setting", [False, None, 0, "", []])
+def test_falsy_session_tls_settings_never_reach_transport(setting):
+    session = Mock(headers={}, verify=setting)
+    client = HttpClient("https://8.8.8.8", session=session)
+    with pytest.raises(ValueError, match="TLS certificate verification"):
+        client.get("/items")
+    session.request.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"Authorization": "opaque-secret-value\n"},
+        {"Authorization": "opaque-secret-value\rInjected: header"},
+        {"Authorization": "opaque-secret-value\0"},
+        {"Authorization": "opaque-secret-value\x7f"},
+        {"Authorization": "opaque-secret-value\u2603"},
+        {"opaque-secret-value\n": "value"},
+        {"opaque-secret-value:bad": "value"},
+        {"Authorization": ["opaque-secret-value"]},
+    ],
+)
+@pytest.mark.parametrize("source", ["constructor", "injected", "override", "mutated"])
+def test_invalid_header_never_echoes_credentials_or_reaches_transport(entry, source):
+    session = Mock(headers={})
+    with pytest.raises(ValueError) as failure:
+        if source == "constructor":
+            HttpClient("https://8.8.8.8", session=session, headers=entry)
+        elif source == "injected":
+            session.headers.update(entry)
+            HttpClient("https://8.8.8.8", session=session)
+        else:
+            client = HttpClient("https://8.8.8.8", session=session)
+            if source == "override":
+                client.get("/items", headers=entry)
+            else:
+                session.headers.update(entry)
+                client.get("/items")
+    assert "opaque-secret-value" not in str(failure.value)
+    session.request.assert_not_called()
+
+
+def test_invalid_header_from_auth_handler_has_no_exposed_exception_chain():
+    session = Mock(headers={})
+    session.request.side_effect = requests.exceptions.InvalidHeader("opaque-secret-value")
+    client = HttpClient("https://8.8.8.8", session=session)
+    with pytest.raises(ValueError) as failure:
+        client.get("/items")
+    assert "opaque-secret-value" not in "".join(traceback.format_exception(failure.value))
+
+
+def test_valid_byte_headers_and_request_header_removal_are_supported():
+    session = requests.Session()
+    response = requests.Response()
+    response.status_code = 200
+    response._content = b"{}"
+    response._content_consumed = True
+    session.send = Mock(return_value=response)
+    client = HttpClient(
+        "https://8.8.8.8",
+        session=session,
+        headers={"Authorization": "Bearer synthetic", "X-Label": b"caf\xe9"},
+    )
+    client.get("/items", headers={"Authorization": None, "X-Correlation-ID": "a\tb"})
+    request = session.send.call_args.args[0]
+    assert "Authorization" not in request.headers
+    assert request.headers["X-Label"] == b"caf\xe9"
+
+
+def test_http_client_rejects_control_characters_in_headers_without_echoing_them():
+    with pytest.raises(ValueError) as failure:
+        HttpClient("https://example.com", headers={"Authorization": "SSWS 00SuperSecret\n"})
+    assert "SuperSecret" not in str(failure.value)

@@ -40,9 +40,7 @@ try:
     import fcntl as _fcntl
 
     fcntl = _fcntl
-except (
-    ImportError
-):  # pragma: no cover - fcntl is absent only on platforms the confined reader already refuses
+except ImportError:  # pragma: no cover - absent only where the confined reader already refuses to run
     fcntl = None
 
 
@@ -231,7 +229,14 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     if git("for-each-ref", "--count=1", "--format=%(refname)", "refs/replace").strip():
         raise ValueError("git history has replacement refs")
     history_paths = (
-        git("rev-parse", "--path-format=absolute", "--git-path", "shallow", "--git-path", "info/grafts")
+        git(
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "shallow",
+            "--git-path",
+            "info/grafts",
+        )
         .decode()
         .splitlines()
     )
@@ -315,9 +320,8 @@ def _tree_digest(
             path = basepath / name
             if code and name == ".git":
                 # A worktree's gitdir pointer also affects its metadata.
-                digest.update(
-                    _json(["git-marker", rel, _file_digest(path, max_bytes=max_file_bytes, budget=budget)])
-                )
+                marker = _file_digest(path, max_bytes=max_file_bytes, budget=budget)
+                digest.update(_json(["git-marker", rel, marker]))
                 continue
             if path.is_symlink():
                 raise ValueError("symlink in static input")
@@ -326,13 +330,11 @@ def _tree_digest(
                 raise ValueError("special file in input")
             relative = path.relative_to(root).as_posix()
             if unread_above is not None and info.st_size > unread_above:
-                digest.update(
-                    _json(["oversize", relative, [getattr(info, attr) for attr in _FILE_STAT_ATTRS]])
-                )
+                metadata = [getattr(info, attr) for attr in _FILE_STAT_ATTRS]
+                digest.update(_json(["oversize", relative, metadata]))
                 continue
-            digest.update(
-                _json(["file", relative, _file_digest(path, max_bytes=max_file_bytes, budget=budget)])
-            )
+            content = _file_digest(path, max_bytes=max_file_bytes, budget=budget)
+            digest.update(_json(["file", relative, content]))
         after = basepath.stat(follow_symlinks=False)
         if any(getattr(before, attr) != getattr(after, attr) for attr in attrs):
             raise ValueError("input directory changed while hashing")
@@ -672,7 +674,7 @@ class IncrementalCache:
             # such files are tracked by metadata; a hashed file stays capped.
             unread_above = int(spec.config.get("max_file_size", 1_000_000)) if code else None
             max_bytes = (
-                min(unread_above, _MAX_HASH_FILE_BYTES) if unread_above is not None else _MAX_HASH_FILE_BYTES
+                _MAX_HASH_FILE_BYTES if unread_above is None else min(unread_above, _MAX_HASH_FILE_BYTES)
             )
             inputs = []
             for root in roots:

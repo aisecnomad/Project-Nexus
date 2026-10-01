@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 from shadowscan import registry
@@ -100,6 +102,52 @@ def test_inventory_constraints_load_from_card_simple_and_csv(tmp_path):
 
 def test_name_only_inventory_never_auto_approves():
     assert Inventory([InventoryEntry(agent_id="trusted-agent")]).match(finding()) is None
+
+
+def _finding():
+    return Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="sample",
+        resource="repo:sample",
+        resource_type="repository",
+    )
+
+
+def test_inventory_pattern_cache_is_bounded_and_does_not_confer_approval(monkeypatch):
+    monkeypatch.setattr("shadowscan.registry._MAX_NAME_PATTERNS", 2)
+    inventory = Inventory([InventoryEntry(agent_id="sample", resources=["elsewhere:*"])])
+    finding = _finding()
+    assert inventory.suggest(finding)
+    for name in ("second", "third", "fourth"):
+        inventory._name_pattern(name)
+    assert len(inventory._name_patterns) == 2
+    assert inventory.suggest(finding)
+    assert not inventory.match(finding)
+
+
+def _bedrock_finding(**kwargs) -> Finding:
+    base = dict(
+        surface=Surface.CLOUD,
+        connector="cloud.aws",
+        kind=Kind.AGENT,
+        title="Bedrock Agent: ops",
+        resource="arn:aws:bedrock:us-east-1:123456789012:agent/A1",
+        resource_type="bedrock-agent",
+    )
+    base.update(kwargs)
+    return Finding(**base)
+
+
+def test_inventory_name_patterns_are_reused(tmp_path):
+    (tmp_path / "agents.yaml").write_text(
+        "agents:\n  - id: reviewer\n    names: [coderabbitai]\n    resources: ['x:*']\n"
+    )
+    inventory = Inventory.load([str(tmp_path)])
+    for _ in range(3):
+        assert inventory.suggest(_bedrock_finding(title="Slack app: CodeRabbitAI", resource="slack:app:1"))
+    assert set(inventory._name_patterns) == {"reviewer", "coderabbitai"}
 
 
 def test_card_account_scope_requirement_is_a_real_extension_point(monkeypatch):

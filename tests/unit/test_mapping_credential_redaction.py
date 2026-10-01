@@ -48,7 +48,10 @@ def test_source_mapping_credentials_never_enter_scan_evidence(tmp_path, run_conn
             encoding="utf-8",
         )
     findings, ctx = run_connector(
-        "code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=scan_secrets
+        "code.filesystem",
+        path=str(tmp_path),
+        use_git=False,
+        scan_secrets=scan_secrets,
     )
     assert findings and not ctx.stats.incomplete
     output = json.dumps([finding.to_dict() for finding in findings])
