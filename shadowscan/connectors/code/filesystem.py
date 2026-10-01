@@ -97,7 +97,14 @@ from shadowscan.utils.safe_yaml import (
     YAMLResourceLimitError,
     strict_bounded_safe_load,
 )
-from shadowscan.utils.text import notebook_to_source, parse_timestamp, read_text, redact, truncate
+from shadowscan.utils.text import (
+    BINARY_CONTENT_ERROR,
+    notebook_to_source,
+    parse_timestamp,
+    read_text,
+    redact,
+    truncate,
+)
 
 # Manifests that configure the code of the project containing them. A2A cards
 # and M365 declarative agents declare a separately addressable agent (its own
@@ -1344,6 +1351,10 @@ class FilesystemConnector(BaseConnector):
         read_errors: list[str] = []
         text = read_text(PurePosixPath(rel), self._size_limit(path.name), read_errors, dir_fd=root_fd)
         for issue in read_errors:
+            if issue == BINARY_CONTENT_ERROR and not _analyzed_by_name(path.name):
+                # Read only because a file-name signature matched (an image under
+                # a rules directory): binary content there was never analyzed.
+                continue
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
                 self.ctx.warn(
                     f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",

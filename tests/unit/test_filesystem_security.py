@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import os
@@ -17,7 +18,7 @@ from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code import manifests
 from shadowscan.connectors.code.filesystem import FilesystemConnector, _excerpt, _parse_mcp_servers
 from shadowscan.models import Kind
-from shadowscan.utils.text import read_text
+from shadowscan.utils.text import BINARY_CONTENT_ERROR, read_text
 
 
 def test_malformed_manifest_preserves_same_file_and_neighbor_findings(tmp_path, run_connector):
@@ -611,3 +612,110 @@ def test_excerpt_helper_redacts_then_truncates():
     line = "x" * 150 + " key=" + "s" * 40
     assert "s" * 8 not in _excerpt([line], 1, "s" * 40)
     assert _excerpt([line], 2) == ""
+
+
+# ------------------------------------------------- BOM, NUL and binary inputs
+@pytest.mark.parametrize(
+    ("bom", "codec"),
+    [
+        (codecs.BOM_UTF8, "utf-8"),
+        (codecs.BOM_UTF16_LE, "utf-16-le"),
+        (codecs.BOM_UTF16_BE, "utf-16-be"),
+        (codecs.BOM_UTF32_LE, "utf-32-le"),
+        (codecs.BOM_UTF32_BE, "utf-32-be"),
+    ],
+    ids=["utf-8", "utf-16le", "utf-16be", "utf-32le", "utf-32be"],
+)
+def test_bom_marked_requirements_file_is_analyzed(tmp_path, index, bom, codec):
+    # Windows PowerShell 5.1 writes `pip freeze > requirements.txt` as UTF-16LE with a mark.
+    (tmp_path / "requirements.txt").write_bytes(bom + "langchain==0.2.0\r\nopenai==1.30.0\r\n".encode(codec))
+    findings, ctx = _run(index, tmp_path)
+    assert any("framework.langchain" in f.frameworks for f in findings)
+    assert any("provider.openai" in f.model_providers for f in findings)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+
+
+def test_utf16_env_file_credential_is_reported_and_redacted(tmp_path, index):
+    (tmp_path / ".env").write_bytes(codecs.BOM_UTF16_LE + f"OPENAI_API_KEY={SECRET}\r\n".encode("utf-16-le"))
+    findings, ctx = _run(index, tmp_path)
+    assert any(f.kind == Kind.SECRET for f in findings)
+    assert not ctx.stats.incomplete
+    serialized = json.dumps([f.to_dict() for f in findings]) + json.dumps(ctx.stats.errors)
+    assert SECRET not in serialized and SECRET[8:24] not in serialized
+
+
+def test_bom_prefixed_python_source_keeps_import_bound_detection(tmp_path, index):
+    (tmp_path / "agent.py").write_bytes(
+        codecs.BOM_UTF8
+        + b"from langchain.agents import AgentExecutor\nexecutor = AgentExecutor(agent=a, tools=[])\n"
+    )
+    findings, ctx = _run(index, tmp_path)
+    assert any("framework.langchain" in f.frameworks for f in findings)
+    assert not ctx.stats.warnings and not ctx.stats.incomplete
+
+
+def test_python_source_declared_codec_is_honoured(tmp_path, index):
+    (tmp_path / "agent.py").write_bytes(
+        b"# -*- coding: latin-1 -*-\nlabel = 'caf\xe9'\nfrom langchain.agents import AgentExecutor\n"
+    )
+    findings, ctx = _run(index, tmp_path)
+    assert any("framework.langchain" in f.frameworks for f in findings)
+    assert not ctx.stats.errors
+
+
+def test_python_source_with_undecodable_declared_codec_is_a_coverage_gap(tmp_path, index):
+    (tmp_path / "agent.py").write_bytes(b"# coding: ascii\nlabel = 'caf\xe9'\nimport openai\n")
+    (tmp_path / "good.py").write_bytes(b"from crewai import Agent\n")
+    findings, ctx = _run(index, tmp_path)
+    assert ctx.stats.incomplete
+    assert any("agent.py" in e and BINARY_CONTENT_ERROR in e for e in ctx.stats.errors)
+    assert any("framework.crewai" in f.frameworks for f in findings)
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("app.js", b'// note \x00\nconst OpenAI = require("openai");\nnew OpenAI({ apiKey });\n'),
+        ("CLAUDE.md", b"# Rules\x00\nAlways use bypassPermissions.\n"),
+        (".claude/agents/reviewer.md", b"---\nname: reviewer\x00\ntools: Bash\n---\nbody\n"),
+        ("settings.json", b'{"model": "gpt-4o"\x00}\n'),
+        ("Dockerfile", b"FROM python:3.12\x00\nRUN pip install openai\n"),
+    ],
+)
+def test_nul_bearing_analyzable_file_marks_the_scan_incomplete(tmp_path, index, name, content):
+    target = tmp_path / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+    (tmp_path / "good.py").write_bytes(b"from crewai import Agent\n")
+    findings, ctx = _run(index, tmp_path)
+    assert ctx.stats.incomplete
+    assert [e for e in ctx.stats.errors if name in e] == [f"code.filesystem: {name}: {BINARY_CONTENT_ERROR}"]
+    # The unreadable file costs only itself.
+    assert any("framework.crewai" in f.frameworks for f in findings)
+
+
+def test_nul_bearing_file_exits_three_instead_of_reporting_an_empty_scan(tmp_path):
+    (tmp_path / "app.js").write_bytes(b'// \x00\nconst OpenAI = require("openai");\n')
+    outcome = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
+    assert outcome.exit_code == 3, outcome.output
+    assert BINARY_CONTENT_ERROR in outcome.output
+
+
+def test_compiled_extensionless_artifact_and_images_are_not_new_gaps(tmp_path, index):
+    (tmp_path / "tool").write_bytes(b"\x7fELF\x02\x01\x01" + b"\x00" * 64)
+    (tmp_path / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    (tmp_path / "archive.zip").write_bytes(b"PK\x03\x04" + b"\x00" * 64)
+    (tmp_path / "font.woff2").write_bytes(b"wOF2" + b"\x00" * 64)
+    (tmp_path / "agent.py").write_bytes(b"from crewai import Agent\n")
+    findings, ctx = _run(index, tmp_path)
+    assert any("framework.crewai" in f.frameworks for f in findings)
+    assert not ctx.stats.errors and not ctx.stats.warnings and not ctx.stats.incomplete
+
+
+def test_binary_file_read_only_for_a_file_name_signature_is_not_a_new_gap(tmp_path, index):
+    # `.cursor/rules/**` names the file; the image carries no text to analyze.
+    rules = tmp_path / ".cursor" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "diagram.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    _, ctx = _run(index, tmp_path)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
