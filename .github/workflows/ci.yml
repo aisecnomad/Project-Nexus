@@ -106,6 +106,12 @@ jobs:
             -r requirements-ci.lock -r requirements-build.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
+      - name: Check tracked files for hardcoded credentials
+        run: |
+          set -euo pipefail
+          # The same standard-library script as the pre-commit hook; it skips
+          # the paths that hold synthetic credentials on purpose.
+          git ls-files -z | xargs -0 python tools/check_secrets.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools

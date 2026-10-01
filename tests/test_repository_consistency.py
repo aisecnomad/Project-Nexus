@@ -485,6 +485,29 @@ def test_example_action_pins_match_the_repository_workflows() -> None:
             )
 
 
+def test_secret_check_runs_on_the_same_files_in_the_hook_and_ci() -> None:
+    """The script owns its exclusions, so the hook and CI cannot drift apart."""
+    hooks = {
+        hook["id"]: hook
+        for repo in _load_yaml(ROOT / ".pre-commit-config.yaml")["repos"]
+        for hook in repo.get("hooks", [])
+    }
+    hook = hooks["no-hardcoded-secrets"]
+    assert hook["entry"] == "python tools/check_secrets.py"
+    assert hook.get("types") == ["text"], "the hook must scan every text file"
+    assert not {"exclude", "files", "types_or"} & hook.keys(), "exclusions belong in the script"
+    steps = [
+        step
+        for job in _load_yaml(GITHUB / "workflows" / "ci.yml")["jobs"].values()
+        for step in job.get("steps") or []
+        if "tools/check_secrets.py" in str(step.get("run", ""))
+    ]
+    assert len(steps) == 1, "CI must run the secret check exactly once per test job"
+    lines = [line.strip() for line in steps[0]["run"].splitlines()]
+    assert lines[0] == "set -euo pipefail", "a failed `git ls-files` must fail the step"
+    assert "git ls-files -z | xargs -0 python tools/check_secrets.py" in lines
+
+
 def test_pre_commit_hooks_select_files_with_types_or() -> None:
     """`types` is an AND filter; a hook listing two types would never run."""
     config = _load_yaml(ROOT / ".pre-commit-config.yaml")
