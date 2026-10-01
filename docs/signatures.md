@@ -197,6 +197,29 @@ centrally by the risk engine from the finding. Every `severity` field is rejecte
 including apparently valid values such as `high`, so it cannot silently bypass
 risk scoring. `weight` controls confidence in the evidence, not finding severity.
 
+## Rule packs inside scanned repositories
+
+A repository that stores detection rules lists the environment variables,
+hosts and identifiers those rules detect. The code connector treats these
+files as data: their content is never read as usage or configuration, so a
+pack of custom signatures does not make its own repository an AI project.
+It recognizes a YAML, JSON or TOML file only when the whole file has one of
+these shapes, with no top-level key the format does not define:
+
+| Format | Shape |
+|---|---|
+| ShadowScan signature pack | the loader's forms (`signatures:` alone, one signature, or a list), every signature with an `id`, a valid `category` and nonempty `signals` using schema field names |
+| Semgrep | `rules:` alone, every rule with an `id`, a `message` and a `pattern`, `patterns`, `pattern-either`, `pattern-regex`, `match`, `taint` or `pattern-sources` matcher |
+| Sigma | every document limited to Sigma rule fields, one with a `logsource` and a `detection` holding a `condition` |
+| gitleaks | `title`, `extend`, `allowlist(s)` and `[[rules]]`, every rule with an `id` and a `regex` or `path` |
+
+A file that adds anything else, such as an MCP server table beside gitleaks
+rules, is scanned as before. File-name signals and real-format credentials in
+a rule pack are still reported. The project finding lists recognized files
+under `metadata.detection_rule_files` (a count per format and the first 20
+paths). Scanning the scanner's own checkout still reports its Python sources
+and tests, which call and test the products they detect.
+
 ## Conventions
 
 * Regexes must compile as Python `re` expressions with `MULTILINE`; execution uses

@@ -31,6 +31,11 @@ Precision safeguards
   and the finding is built from the name references alone: evidence weights
   are halved, the finding is tagged ``env-names-only`` and confidence is
   capped below the ``confirmed`` band.
+* A detection-rule pack (a ShadowScan signature pack, Semgrep or Sigma rules,
+  a gitleaks configuration; see ``rule_packs``) lists the names and hosts it
+  detects. Its content is never usage or configuration evidence; the project
+  finding lists such files under ``detection_rule_files``. File-name signals
+  and credentials in them are still reported.
 """
 
 from __future__ import annotations
@@ -66,6 +71,7 @@ from shadowscan.connectors.code.ownership import (
 from shadowscan.connectors.code.ownership import (
     codeowners_match as _codeowners_match,
 )
+from shadowscan.connectors.code.rule_packs import detection_rule_format
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
     has_template_markers,
@@ -107,6 +113,8 @@ _PROJECT_MANIFESTS = frozenset({"crewai", "langgraph"})
 
 # Registered MCP tool names retained per project.
 _MAX_MCP_TOOLS = 200
+# Detection-rule pack paths listed in a project finding's metadata.
+_MAX_LISTED_RULE_FILES = 20
 
 # Signal types that establish a library in a project (see _emit_project).
 _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
@@ -414,6 +422,8 @@ class _Project:
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
     seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
     mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
+    detection_rules: dict[str, int] = field(default_factory=dict)  # rule-pack format -> files
+    detection_rule_files: list[str] = field(default_factory=list)  # the first, in walk order
 
 
 @dataclass
@@ -1331,6 +1341,10 @@ class FilesystemConnector(BaseConnector):
         self._record_file_matches(file)
         if self.scan_secrets:
             self._detect_secrets(scan, file)
+        if self._record_detection_rules(file):
+            # A rule pack lists the names and hosts it detects. Its content
+            # is data, not usage or configuration of those products.
+            return
         self._detect_mcp(file)
 
         # 2. manifests (dependencies, images, env names, IaC types)
@@ -1525,6 +1539,27 @@ class FilesystemConnector(BaseConnector):
             for m in file.file_matches:
                 if m.signature_id == "protocol.mcp":
                     self._record(file.proj, m, file.rel, None)
+
+    @staticmethod
+    def _record_detection_rules(file: _SourceFile) -> bool:
+        """Whether ``file`` is a detection-rule pack; if so, count it on its project.
+
+        File-name and credential evidence is already recorded and agent
+        manifests keep their own analysis. No rule-pack shape has an MCP
+        server table, so a pack that mentions MCP keys in its patterns is not
+        parsed as a client configuration.
+        """
+        if file.card_kind:
+            return False
+        parsed = None if file.structure is _NO_STRUCTURE else file.structure
+        rule_format = detection_rule_format(file.rel, file.text, parsed)
+        if rule_format is None:
+            return False
+        proj = file.proj
+        proj.detection_rules[rule_format] = proj.detection_rules.get(rule_format, 0) + 1
+        if len(proj.detection_rule_files) < _MAX_LISTED_RULE_FILES:
+            proj.detection_rule_files.append(file.rel)
+        return True
 
     def _record_content(self, file: _SourceFile, m: Match, snippet: str | None) -> None:
         # A bare key or matching filename is not evidence of a
@@ -2313,6 +2348,13 @@ class FilesystemConnector(BaseConnector):
         )
         f.metadata["models"] = sorted({m.value for m, _, _ in matches if m.signal.type == "model"})
         f.models = f.metadata["models"]
+        if proj.detection_rules:
+            # Rule packs read as data, not as evidence (see rule_packs).
+            f.metadata["detection_rule_files"] = {
+                "count": sum(proj.detection_rules.values()),
+                "formats": dict(sorted(proj.detection_rules.items())),
+                "files": list(proj.detection_rule_files),
+            }
         if proj.agent_defs:
             f.metadata["agent_definitions"] = proj.agent_defs
         # Installed SDKs, imports and endpoint strings establish framework
