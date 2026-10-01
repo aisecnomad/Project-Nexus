@@ -113,9 +113,12 @@ The [CI workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/
 runs the same commands on Linux for Python 3.11, 3.12 and 3.13 and on macOS for
 3.11 and 3.13, installs the hash-locked dependency sets, audits every lock,
 builds and validates the wheel outside the checkout, and on Python 3.13 builds
-and smoke-tests the container image. The `CI gate` job requires every job,
-including DCO on pull requests, to succeed. [CI integration](operations/ci.md)
-describes running the scanner itself inside a pipeline.
+and smoke-tests the container image. The Linux Python 3.11 job runs the suite
+with line and branch coverage and enforces both coverage floors; tracing slows
+the suite several-fold, so the other jobs run the same full suite without it.
+The `CI gate` job requires every job, including DCO on pull requests, to
+succeed. [CI integration](operations/ci.md) describes running the scanner
+itself inside a pipeline.
 
 ## Troubleshooting
 

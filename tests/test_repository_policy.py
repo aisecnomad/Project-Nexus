@@ -218,6 +218,29 @@ def test_ci_gate_executes_fail_closed(
     assert (result.returncode == 0) is passes, result.stdout + result.stderr
 
 
+def test_one_linux_leg_enforces_both_coverage_floors_and_every_leg_runs_the_suite() -> None:
+    jobs = _load(GITHUB / "workflows" / "ci.yml")["jobs"]
+    matrix = jobs["test"]["strategy"]["matrix"]
+    # Exactly one include entry, extending an existing leg rather than adding one.
+    (leg,) = matrix["include"]
+    assert leg == {"python": leg["python"], "coverage": True} and leg["python"] in matrix["python"]
+    steps = jobs["test"]["steps"]
+    pytest_steps = [step for step in steps if "python -m pytest" in step.get("run", "")]
+    traced = [step for step in pytest_steps if "--cov=shadowscan" in step["run"]]
+    assert [step.get("if") for step in traced] == ["${{ matrix.coverage }}"]
+    assert "--cov-fail-under=80" in traced[0]["run"]
+    gate = [step for step in steps if "python -m tools.coverage_gate" in step.get("run", "")]
+    assert [step.get("if") for step in gate] == ["${{ matrix.coverage }}"]
+    assert steps.index(gate[0]) > steps.index(traced[0])
+    # Every other leg, and macOS, still runs the whole suite (no selection flags).
+    untraced = [step for step in pytest_steps if step not in traced]
+    assert [(step.get("if"), step["run"].strip()) for step in untraced] == [
+        ("${{ !matrix.coverage }}", "python -m pytest -q")
+    ]
+    macos = [step for step in jobs["test-macos"]["steps"] if "pytest" in step.get("run", "")]
+    assert [(step.get("if"), step["run"].strip()) for step in macos] == [(None, "python -m pytest -q")]
+
+
 def test_coverage_floors_count_branches_and_are_not_lowered() -> None:
     coverage = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["coverage"]
     assert coverage["run"]["branch"] is True

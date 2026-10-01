@@ -131,6 +131,9 @@ exact supported Python matrix and dependency pins.
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
 
+CI measures coverage on one Linux job (Python 3.11) and runs the same full
+suite untraced on the others; `pyproject.toml` enables branch coverage.
+
 Ruff enforces a 110-column line length outside `tests/` and flags loop
 variables captured by closures (B023). Mypy requires annotated definitions
 (`disallow_untyped_defs`) and reports unused `type: ignore` comments.
