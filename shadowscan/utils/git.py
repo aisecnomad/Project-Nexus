@@ -257,6 +257,9 @@ def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     # Clear the namespace rather than maintain a partial list of overrides.
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env.pop("SSH_ASKPASS", None)
+    # Git never needs the report identity key (comparison.IDENTITY_KEY_ENV),
+    # so a child process of untrusted content never receives it.
+    env.pop("SHADOWSCAN_IDENTITY_KEY", None)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
