@@ -152,14 +152,16 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   literal at the key's position in these is withheld: Semantic Kernel's .NET
   Azure OpenAI and OpenAI connectors
   (`AddAzureOpenAIChatCompletion("deployment", endpoint, "...")`,
-  `AddOpenAIChatCompletion("model", "...")`, their chat client, embedding,
-  Azure text-to-image and audio siblings and the matching services),
-  go-openai's `openai.DefaultConfig("...")`, `openai.NewClient("...")` and
+  `AddOpenAIChatCompletion("model", "...")`, including the overloads that
+  take an endpoint `Uri` before the key, and their chat client, embedding,
+  text-to-image and audio siblings and the matching services), go-openai's
+  `openai.DefaultConfig("...")`, `openai.NewClient("...")` and
   `openai.DefaultAzureConfig("...", url)`, `new OpenAiService("...")`
-  (com.theokanning.openai) and `new GoogleGenerativeAI("...")`. Any other
-  SDK call is an ordinary function, as are a key at another position or in
-  another overload (`AddOpenAIChatCompletion` with an endpoint `Uri`) and a
-  listed call through an aliased import (`gogpt.DefaultConfig("...")`).
+  (com.theokanning.openai) and `new GoogleGenerativeAI("...")`. Where a
+  variable stands at the key's position, a later literal such as an
+  organization ID may be withheld instead. Any other SDK call is an ordinary
+  function, as are a key at a position no listed overload uses and a listed
+  call through an aliased import (`gogpt.DefaultConfig("...")`).
   These forms can also remain: a literal in a
   credential call written in a form the call rules do not read: after a space
   or comment before the parenthesis (`AzureKeyCredential ("...")`, since
