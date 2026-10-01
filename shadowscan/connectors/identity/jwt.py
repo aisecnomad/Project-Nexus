@@ -499,6 +499,12 @@ def _machine_identity(f: Finding, claims: dict[str, Any], family: str, sub: str)
     ):
         identity_type = "workload"
         reasons.append(f"{family} issuer (CI job or in-cluster workload identity)")
+    elif identity_type == "human" and (
+        # Any cluster's issuer: GKE's is container.googleapis.com, in the google family.
+        sub.startswith("system:serviceaccount:") or _has_kubernetes_service_account_claims(claims)
+    ):
+        identity_type = "workload"
+        reasons.append("Kubernetes service-account token (in-cluster workload identity)")
     return identity_type, reasons
 
 
