@@ -126,6 +126,10 @@ docs-serve: ## Serve documentation site with live reload
 	python -m pip install -q --require-hashes --only-binary=:all: -r requirements-docs.lock
 	mkdocs serve
 
+.PHONY: connector-reference
+connector-reference: ## Regenerate docs/connectors/reference.md from the connector classes
+	python -m tools.connector_reference
+
 .PHONY: policy
 policy: ## Check workflow and issue-form safety policies
 	python -m pytest -q tests/test_repository_policy.py tests/test_repository_consistency.py

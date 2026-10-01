@@ -89,6 +89,7 @@ nav:
       - Low-code: connectors/lowcode.md
       - SaaS: connectors/saas.md
       - Cloud: connectors/cloud.md
+      - Configuration reference: connectors/reference.md
   - Concepts:
       - Architecture: architecture.md
       - Signatures: signatures.md

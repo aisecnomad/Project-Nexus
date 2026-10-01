@@ -650,3 +650,12 @@ def test_documented_http_read_deadline_matches_the_client() -> None:
     for path, match in claims:
         claimed = (_READ_DEADLINE_FACTORS.get(match.group(1)), int(match.group(2)))
         assert claimed == expected, f"{_relative(path)} says {match.group(0)!r}; the client uses {expected}"
+
+
+def test_connector_configuration_reference_is_current() -> None:
+    """docs/connectors/reference.md is generated from every built-in connector's keys."""
+    from tools.connector_reference import REFERENCE, render
+
+    assert REFERENCE.read_text(encoding="utf-8") == render(), (
+        "docs/connectors/reference.md is stale; run `make connector-reference`"
+    )

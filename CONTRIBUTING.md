@@ -205,8 +205,10 @@ contract. In brief:
 3. Register in `shadowscan/connectors/__init__.py`.
 4. Add offline test fixtures under `tests/fixtures/`.
 5. Achieve ≥ 75% statement coverage.
-6. Document in `docs/connectors.md` with configuration keys, required API
-   scopes, and offline export format.
+6. Describe each key in `config_keys` and run `make connector-reference`, which
+   regenerates [docs/connectors/reference.md](docs/connectors/reference.md); a
+   test fails when it is stale. Document required API scopes and the offline
+   export format in the connector guide under `docs/connectors/`.
 
 `BaseConnector.load_offline` already reads `input` exports. Declare an
 [engine hook](docs/architecture.md#engine-hooks) only when the engine must
