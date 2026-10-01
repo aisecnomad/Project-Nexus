@@ -66,6 +66,15 @@ into that project's finding and listed under `metadata.manifests`. MCP server
 capabilities are derived from the tool names the server registers
 (`metadata.mcp_tools`, for example `write_file` implies `data-access`).
 
+Gemini CLI's `httpUrl` (Streamable HTTP) is read as an MCP endpoint, like
+`url`, `serverUrl` and `endpoint`; an entry with more than one of them is
+ambiguous. A header or env value that is only a shell-style variable reference
+(`Bearer $TOKEN`) is not an inline credential. A GitHub Actions workflow is not
+itself an MCP document: servers passed as a JSON object in a step input (for
+example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
+reported from that workflow, and an embedded object that cannot be parsed
+makes the scan incomplete.
+
 ### `code.github`
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded

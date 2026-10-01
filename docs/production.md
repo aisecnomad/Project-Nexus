@@ -585,6 +585,22 @@ pinned baseline with a candidate before enforcing policy on the new output:
   servers no longer add capabilities; MCP server capabilities come from their
   registered tools. Risk scores of affected findings change accordingly.
 
+## October field scan changes
+
+These corrections change what some scans report. Compare a pinned baseline with
+a candidate before enforcing policy on the new output:
+
+- **Completeness.** TSX files with typed elements, comments between JSX
+  attributes or element text starting with `(` no longer make scans incomplete.
+  Previously incomplete React repositories can now complete and become usable
+  `diff` baselines.
+- **New MCP findings.** Gemini `httpUrl` servers and MCP servers embedded in
+  GitHub Actions step inputs are new `mcp-server` findings. `diff` shows them as
+  new; review their risk before using `--fail-on`.
+- **Attribution.** Findings whose only Google ADK evidence was
+  `GOOGLE_GENAI_USE_VERTEXAI` lose `framework.google-adk` and its `multi-agent`
+  potential capability. `diff` reports them as changed; titles change too.
+
 ## Finding identity and comparison migration
 
 Finding IDs now separate stable source identity from inferred classification.

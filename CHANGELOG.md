@@ -2,6 +2,27 @@
 
 ## 0.1.1 — Unreleased
 
+### October 1 field scan follow-up
+
+Fixes for defects found by scanning five public agent repositories (see
+`archive/reviews/field-scan-2026-10-01.md`); each has a regression test.
+
+- The JSX lexer no longer marks valid TSX incomplete. It skips explicit type
+  arguments on elements (`<Select<Option> ...>`, `<Form<{ email: string }>>`),
+  comments between attributes, and treats `<Text>(...)</Text>` as an element
+  unless the parenthesized group is followed by `=>` or a return type. In the
+  field scan this removed 139 false incomplete files; unbalanced tags still
+  fail closed.
+- Gemini CLI's `httpUrl` is an MCP endpoint alias. Such extension manifests no
+  longer make the scan incomplete, and their remote servers are reported. A
+  header or env value that is only a shell-style reference (`Bearer $TOKEN`) is
+  not an inline credential.
+- GitHub Actions workflows that pass MCP settings to an agent action no longer
+  fail strict YAML parsing on the `on:` key. Servers embedded as JSON step inputs
+  are reported as MCP findings; unparseable embedded settings stay incomplete.
+- `GOOGLE_GENAI_USE_VERTEXAI` no longer attributes the Google Agent Development
+  Kit. It remains Vertex AI provider evidence.
+
 ### September 28 repository hygiene
 
 - The DCO check accepts Dependabot's app-authored commits with GitHub's fixed

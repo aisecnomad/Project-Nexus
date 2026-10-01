@@ -2517,12 +2517,66 @@ def _safe_source_text(rel: str, text: str) -> str:
     return _redacted_source(text, _structured_context(rel, text))
 
 
+# Gemini CLI names its Streamable HTTP endpoint `httpUrl` (`url` is SSE).
+_MCP_URL_KEYS = ("url", "httpUrl", "serverUrl", "endpoint")
+# `Bearer $TOKEN`: Gemini CLI expands shell-style variables in env and headers.
+_SHELL_ENV_REFERENCE = re.compile(r"(?:[A-Za-z][\w-]*[ \t]+)?\$[A-Z_][A-Z0-9_]*")
+_WORKFLOW_PATH = re.compile(r"(?:^|/)\.github/workflows/[^/]+\.ya?ml$")
+_EMBEDDED_MCP_MARKERS = ('"mcpServers"', '"mcp_servers"')
+
+
+def _embedded_workflow_mcp(workflow: Any, errors: list[str]) -> dict[str, Any]:
+    """Collect MCP servers passed as JSON strings to workflow step inputs.
+
+    Agent actions take their MCP configuration as a step input, for example
+    `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`. The
+    workflow itself is not an MCP document, so only those embedded objects
+    are parsed. Server names repeated across steps keep a numbered suffix.
+    """
+    servers: dict[str, Any] = {}
+    jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
+    for job in jobs.values() if isinstance(jobs, dict) else ():
+        steps = job.get("steps") if isinstance(job, dict) else None
+        for step in steps if isinstance(steps, list) else ():
+            inputs = step.get("with") if isinstance(step, dict) else None
+            for value in inputs.values() if isinstance(inputs, dict) else ():
+                if not (
+                    isinstance(value, str)
+                    and value.lstrip().startswith("{")
+                    and any(marker in value for marker in _EMBEDDED_MCP_MARKERS)
+                ):
+                    continue
+                try:
+                    embedded = _load_json_lenient(value)
+                except (ValueError, RecursionError):
+                    errors.append("invalid embedded MCP configuration syntax")
+                    continue
+                container = (
+                    embedded.get("mcpServers", embedded.get("mcp_servers"))
+                    if isinstance(embedded, dict)
+                    else None
+                )
+                if not isinstance(container, dict):
+                    errors.append("embedded MCP servers must be an object")
+                    continue
+                for name, cfg in container.items():
+                    key, suffix = str(name), 2
+                    while key in servers:
+                        key, suffix = f"{name}#{suffix}", suffix + 1
+                    servers[key] = cfg
+    return {"mcpServers": servers} if servers else {}
+
+
 def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:
     errors = errors if errors is not None else []
     data: Any  # untrusted repository content; every shape is checked below
     try:
         if rel.endswith(".toml"):
             data = tomllib.loads(text)
+        elif _WORKFLOW_PATH.search(rel):
+            # GitHub's `on:` key is a YAML 1.1 boolean, so a workflow needs the
+            # configuration loader that permits non-string mapping keys.
+            data = _embedded_workflow_mcp(strict_bounded_safe_load(text, require_string_keys=False), errors)
         elif rel.endswith((".yaml", ".yml")):
             data = strict_bounded_safe_load(text)
         else:
@@ -2576,7 +2630,7 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
             sum(alias in cfg for alias in aliases) > 1
             for aliases in (
                 ("env", "environment"),
-                ("url", "serverUrl", "endpoint"),
+                _MCP_URL_KEYS,
                 ("type", "transport"),
                 ("autoApprove", "alwaysAllow"),
             )
@@ -2594,7 +2648,7 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
             errors.append("MCP headers must be an object")
             headers = {}
         direct_url = next(
-            (cfg[key] for key in ("url", "serverUrl", "endpoint") if key in cfg),
+            (cfg[key] for key in _MCP_URL_KEYS if key in cfg),
             None,
         )
         urls: list[str] = []
@@ -2647,6 +2701,7 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
                 isinstance(value, str)
                 and value
                 and not value.startswith("${")
+                and not _SHELL_ENV_REFERENCE.fullmatch(value)
                 and not looks_like_placeholder(value)
                 and _SECRETISH.search(str(key))
                 and len(value) >= 12

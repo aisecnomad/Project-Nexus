@@ -121,6 +121,15 @@ into that project's finding (`metadata.manifests`). MCP server capabilities come
 from the tool names the server registers outside tests (`metadata.mcp_tools`);
 a server without recognised tools keeps the capabilities its code implies.
 
+Gemini CLI's `httpUrl` (Streamable HTTP) is read as an MCP endpoint, like
+`url`, `serverUrl` and `endpoint`; an entry with more than one of them is
+ambiguous. A header or env value that is only a shell-style variable reference
+(`Bearer $TOKEN`) is not an inline credential. A GitHub Actions workflow is not
+itself an MCP document: servers passed as a JSON object in a step input (for
+example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
+reported from that workflow, and an embedded object that cannot be parsed
+makes the scan incomplete.
+
 Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
 `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
 `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
