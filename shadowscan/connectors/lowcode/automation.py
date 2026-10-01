@@ -26,6 +26,7 @@ from requests import RequestException
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.common import apply_matches, blob_matches, finalize, model_matches, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.safe_json import strict_json_loads
@@ -71,7 +72,9 @@ class _AutomationBase(BaseConnector):
         resource_type: str = "workflow",
         extra: dict[str, Any] | None = None,
         url: str | None = None,
+        hints: list[Match] | None = None,
     ) -> Finding | None:
+        """One finding per AI-enabled definition; ``hints`` (model or step names) count at half weight."""
         matches = blob_matches(self.index, blob)
         if not matches and not ai_steps:
             return None
@@ -121,6 +124,9 @@ class _AutomationBase(BaseConnector):
                 **(extra or {}),
             }
         )
+        # Attach every observation before finalizing: confidence, likelihood and
+        # --min-confidence filtering must reflect the hints too.
+        apply_matches(f, hints or [], weight_scale=0.5)
         finalize(f, self.index)
         f.kind = kind
         return f
@@ -244,12 +250,12 @@ class N8nConnector(_AutomationBase):
                 "node_types": sorted(set(types))[:40],
                 "tags": [t.get("name") for t in w.get("tags") or [] if isinstance(t, dict)],
             },
+            hints=model_matches(self.index, *models),
         )
         if f:
             if not identified:
                 f.metadata["identity_unresolved"] = True
                 f.add_tag("unresolved-identity")
-            apply_matches(f, model_matches(self.index, *models), weight_scale=0.5)
             f.models = sorted({m for m in models if m and m != "None"})
             if any(
                 "toolCode" in t or "executeCommand" in t or "n8n-nodes-base.code" in t or "ssh" in t.lower()
@@ -402,7 +408,7 @@ class MakeConnector(_AutomationBase):
 
     def _agent_finding(self, rec: dict[str, Any]) -> Finding | None:
         model = rec.get("model") or rec.get("llmModel") or rec.get("defaultModel")
-        f = self._workflow_finding(
+        return self._workflow_finding(
             wid=str(rec.get("id") or rec.get("agentId") or rec.get("name")),
             name=str(rec.get("name")),
             blob=json.dumps(rec, default=str)[:100_000],
@@ -420,10 +426,8 @@ class MakeConnector(_AutomationBase):
                 "tools": [t.get("name") for t in rec.get("tools") or [] if isinstance(t, dict)][:20],
                 "system_prompt": truncate(str(rec.get("systemPrompt") or ""), 200),
             },
+            hints=model_matches(self.index, model),
         )
-        if f:
-            apply_matches(f, model_matches(self.index, model), weight_scale=0.5)
-        return f
 
     def _scenario_finding(self, rec: dict[str, Any]) -> Finding | None:
         bp = rec.get("blueprint") or rec
@@ -537,7 +541,7 @@ class ZapierConnector(_AutomationBase):
         owner = rec.get("owner") or rec.get("Owner") or get_path(rec, "owner.email", "user.email", "creator")
         agent = re.search(r"(?i)\bagent\b", title) or rec.get("type") == "agent" or "instructions" in rec
         kind = Kind.AGENT if agent else Kind.WORKFLOW
-        f = self._workflow_finding(
+        return self._workflow_finding(
             wid=str(rec.get("id") or rec.get("Id") or title),
             name=title,
             blob=blob,
@@ -555,10 +559,8 @@ class ZapierConnector(_AutomationBase):
             resource_type="agent" if rec.get("type") == "agent" or "instructions" in rec else "zap",
             extra={"steps": steps_list[:20], "status": rec.get("status") or rec.get("Status")},
             url=rec.get("url") or rec.get("editor_url"),
+            hints=name_matches(self.index, " ".join(ai_steps)),
         )
-        if f:
-            apply_matches(f, name_matches(self.index, " ".join(ai_steps)), weight_scale=0.5)
-        return f
 
 
 # --------------------------------------------------------------- Workato
