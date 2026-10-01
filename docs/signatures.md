@@ -133,6 +133,28 @@ This checks built-ins plus the supplied directory; use `--no-builtin DIR` to
 validate an isolated custom pack. CI runs the same validator on every push and
 pull request. `shadowscan signatures test` exercises representative inputs.
 
+`signatures test` reports a signal's own weight and `agent_indicator`. The
+code connector then decides how much a `code` match counts:
+
+* In Python and JavaScript/TypeScript, calls are bound to their imports. A
+  call through an import that matches a signature's `import` signal is
+  checked against that signature's `code` patterns (the pattern must match at
+  the called name). For a custom pack, the signature's or signal's
+  `agent_indicator` applies to the bound call; built-in frameworks list their
+  agent constructors instead. The built-in `framework` patterns count only
+  this way: `Crew(` is CrewAI evidence when `Crew` was imported from
+  `crewai`, not when a local class has that name.
+* A custom pack's `framework` pattern also counts as a lexical match anywhere
+  in the source, in every language, unless the bound call on that line already
+  produced the same evidence. A lexical match promotes the project to an
+  `agent` only when the same signature also has an `import` or `dependency`
+  match in the project. Without one, the finding is `framework-usage`, with
+  that evidence capped at weight 0.6 (`confidence_group:
+  uncorroborated-lexical`). A pack with only a `code` signal therefore reports
+  usage, not an agent; add the product's package or import to promote it.
+* Other categories' unbound `code` matches in Python and JavaScript are
+  supporting evidence and never promote an agent by themselves.
+
 The schema requires a signature `id`, `category`, and nonempty `signals` list.
 Each signal has a supported `type` and that type's matcher fields. Unknown
 fields, incorrect types, duplicate YAML keys or IDs within a pack directory,

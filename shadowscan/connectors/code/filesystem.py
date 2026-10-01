@@ -84,7 +84,8 @@ from shadowscan.connectors.common import (
     placeholder_reason,
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.signatures import Match
+from shadowscan.signatures import Match, Signature
+from shadowscan.signatures.loader import builtin_signature_dir
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
 from shadowscan.utils.files import open_confined_directory, open_confined_file
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
@@ -641,6 +642,15 @@ def _root_open_failure(exc: OSError | ValueError) -> str:
 def _is_test_path(rel: str) -> bool:
     parts = rel.lower().split("/")
     return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
+
+
+# A signature's source names its pack file (as the validator's namespace check reads it).
+_BUNDLED_PACKS = os.path.join(os.path.abspath(builtin_signature_dir()), "")
+
+
+def _bundled_signature(signature: Signature) -> bool:
+    """Whether ``signature`` comes from the packs that ship with the scanner, not a custom pack."""
+    return signature.source is not None and signature.source.startswith(_BUNDLED_PACKS)
 
 
 _CODING_AGENT_DOC_NAMES = frozenset(
@@ -1624,7 +1634,7 @@ class FilesystemConnector(BaseConnector):
         file_uses_llm = any(
             m.signature.category in _LLM_CATEGORIES for m in (*imports, *code_matches, *bound)
         )
-        self._record_code_matches(file, code_matches, file_uses_llm)
+        self._record_code_matches(file, code_matches, file_uses_llm, bound)
         for m in bound:
             self._record_content(file, m, self._file_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
@@ -1664,18 +1674,32 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(message)
             return []
 
-    def _record_code_matches(self, file: _SourceFile, code_matches: list[Match], file_uses_llm: bool) -> None:
+    def _record_code_matches(
+        self,
+        file: _SourceFile,
+        code_matches: list[Match],
+        file_uses_llm: bool,
+        bound: list[Match],
+    ) -> None:
+        # The binder's evidence for a signal on a line replaces its lexical match.
+        bound_signals = {(m.signature_id, id(m.signal), m.line) for m in bound}
         for m in code_matches:
             if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
                 continue
-            if file.lang in {"python", "javascript"}:
-                if m.signature.category == "framework":
-                    continue  # import-bound calls establish the library
-                m.extra["verified_agent"] = False
-            else:
+            if file.lang not in {"python", "javascript"}:
                 # Other languages have lexical filtering but
                 # no import binder. Their code signatures need
                 # corroborating library evidence at emit time.
+                m.extra["lexical_source"] = file.lang
+            elif m.signature.category != "framework":
+                m.extra["verified_agent"] = False
+            elif _bundled_signature(m.signature) or (m.signature_id, id(m.signal), m.line) in bound_signals:
+                continue  # import-bound calls establish the library
+            else:
+                # The bundled framework patterns are written for the import
+                # binder. A custom pack's pattern is plain lexical evidence,
+                # as in other languages, so a pack without a matching import
+                # still takes effect, corroborated at emit time.
                 m.extra["lexical_source"] = file.lang
             self._record_content(file, m, self._file_excerpt(file, m.line))
 
