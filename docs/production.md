@@ -10,6 +10,45 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 1 review remediation
+
+Rollout effects of the remediation listed in the changelog. Re-run any baseline
+collected before this revision: some scans that previously finished complete now
+finish incomplete because the earlier result hid a gap.
+
+- **More exit 3 on real estates.** Expect new incomplete diagnostics for binary
+  or undecodable files with source or config names, rotated log files in a log
+  directory, unnamed `saas.generic` rows and negative gateway usage. Fix the
+  input (exclude the path, supply the rotated files by name, map the name column)
+  rather than ignoring exit 3. Do not read a finding that disappeared before this
+  revision as resolved; compare only complete scans of the same scope.
+- **Notices are not completeness.** The default-exclude notice and the AWS/GCP
+  default-region notice are warnings that leave the scan complete. Scope a scan to
+  an excluded directory as its own root, or set `regions`, to cover it. Review the
+  notices before treating a clean report as estate-wide.
+- **New report fields.** `collection_scope.not_run`, finding metadata
+  `registry_match_assurance` and tag `registry-identity-unverified`, and
+  `signature_verified` on JWT findings are additive. A gateway finding approved
+  only by an operator-asserted caller name is still registered; treat that match
+  as unverified until the caller binding is authenticated.
+- **CSV consumers.** An incomplete CSV report has a first data row with
+  `id=SCAN-INCOMPLETE`, `kind=scan-status` and the unfinished connectors in the
+  `connector` column. Skip or alert on it; exit code 3 remains the primary signal.
+- **Credential binding digest (open item).** Code and gateway findings still
+  carry `credential:sha256:<digest>`, an unsalted SHA-256 of the raw credential
+  used for stable identity and gateway bindings. Anyone holding a report can
+  confirm a candidate credential against it. Treat reports as sensitive, and
+  plan an operator-supplied keyed digest, which changes finding identity and
+  bindings, as a separate migration.
+- **Private CA.** Set `ca_bundle` on `identity.jwt` to a PEM file to scan an
+  endpoint behind internal PKI; TLS verification stays on and the bundle replaces
+  the default store. Other connectors do not accept it yet.
+- **Known limits.** The default 120 s connector deadline cannot finish a roughly
+  20,000-file repository or a 30 MiB gateway log (raise
+  `connector_timeout_seconds`); gateway finding IDs are scan-local, so `diff` of
+  gateway findings between runs is not stable; logfmt gateway lines still use
+  last-key-wins for `host`.
+
 ## September 27 migration and acceptance
 
 The distribution metadata now names `project-nexus-shadowscan`. Install a wheel

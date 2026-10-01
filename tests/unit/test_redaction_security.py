@@ -222,7 +222,9 @@ def test_generic_saas_does_not_copy_arbitrary_export_columns():
 )
 def test_csv_formula_values_are_literal_text(formula):
     f = _finding(title=formula, owner=formula, evidence=[Evidence(signal="test", description=formula)])
-    row = next(csv.DictReader(io.StringIO(render_csv(ScanResult(findings=[f])))))
+    # A complete scan: an incomplete one leads with a status row.
+    complete = ScanResult(findings=[f], stats=[ScanStats(connector="test", started_at="now")])
+    row = next(csv.DictReader(io.StringIO(render_csv(complete))))
     for column in ("title", "owner", "top_evidence"):
         assert row[column] == "'" + formula
     assert row["confidence"] == "0.0"

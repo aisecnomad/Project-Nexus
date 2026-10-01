@@ -2,6 +2,59 @@
 
 ## 0.1.1 — Unreleased
 
+### October 1 review remediation
+
+An AI-assisted audit of the unreleased candidate (not independent human review)
+found places where a scan could finish `complete` while skipping content or
+persisting credential-shaped text. These changes close the confirmed gaps; each
+has a regression test.
+
+- **Silent coverage gaps now mark the scan incomplete.** A source or config file
+  with a NUL byte or other undecodable content (UTF-8/16/32 files with a byte
+  order mark are now decoded instead), a FIFO, socket or device named like a
+  config file, a directory tree nested too deeply for the Python 3.11 walker,
+  unsupported files in a gateway log directory (`access.log.1`, `.bak`, `.zst`),
+  `saas.generic` rows without a resolvable name, wrong-schema `saas.generic` and
+  `lowcode.zapier` objects, and negative or absurd gateway token and cost values
+  each produce a specific incomplete diagnostic. A symlinked card inside an
+  inventory directory stops setup instead of being skipped.
+- **Disclosure without failure.** Code scans list default-excluded directory
+  names (`build`, `vendor`, `external`, ...) once per root, and default-scope AWS
+  and GCP scans name the regions or locations that were not scanned. Both are
+  notices that do not mark the scan incomplete. Reports list disabled or
+  `--only`-excluded connectors in `collection_scope.not_run`. The AWS CloudTrail
+  management-events notice no longer forces exit 3.
+- **Credential redaction.** Command-line credential flags (`--api-key=S`,
+  `--token S`, `--pat`, `--passphrase`, `-u user:S`), escaped-quote JSON, inline
+  headers, multiple cookies, values containing `;`, PGP key blocks, more token
+  formats (including `sk-ant-oat01-`) and URL query keys are redacted, and sets
+  and bytes are traversed. A quadratic JWT pattern that could stall a scan for
+  minutes was replaced by a linear one. The unkeyed SHA-256 `credential:sha256:`
+  binding digest is unchanged; see `docs/production.md`.
+- **Gateway attribution.** Access-log hosts are read only from the trailing
+  unquoted `host=` token, so a user agent or path cannot hide or forge LLM
+  traffic. Generic vendor hosts (`api.cloudflare.com`, `huggingface.co`) are
+  hints rather than LLM-usage evidence, PyPI `swarm` no longer maps to OpenAI
+  Swarm, and standard OIDC scope names are no longer "privileged".
+  `identity.jwt` ignores empty or false agent claims, labels GitHub Actions,
+  GitLab CI and Kubernetes tokens `workload`, and marks tokens scanned without a
+  JWKS (`signature_verified: false`). Gateway registry matches on
+  operator-asserted or unverified caller names carry
+  `metadata.registry_match_assurance` and the `registry-identity-unverified` tag.
+- **Engine and reports.** A connector raising `SystemExit` or another
+  `BaseException` is an incomplete connector, not a process exit. Incomplete CSV
+  reports start with a `SCAN-INCOMPLETE` status row. Saved CSV and HTML render
+  terminal control characters visibly. `shadowscan diff --fail-on-new` exits 2 on
+  new or higher-risk findings. Exit codes 1 and the usage-error 2 are documented.
+- **HTTP client.** Okta `X-Rate-Limit-Reset` is honored, a whole-response read is
+  capped at `max_read_seconds` (default 120), retries stop at the connector
+  deadline, and `identity.jwt` accepts an explicit `ca_bundle` for private PKI
+  (verification stays on).
+- Dialogflow CX and Discovery Engine use their regional endpoints. ServiceNow
+  collection pages until an empty page. A weekly scheduled `pip-audit` workflow
+  was added. Unquoted Cursor `globs: **/*.ts` no longer causes a false exit 3,
+  and `host_of` strips URL userinfo and handles IPv6 literals.
+
 ### September 28 repository hygiene
 
 - The DCO check accepts Dependabot's app-authored commits with GitHub's fixed

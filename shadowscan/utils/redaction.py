@@ -22,6 +22,8 @@ from urllib.parse import unquote
 
 REDACTED = "[REDACTED]"
 _FINGERPRINT = re.compile(r"^credential:sha256:[a-f0-9]{64}$")
+# Values the sanitizer descends into; sets and frozensets are traversed like lists.
+_CONTAINERS = (Mapping, list, tuple, set, frozenset)
 _SENSITIVE_SUFFIXES = (
     "apikey",
     "accesskey",
@@ -79,16 +81,27 @@ _SENSITIVE_NAMES = {
 _CREDENTIAL_DESCRIPTORS = {"id", "objectid", "name", "type", "provider", "scope", "scopes", "status"}
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
+# Boundaries are ASCII-only: ``\b`` treats CJK and other letters as word
+# characters, so a key written directly after non-Latin text would be missed.
 _SECRET_TOKEN = re.compile(
-    r"\b(?:sk-(?:proj-|ant-|live-|or-v1-|lf-|litellm-|svcacct-|admin-)?[A-Za-z0-9_-]{8,}"
+    r"(?<![A-Za-z0-9_])(?:sk-(?:proj-|ant-|live-|or-v1-|lf-|litellm-|svcacct-|admin-)?[A-Za-z0-9_-]{8,}"
     r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
     r"|glpat-[A-Za-z0-9_-]{8,}"
-    r"|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{16,}"
+    r"|xox[baeprs]-[A-Za-z0-9-]{8,}|xoxe\.xox[bp]-[A-Za-z0-9-]{8,}|xapp-[A-Za-z0-9-]{8,}"
+    r"|AIza[A-Za-z0-9_-]{16,}|ya29\.[A-Za-z0-9_-]{20,}"
     r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,}"
     r"|gsk_[A-Za-z0-9]{40,}|pcsk_[A-Za-z0-9_]{20,}|e2b_[a-f0-9]{40}|tgp_v1_[A-Za-z0-9_-]{30,}"
     r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}"
     r"|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}"
-    r"|r8_[A-Za-z0-9]{30,}|fc-[a-f0-9]{32}|app-[A-Za-z0-9]{24})\b"
+    r"|r8_[A-Za-z0-9]{30,}|fc-[a-f0-9]{32}|app-[A-Za-z0-9]{24}"
+    # Payment, mail, package-registry, cloud and model-host credentials. Each
+    # needs its vendor prefix and a realistic length, so ordinary identifiers
+    # that merely start alike are left alone.
+    r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}"
+    r"|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"
+    r"|npm_[A-Za-z0-9]{30,}|pypi-Ag[A-Za-z0-9_-]{50,}"
+    r"|do[opr]_v1_[a-f0-9]{64}|dapi[a-f0-9]{32}(?:-\d+)?"
+    r"|fw_(?=[A-Za-z]*\d)[A-Za-z0-9]{24,}|sk_[a-f0-9]{48})(?<!-)(?![A-Za-z0-9_])"
 )
 # Webhook and bot endpoints whose *path* is the credential. The scheme, host
 # and a fixed prefix are kept for context; the remainder of the path is
@@ -109,9 +122,18 @@ _PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     # n8n (commonly self-hosted, so any host): /webhook/<id> and /webhook-test/<id>.
     (re.compile(r".+"), re.compile(r"(?:/[^/]+)*?/webhook(?:-test|-waiting)?/")),
 )
-_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")
+# A token starts only at the beginning of a dot-separated segment or after a
+# '-' inside one, never inside a run, and every quantifier is possessive. The
+# prefix group walks a segment's '-' separated chunks once, so each character
+# is read a bounded number of times: a long run of 'eyJ-eyJ-...' is linear,
+# not quadratic. ASCII-only boundaries keep a token after CJK text matchable.
+_JWT = re.compile(
+    r"(?<![A-Za-z0-9_-])(?P<prefix>(?:(?!eyJ)[A-Za-z0-9_]*+-)*+)"
+    r"eyJ[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+"
+)
 _PEM = re.compile(
-    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)",
+    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY(?: BLOCK)?-----.*?"
+    r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY(?: BLOCK)?-----|\Z)",
     re.DOTALL,
 )
 _AUTH = re.compile(r"(?i)\b(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
@@ -121,11 +143,66 @@ _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 # that limit. The left boundary includes every character accepted by the key
 # lexer (including '.' and '-'), preventing retries at interior key segments.
 # Text size and redaction work are bounded separately below.
+#
+# Quotes may be escaped (JSON inside a string literal, up to eight levels), in
+# which case the closing delimiter must repeat the opening one exactly. A ';'
+# ends an unquoted value only before whitespace, the end of the text or another
+# ``name=`` pair (connection strings, shell lists); a password may contain one.
+_VALUE_SEMICOLON = r";(?!\s|\Z|[A-Za-z_][A-Za-z0-9_.-]*\s*=)"
+_GLUED_SEMICOLON = re.compile(_VALUE_SEMICOLON)
+_ESCAPED_QUOTE = re.compile(r"\\{1,8}[\"']")
 _ASSIGNMENT = re.compile(
     r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
-    r"(?P<sep>[\"']\s*:\s*|\s*=\s*|:\s+|:\s*(?=[\"']))"
-    r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;\}\]\)\"']+)"
+    r"(?P<sep>\\{0,8}[\"']\s*:\s*|\s*=\s*|:\s+|:\s*(?=\\{0,8}[\"']))"
+    r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'"
+    r"|(?P<escaped>\\{1,8}[\"'])(?:(?!(?P=escaped))[^\r\n])*(?P=escaped)"
+    r"|\\{1,8}[\"'][^\r\n]*"
+    r"|[^\s,;\}\]\)\"']+(?:" + _VALUE_SEMICOLON + r"[^\s,;\}\]\)\"']*)*)"
 )
+# Command lines carry credentials as ``--flag value`` and ``--flag=value``
+# (or ``-pVALUE`` for MySQL clients), outside the key lexer above. A flag names
+# a credential when its name does (``--api-key``) or is one of these short
+# spellings that are too broad as record field names. ``-u user:password`` is a
+# credential pair whose first half is not secret.
+_CREDENTIAL_FLAG_NAMES = {"pat", "pass", "passphrase", "pwd", "key", "auth"}
+_USER_PASSWORD_FLAGS = {"u", "U", "user", "proxy-user"}
+_CLI_FLAG = re.compile(r"(?<![\w-])(?P<flag>--?[A-Za-z][A-Za-z0-9_-]*)(?P<sep>=|[ \t]+)(?=\S)")
+_CLI_VALUE = re.compile(
+    r"\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'"
+    r"|(?P<escaped>\\{1,8}[\"'])(?:(?!(?P=escaped))[^\r\n])*(?P=escaped)"
+    r"|\\{1,8}[\"'][^\r\n]*|[\"'][^\r\n]*|[^\s\"']+"
+)
+_CLI_NEXT_FLAG = re.compile(r"-{1,2}[A-Za-z]")
+_DB_PASSWORD_FLAG = re.compile(
+    r"(?<![\w-])(?P<command>(?:mysql|mysqldump|mysqladmin|mysqlcheck|mysqlimport|mysqlshow|mariadb)"
+    r"(?:[ \t]+[^\s\"']+){0,20}?[ \t]+-p)(?P<value>\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s\"']+)"
+)
+# Cookie headers hold several ``name=value`` pairs separated by ';', any of
+# which can be a session credential; the whole header value is withheld.
+_COOKIE_HEADER = re.compile(
+    r"(?i)(?<![\w.-])(?P<key>set-cookie2?|cookie2?)(?P<sep>[ \t]*[:=][ \t]*)"
+    r"(?P<value>[^\s\"'][^\r\n\"']*)"
+)
+# ``api-key:value`` with no space (an HTTP header written inline). Limited to
+# these header and field names: a suffix rule would also rewrite identifiers
+# such as ``example-credential:provider.openai`` or ``arn:...:secret:name``.
+_COMPACT_HEADER_NAMES = {
+    "apikey",
+    "xapikey",
+    "xgoogapikey",
+    "ocpapimsubscriptionkey",
+    "xauthtoken",
+    "xaccesstoken",
+    "xapitoken",
+    "authorization",
+    "proxyauthorization",
+    "password",
+    "passwd",
+}
+_COMPACT_COLON = re.compile(r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*):(?=[^\s\"'\\])")
+_COMPACT_VALUE = re.compile(r"\[REDACTED\]|[^\s,;\}\]\)\"']+(?:" + _VALUE_SEMICOLON + r"[^\s,;\}\]\)\"']*)*")
+# Report identifiers the gateway connector writes in place of a caller key.
+_OPAQUE_IDENTITY = re.compile(r"(?:credential|caller):(?:hmac-)?sha256:[a-f0-9]{64}")
 _QUERY_SEPARATOR = re.compile(r"[&#]")
 _PYTHON_ASSIGNMENT_KEY = re.compile(
     r"(?<![\w.-])(?P<key>[A-Za-z_][A-Za-z0-9_.]*)[ \t]*(?P<separator>:|=(?!=))"
@@ -439,6 +516,7 @@ def _redact_python_assignments(text: str) -> str:
             previous -= 1
         argument = not annotated and previous >= 0 and text[previous] in "(,"
         previous_operator = ""
+        quoted = False
 
         def readline() -> str:
             nonlocal work
@@ -453,6 +531,7 @@ def _redact_python_assignments(text: str) -> str:
         try:
             for item in tokenize.generate_tokens(readline):
                 position = offsets[item.start[0] - 1] + item.start[1]
+                quoted = quoted or '"' in item.string or "'" in item.string
                 if item.type == token.ERRORTOKEN and not item.string.isspace():
                     # Incomplete single-quoted strings generate error tokens,
                     # not TokenError. A semicolon inside one is not a boundary.
@@ -482,6 +561,10 @@ def _redact_python_assignments(text: str) -> str:
                         and not brackets
                         and (item.string == ";" or (argument and item.string == ","))
                     ):
+                        # An unquoted value (.env style) may itself contain a
+                        # ';' that is not followed by whitespace or ``name=``.
+                        if item.string == ";" and not quoted and _GLUED_SEMICOLON.match(text, position):
+                            continue
                         end = position
                         break
                     previous_operator = item.string
@@ -828,6 +911,16 @@ def _sensitive_assignment_key(key: str) -> bool:
     return _sensitive_key(key) or _ASSIGNMENT_CREDENTIAL_NAME.fullmatch(key.strip()) is not None
 
 
+def _sensitive_flag(name: str) -> bool:
+    """Whether a command-line flag (without its dashes) carries a credential."""
+    return (
+        _KEY_NORMALISE.sub("", name.lower()) in _CREDENTIAL_FLAG_NAMES
+        or _sensitive_assignment_key(name)
+        # --my-token, --client-key: hyphens read as the underscores of env names.
+        or _ASSIGNMENT_CREDENTIAL_NAME.fullmatch(name.replace("-", "_")) is not None
+    )
+
+
 def credential_id(value: Any) -> str:
     """Stable opaque identity for raw credentials; never retain prefix/suffix."""
     s = str(value)
@@ -837,7 +930,7 @@ def credential_id(value: Any) -> str:
 
 
 def _redact_value(value: Any) -> Any:
-    if value is None or value == "":
+    if value is None or value == "" or value == b"":
         return value
     if isinstance(value, str) and (value == REDACTED or _FINGERPRINT.fullmatch(value)):
         return value
@@ -894,6 +987,10 @@ def _sanitize_url(match: re.Match[str]) -> str:
             "code",
             "x-amz-signature",
             "x-goog-signature",
+            "x-amz-security-token",
+            "auth",
+            "pwd",
+            "pat",
         }
         return key + equals + (REDACTED if sensitive else value)
 
@@ -914,6 +1011,113 @@ def _sanitize_url(match: re.Match[str]) -> str:
     return "".join(parts)
 
 
+def _unquote(raw: str, escaped: str | None) -> tuple[str, str, str]:
+    """Split a lexed value into its opening quote, content and closing quote."""
+    if escaped:
+        return escaped, raw[len(escaped) : -len(escaped)], escaped
+    if raw[:1] in {'"', "'"}:
+        closed = len(raw) > 1 and raw[-1] == raw[0]
+        return raw[0], raw[1:-1] if closed else raw[1:], raw[0] if closed else ""
+    unclosed = _ESCAPED_QUOTE.match(raw)
+    if unclosed:
+        return unclosed.group(0), raw[unclosed.end() :], ""
+    return "", raw, ""
+
+
+def _redact_cli_flags(text: str) -> str:
+    """Withhold the values of credential flags: ``--token S``, ``--api-key=S``.
+
+    The value is the next word (or quoted string). A following flag is not a
+    value, so ``--token --verbose`` is left alone. Flags that are not
+    credentials are skipped without consuming their value, which keeps
+    ``--model gpt-example --token S`` intact up to the secret.
+    """
+    if "-" not in text:
+        return text
+    text = _DB_PASSWORD_FLAG.sub(
+        lambda m: m.group("command") + _withhold_flag_value(m.group("value"), None, pair=False), text
+    )
+    pieces: list[str] = []
+    cursor = 0
+    for flag in _CLI_FLAG.finditer(text):
+        if flag.start() < cursor:
+            continue
+        name = flag.group("flag").lstrip("-")
+        pair = name in _USER_PASSWORD_FLAGS
+        if not (pair or _sensitive_flag(name)):
+            continue
+        value = _CLI_VALUE.match(text, flag.end())
+        if value is None or (flag.group("sep") != "=" and _CLI_NEXT_FLAG.match(value.group(0))):
+            continue
+        replacement = _withhold_flag_value(value.group(0), value.group("escaped"), pair=pair)
+        if replacement == value.group(0):
+            continue
+        pieces.append(text[cursor : value.start()])
+        pieces.append(replacement)
+        cursor = value.end()
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _withhold_flag_value(raw: str, escaped: str | None, *, pair: bool) -> str:
+    opener, bare, closer = _unquote(raw, escaped)
+    if not pair:
+        withheld: str = _redact_value(bare)
+        return opener + withheld + closer
+    # user:password. A bare user name, numeric uid:gid and a shell expansion
+    # such as "$(id -u):$(id -g)" are not secret.
+    user, colon, password = bare.partition(":")
+    if not colon or (user.isdigit() and password.isdigit()) or password.startswith("$"):
+        return raw
+    withheld = _redact_value(password)
+    return opener + user + colon + withheld + closer
+
+
+def _redact_cookie_headers(text: str) -> str:
+    def header(match: re.Match[str]) -> str:
+        raw = match.group("value")
+        bare = raw.rstrip(" \t")
+        withheld: str = _redact_value(bare)
+        return match.group("key") + match.group("sep") + withheld + raw[len(bare) :]
+
+    return _COOKIE_HEADER.sub(header, text)
+
+
+def _redact_compact_colons(text: str) -> str:
+    """Withhold ``api-key:value`` (no space) after a credential header or field name."""
+    pieces: list[str] = []
+    cursor = 0
+    position = 0
+    while match := _COMPACT_COLON.search(text, position):
+        position = match.end()
+        key = match.group("key")
+        if _KEY_NORMALISE.sub("", key.lower()) not in _COMPACT_HEADER_NAMES:
+            continue
+        value = _COMPACT_VALUE.match(text, position)
+        if value is None:
+            continue
+        # Escaped JSON (\"api-key:S\") leaves the delimiter's backslash behind.
+        raw = value.group(0)
+        bare = raw.rstrip("\\")
+        if (
+            not bare
+            or _OPAQUE_IDENTITY.fullmatch(bare)
+            or _OPAQUE_IDENTITY.fullmatch(key + ":" + bare)
+            or _redact_value(bare) == bare
+        ):
+            position = value.end()
+            continue
+        pieces.append(text[cursor:position])
+        pieces.append(REDACTED + raw[len(bare) :])
+        cursor = position = value.end()
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
 def sanitize_text(text: str) -> str:
     """Redact recognizable credentials, assignments, auth headers and URL secrets."""
     if not isinstance(text, str):
@@ -922,13 +1126,15 @@ def sanitize_text(text: str) -> str:
         raise SanitizationLimitError("text sanitization size limit exceeded")
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
+    text = _redact_cookie_headers(text)
     text = _redact_credential_calls(text)
     text = _redact_python_assignments(text)
     text = _redact_yaml_multiline_values(text)
     text = _redact_mapping_values(text)
-    text = _JWT.sub(REDACTED, text)
+    text = _JWT.sub(r"\g<prefix>" + REDACTED, text)
     text = _SECRET_TOKEN.sub(REDACTED, text)
     text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED, text)
+    text = _redact_cli_flags(text)
 
     def assignments(value: str, depth: int = 0) -> str:
         def assignment(m: re.Match[str]) -> str:
@@ -936,8 +1142,7 @@ def sanitize_text(text: str) -> str:
             if _FINGERPRINT.fullmatch(full):
                 return full
             raw: str = m.group("value")
-            quote = raw[0] if raw.startswith(('"', "'")) else ""
-            bare = raw[1:-1] if quote else raw
+            opener, bare, closer = _unquote(raw, m.group("escaped"))
             key: str = m.group("key")
             sep: str = m.group("sep")
             if _sensitive_assignment_key(key):
@@ -948,14 +1153,14 @@ def sanitize_text(text: str) -> str:
                 clean = assignments(bare, depth + 1) if depth < 8 else REDACTED
             else:
                 return full
-            return key + sep + quote + clean + quote
+            return key + sep + opener + clean + closer
 
         return _ASSIGNMENT.sub(assignment, value)
 
     # Plain assignment redaction can introduce a bracketed marker after a
     # mapping colon (including annotations). Normalize those expressions in
     # this same pass so repeated sanitization does not change the result.
-    return _redact_mapping_values(assignments(text))
+    return _redact_mapping_values(_redact_compact_colons(assignments(text)))
 
 
 def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_secrets: bool = True) -> Any:
@@ -963,6 +1168,8 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
 
     Environment variable values are omitted regardless of name. Lists additionally
     recognize argv pairs, so ``["--token", "opaque-value"]`` is safe to retain.
+    Sets and frozensets keep their type; bytes are decoded tolerantly, sanitized
+    and returned as bytes (untouched content is returned unchanged).
     Known credential values are also removed from other fields in the same object.
     Short credentials withhold a matching field by default. Diagnostics can opt
     into bounded substring replacement to retain surrounding diagnostic context.
@@ -986,6 +1193,8 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
         )
 
     def remember(child: Any) -> None:
+        if isinstance(child, (bytes, bytearray)):
+            child = bytes(child).decode("utf-8", errors="replace")
         if isinstance(child, str) and child:
             if child != REDACTED and not _FINGERPRINT.fullmatch(child):
                 known.add(child)
@@ -1008,9 +1217,9 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
         credential_group: bool = False,
     ) -> None:
         identity = (id(item), environment, credential, credential_group)
-        if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in discovered):
+        if depth > 64 or (isinstance(item, _CONTAINERS) and identity in discovered):
             return
-        if isinstance(item, (Mapping, list, tuple)):
+        if isinstance(item, _CONTAINERS):
             discovered.add(identity)
         if isinstance(item, Mapping):
             named_secret = record_has_secret_value(item, environment=environment)
@@ -1036,7 +1245,7 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
                 # cannot survive just because the credential is nested.
                 # Descriptive scalar labels are not secret material, but a
                 # provider/name field can itself hold a credential record.
-                nested = isinstance(child, (Mapping, list, tuple))
+                nested = isinstance(child, _CONTAINERS)
                 child_credential = (
                     key_sensitive
                     or (named_secret and lower_key == "value")
@@ -1072,15 +1281,33 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
                     credential=child_credential,
                     credential_group=child_group,
                 )
+        elif isinstance(item, (set, frozenset)):
+            for child in item:
+                if credential:
+                    remember(child)
+                discover(
+                    child,
+                    depth + 1,
+                    environment=environment,
+                    credential=credential,
+                    credential_group=credential_group,
+                )
         elif isinstance(item, (list, tuple)):
             previous = None
             for child in item:
                 if (
                     isinstance(previous, str)
                     and previous.startswith("-")
-                    and _sensitive_key(previous.lstrip("-"))
+                    and "=" not in previous
+                    and _sensitive_flag(previous.lstrip("-"))
                 ):
                     remember(child)
+                elif isinstance(child, str) and child.startswith("-") and "=" in child:
+                    # --api-key=VALUE: the value is a credential to remove from
+                    # sibling fields, exactly as for a separate argv entry.
+                    flag, _, flag_value = child.partition("=")
+                    if _sensitive_flag(flag.lstrip("-")):
+                        remember(flag_value)
                 if credential:
                     remember(child)
                 discover(
@@ -1155,14 +1382,14 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
             raise SanitizationLimitError("sanitization work limit exceeded")
         if depth > 64:
             return REDACTED
-        if isinstance(item, (Mapping, list, tuple)):
+        if isinstance(item, _CONTAINERS):
             if id(item) in cleaning:
                 return REDACTED
             cleaning.add(id(item))
         try:
             return clean_value(item, depth)
         finally:
-            if isinstance(item, (Mapping, list, tuple)):
+            if isinstance(item, _CONTAINERS):
                 cleaning.discard(id(item))
 
     def clean_value(item: Any, depth: int) -> Any:
@@ -1210,8 +1437,19 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
                 else:
                     sequence_out.append(clean(child, depth + 1))
                     if isinstance(child, str) and child.startswith("-") and "=" not in child:
-                        redact_next = _sensitive_key(child.lstrip("-"))
+                        redact_next = _sensitive_flag(child.lstrip("-"))
             return tuple(sequence_out) if isinstance(item, tuple) else sequence_out
+        if isinstance(item, (set, frozenset)):
+            members = [clean(child, depth + 1) for child in item]
+            return frozenset(members) if isinstance(item, frozenset) else set(members)
+        if isinstance(item, (bytes, bytearray)):
+            # Decode tolerantly: json default=str would otherwise print the raw
+            # bytes. Untouched content keeps its exact bytes.
+            decoded = bytes(item).decode("utf-8", errors="replace")
+            cleaned = text(decoded)
+            if cleaned == decoded:
+                return item
+            return bytearray(cleaned.encode()) if isinstance(item, bytearray) else cleaned.encode()
         if isinstance(item, str):
             return text(item)
         return item
@@ -1231,8 +1469,8 @@ def _check_sanitization_structure(value: Any) -> None:
     memo: dict[int, tuple[int, int, int]] = {}
 
     def cost(item: Any) -> tuple[int, int, int]:
-        if not isinstance(item, (Mapping, list, tuple)):
-            return 1, len(item) if isinstance(item, str) else 0, 1
+        if not isinstance(item, _CONTAINERS):
+            return 1, len(item) if isinstance(item, (str, bytes, bytearray)) else 0, 1
         identity = id(item)
         if identity in active:
             return 1, len(REDACTED), 1
