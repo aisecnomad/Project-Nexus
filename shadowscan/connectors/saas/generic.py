@@ -107,10 +107,18 @@ class GenericSaaSConnector(BaseConnector):
         return False
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        unnamed = 0
         for rec in records:
             self.ctx.examined()
             if self._has_ambiguous_aliases(rec):
                 self.ctx.warn("saas.generic: skipped a record with ambiguous field aliases")
+                continue
+            if not self._get(rec, "name"):
+                # A wrong-schema object or an unmapped name column would
+                # otherwise pass as a complete, empty inventory. Blank
+                # spreadsheet rows carry no app and need no diagnostic.
+                if any(str(value).strip() for value in rec.values() if value is not None):
+                    unnamed += 1
                 continue
             try:
                 f = self._finding(rec)
@@ -127,6 +135,11 @@ class GenericSaaSConnector(BaseConnector):
                 continue
             if f:
                 yield f
+        if unnamed:
+            self.ctx.warn(
+                f"saas.generic: skipped {unnamed} record(s) without a resolvable app name; "
+                "map the export's name column with `fields: {name: ...}`"
+            )
 
     def _finding(self, rec: dict[str, Any]) -> Finding | None:
         name = self._get(rec, "name")

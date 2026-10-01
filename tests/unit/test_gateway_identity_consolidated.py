@@ -99,7 +99,10 @@ def test_document_loader_cannot_bypass_header_validation(header):
     loader.assert_not_called()
 
 
-def test_gateway_overflow_is_atomic_and_keeps_later_callers(index):
+def test_gateway_overflow_is_atomic_and_keeps_later_callers(index, monkeypatch):
+    # Absurd per-record costs are normally discarded before accumulation; lift
+    # that cap so this still exercises the aggregate-overflow guard itself.
+    monkeypatch.setattr("shadowscan.connectors.gateway.logs._MAX_USAGE_VALUE", float("inf"))
     ctx = context(index, format="litellm")
     records = [
         {"api_key": "a", "model": "gpt-4o", "spend": 1e308},

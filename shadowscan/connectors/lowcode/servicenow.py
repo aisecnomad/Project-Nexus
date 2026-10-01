@@ -103,14 +103,15 @@ class ServiceNowConnector(BaseConnector):
         max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
         for table, fields in TABLES.items():
             seen: set[str] = set()
-            for page in range(max_pages):
+            offset = 0
+            for _ in range(max_pages):
                 try:
                     data = self.http.get_json(
                         f"/api/now/table/{table}",
                         params={
                             "sysparm_fields": fields,
                             "sysparm_limit": _PAGE_SIZE,
-                            "sysparm_offset": page * _PAGE_SIZE,
+                            "sysparm_offset": offset,
                             "sysparm_display_value": "all",
                         },
                     )
@@ -136,8 +137,12 @@ class ServiceNowConnector(BaseConnector):
                         self.ctx.warn(f"lowcode.servicenow: invalid record in {table} page")
                         continue
                     yield {**r, "_table": table}
-                if len(rows) < _PAGE_SIZE:
+                # An instance can enforce a smaller page size than requested, so
+                # a short page does not prove the end: only an empty page does,
+                # and the next page starts after the rows actually returned.
+                if not rows:
                     break
+                offset += len(rows)
             else:
                 self.ctx.warn(f"lowcode.servicenow: pagination limit reached for {table}")
 

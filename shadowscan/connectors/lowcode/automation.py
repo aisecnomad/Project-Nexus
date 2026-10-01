@@ -495,6 +495,10 @@ class ZapierConnector(_AutomationBase):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:
             self.ctx.examined()
+            if not self._identified(rec, "id", "Id", "title", "Title", "name", "Zap"):
+                # A wrong-schema object must not pass as a complete, empty inventory.
+                self.ctx.warn("lowcode.zapier: unsupported or malformed zap record; coverage incomplete")
+                continue
             f = self._guarded_finding(rec, self._zap_finding, "zap")
             if f:
                 yield f

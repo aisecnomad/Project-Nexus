@@ -51,6 +51,7 @@ _DEFAULT_MAX_INPUT_BYTES = 256 * 1024 * 1024
 _DEFAULT_MAX_INPUT_FILE_BYTES = 32 * 1024 * 1024
 _DEFAULT_MAX_INPUT_FILES = 10_000
 _MAX_OFFLINE_LINE_BYTES = 4 * 1024 * 1024
+_DEADLINE_CHECK_LINES = 1024
 
 
 @dataclass(slots=True)
@@ -60,6 +61,8 @@ class _OfflineInputBudget:
     bytes_read: int = 0
     files_seen: int = 0
     file_limit_warning_sent: bool = False
+    # Set by _iter_bounded_lines when a size limit ended the file it was reading.
+    limit_hit: str | None = None
 
     @property
     def remaining_bytes(self) -> int:
@@ -294,6 +297,7 @@ class BaseConnector(ABC):
     _MAX_OFFLINE_FILE_BYTES = 64 * 1024 * 1024
     _MAX_OFFLINE_TOTAL_BYTES = 512 * 1024 * 1024
     _MAX_OFFLINE_ENTRIES = 200_000
+    _MAX_LISTED_UNSUPPORTED = 5
 
     def _offline_budget(self) -> _OfflineInputBudget:
         return _OfflineInputBudget(self.max_input_bytes, self.max_input_files)
@@ -318,6 +322,8 @@ class BaseConnector(ABC):
         count = 0
         files_seen = 0
         found = False
+        unsupported: list[str] = []
+        unsupported_count = 0
 
         def failed(_: OSError) -> None:
             self.ctx.error(f"{self.name}: offline directory could not be read")
@@ -352,6 +358,19 @@ class BaseConnector(ABC):
                         return
                     files_seen += 1
                     yield item
+                else:
+                    unsupported_count += 1
+                    if len(unsupported) < self._MAX_LISTED_UNSUPPORTED:
+                        unsupported.append(str(item.relative_to(root)))
+        if unsupported_count:
+            # Rotated logs (access.log.1, access.log-20250901) and backups are
+            # history the scan did not read; it must not look complete.
+            more = unsupported_count - len(unsupported)
+            listed = ", ".join(unsupported) + (f", and {more} more" if more else "")
+            self.ctx.warn(
+                f"{self.name}: {unsupported_count} unsupported file(s) in the offline directory were not "
+                f"read ({listed}); convert or rename them to a supported format"
+            )
         if not found:
             self.ctx.error(f"{self.name}: offline directory contains no supported export files")
 
@@ -434,26 +453,32 @@ class BaseConnector(ABC):
 
         Only the per-file cap is checked before reading. The aggregate budget
         is charged line by line, so records that precede the limit are yielded
-        even when the file as a whole would not fit.
+        even when the file as a whole would not fit. The connector deadline is
+        checked periodically so that blank-line padding cannot outrun it.
         """
+        budget.limit_hit = None
         try:
             with open_confined_file(path.expanduser().absolute(), label="offline input") as (raw, before):
                 if before.st_size > min(self.max_input_file_bytes, self._MAX_OFFLINE_FILE_BYTES):
-                    self.ctx.warn(f"{self.name}: max_input_file_bytes ({self.max_input_file_bytes}) reached")
+                    budget.limit_hit = f"max_input_file_bytes ({self.max_input_file_bytes})"
+                    self.ctx.warn(f"{self.name}: {budget.limit_hit} reached")
                     return
                 stream = gzip.GzipFile(fileobj=raw, mode="rb") if compressed else raw
                 file_bytes = 0
+                lines_read = 0
                 try:
                     while True:
+                        if lines_read % _DEADLINE_CHECK_LINES == 0:
+                            self.ctx.check_deadline()
+                        lines_read += 1
                         remaining = min(self.max_input_file_bytes - file_bytes, budget.remaining_bytes)
                         read_size = min(_MAX_OFFLINE_LINE_BYTES + 1, remaining + 1)
                         line = stream.readline(read_size)
                         if not line:
                             break
                         if len(line) > _MAX_OFFLINE_LINE_BYTES:
-                            self.ctx.warn(
-                                f"{self.name}: max_input_line_bytes ({_MAX_OFFLINE_LINE_BYTES}) reached"
-                            )
+                            budget.limit_hit = f"max_input_line_bytes ({_MAX_OFFLINE_LINE_BYTES})"
+                            self.ctx.warn(f"{self.name}: {budget.limit_hit} reached")
                             return
                         if len(line) > remaining:
                             limit_name = (
@@ -461,12 +486,19 @@ class BaseConnector(ABC):
                                 if self.max_input_file_bytes - file_bytes <= budget.remaining_bytes
                                 else "max_input_bytes"
                             )
+                            limit_value = (
+                                self.max_input_file_bytes
+                                if limit_name == "max_input_file_bytes"
+                                else budget.max_bytes
+                            )
+                            budget.limit_hit = f"{limit_name} ({limit_value})"
                             self.ctx.warn(
                                 f"{self.name}: {limit_name} reached; remaining offline input was skipped"
                             )
                             return
                         if not budget.consume(len(line)):
-                            self.ctx.warn(f"{self.name}: max_input_bytes ({budget.max_bytes}) reached")
+                            budget.limit_hit = f"max_input_bytes ({budget.max_bytes})"
+                            self.ctx.warn(f"{self.name}: {budget.limit_hit} reached")
                             return
                         file_bytes += len(line)
                         try:
@@ -508,12 +540,15 @@ class BaseConnector(ABC):
                     continue
                 yield from self._unwrap(data, lambda message: report(f"line {number}: {message}"))
             if not saw_record:
-                report("empty offline export; use [] for an empty inventory")
+                report(self._empty_export_message(budget))
             return
         if suffix == ".csv":
             try:
                 reader = csv.DictReader(self._iter_bounded_lines(source, budget), strict=True)
                 fields = reader.fieldnames
+                if not fields and budget.limit_hit:
+                    report(self._empty_export_message(budget))
+                    return
                 if (
                     not fields
                     or any(not field.strip() for field in fields)
@@ -561,6 +596,16 @@ class BaseConnector(ABC):
             yield from self._unwrap(data, report)
 
     _MAX_INVALID_LINE_ERRORS = 20
+
+    @staticmethod
+    def _empty_export_message(budget: _OfflineInputBudget) -> str:
+        """Blame the size limit, not the data, when a limit ended the file before any record."""
+        if budget.limit_hit:
+            return (
+                f"no records were read before {budget.limit_hit} was reached; "
+                "raise the limit or split the export"
+            )
+        return "empty offline export; use [] for an empty inventory"
 
     @classmethod
     def _bounded_diagnostics(cls, report: Callable[[str], None]) -> Callable[[str], None]:
