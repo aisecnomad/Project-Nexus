@@ -8,7 +8,7 @@ import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
 from shadowscan.connectors.common import unique_records
-from shadowscan.engine import Engine, correlate, merge
+from shadowscan.engine import Engine, _prune_runtime_links, correlate, merge
 from shadowscan.models import Evidence, Finding, Kind, RiskLevel, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.risk import assess
@@ -176,6 +176,51 @@ def test_confidence_threshold_prunes_links_to_omitted_findings(monkeypatch):
     assert by_id[findings["cloud"].id].metadata["related"] == [findings["identity"].id]
     assert by_id[findings["identity"].id].metadata["related"] == [findings["cloud"].id]
     assert "related" not in by_id[findings["bot"].id].metadata
+
+
+def test_confidence_threshold_prunes_runtime_links_to_omitted_gateway_findings():
+    def caller(name: str, confidence: float) -> Finding:
+        return _f(
+            surface=Surface.GATEWAY,
+            connector="gateway.logs",
+            kind=Kind.GATEWAY_CALLER,
+            title=f"Agentic caller '{name}'",
+            resource=f"principal:{name}",
+            resource_type="gateway-caller",
+            confidence=confidence,
+        )
+
+    kept, omitted = caller("svc-ops", 0.9), caller("svc-batch", 0.2)
+    code = _f(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        title="Agent in ops: LangChain",
+        resource="github:acme/ops-agent",
+        resource_type="project",
+    )
+    code.metadata["runtime_activity"] = {
+        "status": "observed",
+        "events": 3,
+        "sources": [
+            {"gateway_finding_id": kept.id, "events": 1},
+            {"gateway_finding_id": omitted.id, "events": 2},
+        ],
+    }
+    code.add_evidence(
+        Evidence(
+            signal="runtime:gateway-observed",
+            description="Linked gateway recorded 3 timestamped request(s)",
+            weight=0.0,
+            attributes={"gateway_finding_ids": sorted([kept.id, omitted.id])},
+        )
+    )
+    # The threshold removed the second caller; its observation remains evidence.
+    _prune_runtime_links([code, kept])
+    sources = code.metadata["runtime_activity"]["sources"]
+    assert [source["gateway_finding_id"] for source in sources] == [kept.id, None]
+    assert [source["events"] for source in sources] == [1, 2]
+    observed = next(ev for ev in code.evidence if ev.signal == "runtime:gateway-observed")
+    assert observed.attributes["gateway_finding_ids"] == [kept.id]
 
 
 def test_parallel_connector_completion_cannot_change_merge_attribution(monkeypatch):

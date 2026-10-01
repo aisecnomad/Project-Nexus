@@ -812,6 +812,7 @@ class Engine:
         if self.config.min_confidence > 0:
             findings = [f for f in findings if f.confidence >= self.config.min_confidence]
             _prune_related(findings)
+            _prune_runtime_links(findings)
         findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
         if dump_directory:
             self._write_manifest(dump_directory, export_entries, result.started_at, stats)
@@ -1006,3 +1007,24 @@ def _prune_related(findings: list[Finding]) -> None:
             f.metadata["related"] = kept
         else:
             del f.metadata["related"]
+
+
+def _prune_runtime_links(findings: list[Finding]) -> None:
+    """Drop ``runtime_activity`` references to gateway findings absent from ``findings``.
+
+    Gateway identities are scan-local, so an omitted gateway finding's ID names
+    nothing outside this report. The observation itself stays: its events,
+    window and scope are what the exported log recorded, whatever the gateway
+    finding's own confidence.
+    """
+    retained = {f.id for f in findings}
+    for f in findings:
+        activity = f.metadata.get("runtime_activity")
+        sources = activity.get("sources") if isinstance(activity, dict) else None
+        for source in sources if isinstance(sources, list) else []:
+            if isinstance(source, dict) and source.get("gateway_finding_id") not in retained:
+                source["gateway_finding_id"] = None
+        for ev in f.evidence:
+            ids = ev.attributes.get("gateway_finding_ids")
+            if isinstance(ids, list):
+                ev.attributes["gateway_finding_ids"] = [i for i in ids if i in retained]
