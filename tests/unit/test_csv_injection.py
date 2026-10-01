@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import csv
 import io
+import random
+import re
+import time
 
 import pytest
 
@@ -106,3 +109,56 @@ def test_comma_reader_still_recovers_each_value_behind_its_marker():
     row = next(csv.DictReader(io.StringIO(render_csv(ScanResult(findings=[finding])))))
     assert row["title"] == "x;'=2+5;"
     assert row["owner"] == "'@org/team"
+
+
+# The pattern the reporter used before the linear pass, kept as the reference
+# for the documented behaviour (it rescans whitespace at every cell start).
+_REFERENCE_FORMULA_CELL = re.compile(
+    r"^(?=[\t\r\n])"
+    r"|(?:^|(?<=[,;\t|\r\n]))(?=[\t\r]|[ \t\r\n\v\f\ufeff\u00a0\"]*[=+\-@])"
+)
+_TRICKY_ALPHABET = "=+-@,;|\t\r\n\v\f\"' \u00a0\ufeffa1"
+
+
+def test_linear_pass_matches_the_reference_pattern_on_random_strings():
+    rng = random.Random(20261001)
+    for _ in range(6000):
+        value = "".join(rng.choice(_TRICKY_ALPHABET) for _ in range(rng.randint(0, 14)))
+        assert _safe_cell(value) == _REFERENCE_FORMULA_CELL.sub("'", value), repr(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "\r\n" * 100_000,
+        "\n" * 200_000,
+        ", " * 100_000 + "=1",
+        "\r\n" * 100_000 + "=1+1",
+        '" ' * 100_000 + "@x",
+        "\t" * 200_000,
+        "a;" + " " * 200_000 + "b",
+    ],
+)
+def test_neutralising_a_long_whitespace_run_is_linear(value):
+    # The earlier pattern needed about five seconds for 40,000 characters and
+    # four times as long for every doubling, so a long run in a title or owner
+    # stalled "-f csv".
+    started = time.perf_counter()
+    cell = _safe_cell(value)
+    assert time.perf_counter() - started < 1.0
+    assert cell.replace("'", "") == value
+
+
+def test_a_hostile_finding_title_renders_quickly():
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="\r\n" * 30_000 + "=1+1",
+        resource="repo",
+        resource_type="repository",
+    )
+    started = time.perf_counter()
+    report = render_csv(ScanResult(findings=[finding]))
+    assert time.perf_counter() - started < 1.0
+    assert next(csv.DictReader(io.StringIO(report)))["title"].endswith("'=1+1")
