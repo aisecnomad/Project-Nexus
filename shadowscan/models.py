@@ -525,6 +525,11 @@ class Finding:
         for item in evidence:
             if not isinstance(item.get("signal"), str) or not isinstance(item.get("description"), str):
                 raise ValueError("finding evidence must have a string signal and description")
+            for name in ("location", "snippet", "signature"):
+                if item.get(name) is not None and not isinstance(item[name], str):
+                    raise ValueError(f"finding evidence {name} must be a string or null")
+            if not isinstance(item.get("attributes", {}), dict):
+                raise ValueError("finding evidence attributes must be an object")
             _validate_number(item.get("weight", 0.5), "evidence weight", minimum=0, maximum=1)
         d["evidence"] = []
         for item in evidence:

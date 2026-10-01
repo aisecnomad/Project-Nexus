@@ -82,13 +82,17 @@ build: ## Build distributable wheel
 
 .PHONY: wheel-validate
 wheel-validate: build ## Validate the wheel installs and works outside checkout
-	python -m venv /tmp/shadowscan-wheel-test
-	/tmp/shadowscan-wheel-test/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-	/tmp/shadowscan-wheel-test/bin/python -m pip install --no-deps dist/project_nexus_shadowscan-*.whl
-	/tmp/shadowscan-wheel-test/bin/python -m pip check
-	cd /tmp && /tmp/shadowscan-wheel-test/bin/python -m shadowscan.signatures.validate
-	cd /tmp && /tmp/shadowscan-wheel-test/bin/shadowscan --help
-	rm -rf /tmp/shadowscan-wheel-test
+	@set -euo pipefail; \
+		wheel_test_root="$$(cd "$${TMPDIR:-/tmp}" && pwd -P)"; \
+		wheel_test_dir="$$(mktemp -d "$$wheel_test_root/shadowscan-wheel-test.XXXXXXXX")"; \
+		trap 'rm -rf -- "$$wheel_test_dir"' EXIT; \
+		python -m venv "$$wheel_test_dir/venv"; \
+		"$$wheel_test_dir/venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements.lock; \
+		"$$wheel_test_dir/venv/bin/python" -m pip install --no-deps dist/project_nexus_shadowscan-*.whl; \
+		"$$wheel_test_dir/venv/bin/python" -m pip check; \
+		cd "$$wheel_test_dir"; \
+		"$$wheel_test_dir/venv/bin/python" -m shadowscan.signatures.validate; \
+		"$$wheel_test_dir/venv/bin/shadowscan" --help
 
 .PHONY: docker
 docker: ## Build worker from the reviewed Dockerfile base digest

@@ -168,7 +168,9 @@ positives. Its cases re-create observed patterns in original code and are a
 regression suite, not a field precision estimate.
 `review_corpus.json` is a separate authored regression set for the September 25
 findings: local-module collisions, ordinary provider calls, tool-schema-only
-requests, and supported agent construction/loops. It was written after observing
+requests, and supported agent construction/loops. It also contains positive and
+negative npm alias attribution cases added during the October 1 code review.
+It was written after observing
 the defects and is not a fresh holdout. The existing independent corpus and its
 annotation ledger remain frozen; adding regression cases does not refresh their
 independence. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) requires

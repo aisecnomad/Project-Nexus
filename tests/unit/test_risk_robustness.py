@@ -475,6 +475,45 @@ def test_from_dict_rejects_risk_factors_and_evidence_without_text_fields():
             Finding.from_dict(_record(evidence=[item]))
 
 
+@pytest.mark.parametrize(
+    "name, value",
+    [
+        ("location", ["agent.py:1"]),
+        ("location", 5),
+        ("snippet", {"source": "agent.run()"}),
+        ("signature", ["framework.example"]),
+        ("attributes", None),
+        ("attributes", []),
+        ("attributes", "invalid"),
+    ],
+)
+def test_from_dict_rejects_evidence_shapes_before_postprocessing(name, value):
+    item = {"signal": "dependency", "description": "Agent package", name: value}
+    with pytest.raises(ValueError, match=f"evidence {name}"):
+        Finding.from_dict(_record(evidence=[item]))
+
+
+def test_from_dict_accepts_optional_evidence_text_and_object_attributes():
+    finding = Finding.from_dict(
+        _record(
+            evidence=[
+                {
+                    "signal": "dependency",
+                    "description": "Agent package",
+                    "location": None,
+                    "snippet": None,
+                    "signature": None,
+                    "attributes": {"confidence_group": "dependency", "optional": None},
+                }
+            ]
+        )
+    )
+    finding.recompute_confidence()
+    assert finding.confidence == 0.5
+    assert finding.evidence[0].location is None
+    assert finding.evidence[0].attributes["optional"] is None
+
+
 def test_from_dict_keeps_optional_text_fields_null_and_accepts_garbage_inside_metadata():
     metadata = {
         "count": "many",

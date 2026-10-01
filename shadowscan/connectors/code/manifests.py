@@ -320,6 +320,15 @@ def parse_conda_env(text: str) -> ManifestResult:
     return res
 
 
+# An npm alias installs the registry package named after ``npm:``. The map
+# key is only its local import name; attributing that key can both miss a
+# framework and invent one when a known name aliases an unrelated package.
+# Keep the version/range opaque, like ordinary dependency versions. Registry
+# names include legacy URL-safe punctuation and scoped names can begin with
+# underscore/hyphen; current publishing rules are stricter than installation.
+_NPM_ALIAS = re.compile(r"(?i:npm:)((?:@[A-Za-z0-9._~!'()*-]+/)?[A-Za-z0-9._~!'()*-]+)(?:@.*)?")
+
+
 def parse_package_json(text: str) -> ManifestResult:
     res = ManifestResult()
     try:
@@ -338,7 +347,17 @@ def parse_package_json(text: str) -> ManifestResult:
             if not isinstance(spec, str):
                 res.errors.append(f"{section} dependency version must be a string")
                 continue
-            res.deps.append(Dep("npm", name, str(spec), dev=dev))
+            if spec[:4].lower() == "npm:":
+                alias = _NPM_ALIAS.fullmatch(spec, timeout=_pattern_timeout(), concurrent=False)
+                if (
+                    alias is None
+                    or alias.group(1).startswith((".", "_", "-"))
+                    or alias.group(1).rsplit("/", 1)[-1].startswith(".")
+                ):
+                    res.errors.append(f"{section} dependency has an invalid npm alias target")
+                    continue
+                name = alias.group(1)
+            res.deps.append(Dep("npm", name, spec, dev=dev))
     scripts = _mapping(data.get("scripts"), res, "scripts")
     for _, cmd in scripts.items():
         if isinstance(cmd, str):

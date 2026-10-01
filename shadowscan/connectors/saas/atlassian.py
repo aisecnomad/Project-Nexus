@@ -53,6 +53,12 @@ class AtlassianConnector(BaseConnector):
             raise ConnectorError("saas.atlassian: products must list only 'jira' and/or 'confluence'")
         self.products: list[str] = list(dict.fromkeys(products))
 
+    @staticmethod
+    def _is_error_record(data: dict[str, Any]) -> bool:
+        # Atlassian can report failures through errorMessages while errors is
+        # empty. An accompanying collection must not turn that into success.
+        return BaseConnector._is_error_record(data) or bool(data.get("errorMessages"))
+
     def collect(self) -> Iterable[dict[str, Any]]:
         email = self.ctx.get("email", env="ATLASSIAN_EMAIL")
         token = self.ctx.get("api_token", env="ATLASSIAN_API_TOKEN")
@@ -70,6 +76,8 @@ class AtlassianConnector(BaseConnector):
             if not isinstance(data, dict) or not isinstance(data.get("plugins"), list):
                 self.ctx.warn(f"saas.atlassian: {product} UPM returned an invalid collection")
                 continue
+            if self._is_error_record(data):
+                self.ctx.warn(f"saas.atlassian: {product} UPM reported a provider error; coverage incomplete")
             for p in data["plugins"]:
                 if not isinstance(p, dict):
                     self.ctx.warn(f"saas.atlassian: {product} UPM returned an invalid plugin entry")

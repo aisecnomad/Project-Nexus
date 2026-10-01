@@ -1,0 +1,14 @@
+{
+  "notion": {
+    "object": "error",
+    "code": "service_unavailable",
+    "message": "synthetic-provider-error-details",
+    "results": [],
+    "has_more": false
+  },
+  "atlassian": {
+    "plugins": [],
+    "errorMessages": ["synthetic-provider-error-details"],
+    "errors": {}
+  }
+}

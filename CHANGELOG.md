@@ -2,6 +2,25 @@
 
 ## 0.1.1 — Unreleased
 
+### October 2 production review corrections
+
+- npm dependency aliases are attributed to their declared registry target,
+  preserving development-dependency status. Invalid alias targets mark source
+  coverage incomplete while valid neighboring dependencies remain visible.
+- CSV inventory parsing preserves embedded line separators in quoted fields,
+  so resource and account approvals retain their declared identity.
+- Imported evidence validates nullable text fields and object attributes before
+  postprocessing. Malformed incremental entries trigger a fresh scan instead
+  of reaching correlation or confidence calculations.
+- Notion and Atlassian collection reject provider error envelopes even when
+  empty collection fields are present. Google Workspace rejects malformed user
+  suspension flags with incomplete coverage and retains valid neighboring users.
+- Wheel validation uses a unique private temporary environment and working
+  directory, with cleanup on successful and failed validation.
+- The connector coverage gate requires the full existing connector-family
+  inventory and rejects malformed or non-finite measurements. Its statement
+  coverage scope and 75% minimum are unchanged.
+
 ### October 1 discovery review corrections
 
 - Code collection identifies declared submodules whose source has not been

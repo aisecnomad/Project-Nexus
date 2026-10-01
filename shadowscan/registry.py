@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import csv
 import fnmatch
+import io
 import re
 from collections import OrderedDict
 from collections.abc import Sequence
@@ -226,7 +227,10 @@ class Inventory:
     @classmethod
     def _load_csv(cls, text: str, path: Path) -> list[InventoryEntry]:
         # Use the same typed entry parser after the CSV-only pipe-list adaptation.
-        reader = csv.DictReader(text.splitlines(), strict=True)
+        # Let the CSV parser distinguish record separators from quoted field
+        # content. splitlines() removes embedded newlines (including Unicode
+        # separators), changing resource and scope identities before approval.
+        reader = csv.DictReader(io.StringIO(text, newline=""), strict=True)
         try:
             headers = reader.fieldnames
             if not headers or any(not header.strip() for header in headers):

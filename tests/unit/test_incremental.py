@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -275,6 +276,27 @@ def test_unusable_cache_falls_back_to_scan(tmp_path, index, monkeypatch, damage)
         entry.write_text("invalid json")
     result = Engine(cfg, index).run()
     assert result.findings and result.complete and not result.stats[0].cached
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("field, value", [("location", ["agent.py:1"]), ("attributes", [])])
+def test_malformed_cached_evidence_falls_back_before_postprocessing(
+    tmp_path, index, monkeypatch, field, value
+):
+    from shadowscan.incremental import _json
+
+    cfg = config(tmp_path)
+    calls = count_runs(monkeypatch)
+    Engine(cfg, index).run()
+    entry = next((tmp_path / "state").glob("*.json"))
+    data = json.loads(entry.read_text())
+    data["payload"]["findings"][0]["evidence"][0][field] = value
+    # A checksum covers byte integrity, not the model contract. A stale or
+    # external cache producer can persist malformed data with a valid digest.
+    data["payload_sha256"] = hashlib.sha256(_json(data["payload"])).hexdigest()
+    entry.write_text(json.dumps(data))
+    result = Engine(cfg, index).run()
+    assert result.complete and result.findings and not result.stats[0].cached
     assert len(calls) == 2
 
 

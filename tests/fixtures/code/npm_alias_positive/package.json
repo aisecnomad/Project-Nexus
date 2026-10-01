@@ -1,0 +1,7 @@
+{
+  "name": "aliased-framework-regression",
+  "private": true,
+  "dependencies": {
+    "workflow-runtime": "npm:@langchain/langgraph@^1.0"
+  }
+}

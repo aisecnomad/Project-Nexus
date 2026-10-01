@@ -7,6 +7,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,68 @@ WRITE_SCOPES = {
     ("stale.yml", "stale"): {"issues", "pull-requests"},
     ("labels.yml", "sync"): {"issues"},
 }
+
+
+@pytest.mark.parametrize("fail_check", [False, True])
+@pytest.mark.parametrize("relative_tmpdir", [False, True])
+def test_wheel_validation_uses_private_workspace_and_always_cleans_up(
+    tmp_path: Path, fail_check: bool, relative_tmpdir: bool
+) -> None:
+    """Exercise the real recipe without downloading or installing packages."""
+    if shutil.which("make") is None:
+        pytest.skip("make is required for the development-tooling check")
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    shutil.copyfile(ROOT / "Makefile", checkout / "Makefile")
+    shared_temp = tmp_path / "shared temp"
+    shared_temp.mkdir()
+    previous = shared_temp / "shadowscan-wheel-test"
+    previous.mkdir()
+    sentinel = previous / "keep.txt"
+    sentinel.write_text("another invocation's files", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    python = fake_bin / "python"
+    python.write_text(
+        f"#!{sys.executable}\n"
+        "import os, shutil, sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "temporary_root = Path(os.environ['WHEEL_TEST_ROOT'])\n"
+        "if args[:2] == ['-m', 'venv']:\n"
+        "    target = Path(args[2])\n"
+        "    assert target.parent.parent == temporary_root\n"
+        "    assert target.parent.stat().st_mode & 0o777 == 0o700\n"
+        "    assert not target.exists(), 'must not reuse an existing environment'\n"
+        "    (target / 'bin').mkdir(parents=True)\n"
+        "    for command in ('python', 'shadowscan'):\n"
+        "        shutil.copyfile(__file__, target / 'bin' / command)\n"
+        "        (target / 'bin' / command).chmod(0o700)\n"
+        "elif args == ['-m', 'pip', 'check'] and os.environ['FAIL_WHEEL_CHECK'] == '1':\n"
+        "    sys.exit(23)\n"
+        "elif args in (['-m', 'shadowscan.signatures.validate'], ['--help']):\n"
+        "    assert Path.cwd() == Path(__file__).parents[2]\n"
+        "    assert Path.cwd().parent == temporary_root\n",
+        encoding="utf-8",
+    )
+    python.chmod(0o700)
+    result = subprocess.run(
+        ["make", "--no-print-directory", "-o", "build", "wheel-validate"],
+        cwd=checkout,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+            "TMPDIR": os.path.relpath(shared_temp, checkout) if relative_tmpdir else str(shared_temp),
+            "WHEEL_TEST_ROOT": str(shared_temp),
+            "FAIL_WHEEL_CHECK": "1" if fail_check else "0",
+        },
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert (result.returncode != 0) is fail_check, result.stdout + result.stderr
+    assert sentinel.read_text(encoding="utf-8") == "another invocation's files"
+    assert list(shared_temp.iterdir()) == [previous], "temporary workspace leaked on exit"
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):

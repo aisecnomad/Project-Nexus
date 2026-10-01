@@ -1,0 +1,8 @@
+{
+  "kind": "admin#directory#users",
+  "users": [
+    {"primaryEmail": "malformed@example.test", "suspended": "false"},
+    {"primaryEmail": "suspended@example.test", "suspended": true},
+    {"primaryEmail": "active@example.test", "suspended": false}
+  ]
+}
