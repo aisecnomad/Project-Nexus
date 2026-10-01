@@ -1077,7 +1077,8 @@
  ],
  "diagnostics": {
   "warnings": [
-   "gateway.logs: unrecognized text record at line 7"
+   "gateway.logs: unrecognized text record at line 7",
+   "gateway.logs: requests for static assets or health probes not counted as LLM traffic: 1"
   ],
   "errors": [],
   "objects_examined": 6,

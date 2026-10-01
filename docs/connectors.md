@@ -311,6 +311,11 @@ Options: `format`, `min_events`, `llm_hosts_only`, `max_records`,
 label), which names the gateway on findings: it becomes the provider and the
 account of callers without a tenant/account scope.
 
+Static assets and health probes are recognised from the request path alone,
+never its query string, and their count is reported as a scan note. In
+`key=value` text lines, quoted values honour `\"` and `\\` escapes; a line that
+repeats a key or leaves a quote open is malformed and makes the scan incomplete.
+
 ## Low-code
 
 ### `lowcode.power-platform`

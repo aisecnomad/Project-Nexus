@@ -34,3 +34,30 @@ def test_sanitize_record_alias_is_replaced_by_sanitize():
     token = "sk-proj-exampletokenvalue"
     assert not hasattr(text, "sanitize_record")
     assert sanitize({"token": token})["token"] != token
+
+
+@pytest.mark.parametrize(
+    "url,host",
+    [
+        # Userinfo is not the host: everything up to the last "@" is dropped.
+        ("https://user:pw@api.openai.com/v1", "api.openai.com"),
+        ("https://api.openai.com:443@evil.example/v1", "evil.example"),
+        ("https://a@b@Evil.Example:8443/x", "evil.example"),
+        # Bracketed IPv6 literals keep their colons; the port is removed.
+        ("http://[::1]:8080/", "::1"),
+        ("https://[2001:DB8::7]/v1/chat", "2001:db8::7"),
+        ("http://[::1", None),
+        # Scheme optional; the authority ends at the first "/", "?" or "#".
+        ("API.OpenAI.com/v1/chat/completions", "api.openai.com"),
+        ("api.anthropic.com:443", "api.anthropic.com"),
+        ("https://api.mistral.ai?x=@evil.example", "api.mistral.ai"),
+        ("https://api.mistral.ai#@evil.example", "api.mistral.ai"),
+        (":8080", None),
+        ("https://:8080/v1", None),
+        ("/v1/chat/completions", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_host_of_follows_the_rfc3986_authority(url, host):
+    assert text.host_of(url) == host

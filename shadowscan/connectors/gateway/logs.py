@@ -328,10 +328,45 @@ _COMBINED = re.compile(
     r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>[^\s"]++)[^"]*" '
     r'(?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
 )
-_LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=("[^"]*"|\S+)')
+# A quoted logfmt value may contain backslash-escaped quotes and backslashes;
+# a value that opens a quote it never closes is malformed, not a bare token.
+_LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=(?:"((?:[^"\\]++|\\.)*+)"|(\S++))')
+_LOGFMT_ESCAPE = re.compile(r'\\(["\\])')
+# Static assets and health probes are not inference traffic. Only the request
+# path is tested: a client chooses the query string (``?_=.js``) and must not
+# be able to hide an inference call with it.
+_STATIC_OR_PROBE_PATH = re.compile(
+    r"(?:^|/)(?:favicon\.ico|robots\.txt|healthz?|readyz?|livez?|metrics)/?$"
+    r"|\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)$",
+    re.I,
+)
 _HOST_IN_LINE = re.compile(
     r"\b(?:host|authority|upstream_host|server_name)[=:]\s*\"?([A-Za-z0-9.-]+\.[a-z]{2,})", re.I
 )
+
+
+def _is_static_or_probe(path: str | None) -> bool:
+    """Whether the request path, without its query string or fragment, names a static asset or probe."""
+    if not path:
+        return False
+    request_path = path.partition("?")[0].partition("#")[0]
+    return _STATIC_OR_PROBE_PATH.search(request_path) is not None
+
+
+def _logfmt_pairs(line: str) -> dict[str, str]:
+    """Parse logfmt pairs; an unterminated quote or a repeated key makes the line malformed.
+
+    A repeated key would let the last occurrence (for example one smuggled
+    into a client-controlled value) override the gateway's own field.
+    """
+    pairs: dict[str, str] = {}
+    for key, quoted, bare in _LOGFMT_PAIR.findall(line):
+        if key in pairs:
+            raise ValueError("logfmt record repeats a key")
+        if bare.startswith('"'):
+            raise ValueError("logfmt record has an unterminated quoted value")
+        pairs[key] = bare.strip('"') if bare else _LOGFMT_ESCAPE.sub(r"\1", quoted)
+    return pairs
 
 
 def parse_text_line(line: str) -> dict[str, Any] | None:
@@ -360,9 +395,9 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
         return rec
     # key=value logfmt
     if "=" in line and " " in line:
-        kv = dict(_LOGFMT_PAIR.findall(line))
+        kv = _logfmt_pairs(line)
         if kv:
-            return {k: v.strip('"') for k, v in kv.items()}
+            return kv
     return None
 
 
@@ -1146,6 +1181,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         detail_budget = _DetailBudget()
         n = 0
         skipped = 0
+        static_excluded = 0
         omitted_caller_records = 0
         omitted_caller_requests = 0
         retained_intervals = 0
@@ -1169,6 +1205,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                     and not self._is_llm_traffic(ev)
                 ):
                     skipped += 1
+                    static_excluded += _is_static_or_probe(ev.path)
                     continue
                 self._runtime_context(ev, rec, framework_cache, clean)
                 identity = json.dumps([ev.caller, ev.scope], sort_keys=True)
@@ -1201,6 +1238,12 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 continue
         self.ctx.examined(n)
         self._report_limits(callers, detail_budget, omitted_caller_records, omitted_caller_requests)
+        if static_excluded:
+            self.ctx.warn(
+                "gateway.logs: requests for static assets or health probes not counted as LLM traffic: "
+                f"{static_excluded}",
+                incomplete=False,
+            )
         if skipped:
             self.log.info("gateway.logs: %d/%d records skipped (unrecognised or non-LLM)", skipped, n)
         for c in callers.values():
@@ -1374,12 +1417,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         return "operator-asserted" if schema in {"generic", "access-log"} else "provider-authenticated-field"
 
     def _is_llm_traffic(self, ev: Event) -> bool:
-        if ev.path and re.search(
-            r"(?:^|/)(?:favicon\.ico|robots\.txt|healthz?|readyz?|livez?|metrics)(?:$|[/?#])"
-            r"|\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)(?:$|[?#])",
-            ev.path,
-            re.I,
-        ):
+        if _is_static_or_probe(ev.path):
             return False
         text = " ".join(x for x in (ev.host, ev.path) if x)
         if ev.path and re.search(

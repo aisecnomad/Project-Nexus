@@ -194,11 +194,27 @@ def truncate(s: str | None, n: int = 200) -> str | None:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-_HOST_IN_URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*://)?([^/:?#]+)(?::\d+)?", re.IGNORECASE)
+_URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*+://", re.IGNORECASE)
 
 
 def host_of(url: str | None) -> str | None:
+    """Return the lowercase host of ``url`` (RFC 3986 authority; scheme optional).
+
+    Userinfo before the last ``@`` and the port are removed, and a bracketed
+    IPv6 literal is returned without its brackets. A URL such as
+    ``https://api.openai.com:443@evil.example/`` therefore names ``evil.example``,
+    the host a client connects to, never the userinfo.
+    """
     if not url:
         return None
-    m = _HOST_IN_URL.match(url.strip())
-    return m.group(1).lower() if m else None
+    rest = url.strip()
+    scheme = _URL_SCHEME.match(rest)
+    if scheme:
+        rest = rest[scheme.end() :]
+    authority = re.split(r"[/?#]", rest, maxsplit=1)[0].rpartition("@")[2]
+    if authority.startswith("["):
+        end = authority.find("]")
+        host = authority[1:end] if end > 0 else ""
+    else:
+        host = authority.split(":", 1)[0]
+    return host.lower() or None

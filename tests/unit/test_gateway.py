@@ -4,6 +4,8 @@ import base64
 import json
 import time
 
+import pytest
+
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.gateway import logs as logs_module
 from shadowscan.connectors.gateway.logs import (
@@ -381,6 +383,73 @@ def test_text_line_parsers_are_linear_on_hostile_input():
     )
     without_protocol = '10.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /v1/models" 200 5'
     assert parse_text_line(without_protocol)["request_uri"] == "/v1/models"
+
+
+def test_query_string_cannot_hide_inference_as_a_static_asset(tmp_path, run_connector):
+    # "?_=.js" used to make three chat calls look like a static asset: 0 findings, complete.
+    line = (
+        '10.9.9.9 - rogue-agent [10/Oct/2025:03:00:0{n} +0000] "{request} HTTP/1.1" 200 512 "-" "crewai/0.5"'
+    )
+    requests = [
+        "POST /v1/chat/completions?_=.js",
+        "POST /v1/chat/completions?_=.js#x.css",
+        "POST /v1/messages?_=/healthz",
+        "GET /assets/app.js?v=3",
+        "GET /healthz",
+        "GET /favicon.ico/../v1/chat/completions",
+    ]
+    path = tmp_path / "access.log"
+    path.write_text("\n".join(line.format(n=n, request=r) for n, r in enumerate(requests)) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert len(findings) == 1 and findings[0].metadata["events"] == 4
+    assert not ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "gateway.logs: requests for static assets or health probes not counted as LLM traffic: 2"
+    ]
+
+
+def test_logfmt_escaped_quotes_cannot_inject_fields(tmp_path, run_connector):
+    victim = "level=info ts=2025-10-10T13:55:36Z api_key=KEY-REAL-0001 model=gpt-4o-mini user=alice path=/v1/chat/completions"
+    injected = (
+        "level=info ts=2025-10-10T13:55:38Z api_key=KEY-ATTACKER-9999 model=gpt-4o-mini user=mallory "
+        r'ua="x\" api_key=KEY-REAL-0001 user=alice model=forged-model \"y \\" path=/v1/chat/completions'
+    )
+    assert parse_text_line(injected)["ua"] == 'x" api_key=KEY-REAL-0001 user=alice model=forged-model "y \\'
+    assert parse_text_line(injected)["api_key"] == "KEY-ATTACKER-9999"
+    path = tmp_path / "gateway.log"
+    path.write_text(f"{victim}\n{injected}\n")
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert sorted(f.metadata["events"] for f in findings) == [1, 1]
+    assert all(f.models == ["gpt-4o-mini"] for f in findings)
+    assert not ctx.stats.incomplete
+
+
+def test_logfmt_lines_with_repeated_keys_or_open_quotes_are_malformed(tmp_path, run_connector):
+    good = "ts=2025-10-10T13:55:36Z api_key=KEY-REAL-0001 model=gpt-4o-mini path=/v1/chat/completions"
+    repeated = "ts=2025-10-10T13:55:37Z api_key=KEY-ATTACKER-9999 model=gpt-4o api_key=KEY-REAL-0001"
+    unterminated = 'ts=2025-10-10T13:55:38Z api_key=KEY-REAL-0001 model=gpt-4o ua="x api_key=KEY-OTHER-0002'
+    for line in (repeated, unterminated):
+        with pytest.raises(ValueError):
+            parse_text_line(line)
+    path = tmp_path / "gateway.log"
+    path.write_text("\n".join([good, repeated, unterminated]) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert len(findings) == 1 and findings[0].metadata["events"] == 1
+    assert findings[0].models == ["gpt-4o-mini"]
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "gateway.logs: invalid JSON/text record at line 2",
+        "gateway.logs: invalid JSON/text record at line 3",
+    ]
+
+
+def test_logfmt_quoted_values_are_parsed_in_linear_time():
+    started = time.monotonic()
+    with pytest.raises(ValueError):
+        parse_text_line('a=1 ua="' + 'x\\"' * 40_000)  # unterminated after 120 KB of escapes
+    assert parse_text_line('a=1 ua="' + "\\\\" * 60_000 + '"')["ua"] == "\\" * 60_000
+    assert len(parse_text_line(" ".join(f"k{i}=v" for i in range(20_000)))) == 20_000
+    assert time.monotonic() - started < 2
 
 
 def test_gateway_json_fallback_reports_a_corrupt_document_once(index, tmp_path):
