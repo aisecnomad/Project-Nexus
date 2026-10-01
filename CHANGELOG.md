@@ -9,17 +9,11 @@
   longer marks the scan incomplete. The target is scanned at its real path and
   the alias-only file name is not reported as a second agent. Links across
   projects or into and out of test paths, and directory links, stay gaps.
-- Non-source files under test paths, `cassettes/` and `seed-memory/` and the
-  new default `oversize_skip_globs` entries (`*.cassette`, `*_cassette.yaml`,
-  `*_cassette.yml`, `**/cassettes/**`, `*/cassettes/*`, `**/fixtures/*.json`)
-  are declared omissions when over `max_file_size`. Oversize source files stay
-  coverage gaps wherever they live. Operators who set `oversize_skip_globs`
-  keep their own list.
-- Credential policy: a credential-shaped value under a test or fixture path is
-  no longer a `secret` finding unless `include_tests` is set. Without it the
-  value is recorded, redacted, as `example-credential` evidence with the reason
-  `test-or-fixture-path`. A live key committed under `tests/` is therefore not
-  reported by default.
+- Credential policy: a real-format credential under a test, fixture or
+  `cassettes/` path stays a `secret` finding and now follows the project
+  test-code policy: half weight, lower confidence and risk, and the
+  `test-code-only` tag unless `include_tests` is set. Recorded cassettes
+  capture real traffic, so such keys are downweighted, never dropped.
 - A coding-agent configuration finding now needs more than an environment-variable
   or display-name mention such as `GOOSE_PROVIDER`. Config files, instruction
   documents, dependencies and code patterns such as a workflow step still
@@ -29,7 +23,10 @@
   workflows) and cookiecutter `{{...}}` template paths, which no longer raise an
   invalid-MCP error. Other GitHub Actions workflows are still parsed for MCP
   servers passed as JSON step inputs (see the field scan follow-up below).
-- Not changed: signatures, risk scoring and inventory labeling. Examples,
+- Not changed: signatures, risk scoring and inventory labeling. Oversize
+  recorded fixtures (`cassettes/`, test data) stay coverage gaps, because they
+  can hold real credentials; skipping them unread is an operator decision
+  through `oversize_skip_globs` (for example `*/cassettes/*`). Examples,
   templates and benchmarks are not discounted like tests, because the bundled
   corpora label their agents as real. Evidence is offline regression tests and
   corpora only; it is not a measured field precision.

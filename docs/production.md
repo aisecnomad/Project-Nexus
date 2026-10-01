@@ -479,18 +479,16 @@ leaving the root and oversized files the scanner would
 inspect make the scan incomplete (exit 3) by default, with a warning naming
 the omission. `strict_coverage: true` (`--strict-coverage`) records those
 conditions as errors; explicit `oversize_skip_globs` remain declared omissions
-in both modes, and non-source recorded fixtures (test, `cassettes/` and
-`seed-memory/` data) are declared omissions by default. Raise `max_file_size` or add `exclude` patterns for known data files. Evidence found
+in both modes. Raise `max_file_size` or add `exclude` patterns for known data files. Evidence found
 only in test or fixture paths has half weight and cannot promote a project to an
 agent unless `include_tests: true` (`--include-tests`) is set, and a project
 finding whose evidence is already reported by an MCP configuration, agent
 manifest, exported workflow, IaC or credential finding is not emitted again.
 Recognisable placeholder credentials (repeated characters, marker words such as
 `EXAMPLE`, very low character diversity) are no longer reported. A
-credential-shaped value in a test or fixture path is no longer a `secret`
-finding unless `include_tests: true` is set, so a live key committed under
-`tests/` is not reported by default: keep a repository-wide secret scanner in
-the pipeline for that case. Risk factors
+real-format credential in a test, fixture or `cassettes/` path is still a
+`secret` finding, at half weight and tagged `test-code-only` unless
+`include_tests: true` is set. Risk factors
 always sum to the reported score; `risk.danger_score` excludes the governance
 factors and `options.risk_basis: danger` bases `level` and `--fail-on` on it.
 Review [scan state and runtime correlation](scanning.md) and the changelog
@@ -732,6 +730,17 @@ a candidate before enforcing policy on the new output:
 - **Credential files.** MCP servers whose only inline-secret evidence was a
   credential-file path argument or a repeated variable reference lose the
   `inline-secrets` tag and its risk factor.
+- **Test-path credentials.** `secret` findings under test, fixture or
+  `cassettes/` paths gain the `test-code-only` tag, lower confidence and a lower
+  risk score unless `include_tests` is set; they are still reported.
+- **Coding-agent configuration.** A product named only by an environment
+  variable or display name (such as `GOOSE_PROVIDER` in a test matrix) no longer
+  yields an `agent-config` finding; `diff` shows such findings as resolved.
+  Instruction-document aliases (`CLAUDE.md` linking to `AGENTS.md` in the same
+  project) no longer make a scan incomplete.
+- **MCP parsing.** Compiled agentic-workflow lock files (`*.lock.yml`) and
+  cookiecutter `{{...}}` template paths are not parsed as MCP configuration and
+  no longer make a scan incomplete.
 
 ## Finding identity and comparison migration
 

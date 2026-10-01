@@ -205,12 +205,6 @@ DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
     "*.dylib",
     "*.dll",
     "*.pdf",
-    "*.cassette",
-    "*_cassette.yaml",
-    "*_cassette.yml",
-    "**/cassettes/**",
-    "*/cassettes/*",
-    "**/fixtures/*.json",
     "*.png",
     "*.jpg",
     "*.jpeg",
@@ -807,7 +801,7 @@ class FilesystemConnector(BaseConnector):
         "oversize_skip_globs": (
             "case-insensitive file name globs; a file over max_file_size matching one is skipped with a "
             "warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, "
-            "fonts, archives, compiled artifacts and recorded cassettes)"
+            "fonts, archives and compiled artifacts)"
         ),
         "max_files": "stop after this many files (default 100000)",
         "max_notebook_size": (
@@ -969,24 +963,11 @@ class FilesystemConnector(BaseConnector):
         return self.max_file_size
 
     def _oversize_skippable(self, rel: str, name: str) -> bool:
-        """Whether an oversize file is a declared omission.
-
-        True for generated, locked or binary content per ``oversize_skip_globs``
-        and for non-source recorded or seeded data under test, ``cassettes/`` and
-        ``seed-memory/`` paths. An analyzable source file is never skippable by path.
-        """
+        """Whether an oversize file is generated, locked or binary content per ``oversize_skip_globs``."""
         lower = name.lower()
-        rel_lower = rel.lower()
-        # Recorded cassettes, test data and seed-memory binaries are not
-        # source. Skipping them must not fail-close the whole repository scan.
-        # An analyzable source file stays a coverage gap wherever it lives.
-        if Path(lower).suffix not in SOURCE_EXTENSIONS and (
-            _is_test_path(rel) or "/seed-memory/" in f"/{rel_lower}/" or "/cassettes/" in f"/{rel_lower}/"
-        ):
-            return True
         for pattern in self.oversize_skip_globs:
             if "/" in pattern:
-                if PurePosixPath(rel_lower).match(pattern):
+                if PurePosixPath(rel.lower()).match(pattern):
                     return True
             elif fnmatch.fnmatchcase(lower, pattern):
                 return True
@@ -1364,9 +1345,10 @@ class FilesystemConnector(BaseConnector):
         text = read_text(PurePosixPath(rel), self._size_limit(path.name), read_errors, dir_fd=root_fd)
         for issue in read_errors:
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
-                skippable = self._oversize_skippable(rel, path.name)
-                gap = "" if skippable else "; coverage incomplete"
-                self.ctx.warn(f"code.filesystem: {rel}: skipped, {issue}{gap}", incomplete=not skippable)
+                self.ctx.warn(
+                    f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
+                    incomplete=True,
+                )
             else:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}")
         if text is None:
@@ -1511,10 +1493,6 @@ class FilesystemConnector(BaseConnector):
             reason = placeholder_reason(m.value)
             if reason:
                 self._record_example_credential(file.proj, m, file.rel, reason)
-                continue
-            if not self.include_tests and _is_test_path(file.rel):
-                # Detector fixtures and recorded cassettes contain secret shapes, not live keys.
-                self._record_example_credential(file.proj, m, file.rel, "test-or-fixture-path")
                 continue
             if from_raw_notebook:
                 snippet = _excerpt(raw_lines, m.line or 1, m.value) if raw_lines is not None else ""
@@ -2769,12 +2747,17 @@ class FilesystemConnector(BaseConnector):
         hits = list(unique.values())
         if not hits:
             return None
-        if not self.include_tests and _is_test_path(rel):
-            return None
         f = self._base(label, root, rel, Kind.SECRET, f"LLM provider credential in {rel}", "file")
+        # Test, fixture and recorded-cassette paths follow the project test-code
+        # policy: half weight and an explicit tag unless test code is included.
+        # The credential is still reported: cassettes record real traffic, and a
+        # key committed under tests/ is as exposed as one anywhere else.
+        test_only = not self.include_tests and _is_test_path(rel)
         for m, snip in hits:
-            apply_matches(f, [m], location=rel, snippet=snip)
+            apply_matches(f, [m], location=rel, snippet=snip, weight_scale=0.5 if test_only else 1.0)
         f.add_tag("hardcoded-credential")
+        if test_only:
+            f.add_tag("test-code-only")
         f.metadata["providers"] = sorted({m.signature_id for m, _ in hits})
         f.metadata["count"] = len(hits)
         f.owner = self._owner_for(root, rel) or f.owner

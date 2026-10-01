@@ -407,17 +407,14 @@ def test_realistic_credentials_are_not_placeholders(value):
     assert not looks_like_placeholder(value)
 
 
-def test_fake_keys_in_tests_are_ignored_and_real_format_keys_need_include_tests(run_connector, tmp_path):
+def test_fake_keys_in_tests_are_ignored_but_real_format_keys_are_reported(run_connector, tmp_path):
     write(tmp_path, "tests/test_fake.py", f'FAKE = "{"sk-test-" + "0" * 40}"\n')
     findings, _ = scan(run_connector, tmp_path)
     assert findings == []
-    # A key-shaped value under a test path is detector or cassette content, not
-    # a live credential, unless the operator asks for test evidence.
     write(tmp_path, "tests/test_real.py", f'KEY = "{OPENAI_LIKE_KEY}"\n')
     findings, _ = scan(run_connector, tmp_path)
-    assert findings == []
-    findings, _ = scan(run_connector, tmp_path, include_tests=True)
     assert [f.kind for f in findings] == [Kind.SECRET]
+    assert "test-code-only" in findings[0].tags
     assert OPENAI_LIKE_KEY not in json.dumps(findings[0].to_dict())
 
 
@@ -482,7 +479,7 @@ def test_external_symlinks_make_coverage_incomplete_by_default(run_connector, tm
 
 
 def test_oversize_files_make_coverage_incomplete_by_default(run_connector, tmp_path):
-    write(tmp_path, "config/settings.yaml", "x: " + "y" * 400 + "\n")
+    write(tmp_path, "fixtures/cassette.yaml", "x: " + "y" * 400 + "\n")
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
     assert stats.warnings and not stats.errors and stats.incomplete
     _, stats = scan(run_connector, tmp_path, max_file_size=100, strict_coverage=True)

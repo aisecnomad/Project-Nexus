@@ -1,9 +1,10 @@
 """code.filesystem coverage and precision regressions found in field scans.
 
-Instruction-file aliases, test-path credential shapes, env-name-only coding
-agents, CI lockfiles parsed as MCP and oversize recorded fixtures each marked a
-scan incomplete or reported evidence the tree does not support. The paired
-controls pin the cases that must keep their finding or their coverage gap.
+Instruction-file aliases, env-name-only coding agents and CI lockfiles parsed
+as MCP each marked a scan incomplete or reported evidence the tree does not
+support. Test-path credentials stay findings at the test-code weight, and
+oversize recorded fixtures stay coverage gaps. The paired controls pin the
+cases that must keep their finding or their coverage gap.
 Credentials are assembled at runtime so no key-shaped literal appears here.
 """
 
@@ -88,15 +89,20 @@ def test_instruction_doc_alias_to_a_directory_stays_a_gap(run_connector, tmp_pat
         ("tests/.env", f"OPENAI_API_KEY={OPENAI_LIKE_KEY}\n"),
     ],
 )
-def test_secret_shapes_in_test_paths_are_not_live_secrets(run_connector, tmp_path, rel, text):
+def test_credentials_in_test_paths_are_downweighted_not_dropped(run_connector, tmp_path, rel, text):
+    # Recorded cassettes capture real traffic, and a key committed under tests/
+    # is exposed like any other: it stays a finding, at the test-code weight.
     write(tmp_path, rel, text)
     findings, stats = scan(run_connector, tmp_path)
-    assert Kind.SECRET not in kinds(findings) and not stats.errors
+    secrets = [f for f in findings if f.kind == Kind.SECRET]
+    assert len(secrets) == 1 and not stats.errors
+    assert "test-code-only" in secrets[0].tags
     assert OPENAI_LIKE_KEY not in json.dumps([f.to_dict() for f in findings])
-    # include_tests restores the previous credential weight, still redacted.
-    findings, _ = scan(run_connector, tmp_path, include_tests=True)
-    assert Kind.SECRET in kinds(findings)
-    assert OPENAI_LIKE_KEY not in json.dumps([f.to_dict() for f in findings])
+    included, _ = scan(run_connector, tmp_path, include_tests=True)
+    full = [f for f in included if f.kind == Kind.SECRET]
+    assert len(full) == 1 and "test-code-only" not in full[0].tags
+    assert secrets[0].confidence < full[0].confidence
+    assert OPENAI_LIKE_KEY not in json.dumps([f.to_dict() for f in included])
 
 
 def test_secret_outside_test_paths_is_still_reported(run_connector, tmp_path):
@@ -177,7 +183,6 @@ def test_real_mcp_config_is_still_parsed(run_connector, tmp_path):
 OVERSIZE = "x: " + "y" * 400 + "\n"
 
 
-@pytest.mark.parametrize("strict", [False, True])
 @pytest.mark.parametrize(
     "rel",
     [
@@ -185,12 +190,19 @@ OVERSIZE = "x: " + "y" * 400 + "\n"
         "pkg/fixtures/recorded.json",
         "docs/seed-memory/graph.json",
         "recordings/login_cassette.yaml",
-        "recordings/login.cassette",
     ],
 )
-def test_oversize_recorded_fixtures_are_declared_omissions(run_connector, tmp_path, rel, strict):
+def test_oversize_recorded_fixtures_stay_coverage_gaps(run_connector, tmp_path, rel):
+    # Recorded fixtures can hold real credentials; skipping them unread is the
+    # operator's decision (oversize_skip_globs), never a silent default.
     write(tmp_path, rel, OVERSIZE)
-    _, stats = scan(run_connector, tmp_path, max_file_size=100, strict_coverage=strict)
+    _, stats = scan(run_connector, tmp_path, max_file_size=100)
+    assert stats.warnings and not stats.errors and stats.incomplete
+
+
+def test_operator_skip_globs_declare_recorded_fixtures_omitted(run_connector, tmp_path):
+    write(tmp_path, "tests/cassettes/session.yaml", OVERSIZE)
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, oversize_skip_globs=["*/cassettes/*"])
     assert stats.warnings and not stats.errors and not stats.incomplete
 
 

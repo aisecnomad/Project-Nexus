@@ -55,14 +55,12 @@ found only under test or fixture paths (`tests/`, `fixtures/`, `cassettes/`,
 promote a project to an *agent*; a project whose evidence is entirely test code
 is tagged `test-code-only`. Exported low-code workflows found under those paths
 follow the same rule. Set `include_tests: true` (`--include-tests`) to
-treat test code like any other source. A credential-shaped value under a test
-path is detector, fixture or recorded-cassette content rather than a live key.
-Without `include_tests` it is not a `secret` finding; it is listed on the
-project finding, redacted, as low-weight `example-credential` evidence with the
-reason `test-or-fixture-path` when the project has other evidence. With
-`include_tests: true` a real-format credential in a test path is reported as a
-`secret` finding again. Recognisable placeholders (repeated characters, marker
-words such as `EXAMPLE`, or very low character diversity) are never reported.
+treat test code like any other source. A real-format credential under a test,
+fixture or `cassettes/` path is still reported as a `secret` finding, because
+recorded cassettes capture real traffic and a committed key is exposed wherever
+it lives; without `include_tests` it has half weight and the `test-code-only`
+tag. Recognisable placeholders (repeated characters, marker words such as
+`EXAMPLE`, or very low character diversity) are never reported.
 Evidence that only names a coding agent in a test path (an environment variable,
 a display name, a dependency or a code pattern) likewise does not establish a
 coding-agent configuration; instruction documents and coding-agent config
@@ -188,16 +186,11 @@ incomplete depends on what the file could hide:
   `*.parquet`), compiled or packaged artifacts (`*.wasm`, `*.so`, `*.dylib`,
   `*.dll`, `*.jar`, `*.pyc`, `*.class`), documents, images and fonts (`*.pdf`,
   `*.png`, `*.jpg`, `*.jpeg`, `*.gif`, `*.woff`, `*.woff2`, `*.ttf`) and archives
-  (`*.zip`, `*.gz`, `*.tar`) and recorded test fixtures (`*.cassette`,
-  `*_cassette.yaml`, `*_cassette.yml`, anything under `cassettes/`, and
-  `fixtures/*.json`). Such content is generated from sources the scanner does
-  inspect, is binary, or is recorded traffic, so no agent configuration,
-  framework usage or credential evidence is lost by skipping it. The warning still names each file
+  (`*.zip`, `*.gz`, `*.tar`). Such content is generated from sources the scanner
+  does inspect, or is binary, so no agent configuration, framework usage or
+  credential evidence is lost by skipping it. The warning still names each file
   so the omission is visible. Lockfiles, minified bundles, source maps and
   bytecode below the limit are skipped silently because they are never analyzed.
-* A non-source file under a test path, a `cassettes/` directory or a
-  `seed-memory/` directory is skipped the same way even when its name matches no
-  glob: it is recorded or seeded data, not source. A source file there is not.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
   document, is skipped and makes the scan incomplete (exit 3). With
   `strict_coverage: true` (`--strict-coverage`) it is recorded as an error
@@ -393,7 +386,7 @@ does not establish LLM usage, a coding-agent configuration needs more than an
 environment-variable or display-name mention (`GOOSE_PROVIDER` in a detector
 list is not "Goose configured"; a config file, instruction document,
 dependency or workflow step still is), MCP parsing skips
-`.github/workflows/` files, `*.lock.yml` / `*.lock.yaml` files and cookiecutter
+`*.lock.yml` / `*.lock.yaml` files (compiled agentic workflows) and cookiecutter
 `{{...}}` template paths, and vendor-neutral heuristics (agent loops,
 `subprocess.run`, auto-approve flags) only count in a project that also matches
 a framework, provider, platform, protocol or cloud-service signature. When every
