@@ -189,7 +189,7 @@ class AzureConnector(BaseConnector):
         if self._cred is not None:
             try:
                 self._foundry_token = self._cred.get_token("https://ai.azure.com/.default").token
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - _collect_agents reports a missing token as incomplete
                 self.log.debug("foundry token acquisition failed (%s)", type(exc).__name__)
         return self._foundry_token
 

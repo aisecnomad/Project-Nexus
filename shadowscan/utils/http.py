@@ -560,7 +560,7 @@ class HttpClient:
                     if len(body) + len(chunk) > limit:
                         raise ValueError("HTTP response exceeds the byte limit")
                     body.extend(chunk)
-            except Exception:  # noqa: BLE001 - re-raised unless the deadline shut the read down
+            except Exception:  # re-raised unless the deadline shut the read down
                 # The watchdog's shutdown surfaces as a transport or framing
                 # error; report the deadline instead, without transport text.
                 if not expired.is_set():

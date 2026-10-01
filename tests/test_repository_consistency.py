@@ -497,6 +497,18 @@ def test_pre_commit_hooks_select_files_with_types_or() -> None:
             assert len(types) <= 1, f"hook {hook['id']} lists {types} under `types`; use `types_or`"
 
 
+def test_blind_except_suppressions_give_a_reason() -> None:
+    """Every suppressed broad `except` (ruff BLE001) states why it is intentional."""
+    bare = [
+        f"{path.relative_to(ROOT)}:{number}"
+        for directory in ("shadowscan", "tools", "tests")
+        for path in sorted((ROOT / directory).rglob("*.py"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if re.search(r"#\s*noqa:\s*BLE001(?!\s+-\s+\S)", line)
+    ]
+    assert not bare, f"write `# noqa: BLE001 - <reason>`: {bare}"
+
+
 def test_dev_extra_is_fully_pinned_for_ci() -> None:
     """Every development dependency must occur in a hash-locked CI input."""
     pinned = {
