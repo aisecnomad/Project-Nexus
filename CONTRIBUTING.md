@@ -122,6 +122,7 @@ exact supported Python matrix and dependency pins.
 | Gate | Command | Requirement |
 |------|---------|-------------|
 | Lint | `ruff check shadowscan tests tools` | No errors |
+| Format | `ruff format --check shadowscan tests tools` | No changes |
 | Types | `mypy shadowscan tools` | No errors |
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% per connector |
@@ -143,6 +144,7 @@ The same gates as individual commands:
 python -m pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
 ruff check shadowscan tests tools
+ruff format --check shadowscan tests tools
 mypy shadowscan tools
 pip-audit --progress-spinner off
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
@@ -181,8 +183,9 @@ Do not commit private adjudicated evaluation corpora.
 - Update `CHANGELOG.md` under Unreleased and `docs/production.md` when a change
   affects rollout, finding identity, or credential policy.
 - Include regression tests for bug fixes.
-- Use the PR template checklist; it covers the main gates, and `make check` is
-  the authoritative local run of everything CI enforces.
+- Use the PR template checklist; it covers the main gates. `make check` runs
+  every local gate; CI also builds the documentation, audits each lock file and
+  validates the wheel and container (see [quality gates](#quality-gates)).
 
 Repository policy is tested. When you touch `.github/`, a top-level document or
 a docs page, run `make policy`: `tests/test_repository_policy.py` checks action

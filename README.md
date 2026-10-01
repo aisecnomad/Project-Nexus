@@ -370,6 +370,7 @@ turns shadow findings into card skeletons for review. See
 pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
 ruff check shadowscan tests tools
+ruff format --check shadowscan tests tools
 mypy shadowscan tools
 pip-audit --progress-spinner off
 pytest -q --cov=shadowscan --cov-fail-under=80

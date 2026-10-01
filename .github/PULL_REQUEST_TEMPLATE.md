@@ -15,7 +15,7 @@
 
 ### Required for all changes
 
-- [ ] `make lint` passes
+- [ ] `make lint` and `make format-check` pass
 - [ ] `make typecheck` passes
 - [ ] `pytest -q --cov=shadowscan --cov-fail-under=80` passes
 - [ ] `make audit` (`pip-audit`) reports no known vulnerabilities
