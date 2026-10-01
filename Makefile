@@ -44,6 +44,10 @@ test: ## Run test suite with coverage
 test-fast: ## Run tests without coverage (faster iteration)
 	python -m pytest -q -x
 
+.PHONY: test-parallel
+test-parallel: ## Run tests in parallel with pytest-xdist
+	python -m pytest -q -n auto --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+
 .PHONY: coverage-gate
 coverage-gate: ## Enforce per-connector coverage floor
 	python -m coverage json -o /tmp/shadowscan-coverage.json

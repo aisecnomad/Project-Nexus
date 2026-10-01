@@ -2,6 +2,24 @@
 
 ## 0.1.1 — Unreleased
 
+### Code quality and developer experience improvements
+
+- **engine.py refactor:** extract merge logic into `shadowscan/merge.py` and
+  move cross-surface correlation into `shadowscan/correlation.py`, reducing
+  engine.py from 948 to 781 lines while keeping the public API unchanged.
+- **Property-based testing:** add Hypothesis tests for the redaction module
+  verifying idempotency, crash-freedom on arbitrary unicode, and credential
+  removal for known token patterns.
+- **Parallel test execution:** add pytest-xdist to dev dependencies and a
+  `make test-parallel` target for running the 3,000+ test suite concurrently.
+- **Auto-generated API reference:** add mkdocstrings with reference pages for
+  10 core modules, integrated into the MkDocs documentation site.
+- **Docs auto-deployment:** the Docs workflow now deploys to GitHub Pages on
+  every push to main, in addition to manual workflow_dispatch triggers.
+- **Shared unit test fixtures:** add `tests/unit/conftest.py` with reusable
+  `offline_config` and `sample_finding` fixtures.
+- **Slow test marker:** register `@pytest.mark.slow` for developer iteration.
+
 ### October 1 field scan follow-up
 
 Fixes for defects found by scanning five public agent repositories (see

@@ -53,6 +53,13 @@ validation:
 # hash-locked requirements-docs.lock.
 plugins:
   - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            docstring_style: google
+            members_order: source
 
 markdown_extensions:
   - admonition
@@ -113,6 +120,21 @@ nav:
           - "ADR-001: Connector architecture": adrs/001-connector-architecture.md
           - "ADR-002: Offline-first connectors": adrs/002-offline-first-connectors.md
           - "ADR-003: Evidence-based confidence": adrs/003-evidence-based-confidence.md
+  - API Reference:
+      - api/index.md
+      - Core:
+          - Engine: api/engine.md
+          - Models: api/models.md
+          - Config: api/config.md
+          - Risk: api/risk.md
+          - Merge: api/merge.md
+          - Correlation: api/correlation.md
+      - Connectors:
+          - Base: api/base.md
+          - Registry: api/registry.md
+      - Utilities:
+          - HTTP client: api/http.md
+          - Redaction: api/redaction.md
   - Security: security.md
   - Changelog: changelog.md
 

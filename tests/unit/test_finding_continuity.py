@@ -9,7 +9,8 @@ from click.testing import CliRunner
 from shadowscan.cli import main
 from shadowscan.comparison import compare_reports
 from shadowscan.config import ConnectorSpec, ScanConfig
-from shadowscan.engine import Engine, merge
+from shadowscan.engine import Engine
+from shadowscan.merge import merge
 from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding, Kind, ScanResult, ScanStats, Surface
 
 

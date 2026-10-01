@@ -11,7 +11,8 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.saas.slack import SlackConnector
 from shadowscan.connectors.saas.teams import TeamsConnector
-from shadowscan.engine import Engine, merge
+from shadowscan.engine import Engine
+from shadowscan.merge import merge
 
 SLACK_APP = {"_kind": "approved_app", "app": {"id": "A1", "name": "Claude"}, "scopes": []}
 TEAMS_APP = {
