@@ -2,6 +2,39 @@
 
 ## 0.1.1 — Unreleased
 
+### October 1 field scan follow-up
+
+Fixes for defects found by scanning five public agent repositories (see
+`archive/reviews/field-scan-2026-10-01.md`); each has a regression test.
+
+- The JSX lexer no longer marks valid TSX incomplete. It skips explicit type
+  arguments on elements (`<Select<Option> ...>`, `<Form<{ email: string }>>`),
+  comments between attributes (a comment just before `>` no longer makes the
+  tag self-closing), and treats `<Text>(...)</Text>` as an element
+  unless the parenthesized group is followed by `=>` or a return type. In the
+  field scan this removed 139 false incomplete files; unbalanced tags still
+  fail closed.
+- Gemini CLI's `httpUrl` is an MCP endpoint alias. Such extension manifests no
+  longer make the scan incomplete, and their remote servers are reported. A
+  header or env value that is only a shell-style reference (`Bearer $TOKEN`) is
+  not an inline credential.
+- GitHub Actions workflows that pass MCP settings to an agent action no longer
+  fail strict YAML parsing on the `on:` key. Servers embedded as JSON step inputs
+  are reported as MCP findings; unparseable embedded settings stay incomplete.
+- `GOOGLE_GENAI_USE_VERTEXAI` no longer attributes the Google Agent Development
+  Kit. It remains Vertex AI provider evidence.
+- Exported workflows under test or fixture paths follow the project test-code
+  policy: half weight and the `test-code-only` tag unless `include_tests` is set.
+- A `setup.py` marks a project root only when it references setuptools,
+  distutils or scikit-build, or calls `setup(...)`. Ordinary modules named
+  `setup.py` no longer split a package into a separate project; an unreadable
+  file keeps the previous behavior.
+- An MCP argument assigning a file path to a credential-file variable
+  (`GOOGLE_APPLICATION_CREDENTIALS=/app/key.json`), or one whose only redacted
+  part repeats a variable reference from `env` (`-v ${KEY_FILE}:/app/key.json`),
+  is still redacted but no longer marks the server as carrying an inline secret.
+  Literal values remain inline secrets.
+
 ### Completeness, report safety and credential policy (2026-09-28)
 
 Behavior changes to review before upgrading (see

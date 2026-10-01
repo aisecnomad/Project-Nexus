@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector, _nearest_root
 from shadowscan.models import Kind
@@ -209,3 +211,74 @@ def test_duplicate_manifest_and_text_observations_count_once(tmp_path, index):
     findings, _ = _run(index, tmp_path)
     secret = next(f for f in findings if f.kind == Kind.SECRET)
     assert secret.metadata["count"] == 1 and len(secret.evidence) == 1
+
+
+DIFY_APP = {
+    "kind": "app",
+    "app": {"mode": "chat"},
+    "model_config": {"model": {"provider": "openai", "name": "gpt-4o"}},
+}
+
+
+def test_fixture_workflow_export_is_test_code_only(tmp_path: Path, run_connector) -> None:
+    (tmp_path / "app.json").write_text(json.dumps(DIFY_APP))
+    fixtures = tmp_path / "api" / "tests" / "fixtures" / "workflow"
+    fixtures.mkdir(parents=True)
+    (fixtures / "app.json").write_text(json.dumps(DIFY_APP))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    workflows = [f for f in findings if f.kind == Kind.WORKFLOW]
+    assert len(workflows) == 2
+    deployed = next(f for f in workflows if "fixtures" not in f.resource)
+    fixture = next(f for f in workflows if "fixtures" in f.resource)
+    assert "test-code-only" not in deployed.tags
+    assert "test-code-only" in fixture.tags
+    assert fixture.confidence < deployed.confidence
+
+
+def test_include_tests_restores_fixture_workflow_weight(tmp_path: Path, run_connector) -> None:
+    fixtures = tmp_path / "tests" / "fixtures"
+    fixtures.mkdir(parents=True)
+    (fixtures / "app.json").write_text(json.dumps(DIFY_APP))
+    (tmp_path / "app.json").write_text(json.dumps(DIFY_APP))
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False, include_tests=True)
+    workflows = [f for f in findings if f.kind == Kind.WORKFLOW]
+    assert len(workflows) == 2
+    assert not any("test-code-only" in f.tags for f in workflows)
+    assert workflows[0].confidence == workflows[1].confidence
+
+
+def _project_resources(findings) -> set[str]:
+    return {f.resource for f in findings if f.kind in {Kind.FRAMEWORK_USAGE, Kind.AGENT}}
+
+
+def test_module_named_setup_py_is_not_a_project_root(tmp_path: Path, run_connector) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "sdk"\ndependencies = ["openai"]\n')
+    package = tmp_path / "src" / "sdk" / "tracing"
+    package.mkdir(parents=True)
+    (package / "setup.py").write_text(
+        "import threading\n\nLOCK = threading.Lock()\n\n\ndef setup(app):\n    return app\n"
+    )
+    (package / "export.py").write_text("from openai import OpenAI\n\nclient = OpenAI()\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    resources = _project_resources(findings)
+    assert resources == {str(tmp_path)}
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        'from setuptools import setup\n\nsetup(name="tool", install_requires=["openai"])\n',
+        'from distutils.core import setup\n\nsetup(name="tool")\n',
+    ],
+)
+def test_packaging_setup_py_still_marks_a_project(tmp_path: Path, run_connector, script: str) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "monorepo"\n')
+    tool = tmp_path / "tools" / "tool"
+    tool.mkdir(parents=True)
+    (tool / "setup.py").write_text(script)
+    (tool / "run.py").write_text("from openai import OpenAI\n\nclient = OpenAI()\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert str(tool) in _project_resources(findings)

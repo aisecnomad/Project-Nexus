@@ -572,3 +572,10 @@ def test_bedrock_agent_clients_corroborate_invoke_agent(tmp_path, index, client)
 )
 def test_agentcore_clients_match_by_keyword(index, text):
     assert any(m.signature_id == "cloud.aws-bedrock-agents" for m in index.match_code(text, "python"))
+
+
+def test_genai_vertex_switch_is_not_agent_development_kit_evidence(index) -> None:
+    vertex = {m.signature_id for m in index.match_env("GOOGLE_GENAI_USE_VERTEXAI")}
+    assert "framework.google-adk" not in vertex
+    assert "provider.google-vertex-ai" in vertex
+    assert "framework.google-adk" in {m.signature_id for m in index.match_env("ADK_API_KEY")}

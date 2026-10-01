@@ -75,10 +75,68 @@ def _javascript_regex_end(text: str, start: int) -> int | None:
     return None
 
 
-def _jsx_open_name(text: str, start: int) -> str | None:
-    """Recognize a JSX opening tag without confusing `<T,>` generics with JSX."""
+_MAX_TYPE_ARGUMENTS_LENGTH = 1024
+
+
+def _type_arguments_end(text: str, start: int) -> int | None:
+    """Return the offset after a balanced TypeScript type-argument list at ``text[start] == "<"``.
+
+    Handles nested lists, quoted literal types and `=>` in function types.
+    Anything unbalanced within the bound is not a type-argument list.
+    """
+    depth = 0
+    pos = start
+    limit = min(len(text), start + _MAX_TYPE_ARGUMENTS_LENGTH)
+    while pos < limit:
+        char = text[pos]
+        if char in "\"'`":
+            end = text.find(char, pos + 1, limit)
+            if end < 0:
+                return None
+            pos = end + 1
+            continue
+        if char == "<":
+            depth += 1
+        elif char == ">" and text[pos - 1] != "=":
+            depth -= 1
+            if depth == 0:
+                return pos + 1
+        pos += 1
+    return None
+
+
+def _parenthesized_end(text: str, start: int) -> int | None:
+    """Return the offset after the balanced parenthesized group at ``text[start] == "("``."""
+    depth = 0
+    pos = start
+    limit = min(len(text), start + _MAX_REGEX_LENGTH)
+    while pos < limit:
+        char = text[pos]
+        if char in "\"'`":
+            end = text.find(char, pos + 1, limit)
+            if end < 0:
+                return None
+            pos = end + 1
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return pos + 1
+        pos += 1
+    return None
+
+
+def _jsx_open_tag(text: str, start: int) -> tuple[str, int] | None:
+    """Return the JSX tag name and the offset where its attributes begin.
+
+    TSX allows explicit type arguments on an element (`<Select<Option> ...>`,
+    `<Form<{ email: string }>>`); they are skipped so that the type argument
+    is not mistaken for a nested opening tag.
+    """
     if text.startswith("<>", start):
-        return ""
+        return "", start + 1
     pos = start + 1
     if pos >= len(text) or not (text[pos].isascii() and text[pos].isalpha()):
         return None
@@ -87,14 +145,22 @@ def _jsx_open_name(text: str, start: int) -> str | None:
         (text[pos].isascii() and text[pos].isalnum()) or text[pos] in "_.$:-"
     ):
         pos += 1
+    name = text[start + 1 : pos]
+    if pos < len(text) and text[pos] == "<":
+        after = _type_arguments_end(text, pos)
+        if after is None or after == len(text) or text[after] not in " \t\r\n/>":
+            return None
+        return name, after
     if pos == len(text) or text[pos] not in " \t\r\n/>":
         return None
-    name = text[start + 1 : pos]
-    # A bare `<T>(...)` in TSX is commonly a generic arrow function, with
-    # no JSX closing tag. Leave its body visible to the scanner.
+    # A bare `<T>(...) => ...` in TSX is a generic arrow function, with no
+    # JSX closing tag. Leave its body visible to the scanner. Element text
+    # that merely starts with a parenthesis (`<Text>({n})</Text>`) is JSX.
     if name[0].isupper():
         if text.startswith(">(", pos):
-            return None
+            group_end = _parenthesized_end(text, pos + 1)
+            if group_end is None or text[group_end : group_end + 64].lstrip().startswith(("=>", ":")):
+                return None
         # Constrained and defaulted TSX generic arrows can look like JSX
         # opening tags: `<T extends object>(x: T) => x` and `<T = X>(...)`.
         suffix = text[pos : min(len(text), pos + 64)].lstrip()
@@ -105,7 +171,7 @@ def _jsx_open_name(text: str, start: int) -> str | None:
             end = text.find(">(", pos, min(len(text), pos + 1024))
             if end >= 0 and "=>" in text[end + 2 : min(len(text), end + 258)]:
                 return None
-    return name
+    return name, pos
 
 
 def noncode_ranges(
@@ -467,12 +533,12 @@ class _JavaScriptLexer:
                 spans.append((start, i + 1))
                 self._enter_expression("jsx_expression")
                 return i + 1
-            name = _jsx_open_name(text, i) if text[i] == "<" else None
-            if name is not None:
+            opened = _jsx_open_tag(text, i) if text[i] == "<" else None
+            if opened is not None:
                 spans.append((start, i))
                 modes.append(("jsx_tag", i))
-                self.pending_jsx_tags.append(name)
-                return i + 1
+                self.pending_jsx_tags.append(opened[0])
+                return opened[1]
             i += 1
             if i == size:
                 return self._unterminated(start)
@@ -481,7 +547,26 @@ class _JavaScriptLexer:
     def _jsx_tag(self, i: int, start: int) -> int:
         """Walk a JSX tag that began at ``start`` to an attribute expression or its closing ``>``."""
         text, size, spans, modes = self.text, self.size, self.spans, self.modes
+        # Whether the last significant character was ``/``. Each walk starts
+        # after the tag name, its type arguments or an attribute expression's
+        # ``}``, none of which ends in ``/``. Comments do not count, so
+        # ``<div /* note */>`` is not self-closing.
+        slash = False
         while i < size:
+            # Comments may separate attributes; their text is never an
+            # attribute string or expression.
+            if text.startswith("//", i):
+                end = text.find("\n", i + 2)
+                if end < 0:
+                    return self._unterminated(start)
+                i = end
+                continue
+            if text.startswith("/*", i):
+                end = text.find("*/", i + 2)
+                if end < 0:
+                    return self._unterminated(start)
+                i = end + 2
+                continue
             if text[i] in {'"', "'"}:
                 quote = text[i]
                 i += 1
@@ -490,6 +575,7 @@ class _JavaScriptLexer:
                 if i >= size:
                     return self._unterminated(start)
                 i += 1
+                slash = False
                 continue
             if text[i] == "{":
                 spans.append((start, i + 1))
@@ -498,7 +584,7 @@ class _JavaScriptLexer:
             if text[i] == ">":
                 spans.append((start, i + 1))
                 name = self.pending_jsx_tags.pop()
-                self_closing = text[start:i].rstrip().endswith("/")
+                self_closing = slash
                 i += 1
                 modes.pop()
                 if self_closing:
@@ -508,6 +594,8 @@ class _JavaScriptLexer:
                     self.open_jsx_tags.append(name)
                     modes.append(("jsx_text", i))
                 return i
+            if not text[i].isspace():
+                slash = text[i] == "/"
             i += 1
             if i == size:
                 return self._unterminated(start)
@@ -589,13 +677,13 @@ class _JavaScriptLexer:
                 jsx
                 and text[i] == "<"
                 and can_start_regex[-1]
-                and (name := _jsx_open_name(text, i)) is not None
+                and (opened := _jsx_open_tag(text, i)) is not None
             ):
-                self.pending_jsx_tags.append(name)
+                self.pending_jsx_tags.append(opened[0])
                 modes.append(("jsx_tag", i))
                 can_start_regex[-1] = False
                 control_pending[-1] = False
-                return i + 1
+                return opened[1]
             elif text[i].isalpha() or text[i] in "_$":
                 start = i
                 i += 1
