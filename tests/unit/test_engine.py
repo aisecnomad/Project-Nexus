@@ -112,6 +112,72 @@ def test_merge_and_correlate():
     assert cloud.metadata["related"] == [iac.id] and iac.metadata["related"] == [cloud.id]
 
 
+def test_confidence_threshold_prunes_links_to_omitted_findings(monkeypatch):
+    agent = "ops-provisioning-04"
+    findings = {
+        "cloud": _f(metadata={"agent_name": agent}, confidence=0.95),
+        "identity": _f(
+            surface=Surface.IDENTITY,
+            connector="identity.entra",
+            kind=Kind.SERVICE_IDENTITY,
+            title=f"Entra service principal: {agent}",
+            resource="entra:sp:ops",
+            resource_type="service-principal",
+            metadata={"display_name": agent},
+            confidence=0.9,
+        ),
+        "iac": _f(
+            surface=Surface.CODE,
+            connector="code.filesystem",
+            kind=Kind.INFRA,
+            title="Terraform: bedrock.tf",
+            resource="github:acme/infra/bedrock.tf",
+            resource_type="iac",
+            metadata={"name": agent},
+            confidence=0.3,
+        ),
+        "bot": _f(
+            surface=Surface.SAAS,
+            connector="saas.slack",
+            kind=Kind.BOT_APP,
+            title="Slack app: invoice-assistant",
+            resource="slack:app:A1",
+            resource_type="slack-app",
+            metadata={"name": "invoice-assistant"},
+            confidence=0.8,
+        ),
+        "flow": _f(
+            surface=Surface.LOWCODE,
+            connector="lowcode.zapier",
+            kind=Kind.WORKFLOW,
+            title="Zapier workflow: invoice-assistant",
+            resource="zapier:zap:1",
+            resource_type="zap",
+            metadata={"name": "invoice-assistant"},
+            confidence=0.2,
+        ),
+    }
+
+    class Connector:
+        def __init__(self, ctx):
+            self.ctx = ctx
+
+        def run(self):
+            self.ctx.stats = ScanStats(connector="test", started_at=now_iso(), finished_at=now_iso())
+            return [findings[self.ctx.config["label"]]]
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: Connector)
+    specs = [ConnectorSpec(f"platform.{label}", label=label) for label in findings]
+    result = Engine(ScanConfig(connectors=specs, min_confidence=0.5), SignatureIndex([])).run()
+    assert result.complete
+    by_id = {f.id: f for f in result.findings}
+    assert set(by_id) == {findings[label].id for label in ("cloud", "identity", "bot")}
+    # Links among retained findings survive on both sides; none names an omitted finding.
+    assert by_id[findings["cloud"].id].metadata["related"] == [findings["identity"].id]
+    assert by_id[findings["identity"].id].metadata["related"] == [findings["cloud"].id]
+    assert "related" not in by_id[findings["bot"].id].metadata
+
+
 def test_parallel_connector_completion_cannot_change_merge_attribution(monkeypatch):
     second_finished = Event()
 

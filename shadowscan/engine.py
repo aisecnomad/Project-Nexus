@@ -772,6 +772,7 @@ class Engine:
             )
         if self.config.min_confidence > 0:
             findings = [f for f in findings if f.confidence >= self.config.min_confidence]
+            _prune_related(findings)
         findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
         if dump_directory:
             self._write_manifest(dump_directory, export_entries, result.started_at, stats)
@@ -945,3 +946,24 @@ def correlate(findings: list[Finding]) -> None:
             )
             if links:
                 linked_finding.metadata["related"] = links
+
+
+def _prune_related(findings: list[Finding]) -> None:
+    """Drop ``metadata['related']`` links to findings absent from ``findings``.
+
+    Correlation runs before the confidence threshold. A report must not link
+    to a finding it omits; removing those identifiers from every list keeps
+    the remaining pairs symmetric, as :func:`correlate` created them.
+    """
+    retained = {f.id for f in findings}
+    for f in findings:
+        links = f.metadata.get("related")
+        if not isinstance(links, list):
+            continue
+        kept = [link for link in links if link in retained]
+        if len(kept) == len(links):
+            continue
+        if kept:
+            f.metadata["related"] = kept
+        else:
+            del f.metadata["related"]

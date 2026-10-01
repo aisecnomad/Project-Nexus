@@ -57,7 +57,9 @@
    connector, provider, account, region, resource and observation discriminator),
    **correlates** across surfaces by resource ids and normalised names
    (`metadata.related`), **reconciles** with the inventory (`shadow`,
-   `registry_match`, inherited owner) and **scores** risk.
+   `registry_match`, inherited owner) and **scores** risk. Findings below
+   `min_confidence` are then dropped, together with the `related` links that
+   name them.
 5. Reporters render. SARIF carries `file:line` for code findings and logical
    locations elsewhere; HTML is self-contained.
 
