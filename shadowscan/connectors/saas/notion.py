@@ -127,7 +127,11 @@ class NotionConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="notion:bot",
-                description=f"Integration '{name}' owned by {owner_type or 'unknown'}{' (' + str(owner) + ')' if owner else ''}; workspace {bot.get('workspace_name') or '?'}",
+                description=(
+                    f"Integration '{name}' owned by "
+                    f"{owner_type or 'unknown'}{' (' + str(owner) + ')' if owner else ''}; workspace "
+                    f"{bot.get('workspace_name') or '?'}"
+                ),
                 weight=0.35 if owner_type == "workspace" else 0.25,
             )
         )

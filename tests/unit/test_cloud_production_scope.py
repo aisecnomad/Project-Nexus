@@ -12,6 +12,7 @@ import pytest
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.aws import AwsConnector
 from shadowscan.connectors.cloud.gcp import GcpConnector
+from shadowscan.connectors.cloud.oci import OciConnector
 from shadowscan.models import ScanStats
 
 ACCOUNT = "123456789012"
@@ -149,3 +150,37 @@ def test_aws_offline_account_label_does_not_require_live_authentication(index, t
     assert len(findings) == 1
     assert findings[0].account == "offline-account"
     connector._session_.assert_not_called()
+
+
+def stats_context(index, **config):
+    ctx = ConnectorContext(config=config, index=index)
+    ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
+    return ctx
+
+
+def test_gcp_and_oci_scalar_scope_does_not_expand_to_characters(index):
+    gcp = GcpConnector(stats_context(index, projects="project-one", locations="us-central1"))
+    assert gcp.projects == ["project-one"] and gcp.locations == ["us-central1"]
+    gcp._auth = Mock()
+    gcp._collect_project = Mock(return_value=[])
+    list(gcp.collect())
+    gcp._collect_project.assert_called_once_with("project-one")
+    oci = OciConnector(
+        stats_context(index, compartments="ocid1.compartment.oc1..abc", regions="us-ashburn-1")
+    )
+    assert oci.compartments == ["ocid1.compartment.oc1..abc"]
+    assert oci.regions == ["us-ashburn-1"]
+
+
+@pytest.mark.parametrize(
+    "connector,config",
+    [
+        (GcpConnector, {"locations": "evil.example/path"}),
+        (GcpConnector, {"projects": "project/../../elsewhere"}),
+        (OciConnector, {"regions": 42}),
+        (AwsConnector, {"regions": ["all", "us-east-1"]}),
+    ],
+)
+def test_malformed_cloud_scope_is_rejected_before_authentication(index, connector, config):
+    with pytest.raises(ConnectorError):
+        connector(stats_context(index, **config))

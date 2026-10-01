@@ -136,6 +136,40 @@ def validate(config: dict[str, Any]) -> None:
         "only audited AWS and Slack collectors are enabled",
     )
     scope = config["scope"]
+    _validate_scope(name, connector, scope)
+    if config["mode"] == "live":
+        _require("input" not in connector, "live canaries forbid replay inputs")
+        if name == "saas.slack":
+            _require(
+                isinstance(connector.get("token"), str) and bool(_ENV.fullmatch(connector["token"])),
+                "Slack token must be a required environment reference; literals and fallbacks are forbidden",
+            )
+    else:
+        _require(
+            _text(connector.get("input")) and "token" not in connector,
+            "replay requires an input and forbids tokens",
+        )
+    controls = config["controls"]
+    _require(isinstance(controls, list) and len(controls) <= 1000, "controls must be a bounded list")
+    ids: set[str] = set()
+    resources: set[str] = set()
+    for control in controls:
+        _validate_control(control, name, scope, ids, resources)
+    if config["expectation"] == "complete":
+        _require(
+            any(c["finding"]["present"] for c in controls)
+            and any(not c["finding"]["present"] for c in controls),
+            "complete canaries require observed positive and benign negative controls",
+        )
+    else:
+        _require(
+            not controls,
+            "permission-denied runs use scope and classified denial rather than missing objects as evidence",
+        )
+
+
+def _validate_scope(name: str, connector: Any, scope: Any) -> None:
+    """Require an explicit approved scope that the connector settings repeat exactly."""
     if name == "cloud.aws":
         _keys(
             scope, {"account_id", "regions", "services"}, {"account_id", "regions", "services"}, "AWS scope"
@@ -171,96 +205,64 @@ def validate(config: dict[str, Any]) -> None:
         _require(
             connector.get("team_id") == scope["team_id"], "connector and approved Slack workspace must agree"
         )
-    if config["mode"] == "live":
-        _require("input" not in connector, "live canaries forbid replay inputs")
-        if name == "saas.slack":
-            _require(
-                isinstance(connector.get("token"), str) and bool(_ENV.fullmatch(connector["token"])),
-                "Slack token must be a required environment reference; literals and fallbacks are forbidden",
-            )
-    else:
+
+
+def _validate_control(control: Any, name: str, scope: Any, ids: set[str], resources: set[str]) -> None:
+    """Check one labeled control: a unique record selector and its expected finding."""
+    _keys(
+        control, {"id", "record", "finding", "rationale"}, {"id", "record", "finding", "rationale"}, "control"
+    )
+    _require(
+        isinstance(control["id"], str) and bool(_ID.fullmatch(control["id"])) and control["id"] not in ids,
+        "control IDs must be unique safe identifiers",
+    )
+    ids.add(control["id"])
+    _require(_text(control["rationale"]), "controls require an independent labeling rationale")
+    record = control["record"]
+    _require(
+        isinstance(record, dict)
+        and 1 <= len(record) <= 20
+        and all(
+            isinstance(k, str) and bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", k)) and _text(v)
+            for k, v in record.items()
+        ),
+        "record selectors must be nonempty exact string field matches",
+    )
+    finding = control["finding"]
+    _keys(finding, {"resource", "kind", "present"}, {"resource", "present"}, "finding expectation")
+    _require(
+        _text(finding["resource"]) and isinstance(finding["present"], bool), "invalid finding expectation"
+    )
+    identity_key = _CONTROL_IDENTITIES[name].get(record.get("_kind", ""))
+    _require(
+        identity_key is not None and identity_key in record,
+        "control requires a supported object kind and its exact canonical identity field",
+    )
+    expected_resource = record[identity_key] if name == "cloud.aws" else f"slack:app:{record[identity_key]}"
+    _require(
+        finding["resource"] == expected_resource,
+        "record selector identity and expected finding resource must identify the same object",
+    )
+    _require(finding["resource"] not in resources, "control resources must be unique")
+    resources.add(finding["resource"])
+    if name == "cloud.aws":
+        arn = expected_resource.split(":", 5)
         _require(
-            _text(connector.get("input")) and "token" not in connector,
-            "replay requires an input and forbids tokens",
+            len(arn) == 6
+            and arn[0] == "arn"
+            and arn[1] in {"aws", "aws-cn", "aws-us-gov"}
+            and arn[4] == scope["account_id"]
+            and arn[3] in scope["regions"],
+            "AWS control must be a canonical ARN within approved account and regions",
         )
-    controls = config["controls"]
-    _require(isinstance(controls, list) and len(controls) <= 1000, "controls must be a bounded list")
-    ids: set[str] = set()
-    resources: set[str] = set()
-    for control in controls:
-        _keys(
-            control,
-            {"id", "record", "finding", "rationale"},
-            {"id", "record", "finding", "rationale"},
-            "control",
-        )
+    if finding["present"]:
         _require(
-            isinstance(control["id"], str)
-            and bool(_ID.fullmatch(control["id"]))
-            and control["id"] not in ids,
-            "control IDs must be unique safe identifiers",
-        )
-        ids.add(control["id"])
-        _require(_text(control["rationale"]), "controls require an independent labeling rationale")
-        record = control["record"]
-        _require(
-            isinstance(record, dict)
-            and 1 <= len(record) <= 20
-            and all(
-                isinstance(k, str) and bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", k)) and _text(v)
-                for k, v in record.items()
-            ),
-            "record selectors must be nonempty exact string field matches",
-        )
-        finding = control["finding"]
-        _keys(finding, {"resource", "kind", "present"}, {"resource", "present"}, "finding expectation")
-        _require(
-            _text(finding["resource"]) and isinstance(finding["present"], bool), "invalid finding expectation"
-        )
-        identity_key = _CONTROL_IDENTITIES[name].get(record.get("_kind", ""))
-        _require(
-            identity_key is not None and identity_key in record,
-            "control requires a supported object kind and its exact canonical identity field",
-        )
-        expected_resource = (
-            record[identity_key] if name == "cloud.aws" else f"slack:app:{record[identity_key]}"
-        )
-        _require(
-            finding["resource"] == expected_resource,
-            "record selector identity and expected finding resource must identify the same object",
-        )
-        _require(finding["resource"] not in resources, "control resources must be unique")
-        resources.add(finding["resource"])
-        if name == "cloud.aws":
-            arn = expected_resource.split(":", 5)
-            _require(
-                len(arn) == 6
-                and arn[0] == "arn"
-                and arn[1] in {"aws", "aws-cn", "aws-us-gov"}
-                and arn[4] == scope["account_id"]
-                and arn[3] in scope["regions"],
-                "AWS control must be a canonical ARN within approved account and regions",
-            )
-        if finding["present"]:
-            _require(
-                isinstance(finding.get("kind"), str) and finding.get("kind") in {kind.value for kind in Kind},
-                "positive controls require a known finding kind",
-            )
-        else:
-            _require(
-                "kind" not in finding,
-                "negative controls must reject every finding kind for the known resource",
-            )
-    if config["expectation"] == "complete":
-        _require(
-            any(c["finding"]["present"] for c in controls)
-            and any(not c["finding"]["present"] for c in controls),
-            "complete canaries require observed positive and benign negative controls",
+            isinstance(finding.get("kind"), str) and finding.get("kind") in {kind.value for kind in Kind},
+            "positive controls require a known finding kind",
         )
     else:
         _require(
-            not controls,
-            "permission-denied runs use scope and classified denial rather than missing objects as evidence",
+            "kind" not in finding, "negative controls must reject every finding kind for the known resource"
         )
 
 
@@ -432,7 +434,10 @@ def run(config: dict[str, Any]) -> dict[str, Any]:
         "connector": config["connector"]["name"],
         "expected_scope": config["scope"],
         "ground_truth": config["ground_truth"],
-        "limitations": "A canary validates named controls in selected scope, not estate-wide recall or effective IAM permissions.",
+        "limitations": (
+            "A canary validates named controls in selected scope, "
+            "not estate-wide recall or effective IAM permissions."
+        ),
     }
     missing = _preflight(config)
     if missing:

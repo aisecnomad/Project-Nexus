@@ -74,9 +74,13 @@ This validates that the bundled signatures load successfully. It needs no cloud
 credentials. When iterating on a change, replace the path and test name with the
 relevant test; a single-test pass does not establish full-suite coverage.
 
-A test that replaces a redaction rule must patch it through
-`shadowscan.utils.redaction`, which rebinds the name in every `redaction_*`
-module; patching a `redaction_*` module directly changes only that module.
+Unit tests live in `tests/unit/`, in files named after the module or feature
+they exercise (`test_http_security.py`, `test_gitlab_connector.py`,
+`test_csv_injection.py`). Add a regression test to the file for the code it
+covers rather than a new file per change. A test that replaces a redaction
+rule must patch it through `shadowscan.utils.redaction`, which rebinds the
+name in every `redaction_*` module; patching a `redaction_*` module directly
+changes only that module.
 
 Existing Make targets provide the next steps:
 
@@ -124,6 +128,11 @@ exact supported Python matrix and dependency pins.
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
+
+Ruff enforces a 110-column line length outside `tests/` and flags loop
+variables captured by closures (B023). Mypy requires annotated definitions
+(`disallow_untyped_defs`) and reports unused `type: ignore` comments.
+`pyproject.toml` holds the complete rule sets.
 
 The same gates as individual commands:
 

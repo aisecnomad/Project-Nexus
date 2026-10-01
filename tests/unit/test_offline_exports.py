@@ -120,3 +120,76 @@ def test_offline_file_discovery_goes_through_the_connector_method(tmp_path, inde
     connector._offline_files = recorded
     assert list(connector.load_offline(str(tmp_path))) == [{"id": "w1"}]
     assert seen == [str(tmp_path)]
+
+
+# Page identities and malformed successful responses must not hide collection gaps.
+def test_native_resource_with_id_name_and_items_is_not_unwrapped():
+    native = {"id": "app-1", "name": "Native", "type": "app", "items": [{"id": "child"}]}
+    assert list(BaseConnector._unwrap(native)) == [native]
+
+
+def test_csv_native_log_event_with_error_column_is_preserved():
+    errors: list[str] = []
+    records = list(
+        BaseConnector._csv_records(
+            "id,name,error,timestamp\nlog-1,OpenAI,timeout,2026-01-01\n", errors.append
+        )
+    )
+    assert len(records) == 1 and records[0]["id"] == "log-1" and not errors
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {
+            "_kind": "cloudtrail-event",
+            "eventName": "InvokeModel",
+            "eventTime": "2026-01-01",
+            "error": "AccessDenied",
+        },
+        {
+            "_kind": "audit-event",
+            "principal": "agent@example.test",
+            "timestamp": "2026-01-01",
+            "error": "AccessDenied",
+        },
+        {"_kind": "integration_log", "change_type": "enabled", "app_id": "A1", "error": "install-failed"},
+    ],
+)
+def test_known_native_error_event_is_preserved(record):
+    assert list(BaseConnector._unwrap(record)) == [record]
+    assert list(BaseConnector._unwrap([record])) == [record]
+
+
+def test_base_json_lines_caps_per_line_errors():
+    reports: list[str] = []
+    text = "\n".join(['{"id": "ok"}'] + ["{broken"] * 40)
+    records = list(BaseConnector._json_lines(text, reports.append))
+    assert records == [{"id": "ok"}]
+    assert len(reports) == BaseConnector._MAX_INVALID_LINE_ERRORS + 1
+    reports.clear()
+    assert list(BaseConnector._json_lines('[\n  {"a": 1},\n', reports.append)) == []
+    assert reports == ["invalid JSON export"]
+
+
+class _Probe(BaseConnector):
+    name = "test.offline"
+
+    def collect(self):
+        return []
+
+    def analyze(self, records):
+        return []
+
+
+@pytest.mark.parametrize("suffix", [".jsonl", ".json"])
+def test_corrupt_record_flood_preserves_later_valid_record(tmp_path, index, suffix):
+    source = tmp_path / f"export{suffix}"
+    source.write_text("invalid\n" * 100 + '{"id":"survivor"}\n')
+    ctx = ConnectorContext(index=index)
+    ctx.stats = ScanStats(connector=_Probe.name, started_at="now")
+    records = list(_Probe(ctx).load_offline(str(source)))
+    assert records == [{"id": "survivor"}]
+    assert ctx.stats.incomplete
+    assert len(ctx.stats.errors) == BaseConnector._MAX_INVALID_LINE_ERRORS + 1
+    assert "not listed individually" in ctx.stats.errors[-1]

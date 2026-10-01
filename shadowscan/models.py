@@ -316,7 +316,10 @@ class Finding:
     # ------------------------------------------------------------------ helpers
     def compute_id(self) -> str:
         if self.identity_schema == LEGACY_FINDING_IDENTITY_SCHEMA:
-            raw = f"{self.surface.value}|{self.connector}|{self.kind.value}|{self.provider}|{self.account}|{self.resource}"
+            raw = (
+                f"{self.surface.value}|{self.connector}|{self.kind.value}|"
+                f"{self.provider}|{self.account}|{self.resource}"
+            )
         else:
             raw = json.dumps(
                 [
