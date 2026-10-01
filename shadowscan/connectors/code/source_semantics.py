@@ -31,7 +31,7 @@ from shadowscan.connectors.code.javascript_dispatch import javascript_responses_
 from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
-from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools
+from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools, has_vercel_tool_loop
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
@@ -104,7 +104,7 @@ _FACTORIES = {
     "framework.openai-swarm": r"(?:Agent|Swarm)",
     "framework.claude-agent-sdk": r"(?:ClaudeSDKClient|query)",
     "framework.pydantic-ai": r"Agent",
-    "framework.vercel-ai-sdk": r"(?:ToolLoopAgent|Experimental_Agent)",
+    "framework.vercel-ai-sdk": r"(?:ToolLoopAgent|Experimental_Agent|Agent)",
     "framework.mastra": r"(?:Agent|Mastra)",
     "framework.haystack": r"(?:Agent|ToolInvoker)",
     "framework.dspy": r"(?:ReAct|ProgramOfThought)",
@@ -1023,6 +1023,7 @@ def _call_evidence(
     for signature in signatures.values():
         factory = _FACTORIES.get(signature.id)
         verified = bool(factory and re.fullmatch(factory, symbol))
+        construction = "import-bound agent construction"
         if signature.id == "framework.langgraph" and symbol == "StateGraph":
             verified = call.line in graph_lines
         if signature.id == "framework.vercel-ai-sdk" and symbol in {"generateText", "streamText"}:
@@ -1031,6 +1032,10 @@ def _call_evidence(
             verified = has_executable_vercel_tools(
                 call.arguments, call.structural_arguments, call.tool_factories
             )
+            if not verified and has_vercel_tool_loop(call.arguments, call.structural_arguments):
+                # Tool results go back to the model until the stop condition:
+                # an agent loop even when the tools are imported definitions.
+                verified, construction = True, "import-bound multi-step tool loop"
         if (
             signature.category == "provider"
             and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
@@ -1099,7 +1104,7 @@ def _call_evidence(
                         type="code",
                         weight=0.9,
                         agent_indicator=True,
-                        description="import-bound agent construction",
+                        description=construction,
                     ),
                     sanitize_text(f"{call.binding.module}:{symbol}("),
                     0.9,
