@@ -69,7 +69,10 @@ class Auth0Connector(BaseConnector):
             "/api/v2/clients",
             "client",
             include_fields="true",
-            fields="client_id,name,description,app_type,grant_types,callbacks,allowed_origins,web_origins,initiate_login_uri,client_metadata,is_first_party,token_endpoint_auth_method,logo_uri,sso",
+            fields=(
+                "client_id,name,description,app_type,grant_types,callbacks,allowed_origins,web_origins,"
+                "initiate_login_uri,client_metadata,is_first_party,token_endpoint_auth_method,logo_uri,sso"
+            ),
         )
         yield from self._pages("/api/v2/client-grants", "client_grant")
 
@@ -228,7 +231,11 @@ class Auth0Connector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="auth0:client",
-                description=f"{c.get('app_type') or 'app'} '{name}', grant types {', '.join(grant_types) or 'n/a'}, {'first-party' if c.get('is_first_party') else 'third-party'}; {len(grants)} client grant(s) to {', '.join(audiences)[:200] or 'no API'}",
+                description=(
+                    f"{c.get('app_type') or 'app'} '{name}', grant types {', '.join(grant_types) or 'n/a'}, "
+                    f"{'first-party' if c.get('is_first_party') else 'third-party'}; {len(grants)} client "
+                    f"grant(s) to {', '.join(audiences)[:200] or 'no API'}"
+                ),
                 weight=0.3 if machine else 0.15,
             )
         )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from rich.console import Console, RenderableType
 from rich.panel import Panel
 from rich.table import Table
@@ -27,18 +29,17 @@ def _level(f: Finding) -> Text:
     )
 
 
-def print_table(
-    result: ScanResult, console: Console | None = None, verbose: bool = False, max_rows: int | None = None
-) -> None:
-    # Preflight every publication boundary before writing a single terminal
-    # byte. A cyclic or over-budget plugin diagnostic must not leave behind an
-    # apparently complete header and findings table followed by an exception.
-    stats = publication_stats(result)
-    for finding in result.findings:
-        finding.sanitize()
-    console = console or Console()
-    if not console.is_terminal and console.width < 140:
-        console = Console(width=160, file=console.file, force_terminal=False, color_system=None)
+def _stat_state(st: dict[str, Any]) -> str:
+    """The totals-line suffix for one publication-sanitized connector statistics record."""
+    if st["skipped"]:
+        return " (skipped)"
+    if st["incomplete"] or st["errors"]:
+        return " (incomplete)"
+    return " (cached)" if st["cached"] else ""
+
+
+def _header(result: ScanResult) -> Text:
+    """Completeness, totals by risk level and surface, and the shadow count."""
     s = result.summary()
     header = Text()
     if not result.complete:
@@ -53,12 +54,48 @@ def print_table(
         if n:
             header.append(f" {lvl} {n} ", style=_LEVEL_STYLE[lvl])
             header.append(" ")
-    header.append(
-        "  •  surfaces: " + ", ".join(f"{k} {v}" for k, v in sorted(s["by_surface"].items())), style="dim"
-    )
+    surfaces = ", ".join(f"{k} {v}" for k, v in sorted(s["by_surface"].items()))
+    header.append("  •  surfaces: " + surfaces, style="dim")
+    return header
+
+
+def _finding_cell(f: Finding, verbose: bool) -> Text:
+    """Title and resource, runtime activity and, when verbose, capabilities, risk and evidence."""
+    finding_cell = Text(terminal_text(f.title), style="bold")
+    finding_cell.append(f"\n{terminal_text(f.resource)}", style="dim")
+    activity = f.metadata.get("runtime_activity")
+    if isinstance(activity, dict):
+        suffix = "; production observed" if activity.get("production_observed") else ""
+        status = terminal_text(activity.get("status", "unknown"))
+        finding_cell.append(f"\ngateway: {status}{suffix}", style="cyan")
+    if verbose:
+        caps = ", ".join(f.capabilities)
+        if caps:
+            finding_cell.append(f"\ncapabilities: {terminal_text(caps)}", style="cyan")
+        factors = "; ".join(x.description for x in f.risk.factors if x.weight > 0)
+        if factors:
+            finding_cell.append(f"\nrisk: {terminal_text(factors)}", style="yellow")
+        for e in sorted(f.evidence, key=lambda e: -e.weight)[:3]:
+            location = f" ({terminal_text(e.location)})" if e.location else ""
+            finding_cell.append(f"\n  • {terminal_text(e.description)}{location}", style="dim")
+    return finding_cell
+
+
+def print_table(
+    result: ScanResult, console: Console | None = None, verbose: bool = False, max_rows: int | None = None
+) -> None:
+    # Preflight every publication boundary before writing a single terminal
+    # byte. A cyclic or over-budget plugin diagnostic must not leave behind an
+    # apparently complete header and findings table followed by an exception.
+    stats = publication_stats(result)
+    for finding in result.findings:
+        finding.sanitize()
+    console = console or Console()
+    if not console.is_terminal and console.width < 140:
+        console = Console(width=160, file=console.file, force_terminal=False, color_system=None)
     console.print(
         Panel(
-            header,
+            _header(result),
             title="ShadowScan",
             subtitle=Text(terminal_text(f"v{result.version} · {result.finished_at or ''}")),
             expand=False,
@@ -78,38 +115,16 @@ def print_table(
     rows = result.findings if max_rows is None else result.findings[:max_rows]
     for f in rows:
         tech = ", ".join(t.split(".", 1)[-1] for t in (f.frameworks + f.model_providers)[:5])
-        finding_cell = Text(terminal_text(f.title), style="bold")
-        finding_cell.append(f"\n{terminal_text(f.resource)}", style="dim")
-        activity = f.metadata.get("runtime_activity")
-        if isinstance(activity, dict):
-            suffix = "; production observed" if activity.get("production_observed") else ""
-            finding_cell.append(
-                f"\ngateway: {terminal_text(activity.get('status', 'unknown'))}{suffix}", style="cyan"
-            )
-        if verbose:
-            caps = ", ".join(f.capabilities)
-            if caps:
-                finding_cell.append(f"\ncapabilities: {terminal_text(caps)}", style="cyan")
-            factors = "; ".join(x.description for x in f.risk.factors if x.weight > 0)
-            if factors:
-                finding_cell.append(f"\nrisk: {terminal_text(factors)}", style="yellow")
-            for e in sorted(f.evidence, key=lambda e: -e.weight)[:3]:
-                finding_cell.append(
-                    f"\n  • {terminal_text(e.description)}"
-                    + (f" ({terminal_text(e.location)})" if e.location else ""),
-                    style="dim",
-                )
         cells: list[RenderableType] = [_level(f)]
         if result.inventory_size:
-            cells.append(
-                Text("SHADOW", style="bold red")
-                if f.shadow
-                else Text(terminal_text(f.registry_match or ""), style="green")
-            )
+            if f.shadow:
+                cells.append(Text("SHADOW", style="bold red"))
+            else:
+                cells.append(Text(terminal_text(f.registry_match or ""), style="green"))
         cells += [
             f.surface.value,
             f.kind.value,
-            finding_cell,
+            _finding_cell(f, verbose),
             Text(terminal_text(f.owner or "—")),
             f"{f.confidence:.2f}",
             Text(terminal_text(tech)),
@@ -130,23 +145,8 @@ def print_table(
         console.print("[bold yellow]Warnings:[/bold yellow]")
         for c, w in warns[:30]:
             console.print(Text(terminal_text(f"  {c}: {w}"), style="yellow"))
-    console.print(
-        Text(
-            terminal_text(
-                " · ".join(
-                    f"{st['connector']}: {st['objects_examined']} objects, {st['findings']} findings"
-                    + (
-                        " (skipped)"
-                        if st["skipped"]
-                        else " (incomplete)"
-                        if st["incomplete"] or st["errors"]
-                        else " (cached)"
-                        if st["cached"]
-                        else ""
-                    )
-                    for st in stats
-                )
-            ),
-            style="dim",
-        )
+    totals = " · ".join(
+        f"{st['connector']}: {st['objects_examined']} objects, {st['findings']} findings{_stat_state(st)}"
+        for st in stats
     )
+    console.print(Text(terminal_text(totals), style="dim"))

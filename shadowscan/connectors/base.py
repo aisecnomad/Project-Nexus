@@ -11,65 +11,51 @@ Every connector supports two execution modes:
   which makes connectors usable without credentials, reproducible and testable.
 
 ``analyze()`` turns raw records into findings and is shared by both modes.
+Reading and validating offline exports is implemented in
+:mod:`shadowscan.connectors.offline`; ``BaseConnector`` keeps thin methods
+under the names connectors override.
+
+``BaseConnector`` also declares the *engine hooks*: class-level capabilities
+the engine consults instead of special-casing connector names (per-root
+incremental caching, the scan-wide instance-credential approval, and the
+per-run identity key). Their defaults describe an ordinary connector.
 """
 
 from __future__ import annotations
 
-import csv
-import gzip
 import importlib
 import json
 import logging
 import os
-import stat
 import tempfile
 import time
-import zlib
 from _thread import LockType
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 from threading import Event
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NoReturn
 
-import yaml
-
+from shadowscan.connectors import offline as _offline
+from shadowscan.connectors.offline import OfflineInputBudget
 from shadowscan.models import Finding, ScanStats, Surface, now_iso
 from shadowscan.signatures import SignatureIndex, get_index
-from shadowscan.utils.files import NotRegularFileError, changed_since, open_confined_file
+from shadowscan.utils.files import changed_since
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize
-from shadowscan.utils.safe_json import strict_json_loads
-from shadowscan.utils.safe_yaml import YAMLResourceLimitError, strict_bounded_safe_load
 
 
 class ConnectorError(RuntimeError):
     """Raised when a connector cannot run at all (bad config, missing creds)."""
 
 
-_DEFAULT_MAX_INPUT_BYTES = 256 * 1024 * 1024
-_DEFAULT_MAX_INPUT_FILE_BYTES = 32 * 1024 * 1024
-_DEFAULT_MAX_INPUT_FILES = 10_000
-_MAX_OFFLINE_LINE_BYTES = 4 * 1024 * 1024
+# Historical names, still imported by connectors.
+_OfflineInputBudget = OfflineInputBudget
+_MAX_OFFLINE_LINE_BYTES = _offline.MAX_OFFLINE_LINE_BYTES
 
 
-@dataclass(slots=True)
-class _OfflineInputBudget:
-    max_bytes: int
-    max_files: int
-    bytes_read: int = 0
-    files_seen: int = 0
-    file_limit_warning_sent: bool = False
-
-    @property
-    def remaining_bytes(self) -> int:
-        return max(0, self.max_bytes - self.bytes_read)
-
-    def consume(self, count: int) -> bool:
-        if count < 0 or count > self.remaining_bytes:
-            return False
-        self.bytes_read += count
-        return True
+def _raise_connector_error(message: str) -> NoReturn:
+    raise ConnectorError(message)
 
 
 def _positive_limit(value: Any, name: str) -> int:
@@ -100,7 +86,7 @@ class ConnectorContext:
         cancelled: Event | None = None,
         publication_lock: LockType | None = None,
         gateway_identity_key: bytes | None = None,
-    ):
+    ) -> None:
         self.config: dict[str, Any] = dict(config or {})
         self.index: SignatureIndex = index or get_index()
         self.log = logger or logging.getLogger("shadowscan")
@@ -174,9 +160,8 @@ class ConnectorContext:
         try:
             # Use positional extraction: a short secret can also occur in a
             # wrapper key such as 'message', which the sanitizer must redact.
-            result: str = sanitize(
-                [{**self.config, **self._resolved_config}, msg], redact_short_secrets=True
-            )[1]
+            values = [{**self.config, **self._resolved_config}, msg]
+            result: str = sanitize(values, redact_short_secrets=True)[1]
             return result
         except SanitizationLimitError:
             if self.stats is not None:
@@ -233,8 +218,13 @@ class BaseConnector(ABC):
     # `connectors` command lists them after config_keys; a connector whose
     # offline input is a code checkout rather than an export overrides with {}.
     shared_config_keys: ClassVar[dict[str, str]] = {
-        "max_input_bytes": "offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB)",
-        "max_input_file_bytes": "offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB)",
+        "max_input_bytes": (
+            "offline: maximum expanded bytes read across all input files "
+            "(default 256 MiB, hard ceiling 512 MiB)"
+        ),
+        "max_input_file_bytes": (
+            "offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB)"
+        ),
         "max_input_files": "offline: maximum files read from a directory input (default 10,000)",
     }
     offline_formats: ClassVar[str] = "JSON / JSONL / YAML / CSV export"
@@ -246,22 +236,54 @@ class BaseConnector(ABC):
     # default: their env blocks are where secrets live.
     _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = False
 
-    def __init__(self, ctx: ConnectorContext):
+    # ------------------------------------------------------------ engine hooks
+    # Capabilities the engine consults instead of special-casing connector
+    # names; the defaults describe an ordinary connector.
+
+    # Jobs of a connector that sets this share one private key per scan run
+    # (ConnectorContext.gateway_identity_key): identical sources in a report
+    # get the same opaque identities, which separate runs cannot link.
+    uses_run_identity_key: ClassVar[bool] = False
+
+    @classmethod
+    def inherits_instance_credentials_approval(cls) -> bool:
+        """Whether the engine sets ``allow_instance_credentials`` from the scan options.
+
+        True for every cloud-surface connector, whether or not it documents
+        the key: the registry holds each ``cloud.*`` name, plugins included,
+        to that surface. Also true for any connector that documents the key
+        in ``config_keys``. The scan-wide approval then replaces any value in
+        the connector's own configuration.
+        """
+        return cls.surface == Surface.CLOUD or "allow_instance_credentials" in cls.config_keys
+
+    @classmethod
+    def cache_roots_separately(cls, roots: list[Any], root_ids: Any, *, labelled: bool) -> bool:
+        """Whether an incremental multi-root ``paths`` scan may run and be cached per root.
+
+        The engine then runs one job per root, so an unchanged repository is
+        reused while its sibling is rescanned. Raise ConnectorError for roots
+        that cannot be split: the engine runs the connector once instead, so
+        its own validation reports the scan as incomplete.
+        """
+        return False
+
+    def __init__(self, ctx: ConnectorContext) -> None:
         self.ctx = ctx
         self.index = ctx.index
         self.log = ctx.log
         self.max_input_bytes = min(
-            _positive_limit(ctx.get("max_input_bytes", _DEFAULT_MAX_INPUT_BYTES), "max_input_bytes"),
+            _positive_limit(ctx.get("max_input_bytes", _offline.DEFAULT_MAX_INPUT_BYTES), "max_input_bytes"),
             self._MAX_OFFLINE_TOTAL_BYTES,
         )
         self.max_input_file_bytes = min(
             _positive_limit(
-                ctx.get("max_input_file_bytes", _DEFAULT_MAX_INPUT_FILE_BYTES), "max_input_file_bytes"
+                ctx.get("max_input_file_bytes", _offline.DEFAULT_MAX_INPUT_FILE_BYTES), "max_input_file_bytes"
             ),
             self._MAX_OFFLINE_FILE_BYTES,
         )
         self.max_input_files = _positive_limit(
-            ctx.get("max_input_files", _DEFAULT_MAX_INPUT_FILES), "max_input_files"
+            ctx.get("max_input_files", _offline.DEFAULT_MAX_INPUT_FILES), "max_input_files"
         )
 
     # ----------------------------------------------------------------- modes
@@ -290,480 +312,74 @@ class BaseConnector(ABC):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         """Turn raw records into findings."""
 
-    _OFFLINE_SUFFIXES = {".json", ".jsonl", ".ndjson", ".yaml", ".yml", ".csv"}
-    _MAX_OFFLINE_FILE_BYTES = 64 * 1024 * 1024
-    _MAX_OFFLINE_TOTAL_BYTES = 512 * 1024 * 1024
-    _MAX_OFFLINE_ENTRIES = 200_000
-
-    def _offline_budget(self) -> _OfflineInputBudget:
-        return _OfflineInputBudget(self.max_input_bytes, self.max_input_files)
-
-    def _offline_files(self, path: str, suffixes: set[str] | None = None) -> Iterator[Path]:
-        """Find exports without traversing links; rejected inputs affect completeness."""
-        root = Path(path).expanduser().absolute()
-        suffixes = self._OFFLINE_SUFFIXES if suffixes is None else suffixes
-        try:
-            if any(part.is_symlink() for part in (root, *root.parents)):
-                raise ValueError("symlink input is not allowed")
-            mode = root.stat().st_mode
-        except (OSError, ValueError):
-            self.ctx.error(f"{self.name}: offline input is missing, inaccessible, or a symlink")
-            return
-        if stat.S_ISREG(mode):
-            yield root
-            return
-        if not stat.S_ISDIR(mode):
-            self.ctx.error(f"{self.name}: offline input must be a regular file or directory")
-            return
-        count = 0
-        files_seen = 0
-        found = False
-
-        def failed(_: OSError) -> None:
-            self.ctx.error(f"{self.name}: offline directory could not be read")
-
-        for directory, dirs, files in os.walk(root, followlinks=False, onerror=failed):
-            count += 1 + len(dirs) + len(files)
-            if count > self._MAX_OFFLINE_ENTRIES:
-                self.ctx.error(f"{self.name}: offline directory entry limit exceeded")
-                return
-            base = Path(directory)
-            kept = []
-            for name in sorted(dirs):
-                if (base / name).is_symlink():
-                    self.ctx.warn(f"{self.name}: offline input symlinks are skipped")
-                else:
-                    kept.append(name)
-            dirs[:] = kept
-            for name in sorted(files):
-                item = base / name
-                try:
-                    mode = item.lstat().st_mode
-                except OSError:
-                    failed(OSError())
-                    continue
-                if not stat.S_ISREG(mode):
-                    self.ctx.warn(f"{self.name}: offline input symlinks or special files are skipped")
-                    continue
-                if item.suffix.lower() in suffixes:
-                    found = True
-                    if files_seen >= self.max_input_files:
-                        self.ctx.warn(f"{self.name}: max_input_files ({self.max_input_files}) reached")
-                        return
-                    files_seen += 1
-                    yield item
-        if not found:
-            self.ctx.error(f"{self.name}: offline directory contains no supported export files")
-
-    def _read_offline_bytes(self, path: Path, budget: _OfflineInputBudget | None = None) -> bytes | None:
-        """Read one whole offline file through the confined opener.
-
-        The file is rejected as a whole when it exceeds the per-file cap or the
-        remaining aggregate budget. Without a budget the connector-wide
-        ``_offline_bytes_read`` counter plays the aggregate role and an
-        oversized file is an error rather than a skipped-file warning.
-        """
-        try:
-            with open_confined_file(path.expanduser().absolute(), label="offline input") as (stream, before):
-                used = budget.bytes_read if budget is not None else getattr(self, "_offline_bytes_read", 0)
-                remaining = (budget.max_bytes - used) if budget is not None else (self.max_input_bytes - used)
-                limit = min(
-                    self.max_input_file_bytes,
-                    remaining,
-                    self._MAX_OFFLINE_FILE_BYTES,
-                    self._MAX_OFFLINE_TOTAL_BYTES - used,
-                )
-
-                def oversized() -> None:
-                    if budget is None:
-                        raise ValueError("offline input exceeds the byte limit")
-                    limit_name = (
-                        "max_input_file_bytes"
-                        if self.max_input_file_bytes <= remaining
-                        else "max_input_bytes"
-                    )
-                    self.ctx.warn(f"{self.name}: {limit_name} reached; oversized offline input was skipped")
-
-                if before.st_size > limit:
-                    oversized()
-                    return None
-                raw = stream.read(limit + 1)
-                changed = changed_since(before, stream.fileno())
-            if budget is None:
-                self._offline_bytes_read = used + len(raw)
-            else:
-                budget.consume(len(raw))
-            if len(raw) > limit:
-                oversized()
-                return None
-            if changed:
-                raise ValueError("offline input changed while being read")
-            return raw
-        except (OSError, ValueError) as exc:
-            # Parser and OS exception strings may contain raw data or secret paths.
-            reason = str(exc) if isinstance(exc, ValueError) else "offline input could not be securely read"
-            self.ctx.error(f"{self.name}: {reason}")
-            return None
-
-    def _read_offline_text(self, path: Path, budget: _OfflineInputBudget | None = None) -> str | None:
-        raw = self._read_offline_bytes(path, budget)
-        if raw is None:
-            return None
-        try:
-            return raw.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            self.ctx.error(f"{self.name}: offline input is not valid UTF-8")
-            return None
-
-    def _iter_offline_files(
-        self, path: str, budget: _OfflineInputBudget, suffixes: set[str] | None = None
-    ) -> Iterator[Path]:
-        for source in self._offline_files(path, suffixes):
-            if budget.files_seen >= budget.max_files:
-                if not budget.file_limit_warning_sent:
-                    self.ctx.warn(f"{self.name}: max_input_files ({budget.max_files}) reached")
-                    budget.file_limit_warning_sent = True
-                return
-            budget.files_seen += 1
-            yield source
-
-    def _iter_bounded_lines(
-        self, path: Path, budget: _OfflineInputBudget, *, compressed: bool = False
-    ) -> Iterator[str]:
-        """Read UTF-8 lines with secure opens and per-file, aggregate, and line caps.
-
-        Only the per-file cap is checked before reading. The aggregate budget
-        is charged line by line, so records that precede the limit are yielded
-        even when the file as a whole would not fit.
-        """
-        try:
-            with open_confined_file(path.expanduser().absolute(), label="offline input") as (raw, before):
-                if before.st_size > min(self.max_input_file_bytes, self._MAX_OFFLINE_FILE_BYTES):
-                    self.ctx.warn(f"{self.name}: max_input_file_bytes ({self.max_input_file_bytes}) reached")
-                    return
-                stream = gzip.GzipFile(fileobj=raw, mode="rb") if compressed else raw
-                file_bytes = 0
-                try:
-                    while True:
-                        remaining = min(self.max_input_file_bytes - file_bytes, budget.remaining_bytes)
-                        read_size = min(_MAX_OFFLINE_LINE_BYTES + 1, remaining + 1)
-                        line = stream.readline(read_size)
-                        if not line:
-                            break
-                        if len(line) > _MAX_OFFLINE_LINE_BYTES:
-                            self.ctx.warn(
-                                f"{self.name}: max_input_line_bytes ({_MAX_OFFLINE_LINE_BYTES}) reached"
-                            )
-                            return
-                        if len(line) > remaining:
-                            limit_name = (
-                                "max_input_file_bytes"
-                                if self.max_input_file_bytes - file_bytes <= budget.remaining_bytes
-                                else "max_input_bytes"
-                            )
-                            self.ctx.warn(
-                                f"{self.name}: {limit_name} reached; remaining offline input was skipped"
-                            )
-                            return
-                        if not budget.consume(len(line)):
-                            self.ctx.warn(f"{self.name}: max_input_bytes ({budget.max_bytes}) reached")
-                            return
-                        file_bytes += len(line)
-                        try:
-                            yield line.decode("utf-8-sig")
-                        except UnicodeDecodeError:
-                            self.ctx.error(f"{self.name}: offline input is not valid UTF-8")
-                            return
-                finally:
-                    if compressed:
-                        stream.close()
-                if changed_since(before, raw.fileno()):
-                    self.ctx.error(f"{self.name}: offline input changed while being read")
-        except NotRegularFileError as exc:
-            self.ctx.warn(f"{self.name}: {exc}")
-        except (OSError, EOFError, gzip.BadGzipFile, ValueError, zlib.error) as exc:
-            detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-            self.ctx.warn(f"{self.name}: offline input could not be read ({detail})")
+    # --------------------------------------------------------- offline input
+    # Parsing and reading live in shadowscan.connectors.offline. These thin
+    # methods keep the names connectors override and tests replace; the
+    # offline functions call back through them.
+    _OFFLINE_SUFFIXES: ClassVar[set[str]] = set(_offline.OFFLINE_SUFFIXES)
+    _MAX_OFFLINE_FILE_BYTES: ClassVar[int] = _offline.MAX_OFFLINE_FILE_BYTES
+    _MAX_OFFLINE_TOTAL_BYTES: ClassVar[int] = _offline.MAX_OFFLINE_TOTAL_BYTES
+    _MAX_OFFLINE_ENTRIES: ClassVar[int] = _offline.MAX_OFFLINE_ENTRIES
+    _MAX_INVALID_LINE_ERRORS: ClassVar[int] = _offline.MAX_INVALID_LINE_ERRORS
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
         """Validate exports under shared input budgets and preserve valid records."""
-        budget = self._offline_budget()
-        for source in self._iter_offline_files(path, budget, self._OFFLINE_SUFFIXES):
-            yield from self._load_offline_file(source, budget)
+        return _offline.load_offline(self, path)
 
-    def _load_offline_file(self, source: Path, budget: _OfflineInputBudget) -> Iterator[dict[str, Any]]:
-        suffix = source.suffix.lower()
-        report = self._bounded_diagnostics(lambda message: self.ctx.error(f"{self.name}: {message}"))
+    def _offline_budget(self) -> OfflineInputBudget:
+        return OfflineInputBudget(self.max_input_bytes, self.max_input_files)
 
-        if suffix in {".jsonl", ".ndjson"}:
-            saw_record = False
-            for number, line in enumerate(self._iter_bounded_lines(source, budget), 1):
-                if not line.strip():
-                    continue
-                saw_record = True
-                try:
-                    data = strict_json_loads(line)
-                except (json.JSONDecodeError, RecursionError, ValueError):
-                    report(f"invalid JSON record at line {number}")
-                    continue
-                yield from self._unwrap(data, lambda message: report(f"line {number}: {message}"))
-            if not saw_record:
-                report("empty offline export; use [] for an empty inventory")
-            return
-        if suffix == ".csv":
-            try:
-                reader = csv.DictReader(self._iter_bounded_lines(source, budget), strict=True)
-                fields = reader.fieldnames
-                if (
-                    not fields
-                    or any(not field.strip() for field in fields)
-                    or len({field.strip().casefold() for field in fields}) != len(fields)
-                ):
-                    report("CSV export needs unique, nonempty column names")
-                    return
-                for rec in reader:
-                    if None in rec or any(value is None for value in rec.values()):
-                        report(f"CSV row at line {reader.line_num} has the wrong number of columns")
-                        continue
-                    if self._is_csv_provider_error(rec):
-                        report(
-                            f"provider error response in CSV row at line {reader.line_num}; coverage incomplete"
-                        )
-                        continue
-                    yield rec
-            except csv.Error:
-                report("invalid CSV export")
-            return
-        text = self._read_offline_text(source, budget)
-        if text is None:
-            return
-        if not text.strip():
-            report("empty offline export; use [] for an empty inventory")
-            return
-        if suffix in {".yaml", ".yml"}:
-            try:
-                data = strict_bounded_safe_load(text)
-            except YAMLResourceLimitError:
-                report("YAML safety limit exceeded")
-                return
-            except (yaml.YAMLError, RecursionError, ValueError):
-                report("invalid YAML export")
-                return
-            yield from self._unwrap(data, report)
-            return
-        try:
-            data = strict_json_loads(text)
-        except json.JSONDecodeError:
-            yield from self._json_lines(text, report)
-        except (RecursionError, ValueError):
-            report("invalid JSON export")
-        else:
-            yield from self._unwrap(data, report)
+    def _offline_files(self, path: str, suffixes: AbstractSet[str] | None = None) -> Iterator[Path]:
+        return _offline.offline_files(self, path, suffixes)
 
-    _MAX_INVALID_LINE_ERRORS = 20
+    def _iter_offline_files(
+        self, path: str, budget: OfflineInputBudget, suffixes: AbstractSet[str] | None = None
+    ) -> Iterator[Path]:
+        return _offline.iter_offline_files(self, path, budget, suffixes)
+
+    def _read_offline_bytes(self, path: Path, budget: OfflineInputBudget | None = None) -> bytes | None:
+        # Passed from here so this module's changed_since stays the one seam
+        # tests patch to simulate a file rewritten during either reader.
+        return _offline.read_offline_bytes(self, path, budget, changed=changed_since)
+
+    def _read_offline_text(self, path: Path, budget: OfflineInputBudget | None = None) -> str | None:
+        return _offline.read_offline_text(self, path, budget)
+
+    def _iter_bounded_lines(
+        self, path: Path, budget: OfflineInputBudget, *, compressed: bool = False
+    ) -> Iterator[str]:
+        return _offline.iter_bounded_lines(self, path, budget, compressed=compressed, changed=changed_since)
+
+    def _load_offline_file(self, source: Path, budget: OfflineInputBudget) -> Iterator[dict[str, Any]]:
+        return _offline.load_offline_file(self, source, budget)
 
     @classmethod
     def _bounded_diagnostics(cls, report: Callable[[str], None]) -> Callable[[str], None]:
-        """Bound diagnostics per export while continuing to inspect later records."""
-        errors = 0
-
-        def limited(message: str) -> None:
-            nonlocal errors
-            errors += 1
-            if errors <= cls._MAX_INVALID_LINE_ERRORS:
-                report(message)
-            elif errors == cls._MAX_INVALID_LINE_ERRORS + 1:
-                report("further invalid records in this export are not listed individually")
-
-        return limited
+        return _offline.bounded_diagnostics(report, cls._MAX_INVALID_LINE_ERRORS)
 
     @classmethod
     def _json_lines(cls, text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:
-        lines = text.splitlines()
-        first = next((line.strip() for line in lines if line.strip()), "")
-        if first in {"[", "{"}:
-            # A broken pretty-printed document is not a JSONL stream. Do not
-            # amplify a single parse failure into one diagnostic per line.
-            report("invalid JSON export")
-            return
-        report = cls._bounded_diagnostics(report)
-        for number, line in enumerate(lines, 1):
-            if not line.strip():
-                continue
-            try:
-                data = strict_json_loads(line)
-            except (json.JSONDecodeError, RecursionError, ValueError):
-                report(f"invalid JSON record at line {number}")
-                continue
-            if not isinstance(data, dict):
-                report(f"line {number}: JSONL records must be objects")
-                continue
-            yield from cls._unwrap(data, lambda message: report(f"line {number}: {message}"))
+        return _offline.json_lines(cls, text, report)
 
     @staticmethod
     def _csv_records(text: str, report: Callable[[str], None]) -> Iterator[dict[str, Any]]:
-        import io
-
-        try:
-            reader = csv.DictReader(io.StringIO(text), strict=True)
-            fields = reader.fieldnames
-            if (
-                not fields
-                or any(not field.strip() for field in fields)
-                or len({field.strip().casefold() for field in fields}) != len(fields)
-            ):
-                report("CSV export needs unique, nonempty column names")
-                return
-            for rec in reader:
-                if None in rec or any(value is None for value in rec.values()):
-                    report(f"CSV row at line {reader.line_num} has the wrong number of columns")
-                    continue
-                if BaseConnector._is_csv_provider_error(rec):
-                    report(
-                        f"provider error response in CSV row at line {reader.line_num}; coverage incomplete"
-                    )
-                    continue
-                yield rec
-        except csv.Error:
-            report("invalid CSV export")
+        return _offline.csv_records(text, report)
 
     @staticmethod
     def _is_csv_provider_error(record: dict[str, str]) -> bool:
-        """Recognize metadata-only failures without treating log event rows as failures."""
-        fields: dict[str, str] = {}
-        for key, value in record.items():
-            normalized = key.strip().casefold()
-            if normalized in fields:
-                return True
-            fields[normalized] = value
-        if not fields.keys() <= {
-            "id",
-            "name",
-            "error",
-            "ok",
-            "code",
-            "message",
-            "status",
-            "requestid",
-            "request_id",
-            "traceid",
-        }:
-            return False
-        return bool(fields.get("error", "").strip()) or fields.get("ok", "").strip().lower() == "false"
+        return _offline.is_csv_provider_error(record)
 
     @staticmethod
     def _valid_record(data: Any) -> bool:
-        """Validate structural shape without echoing data; reject YAML alias cycles."""
-        if not isinstance(data, dict) or not data:
-            return False
-        active: set[int] = set()
-        remaining = 100_000
-
-        def check(value: Any, depth: int = 0) -> bool:
-            nonlocal remaining
-            remaining -= 1
-            if depth > 64 or remaining < 0:
-                return False
-            if not isinstance(value, (dict, list)):
-                return not isinstance(value, (set, bytes))
-            identity = id(value)
-            if identity in active:
-                return False
-            active.add(identity)
-            try:
-                if isinstance(value, dict):
-                    return all(isinstance(key, str) and check(item, depth + 1) for key, item in value.items())
-                return all(check(item, depth + 1) for item in value)
-            finally:
-                active.remove(identity)
-
-        return check(data)
+        return _offline.valid_record(data)
 
     @staticmethod
     def _is_native_offline_record(data: dict[str, Any]) -> bool:
-        # Page IDs, labels and provider-specific ``kind`` values are not
-        # enough to turn a collection into one resource.  Explicit resource
-        # type fields can identify a native record with nested collections.
-        collections = {"items", "records", "value", "data", "results", "resources", "logEvents"}
-        pagination = {
-            "has_more",
-            "IsTruncated",
-            "next_page",
-            "nextPage",
-            "next_page_token",
-            "nextPageToken",
-            "nextToken",
-            "NextToken",
-            "NextMarker",
-            "@odata.nextLink",
-            "nextLink",
-            "nextCursor",
-            "next_cursor",
-            "response_metadata",
-        }
-        if collections.intersection(data) and pagination.intersection(data):
-            # A page can carry an ID, resource-looking type and continuation.
-            # Never let those labels bypass the envelope pagination check.
-            return False
-        if collections.intersection(data) and (
-            data.get("type") in ("list", "page", "collection")
-            or data.get("object") in ("list", "page", "collection")
-        ):
-            return False
-        if BaseConnector._is_error_record(data):
-            if {"items", "records", "value", "results", "resources", "logEvents"}.intersection(data):
-                return False
-            payload = data.get("data")
-            if isinstance(payload, list) and any(
-                isinstance(item, dict) and (collections | pagination).intersection(item) for item in payload
-            ):
-                return False
-            if data.get("object") == "error" or data.get("type") == "error" or data.get("_kind") == "error":
-                return False
-            kind = data.get("_kind")
-            if kind == "cloudtrail-event" and data.get("eventName") and data.get("eventTime"):
-                return True
-            if kind == "audit-event" and data.get("principal") and data.get("timestamp"):
-                return True
-            if (
-                kind == "integration_log"
-                and data.get("change_type")
-                and (data.get("app_id") or data.get("service_id"))
-            ):
-                return True
-            # A known log event can legitimately describe an upstream error.
-            # Preserve it only when its nested payload has event attributes;
-            # an error with page records remains a failed partial export.
-            event_fields = {"attempt", "timestamp", "message", "status", "operation", "duration_ms"}
-            return (
-                "id" in data
-                and isinstance(data.get("error"), dict)
-                and isinstance(payload, list)
-                and bool(payload)
-                and all(
-                    isinstance(item, dict)
-                    and bool(event_fields.intersection(item))
-                    and not collections.intersection(item)
-                    and not pagination.intersection(item)
-                    for item in payload
-                )
-            )
-        if (
-            "items" in data or "records" in data or ("value" in data and isinstance(data["value"], list))
-        ) and not (
-            {"_kind", "resource", "resourceId", "arn"}.intersection(data)
-            or ("type" in data and data["type"] not in ("list", "page", "collection"))
-            or data.get("object") not in (None, "list", "page", "collection")
-        ):
-            return False
-        identity_keys = {"_id", "_kind", "name", "arn", "type", "kind", "resource", "resourceId"}
-        if identity_keys.intersection(data) or data.get("object") not in (None, "list", "page"):
-            return True
-        return "id" in data
+        return _offline.is_native_offline_record(data)
 
     @staticmethod
     def _is_error_record(data: dict[str, Any]) -> bool:
-        return "error" in data or bool(data.get("errors")) or data.get("ok") is False
+        return _offline.is_error_record(data)
 
     @staticmethod
     def _record_fields_valid(
@@ -774,151 +390,18 @@ class BaseConnector(ABC):
         arrays: tuple[str, ...] = (),
         required: tuple[str, ...] = (),
     ) -> bool:
-        """Check fields consumed by a provider without disclosing rejected values."""
-        if not isinstance(data, dict) or BaseConnector._is_error_record(data):
-            return False
-        if any(not isinstance(data.get(key), str) or not data[key].strip() for key in required):
-            return False
-        for fields, expected in ((strings, str), (mappings, dict), (arrays, list)):
-            if any(data.get(key) is not None and not isinstance(data[key], expected) for key in fields):
-                return False
-        return True
+        return _offline.record_fields_valid(
+            data, strings=strings, mappings=mappings, arrays=arrays, required=required
+        )
 
     @staticmethod
     def _offline_pagination_issue(data: dict[str, Any]) -> str | None:
-        """Reject partial export envelopes without disclosing opaque cursors.
-
-        Slack nests its continuation cursor under response_metadata; AWS also
-        signals truncation separately from its marker. Empty result arrays do
-        not establish that either provider has reached the end of a collection.
-        Call only for collection envelopes, never arbitrary resource fields.
-        """
-        for flag in ("has_more", "IsTruncated"):
-            if flag in data and not isinstance(data[flag], bool):
-                return "offline export has invalid pagination metadata"
-        metadata = data.get("response_metadata", {})
-        if not isinstance(metadata, dict):
-            return "offline export has invalid pagination metadata"
-        string_cursors = (
-            "next_page_token",
-            "nextPageToken",
-            "nextToken",
-            "NextToken",
-            "NextMarker",
-            "@odata.nextLink",
-            "nextLink",
-            "nextCursor",
-            "next_cursor",
-        )
-        for key in string_cursors:
-            cursor = data.get(key)
-            if cursor is not None and not isinstance(cursor, str):
-                return "offline export has invalid pagination metadata"
-        cursor = metadata.get("next_cursor")
-        if cursor is not None and not isinstance(cursor, str):
-            return "offline export has invalid pagination metadata"
-        for key in ("next_page", "nextPage"):
-            page = data.get(key)
-            # Providers use either an opaque link/token or a positive page
-            # number. Falsey containers/booleans are malformed, not a proof
-            # that collection reached its terminal page.
-            if page is not None and not (isinstance(page, str) or (type(page) is int and page > 0)):
-                return "offline export has invalid pagination metadata"
-        keys = (
-            "has_more",
-            "IsTruncated",
-            "next_page",
-            "nextPage",
-            *string_cursors,
-        )
-        if any(data.get(key) for key in keys) or metadata.get("next_cursor"):
-            return "offline export contains an uncollected next page"
-        return None
+        return _offline.offline_pagination_issue(data)
 
     @classmethod
     def _unwrap(cls, data: Any, on_error: Callable[[str], None] | None = None) -> Iterator[dict[str, Any]]:
-        """Accept records or a common envelope, rejecting invalid shapes explicitly.
-
-        Identified native records keep nested fields such as data/results intact.
-        An envelope containing more than one collection is ambiguous, not empty.
-        """
-
-        def failed(message: str) -> None:
-            if on_error is None:
-                raise ConnectorError(message)
-            on_error(message)
-
-        wrappers = {
-            "records",
-            "items",
-            "value",
-            "data",
-            "results",
-            "resources",
-            "logs",
-            "entries",
-            "plugins",
-            "installations",
-            "apps",
-            "users",
-            "members",
-            "workflows",
-            "scenarios",
-            "aiAgents",
-            "teamsApps",
-            "servicePrincipals",
-            "clients",
-            "tokens",
-            "agents",
-            "bots",
-            "flows",
-            "Records",
-            "logEvents",
-            "hits",
-        }
-        wrappers.update(cls._OFFLINE_COLLECTION_KINDS)
-        record_kind: str | None = None
-        if isinstance(data, dict):
-            # Lists supplied as records are never recursively unwrapped. Direct
-            # single-record exports require the same protection from field collisions.
-            native = cls._is_native_offline_record(data)
-            if not native and cls._is_error_record(data):
-                failed("provider error response in offline export; coverage is incomplete")
-                if not wrappers.intersection(data):
-                    return
-            keys = wrappers.intersection(data) if not native else set()
-            if len(keys) > 1:
-                failed("ambiguous export envelope contains multiple record collections")
-                return
-            if keys:
-                pagination_issue = cls._offline_pagination_issue(data)
-                if pagination_issue:
-                    failed(pagination_issue)
-                key = next(iter(keys))
-                record_kind = cls._OFFLINE_COLLECTION_KINDS.get(key)
-                collection = data[key]
-                if not isinstance(collection, list):
-                    failed("export envelope record collection must be an array")
-                    return
-                data = collection
-            else:
-                data = [data]
-        if not isinstance(data, list):
-            failed("offline export must contain an object or an array of objects")
-            return
-        for number, item in enumerate(data, 1):
-            if not BaseConnector._valid_record(item):
-                failed(f"invalid export record {number}; expected a nonempty object with string keys")
-                continue
-            if cls._is_error_record(item) and not cls._is_native_offline_record(item):
-                if wrappers.intersection(item):
-                    # A failed page embedded in an export can still contain
-                    # observed records.  Keep them, but never mark it complete.
-                    yield from cls._unwrap(item, on_error)
-                else:
-                    failed("provider error response in offline export; coverage is incomplete")
-                continue
-            yield {**item, "_kind": record_kind} if record_kind else item
+        """Accept records or a common envelope; without ``on_error`` a rejection raises ConnectorError."""
+        return _offline.unwrap(cls, data, on_error if on_error is not None else _raise_connector_error)
 
     # ------------------------------------------------------------------- run
     def _tee(self, records: Iterable[dict[str, Any]], path: str) -> Iterator[dict[str, Any]]:

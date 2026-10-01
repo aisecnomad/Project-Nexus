@@ -259,7 +259,8 @@ def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[s
             reasons.append(f"{label} scan is incomplete or lacks completion metadata")
         if not _identity_attested(report):
             reasons.append(
-                f"{label} finding identity schema is legacy or unsupported; collect a fresh baseline after upgrade"
+                f"{label} finding identity schema is legacy or unsupported; "
+                "collect a fresh baseline after upgrade"
             )
     if _complete(baseline) and _complete(current):
         if sorted(s["connector"] for s in baseline["stats"]) != sorted(

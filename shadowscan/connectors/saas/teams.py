@@ -32,14 +32,17 @@ class TeamsConnector(BaseConnector):
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "microsoft-teams"
     description: ClassVar[str] = (
-        "Teams apps (custom + store) with bots, message extensions and Copilot agents, plus their installations."
+        "Teams apps (custom + store) with bots, message extensions and Copilot agents, plus their "
+        "installations."
     )
     config_keys: ClassVar[dict[str, str]] = {
         "tenant_id": "env AZURE_TENANT_ID",
         "client_id": "env AZURE_CLIENT_ID",
         "client_secret": "env AZURE_CLIENT_SECRET",
         "access_token": "pre-issued Graph token (env GRAPH_ACCESS_TOKEN)",
-        "include_store": "also list store apps in the catalog (default false; installations always inspected)",
+        "include_store": (
+            "also list store apps in the catalog (default false; installations always inspected)"
+        ),
         "max_teams": "cap on teams whose installed apps are enumerated (default 300)",
         "input": "offline: JSON export of teamsApps / installedApps",
     }
@@ -123,7 +126,8 @@ class TeamsConnector(BaseConnector):
                 elif existing != rec and app_id not in conflicting_apps:
                     conflicting_apps.add(app_id)
                     self.ctx.warn(
-                        "saas.microsoft-teams: conflicting Teams app records; app identity coverage incomplete"
+                        "saas.microsoft-teams: conflicting Teams app records; "
+                        "app identity coverage incomplete"
                     )
             else:
                 app = rec.get("teamsApp") or {}
@@ -286,7 +290,11 @@ class TeamsConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="teams:app",
-                description=f"{app.get('distributionMethod') or 'unknown'} app '{name}' v{latest.get('version') or '?'}{' with bot ' + str(bot.get('id')) if bot else ''}; installed in {len(installs)} team(s); RSC permissions: {', '.join(perms) or 'none'}",
+                description=(
+                    f"{app.get('distributionMethod') or 'unknown'} app '{name}' "
+                    f"v{latest.get('version') or '?'}{' with bot ' + str(bot.get('id')) if bot else ''}; "
+                    f"installed in {len(installs)} team(s); RSC permissions: {', '.join(perms) or 'none'}"
+                ),
                 weight=0.35 if bot else 0.15,
             )
         )

@@ -62,7 +62,8 @@ def test_remote_clone_over_observed_limit_uses_incomplete_api_fallback(
             max_bytes=max_bytes,
         )
 
-    monkeypatch.setattr(f"{cls.__module__}.run_bounded_clone", write_instead_of_git)
+    # GitHub and GitLab share the clone in the remote-repository base connector.
+    monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", write_instead_of_git)
     monkeypatch.setattr(connector, "_fetch_via_api", lambda repo, tmp: tmp)
     fetch = connector._fetch_repo if cls is GitHubConnector else connector._fetch
     assert fetch(record, str(tmp_path)) == str(tmp_path)

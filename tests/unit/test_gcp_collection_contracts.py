@@ -493,3 +493,106 @@ def test_gcp_local_credentials_refresh_only_reaches_public_https(index, monkeypa
     monkeypatch.setattr(gcp_module, "validate_url", checked)
     assert request("https://sts.googleapis.com/v1/token", method="POST") == "sent"
     checked.assert_called_once_with("https://sts.googleapis.com/v1/token", allow_private=False)
+
+
+def stats_context(index, **config):
+    ctx = ConnectorContext(config=config, index=index)
+    ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
+    return ctx
+
+
+@pytest.mark.parametrize("keys", [None, [], {"error": {}}, {"keys": None}, {"keys": [1]}])
+def test_gcp_unknown_key_inventory_is_not_zero_keys(index, keys):
+    connector = GcpConnector(stats_context(index, projects="project-one"))
+    account = {
+        "name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com",
+        "email": "crew@project-one.iam.gserviceaccount.com",
+        "displayName": "n8n agent runner",
+    }
+    connector._pages = lambda url, *a, **kw: iter([account]) if url.endswith("/serviceAccounts") else iter([])
+    connector._get = Mock(return_value=keys)
+    connector.http = Mock()
+    connector.http.post_json.return_value = {"bindings": []}
+    records = list(connector._collect_project("project-one"))
+    record = next(r for r in records if r["_kind"] == "service-account")
+    assert record["user_managed_keys"] is None and record["key_coverage"] == "unknown"
+    finding = connector._h_service_account(record)
+    assert finding is not None and finding.metadata["keys"] is None
+    assert finding.metadata["key_coverage"] == "unknown"
+    assert any("unknown user-managed key inventory" in evidence.description for evidence in finding.evidence)
+    assert connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("keys,count", [({}, 0), ({"keys": []}, 0), ({"keys": [{"name": "key-one"}]}, 1)])
+def test_gcp_observed_key_inventory_keeps_true_count(index, keys, count):
+    connector = GcpConnector(stats_context(index))
+    account = {
+        "name": "projects/project-one/serviceAccounts/crew@project-one.iam.gserviceaccount.com",
+        "displayName": "CrewAI agent runner",
+    }
+    connector._pages = lambda url, *a, **kw: iter([account]) if url.endswith("/serviceAccounts") else iter([])
+    connector._get = Mock(return_value=keys)
+    connector.http = Mock()
+    connector.http.post_json.return_value = {"bindings": []}
+    record = next(r for r in connector._collect_project("project-one") if r["_kind"] == "service-account")
+    assert record["user_managed_keys"] == count and record["key_coverage"] == "observed"
+    assert not connector.ctx.stats.incomplete
+
+
+# Live provider response shapes, without cloud credentials.
+def test_gcp_repeated_pagination_token_preserves_partial_data_but_marks_incomplete(index):
+    ctx = stats_context(index)
+    connector = GcpConnector(ctx)
+    connector.http = Mock()
+    connector.http.get_json.side_effect = [
+        {"items": [{"id": "first"}], "nextPageToken": "same"},
+        {"items": [{"id": "second"}], "nextPageToken": "same"},
+    ]
+    assert [item["id"] for item in connector._pages("https://example.googleapis.com/v1/items", "items")] == [
+        "first",
+        "second",
+    ]
+    assert connector.http.get_json.call_count == 2
+    assert ctx.stats.incomplete
+
+
+def test_gcp_malformed_continuation_keeps_observed_resources_without_leaking_payload(index):
+    ctx = stats_context(index)
+    connector = GcpConnector(ctx)
+    connector.http = Mock()
+    secret = "sk-proj-" + "x" * 40
+    connector.http.get_json.side_effect = [
+        {"items": [{"id": "observed-agent"}], "nextPageToken": "next"},
+        {"items": secret},  # malformed successful response on the next page
+    ]
+
+    records = list(connector._pages("https://example.googleapis.com/v1/agents", "items"))
+
+    assert records == [{"id": "observed-agent"}]
+    assert connector.http.get_json.call_count == 2
+    assert ctx.stats.incomplete
+    assert any("invalid items page" in warning for warning in ctx.stats.warnings)
+    assert secret not in str(ctx.stats.warnings)
+
+
+def test_gcp_page_cap_marks_incomplete(index, monkeypatch):
+    monkeypatch.setattr("shadowscan.connectors.cloud.gcp.MAX_LIST_PAGES", 2)
+    ctx = stats_context(index)
+    connector = GcpConnector(ctx)
+    connector.http = Mock()
+    connector.http.get_json.side_effect = [
+        {"items": [{"id": "first"}], "nextPageToken": "t1"},
+        {"items": [{"id": "second"}], "nextPageToken": "t2"},
+    ]
+    assert len(list(connector._pages("https://example.googleapis.com/v1/items", "items"))) == 2
+    assert connector.http.get_json.call_count == 2
+    assert ctx.stats.incomplete
+
+
+def test_gcp_suppressed_rate_limit_does_not_report_clean_inventory(index):
+    ctx = stats_context(index)
+    connector = GcpConnector(ctx)
+    connector.http = Mock()
+    connector.http.get_json.side_effect = HttpError(429, "https://example.googleapis.com/v1/items")
+    assert list(connector._pages("https://example.googleapis.com/v1/items", "items")) == []
+    assert ctx.stats.incomplete

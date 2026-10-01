@@ -173,7 +173,10 @@ class ZoomConnector(BaseConnector):
         users = app.get("installed_users_count")
         if users is None:
             users = app.get("users_count")
-        description = f"{source} app '{name}' ({app.get('app_usage') or app.get('usage') or 'unknown'} usage); scopes {', '.join(scopes)[:300] or 'unknown'}"
+        description = (
+            f"{source} app '{name}' ({app.get('app_usage') or app.get('usage') or 'unknown'} usage); scopes "
+            f"{', '.join(scopes)[:300] or 'unknown'}"
+        )
         if users is not None:
             description += f"; {users} reported users"
         f.add_evidence(Evidence(signal="zoom:app", description=description, weight=0.3))

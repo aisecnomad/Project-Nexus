@@ -35,7 +35,8 @@ QUERIES: dict[str, tuple[str, str]] = {
     # kind: (api, soql)
     "BotDefinition": (
         "data",
-        "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate, CreatedBy.Name, LastModifiedBy.Name FROM BotDefinition",
+        "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate, CreatedBy.Name, "
+        "LastModifiedBy.Name FROM BotDefinition",
     ),
     "BotVersion": (
         "data",
@@ -43,23 +44,28 @@ QUERIES: dict[str, tuple[str, str]] = {
     ),
     "GenAiPlannerDefinition": (
         "tooling",
-        "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate, CreatedBy.Name FROM GenAiPlannerDefinition",
+        "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate, CreatedBy.Name "
+        "FROM GenAiPlannerDefinition",
     ),
     "GenAiPluginDefinition": (
         "tooling",
-        "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate FROM GenAiPluginDefinition",
+        "SELECT Id, DeveloperName, MasterLabel, Description, CreatedDate, LastModifiedDate FROM "
+        "GenAiPluginDefinition",
     ),
     "GenAiFunctionDefinition": (
         "tooling",
-        "SELECT Id, DeveloperName, MasterLabel, Description, InvocationTarget, InvocationTargetType, CreatedDate FROM GenAiFunctionDefinition",
+        "SELECT Id, DeveloperName, MasterLabel, Description, InvocationTarget, InvocationTargetType, "
+        "CreatedDate FROM GenAiFunctionDefinition",
     ),
     "GenAiPromptTemplate": (
         "tooling",
-        "SELECT Id, DeveloperName, MasterLabel, Description, Type, CreatedDate, LastModifiedDate, CreatedBy.Name FROM GenAiPromptTemplate",
+        "SELECT Id, DeveloperName, MasterLabel, Description, Type, CreatedDate, LastModifiedDate, "
+        "CreatedBy.Name FROM GenAiPromptTemplate",
     ),
     "ConnectedApplication": (
         "data",
-        "SELECT Id, Name, CreatedDate, LastModifiedDate, CreatedBy.Name, OptionsAllowAdminApprovedUsersOnly, OptionsRefreshTokenValidityMetric, MobileSessionTimeout FROM ConnectedApplication",
+        "SELECT Id, Name, CreatedDate, LastModifiedDate, CreatedBy.Name, OptionsAllowAdminApprovedUsersOnly, "
+        "OptionsRefreshTokenValidityMetric, MobileSessionTimeout FROM ConnectedApplication",
     ),
     # Token values are never read by the analysis; do not request them.
     "OauthToken": (
@@ -68,7 +74,8 @@ QUERIES: dict[str, tuple[str, str]] = {
     ),
     "FlowDefinitionView": (
         "data",
-        "SELECT Id, ApiName, Label, Description, ProcessType, TriggerType, IsActive, ActiveVersionId, LastModifiedDate, LastModifiedBy FROM FlowDefinitionView WHERE IsActive = true",
+        "SELECT Id, ApiName, Label, Description, ProcessType, TriggerType, IsActive, ActiveVersionId, "
+        "LastModifiedDate, LastModifiedBy FROM FlowDefinitionView WHERE IsActive = true",
     ),
 }
 
@@ -334,7 +341,10 @@ class SalesforceConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="salesforce:bot",
-                description=f"BotDefinition '{name}' ({bot.get('DeveloperName')}) with {len(active)} active version(s) of {len(versions)}",
+                description=(
+                    f"BotDefinition '{name}' ({bot.get('DeveloperName')}) with {len(active)} active "
+                    f"version(s) of {len(versions)}"
+                ),
                 weight=0.9,
                 signature="platform.salesforce-agentforce",
             )
@@ -377,7 +387,10 @@ class SalesforceConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="salesforce:genai-planner",
-                description=f"GenAiPlannerDefinition '{name}'; org has {len(plugins)} topic(s) (GenAiPlugin) and {len(functions)} action(s) (GenAiFunction)",
+                description=(
+                    f"GenAiPlannerDefinition '{name}'; org has {len(plugins)} topic(s) (GenAiPlugin) and "
+                    f"{len(functions)} action(s) (GenAiFunction)"
+                ),
                 weight=0.95,
                 signature="platform.salesforce-agentforce",
             )
@@ -420,10 +433,11 @@ class SalesforceConnector(BaseConnector):
             account=self.instance or None,
         )
         f.add_framework("platform.salesforce-agentforce")
+        labels = ", ".join(str(t.get("MasterLabel") or t.get("DeveloperName")) for t in templates[:10])
         f.add_evidence(
             Evidence(
                 signal="salesforce:prompt-templates",
-                description=f"{len(templates)} GenAiPromptTemplate(s): {', '.join(str(t.get('MasterLabel') or t.get('DeveloperName')) for t in templates[:10])}",
+                description=f"{len(templates)} GenAiPromptTemplate(s): {labels}",
                 weight=0.6,
                 signature="platform.salesforce-agentforce",
             )
@@ -463,7 +477,10 @@ class SalesforceConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="salesforce:flow",
-                description=f"{rec.get('ProcessType')} flow (trigger {rec.get('TriggerType')}) whose name/description references AI: {truncate(text, 160)}",
+                description=(
+                    f"{rec.get('ProcessType')} flow (trigger {rec.get('TriggerType')}) whose "
+                    f"name/description references AI: {truncate(text, 160)}"
+                ),
                 weight=0.4,
             )
         )

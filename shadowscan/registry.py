@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import csv
 import fnmatch
-import json
 import re
 from collections import OrderedDict
 from collections.abc import Sequence
@@ -47,7 +46,7 @@ from shadowscan.utils.identity import (
     requires_card_account_scope,
 )
 from shadowscan.utils.redaction import REDACTED, sanitize_text
-from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
+from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.safe_yaml import strict_bounded_safe_load_all
 
 NAME_FIELDS = (
@@ -71,6 +70,18 @@ NAME_FIELDS = (
 _MAX_NAME_PATTERNS = 4096
 
 
+def _has_valid_account_scope(finding: Finding) -> bool:
+    """Whether the finding's own account/resource pairing is internally consistent.
+
+    Shared by ``Inventory.match`` (which also reports which specific check
+    failed) and ``card_stub_for`` (which only needs the yes/no answer before
+    deciding whether a generated card may bind account/resource evidence).
+    """
+    return has_aws_account_scope(
+        finding.provider, finding.account, finding.resource
+    ) and has_google_workspace_account_scope(finding.provider, finding.account)
+
+
 def _has_usable_resource_identity(finding: Finding) -> bool:
     return isinstance(finding.resource, str) and bool(finding.resource) and REDACTED not in finding.resource
 
@@ -82,18 +93,6 @@ def _has_usable_scope_identity(finding: Finding) -> bool:
         value is None or (isinstance(value, str) and REDACTED not in value)
         for value in (finding.provider, finding.account, finding.region)
     )
-
-
-def _has_valid_account_scope(finding: Finding) -> bool:
-    """Whether the finding's own account/resource pairing is internally consistent.
-
-    Shared by ``Inventory.match`` (which also reports which specific check
-    failed) and ``card_stub_for`` (which only needs the yes/no answer before
-    deciding whether a generated card may bind account/resource evidence).
-    """
-    return has_aws_account_scope(
-        finding.provider, finding.account, finding.resource
-    ) and has_google_workspace_account_scope(finding.provider, finding.account)
 
 
 def _meta_names(finding: Finding) -> set[str]:
@@ -194,7 +193,10 @@ class Inventory:
                 docs = [strict_json_loads(text)]
             else:
                 docs = strict_bounded_safe_load_all(_strip_cite_markers(text))
-        except (json.JSONDecodeError, JSONIntegrityError, yaml.YAMLError, RecursionError):
+        except (ValueError, yaml.YAMLError, RecursionError):
+            # JSON syntax errors, duplicate or nonfinite JSON fields (JSONIntegrityError) and
+            # SafeLoader's plain ValueError for an impossible date or an over-long integer are
+            # all ValueErrors; like YAML integrity and resource errors they are malformed input.
             # Parser errors include source excerpts, which can contain credentials.
             raise _invalid(path, "document", "invalid syntax or duplicate mapping key") from None
         if not docs:
@@ -379,10 +381,8 @@ class Inventory:
             (not entry.surfaces or finding.surface.value in entry.surfaces)
             and (not entry.providers or finding.provider in entry.providers)
             and (not entry.accounts or finding.account in entry.accounts)
-            # A resource-pattern-only card can approve a finding for every
-            # tenant that shares the same identifier. Providers whose
-            # resource IDs are not intrinsically tenant-scoped (see
-            # requires_card_account_scope) must also list ``accounts``.
+            # Older generated cards omitted the tenant. A global OAuth client
+            # resource cannot confer approval across unrelated customers.
             and (not requires_card_account_scope(finding.provider) or bool(entry.accounts))
             and (not entry.regions or finding.region in entry.regions)
         )

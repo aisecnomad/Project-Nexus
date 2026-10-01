@@ -5,7 +5,15 @@ from __future__ import annotations
 import json
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 import responses
+from requests import ConnectionError
+
+from shadowscan.connectors import ConnectorContext
+from shadowscan.connectors.saas import github_apps as github_apps_module
+from shadowscan.connectors.saas.github_apps import GitHubAppsConnector
+from shadowscan.models import ScanStats
+from shadowscan.utils.http import HttpError
 
 
 def _installation(app_id: int, slug: str) -> dict:
@@ -283,3 +291,228 @@ def test_atlassian_invalid_jira_collection_does_not_hide_valid_confluence_apps(r
     assert [f.resource for f in findings] == ["atlassian:confluence:app:ai.glean.confluence"]
     assert ctx.stats.incomplete and not ctx.stats.errors
     assert len(ctx.stats.warnings) == 2
+
+
+def context(index, **config):
+    ctx = ConnectorContext(config=config, index=index)
+    ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
+    return ctx
+
+
+def test_github_apps_pat_inventory_is_optional(index, monkeypatch):
+    ctx = context(index, org="acme", token="synthetic")
+    connector = GitHubAppsConnector(ctx)
+
+    class FakeHttp:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def paginate_link(self, path, params=None, item_key=None):
+            if "personal-access-tokens" in path:
+                raise HttpError(403, "https://api.github.com" + path)
+            yield {"id": 101, "app_slug": "coderabbitai", "permissions": {}}
+
+        def try_get_json(self, path, default=None, ok_statuses=None, **kwargs):
+            return None
+
+    monkeypatch.setattr(github_apps_module, "HttpClient", FakeHttp)
+    records = list(connector.collect())
+    assert [r["_kind"] for r in records] == ["installation"]
+    assert ctx.stats.incomplete and any(
+        "PAT inventory unavailable" in warning for warning in ctx.stats.warnings
+    )
+
+
+def _claude_installation(**overrides):
+    return {
+        "id": 101,
+        "app_id": 1001,
+        "app_slug": "claude",
+        "account": {"login": "acme"},
+        "permissions": {"contents": "write"},
+        "events": ["pull_request"],
+        **overrides,
+    }
+
+
+def _pat(**overrides):
+    return {
+        "token_id": 501,
+        "token_name": "Claude workflow",
+        "owner": {"login": "developer"},
+        "permissions": {"repository": {"contents": "write"}},
+        **overrides,
+    }
+
+
+@responses.activate
+def test_github_installation_denial_keeps_independent_billing_and_pat(run_connector):
+    base = "https://api.github.com/orgs/acme"
+    responses.get(f"{base}/installations", status=403, json={"message": "opaque-provider-secret"})
+    responses.get(f"{base}/copilot/billing", json={"plan_type": "business", "seat_breakdown": {"total": 3}})
+    responses.get(f"{base}/personal-access-tokens", json=[_pat()])
+
+    findings, ctx = run_connector("saas.github-apps", org="acme", token="example-token")
+
+    assert {f.resource for f in findings} == {"github:acme/copilot", "github:pat:501"}
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert any(
+        "installation inventory" in warning and "HTTP 403" in warning for warning in ctx.stats.warnings
+    )
+    assert "opaque-provider-secret" not in str(ctx.stats)
+    assert len(responses.calls) == 3
+
+
+@responses.activate
+def test_github_failed_installation_continuation_preserves_pages_and_pat(run_connector):
+    base = "https://api.github.com/orgs/acme"
+    responses.get(
+        f"{base}/installations",
+        json={"installations": [_claude_installation()]},
+        headers={"Link": f'<{base}/installations?page=2>; rel="next"'},
+    )
+    responses.get(f"{base}/installations", status=403)
+    responses.get(f"{base}/copilot/billing", status=404)
+    responses.get(f"{base}/personal-access-tokens", json=[_pat()])
+
+    findings, ctx = run_connector("saas.github-apps", org="acme", token="example-token")
+
+    assert {f.resource for f in findings} == {"github:installation:101", "github:pat:501"}
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert len(responses.calls) == 4
+
+
+@pytest.mark.parametrize("billing", [[], {}, {"seat_breakdown": []}, {"error": "opaque-provider-secret"}])
+@responses.activate
+def test_github_malformed_billing_keeps_installations_and_pat(run_connector, billing):
+    base = "https://api.github.com/orgs/acme"
+    responses.get(f"{base}/installations", json={"installations": [_claude_installation()]})
+    responses.get(f"{base}/copilot/billing", json=billing)
+    responses.get(f"{base}/personal-access-tokens", json=[_pat()])
+
+    findings, ctx = run_connector("saas.github-apps", org="acme", token="example-token")
+
+    assert {f.resource for f in findings} == {"github:installation:101", "github:pat:501"}
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert "opaque-provider-secret" not in str(ctx.stats)
+
+
+@responses.activate
+def test_github_billing_network_failure_keeps_pat(run_connector):
+    base = "https://api.github.com/orgs/acme"
+    responses.get(f"{base}/installations", json={"installations": []})
+    responses.get(f"{base}/copilot/billing", body=ConnectionError("opaque-provider-secret"))
+    responses.get(f"{base}/personal-access-tokens", json=[_pat()])
+
+    findings, ctx = run_connector("saas.github-apps", org="acme", token="example-token")
+
+    assert [f.resource for f in findings] == ["github:pat:501"]
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert "opaque-provider-secret" not in str(ctx.stats)
+
+
+@pytest.mark.parametrize(
+    "bad_record",
+    [
+        _claude_installation(id={"invalid": "opaque-provider-secret"}),
+        _claude_installation(permissions={"contents": ["write"]}),
+        _claude_installation(events=[{"invalid": "opaque-provider-secret"}]),
+        _claude_installation(account=["invalid"]),
+        _claude_installation(app_slug={"invalid": "opaque-provider-secret"}),
+        _pat(permissions={"repository": ["invalid"]}),
+        _pat(owner={"login": ["invalid"]}),
+        {"_kind": "unsupported", "app_slug": "claude"},
+        {"_kind": "copilot_billing", "seat_breakdown": "invalid"},
+    ],
+)
+def test_github_malformed_records_preserve_valid_neighbors(tmp_path, run_connector, bad_record):
+    source = tmp_path / "github.json"
+    source.write_text(json.dumps([bad_record, _claude_installation(), _pat()]))
+
+    findings, ctx = run_connector("saas.github-apps", input=str(source), org="acme")
+
+    assert {f.resource for f in findings} == {"github:installation:101", "github:pat:501"}
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert "opaque-provider-secret" not in str(ctx.stats)
+
+
+@responses.activate
+def test_github_live_billing_kind_is_assigned_by_collector(run_connector):
+    base = "https://api.github.com/orgs/acme"
+    responses.get(f"{base}/installations", json={"installations": []})
+    responses.get(
+        f"{base}/copilot/billing",
+        json={"_kind": "pat", "plan_type": "business", "seat_breakdown": {"total": 3}},
+    )
+    responses.get(f"{base}/personal-access-tokens", json=[])
+
+    findings, ctx = run_connector("saas.github-apps", org="acme", token="example-token")
+
+    assert [f.resource for f in findings] == ["github:acme/copilot"]
+    assert not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "connector,bad,valid,resource",
+    [
+        (
+            "saas.atlassian",
+            {"key": "broken", "name": ["opaque-provider-secret"]},
+            {"key": "ai.glean", "name": "Glean AI"},
+            "atlassian:jira:app:ai.glean",
+        ),
+        (
+            "saas.atlassian",
+            {"key": "broken", "description": ["opaque-provider-secret"]},
+            {"key": "ai.glean", "name": "Glean AI"},
+            "atlassian:jira:app:ai.glean",
+        ),
+        (
+            "saas.atlassian",
+            {"key": "broken", "scopes": "read:confluence-content.all"},
+            {"key": "ai.glean", "name": "Glean AI"},
+            "atlassian:jira:app:ai.glean",
+        ),
+        (
+            "saas.atlassian",
+            {"key": "broken", "vendor": {"link": ["opaque-provider-secret"]}},
+            {"key": "ai.glean", "name": "Glean AI"},
+            "atlassian:jira:app:ai.glean",
+        ),
+        (
+            "saas.zoom",
+            {"app_id": "broken", "app_name": ["opaque-provider-secret"]},
+            {"app_id": "valid", "app_name": "Fathom AI Notetaker"},
+            "zoom:app:valid",
+        ),
+        (
+            "saas.zoom",
+            {"app_id": "broken", "app_description": ["opaque-provider-secret"]},
+            {"app_id": "valid", "app_name": "Fathom AI Notetaker"},
+            "zoom:app:valid",
+        ),
+        (
+            "saas.zoom",
+            {"app_id": "broken", "owner": {"name": "opaque-provider-secret"}},
+            {"app_id": "valid", "app_name": "Fathom AI Notetaker"},
+            "zoom:app:valid",
+        ),
+        (
+            "saas.zoom",
+            {"app_id": "broken", "installed_users_count": -1},
+            {"app_id": "valid", "app_name": "Fathom AI Notetaker"},
+            "zoom:app:valid",
+        ),
+    ],
+)
+def test_malformed_saas_apps_preserve_valid_neighbors(
+    tmp_path, run_connector, connector, bad, valid, resource
+):
+    source = tmp_path / "apps.json"
+    source.write_text(json.dumps([bad, valid]))
+
+    findings, ctx = run_connector(connector, input=str(source))
+
+    assert [f.resource for f in findings] == [resource]
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert "opaque-provider-secret" not in str(ctx.stats)

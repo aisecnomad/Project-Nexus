@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from bisect import bisect_left
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import PurePosixPath
 from time import monotonic
 from typing import Any
@@ -157,7 +158,10 @@ def parse_requirements(text: str) -> ManifestResult:
         if line.startswith(("http://", "https://", "git+", "ssh://", "git://")) or "://" in line:
             # The fragment is part of a VCS requirement, not a comment.
             egg = re.search(
-                r"(?:#|&)egg=([A-Za-z0-9_.-]+)", line, timeout=_pattern_timeout(), concurrent=False
+                r"(?:#|&)egg=([A-Za-z0-9_.-]+)",
+                line,
+                timeout=_pattern_timeout(),
+                concurrent=False,
             )
             if egg:
                 res.deps.append(Dep("pypi", egg.group(1), line, i))
@@ -171,7 +175,10 @@ def parse_requirements(text: str) -> ManifestResult:
             # PEP 508 direct reference: name @ url
             name = line.split("@", 1)[0].strip()
             if re.fullmatch(
-                r"[A-Za-z0-9][A-Za-z0-9._-]*(\[[^\]]*\])?", name, timeout=_pattern_timeout(), concurrent=False
+                r"[A-Za-z0-9][A-Za-z0-9._-]*(\[[^\]]*\])?",
+                name,
+                timeout=_pattern_timeout(),
+                concurrent=False,
             ):
                 res.deps.append(Dep("pypi", name.split("[", 1)[0], line, i))
                 continue
@@ -199,7 +206,9 @@ def parse_pyproject(text: str) -> ManifestResult:
         if isinstance(spec, str) and (n := _pep508_name(spec)):
             res.deps.append(Dep("pypi", n, spec))
     for group, specs in _mapping(
-        project.get("optional-dependencies"), res, "project.optional-dependencies"
+        project.get("optional-dependencies"),
+        res,
+        "project.optional-dependencies",
     ).items():
         for spec in _sequence(specs, res, "project.optional-dependencies group"):
             if isinstance(spec, str) and (n := _pep508_name(spec)):
@@ -215,7 +224,9 @@ def parse_pyproject(text: str) -> ManifestResult:
             res.deps.append(Dep("pypi", name, json.dumps(spec) if not isinstance(spec, str) else spec))
     for group in _mapping(poetry.get("group"), res, "tool.poetry.group").values():
         for name, spec in _mapping(
-            _mapping(group, res, "tool.poetry.group entry").get("dependencies"), res, "group.dependencies"
+            _mapping(group, res, "tool.poetry.group entry").get("dependencies"),
+            res,
+            "group.dependencies",
         ).items():
             res.deps.append(Dep("pypi", name, str(spec), dev=True))
     for name, spec in _mapping(poetry.get("dev-dependencies"), res, "tool.poetry.dev-dependencies").items():
@@ -242,7 +253,8 @@ def parse_pipfile(text: str) -> ManifestResult:
 
 
 _SETUP_REQ = re.compile(
-    r"(?:install_requires|extras_require|tests_require|setup_requires)\s*=\s*(\[[^\]]*\]|\{[^}]*\})", re.S
+    r"(?:install_requires|extras_require|tests_require|setup_requires)\s*=\s*(\[[^\]]*\]|\{[^}]*\})",
+    re.S,
 )
 _STR = re.compile(r"""["']([^"']+)["']""")
 
@@ -262,7 +274,10 @@ def parse_setup_cfg(text: str) -> ManifestResult:
     in_reqs = False
     for line in text.splitlines():
         if re.match(
-            r"^[ \t]*(install_requires|tests_require)\s*=", line, timeout=_pattern_timeout(), concurrent=False
+            r"^[ \t]*(install_requires|tests_require)\s*=",
+            line,
+            timeout=_pattern_timeout(),
+            concurrent=False,
         ):
             in_reqs = True
             rest = line.split("=", 1)[1].strip()
@@ -286,7 +301,9 @@ def parse_conda_env(text: str) -> ManifestResult:
     except YAMLResourceLimitError:
         res.errors.append("YAML safety limit exceeded")
         return res
-    except yaml.YAMLError:
+    except (ValueError, RecursionError, yaml.YAMLError):
+        # SafeLoader raises a plain ValueError for an impossible date or an
+        # integer beyond Python's digit limit: the document is malformed.
         res.errors.append("invalid YAML")
         return res
     data = _mapping(data, res, "document")
@@ -326,7 +343,10 @@ def parse_package_json(text: str) -> ManifestResult:
     for _, cmd in scripts.items():
         if isinstance(cmd, str):
             for pkg in re.findall(
-                r"npx\s+(?:-y\s+)?(@?[A-Za-z0-9_./-]+)", cmd, timeout=_pattern_timeout(), concurrent=False
+                r"npx\s+(?:-y\s+)?(@?[A-Za-z0-9_./-]+)",
+                cmd,
+                timeout=_pattern_timeout(),
+                concurrent=False,
             ):
                 res.deps.append(
                     Dep(
@@ -418,7 +438,8 @@ def parse_pom(text: str) -> ManifestResult:
 
 
 _GRADLE_DEP = re.compile(
-    r"""\b(implementation|api|compile|compileOnly|runtimeOnly|testImplementation|testCompile|kapt|annotationProcessor|developmentOnly)\s*\(?\s*["']([^"':]+):([^"':]+)(?::([^"']+))?["']"""
+    r"""\b(implementation|api|compile|compileOnly|runtimeOnly|testImplementation|testCompile|kapt"""
+    r"""|annotationProcessor|developmentOnly)\s*\(?\s*["']([^"':]+):([^"':]+)(?::([^"']+))?["']"""
 )
 _GRADLE_PLATFORM = re.compile(
     r"""(?:platform|enforcedPlatform)\s*\(\s*["']([^"':]+):([^"':]+)(?::([^"']+))?["']"""
@@ -504,7 +525,8 @@ _DOCKER_ENV = re.compile(r"^[ \t]*(?:ENV|ARG)\s+([A-Z][A-Z0-9_]+)", re.I | re.M)
 _DOCKER_ENV_MULTI = re.compile(r"^[ \t]*ENV\s+(.+)$", re.I | re.M)
 _DOCKER_PIP = re.compile(r"pip3?\s+install\s+([^&|;\n\\]+)", re.I)
 _DOCKER_NPM = re.compile(
-    r"(?:npm\s+(?:install|i|add)|yarn\s+add|pnpm\s+(?:add|install))\s+([^&|;\n\\]+)", re.I
+    r"(?:npm\s+(?:install|i|add)|yarn\s+add|pnpm\s+(?:add|install))\s+([^&|;\n\\]+)",
+    re.I,
 )
 _DOCKER_UV = re.compile(r"uv\s+(?:pip\s+install|add)\s+([^&|;\n\\]+)", re.I)
 
@@ -551,7 +573,10 @@ def parse_dockerfile(text: str) -> ManifestResult:
             res.artifacts.append(Artifact("image", img, lines.at(m.start())))
     for m in _DOCKER_ENV_MULTI.finditer(text, timeout=_pattern_timeout(), concurrent=False):
         for name in re.findall(
-            r"([A-Z][A-Z0-9_]+)\s*=", m.group(1), timeout=_pattern_timeout(), concurrent=False
+            r"([A-Z][A-Z0-9_]+)\s*=",
+            m.group(1),
+            timeout=_pattern_timeout(),
+            concurrent=False,
         ):
             res.artifacts.append(Artifact("env", name, lines.at(m.start())))
     for m in _DOCKER_ENV.finditer(text, timeout=_pattern_timeout(), concurrent=False):
@@ -563,7 +588,12 @@ def parse_dockerfile(text: str) -> ManifestResult:
                     tok.startswith("-")
                     or tok in {"install", "."}
                     or "=" in tok
-                    and not re.match(r"^[A-Za-z0-9_.-]+==", tok, timeout=_pattern_timeout(), concurrent=False)
+                    and not re.match(
+                        r"^[A-Za-z0-9_.-]+==",
+                        tok,
+                        timeout=_pattern_timeout(),
+                        concurrent=False,
+                    )
                 ):
                     continue
                 n = _pep508_name(tok)
@@ -583,11 +613,24 @@ def parse_dockerfile(text: str) -> ManifestResult:
 _YAML_IMAGE = re.compile(r"^[ \t]*(?:-[ \t]*)?image[ \t]*:[ \t]*['\"]?([^'\"\s#]+)", re.M)
 _YAML_REPO = re.compile(r"^[ \t]*repository[ \t]*:[ \t]*['\"]?([^'\"\s#]+)", re.M)
 _YAML_ENV_KEY = re.compile(
-    r"^[ \t]*+-?[ \t]*+(?:name[ \t]*+:[ \t]*+)?['\"]?([A-Z][A-Z0-9_]{2,})['\"]?[ \t]*+[:=]", re.M
+    r"^[ \t]*+-?[ \t]*+(?:name[ \t]*+:[ \t]*+)?['\"]?([A-Z][A-Z0-9_]{2,})['\"]?[ \t]*+[:=]",
+    re.M,
 )
 _YAML_USES = re.compile(r"^[ \t]*+-?[ \t]*+uses[ \t]*+:[ \t]*+['\"]?([^'\"\s#]+)", re.M)
 _SECRETS_REF = re.compile(r"\$\{\{\s*secrets\.([A-Za-z0-9_]+)\s*\}\}")
 _GITLAB_IMAGE = re.compile(r"^[ \t]*image\s*:\s*(?:name\s*:\s*)?['\"]?([^'\"\s#]+)", re.M)
+
+
+def _chunk_matches(
+    pattern: re.Pattern[str],
+    text: str,
+    start: int,
+    end: int,
+    ceiling: float,
+    timeout: float,
+) -> list[re.Match[str]]:
+    """Return every match in ``text[start:end]``, each attempt bounded by ``timeout`` and ``ceiling``."""
+    return list(pattern.finditer(text, start, end, timeout=min(timeout, ceiling), concurrent=False))
 
 
 def _yaml_line_matches(pattern: re.Pattern[str], text: str, deadline: float) -> Iterator[re.Match[str]]:
@@ -612,9 +655,7 @@ def _yaml_line_matches(pattern: re.Pattern[str], text: str, deadline: float) -> 
         # regex iterators otherwise charge artifact construction and unrelated
         # worker CPU to matching. Reuse the matcher contention retry budget.
         matches = _run_regex(
-            lambda timeout: list(
-                pattern.finditer(text, start, end, timeout=min(timeout, remaining), concurrent=False)
-            ),
+            partial(_chunk_matches, pattern, text, start, end, remaining),
             "YAML manifest",
             max_seconds=remaining,
         )
@@ -655,12 +696,14 @@ _ARM_TYPE = re.compile(r"""["']type["']\s*:\s*["']((?:Microsoft|Oracle|Google)\.
 _BICEP_RESOURCE = re.compile(r"""^[ \t]*resource\s+\w+\s+['"]([A-Za-z0-9./]+)@[^'"]+['"]""", re.M)
 _PULUMI_TYPE = re.compile(r"""\b(?:aws|gcp|azure|azure_native|azurerm|oci)[.:][a-z_]+[.:][A-Z][A-Za-z]+""")
 _CDK_IMPORT = re.compile(
-    r"""(?:from\s+aws_cdk\s+import\s+([^\n]+)|aws-cdk-lib/([a-z_-]+)|@aws-cdk/([a-z_-]+)|aws_cdk\.([a-z_]+))"""
+    r"""(?:from\s+aws_cdk\s+import\s+([^\n]+)|aws-cdk-lib/([a-z_-]+)|@aws-cdk/([a-z_-]+)"""
+    r"""|aws_cdk\.([a-z_]+))"""
 )
 
 
 _TF_DISPLAY = re.compile(
-    r"""^[ \t]*(?:agent_name|display_name|function_name|name|bot_name|app_name|workflow_name)\s*=\s*["']([^"'$]+)["']""",
+    r"""^[ \t]*(?:agent_name|display_name|function_name|name|bot_name|app_name|workflow_name)"""
+    r"""\s*=\s*["']([^"'$]+)["']""",
     re.M,
 )
 
@@ -682,15 +725,25 @@ def parse_terraform(text: str) -> ManifestResult:
     for m in _TF_MODULE_SOURCE.finditer(text, timeout=_pattern_timeout(), concurrent=False):
         res.artifacts.append(Artifact("module", m.group(1), lines.at(m.start())))
     for m in re.finditer(
-        r"image\s*=\s*['\"]([^'\"$]+)['\"]", text, timeout=_pattern_timeout(), concurrent=False
+        r"image\s*=\s*['\"]([^'\"$]+)['\"]",
+        text,
+        timeout=_pattern_timeout(),
+        concurrent=False,
     ):
         res.artifacts.append(Artifact("image", m.group(1), lines.at(m.start())))
     for m in re.finditer(
-        r"['\"]([A-Z][A-Z0-9_]{2,})['\"]\s*[=:]", text, timeout=_pattern_timeout(), concurrent=False
+        r"['\"]([A-Z][A-Z0-9_]{2,})['\"]\s*[=:]",
+        text,
+        timeout=_pattern_timeout(),
+        concurrent=False,
     ):
         res.artifacts.append(Artifact("env", m.group(1), lines.at(m.start())))
     for m in re.finditer(
-        r"^[ \t]*([A-Z][A-Z0-9_]{2,})\s*=\s*", text, re.M, timeout=_pattern_timeout(), concurrent=False
+        r"^[ \t]*([A-Z][A-Z0-9_]{2,})\s*=\s*",
+        text,
+        re.M,
+        timeout=_pattern_timeout(),
+        concurrent=False,
     ):
         res.artifacts.append(Artifact("env", m.group(1), lines.at(m.start())))
     return res
@@ -739,7 +792,11 @@ def parse_wrangler(text: str) -> ManifestResult:
     ):
         res.artifacts.append(Artifact("iac", "cloudflare_workers_ai_binding", None))
     for m in re.finditer(
-        r"^[ \t]*([A-Z][A-Z0-9_]{2,})\s*=", text, re.M, timeout=_pattern_timeout(), concurrent=False
+        r"^[ \t]*([A-Z][A-Z0-9_]{2,})\s*=",
+        text,
+        re.M,
+        timeout=_pattern_timeout(),
+        concurrent=False,
     ):
         res.artifacts.append(Artifact("env", m.group(1), lines.at(m.start())))
     return res
@@ -749,7 +806,11 @@ def parse_modelfile(text: str) -> ManifestResult:
     res = ManifestResult()
     lines = _LineIndex(text)
     for m in re.finditer(
-        r"^[ \t]*FROM\s+(\S+)", text, re.M | re.I, timeout=_pattern_timeout(), concurrent=False
+        r"^[ \t]*FROM\s+(\S+)",
+        text,
+        re.M | re.I,
+        timeout=_pattern_timeout(),
+        concurrent=False,
     ):
         res.artifacts.append(Artifact("model", m.group(1), lines.at(m.start())))
     return res

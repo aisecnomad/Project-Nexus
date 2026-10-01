@@ -4,7 +4,8 @@ Live (Entra app registered as a Power Platform *application user* / tenant admin
 
 * environments – ``api.bap.microsoft.com`` admin API
 * flows        – ``api.flow.microsoft.com`` admin listing per environment (connection references reveal
-                 ``shared_openai`` / ``shared_azureopenai`` / ``shared_aibuilder`` / ``shared_microsoftcopilotstudio``...)
+                 ``shared_openai`` / ``shared_azureopenai`` / ``shared_aibuilder`` /
+                 ``shared_microsoftcopilotstudio``...)
 * apps         – ``api.powerplatform.com`` admin listing (connection references)
 * bots         – Dataverse ``bots`` + ``botcomponents`` of each environment (Copilot Studio agents, topics,
                  generative-answer components, actions, authentication mode)
@@ -218,7 +219,8 @@ class PowerPlatformConnector(BaseConnector):
             metadata = properties.get("linkedEnvironmentMetadata") if isinstance(properties, dict) else None
             if self.include_bots and metadata is not None and not isinstance(metadata, dict):
                 self.ctx.warn(
-                    "lowcode.power-platform: Dataverse environment metadata is malformed; bot coverage unknown"
+                    "lowcode.power-platform: Dataverse environment metadata is malformed; bot coverage "
+                    "unknown"
                 )
                 continue
             instance_url = get_path(env, "properties.linkedEnvironmentMetadata.instanceUrl")
@@ -227,7 +229,8 @@ class PowerPlatformConnector(BaseConnector):
                     origin = _dataverse_origin(instance_url, env, self.tenant)
                 except ValueError:
                     self.ctx.warn(
-                        "lowcode.power-platform: Dataverse environment origin is untrusted; bot coverage unknown"
+                        "lowcode.power-platform: Dataverse environment origin is untrusted; bot coverage "
+                        "unknown"
                     )
                     continue
                 try:
@@ -235,7 +238,11 @@ class PowerPlatformConnector(BaseConnector):
                     for bot in dv.paginate_odata(
                         "/api/data/v9.2/bots",
                         params={
-                            "$select": "botid,name,schemaname,statecode,statuscode,createdon,modifiedon,publishedon,authenticationmode,accesscontrolpolicy,authenticationtrigger,configuration,language,_ownerid_value,_createdby_value"
+                            "$select": (
+                                "botid,name,schemaname,statecode,statuscode,createdon,modifiedon,publishedon,"
+                                "authenticationmode,accesscontrolpolicy,authenticationtrigger,configuration,"
+                                "language,_ownerid_value,_createdby_value"
+                            )
                         },
                     ):
                         bot["_kind"] = "bot"
@@ -244,7 +251,10 @@ class PowerPlatformConnector(BaseConnector):
                     for comp in dv.paginate_odata(
                         "/api/data/v9.2/botcomponents",
                         params={
-                            "$select": "botcomponentid,name,componenttype,statecode,data,_parentbotid_value,modifiedon"
+                            "$select": (
+                                "botcomponentid,name,componenttype,statecode,data,_parentbotid_value,"
+                                "modifiedon"
+                            )
                         },
                     ):
                         comp["_kind"] = "botcomponent"
@@ -376,7 +386,10 @@ class PowerPlatformConnector(BaseConnector):
             surface=Surface.LOWCODE,
             connector=self.name,
             kind=Kind.WORKFLOW,
-            title=f"Power Automate flow using {', '.join(sorted({label for _, label in refs})) or 'AI services'}: {name}",
+            title=(
+                "Power Automate flow using "
+                f"{', '.join(sorted({label for _, label in refs})) or 'AI services'}: {name}"
+            ),
             resource=f"power-platform:flow:{fl.get('name') or fl.get('id')}",
             resource_type="power-automate-flow",
             provider="power-platform",
@@ -449,7 +462,9 @@ class PowerPlatformConnector(BaseConnector):
             surface=Surface.LOWCODE,
             connector=self.name,
             kind=Kind.WORKFLOW,
-            title=f"Power App using {', '.join(sorted({label for _, label in refs})) or 'AI services'}: {name}",
+            title=(
+                f"Power App using {', '.join(sorted({label for _, label in refs})) or 'AI services'}: {name}"
+            ),
             resource=f"power-platform:app:{app.get('name') or app.get('id')}",
             resource_type="power-app",
             provider="power-platform",
@@ -497,10 +512,12 @@ class PowerPlatformConnector(BaseConnector):
             resource_type="copilot-studio-agent",
             provider="power-platform",
             account=env,
-            owner=bot.get("_ownerid_value@OData.Community.Display.V1.FormattedValue")
-            or bot.get("owner")
-            or bot.get("_ownerid_value")
-            or bot.get("_createdby_value"),
+            owner=(
+                bot.get("_ownerid_value@OData.Community.Display.V1.FormattedValue")
+                or bot.get("owner")
+                or bot.get("_ownerid_value")
+                or bot.get("_createdby_value")
+            ),
             first_seen=bot.get("createdon"),
             last_seen=bot.get("modifiedon") or bot.get("publishedon"),
         )
@@ -508,49 +525,16 @@ class PowerPlatformConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="dataverse:bot",
-                description=f"Copilot Studio agent '{name}' (schema {bot.get('schemaname')}), state {bot.get('statecode')}, auth mode {bot.get('authenticationmode')}, published {bot.get('publishedon') or 'never'}",
+                description=(
+                    f"Copilot Studio agent '{name}' (schema {bot.get('schemaname')}), state "
+                    f"{bot.get('statecode')}, auth mode {bot.get('authenticationmode')}, published "
+                    f"{bot.get('publishedon') or 'never'}"
+                ),
                 weight=0.95,
                 signature="platform.copilot-studio",
             )
         )
-        gen_ai = False
-        actions: list[str] = []
-        knowledge: list[str] = []
-        topics = 0
-        for c in comps:
-            data = c.get("data") or ""
-            blob = data if isinstance(data, str) else json.dumps(data)
-            low = blob.lower()
-            ctype = c.get("componenttype")
-            if (
-                "gptcomponentmetadata" in low
-                or "generativeanswers" in low
-                or "searchandsummarizecontent" in low
-                or "kind: gptcomponentmetadata" in low
-            ):
-                gen_ai = True
-            if (
-                "kind: invokeflowaction" in low
-                or "invokeflowaction" in low
-                or "kind: invokeconnectoraction" in low
-                or "httprequestaction" in low
-                or "invokeaiskill" in low
-                or "kind: invokeskillaction" in low
-                or "mcp" in low
-                and "server" in low
-            ):
-                actions.append(str(c.get("name")))
-            if (
-                "kind: knowledgesource" in low
-                or "knowledge" in low
-                and ("sharepoint" in low or "dataverse" in low or "publicwebsite" in low or "file" in low)
-            ):
-                knowledge.append(str(c.get("name")))
-            if ctype in (0, "0", 9, "9") or "kind: adaptivedialog" in low:
-                topics += 1
-            for m in blob_matches(self.index, blob[:100_000]):
-                if m.signature_id not in {"platform.copilot-studio"}:
-                    apply_matches(f, [m], weight_scale=0.6)
+        gen_ai, actions, knowledge, topics = self._bot_components(f, comps)
         if gen_ai:
             f.add_evidence(
                 Evidence(
@@ -566,7 +550,10 @@ class PowerPlatformConnector(BaseConnector):
             f.add_evidence(
                 Evidence(
                     signal="copilot-studio:actions",
-                    description=f"{len(actions)} action(s) (flows / connectors / HTTP / MCP): {', '.join(actions[:8])}",
+                    description=(
+                        f"{len(actions)} action(s) (flows / connectors / HTTP / MCP): "
+                        f"{', '.join(actions[:8])}"
+                    ),
                     weight=0.5,
                 )
             )
@@ -576,7 +563,10 @@ class PowerPlatformConnector(BaseConnector):
             f.add_evidence(
                 Evidence(
                     signal="copilot-studio:no-auth",
-                    description="Agent configured with no end-user authentication (anonymous access if published to web)",
+                    description=(
+                        "Agent configured with no end-user authentication (anonymous access if published to "
+                        "web)"
+                    ),
                     weight=0.2,
                 )
             )
@@ -602,6 +592,52 @@ class PowerPlatformConnector(BaseConnector):
         finalize(f, self.index)
         f.kind = Kind.AGENT
         return f
+
+    def _bot_components(
+        self, f: Finding, comps: list[dict[str, Any]]
+    ) -> tuple[bool, list[str], list[str], int]:
+        """Generative answers, actions, knowledge sources and topic count from a bot's components."""
+        gen_ai = False
+        actions: list[str] = []
+        knowledge: list[str] = []
+        topics = 0
+        for c in comps:
+            data = c.get("data") or ""
+            blob = data if isinstance(data, str) else json.dumps(data)
+            low = blob.lower()
+            ctype = c.get("componenttype")
+            if any(marker in low for marker in _GENERATIVE_MARKERS):
+                gen_ai = True
+            if any(marker in low for marker in _ACTION_MARKERS) or ("mcp" in low and "server" in low):
+                actions.append(str(c.get("name")))
+            if "kind: knowledgesource" in low or (
+                "knowledge" in low and any(store in low for store in _KNOWLEDGE_STORES)
+            ):
+                knowledge.append(str(c.get("name")))
+            if ctype in (0, "0", 9, "9") or "kind: adaptivedialog" in low:
+                topics += 1
+            for m in blob_matches(self.index, blob[:100_000]):
+                if m.signature_id not in {"platform.copilot-studio"}:
+                    apply_matches(f, [m], weight_scale=0.6)
+        return gen_ai, actions, knowledge, topics
+
+
+# Lower-cased markers in Copilot Studio component definitions.
+_GENERATIVE_MARKERS = (
+    "gptcomponentmetadata",
+    "generativeanswers",
+    "searchandsummarizecontent",
+    "kind: gptcomponentmetadata",
+)
+_ACTION_MARKERS = (
+    "kind: invokeflowaction",
+    "invokeflowaction",
+    "kind: invokeconnectoraction",
+    "httprequestaction",
+    "invokeaiskill",
+    "kind: invokeskillaction",
+)
+_KNOWLEDGE_STORES = ("sharepoint", "dataverse", "publicwebsite", "file")
 
 
 def _infer(rec: dict[str, Any]) -> str:

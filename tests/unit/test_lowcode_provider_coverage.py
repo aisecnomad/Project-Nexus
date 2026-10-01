@@ -9,7 +9,11 @@ import pytest
 from requests import ConnectionError
 
 from shadowscan.connectors.base import ConnectorContext
-from shadowscan.connectors.lowcode import salesforce, servicenow
+from shadowscan.connectors.lowcode import automation, salesforce, servicenow
+from shadowscan.connectors.lowcode.automation import MakeConnector, N8nConnector
+from shadowscan.connectors.lowcode.salesforce import SalesforceConnector
+from shadowscan.connectors.lowcode.servicenow import ServiceNowConnector
+from shadowscan.models import ScanStats
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpError
 
@@ -305,3 +309,118 @@ def test_salesforce_normal_query_pagination_is_complete(index, monkeypatch):
     assert len(connector.run()) == 2
     assert not connector.ctx.stats.incomplete
     assert connector.http.get_json.call_args.kwargs == {"params": None}
+
+
+@pytest.mark.parametrize("graph", [{}, {"nodes": None}, {"nodes": {}}, {"nodes": [], "error": "denied"}])
+def test_n8n_missing_or_invalid_graph_preserves_next_workflow(index, graph):
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(
+        return_value=iter(
+            [
+                {"id": "bad", "name": "unknown", **graph},
+                {
+                    "id": "good",
+                    "name": "assistant",
+                    "nodes": [{"type": "@n8n/n8n-nodes-langchain.agent", "name": "Agent"}],
+                },
+            ]
+        )
+    )
+    (finding,) = connector.run()
+    assert finding.resource == "n8n:workflow:good"
+    assert connector.ctx.stats.incomplete and not connector.ctx.stats.errors
+
+
+def test_n8n_empty_graph_is_known_empty(index):
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([{"id": "empty", "name": "Empty", "nodes": []}]))
+    assert connector.run() == []
+    assert not connector.ctx.stats.incomplete
+
+
+def context(index, **config):
+    ctx = ConnectorContext(config=config, index=index)
+    ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
+    return ctx
+
+
+def test_salesforce_never_requests_token_values_and_survives_expired_locators(index, monkeypatch):
+    assert "DeleteToken" not in salesforce.QUERIES["OauthToken"][1]
+    assert "AccessToken" not in salesforce.QUERIES["OauthToken"][1]
+    ctx = context(index, instance_url="https://acme.my.salesforce.com", access_token="synthetic")
+    connector = SalesforceConnector(ctx)
+    monkeypatch.setattr(salesforce, "QUERIES", {"BotDefinition": ("data", "SELECT Id FROM BotDefinition")})
+    monkeypatch.setattr(connector, "_auth", lambda: None)
+    connector.http = Mock()
+    connector.http.get_json.side_effect = [
+        {"records": [{"Id": "1"}], "done": False, "nextRecordsUrl": "/services/data/v62.0/query/01g-2000"},
+        HttpError(400, "https://acme.my.salesforce.com/services/data/v62.0/query/01g-2000"),
+    ]
+    assert list(connector.collect()) == [{"Id": "1", "_kind": "BotDefinition"}]
+    assert connector.http.get_json.call_count == 2
+    assert ctx.stats.incomplete and any("collection incomplete (HTTP 400)" in w for w in ctx.stats.warnings)
+
+
+def test_servicenow_pagination_stops_on_a_repeated_page(index, monkeypatch):
+    ctx = context(index, instance="https://acme.service-now.com", token="synthetic")
+    connector = ServiceNowConnector(ctx)
+    monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
+    monkeypatch.setattr(connector, "_auth", lambda: None)
+    connector.http = Mock()
+    # Every response is a fresh object, as it would be from the transport.
+    connector.http.get_json.side_effect = lambda *args, **kwargs: {
+        "result": [{"sys_id": str(i)} for i in range(kwargs["params"]["sysparm_limit"])]
+    }
+    records = list(connector.collect())
+    assert len(records) == 500
+    assert connector.http.get_json.call_count == 2
+    assert ctx.stats.incomplete and any(
+        "repeated pagination page" in warning for warning in ctx.stats.warnings
+    )
+
+
+def test_make_missing_blueprint_and_agents_marks_scan_incomplete(monkeypatch, run_connector):
+    class MakeAPI:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_json(self, path, params=None):
+            if path == "/scenarios":
+                return {
+                    "scenarios": [
+                        {"id": "with-blueprint", "name": "Classification flow"},
+                        {"id": "without-blueprint", "name": "Routine backup"},
+                    ]
+                }
+            if path == "/scenarios/with-blueprint/blueprint":
+                return {"response": {"blueprint": {"flow": [{"module": "openai:CreateCompletion"}]}}}
+            if path == "/scenarios/without-blueprint/blueprint":
+                raise HttpError(403, "https://eu1.make.com/api/v2/scenarios/without-blueprint/blueprint")
+            if path == "/ai-agents/v1/agents":
+                raise HttpError(403, "https://eu1.make.com/api/v2/ai-agents/v1/agents")
+            raise AssertionError(path)
+
+    monkeypatch.setattr(automation, "HttpClient", MakeAPI)
+    findings, ctx = run_connector(
+        "lowcode.make", api_url="https://eu1.make.com/api/v2", token="dummy", team_id="team-1"
+    )
+    assert any(f.resource == "make:scenario:with-blueprint" for f in findings)
+    assert ctx.stats.incomplete
+    assert not ctx.stats.errors
+    assert any("blueprints unreadable" in warning and "HTTP 403" in warning for warning in ctx.stats.warnings)
+    assert any("AI agents unreadable" in warning and "HTTP 403" in warning for warning in ctx.stats.warnings)
+
+
+def test_make_invalid_page_is_incomplete_not_fatal(index, monkeypatch):
+    connector = MakeConnector(
+        ConnectorContext(
+            config={"api_url": "https://eu1.make.com/api/v2", "token": "synthetic", "team_id": "1"},
+            index=index,
+        )
+    )
+    http = Mock()
+    http.get_json.side_effect = ValueError("Invalid JSON response")
+    monkeypatch.setattr("shadowscan.connectors.lowcode.automation.HttpClient", Mock(return_value=http))
+    assert connector.run() == []
+    assert not connector.ctx.stats.errors
+    assert connector.ctx.stats.incomplete and connector.ctx.stats.warnings

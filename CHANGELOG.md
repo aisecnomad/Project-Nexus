@@ -25,14 +25,239 @@
   documents, dependencies and code patterns such as a workflow step still
   establish it. In test paths only config files and instruction documents count
   unless `include_tests` is set.
-- MCP parsing skips files under `.github/workflows/`, `*.lock.yml` and
-  `*.lock.yaml` files and cookiecutter `{{...}}` template paths, which no longer
-  raise an invalid-MCP error. An embedded `mcpServers` value in a workflow is
-  not inventoried as an MCP configuration.
+- MCP parsing skips `*.lock.yml` and `*.lock.yaml` files (compiled agentic
+  workflows) and cookiecutter `{{...}}` template paths, which no longer raise an
+  invalid-MCP error. Other GitHub Actions workflows are still parsed for MCP
+  servers passed as JSON step inputs (see the field scan follow-up below).
 - Not changed: signatures, risk scoring and inventory labeling. Examples,
   templates and benchmarks are not discounted like tests, because the bundled
   corpora label their agents as real. Evidence is offline regression tests and
   corpora only; it is not a measured field precision.
+
+### October 1 field scan follow-up
+
+Fixes for defects found by scanning five public agent repositories (see
+`archive/reviews/field-scan-2026-10-01.md`); each has a regression test.
+
+- The JSX lexer no longer marks valid TSX incomplete. It skips explicit type
+  arguments on elements (`<Select<Option> ...>`, `<Form<{ email: string }>>`),
+  comments between attributes (a comment just before `>` no longer makes the
+  tag self-closing), and treats `<Text>(...)</Text>` as an element
+  unless the parenthesized group is followed by `=>` or a return type. In the
+  field scan this removed 139 false incomplete files; unbalanced tags still
+  fail closed.
+- Gemini CLI's `httpUrl` is an MCP endpoint alias. Such extension manifests no
+  longer make the scan incomplete, and their remote servers are reported. A
+  header or env value that is only a shell-style reference (`Bearer $TOKEN`) is
+  not an inline credential.
+- GitHub Actions workflows that pass MCP settings to an agent action no longer
+  fail strict YAML parsing on the `on:` key. Servers embedded as JSON step inputs
+  are reported as MCP findings; unparseable embedded settings stay incomplete.
+- `GOOGLE_GENAI_USE_VERTEXAI` no longer attributes the Google Agent Development
+  Kit. It remains Vertex AI provider evidence.
+- Exported workflows under test or fixture paths follow the project test-code
+  policy: half weight and the `test-code-only` tag unless `include_tests` is set.
+- A `setup.py` marks a project root only when it references setuptools,
+  distutils or scikit-build, or calls `setup(...)`. Ordinary modules named
+  `setup.py` no longer split a package into a separate project; an unreadable
+  file keeps the previous behavior.
+- An MCP argument assigning a file path to a credential-file variable
+  (`GOOGLE_APPLICATION_CREDENTIALS=/app/key.json`), or one whose only redacted
+  part repeats a variable reference from `env` (`-v ${KEY_FILE}:/app/key.json`),
+  is still redacted but no longer marks the server as carrying an inline secret.
+  Literal values remain inline secrets.
+
+### Completeness, report safety and credential policy (2026-09-28)
+
+Behavior changes to review before upgrading (see
+[production](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#completeness-report-and-credential-changes)):
+
+- **Credential policy:** the scan-wide `options.allow_instance_credentials`
+  now replaces `allow_instance_credentials` in every connector entry. Only
+  `cloud.*` entries were replaced before, so a third-party connector's own
+  entry could grant it instance-credential approval. The scan-wide value
+  still goes to every `cloud.*` connector, plugins included, and now also to
+  any plugin that declares the cloud surface or documents the key in
+  `config_keys`; with the default `false` this only denies. Built-in
+  connectors behave as before.
+- **New incomplete scans (exit 3):**
+  - A shared HTTP response body must arrive within twice the client timeout
+    (60 seconds by default), not only within the 30-second per-read timeout.
+    A slower body, for example from a slow-drip server, is aborted (`HTTP
+    response exceeds the read deadline`) and the connector's collection is
+    incomplete, never truncated.
+  - `code.filesystem` opens each scan root once and reads every file, and
+    `CODEOWNERS`, relative to it without following a link in any path
+    component; before, only the final component was protected. A directory
+    replaced by a link during the scan fails the reads below it
+    (`file could not be read`). A root that cannot be opened this way is
+    reported, by its `label` when one is set, as
+    `could not open the scan root safely (<reason>)`.
+  - `code.gitlab` skips a group listing entry whose project `id` is not a
+    positive integer (`group project listing entry has no valid numeric id;
+    project skipped`) and scans the other projects. Such an id used to reach
+    request paths, where it could send the token to another API endpoint,
+    and a missing id aborted the whole listing.
+  - `code.github` skips an org or user listing entry whose `full_name` is not
+    a plain `owner/name` (`repository listing entry has no valid owner/name;
+    repository skipped`). It used to reach request paths and the clone URL.
+- **Changed diagnostics (these scans were already incomplete):**
+  - A YAML value PyYAML cannot construct, such as an impossible date or an
+    integer over 4,300 digits, is reported as malformed YAML: `invalid YAML`
+    for conda environment files (was `manifest parsing failed (ValueError)`)
+    and `invalid agent definition YAML` for agent front matter (was
+    `file analysis incomplete (ValueError)`). The agent definition is now
+    listed where it used to be dropped, which adds `agent_definitions`
+    metadata and can raise the finding's risk score. Scan configuration and
+    inventory files with such a value still fail at setup (exit 1), now with
+    `ConfigValidationError` and `InventoryValidationError` instead of an
+    unclassified `ValueError`.
+  - A cancellation or connector deadline while `code.filesystem` builds a
+    credential finding ends the connector, as it does everywhere else,
+    instead of becoming that file's `credential analysis incomplete` error.
+- **Scans that now complete:**
+  - A Python module none of whose imports can resolve to a signature no
+    longer makes a scan incomplete when it exceeds `max_ast_nodes` or the
+    import binder's nesting limit: the binder, which could add no evidence
+    there, is skipped. The check is linear in the module and matches at most
+    4,096 distinct import statements; other modules keep the
+    `import-bound analysis skipped (…); lexical evidence retained`
+    diagnostic. A scan of installed libraries such as mypy, pip, requests and
+    rich, which exited 3 because of `mypy/checker.py`, now completes.
+  - Configuration, inventory, signature pack, `diff` report and offline
+    export files below a traverse-only directory (mode `0711`) now open:
+    directories are opened for traversal only (`O_PATH` on Linux), not for
+    reading.
+  - An unrendered Helm, Jinja or Go-template YAML file, whose placeholders
+    read as mapping keys (`image: {{ .Values.image }}`) or whose conditional
+    branches repeat a field, no longer reports `structured parsing incomplete
+    (YAMLIntegrityError)`. Such a file is not YAML until rendered, so its
+    excerpts use lexical redaction, as for any template the YAML parser
+    rejects. Plain YAML with duplicate or non-finite data still fails closed.
+- **Report redaction** withholds more credential forms, in excerpts and in
+  structured connector metadata. Expect more `[REDACTED]` markers:
+  - string literals passed to credential constructors, helpers and factories
+    (`AzureKeyCredential("…")`, `HTTPBasicAuth("user", "…")`,
+    `Credentials.basic`, `setBearerToken`, `WithAPIKey`, `cohere.Client`),
+    including Rust `::new("…")`, C# target-typed `new("…")`, calls down a
+    builder chain (`builder().apiKey("…")`, `.header("x-api-key", "…")`) and
+    `auth=("user", "…")` tuples;
+  - literal defaults of credentials read from the environment
+    (`process.env.OPENAI_API_KEY || "…"`, `?? "…"`, `or "…"`, `?: "…"`,
+    `${OPENAI_API_KEY:-…}`);
+  - credential command-line options: `--api-key`, `--token`, `--password`,
+    `--key` and `--pwd`, also in argv lists; `curl -u` and
+    `-H "X-Api-Key:…"`; `-p` after `docker login`, other registry logins and
+    `az`, `oc` or `cf` logins; `sshpass -p`; MySQL `-p…`; a literal echoed
+    into `--password-stdin`; and `dotnet user-secrets set NAME VALUE`;
+  - Dockerfile `ENV`, `setx`, `setenv`, C `#define`, PowerShell and TOML
+    quoted keys assigned with `=`, and R `<-`;
+  - XML key/name attributes, element names and name/value records, read as
+    .NET settings by their last `:`, `__` or `.` segment as well as whole
+    (`<add key="OpenAI:Secret" value="…"/>`, `- name: AzureOpenAI__Key`). In
+    structured metadata the value is also removed from the record's other
+    fields;
+  - an opaque-looking value under a name whose last word, ignoring trailing
+    digits, names a credential (`openaiKey`, `key`, `KEY1`), and a lone
+    opaque value on the unindented line after a sensitive key;
+  - more token prefixes: Google `ya29.`, `1//0` and `GOCSPX-`; Slack `xapp-`
+    and `xoxe`; the GitLab `glrt-` family; `npm_`, `pypi-` and `dop_v1_`;
+    and Stripe, SendGrid, Databricks, Shopify, Atlassian, Linear, Notion,
+    Postman, Doppler, Supabase, Grafana, Sentry, Vault and Terraform Cloud
+    tokens. `Ocp-Apim-Subscription-Key` and names ending in
+    `subscriptionKey` are credentials.
+
+  A C# `new AzureKeyCredential("<key>")`, a Java `builder().apiKey("<key>")`
+  or a web.config `<appSettings>` key used to reach the reports of a complete
+  scan; regenerate such reports and rotate the keys they show. Endpoint URLs,
+  model names, variable names and references, placeholders and ordinary
+  values (`<add key="CacheKey" value="users"/>`) stay visible. SECURITY.md
+  lists the forms that are still not withheld, among them a space or comment
+  before a call's parenthesis, redundant parentheses, C# interpolated and
+  multi-line triple-quoted strings, one-letter options, a query parameter
+  outside a URL and an unquoted value that reads as an identifier.
+- **Redaction fixes:** a YAML parent key such as `openai:` no longer takes
+  the next line as its value, which leaked a nested `api_key: <value>`. A
+  `Bearer`/`Basic` scheme before a line break no longer drops a line from
+  the excerpt, and a marker inside an unquoted value no longer gains a `]`
+  each time a report sanitizes it again. Redaction is linear on hostile
+  layouts that used to time out, exhaust the redaction budget or hang the
+  scan without marking it incomplete: long runs of unfinished annotations,
+  minified lines with thousands of sensitive keys, and long unquoted values
+  after `key=`. Expressions nested more than 100 brackets deep are withheld
+  through the end of the excerpt, and an unquoted word holding more than 16
+  command-line options is withheld from its 17th option on.
+- **Finding identity:** IDs are computed from sanitized resource fields, so
+  an ID changes only where such a field held a value that is now withheld.
+  These redaction rules leave the findings and IDs of the demo, the sample
+  repository and every evaluation corpus unchanged; the classification
+  corrections of September 27 below can still change findings. The redaction
+  policy token changed, so findings verified clean under the old rules are
+  sanitized again. Report sanitization takes about 28% longer (11 s to 14 s
+  for 19 MB of library source).
+- **Reports:**
+  - CSV also inserts the `'` marker after a `,`, `;`, tab, `|` or line break
+    inside a value when a formula could start there (OWASP CSV injection), so
+    a report opened with another delimiter cannot create a formula cell.
+    Leading no-break spaces and double quotes no longer hide a trigger.
+    Consumers that strip only a leading `'` must strip these markers too, or
+    read `json`.
+  - Markdown writes `@` as `[@]` in untrusted text, like the existing
+    `hxxp://` and `www[.]` defanging, so a pasted report no longer
+    @-mentions users or teams or links e-mail addresses. Code spans stay
+    verbatim.
+- **Plugins and embedders:**
+  - `shadowscan.utils.text.sanitize_record` is removed; call
+    `shadowscan.utils.redaction.sanitize`.
+  - `HttpClient.paginate_cursor` is removed; paginate explicitly. The Slack
+    and Notion connectors keep their own cursor pagination.
+  - The engine no longer names connectors. Per-root incremental caching, the
+    instance-credential approval and the per-run gateway identity key are
+    hooks a connector class declares (`cache_roots_separately`,
+    `inherits_instance_credentials_approval`, `uses_run_identity_key`; see
+    `docs/architecture.md`). Offline export parsing moved from
+    `BaseConnector` to `shadowscan/connectors/offline.py` with
+    `BaseConnector` names unchanged, and duplicate-finding metadata merging
+    to `shadowscan.connectors.common.merge_duplicate_metadata`.
+  - `shadowscan.utils.redaction` is split into `redaction_*` modules with the
+    same public API and rule names. Patch rules through
+    `shadowscan.utils.redaction`, never through a `redaction_*` module;
+    `policy_token()` covers every module.
+  - `SignatureIndex.signals_of_type(kind)` returns the (signature, signal)
+    pairs of one signal type in pack order.
+
+Development:
+
+- ruff enforces line length (E501, 110 columns) outside `tests/` and
+  loop-variable capture in closures (B023) everywhere. mypy requires
+  annotated definitions (`disallow_untyped_defs`) and reports unused
+  `type: ignore` comments (`warn_unused_ignores`). Only `regex`, `boto3`,
+  `botocore` and `oci`, which ship neither stubs nor a `py.typed` marker, may
+  be imported untyped.
+- Unit tests live in files named after the module or feature they exercise,
+  not the review round that added them; test bodies are unchanged.
+- The evaluation, benchmark, canary and acceptance tools resolve the temporary
+  directories they create before handing paths to the scanner, so they pass on
+  macOS, where `/var` and `/tmp` are links into `/private`. The symbolic-link
+  checks on untrusted input are unchanged.
+- `docs/testing.md` describes the development environment, the offline suite
+  and every `make` gate CI runs. `docs/maintainer-onboarding.md` is a reviewer
+  and co-maintainer checklist, and `GOVERNANCE.md` has reviewer,
+  co-maintainer and offboarding sections.
+- `code.github` and `code.gitlab` share one implementation
+  (`shadowscan/connectors/code/remote.py`), and the four cloud connectors
+  share one offline-record dispatcher and audit-caller aggregator. New
+  offline exports cover every GCP and OCI record kind, raising line coverage
+  of `cloud/gcp.py` from 78% to 99% and of `cloud/oci.py` from 88% to 99%.
+  The scanning commands share one option decorator; options, defaults and
+  help are unchanged.
+- Consistency tests check that documents describing CSV markers name every
+  separator the reporter marks, and that the documented HTTP read deadline
+  matches the client.
+- Documentation: ADR-003 has a dated amendment recording the implemented
+  confidence and risk formulas, and `docs/concepts/risk.md` matches the
+  code. The cloud connector guide lists each connector's offline `_kind`
+  values, and the architecture guide the engine hooks.
 
 ### September 28 repository hygiene
 
@@ -370,8 +595,9 @@ Development:
   that cannot enforce the documented path confinement (Windows, or a platform
   without `O_NOFOLLOW`); `--help` and `--version` still work everywhere.
   `shadowscan.utils.platform.require_supported_platform()` performs the same
-  check for embedding callers. `redact` and `sanitize_record` in
-  `shadowscan.utils.text` stay as documented compatibility aliases.
+  check for embedding callers. `redact` in `shadowscan.utils.text` stays as
+  a documented compatibility alias. `sanitize_record` was removed later in
+  this release; call `shadowscan.utils.redaction.sanitize`.
 
 ### Community policy consistency
 
