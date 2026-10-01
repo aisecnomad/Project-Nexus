@@ -28,6 +28,7 @@ from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatchcase
 from itertools import islice
 from typing import Any, ClassVar
+from urllib.parse import unquote
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import (
@@ -156,10 +157,13 @@ _LLM_SECRET_KEYWORDS = (
     "pinecone",
     "tavily",
 )
-# Evidence heuristics over a serialized trust policy, not URL validation: the
+# Evidence heuristics over trust policy principals, not URL validation: the
 # GitHub Actions OIDC issuer host and the Bedrock service principals.
 _GITHUB_ACTIONS_OIDC = "token.actions.githubusercontent.com"
 _BEDROCK_TRUST_SERVICES = frozenset({"bedrock.amazonaws.com", "bedrock-agentcore.amazonaws.com"})
+# Operations through which a trust policy lets a principal assume the role
+# (lowercase: IAM matches action names case-insensitively).
+_ASSUME_ROLE_ACTIONS = ("sts:assumerole", "sts:assumerolewithwebidentity", "sts:assumerolewithsaml")
 # Service principals in a role trust policy that run agents or AI workloads.
 _WORKLOAD_TRUST_SERVICES = (
     "lambda.amazonaws.com",
@@ -1721,10 +1725,15 @@ class AwsConnector(BaseConnector):
             apply_matches(f, self.index.match_scope(action), location=rec.get("arn"), weight_scale=0.3)
         # Ancillary privileges remain evidence only after an AI grant exists.
         wildcard = [a for a in actions if "*" in a or "?" in a]
-        trust = json.dumps(rec.get("assume_role_policy") or {})
-        principals = [svc for svc in _WORKLOAD_TRUST_SERVICES if svc in trust]
-        if "oidc-provider" in trust or _GITHUB_ACTIONS_OIDC in trust:
-            principals.append("oidc-federated")
+        principals = _trust_principals(rec.get("assume_role_policy"))
+        if principals is None:
+            # Unknown trust is not "no service trust": keep the grant evidence
+            # but never let the scan read as complete.
+            self.ctx.warn("cloud.aws: malformed IAM trust policy; trusted principals unknown")
+            limitations = [*limitations, "malformed-trust-policy"]
+            trust_note = "trust policy malformed, trusted principals unknown"
+        else:
+            trust_note = f"trusted by {', '.join(principals) or 'users/accounts'}"
         wildcard_note = " + wildcards " + ", ".join(wildcard[:3]) if wildcard else ""
         potential_note = "; potential NotAction grants " + ", ".join(potential[:8]) if potential else ""
         f.add_evidence(
@@ -1733,14 +1742,13 @@ class AwsConnector(BaseConnector):
                 description=(
                     f"Policy evidence for {rec.get('type')} '{rec.get('name')}': explicit actions "
                     f"{', '.join(llm[:8]) or 'none'}{wildcard_note}{potential_note}; "
-                    f"trusted by {', '.join(principals) or 'users/accounts'}. "
-                    "Effective authorization is not evaluated."
+                    f"{trust_note}. Effective authorization is not evaluated."
                 ),
                 location=rec.get("arn"),
                 weight=0.45 if llm else 0.25,
             )
         )
-        if _BEDROCK_TRUST_SERVICES.intersection(principals):
+        if principals and _BEDROCK_TRUST_SERVICES.intersection(principals):
             f.add_framework("cloud.aws-bedrock-agents")
             f.add_tag("agent-execution-role")
         if wildcard:
@@ -1757,7 +1765,7 @@ class AwsConnector(BaseConnector):
                 "effective_permissions": "not-evaluated",
                 "wildcards": wildcard[:10],
                 "attached_policies": rec.get("attached_policies"),
-                "trusted_services": principals,
+                "trusted_services": principals or [],
                 "action_count": len(actions),
             }
         )
@@ -2142,6 +2150,84 @@ def _policy_strings(value: Any) -> list[str] | None:
     ):
         return None
     return values
+
+
+def _policy_document(value: Any) -> Any:
+    """A policy document as given, or decoded from JSON text or URL-encoded JSON text.
+
+    The IAM API returns documents URL-encoded; SDKs and most exports decode them.
+    Raises ValueError (or RecursionError) for text that is neither.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        return strict_json_loads(value)
+    except json.JSONDecodeError:
+        # Only text that is not JSON at all is retried: an ambiguous (duplicate
+        # field) document stays malformed rather than being reinterpreted.
+        return strict_json_loads(unquote(value))
+
+
+def _grants_assume_role(action: str) -> bool:
+    """Whether an IAM action expression (``*`` and ``?`` wildcards, any case) includes role assumption."""
+    if "[" in action or "]" in action:
+        return False  # IAM uses * and ?, not fnmatch character classes.
+    return any(fnmatchcase(candidate, action.lower()) for candidate in _ASSUME_ROLE_ACTIONS)
+
+
+def _trust_principals(document: Any) -> list[str] | None:
+    """Workload service principals and OIDC federation that a role trust policy allows.
+
+    Only ``Allow`` statements whose ``Action`` includes role assumption count,
+    with principals read from ``Principal.Service`` and ``Principal.Federated``.
+    ``Deny``, ``NotAction`` and ``NotPrincipal`` statements never establish
+    trust; conditions are not evaluated. An absent document trusts no service.
+    Returns None for a malformed document: its trusted principals are unknown.
+    """
+    if document is None:
+        return []
+    try:
+        policy = _policy_document(document)
+    except (ValueError, RecursionError):
+        return None
+    statements = policy.get("Statement") if isinstance(policy, dict) else None
+    if isinstance(statements, dict):
+        statements = [statements]
+    if not isinstance(statements, list) or not statements:
+        return None
+    services: set[str] = set()
+    federated = False
+    for st in statements:
+        if (
+            not isinstance(st, dict)
+            or not isinstance(st.get("Effect"), str)
+            or st["Effect"] not in {"Allow", "Deny"}
+            or ("Action" in st) == ("NotAction" in st)
+            or ("Principal" in st) == ("NotPrincipal" in st)
+        ):
+            return None
+        if st["Effect"] != "Allow" or "Action" not in st or "Principal" not in st:
+            continue
+        actions = _policy_strings(st["Action"])
+        # "*" is everyone: it names no service or identity provider.
+        principal = {} if st["Principal"] == "*" else st["Principal"]
+        named = (
+            {key: _policy_strings(value) for key, value in principal.items()}
+            if isinstance(principal, dict)
+            else None
+        )
+        if actions is None or named is None or any(names is None for names in named.values()):
+            return None
+        if not any(_grants_assume_role(action) for action in actions):
+            continue
+        services.update(named.get("Service") or [])
+        federated = federated or any(
+            "oidc-provider" in name or _GITHUB_ACTIONS_OIDC in name for name in named.get("Federated") or []
+        )
+    principals = [svc for svc in _WORKLOAD_TRUST_SERVICES if svc in services]
+    if federated:
+        principals.append("oidc-federated")
+    return principals
 
 
 def _resource_services(resources: list[str] | None, limitations: set[str]) -> set[str]:

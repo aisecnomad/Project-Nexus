@@ -57,6 +57,16 @@ are not evaluated; partial semantics make coverage incomplete. S3/IAM-only
 wildcards do not independently produce LLM grants. Effective access also depends
 on applicable policies outside this collector's view.
 
+Role trust policies are parsed, not searched as text. A service principal
+(`Principal.Service`) or OIDC provider (`Principal.Federated`) is trusted only
+through an `Allow` statement whose `Action` includes `sts:AssumeRole`,
+`sts:AssumeRoleWithWebIdentity` or `sts:AssumeRoleWithSAML` (IAM wildcards, any
+case). `Deny`, `NotAction` and `NotPrincipal` statements, and service names in a
+`Sid` or `Condition`, never establish trust; conditions are not evaluated. A
+trusted Bedrock or AgentCore principal tags the role `agent-execution-role`. The
+document may be an object, JSON text or URL-encoded JSON; a malformed one is
+reported as unknown trust (`malformed-trust-policy`) and makes the scan incomplete.
+
 AWS clients ignore configured endpoint URL overrides and use bundled SDK models;
 external model paths (`AWS_DATA_PATH`, user SDK model directories) cannot replace
 service endpoint rules, including after role assumption. This does not replace
