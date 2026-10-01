@@ -3655,6 +3655,7 @@
       "azure-openai"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "framework.microsoft-agent-framework|user_agent": 1,

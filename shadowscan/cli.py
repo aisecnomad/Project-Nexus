@@ -1188,13 +1188,22 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
     else:
         keys = ("new", "resolved", "unknown", "changed")
         new, resolved, unknown, changed = (comparison[key] for key in keys)
+        # Scan-local IDs (baseline "<", current ">") cannot be matched across reports.
+        local_baseline, local_current = (comparison["not_comparable"][key] for key in ("baseline", "current"))
         console.print(
             f"[bold]{len(new)} new[/bold], [bold]{len(resolved)} resolved[/bold],"
-            f" [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed[/bold]"
+            f" [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed[/bold],"
+            f" [bold]{len(local_baseline) + len(local_current)} not comparable[/bold]"
         )
         for reason in comparison["reasons"]:
             console.print(f"Comparison incomplete: {reason}", markup=False)
-        for marker, records in (("+", new), ("-", resolved), ("?", unknown)):
+        for marker, records in (
+            ("+", new),
+            ("-", resolved),
+            ("?", unknown),
+            ("<", local_baseline),
+            (">", local_current),
+        ):
             for d in sorted(records, key=lambda d: -d["risk"]["score"]):
                 line = f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}"
                 console.print(terminal_text(line), markup=False)

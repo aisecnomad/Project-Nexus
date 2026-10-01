@@ -5337,6 +5337,7 @@
       "bedrock"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.aws-bedrock|model": 1,
@@ -5547,6 +5548,7 @@
       "bedrock"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.aws-bedrock|model": 1,

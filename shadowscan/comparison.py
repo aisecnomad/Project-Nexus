@@ -1,8 +1,9 @@
 """Conservative collection-scope provenance and report comparison.
 
 A finding disappearing from a report is only evidence of resolution when both
-scans completed under the same collection and detection settings. Scope hashes
-identify inputs, not their contents: a file changing is what comparisons measure.
+scans completed under the same collection and detection settings and its ID is
+stable across scans. Scope hashes identify inputs, not their contents: a file
+changing is what comparisons measure.
 """
 
 from __future__ import annotations
@@ -229,6 +230,18 @@ def _identity_attested(report: dict[str, Any]) -> bool:
     )
 
 
+def _scan_local(record: dict[str, Any]) -> bool:
+    """Whether a finding's ID identifies its source only within its own report.
+
+    ``gateway.logs`` declares ``metadata.identity_scope`` because its IDs
+    derive from a key that is random for each scan. Any declared scope, even
+    a malformed one, is treated as scan-local: absence of such an ID from
+    another report says nothing about the source it describes.
+    """
+    metadata = record.get("metadata")
+    return isinstance(metadata, dict) and "identity_scope" in metadata
+
+
 def _public_finding(record: dict[str, Any]) -> dict[str, Any]:
     """Apply the normal finding export boundary to imported comparison records.
 
@@ -244,7 +257,12 @@ def _public_finding(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
-    """Keep positive observations, but never infer absence from lost coverage."""
+    """Keep positive observations, but never infer absence from lost coverage.
+
+    Unmatched findings with scan-local IDs are neither new, resolved nor
+    unknown: they are listed under ``not_comparable`` and the comparison is
+    incomplete. A scan-local ID present in both reports is compared as usual.
+    """
     if not isinstance(baseline, dict) or not isinstance(current, dict):
         raise ValueError("reports must be JSON objects")
     b, c = _findings(baseline), _findings(current)
@@ -274,7 +292,14 @@ def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[s
         )
     elif bs != cs:
         reasons.append("collection or detection scope differs")
-    missing = [public_b[i] for i in sorted(b.keys() - c.keys())]
+    local_b = sorted(i for i in b.keys() - c.keys() if _scan_local(b[i]))
+    local_c = sorted(i for i in c.keys() - b.keys() if _scan_local(c[i]))
+    if local_b or local_c:
+        reasons.append(
+            f"{len(local_b) + len(local_c)} finding(s) have scan-local identities "
+            "(metadata.identity_scope) and cannot be matched across scans"
+        )
+    missing = [public_b[i] for i in sorted(b.keys() - c.keys() - set(local_b))]
     changes = []
     for identifier in sorted(b.keys() & c.keys()):
         before, after = _substantive_state(b[identifier]), _substantive_state(c[identifier])
@@ -286,8 +311,12 @@ def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[s
     return {
         "comparable": not reasons,
         "reasons": reasons,
-        "new": [public_c[i] for i in sorted(c.keys() - b.keys())],
+        "new": [public_c[i] for i in sorted(c.keys() - b.keys() - set(local_c))],
         "resolved": [] if reasons else missing,
         "unknown": missing if reasons else [],
         "changed": changes,
+        "not_comparable": {
+            "baseline": [public_b[i] for i in local_b],
+            "current": [public_c[i] for i in local_c],
+        },
     }

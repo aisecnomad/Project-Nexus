@@ -356,7 +356,9 @@ reports. Repeating an identical configured source within one connector instance
 is idempotent for nonredacted principal/service callers; API-key callers and
 redacted scopes use connector-local HMAC IDs. Gateway exports are noncomparable
 across independent scans to avoid claiming that a missing scan-local ID is a
-resolved finding. Distinct exports retain
+resolved finding: their findings carry `metadata.identity_scope: run`, and
+`diff` lists them as not comparable (see
+[comparing reports](#comparing-reports)). Distinct exports retain
 separate provenance. Overlapping exports count observations from each source,
 so aggregate counts are not guaranteed to represent unique requests.
 
@@ -424,6 +426,15 @@ Their missing findings are reported as `unknown`, and diff exits 3. New and
 changed findings remain visible. Currently only local repositories and offline
 exports from built-in connectors can attest comparable scope; live account and
 permission coverage require additional provider-specific provenance.
+
+A finding with `metadata.identity_scope: run`, which every `gateway.logs`
+finding carries, has an ID derived from a key that is random for each scan:
+the same caller has a different ID in the next report. Diff therefore never
+reports such a finding as new, resolved or unknown because the other report
+lacks its ID. It lists it under `not_comparable` (`baseline` or `current`;
+marked `<` or `>` in text output), states the reason and exits 3. A finding
+whose ID appears in both reports is compared as usual. Any other declared
+`identity_scope` is treated the same way.
 
 Finding IDs do not depend on inferred kind. Stable resource-type families (or an
 explicit plugin `identity_discriminator`) separate distinct observations on a

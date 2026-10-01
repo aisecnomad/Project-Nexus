@@ -1553,6 +1553,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 "label": self.label,
                 "schemas": sorted(c.schemas),
             },
+            # The finding ID and pseudonyms derive from a key that is random
+            # for each scan, so another report's ID for this caller differs.
+            # Report comparison must not read that as a new or resolved caller.
+            "identity_scope": "run",
         }
 
     def _finding_title(self, f: Finding, c: _Caller, top_models: list[str]) -> str:

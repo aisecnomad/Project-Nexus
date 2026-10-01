@@ -2737,6 +2737,7 @@
       "portkey"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "framework.langchain|user_agent": 1
@@ -2897,6 +2898,7 @@
       "portkey"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|user_agent": 1
@@ -3117,6 +3119,7 @@
       "kong"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -3304,6 +3307,7 @@
       "kong"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|domain": 1,
@@ -3477,6 +3481,7 @@
       "cloudflare"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|user_agent": 1
@@ -3616,6 +3621,7 @@
       "cloudflare"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },
@@ -3755,6 +3761,7 @@
       "cloudflare"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.cloudflare-workers-ai|model": 1
     },
@@ -3945,6 +3952,7 @@
       "helicone"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -4131,6 +4139,7 @@
       "helicone"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -4290,6 +4299,7 @@
       "langfuse"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },
@@ -4442,6 +4452,7 @@
       "langfuse"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1
     },
@@ -4658,6 +4669,7 @@
       "vertex"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.google-vertex-ai|model": 1,
      "provider.google-vertex-ai|domain": 1,
@@ -4822,6 +4834,7 @@
       "vertex"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.google-vertex-ai|domain": 1
     },
@@ -4994,6 +5007,7 @@
       "openai-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1
@@ -5174,6 +5188,7 @@
       "openai-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1
@@ -5394,6 +5409,7 @@
       "openai-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 2,
      "provider.openai|domain": 2,
@@ -5595,6 +5611,7 @@
       "openai-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -5791,6 +5808,7 @@
       "openai-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -5975,6 +5993,7 @@
       "anthropic-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|domain": 1,
@@ -6158,6 +6177,7 @@
       "anthropic-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|domain": 1,
@@ -6377,6 +6397,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -6576,6 +6597,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|domain": 1,
@@ -6798,6 +6820,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|domain": 1,
@@ -6941,6 +6964,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "technologies": [
      {
       "id": "provider.ollama",
@@ -7118,6 +7142,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1,
@@ -7305,6 +7330,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|domain": 1,
      "identity-app.anthropic-claude|domain": 1,
@@ -7432,6 +7458,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "technologies": []
    },
    "identity_discriminator": "caller",
@@ -7580,6 +7607,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "platform.litellm|user_agent": 1
@@ -7791,6 +7819,7 @@
       "litellm"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -7967,6 +7996,7 @@
       "litellm"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|user_agent": 1
@@ -8129,6 +8159,7 @@
       "bedrock"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.aws-bedrock|model": 1,
      "provider.aws-bedrock|domain": 1
@@ -8300,6 +8331,7 @@
       "bedrock"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.aws-bedrock|model": 1,
      "provider.aws-bedrock|domain": 1,
@@ -8456,6 +8488,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.google-gemini|model": 1,
      "provider.google-gemini|domain": 1
@@ -8591,6 +8624,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },
@@ -8725,6 +8759,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },
@@ -8890,6 +8925,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1
@@ -9044,6 +9080,7 @@
       "azure-openai"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },
@@ -9206,6 +9243,7 @@
       "azure-openai"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },

@@ -22,8 +22,9 @@ Regenerate the output sections after an intentional behaviour change with::
     SHADOWSCAN_UPDATE_GATEWAY_GOLDENS=1 pytest tests/unit/test_gateway_normalise_golden.py
 
 and review the resulting diff before committing it.
-The Bedrock invocation fixture stays unchanged; its intentional toolUse
-correction is checked as a narrow scalar delta in the replay test.
+The Bedrock invocation golden is never regenerated; its intentional toolUse
+correction is checked as a narrow scalar delta in the replay test, and a new
+finding field is added to it by hand.
 """
 
 from __future__ import annotations
