@@ -7,6 +7,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -254,6 +255,77 @@ def test_coverage_floors_count_branches_and_are_not_lowered() -> None:
     assert coverage["run"]["branch"] is True
     assert coverage["report"]["fail_under"] >= 80
     assert MIN_CONNECTOR_COVERAGE >= 75
+
+
+def _secrets_step_runner(tmp_path: Path) -> tuple[str, dict[str, str]]:
+    """The committed CI step that runs the secret hook, and an environment to execute it."""
+    bin_dir = Path(sys.executable).parent
+    if shutil.which("pre-commit", path=str(bin_dir)) is None:
+        pytest.skip("pre-commit from the development toolchain is not installed")
+    steps = _load(GITHUB / "workflows" / "ci.yml")["jobs"]["test"]["steps"]
+    (step,) = [step for step in steps if "no-hardcoded-secrets" in step.get("run", "")]
+    assert "if" not in step, "the secret check runs on every Linux leg"
+    env = {
+        **os.environ,
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+        "RUNNER_TEMP": str(tmp_path),
+        "PRE_COMMIT_HOME": str(tmp_path / "pre-commit-home"),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+    return step["run"], env
+
+
+def test_ci_secret_check_uses_the_hook_file_selection(tmp_path: Path) -> None:
+    script, env = _secrets_step_runner(tmp_path)
+    repo = tmp_path / "repo"
+    (repo / "tools").mkdir(parents=True)
+    shutil.copy(ROOT / ".pre-commit-config.yaml", repo)
+    shutil.copy(ROOT / "tools" / "check_secrets.py", repo / "tools")
+    token = "ghp_" + "A1b2C3d4" * 4 + "E5f6"  # shaped like a GitHub token; not a credential
+    planted = {
+        "app.py": "print('ok')\n",
+        "notes.md": token,  # neither Python nor YAML
+        "tests/test_fixture.py": f"TOKEN = {token!r}\n",  # excluded by the hook
+        "shadowscan/signatures/data/pack.yaml": f"example: {token}\n",  # excluded by the hook
+    }
+    for name, text in planted.items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(text, encoding="utf-8")
+    (repo / "untracked.py").write_text(f"TOKEN = {token!r}\n", encoding="utf-8")
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            args, cwd=repo, env=env, capture_output=True, text=True, timeout=120, check=False
+        )
+
+    assert run("git", "init", "-q").returncode == 0
+    assert run("git", "add", ".pre-commit-config.yaml", "tools", *planted).returncode == 0
+    clean = run("bash", "-e", "-c", script)
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    (repo / "config.yml").write_text(f"token: {token}\n", encoding="utf-8")
+    assert run("git", "add", "config.yml").returncode == 0
+    leaked = run("bash", "-e", "-c", script)
+    assert leaked.returncode != 0 and "config.yml: possible hardcoded secret" in leaked.stdout, (
+        leaked.stdout + leaked.stderr
+    )
+    assert "untracked.py" not in leaked.stdout and "notes.md" not in leaked.stdout
+
+
+def test_ci_secret_check_passes_on_this_checkout(tmp_path: Path) -> None:
+    script, env = _secrets_step_runner(tmp_path)
+    if not (ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(

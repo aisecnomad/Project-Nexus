@@ -130,6 +130,7 @@ exact supported Python matrix and dependency pins.
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
+| Secrets | `pre-commit run no-hardcoded-secrets --all-files` | No credential-shaped strings outside `tests/` |
 
 CI measures coverage on one Linux job (Python 3.11) and runs the same full
 suite untraced on the others; `pyproject.toml` enables branch coverage.

@@ -117,6 +117,23 @@ jobs:
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
       - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+      - name: Check tracked files for hardcoded secrets
+        run: |
+          # Run the no-hardcoded-secrets pre-commit hook over every tracked file
+          # it selects. A config with only the local hooks keeps pre-commit from
+          # fetching the remote hook repositories; the hook's own file filters
+          # (Python and YAML outside tests/ and signature data) still apply.
+          python - "$RUNNER_TEMP/pre-commit-local.yaml" <<'PY'
+          import sys
+          from pathlib import Path
+
+          import yaml
+
+          config = yaml.safe_load(Path('.pre-commit-config.yaml').read_text(encoding='utf-8'))
+          config['repos'] = [repo for repo in config['repos'] if repo['repo'] == 'local']
+          Path(sys.argv[1]).write_text(yaml.safe_dump(config, sort_keys=False), encoding='utf-8')
+          PY
+          pre-commit run --config "$RUNNER_TEMP/pre-commit-local.yaml" --all-files no-hardcoded-secrets
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off
