@@ -1,5 +1,9 @@
 """Helpers shared by connectors to turn signature matches into findings.
 
+The engine also merges repeated observations of one finding through
+:func:`merge_duplicate_metadata`, which knows the metadata keys connectors
+emit that combine across observations instead of keeping the first value.
+
 Placeholder credentials
 -----------------------
 A credential-looking value is treated as a documentation placeholder, not a
@@ -27,6 +31,8 @@ so a rare misclassification remains visible to analysts.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 from collections.abc import Iterable
@@ -34,7 +40,7 @@ from typing import Any
 
 from shadowscan.config import ConfigValidationError, connector_boolean
 from shadowscan.connectors.base import ConnectorError
-from shadowscan.models import Evidence, Finding, Kind
+from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.utils.text import redact
 
@@ -225,7 +231,8 @@ def classify_permissions(index: SignatureIndex, finding: Finding, scopes: Iterab
 
 
 _PLACEHOLDER = re.compile(
-    r"^(?:x{3,}|\*{3,}|<[^>]+>|\$\{[^}]+\}|your[_-]?[a-z_]*|changeme|redacted|placeholder|todo|null|none)$",
+    r"^(?:x{3,}|\*{3,}|<[^>]+>|\$\{[^}]+\}|your[_-]?[a-z_]*"
+    r"|changeme|redacted|placeholder|todo|null|none)$",
     re.IGNORECASE,
 )
 _TEMPLATE_MARKER = re.compile(r"<[^<>\s]+>|\$\{[^{}]*\}|\{\{[^{}]*\}\}")
@@ -359,12 +366,6 @@ def cap_confidence(finding: Finding, maximum: float) -> None:
     finding.recompute_confidence()
 
 
-def merge_metadata(finding: Finding, **kwargs: Any) -> None:
-    for k, v in kwargs.items():
-        if v not in (None, "", [], {}):
-            finding.metadata[k] = v
-
-
 def blob_matches(index: SignatureIndex, text: str, *, secrets: bool = False) -> list[Match]:
     """Run code / domain / env / model signatures over an arbitrary text blob (e.g. a JSON export).
 
@@ -378,12 +379,13 @@ def blob_matches(index: SignatureIndex, text: str, *, secrets: bool = False) -> 
     secret_matches = (
         [m for m in index.match_secrets(text) if not looks_like_placeholder(m.value)] if secrets else []
     )
-    for m in [
+    candidates = [
         *index.match_code(text, None),
         *index.match_domains_in_text(text),
         *index.match_envs_in_text(text),
         *secret_matches,
-    ]:
+    ]
+    for m in candidates:
         if m.signature.category == "identity-app" and m.signal.type == "domain":
             continue
         key = (m.signature_id, m.signal.type, m.value[:60])
@@ -405,3 +407,171 @@ def model_matches(index: SignatureIndex, *models: str | None) -> list[Match]:
                 seen.add(m.signature_id)
                 out.append(m)
     return out
+
+
+# --------------------------------------------------------------- duplicate findings
+# Metrics a gateway-surface caller finding (gateway.logs, and the CloudTrail and
+# Vertex AI callers of cloud.aws and cloud.gcp) sums across distinct sources.
+_RUNTIME_TOTALS = (
+    "events",
+    "records",
+    "aggregate_records",
+    "tool_known",
+    "tool_requests",
+    "tool_call_responses",
+    "tokens_in",
+    "tokens_out",
+    "cost",
+    "errors",
+)
+_RUNTIME_DISTRIBUTIONS = (
+    "models",
+    "providers",
+    "hosts",
+    "user_agents",
+    "source_ips",
+    "end_users",
+    "teams",
+    "operations",
+    "schemas",
+)
+_RUNTIME_MERGE_NOTE = "Counts sum records across inputs; overlapping exports can represent the same requests."
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def unique_records(records: list[Any]) -> list[dict[str, Any]]:
+    """Deduplicate nested observations while retaining their first provenance."""
+
+    def key_for(value: Any) -> Any:
+        if isinstance(value, dict):
+            return ("dict", frozenset((key, key_for(item)) for key, item in value.items()))
+        if isinstance(value, (list, tuple)):
+            return (type(value).__name__, tuple(key_for(item) for item in value))
+        if isinstance(value, (set, frozenset)):
+            return ("set", frozenset(key_for(item) for item in value))
+        # JSON numbers remain equivalent when exporters vary number syntax,
+        # but booleans must not collide with Python's equal numeric values.
+        if _is_number(value):
+            return ("number", value)
+        return (type(value).__name__, value)
+
+    unique: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        key = key_for(record)
+        if key not in seen:
+            seen.add(key)
+            unique.append(record)
+    return unique
+
+
+def _runtime_source_snapshot(finding: Finding) -> dict[str, Any]:
+    metadata = finding.metadata
+    observations = metadata.get("runtime_observations", [])
+    digest = hashlib.sha256(json.dumps(observations, sort_keys=True, default=str).encode()).hexdigest()
+    return {
+        "source": metadata.get("runtime_source", {}),
+        "window": {"first_seen": finding.first_seen, "last_seen": finding.last_seen},
+        "observation_sha256": digest,
+        "metrics": {
+            key: metadata[key] for key in (*_RUNTIME_TOTALS, *_RUNTIME_DISTRIBUTIONS) if key in metadata
+        },
+    }
+
+
+def _runtime_sources(finding: Finding) -> list[dict[str, Any]]:
+    existing = finding.metadata.get("runtime_sources")
+    return existing if isinstance(existing, list) else [_runtime_source_snapshot(finding)]
+
+
+def _merge_runtime_observations(merged: Finding, duplicate: Finding) -> list[dict[str, Any]]:
+    """Keep each input's observations alongside the source they were exported from.
+
+    A merged gateway caller may have been exported from several inputs; the
+    correlation report must not attribute every event to the first input.
+    """
+    observations = []
+    for finding in (merged, duplicate):
+        group = finding.metadata.get("runtime_observations", [])
+        if not isinstance(group, list):
+            continue
+        for observation in group:
+            if isinstance(observation, dict):
+                entry = dict(observation)
+                entry.setdefault("source", finding.metadata.get("runtime_source", {}))
+                observations.append(entry)
+    return unique_records(observations)
+
+
+def _merge_runtime_sources(merged: Finding, sources: list[dict[str, Any]]) -> None:
+    unique = unique_records(sources)
+    merged.metadata["runtime_sources"] = unique
+    for key in _RUNTIME_TOTALS:
+        values = [source.get("metrics", {}).get(key) for source in unique]
+        numbers = [value for value in values if _is_number(value)]
+        if numbers:
+            total = sum(numbers)
+            merged.metadata[key] = round(total, 4) if key == "cost" else total
+    for key in _RUNTIME_DISTRIBUTIONS:
+        counts: dict[str, int | float] = {}
+        for source in unique:
+            distribution = source.get("metrics", {}).get(key)
+            if isinstance(distribution, dict):
+                for name, value in distribution.items():
+                    if isinstance(name, str) and _is_number(value):
+                        counts[name] = counts.get(name, 0) + value
+        if counts:
+            merged.metadata[key] = dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+    events = merged.metadata.get("events")
+    if isinstance(events, int):
+        merged.title = re.sub(r": \d+ requests\b", f": {events} requests", merged.title, count=1)
+        identity_signal = "gateway:" + str(merged.metadata.get("caller_kind", ""))
+        identity_evidence = [ev for ev in merged.evidence if ev.signal == identity_signal]
+        if identity_evidence:
+            primary = identity_evidence[0]
+            primary.description = re.sub(
+                r"^\d+ LLM request\(s\)",
+                f"{events} LLM request(s)",
+                primary.description,
+            )
+            merged.evidence = [ev for ev in merged.evidence if ev.signal != identity_signal or ev is primary]
+    if len(unique) > 1:
+        merged.metadata["runtime_merge_note"] = _RUNTIME_MERGE_NOTE
+
+
+def merge_duplicate_metadata(merged: Finding, duplicate: Finding) -> None:
+    """Fold the metadata of ``duplicate``, another observation of one finding, into ``merged``.
+
+    The engine calls this after combining evidence and before widening the
+    observation window, so each finding still carries its own window. The
+    first observation's values take precedence, except for keys that combine:
+
+    * ``variable_names`` becomes the sorted union of both lists;
+    * ``runtime_observations`` keeps every input's observations, each tagged
+      with the ``runtime_source`` it was exported from;
+    * gateway-surface findings keep one snapshot per distinct source under
+      ``runtime_sources`` and sum request, token and cost metrics over them.
+
+    Gateway IDs include export source identity. Repeated scans of the same
+    configured source are idempotent here; observations from distinct exports
+    remain separate even if caller and scope match. No cross-source request
+    deduplication is inferred from matching timestamps or caller names.
+    """
+    gateway = merged.surface == duplicate.surface == Surface.GATEWAY
+    sources = _runtime_sources(merged) + _runtime_sources(duplicate) if gateway else []
+    for key, value in duplicate.metadata.items():
+        if key == "variable_names" and isinstance(value, list):
+            existing = merged.metadata.get(key, [])
+            if isinstance(existing, list):
+                merged.metadata[key] = sorted(set(existing) | set(value))
+        elif key == "runtime_observations" and isinstance(value, list):
+            merged.metadata[key] = _merge_runtime_observations(merged, duplicate)
+        else:
+            merged.metadata.setdefault(key, value)
+    if sources:
+        _merge_runtime_sources(merged, sources)

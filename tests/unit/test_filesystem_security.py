@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
+from pathlib import Path
 
 import pytest
 import regex
@@ -13,7 +15,7 @@ from click.testing import CliRunner
 from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code import manifests
-from shadowscan.connectors.code.filesystem import FilesystemConnector, _parse_mcp_servers
+from shadowscan.connectors.code.filesystem import FilesystemConnector, _excerpt, _parse_mcp_servers
 from shadowscan.models import Kind
 from shadowscan.utils.text import read_text
 
@@ -528,3 +530,86 @@ def test_analyzable_alias_to_a_lockfile_marks_incomplete(tmp_path, run_connector
 
     _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
     assert ctx.stats.incomplete
+
+
+SECRET = "sk-proj-aP9rVv3qN4zY7bC2hJ8Lm5Qw6Dt0KsX1eR7uT4p"
+
+
+def _scan(index, root: Path, **config):
+    ctx = ConnectorContext(config={"path": str(root), **config}, index=index)
+    return FilesystemConnector(ctx).run(), ctx
+
+
+def test_multiline_structured_secret_keeps_excerpt_lines_aligned(tmp_path, index):
+    (tmp_path / "config.toml").write_text(
+        '[llm]\npassword = """\nabcdefgh\nijklmnop"""\nendpoint = "https://api.openai.com/v1"\nmodel_name = "unrelated-line-six"\n'
+    )
+    findings, ctx = _scan(index, tmp_path)
+    domain_evidence = [e for f in findings for e in f.evidence if e.signal.startswith("domain:")]
+    expected = 'endpoint = "https://api.openai.com/v1"'
+    assert domain_evidence and all(
+        e.location == "config.toml:5" and e.snippet == expected for e in domain_evidence
+    )
+    assert "abcdefgh" not in json.dumps([f.to_dict() for f in findings])
+
+
+def test_notebook_outputs_and_markdown_cells_are_scanned_for_credentials(tmp_path, index):
+    notebook = {
+        "cells": [
+            {
+                "cell_type": "code",
+                "source": ["import os\n"],
+                "outputs": [{"output_type": "stream", "name": "stdout", "text": [SECRET + "\n"]}],
+            },
+            {"cell_type": "markdown", "source": ["Use key `" + SECRET + "` for the demo\n"]},
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    (tmp_path / "demo.ipynb").write_text(json.dumps(notebook))
+    findings, ctx = _scan(index, tmp_path)
+    secret = next(f for f in findings if f.kind == Kind.SECRET)
+    assert secret.metadata["count"] == 1 and not ctx.stats.errors
+    assert SECRET not in json.dumps([f.to_dict() for f in findings])
+
+
+def test_agent_definition_and_manifest_aggregates_are_bounded(tmp_path, index):
+    agents = tmp_path / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    for i in range(60):
+        (agents / f"a{i}.md").write_text(
+            "---\nname: a\ntools:\n" + "".join(f"  - t{j}\n" for j in range(300)) + "---\nbody\n"
+        )
+    (tmp_path / "app.py").write_text("import openai\n")
+    (tmp_path / "secrets.env").write_text(f"OPENAI_API_KEY={SECRET}\n")
+    findings, ctx = _scan(index, tmp_path)
+    project = next(f for f in findings if f.resource_type == "project")
+    assert len(project.metadata["agent_definitions"]) == 50
+    assert all(len(d["tools"]) == 50 for d in project.metadata["agent_definitions"])
+    assert any("agent definition limit" in e for e in ctx.stats.errors)
+    assert any(f.kind == Kind.SECRET for f in findings)
+
+
+def _run(index, root, **config):
+    ctx = ConnectorContext(config={"path": str(root), "use_git": False, **config}, index=index)
+    return FilesystemConnector(ctx).run(), ctx
+
+
+def test_secret_excerpt_is_redacted_before_truncation(tmp_path, index):
+    # Derived at runtime so no secret-shaped literal sits in the source.
+    key = "pplx-" + hashlib.sha256(b"perplexity-sample").hexdigest()[:48]
+    (tmp_path / "client.py").write_text(
+        'headers = {"X-Trace": "' + "p" * 100 + '", "X-Custom-Header": "' + key + '"}\n'
+    )
+    findings, _ = _run(index, tmp_path)
+    secrets = [f for f in findings if f.kind == Kind.SECRET]
+    assert len(secrets) == 1
+    serialized = json.dumps(secrets[0].to_dict())
+    assert key[5:17] not in serialized and "pplx-" not in serialized
+
+
+def test_excerpt_helper_redacts_then_truncates():
+    line = "x" * 150 + " key=" + "s" * 40
+    assert "s" * 8 not in _excerpt([line], 1, "s" * 40)
+    assert _excerpt([line], 2) == ""

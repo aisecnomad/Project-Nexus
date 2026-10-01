@@ -49,7 +49,8 @@ from shadowscan.connectors.base import (
     _positive_limit,
 )
 from shadowscan.connectors.common import apply_matches, config_boolean, finalize
-from shadowscan.connectors.gateway.normalise import (  # noqa: F401 - re-exported; callers and tests import them from here
+from shadowscan.connectors.gateway.normalise import (  # noqa: F401
+    # Re-exported: callers and tests import these names from this module.
     NORMALISERS,
     Event,
     _b,
@@ -324,7 +325,8 @@ def normalise_with_record(
 # they must be linear: possessive tokens (Python 3.11+) never backtrack into a
 # long unterminated request or a bare token blob to retry a failed match.
 _COMBINED = re.compile(
-    r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>[^\s"]++)[^"]*" (?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
+    r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>[^\s"]++)[^"]*" '
+    r'(?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
 )
 _LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=("[^"]*"|\S+)')
 _HOST_IN_TRAILER = re.compile(
@@ -580,79 +582,24 @@ def _record_interval(c: _Caller, ev: Event, retain_interval: bool) -> bool:
 
 def _record_distributions(c: _Caller, ev: Event, detail_budget: _DetailBudget | None) -> None:
     """Count the event's labels in every bounded per-caller distribution."""
+    n, dropped = ev.request_count, c.distribution_events_dropped
     if ev.model:
-        _count(
-            c.models,
-            str(ev.model)[:_MAX_LABEL_CHARS],
-            ev.request_count,
-            c.distribution_events_dropped,
-            "models",
-            detail_budget,
-        )
+        _count(c.models, str(ev.model)[:_MAX_LABEL_CHARS], n, dropped, "models", detail_budget)
     if ev.provider:
-        _count(
-            c.providers,
-            str(ev.provider)[:_MAX_LABEL_CHARS],
-            ev.request_count,
-            c.distribution_events_dropped,
-            "providers",
-            detail_budget,
-        )
+        _count(c.providers, str(ev.provider)[:_MAX_LABEL_CHARS], n, dropped, "providers", detail_budget)
     if ev.host:
-        _count(
-            c.hosts,
-            ev.host[:_MAX_LABEL_CHARS],
-            ev.request_count,
-            c.distribution_events_dropped,
-            "hosts",
-            detail_budget,
-        )
+        _count(c.hosts, ev.host[:_MAX_LABEL_CHARS], n, dropped, "hosts", detail_budget)
     if ev.user_agent:
-        _count(
-            c.user_agents,
-            str(ev.user_agent)[:_MAX_LABEL_CHARS],
-            ev.request_count,
-            c.distribution_events_dropped,
-            "user_agents",
-            detail_budget,
-        )
+        _count(c.user_agents, str(ev.user_agent)[:_MAX_LABEL_CHARS], n, dropped, "user_agents", detail_budget)
     if ev.ip:
-        _count(
-            c.ips,
-            ev.ip[:_MAX_LABEL_CHARS],
-            ev.request_count,
-            c.distribution_events_dropped,
-            "source_ips",
-            detail_budget,
-        )
+        _count(c.ips, ev.ip[:_MAX_LABEL_CHARS], n, dropped, "source_ips", detail_budget)
     if ev.user:
-        _count(
-            c.users,
-            ev.user[:_MAX_LABEL_CHARS],
-            ev.request_count,
-            c.distribution_events_dropped,
-            "end_users",
-            detail_budget,
-        )
+        _count(c.users, ev.user[:_MAX_LABEL_CHARS], n, dropped, "end_users", detail_budget)
     if ev.team:
-        _count(
-            c.teams,
-            str(ev.team)[:_MAX_LABEL_CHARS],
-            ev.request_count,
-            c.distribution_events_dropped,
-            "teams",
-            detail_budget,
-        )
+        _count(c.teams, str(ev.team)[:_MAX_LABEL_CHARS], n, dropped, "teams", detail_budget)
     if ev.path:
         # Query strings carry per-request identifiers; the operation is the path.
-        _count(
-            c.paths,
-            str(ev.path).split("?", 1)[0][:120],
-            ev.request_count,
-            c.distribution_events_dropped,
-            "operations",
-            detail_budget,
-        )
+        _count(c.paths, str(ev.path).split("?", 1)[0][:120], n, dropped, "operations", detail_budget)
 
 
 def _record_usage(c: _Caller, ev: Event, total_cost: float) -> None:
@@ -723,6 +670,49 @@ def _record_observation(c: _Caller, ev: Event, detail_budget: _DetailBudget | No
         )
 
 
+# Accepted ``format`` values; None auto-detects the schema per record.
+_FORMATS = frozenset(
+    {
+        None,
+        "litellm",
+        "portkey",
+        "kong",
+        "cloudflare",
+        "helicone",
+        "langfuse",
+        "bedrock",
+        "azure-openai",
+        "vertex",
+        "openai-usage",
+        "anthropic-usage",
+        "access-log",
+        "generic",
+    }
+)
+
+# Generic exports: the credential or principal fields an exact binding may name.
+_GENERIC_KEY_FIELDS = (
+    "api_key",
+    "apiKey",
+    "api_key_id",
+    "key",
+    "key_id",
+    "key_alias",
+    "virtual_key",
+    "token_id",
+)
+_GENERIC_PRINCIPAL_FIELDS = (
+    "principal",
+    "principal_id",
+    "identity.arn",
+    "caller",
+    "service",
+    "service_name",
+    "app",
+    "application",
+    "app_name",
+)
+
 _CALLER_KIND_WEIGHT = {
     "api-key": 0.35,
     "principal": 0.35,
@@ -741,7 +731,10 @@ def _tool_use_evidence(f: Finding, c: _Caller) -> None:
         f.add_evidence(
             Evidence(
                 signal="gateway:tool-use",
-                description=f"{c.tools_requests}/{c.tool_known} inspected requests carried tool/function definitions ({tool_ratio:.0%}); {c.tool_call_responses} responses invoked tools",
+                description=(
+                    f"{c.tools_requests}/{c.tool_known} inspected requests carried tool/function definitions "
+                    f"({tool_ratio:.0%}); {c.tool_call_responses} responses invoked tools"
+                ),
                 weight=min(0.9, 0.4 + tool_ratio * 0.5),
             )
         )
@@ -797,7 +790,10 @@ def _temporal_evidence(f: Finding, c: _Caller, framework_user_agent: bool) -> No
             f.add_evidence(
                 Evidence(
                     signal="gateway:always-on",
-                    description=f"{shape}: round-the-clock activity without tool use, an agent framework or an unattended identity",
+                    description=(
+                        f"{shape}: round-the-clock activity without tool use, an agent framework or an "
+                        "unattended identity"
+                    ),
                     weight=0.3,
                 )
             )
@@ -844,21 +840,34 @@ def _assign_owner(f: Finding, c: _Caller) -> None:
 
 
 class GatewayLogConnector(BaseConnector, _NoDump):
+    # Engine hook: identical sources in one report share opaque caller/scope IDs.
+    uses_run_identity_key: ClassVar[bool] = True
+
     name: ClassVar[str] = "gateway.logs"
     surface: ClassVar[Surface] = Surface.GATEWAY
     provider: ClassVar[str | None] = "gateway"
     description: ClassVar[str] = (
-        "Reconstruct LLM callers (API keys, principals, services, user agents) from AI gateway / provider / proxy logs."
+        "Reconstruct LLM callers (API keys, principals, services, user agents) from AI gateway / provider / "
+        "proxy logs."
     )
     config_keys: ClassVar[dict[str, str]] = {
         "input": "log file or directory (JSONL / JSON / CSV / nginx-envoy text)",
-        "format": "force schema: litellm|portkey|kong|cloudflare|helicone|langfuse|bedrock|azure-openai|vertex|openai-usage|anthropic-usage|access-log|generic (default auto)",
+        "format": (
+            "force schema: litellm|portkey|kong|cloudflare|helicone|langfuse|bedrock|azure-openai|vertex|"
+            "openai-usage|anthropic-usage|access-log|generic (default auto)"
+        ),
         "min_events": "ignore callers with fewer events (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
         "max_records": "stop after N records (default 5,000,000)",
-        "label": "gateway name recorded as the finding provider and as the account of unscoped callers (defaults to the entry's `label`)",
+        "label": (
+            "gateway name recorded as the finding provider and as the account of unscoped callers (defaults "
+            "to the entry's `label`)"
+        ),
         "gateway_name": "fallback for `label` when the connector entry has none",
-        "correlation_bindings": "explicit [{code_resource, caller, scope}] mappings to workload identities; scope must exactly match log tenant/account/project/workspace fields ({} for unscoped exports)",
+        "correlation_bindings": (
+            "explicit [{code_resource, caller, scope}] mappings to workload identities; scope must exactly "
+            "match log tenant/account/project/workspace fields ({} for unscoped exports)"
+        ),
     }
     offline_formats: ClassVar[str] = "JSONL / JSON / CSV / text access logs"
 
@@ -872,22 +881,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         self.llm_hosts_only = config_boolean(ctx.get("llm_hosts_only", True), "llm_hosts_only")
         self.max_records = _positive_limit(ctx.get("max_records", 5_000_000), "max_records")
         self.label = ctx.get("label") or ctx.get("gateway_name")
-        if self.format not in {
-            None,
-            "litellm",
-            "portkey",
-            "kong",
-            "cloudflare",
-            "helicone",
-            "langfuse",
-            "bedrock",
-            "azure-openai",
-            "vertex",
-            "openai-usage",
-            "anthropic-usage",
-            "access-log",
-            "generic",
-        }:
+        if self.format not in _FORMATS:
             raise ConnectorError("gateway.logs: unsupported format")
         # A caller is scoped to its configured export source. Repeating the same
         # source is idempotent; distinct sources retain their own observations.
@@ -908,7 +902,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 )
             ):
                 raise ConnectorError(
-                    "gateway.logs: each correlation binding requires exact code_resource, caller and scope mapping"
+                    "gateway.logs: each correlation binding requires exact code_resource, caller and scope "
+                    "mapping"
                 )
         source = str(Path(ctx.input_path).expanduser().resolve()) if ctx.input_path else ""
         identity = json.dumps(
@@ -1289,7 +1284,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         )
         if distribution_requests_dropped or detail_budget.observations_omitted:
             self.ctx.warn(
-                f"gateway.logs: distribution limit or bounded detail budget ({_MAX_TOTAL_DETAIL_KEYS} keys total, "
+                "gateway.logs: distribution limit or bounded detail budget "
+                f"({_MAX_TOTAL_DETAIL_KEYS} keys total, "
                 f"{_MAX_DISTINCT_KEYS} per distribution or caller observations) reached; "
                 f"omitted {distribution_requests_dropped} distribution dimension-request counts; "
                 f"omitted {detail_budget.observations_omitted} observation records representing "
@@ -1324,7 +1320,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             ev.scope, ev.scope_redacted = _restore_scope(raw_scope, clean_scope, self._scope_key)
         if ev.scope_redacted:
             self.ctx.warn(
-                "gateway.logs: scope labels were redacted; distinct opaque scopes retained; runtime attribution incomplete"
+                "gateway.logs: scope labels were redacted; distinct opaque scopes retained; runtime "
+                "attribution incomplete"
             )
             identity_assurance = "unverified"
         if ev.caller_redacted and not ev.binding_caller:
@@ -1402,28 +1399,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             "anthropic-usage": rec.get("api_key_id"),
             "access-log": get_path(rec, "api_key", "authorization_hash", "consumer"),
             "generic": get_path(
-                rec,
-                "api_key",
-                "apiKey",
-                "api_key_id",
-                "key",
-                "key_id",
-                "key_alias",
-                "virtual_key",
-                "token_id",
-            )
-            if ev.caller_kind == "api-key"
-            else get_path(
-                rec,
-                "principal",
-                "principal_id",
-                "identity.arn",
-                "caller",
-                "service",
-                "service_name",
-                "app",
-                "application",
-                "app_name",
+                rec, *(_GENERIC_KEY_FIELDS if ev.caller_kind == "api-key" else _GENERIC_PRINCIPAL_FIELDS)
             ),
         }
         # Sentinels often appear in partial exports. A binding to one is not
@@ -1435,14 +1411,19 @@ class GatewayLogConnector(BaseConnector, _NoDump):
 
     def _is_llm_traffic(self, ev: Event) -> bool:
         if ev.path and re.search(
-            r"(?:^|/)(?:favicon\.ico|robots\.txt|healthz?|readyz?|livez?|metrics)(?:$|[/?#])|\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)(?:$|[?#])",
+            r"(?:^|/)(?:favicon\.ico|robots\.txt|healthz?|readyz?|livez?|metrics)(?:$|[/?#])"
+            r"|\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)(?:$|[?#])",
             ev.path,
             re.I,
         ):
             return False
         text = " ".join(x for x in (ev.host, ev.path) if x)
         if ev.path and re.search(
-            r"/v1/(?:chat/completions|completions|responses|messages|embeddings|models|assistants|threads|runs|audio|images|files|batches|realtime)|/openai/deployments/|/generateContent|:generateContent|:streamGenerateContent|/invoke(?:-with-response-stream)?|/converse|/mcp\b|/sse\b|/a2a\b|/agents?/|/predict\b|/api/(?:chat|generate|tags)\b",
+            r"/v1/(?:chat/completions|completions|responses|messages|embeddings|models|assistants|threads"
+            r"|runs|audio|images|files|batches|realtime)"
+            r"|/openai/deployments/|/generateContent|:generateContent|:streamGenerateContent"
+            r"|/invoke(?:-with-response-stream)?|/converse|/mcp\b|/sse\b|/a2a\b|/agents?/|/predict\b"
+            r"|/api/(?:chat|generate|tags)\b",
             text,
         ):
             return True
@@ -1520,7 +1501,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         f.add_evidence(
             Evidence(
                 signal=f"gateway:{c.kind}",
-                description=f"{c.events} LLM request(s) by {c.kind} '{c.label}' to models {', '.join(top_models[:5]) or 'unknown'}",
+                description=(
+                    f"{c.events} LLM request(s) by {c.kind} '{c.label}' to models "
+                    f"{', '.join(top_models[:5]) or 'unknown'}"
+                ),
                 weight=_CALLER_KIND_WEIGHT[c.kind],
             )
         )
@@ -1576,7 +1560,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             "usage_intervals": c.usage_intervals,
             "usage_intervals_dropped": c.usage_intervals_dropped,
             "usage_interval_requests_dropped": c.usage_interval_requests_dropped,
-            "event_counting": "Request totals within this source; aggregate bucket counts are preserved. Distinct sources are not deduplicated against each other.",
+            "event_counting": (
+                "Request totals within this source; aggregate bucket counts are preserved. Distinct sources "
+                "are not deduplicated against each other."
+            ),
             "models": dict(c.models.most_common(10)),
             "providers": dict(c.providers.most_common(5)),
             "hosts": dict(c.hosts.most_common(5)),
@@ -1589,14 +1576,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             "distribution_limit": _MAX_DISTINCT_KEYS,
             "classification_incomplete": any(
                 c.distribution_events_dropped.get(name)
-                for name in (
-                    "models",
-                    "providers",
-                    "hosts",
-                    "user_agents",
-                    "end_users",
-                    "teams",
-                )
+                for name in ("models", "providers", "hosts", "user_agents", "end_users", "teams")
             ),
             "tool_requests": c.tools_requests,
             "tool_call_responses": c.tool_call_responses,
@@ -1621,7 +1601,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
     def _finding_title(self, f: Finding, c: _Caller, top_models: list[str]) -> str:
         """Caller kind, request volume, up to two frameworks and the top model."""
         what = "Agentic caller" if f.metadata.get("agent_indicators") else "LLM caller"
-        fw = [self.index.get(s).name for s in f.frameworks[:2] if self.index.get(s)]  # type: ignore[union-attr]
+        fw = [
+            self.index.get(s).name  # type: ignore[union-attr]
+            for s in f.frameworks[:2]
+            if self.index.get(s)
+        ]
         return (
             f"{what} '{c.label}' ({c.kind}): {c.events} requests"
             + (f" via {', '.join(fw)}" if fw else "")

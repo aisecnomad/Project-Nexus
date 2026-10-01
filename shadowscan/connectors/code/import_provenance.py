@@ -3,8 +3,11 @@
 A familiar import name is not proof of an installed SDK: a repository can
 provide that same name. These checks only inspect path metadata; they never
 import modules, execute source, read package initializers, or enumerate trees.
-As with the filesystem connector, callers must scan an immutable checkout.
-Concurrent directory replacement requires filesystem/container isolation.
+They ``lstat`` paths rather than use open directories, so their answer holds
+only for a checkout that does not change during the scan: unlike the
+filesystem connector's file reads, which stay below the opened scan root, a
+directory replaced between two probes can mislead them. Concurrent directory
+replacement requires filesystem/container isolation.
 """
 
 from __future__ import annotations

@@ -72,7 +72,10 @@ def test_annotated_credentials_never_enter_full_scan_evidence(tmp_path, run_conn
         f'from crewai import Agent; CLIENT_SECRET: Final[str] = "{SECRET}"\n'
     )
     findings, ctx = run_connector(
-        "code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=scan_secrets
+        "code.filesystem",
+        path=str(tmp_path),
+        use_git=False,
+        scan_secrets=scan_secrets,
     )
     assert findings and not ctx.stats.incomplete
     exported = json.dumps([finding.to_dict() for finding in findings])

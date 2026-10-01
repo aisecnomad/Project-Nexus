@@ -165,6 +165,95 @@ def _physical_locations(f: Finding) -> list[dict[str, Any]]:
     return locs
 
 
+def _rule(f: Finding, rid: str) -> dict[str, Any]:
+    """A reporting descriptor from the first finding of a rule; severity is raised later."""
+    technology = (f.frameworks or f.model_providers or ["generic"])[0]
+    return {
+        "id": rid,
+        "name": _rule_name(rid),
+        "shortDescription": {"text": f"{f.kind.value} ({technology})"},
+        "fullDescription": {
+            "text": f"ShadowScan detected a {f.kind.value} on the {f.surface.value} surface."
+        },
+        "help": {
+            "text": (
+                "Review the agent, confirm ownership, register it in the agent inventory and "
+                "remediate the listed risk factors."
+            )
+        },
+        "defaultConfiguration": {"level": _LEVEL[f.risk.level]},
+        "properties": {
+            "tags": ["security", "ai-agent", f.surface.value, f.kind.value],
+            "security-severity": _SECURITY_SEVERITY[f.risk.level],
+        },
+    }
+
+
+def _result(f: Finding, rid: str) -> dict[str, Any]:
+    message = f"{f.title} — risk {f.risk.level.value} ({f.risk.score}), confidence {f.confidence:.2f}"
+    if f.shadow:
+        message += " — SHADOW (not in inventory)"
+    factors = "; ".join(x.description for x in f.risk.factors if x.weight > 0)
+    res: dict[str, Any] = {
+        "ruleId": rid,
+        "level": _LEVEL[f.risk.level],
+        "message": {"text": message + (f". Risk factors: {factors}" if factors else "")},
+        "partialFingerprints": {"shadowscan/finding": f.id},
+        "properties": _compact(
+            {
+                "surface": f.surface.value,
+                "kind": f.kind.value,
+                "resource": f.resource,
+                "provider": f.provider,
+                "owner": f.owner,
+                "frameworks": f.frameworks,
+                "model_providers": f.model_providers,
+                "capabilities": f.capabilities,
+                # A property bag's reserved ``tags`` key is a set of distinct strings.
+                "tags": list(dict.fromkeys(f.tags)),
+                "shadow": f.shadow,
+                "risk_score": f.risk.score,
+                "confidence": f.confidence,
+            }
+        ),
+    }
+    locations = _physical_locations(f) if f.surface == Surface.CODE else []
+    if locations:
+        res["locations"] = locations
+    else:
+        logical = _compact(
+            {"name": f.resource, "kind": f.resource_type or None, "fullyQualifiedName": f.resource}
+        )
+        res["locations"] = [{"logicalLocations": [logical]}]
+    return res
+
+
+def _invocation(result: ScanResult) -> dict[str, Any]:
+    """Run status plus one notification per distinct connector error, warning or skip reason.
+
+    Connector statistics pass the shared publication boundary (collectively sanitized, fail
+    closed on sanitizer limits) before any of them is written into the log.
+    """
+    notifications = [
+        {
+            "level": "error" if st["errors"] or st["skipped"] else "warning",
+            "message": {"text": f"{st['connector']}: {msg}"},
+        }
+        for st in publication_stats(result)
+        for msg in dict.fromkeys(
+            st["errors"] + st["warnings"] + ([st["skip_reason"]] if st["skip_reason"] else [])
+        )
+    ]
+    return _compact(
+        {
+            "executionSuccessful": result.complete,
+            "startTimeUtc": _utc_timestamp(result.started_at),
+            "endTimeUtc": _utc_timestamp(result.finished_at),
+            "toolExecutionNotifications": notifications,
+        }
+    )
+
+
 def render_sarif(result: ScanResult) -> str:
     """Render a scan result as a SARIF 2.1.0 log (validity rules are in the module docstring)."""
     for finding in result.findings:
@@ -177,83 +266,13 @@ def render_sarif(result: ScanResult) -> str:
         if rid not in worst or _RANK[f.risk.level] > _RANK[worst[rid]]:
             worst[rid] = f.risk.level
         if rid not in rules:
-            rules[rid] = {
-                "id": rid,
-                "name": _rule_name(rid),
-                "shortDescription": {
-                    "text": f"{f.kind.value} ({(f.frameworks or f.model_providers or ['generic'])[0]})"
-                },
-                "fullDescription": {
-                    "text": f"ShadowScan detected a {f.kind.value} on the {f.surface.value} surface."
-                },
-                "help": {
-                    "text": "Review the agent, confirm ownership, register it in the agent inventory and remediate the listed risk factors."
-                },
-                "defaultConfiguration": {"level": _LEVEL[f.risk.level]},
-                "properties": {
-                    "tags": ["security", "ai-agent", f.surface.value, f.kind.value],
-                    "security-severity": _SECURITY_SEVERITY[f.risk.level],
-                },
-            }
-        message = f"{f.title} — risk {f.risk.level.value} ({f.risk.score}), confidence {f.confidence:.2f}"
-        if f.shadow:
-            message += " — SHADOW (not in inventory)"
-        factors = "; ".join(x.description for x in f.risk.factors if x.weight > 0)
-        res: dict[str, Any] = {
-            "ruleId": rid,
-            "level": _LEVEL[f.risk.level],
-            "message": {"text": message + (f". Risk factors: {factors}" if factors else "")},
-            "partialFingerprints": {"shadowscan/finding": f.id},
-            "properties": _compact(
-                {
-                    "surface": f.surface.value,
-                    "kind": f.kind.value,
-                    "resource": f.resource,
-                    "provider": f.provider,
-                    "owner": f.owner,
-                    "frameworks": f.frameworks,
-                    "model_providers": f.model_providers,
-                    "capabilities": f.capabilities,
-                    # A property bag's reserved ``tags`` key is a set of distinct strings.
-                    "tags": list(dict.fromkeys(f.tags)),
-                    "shadow": f.shadow,
-                    "risk_score": f.risk.score,
-                    "confidence": f.confidence,
-                }
-            ),
-        }
-        locations = _physical_locations(f) if f.surface == Surface.CODE else []
-        if locations:
-            res["locations"] = locations
-        else:
-            logical = _compact(
-                {"name": f.resource, "kind": f.resource_type or None, "fullyQualifiedName": f.resource}
-            )
-            res["locations"] = [{"logicalLocations": [logical]}]
-        results.append(res)
+            rules[rid] = _rule(f, rid)
+        results.append(_result(f, rid))
     # Code-scanning UIs show a rule's severity for all of its alerts: use the
     # most severe result, independent of report ordering.
     for rid, level in worst.items():
         rules[rid]["defaultConfiguration"]["level"] = _LEVEL[level]
         rules[rid]["properties"]["security-severity"] = _SECURITY_SEVERITY[level]
-    stats = publication_stats(result)
-    invocation = _compact(
-        {
-            "executionSuccessful": result.complete,
-            "startTimeUtc": _utc_timestamp(result.started_at),
-            "endTimeUtc": _utc_timestamp(result.finished_at),
-            "toolExecutionNotifications": [
-                {
-                    "level": "error" if st["errors"] or st["skipped"] else "warning",
-                    "message": {"text": f"{st['connector']}: {msg}"},
-                }
-                for st in stats
-                for msg in dict.fromkeys(
-                    st["errors"] + st["warnings"] + ([st["skip_reason"]] if st["skip_reason"] else [])
-                )
-            ],
-        }
-    )
     sarif = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
@@ -268,7 +287,7 @@ def render_sarif(result: ScanResult) -> str:
                     }
                 },
                 "results": results,
-                "invocations": [invocation],
+                "invocations": [_invocation(result)],
                 "properties": {"summary": result.summary()},
             }
         ],

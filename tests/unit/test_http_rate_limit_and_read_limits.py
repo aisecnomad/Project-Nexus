@@ -246,23 +246,53 @@ def tls_server(tmp_path):
 
 def test_slow_drip_response_is_bounded_by_the_wall_clock(tls_server):
     base, cert = tls_server
-    http = HttpClient(
-        allow_private_origin=True, timeout=5, max_retries=0, ca_bundle=str(cert), max_read_seconds=1.0
-    )
+    # Each byte arrives well inside the 0.5 s per-read timeout; the whole body
+    # must still finish within the derived read deadline (twice the timeout).
+    http = HttpClient(allow_private_origin=True, timeout=0.5, max_retries=0, ca_bundle=str(cert))
     started = time.monotonic()
     try:
-        with pytest.raises(requests.exceptions.ReadTimeout):
+        with pytest.raises(ValueError, match="read deadline"):
             http.get_json(f"{base}/drip")
     finally:
         http.session.close()
     assert time.monotonic() - started < 5
 
 
+def test_connector_deadline_bounds_a_body_read_inside_the_read_deadline(tls_server):
+    base, cert = tls_server
+    # The 60 s read deadline would let the drip run on; the connector's own
+    # deadline one second away ends the read first.
+    http = HttpClient(
+        allow_private_origin=True,
+        timeout=30,
+        max_retries=0,
+        ca_bundle=str(cert),
+        deadline=time.monotonic() + 1.0,
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises((ValueError, TimeoutError)):
+            http.get_json(f"{base}/drip")
+    finally:
+        http.session.close()
+    assert time.monotonic() - started < 5
+
+
+def test_body_read_after_the_connector_deadline_is_refused(tls_server):
+    base, cert = tls_server
+    http = HttpClient(allow_private_origin=True, timeout=5, max_retries=0, ca_bundle=str(cert))
+    try:
+        resp = http.get(f"{base}/keys", stream=True)
+        http.deadline = time.monotonic() - 1
+        with pytest.raises(TimeoutError, match="connector deadline"):
+            http.read_response_bytes(resp)
+    finally:
+        http.session.close()
+
+
 def test_fast_response_within_the_wall_clock_cap_is_unaffected(tls_server):
     base, cert = tls_server
-    http = HttpClient(
-        allow_private_origin=True, timeout=5, max_retries=0, ca_bundle=str(cert), max_read_seconds=5.0
-    )
+    http = HttpClient(allow_private_origin=True, timeout=5, max_retries=0, ca_bundle=str(cert))
     try:
         assert http.get_json(f"{base}/keys") == {"keys": []}
     finally:
@@ -306,12 +336,6 @@ def test_ca_bundle_defaults_leave_certifi_verification_untouched():
     http = HttpClient()
     assert http.session.verify is True
     http.session.close()
-
-
-@pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf"), True, "30"])
-def test_read_time_cap_must_be_a_positive_finite_number(value):
-    with pytest.raises(ValueError, match="max_read_seconds"):
-        HttpClient(max_read_seconds=value)  # type: ignore[arg-type]
 
 
 # --------------------------------------------------------------- JWKS and CA

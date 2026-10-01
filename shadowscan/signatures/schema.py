@@ -49,12 +49,34 @@ SIGNAL_FIELDS = {
 # Dependency ecosystems the manifest parsers emit. ``any`` matches every
 # ecosystem; an omitted ecosystem is treated as ``any`` by the matcher.
 ECOSYSTEMS = frozenset(
-    {"pypi", "npm", "nuget", "maven", "go", "cargo", "rubygems", "composer", "conda", "any"}
+    {
+        "pypi",
+        "npm",
+        "nuget",
+        "maven",
+        "go",
+        "cargo",
+        "rubygems",
+        "composer",
+        "conda",
+        "any",
+    }
 )
 
 # Canonical language names produced by ``matcher.language_for_path``.
 LANGUAGES = frozenset(
-    {"python", "javascript", "go", "rust", "java", "dotnet", "ruby", "php", "swift", "dart"}
+    {
+        "python",
+        "javascript",
+        "go",
+        "rust",
+        "java",
+        "dotnet",
+        "ruby",
+        "php",
+        "swift",
+        "dart",
+    }
 )
 
 # Capability vocabulary scored by ``shadowscan.risk.CAPABILITY_WEIGHTS``. The
@@ -210,7 +232,8 @@ def validate_signature_shape(value: Any, context: str) -> dict[str, Any]:
     expected = NAMESPACE_CATEGORIES.get(namespace)
     if expected is not None and d["category"] != expected:
         raise ValueError(
-            f"{context}: id {d['id']!r} is in the {namespace!r} namespace, which requires category {expected!r}, not {d['category']!r}"
+            f"{context}: id {d['id']!r} is in the {namespace!r} namespace, "
+            f"which requires category {expected!r}, not {d['category']!r}"
         )
     # Distinct signals of one signature may repeat a value on purpose: the
     # matcher lets them attach different weights or capabilities to the same

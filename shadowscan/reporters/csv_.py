@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 
 from shadowscan.models import ScanResult
 from shadowscan.reporters._publication import publication_stats, visible_controls
@@ -39,15 +40,23 @@ COLUMNS = [
     "connector",
 ]
 
+# A spreadsheet cell must not begin with a formula trigger (OWASP CSV injection).
+# A value can start several cells: a report opened with another delimiter (for
+# example a semicolon locale), or a joined list split on "|", starts a new cell
+# after each delimiter or line break. Leading whitespace, including a no-break
+# space, and quotes may be trimmed, so they do not hide a trigger. A value that
+# starts with a tab or line break, or a later cell that does, is also neutralised.
+_FORMULA_CELL = re.compile(
+    r"^(?=[\t\r\n])"
+    r"|(?:^|(?<=[,;\t|\r\n]))(?=[\t\r]|[ \t\r\n\v\f\ufeff\u00a0\"]*[=+\-@])"
+)
+
 
 def _safe_cell(value: object) -> object:
-    """Force formula-like untrusted strings to spreadsheet text cells and show terminal controls."""
+    """Mark formula-like cells in an untrusted string as text and make terminal controls visible."""
     if isinstance(value, str):
-        # Tab, CR and LF stay: they are cell data, and the formula guard below needs them.
-        value = visible_controls(value, keep="\t\r\n")
-        stripped = value.lstrip(" \t\r\n\v\f\ufeff")
-        if stripped.startswith(("=", "+", "-", "@")) or value.startswith(("\t", "\r", "\n")):
-            return "'" + value
+        # Tab, CR and LF stay: they are cell data, and the formula guard needs them.
+        return _FORMULA_CELL.sub("'", visible_controls(value, keep="\t\r\n"))
     return value
 
 
@@ -81,6 +90,7 @@ def render_csv(result: ScanResult) -> str:
         w.writerow({key: _safe_cell(value) for key, value in _status_row(result).items()})
     for f in result.findings:
         f.sanitize()
+        top_evidence = sorted(f.evidence, key=lambda e: -e.weight)[:3]
         row = {
             "id": f.id,
             "risk_level": f.risk.level.value,
@@ -108,9 +118,7 @@ def render_csv(result: ScanResult) -> str:
             "last_seen": f.last_seen or "",
             "risk_factors": "; ".join(x.description for x in f.risk.factors if x.weight > 0),
             "evidence_count": len(f.evidence),
-            "top_evidence": " | ".join(
-                e.description for e in sorted(f.evidence, key=lambda e: -e.weight)[:3]
-            ),
+            "top_evidence": " | ".join(e.description for e in top_evidence),
             "connector": f.connector,
         }
         w.writerow({key: _safe_cell(value) for key, value in row.items()})

@@ -473,9 +473,9 @@ class AwsConnector(BaseConnector):
         if self._default_regions and self.services - {"iam"}:
             # Informational: the operator chose no scope, so name what was and was not covered.
             self.ctx.warn(
-                f"cloud.aws: no 'regions' option set; scanned only the default regions ({', '.join(regions)}). "
-                "Resources in other regions were not scanned. Set 'regions' to a list, or "
-                "'regions: all' for every enabled region, to change the scope",
+                "cloud.aws: no 'regions' option set; scanned only the default regions "
+                f"({', '.join(regions)}). Resources in other regions were not scanned. "
+                "Set 'regions' to a list, or 'regions: all' for every enabled region, to change the scope",
                 incomplete=False,
             )
         yield {"_kind": "account", "account": acct, "regions": regions}

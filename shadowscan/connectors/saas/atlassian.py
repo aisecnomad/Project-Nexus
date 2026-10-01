@@ -27,7 +27,8 @@ class AtlassianConnector(BaseConnector):
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "atlassian"
     description: ClassVar[str] = (
-        "Marketplace / Forge apps installed on Jira & Confluence Cloud (AI assistants, Rovo agents, automation bots)."
+        "Marketplace / Forge apps installed on Jira & Confluence Cloud (AI assistants, Rovo agents, "
+        "automation bots)."
     )
     config_keys: ClassVar[dict[str, str]] = {
         "site": "https://<org>.atlassian.net (env ATLASSIAN_SITE)",
@@ -140,7 +141,11 @@ class AtlassianConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="atlassian:app",
-                description=f"{'Enabled' if p.get('enabled', True) else 'Disabled'} {'user-installed ' if p.get('userInstalled') else ''}app '{name}' ({p.get('key')}) by {vendor or 'unknown vendor'} v{p.get('version') or '?'}",
+                description=(
+                    f"{'Enabled' if p.get('enabled', True) else 'Disabled'} "
+                    f"{'user-installed ' if p.get('userInstalled') else ''}app '{name}' ({p.get('key')}) by "
+                    f"{vendor or 'unknown vendor'} v{p.get('version') or '?'}"
+                ),
                 weight=0.3,
             )
         )

@@ -268,7 +268,9 @@ signatures:
         globs: ["**/.adk/**", "**/agent_engine_app.py"]
         weight: 0.6
       - type: env
-        names: [GOOGLE_GENAI_USE_VERTEXAI, ADK_API_KEY]
+        # GOOGLE_GENAI_USE_VERTEXAI belongs to the google-genai SDK used by any
+        # Gemini application; it is a provider.google-vertex-ai signal, not ADK.
+        names: [ADK_API_KEY]
         weight: 0.4
       - type: user_agent
         patterns: ['(?i)google-adk', '(?i)\badk/\d']

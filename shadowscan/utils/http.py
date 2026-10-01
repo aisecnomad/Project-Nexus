@@ -37,8 +37,10 @@ log = logging.getLogger("shadowscan.http")
 
 DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
-# ``timeout`` bounds each socket read; this bounds reading a whole response.
-DEFAULT_MAX_READ_SECONDS = 120.0
+# A per-read socket timeout does not bound a response body: a server can send one
+# byte just inside every timeout. Each body must also finish within this multiple
+# of the client timeout (60 seconds by default).
+READ_DEADLINE_FACTOR = 2
 MAX_RETRY_DELAY = 120
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 _HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
@@ -100,10 +102,62 @@ def _validated_ca_bundle(path: Any) -> str:
     return os.path.abspath(path)
 
 
-def _positive_seconds(value: Any, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < math.inf:
-        raise ValueError(f"{name} must be a positive finite number")
-    return float(value)
+def _read_deadline(timeout: float) -> float:
+    """Derive the whole-body read deadline from the per-read client timeout."""
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise ValueError("timeout must be a positive finite number of seconds")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be a positive finite number of seconds")
+    return float(timeout) * READ_DEADLINE_FACTOR
+
+
+def _read_watchdog(
+    resp: requests.Response, seconds: float, expired: threading.Event
+) -> threading.Timer | None:
+    """Abort a body read that is still blocked when its deadline passes.
+
+    urllib3 fills a whole chunk before returning it, so a server dripping bytes
+    inside the socket timeout would otherwise hold the worker until the connector
+    deadline abandons it. Shutting the socket down for reading wakes the blocked
+    read; ``expired`` tells the reader that any end of body it then sees is not a
+    complete response.
+
+    urllib3 returns the connection to the pool during the read that ends the
+    body, before the reader regains control, and its ``shutdown()`` checks for
+    that without a lock. A pooled socket may already carry another request on
+    this session, so a release waits for a shutdown in progress, and the
+    watchdog leaves alone a body whose connection was released before it fired.
+    """
+    raw: Any = resp.raw
+    shutdown = getattr(raw, "shutdown", None)
+    if not callable(shutdown):
+        return None
+    lock = threading.Lock()
+    released = False
+    release = getattr(raw, "release_conn", None)
+    if callable(release):
+
+        def release_conn() -> None:
+            nonlocal released
+            with lock:
+                released = True
+                release()
+
+        raw.release_conn = release_conn
+
+    def abort() -> None:
+        with lock:
+            if released:
+                return
+            expired.set()
+            # urllib3 refuses to shut down a connection that is already closed.
+            with contextlib.suppress(OSError, RuntimeError, ValueError):
+                shutdown()
+
+    timer = threading.Timer(seconds, abort)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -228,11 +282,8 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
         raise ValueError("API URL must use HTTPS without embedded credentials")
     if origin:
         expected = urlsplit(origin)
-        if (parsed.scheme, parsed.hostname, parsed.port or 443) != (
-            expected.scheme,
-            expected.hostname,
-            expected.port or 443,
-        ):
+        actual_origin = (parsed.scheme, parsed.hostname, parsed.port or 443)
+        if actual_origin != (expected.scheme, expected.hostname, expected.port or 443):
             raise ValueError("Refusing API URL outside the configured credential origin")
     allow = _allow_private_origin.get() if allow_private is None else allow_private
     if not isinstance(allow, bool):
@@ -268,13 +319,6 @@ class _PublicHTTPSConnection(HTTPSConnection):
     """
 
     allow_private_origin = False
-    # The connected TLS socket. http.client drops ``sock`` once a response owns
-    # the connection; the read-time limit needs it to wake a blocked reader.
-    transport: socket.socket | None = None
-
-    def connect(self) -> None:
-        super().connect()
-        self.transport = self.sock
 
     def _new_conn(self) -> socket.socket:
         host = self.host.rstrip(".")
@@ -380,32 +424,6 @@ def diagnostic_url(url: str) -> str:
     return sanitize_text(urlunsplit((parsed.scheme, parsed.netloc.rsplit("@", 1)[-1], parsed.path, "", "")))
 
 
-@contextlib.contextmanager
-def _read_time_limit(resp: requests.Response, seconds: float) -> Iterator[threading.Event]:
-    """Abort a streamed read once ``seconds`` of wall-clock have passed.
-
-    A socket timeout only bounds each recv, so a server dripping one byte at a
-    time never trips it. At the deadline the transport socket is shut down,
-    which wakes the blocked reader; the caller treats the event as a timeout.
-    """
-    expired = threading.Event()
-
-    def abort() -> None:
-        expired.set()
-        sock = getattr(getattr(getattr(resp, "raw", None), "connection", None), "transport", None)
-        with contextlib.suppress(AttributeError, OSError, ValueError):
-            if sock is not None:
-                sock.shutdown(socket.SHUT_RDWR)
-
-    timer = threading.Timer(seconds, abort)
-    timer.daemon = True
-    timer.start()
-    try:
-        yield expired
-    finally:
-        timer.cancel()
-
-
 class HttpError(RuntimeError):
     def __init__(self, status: int, url: str, body: str = ""):
         self.status = status
@@ -423,18 +441,19 @@ class HttpClient:
         self,
         base_url: str = "",
         headers: dict[str, str] | None = None,
-        timeout: int = DEFAULT_TIMEOUT,
+        timeout: float = DEFAULT_TIMEOUT,
         max_retries: int = 4,
         session: requests.Session | None = None,
         auth: Any = None,
         on_warning: Callable[[str], None] | None = None,
         allow_private_origin: bool | None = None,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
-        max_read_seconds: float = DEFAULT_MAX_READ_SECONDS,
         ca_bundle: str | None = None,
         deadline: float | None = None,
         cancelled: threading.Event | None = None,
     ):
+        # Validate before an injected session is modified.
+        read_deadline = _read_deadline(timeout)
         self.base_url = base_url.rstrip("/")
         self.allow_private_origin = (
             _allow_private_origin.get() if allow_private_origin is None else allow_private_origin
@@ -473,9 +492,9 @@ class HttpClient:
         if auth is not None:
             self.session.auth = auth
         self.timeout = timeout
+        self.read_deadline = read_deadline
         self.max_retries = max_retries
         self.max_response_bytes = _positive_byte_limit(max_response_bytes, DEFAULT_MAX_RESPONSE_BYTES)
-        self.max_read_seconds = _positive_seconds(max_read_seconds, "max_read_seconds")
         inherited_deadline, inherited_cancelled = _request_limits.get()
         self.deadline = inherited_deadline if deadline is None else deadline
         self.cancelled = inherited_cancelled if cancelled is None else cancelled
@@ -520,10 +539,10 @@ class HttpClient:
         redirects = 0
         origin = url
         while True:
-            if (
-                isinstance(self.session, requests.Session)
-                and self.session.get_adapter(url) is not self._policy_adapter
-            ):
+            replaced = isinstance(self.session, requests.Session) and (
+                self.session.get_adapter(url) is not self._policy_adapter
+            )
+            if replaced:
                 raise ValueError("HTTP destination policy adapter was replaced")
             attempt += 1
             self.requests_made += 1
@@ -591,12 +610,16 @@ class HttpClient:
         return self.request("POST", path, **kwargs)
 
     def read_response_bytes(self, resp: requests.Response, *, max_bytes: int | None = None) -> bytes:
-        """Read a streamed response within the configured decoded-byte limit.
+        """Read a streamed response within the configured decoded-byte and time limits.
 
         Iteration counts bytes after HTTP content decoding, so compressed
-        responses cannot expand past the limit unnoticed. The response is closed
-        on success and on every parse, transport, or size error.
+        responses cannot expand past the limit unnoticed. The whole body must
+        arrive within ``read_deadline`` seconds; a body cut short by that
+        deadline is an error, never a truncated result. The response is closed
+        on success and on every parse, transport, size, or deadline error.
         """
+        watchdog: threading.Timer | None = None
+        expired = threading.Event()
         try:
             limit = _positive_byte_limit(max_bytes, self.max_response_bytes)
             length = resp.headers.get("Content-Length")
@@ -609,31 +632,38 @@ class HttpClient:
                 maximum = str(limit)
                 if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
                     raise ValueError("HTTP response exceeds the byte limit")
-            budget = self.max_read_seconds
+            # The body must also arrive before the connector's own deadline.
+            read_deadline = self.read_deadline
             if self.deadline is not None:
-                budget = min(budget, self.deadline - time.monotonic())
-            if budget <= 0 or self._scan_over():
+                read_deadline = min(read_deadline, self.deadline - time.monotonic())
+            if read_deadline <= 0 or self._scan_over():
                 raise TimeoutError("HTTP response not read: connector deadline exceeded")
+            deadline = time.monotonic() + read_deadline
+            watchdog = _read_watchdog(resp, read_deadline, expired)
             body = bytearray()
-            with _read_time_limit(resp, budget) as expired:
-                try:
-                    for chunk in resp.iter_content(chunk_size=min(65536, limit + 1)):
-                        if not isinstance(chunk, bytes):
-                            raise ValueError("Invalid HTTP response chunk")
-                        if len(body) + len(chunk) > limit:
-                            raise ValueError("HTTP response exceeds the byte limit")
-                        body.extend(chunk)
-                except Exception:
-                    if expired.is_set():
-                        raise requests.exceptions.ReadTimeout(
-                            "HTTP response read exceeded the time limit"
-                        ) from None
+            try:
+                for chunk in resp.iter_content(chunk_size=min(65536, limit + 1)):
+                    if time.monotonic() >= deadline:
+                        expired.set()
+                        break
+                    if not isinstance(chunk, bytes):
+                        raise ValueError("Invalid HTTP response chunk")
+                    if len(body) + len(chunk) > limit:
+                        raise ValueError("HTTP response exceeds the byte limit")
+                    body.extend(chunk)
+            except Exception:  # noqa: BLE001 - re-raised unless the deadline shut the read down
+                # The watchdog's shutdown surfaces as a transport or framing
+                # error; report the deadline instead, without transport text.
+                if not expired.is_set():
                     raise
-                if expired.is_set():
-                    # The abort can end a body without a length as a clean EOF.
-                    raise requests.exceptions.ReadTimeout("HTTP response read exceeded the time limit")
+            if expired.is_set():
+                # A close-delimited body also ends cleanly after the shutdown.
+                raise ValueError("HTTP response exceeds the read deadline")
             return bytes(body)
         finally:
+            if watchdog is not None:
+                watchdog.cancel()
+                watchdog.join()
             resp.close()
 
     def read_json_response(self, resp: requests.Response, *, max_bytes: int | None = None) -> Any:
@@ -815,43 +845,5 @@ class HttpClient:
                 raise RuntimeError("Repeated pagination token; collection incomplete")
             seen.add(token)
             params[token_param] = token
-            pages += 1
-        raise RuntimeError("Pagination limit reached; collection incomplete")
-
-    def paginate_cursor(
-        self,
-        path: str,
-        params: dict[str, Any] | None = None,
-        items_key: str = "results",
-        cursor_path: Callable[[dict[str, Any]], str | None] | None = None,
-        cursor_param: str = "cursor",
-        max_pages: int = 1000,
-    ) -> Iterator[dict[str, Any]]:
-        """Slack-style response-metadata cursor pagination."""
-        params = dict(params or {})
-        pages = 0
-        seen: set[str] = set()
-        while pages < max_pages:
-            data = self.get_json(path, params=params)
-            if not isinstance(data, dict):
-                raise RuntimeError("Invalid paginated API response; collection incomplete")
-            items = self._require_page_items(data, items_key, "Cursor pagination")
-            if cursor_path is None:
-                metadata = data.get("response_metadata", {})
-                if not isinstance(metadata, dict):
-                    raise RuntimeError("Invalid pagination metadata; collection incomplete")
-                cursor = self._continuation(metadata.get("next_cursor"))
-            else:
-                try:
-                    cursor = self._continuation(cursor_path(data))
-                except (AttributeError, KeyError, TypeError) as exc:
-                    raise RuntimeError("Invalid pagination cursor; collection incomplete") from exc
-            yield from items
-            if not cursor:
-                return
-            if cursor in seen:
-                raise RuntimeError("Repeated pagination cursor; collection incomplete")
-            seen.add(cursor)
-            params[cursor_param] = cursor
             pages += 1
         raise RuntimeError("Pagination limit reached; collection incomplete")

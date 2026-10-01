@@ -16,7 +16,7 @@ from shadowscan.connectors.code.manifests import parse_conda_env
 from shadowscan.models import ScanStats
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, credential_id, sanitize
 from shadowscan.utils.safe_yaml import BoundedSafeLoader, YAMLResourceLimitError, bounded_safe_load
-from shadowscan.utils.text import redact, sanitize_record
+from shadowscan.utils.text import redact
 
 
 def _bomb(*, merge=False):
@@ -136,13 +136,12 @@ def test_full_source_scan_reports_yaml_limit_and_retains_neighboring_findings(tm
     assert any("framework.crewai" in finding.frameworks for finding in findings)
 
 
-def test_python_alias_dag_is_rejected_by_both_sanitizer_entry_points():
+def test_python_alias_dag_is_rejected_by_the_sanitizer():
     value = {"label": "ordinary"}
     for _ in range(9):
         value = {"children": [value] * 10}
-    for sanitizer in (sanitize, sanitize_record):
-        with pytest.raises(SanitizationLimitError, match="expanded output"):
-            sanitizer(value)
+    with pytest.raises(SanitizationLimitError, match="expanded output"):
+        sanitize(value)
 
 
 def test_shared_strings_cannot_expand_export_without_bound():
