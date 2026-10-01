@@ -7,7 +7,10 @@ permissions:
   contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A new push to a pull request supersedes its running checks. A main run is
+  # never cancelled: release evidence needs a successful push run for the exact
+  # main commit, so a newer main push waits for the running one to finish.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   dco:
     if: github.event_name == 'pull_request'

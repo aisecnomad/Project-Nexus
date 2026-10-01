@@ -218,6 +218,14 @@ def test_ci_gate_executes_fail_closed(
     assert (result.returncode == 0) is passes, result.stdout + result.stderr
 
 
+def test_ci_cancels_superseded_pull_request_runs_but_never_a_main_run() -> None:
+    # Release evidence (tools/release/evidence.py) accepts only a successful push
+    # run of CI for the exact main commit; a cancelled main run leaves none.
+    concurrency = _load(GITHUB / "workflows" / "ci.yml")["concurrency"]
+    assert "github.event.pull_request.number" in concurrency["group"]
+    assert concurrency["cancel-in-progress"] == "${{ github.ref != 'refs/heads/main' }}"
+
+
 def test_one_linux_leg_enforces_both_coverage_floors_and_every_leg_runs_the_suite() -> None:
     jobs = _load(GITHUB / "workflows" / "ci.yml")["jobs"]
     matrix = jobs["test"]["strategy"]["matrix"]

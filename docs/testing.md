@@ -125,8 +125,10 @@ and smoke-tests the container image. The Linux Python 3.11 job runs the suite
 with line and branch coverage and enforces both coverage floors; tracing slows
 the suite several-fold, so the other jobs run the same full suite without it.
 The `CI gate` job requires every job, including DCO on pull requests, to
-succeed. [CI integration](operations/ci.md) describes running the scanner
-itself inside a pipeline.
+succeed. A new push to a pull request cancels its running checks, but a run on
+`main` always finishes, because release evidence needs a successful push run
+for the exact commit. [CI integration](operations/ci.md) describes running the
+scanner itself inside a pipeline.
 
 ## Troubleshooting
 
