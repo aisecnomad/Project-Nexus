@@ -7,7 +7,6 @@ signatures:
     vendor: LangChain4j
     homepage: https://docs.langchain4j.dev
     description: Java LLM framework with AI Services, tools and agents.
-    capabilities: [tool-use]
     signals:
       - type: dependency
         ecosystem: maven
@@ -19,15 +18,29 @@ signatures:
         patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.']
         weight: 0.9
       - type: code
-        patterns: ['\bAiServices\.builder\s*\(', '\bAiServices\.create\s*\(', '\bAgenticServices\.']
+        # AI Services can be ordinary tool-free chat or RAG applications.
+        patterns: ['\bAiServices\.(?:builder|create)\s*\(', '\bAgenticServices\.']
+        weight: 0.85
+      - type: code
+        # Only explicit agent factories count; AgenticServices also exposes
+        # registry, listener and other utility APIs.
+        patterns: ['\bAgenticServices\.(?:agentBuilder|sequenceBuilder|parallelBuilder|loopBuilder|conditionalBuilder|supervisorBuilder|plannerBuilder|createAgenticSystem)\s*\(']
         weight: 0.85
         agent_indicator: true
+      - type: code
+        # A narrow inline registration chain establishes configured tools.
+        # Do not infer tools from arbitrary .tools() receivers, empty
+        # collections, comments/strings, or unresolved builder variables.
+        # More complex chains remain framework evidence pending a JVM binder.
+        patterns: ['\bAiServices\.builder\s*\(\s*[\w$.]{1,256}\.class\s*\)\s*(?:\.chatModel\s*\(\s*[\w$.]{1,256}\s*\)\s*)?\.tools\s*\(\s*new\s+(?!(?:java\.util\.)?(?:ArrayList|LinkedList|HashSet|LinkedHashSet|TreeSet|Vector|Stack)\s*\()(?!(?:java\.lang\.)?Object\s*\()[\w$.]{1,256}\s*\(\s*\)\s*\)\s*\.build\s*\(']
+        weight: 0.85
+        agent_indicator: true
+        capabilities: [tool-use]
       - type: code
         # @Tool is shared by Spring AI. It identifies LangChain4j only when
         # this project also has LangChain4j import/dependency evidence.
         patterns: ['@Tool\s*(?:\(|\n)']
         weight: 0.85
-        agent_indicator: true
         ambiguous: true
 
   - id: framework.spring-ai
@@ -36,7 +49,6 @@ signatures:
     vendor: VMware / Broadcom
     homepage: https://spring.io/projects/spring-ai
     description: Spring portable AI abstraction with ChatClient, tools/function calling and MCP.
-    capabilities: [tool-use]
     signals:
       - type: dependency
         ecosystem: maven
@@ -49,7 +61,14 @@ signatures:
       - type: code
         patterns: ['\bChatClient\.(?:builder|create)\s*\(', '\bToolCallback\b', '@Tool\s*\(\s*(?:name|description)\s*=', '\bMethodToolCallbackProvider\b', '\bSyncMcpToolCallbackProvider\b']
         weight: 0.8
+      - type: code
+        # ChatClient and standalone @Tool declarations also serve ordinary
+        # chat/tool-server applications. Require concrete inline registration
+        # on the client builder before asserting an agent or tool capability.
+        patterns: ['\bChatClient\.builder\s*\(\s*[\w$.]{1,256}\s*\)\s*\.defaultTools\s*\(\s*new\s+(?!(?:java\.util\.)?(?:ArrayList|LinkedList|HashSet|LinkedHashSet|TreeSet|Vector|Stack)\s*\()(?!(?:java\.lang\.)?Object\s*\()[\w$.]{1,256}\s*\(\s*\)\s*\)\s*\.build\s*\(']
+        weight: 0.85
         agent_indicator: true
+        capabilities: [tool-use]
 
   - id: framework.rig
     name: Rig
