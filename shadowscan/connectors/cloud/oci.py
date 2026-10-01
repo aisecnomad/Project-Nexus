@@ -18,6 +18,8 @@ import re
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any, ClassVar
 
+import regex
+
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import (
     RECORD_ERRORS,
@@ -33,12 +35,21 @@ from shadowscan.connectors.cloud.common import (
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials
 from shadowscan.connectors.common import apply_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 from shadowscan.utils.text import truncate
 
-GENAI_POLICY_RX = re.compile(
-    r"(?i)\b(?:allow)\b.*?\b(?:to\s+)?(manage|use|read|inspect)\s+"
+# "Allow <subject> to <verb> <resource family>": IAM policy statements are
+# untrusted text. A single "allow .*? <verb> <family>" search retried its lazy
+# scan from every "allow", which is quadratic (48 KB of "allow " took seconds
+# while holding the GIL), so the two parts are matched separately and only
+# forward; see _policy_grant.
+_POLICY_ALLOW = regex.compile(r"(?i)\ballow\b")
+_POLICY_GRANT = regex.compile(
+    r"(?i)\b(?:to\s++)?(manage|use|read|inspect)\s++"
     r"(generative-ai[a-z-]*|oda[a-z-]*|data-science[a-z-]*|all-resources|ai-service[a-z-]*)\b"
 )
+# OCI policy statements are short; a longer one is a malformed record.
+MAX_POLICY_STATEMENT_CHARS = 8192
 _POLICY_SUBJECT = re.compile(r"(?i)allow\s+(?:group|dynamic-group|service|any-user)\s+([^\s]+)")
 # Serving images and settings that indicate an LLM model deployment.
 _LLM_DEPLOYMENT_HINTS = ("vllm", "tgi", "llm", "text-generation", "model_deploy_predict_endpoint")
@@ -69,6 +80,46 @@ def _resource_id(value: Any) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("invalid OCI resource identifier")
     return value
+
+
+def _policy_grant(statement: Any) -> tuple[str, str] | None:
+    """Return the lower-case (verb, resource family) of an AI grant in ``statement``.
+
+    Same result as one search for ``\\ballow\\b.*?<grant>``: the earliest grant
+    after the first ``allow`` of a line that starts on that line. Later
+    ``allow`` words on the same line cannot match more, and both searches only
+    move forward, so matching is linear in the statement length.
+    """
+    if not isinstance(statement, str):
+        raise TypeError("policy statement must be a string")
+    if len(statement) > MAX_POLICY_STATEMENT_CHARS:
+        raise ValueError("policy statement exceeds the length limit")
+    grant = None
+    pos = 0
+    try:
+        while allow := _POLICY_ALLOW.search(statement, pos, timeout=pattern_timeout(), concurrent=False):
+            line_end = statement.find("\n", allow.end())
+            line_end = len(statement) if line_end < 0 else line_end
+            if grant is None or grant.start() < allow.end():
+                grant = _POLICY_GRANT.search(
+                    statement, allow.end(), timeout=pattern_timeout(), concurrent=False
+                )
+                if grant is None:
+                    return None
+            if grant.start() < line_end:
+                return grant.group(1).lower(), grant.group(2).lower()
+            pos = line_end + 1
+    except (TimeoutError, MatchTimeoutError) as exc:
+        raise ValueError("policy statement matching timed out") from exc
+    return None
+
+
+def _may_grant_ai(statement: Any) -> bool:
+    """Collection filter: keep AI grants and statements that analyze() must report as malformed."""
+    try:
+        return _policy_grant(statement) is not None
+    except (TypeError, ValueError):
+        return True
 
 
 def _tool_config_type(tool: dict[str, Any]) -> Any:
@@ -268,7 +319,7 @@ class OciConnector(BaseConnector):
         for comp in compartments:
             for p in self._all(identity.list_policies, comp):
                 stmts = list(p.statements or [])
-                if any(GENAI_POLICY_RX.search(s) for s in stmts):
+                if any(_may_grant_ai(s) for s in stmts):
                     yield {
                         "_kind": "policy",
                         "_compartment": comp,
@@ -819,8 +870,14 @@ class OciConnector(BaseConnector):
         f.add_tag("managed-secret")
         return done(f, self.index, Kind.SECRET)
 
-    def _h_policy(self, rec: dict[str, Any]) -> Finding:
+    def _h_policy(self, rec: dict[str, Any]) -> Finding | None:
         stmts = rec.get("statements") or []
+        if any(isinstance(s, str) and len(s) > MAX_POLICY_STATEMENT_CHARS for s in stmts):
+            self.ctx.warn(
+                f"cloud.oci: policy statement longer than {MAX_POLICY_STATEMENT_CHARS} characters; "
+                "policy record skipped"
+            )
+            return None
         f = cloud_finding(
             self.name,
             "oci",
@@ -834,9 +891,9 @@ class OciConnector(BaseConnector):
         )
         subjects: list[str] = []
         for s in stmts:
-            m = GENAI_POLICY_RX.search(s)
-            if m:
-                verb, family = m.group(1).lower(), m.group(2).lower()
+            grant = _policy_grant(s)
+            if grant:
+                verb, family = grant
                 scopes = self.index.match_scope(family) + self.index.match_scope(f"{verb} {family}")
                 apply_matches(f, scopes, weight_scale=0.6)
                 subj = _POLICY_SUBJECT.search(s)
