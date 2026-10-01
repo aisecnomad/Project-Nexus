@@ -64,6 +64,8 @@ from shadowscan.utils.safe_yaml import BoundedSafeLoader
 log = logging.getLogger("shadowscan.config")
 
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+# Connector options naming local files: YAML-relative values resolve beside the
+# configuration file, never against the process working directory.
 PATH_KEYS = (
     "input",
     "path",
@@ -72,6 +74,7 @@ PATH_KEYS = (
     "credentials_file",
     "config_file",
     "token_file",
+    "ca_bundle",
 )
 _CONFIG_FIELDS = {"connectors", "inventory", "signatures", "options"}
 _OPTION_FIELDS = {

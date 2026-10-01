@@ -380,3 +380,31 @@ def test_config_relative_globs_and_workdir_use_configuration_directory(tmp_path)
     loaded = ScanConfig.from_yaml(config)
     assert loaded.inventory == [str(directory / "inventory" / "*.yaml")]
     assert loaded.workdir == str(directory / "working")
+
+
+def test_relative_jwt_ca_bundle_resolves_beside_the_configuration_not_the_working_directory(
+    tmp_path, monkeypatch
+):
+    # The CA bundle replaces the default trust store for the JWKS fetch. A
+    # relative value must not pick up a same-named file from the directory
+    # the scanner runs in, such as a scanned checkout.
+    directory = tmp_path / "deployment"
+    directory.mkdir()
+    (directory / "internal-ca.pem").write_text("operator CA\n")
+    config = directory / "scan.yaml"
+    config.write_text(
+        "connectors:\n"
+        "  - name: identity.jwt\n"
+        "    input: tokens.txt\n"
+        "    jwks_url: https://keys.acme.example/jwks\n"
+        "    ca_bundle: internal-ca.pem\n"
+    )
+    elsewhere = tmp_path / "checkout"
+    elsewhere.mkdir()
+    (elsewhere / "internal-ca.pem").write_text("untrusted CA\n")
+    monkeypatch.chdir(elsewhere)
+
+    (spec,) = ScanConfig.from_yaml(config).connectors
+
+    assert spec.config["ca_bundle"] == str(directory / "internal-ca.pem")
+    assert spec.config["input"] == str(directory / "tokens.txt")
