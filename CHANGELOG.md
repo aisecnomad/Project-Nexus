@@ -2,6 +2,35 @@
 
 ## 0.1.1 — Unreleased
 
+### October 1 code.filesystem coverage and precision
+
+- A coding-agent instruction document that links to another one in the same
+  project with the same test classification (`CLAUDE.md` to `AGENTS.md`) no
+  longer marks the scan incomplete. The target is scanned at its real path and
+  the alias-only file name is not reported as a second agent. Links across
+  projects or into and out of test paths, and directory links, stay gaps.
+- Credential policy: a real-format credential under a test, fixture or
+  `cassettes/` path stays a `secret` finding and now follows the project
+  test-code policy: half weight, lower confidence and risk, and the
+  `test-code-only` tag unless `include_tests` is set. Recorded cassettes
+  capture real traffic, so such keys are downweighted, never dropped.
+- A coding-agent configuration finding now needs more than an environment-variable
+  or display-name mention such as `GOOSE_PROVIDER`. Config files, instruction
+  documents, dependencies and code patterns such as a workflow step still
+  establish it. In test paths only config files and instruction documents count
+  unless `include_tests` is set.
+- MCP parsing skips `*.lock.yml` and `*.lock.yaml` files (compiled agentic
+  workflows) and cookiecutter `{{...}}` template paths, which no longer raise an
+  invalid-MCP error. Other GitHub Actions workflows are still parsed for MCP
+  servers passed as JSON step inputs (see the field scan follow-up below).
+- Not changed: signatures, risk scoring and inventory labeling. Oversize
+  recorded fixtures (`cassettes/`, test data) stay coverage gaps, because they
+  can hold real credentials; skipping them unread is an operator decision
+  through `oversize_skip_globs` (for example `*/cassettes/*`). Examples,
+  templates and benchmarks are not discounted like tests, because the bundled
+  corpora label their agents as real. Evidence is offline regression tests and
+  corpora only; it is not a measured field precision.
+
 ### October 1 field scan follow-up
 
 Fixes for defects found by scanning five public agent repositories (see

@@ -414,6 +414,7 @@ def test_fake_keys_in_tests_are_ignored_but_real_format_keys_are_reported(run_co
     write(tmp_path, "tests/test_real.py", f'KEY = "{OPENAI_LIKE_KEY}"\n')
     findings, _ = scan(run_connector, tmp_path)
     assert [f.kind for f in findings] == [Kind.SECRET]
+    assert "test-code-only" in findings[0].tags
     assert OPENAI_LIKE_KEY not in json.dumps(findings[0].to_dict())
 
 
