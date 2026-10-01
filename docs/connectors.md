@@ -282,7 +282,9 @@ ES256, EdDSA and PS256 by default. `allowed_algorithms` may narrow that list.
 unverified token's issuer does not choose or authorize a key source. The JWKS URL
 is configured by the operator, so legitimate providers may host keys separately.
 Audience and historical-token expiry are not authorization checks here. Read
-`metadata.verified` as signature evidence, not permission to act.
+`metadata.verified` as signature evidence, not permission to act. Without
+`jwks_url`, every token reports `metadata.verified: false` and a "signature not
+checked" evidence line: its claims are unauthenticated.
 
 CLI equivalents: `--jwks-url`, `--expected-issuer`, and repeatable
 `--jwt-algorithm`. The latter two require `--jwks-url`.
