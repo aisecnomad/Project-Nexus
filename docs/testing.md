@@ -71,6 +71,10 @@ SDKs installed, so run it after `make install` rather than `make install-dev`.
 - **No outbound connections.** A socket connection to anything other than
   loopback fails, and the test fails at teardown even if the code under test
   handled the error. Serve test traffic from a loopback server.
+- **Signature packs.** An `Engine` built without an index reparses the
+  signature packs. The suite reuses one index of the built-in packs, parsed at
+  session start, while their source digest is unchanged; organization pack
+  directories and override approval always load for real.
 
 Useful pytest patterns:
 

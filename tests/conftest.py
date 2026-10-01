@@ -13,8 +13,10 @@ from typing import Any
 
 import pytest
 
+import shadowscan.engine as engine_module
 from shadowscan.connectors import ConnectorContext, get_connector_class
-from shadowscan.signatures import get_index
+from shadowscan.signatures import SignatureIndex, get_index
+from shadowscan.signatures.loader import signature_source_digest
 from shadowscan.utils import http
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -186,6 +188,44 @@ def blocked_connections(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
 
 
 # --- Shared fixtures -------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def builtin_signature_index() -> tuple[str, SignatureIndex]:
+    """The built-in packs' source digest and index, loaded before any test patches the loader."""
+    return signature_source_digest(), engine_module.get_index(reload=True)
+
+
+@pytest.fixture(autouse=True)
+def reuse_builtin_signature_index(
+    monkeypatch: pytest.MonkeyPatch, builtin_signature_index: tuple[str, SignatureIndex]
+) -> None:
+    """Parse the built-in signature packs once per session instead of once per Engine.
+
+    Engine reloads the packs whenever it is constructed without an index: about
+    one second of YAML parsing, three under coverage, for each of the hundreds
+    of tests and CLI invocations that build one. The loader's own source digest
+    covers every pack file's content and the override approval; while it is
+    unchanged, Engine gets the index loaded at session start. Organization pack
+    directories and override approval always load for real, and a test that
+    patches engine.get_index replaces this.
+    """
+    digest, builtin = builtin_signature_index
+    real_get_index = engine_module.get_index
+
+    def get_index(
+        extra_dirs: list[str] | None = None, reload: bool = False, *, allow_override: bool = False
+    ) -> SignatureIndex:
+        if not extra_dirs and not allow_override:
+            try:
+                unchanged = signature_source_digest() == digest
+            except (OSError, ValueError):
+                unchanged = False  # the real load below reports the problem
+            if unchanged:
+                return builtin
+        return real_get_index(extra_dirs=extra_dirs, reload=reload, allow_override=allow_override)
+
+    monkeypatch.setattr(engine_module, "get_index", get_index)
 
 
 @pytest.fixture(scope="session")
