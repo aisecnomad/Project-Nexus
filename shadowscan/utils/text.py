@@ -14,8 +14,9 @@ from shadowscan.utils.safe_json import strict_json_loads
 
 _BINARY_SNIFF = 8192
 # Reported by ``read_text`` for a NUL-bearing file that is not text in any
-# encoding it decodes. Callers pass only names they would analyze, so this is
-# a coverage gap, never a reason to treat the scan as complete.
+# encoding it decodes and not a binary artifact it may skip (``_skips_binary``).
+# Callers pass only files they would analyze, so this is a coverage gap, never
+# a reason to treat the scan as complete.
 BINARY_CONTENT_ERROR = "binary or undecodable content in analyzable file"
 # Byte-order marks, longest first (the UTF-32LE mark begins with the UTF-16LE one).
 _BOM_CODECS: tuple[tuple[bytes, str], ...] = (
@@ -25,10 +26,10 @@ _BOM_CODECS: tuple[tuple[bytes, str], ...] = (
     (b"\xfe\xff", "utf-16"),
     (b"\xef\xbb\xbf", "utf-8-sig"),
 )
-# Headers of compiled and packed artifacts. Only a name without any extension
-# is skipped quietly on this evidence: an interpreter can still run a script
-# whose first line looks like a header, so a name the scanner analyzes by its
-# extension (``.sh``, ``.js``) stays a coverage gap.
+# Headers of compiled, packed and media artifacts. An interpreter can still run
+# a script whose first line looks like a header, so this evidence alone never
+# hides a name the scanner analyzes by its extension (``.sh``, ``.js``); see
+# ``_skips_binary`` for where it does apply.
 _BINARY_MAGIC: tuple[bytes, ...] = (
     b"\x7fELF",
     b"\xca\xfe\xba\xbe",
@@ -36,6 +37,7 @@ _BINARY_MAGIC: tuple[bytes, ...] = (
     b"\xfe\xed\xfa\xcf",
     b"\xce\xfa\xed\xfe",
     b"\xcf\xfa\xed\xfe",
+    b"MZ",  # PE and DOS executables
     b"\x00asm",
     b"\x1f\x8b",
     b"PK\x03\x04",
@@ -43,12 +45,18 @@ _BINARY_MAGIC: tuple[bytes, ...] = (
     b"\xfd7zXZ\x00",
     b"\x28\xb5\x2f\xfd",
     b"7z\xbc\xaf\x27\x1c",
+    b"SQLite format 3\x00",
     b"\x89PNG\r\n\x1a\n",
     b"\xff\xd8\xff",
     b"GIF87a",
     b"GIF89a",
     b"%PDF-",
 )
+# An MPEG transport stream (an HLS ``.ts`` video segment) is a run of 188-byte
+# packets, each starting with the sync byte 0x47, carrying compressed media.
+_TS_PACKET_SIZE = 188
+_TS_SYNC_BYTE = 0x47
+_TEXT_BYTES = bytes(range(0x20, 0x7F)) + b"\t\n\r"
 # Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
 _EPOCH_RX = re.compile(r"\d{1,19}(?:\.\d{1,9})?")
 
@@ -65,12 +73,44 @@ def redact(value: str, keep: int = 4) -> str:
     return credential_id(value)
 
 
+def _is_transport_stream(raw: bytes) -> bool:
+    """Whether the sniffed prefix is MPEG transport stream packets rather than text.
+
+    Every 188-byte packet in it, at least three, must start with the sync byte,
+    and most of its bytes must be outside printable ASCII. A script padded to
+    put "G" at each packet start is still mostly text, so it stays a gap.
+    """
+    window = raw[:_BINARY_SNIFF]
+    if len(window) <= 2 * _TS_PACKET_SIZE:
+        return False
+    if any(window[offset] != _TS_SYNC_BYTE for offset in range(0, len(window), _TS_PACKET_SIZE)):
+        return False
+    return 2 * len(window.translate(None, _TEXT_BYTES)) > len(window)
+
+
+def _skips_binary(path: PurePath, raw: bytes, analyzable_name: bool) -> bool:
+    """Whether NUL-bearing ``raw`` is a recognised binary artifact to skip without a coverage gap.
+
+    The content must start with a ``_BINARY_MAGIC`` header or be an MPEG
+    transport stream. Even then a name analyzed for its own sake stays a gap,
+    unless it has no extension at all or is a ``.ts`` transport stream (a video
+    segment, not TypeScript). Unrecognised binary content is always a gap.
+    """
+    transport_stream = _is_transport_stream(raw)
+    if not (transport_stream or raw.startswith(_BINARY_MAGIC)):
+        return False
+    if not analyzable_name or "." not in path.name:
+        return True
+    return transport_stream and path.suffix.lower() == ".ts"
+
+
 def read_text(
     path: PurePath,
     max_bytes: int,
     errors: list[str] | None = None,
     *,
     dir_fd: int | None = None,
+    analyzable_name: bool = True,
 ) -> str | None:
     """Read a bounded regular file without following a symlink in any path component.
 
@@ -82,11 +122,14 @@ def read_text(
     of redirecting it outside the tree. Validate the opened descriptor, not a
     separate stat result: the file may change between directory traversal and
     reading. Text with a byte-order mark (UTF-8, UTF-16, UTF-32) is decoded and
-    the mark removed. Callers pass only names they would analyze, so any other
+    the mark removed. Callers pass only files they would analyze, so any other
     content with a NUL byte in its first 8 KiB is reported as
-    ``BINARY_CONTENT_ERROR`` rather than ignored, except a compiled or packed
-    artifact without any file extension. Limits and I/O failures are reported
-    to callers that track completeness.
+    ``BINARY_CONTENT_ERROR`` rather than ignored. The exception is a recognised
+    binary artifact (``_skips_binary``) without any file extension, a ``.ts``
+    MPEG transport stream, or, with ``analyzable_name`` False, any recognised
+    artifact: the caller then reads the file only because of the directory it
+    is in, such as an image kept beside coding-agent rules. Limits and I/O
+    failures are reported to callers that track completeness.
     """
     try:
         if max_bytes < 1:
@@ -101,7 +144,7 @@ def read_text(
             if raw.startswith(bom):
                 return raw.decode(codec, errors="replace")
         if b"\x00" in raw[:_BINARY_SNIFF]:
-            if "." not in path.name and raw.startswith(_BINARY_MAGIC):
+            if _skips_binary(path, raw, analyzable_name):
                 return None
             raise ValueError(BINARY_CONTENT_ERROR)
         return raw.decode("utf-8", errors="replace")
