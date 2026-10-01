@@ -121,6 +121,52 @@ def test_servicenow_page_limit_and_repeated_pages_are_bounded(index, monkeypatch
     assert connector.ctx.stats.incomplete
 
 
+def _snow_page(start, count):
+    return {
+        "result": [
+            {"sys_id": f"agent-{number}", "name": "Assistant"} for number in range(start, start + count)
+        ]
+    }
+
+
+def test_servicenow_short_page_is_not_the_last_page(index, monkeypatch):
+    # ACLs filter rows after sysparm_limit: 100 of 500 rows came back while
+    # more existed, and collection stopped with 100 findings, complete.
+    monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
+    monkeypatch.setattr(servicenow, "name_matches", Mock(return_value=[]))
+    connector = _live(
+        index,
+        servicenow.ServiceNowConnector,
+        [
+            _snow_page(0, 100),
+            _snow_page(100, 37),
+            {"result": []},
+            RuntimeError("guard against unbounded loop"),
+        ],
+    )
+    findings = connector.run()
+    assert len(findings) == 137
+    assert connector.http.get_json.call_count == 3
+    offsets = [call.kwargs["params"]["sysparm_offset"] for call in connector.http.get_json.call_args_list]
+    assert offsets == [0, 500, 1000]
+    assert not connector.ctx.stats.incomplete and not connector.ctx.stats.warnings
+
+
+def test_servicenow_short_pages_up_to_the_page_bound_are_incomplete(index, monkeypatch):
+    monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
+    monkeypatch.setattr(servicenow, "name_matches", Mock(return_value=[]))
+    connector = _live(
+        index,
+        servicenow.ServiceNowConnector,
+        [_snow_page(0, 100), _snow_page(100, 100), RuntimeError("guard against unbounded loop")],
+        max_pages=2,
+    )
+    assert len(connector.run()) == 200
+    assert connector.http.get_json.call_count == 2
+    assert connector.ctx.stats.incomplete
+    assert any("pagination limit reached" in warning for warning in connector.ctx.stats.warnings)
+
+
 def test_servicenow_name_matching_timeout_preserves_native_agents(index, monkeypatch):
     monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
     calls = 0
