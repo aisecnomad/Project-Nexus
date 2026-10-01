@@ -54,6 +54,64 @@ def test_url_redaction_preserves_structure_and_is_idempotent(url, expected):
     assert sanitize_text(safe) == safe
 
 
+PASSWORD_WITH_RESERVED = "Zq7?k3PzW9aLmQ"
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        # A password that holds a raw '?', '#' or '/' ends the authority early; the
+        # userinfo runs to the last '@' that is followed by a host.
+        (
+            f'OpenAI(base_url="https://svc_llm:{PASSWORD_WITH_RESERVED}@llm-gw.corp.example/v1")',
+            f'OpenAI(base_url="https://{REDACTED}@llm-gw.corp.example/v1")',
+        ),
+        ("postgres://u:Pass#word@h", f"postgres://{REDACTED}@h"),
+        ("postgres://u:Pass#word@h/db", f"postgres://{REDACTED}@h/db"),
+        ("redis://:p#w@h", f"redis://{REDACTED}@h"),
+        ("redis://:1234#w@h", f"redis://{REDACTED}@h"),
+        (
+            "postgres://u:pa/ss@host:5432/db?sslmode=require",
+            f"postgres://{REDACTED}@host:5432/db?sslmode=require",
+        ),
+        ("amqp://guest:g?u=e&st@broker:5672/vhost", f"amqp://{REDACTED}@broker:5672/vhost"),
+        ("postgres://u:Pass#word@[::1]:5432/db", f"postgres://{REDACTED}@[::1]:5432/db"),
+        # The userinfo of an ordinary URL is read as before.
+        ("https://user:pw@host/p?next=x@y", f"https://{REDACTED}@host/p?next=x@y"),
+    ],
+)
+def test_url_userinfo_with_reserved_characters_is_withheld(url, expected):
+    safe = sanitize_text(url)
+    assert safe == expected
+    assert PASSWORD_WITH_RESERVED not in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # An '@' in the path, query or fragment of an ordinary authority is not userinfo.
+        "https://host/path?x=a@b",
+        "https://host:8080/path?x=a@b",
+        "https://host/path@file",
+        "https://host/#/users/@me",
+        "https://example.com/profile/@alice",
+        "https://[::1]:8080/x?y=a@b",
+        "file:///home/bob/node_modules/@types/node/index.d.ts",
+        "https://${HOST}:${PORT}/users/@me",
+        "https://{host}:{port}/users/@me",
+        "https://{{ host }}:{{ port }}/users/@me",
+        # Text that is no URL with userinfo.
+        "contact bob@example.com about https://example.com:8443/x",
+        "git@github.com:org/repo.git",
+        "https://x:y",
+        "http://svc:abc/path/to/foo@",
+    ],
+)
+def test_url_text_without_userinfo_is_preserved(text):
+    assert sanitize_text(text) == text
+
+
 def _bounded_process(script: str, *args: str) -> None:
     # This generous bound distinguishes linear work (well below a second on
     # ordinary hardware) from the former quadratic retry, which takes minutes.
@@ -129,4 +187,16 @@ for shape in shapes:
     sanitize_text(shape)
 jwt = 'eyJ' + 'a' * 20 + '.' + 'b' * 30 + '.' + 'c' * 20
 assert sanitize_text('x ' + 'eyJ_' * 50_000 + jwt) == 'x ' + REDACTED
+""")
+
+
+def test_url_userinfo_scan_is_linear():
+    # The last '@' and the end of the host are each found by one scan of the URL.
+    _bounded_process("""
+from shadowscan.utils.redaction import REDACTED, sanitize_text
+url = 'postgres://u:p' + '#@x' * 150_000 + '/db'
+safe = sanitize_text(url)
+assert safe.startswith('postgres://' + REDACTED + '@'), safe[:40]
+text = ' '.join(['https://u:' + 'a/' * 20 + 'b@h/p'] * 20_000)
+assert sanitize_text(text).count(REDACTED) == 20_000
 """)

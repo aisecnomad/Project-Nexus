@@ -102,7 +102,13 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
   `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-` and `dop_v1_`),
   JWTs, PEM private keys, URL userinfo and credential query or webhook path
-  segments. It also withholds values that their context names as credentials:
+  segments. A token or JWT is withheld behind a JSON-escaped line break or tab
+  (`\n`, `\t`), a percent escape (`%3D`) or an underscore, and the prefixes no
+  ordinary word contains (`sk-proj-`, `ghp_`, `AKIA`, `eyJ` and similar) also
+  behind a digit; a word that merely ends in a prefix's text (`risk-`, `disk-`)
+  stays. URL userinfo is withheld whole when the password holds a raw `/`, `?`
+  or `#` (`postgres://u:Pass#word@host`). It also withholds values that their
+  context names as credentials:
   assignments, including annotated, multiline and R (`<-`) expressions;
   mappings, YAML block scalars, properties and INI entries; `getenv`-style
   calls; name/value records such as Kubernetes `env` lists; XML elements and
@@ -164,7 +170,13 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   bracket, brace or comma; a literal fallback of a name that is not a
   credential's, even inside a credential constructor
   (`new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "...")`);
-  a value named only by a comment (`x = "..."  # openai key`); a name/value
+  URL userinfo that cannot be delimited: a password holding raw whitespace,
+  quotes or angle brackets, one holding both a raw `@` and a raw `/`, `?` or
+  `#`, a token without a colon that holds one of those
+  (`https://tok?en@host`), or a numeric password followed by one
+  (`https://user:12345?x@host`, which reads as a port); a token glued to a
+  letter (`apisk-proj-...`) or, for a shorter prefix, a digit; a value named
+  only by a comment (`x = "..."  # openai key`); a name/value
   record in text whose value field comes before its name
   (`{"value": "...", "name": "Password"}`, `- value: ...` above
   `name: DB_PASSWORD`); the part of a quoted record value after a `}` inside

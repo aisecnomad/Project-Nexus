@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from urllib.parse import unquote
 
-from shadowscan.utils.redaction_rules import REDACTED, _sensitive_assignment_key
+from shadowscan.utils.redaction_rules import _REFERENCE, REDACTED, _sensitive_assignment_key
 
 # A token inside a longer identifier ('risk-assessment-2024') is not one, so a
 # prefix needs a boundary before it. '\b' is too strict: 'n', 'D' and '_' are word
@@ -124,12 +124,47 @@ def _redact_path_secret(host: str, path: str) -> str:
     return path
 
 
+# 'host', 'host:8080', '[::1]:8080': an authority that cannot hold a password.
+_HOST_PORT = re.compile(r"(?:\[[^\]\s]*\]|[^\s:@\[\]]+)(?::[0-9]*)?")
+_TEMPLATE_PORT = re.compile(r"\{[^{}\s]*\}")
+
+
+def _reads_as_userinfo(authority: str) -> bool:
+    """Whether the text before the first '/', '?' or '#' is 'user:password' cut short by one of them.
+
+    'host', 'host:8080' and '[::1]:8080' are authorities that end there. So are
+    a templated port ('${HOST}:${PORT}'), an empty authority ('file:///') and an
+    authority without a colon (a token alone cannot be told from a host).
+    """
+    if not authority or _HOST_PORT.fullmatch(authority):
+        return False
+    _, colon, secret = authority.partition(":")
+    return bool(colon and secret) and not (_REFERENCE.fullmatch(secret) or _TEMPLATE_PORT.fullmatch(secret))
+
+
+def _authority_end(rest: str) -> int:
+    """Where the authority of the URL text after '://' ends.
+
+    That is the first '/', '?' or '#', since an '@' in a path or query value must not be
+    mistaken for a hostname separator. A password may hold those characters raw
+    ('postgres://u:Pass#word@h', 'https://svc:Zq7?x@gw.example/v1'): when what comes
+    first reads as 'user:password', the userinfo runs to the last '@' that is followed
+    by a host and optional port, as far as the URL text goes. Every step is a single scan.
+    """
+    end = min((pos for c in "/?#" if (pos := rest.find(c)) >= 0), default=len(rest))
+    if "@" in rest[:end] or not _reads_as_userinfo(rest[:end]):
+        return end
+    at = rest.rfind("@")
+    if at < end:
+        return end
+    host_end = min((pos for c in "/?#" if (pos := rest.find(c, at)) >= 0), default=len(rest))
+    return host_end if _HOST_PORT.fullmatch(rest, at + 1, host_end) else end
+
+
 def _sanitize_url(match: re.Match[str]) -> str:
     url = match.group(0)
     scheme, rest = url.split("://", 1)
-    # Userinfo ends at the authority boundary, not at the first slash alone.
-    # An @ in a query value must not be mistaken for a hostname separator.
-    authority_end = min((pos for c in "/?#" if (pos := rest.find(c)) >= 0), default=len(rest))
+    authority_end = _authority_end(rest)
     authority, tail = rest[:authority_end], rest[authority_end:]
     if "@" in authority:
         authority = REDACTED + "@" + authority.rsplit("@", 1)[1]
