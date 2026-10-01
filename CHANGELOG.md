@@ -22,6 +22,17 @@ Fixes for defects found by scanning five public agent repositories (see
   are reported as MCP findings; unparseable embedded settings stay incomplete.
 - `GOOGLE_GENAI_USE_VERTEXAI` no longer attributes the Google Agent Development
   Kit. It remains Vertex AI provider evidence.
+- Exported workflows under test or fixture paths follow the project test-code
+  policy: half weight and the `test-code-only` tag unless `include_tests` is set.
+- A `setup.py` marks a project root only when it references setuptools,
+  distutils or scikit-build, or calls `setup(...)`. Ordinary modules named
+  `setup.py` no longer split a package into a separate project; an unreadable
+  file keeps the previous behavior.
+- An MCP argument assigning a file path to a credential-file variable
+  (`GOOGLE_APPLICATION_CREDENTIALS=/app/key.json`), or one whose only redacted
+  part repeats a variable reference from `env` (`-v ${KEY_FILE}:/app/key.json`),
+  is still redacted but no longer marks the server as carrying an inline secret.
+  Literal values remain inline secrets.
 
 ### September 28 repository hygiene
 

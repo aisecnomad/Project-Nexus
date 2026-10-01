@@ -13,7 +13,8 @@ that provisions agent resources.
 
 ### `code.filesystem`
 Scans a directory tree. Project roots are detected from manifests
-(`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, …); each root yields one
+(`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
+package, …); each root yields one
 finding summarising frameworks, model providers, capabilities, models and
 evidence. Extra findings: MCP configs (`.mcp.json`, `.cursor/mcp.json`,
 `.vscode/mcp.json`, `claude_desktop_config.json`, Codex `config.toml`,
@@ -69,7 +70,9 @@ capabilities are derived from the tool names the server registers
 Gemini CLI's `httpUrl` (Streamable HTTP) is read as an MCP endpoint, like
 `url`, `serverUrl` and `endpoint`; an entry with more than one of them is
 ambiguous. A header or env value that is only a shell-style variable reference
-(`Bearer $TOKEN`) is not an inline credential. A GitHub Actions workflow is not
+(`Bearer $TOKEN`) is not an inline credential, nor is a credential-file path
+argument (`GOOGLE_APPLICATION_CREDENTIALS=/app/key.json`) or an argument that
+repeats such a reference; both stay redacted. A GitHub Actions workflow is not
 itself an MCP document: servers passed as a JSON object in a step input (for
 example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed

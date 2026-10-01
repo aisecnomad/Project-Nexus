@@ -83,10 +83,11 @@ from shadowscan.connectors.common import (
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
+from shadowscan.utils.files import open_confined_file
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
-from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
+from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError
 from shadowscan.utils.safe_yaml import (
     YAMLIntegrityError,
@@ -254,6 +255,30 @@ PROJECT_ROOT_MARKERS = {
     "composer.json",
     "environment.yml",
 }
+
+# `setup.py` is also an ordinary module name (a package's `tracing/setup.py`,
+# a web app's `controllers/setup.py`). It marks a project only when it builds
+# a package; anything that cannot be read keeps the historical marker.
+_SETUP_SCRIPT_MAX_BYTES = 256 * 1024
+_PACKAGING_SETUP = re.compile(rb"\b(?:setuptools|distutils|skbuild)\b|(?<!def )(?<![.\w])setup\s*\(")
+
+
+def _packaging_setup_script(path: Path) -> bool:
+    try:
+        with open_confined_file(path, label="setup.py") as (stream, _):
+            head = stream.read(_SETUP_SCRIPT_MAX_BYTES)
+    except (OSError, ValueError):
+        return True
+    return _PACKAGING_SETUP.search(head) is not None
+
+
+def _marks_project(directory: Path, names: Iterable[str]) -> bool:
+    """True when ``names`` in ``directory`` include a project manifest."""
+    return any(
+        name in PROJECT_ROOT_MARKERS and (name != "setup.py" or _packaging_setup_script(directory / name))
+        for name in names
+    )
+
 
 TEXT_CONFIG_EXTENSIONS = {
     ".json",
@@ -791,7 +816,7 @@ class FilesystemConnector(BaseConnector):
                 kept.append(name)
             dirnames[:] = kept
             proj = _nearest_root(rel_dir, roots)
-            if rel_dir != "." and any(f in PROJECT_ROOT_MARKERS for f in filenames):
+            if rel_dir != "." and _marks_project(Path(dirpath), filenames):
                 roots.append(rel_dir)
                 proj = rel_dir
             for fn in sorted(filenames):
@@ -2263,8 +2288,14 @@ class FilesystemConnector(BaseConnector):
 
     def _workflow_finding(self, label: str, root: Path, rel: str, hits: list[tuple[Match, str]]) -> Finding:
         f = self._base(label, root, rel, Kind.WORKFLOW, "", "workflow-export")
+        # A workflow export kept as a test or fixture input exercises the
+        # importer; it is not a deployed workflow. Apply the project policy:
+        # half weight and an explicit tag, unless test code is included.
+        test_only = not self.include_tests and _is_test_path(rel)
         for m, snip in hits:
-            apply_matches(f, [m], location=rel, snippet=snip)
+            apply_matches(f, [m], location=rel, snippet=snip, weight_scale=0.5 if test_only else 1.0)
+        if test_only:
+            f.add_tag("test-code-only")
         names = {
             sig.name
             for m, _ in hits
@@ -2418,7 +2449,7 @@ def _project_root(root: Path, rel: str) -> str:
             names = os.listdir(root / directory)
         except OSError:
             continue
-        if PROJECT_ROOT_MARKERS.intersection(names):
+        if _marks_project(root / directory, names):
             return directory
     return "."
 
@@ -2521,6 +2552,46 @@ def _safe_source_text(rel: str, text: str) -> str:
 _MCP_URL_KEYS = ("url", "httpUrl", "serverUrl", "endpoint")
 # `Bearer $TOKEN`: Gemini CLI expands shell-style variables in env and headers.
 _SHELL_ENV_REFERENCE = re.compile(r"(?:[A-Za-z][\w-]*[ \t]+)?\$[A-Z_][A-Z0-9_]*")
+# `GOOGLE_APPLICATION_CREDENTIALS=/app/key.json` names a credential file; the
+# path is redacted with the rest of the argument but is not an inline secret.
+_CREDENTIAL_FILE_ARGUMENT = re.compile(
+    r"[A-Z][A-Z0-9_]*(?:CREDENTIALS|_FILE|_PATH)=(?:/|\./|\.\./|~/)[A-Za-z0-9_./@%+-]*"
+)
+
+
+# An environment value under a sensitive key is redacted wherever it repeats.
+# When that value is itself a variable reference, its repetition in an
+# argument (`-v ${KEY_FILE}:/app/key.json`) does not disclose a secret.
+_VARIABLE_REFERENCE = r"(?:\$\{\{[^}\r\n]{1,200}\}\}|\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Z_][A-Z0-9_]*)"
+
+
+def _only_references_redacted(before: str, after: str) -> bool:
+    parts = after.split(REDACTED)
+    if len(parts) < 2:
+        return False
+    pattern = _VARIABLE_REFERENCE.join(re.escape(part) for part in parts)
+    return re.fullmatch(pattern, before) is not None
+
+
+def _args_reveal_secret(args: list[Any], sanitized: Any) -> bool:
+    """True when sanitizing changed an argument that could carry a credential value.
+
+    A credential-file path assignment and an argument whose only redacted
+    parts are variable references remain redacted, but are not inline secrets.
+    """
+    if not isinstance(sanitized, list) or len(sanitized) != len(args):
+        return bool(sanitized != args)
+    return any(
+        before != after
+        and not (
+            isinstance(before, str)
+            and isinstance(after, str)
+            and (_CREDENTIAL_FILE_ARGUMENT.fullmatch(before) or _only_references_redacted(before, after))
+        )
+        for before, after in zip(args, sanitized, strict=True)
+    )
+
+
 _WORKFLOW_PATH = re.compile(r"(?:^|/)\.github/workflows/[^/]+\.ya?ml$")
 _EMBEDDED_MCP_MARKERS = ('"mcpServers"', '"mcp_servers"')
 
@@ -2751,7 +2822,7 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
         inline_locations += [
             location
             for location, changed in (
-                ("args", safe["args"] != args),
+                ("args", _args_reveal_secret(args, safe["args"])),
                 ("url", safe["url"] != url or safe["urls"] != urls),
                 ("command", safe["command"] != command),
             )

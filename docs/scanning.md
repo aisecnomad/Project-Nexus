@@ -35,7 +35,8 @@ Library test suites often construct agents to exercise integrations. Evidence
 found only under test or fixture paths (`tests/`, `fixtures/`, `cassettes/`,
 `__mocks__/`, `test_*.py`, `*_test.go`, `*.spec.ts`, …) has half weight and cannot
 promote a project to an *agent*; a project whose evidence is entirely test code
-is tagged `test-code-only`. Set `include_tests: true` (`--include-tests`) to
+is tagged `test-code-only`. Exported low-code workflows found under those paths
+follow the same rule. Set `include_tests: true` (`--include-tests`) to
 treat test code like any other source. Credentials are still reported from test
 paths unless they are recognisable placeholders (repeated characters, marker
 words such as `EXAMPLE`, or very low character diversity).

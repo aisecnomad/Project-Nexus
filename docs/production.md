@@ -600,6 +600,14 @@ a candidate before enforcing policy on the new output:
 - **Attribution.** Findings whose only Google ADK evidence was
   `GOOGLE_GENAI_USE_VERTEXAI` lose `framework.google-adk` and its `multi-agent`
   potential capability. `diff` reports them as changed; titles change too.
+- **Fixture workflows.** Exported workflows under test or fixture paths gain the
+  `test-code-only` tag, lower confidence and a lower risk score.
+- **Project roots.** Modules named `setup.py` that do not build a package no
+  longer create a project. Findings for such directories disappear from `diff`
+  as resolved and their evidence joins the enclosing project's finding.
+- **Credential files.** MCP servers whose only inline-secret evidence was a
+  credential-file path argument or a repeated variable reference lose the
+  `inline-secrets` tag and its risk factor.
 
 ## Finding identity and comparison migration
 
