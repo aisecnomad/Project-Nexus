@@ -12,7 +12,7 @@
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, and cloud accounts. It fingerprints frameworks and
 model providers, scores findings, and reconciles discoveries against your approved
-registry of
+agent registry of
 [Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
 Counts and severity labels need an analyst review before they drive enforcement.
 
@@ -32,7 +32,7 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
  MEDIUM   33  ops-provisioning-04  cloud  agent  Bedrock Agent: ops-provisioning-04   ← registered via its card's resource binding; owner from the AWS resource tag
 ```
 
-## Why
+## The Why
 
 Agents are no longer only Python scripts.
 They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
@@ -41,7 +41,7 @@ developer's editor, service principals with `Mail.ReadWrite` acting on behalf of
 Each surface has its own discovery API and its own vocabulary.
 ShadowScan normalizes these observations into one finding model with evidence,
 so investigators or auditors can ask: *Who owns this AI Agent? What can it do, and is it
-registered in the registry supplied for this scan?*
+registered in the agent registry supplied for this scan?*
 
 | Observation | What it establishes | Next check |
 |---|---|---|
@@ -225,7 +225,7 @@ connectors:
 required extras; `shadowscan connectors --json` also includes each connector's
 offline export formats. Every entry also accepts `enabled` (default true) and
 `label` (a distinct id when a connector runs more than once). See
-[docs/connectors.md](docs/connectors.md) for entry keys, credentials and
+[docs/connectors.md](docs/connectors.md) for entry keys, credentials, and
 least-privilege scopes per connector. Run repository scans in
 a separate job/configuration from live tenant collection. Mixing these credential
 boundaries requires an explicit `allow_credential_mixing` exception; keep the
