@@ -32,7 +32,7 @@ from shadowscan.connectors.cloud.common import (
     string_list,
 )
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials
-from shadowscan.connectors.common import apply_matches, model_matches
+from shadowscan.connectors.common import apply_matches, max_pages_limit, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.text import truncate
 
@@ -140,14 +140,14 @@ class OciConnector(BaseConnector):
         ),
         "tenancy": "tenancy OCID (default: from the config profile or the principal signer)",
         "compartments": "compartment OCIDs (default: all active compartments in the tenancy)",
-        "max_pages": "cap on pages per paginated list call, at least 1 (default 1000)",
+        "max_pages": "maximum pages per paginated list call, capped at 1000 (default 1000)",
         "input": "offline: JSONL dump of records",
     }
     offline_formats: ClassVar[str] = "JSONL dump of records"
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
-        self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
+        self.max_pages = max_pages_limit(ctx.get("max_pages", 1000))
         self._config: dict[str, Any] = {}
         self._signer: Any = None
         self._clients: dict[tuple[Any, str | None], Any] = {}

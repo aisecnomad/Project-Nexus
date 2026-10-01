@@ -24,7 +24,14 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorError
-from shadowscan.connectors.common import apply_matches, blob_matches, finalize, model_matches, name_matches
+from shadowscan.connectors.common import (
+    apply_matches,
+    blob_matches,
+    finalize,
+    max_pages_limit,
+    model_matches,
+    name_matches,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -141,7 +148,7 @@ class N8nConnector(_AutomationBase):
     config_keys: ClassVar[dict[str, str]] = {
         "api_url": "https://n8n.example.com/api/v1 (env N8N_API_URL)",
         "api_key": "X-N8N-API-KEY (env N8N_API_KEY)",
-        "max_pages": "cap on 250-workflow pages, at least 1 (default 1000)",
+        "max_pages": "maximum 250-workflow pages, capped at 1000 (default 1000)",
         "input": "offline: workflow list JSON or directory of exported workflows",
     }
 
@@ -157,7 +164,7 @@ class N8nConnector(_AutomationBase):
             items_key="data",
             token_key="nextCursor",
             token_param="cursor",
-            max_pages=max(1, int(self.ctx.get("max_pages", 1000))),
+            max_pages=max_pages_limit(self.ctx.get("max_pages", 1000)),
         )
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -276,7 +283,7 @@ class MakeConnector(_AutomationBase):
         "token": "API token (env MAKE_API_TOKEN)",
         "team_id": "team id to scan; or `organization_id`",
         "organization_id": "organization id whose teams are all scanned when `team_id` is unset",
-        "max_pages": "cap on 100-item pages per list call, at least 1 (default 1000)",
+        "max_pages": "maximum 100-item pages per list call, capped at 1000 (default 1000)",
         "input": "offline: scenarios JSON (with blueprint) / ai-agents JSON / blueprint files",
     }
 
@@ -288,7 +295,7 @@ class MakeConnector(_AutomationBase):
         **params: Any,
     ) -> Iterator[dict[str, Any]]:
         seen: set[str] = set()
-        for page in range(max(1, int(self.ctx.get("max_pages", 1000)))):
+        for page in range(max_pages_limit(self.ctx.get("max_pages", 1000))):
             try:
                 data = http.get_json(path, params={**params, "pg[limit]": 100, "pg[offset]": page * 100})
             except (HttpError, RequestException, RuntimeError, ValueError) as exc:
@@ -480,7 +487,7 @@ class ZapierConnector(_AutomationBase):
     )
     config_keys: ClassVar[dict[str, str]] = {
         "token": "OAuth bearer with `zap` scope for https://api.zapier.com/v2/zaps (env ZAPIER_TOKEN)",
-        "max_pages": "cap on 100-zap pages, at least 1 (default 1000)",
+        "max_pages": "maximum 100-zap pages, capped at 1000 (default 1000)",
         "input": "offline: Zapier for Companies CSV/JSON export of Zaps or Agents",
     }
     offline_formats: ClassVar[str] = "CSV / JSON export"
@@ -492,7 +499,7 @@ class ZapierConnector(_AutomationBase):
         http = HttpClient("https://api.zapier.com", headers={"Authorization": f"Bearer {token}"})
         url: str | None = "/v2/zaps"
         seen: set[str] = set()
-        for _ in range(max(1, int(self.ctx.get("max_pages", 1000)))):
+        for _ in range(max_pages_limit(self.ctx.get("max_pages", 1000))):
             if not url:
                 return
             if not isinstance(url, str) or url in seen:
@@ -574,7 +581,7 @@ class WorkatoConnector(_AutomationBase):
             "default https://www.workato.com/api (EU: https://app.eu.workato.com/api; env WORKATO_API_URL)"
         ),
         "token": "API client token (env WORKATO_API_TOKEN)",
-        "max_pages": "cap on 100-recipe pages, at least 1 (default 1000)",
+        "max_pages": "maximum 100-recipe pages, capped at 1000 (default 1000)",
         "input": "offline: /api/recipes JSON",
     }
 
@@ -585,7 +592,7 @@ class WorkatoConnector(_AutomationBase):
             raise ConnectorError("lowcode.workato: token required")
         http = HttpClient(base, headers={"Authorization": f"Bearer {token}"})
         seen: set[str] = set()
-        for page in range(1, max(1, int(self.ctx.get("max_pages", 1000))) + 1):
+        for page in range(1, max_pages_limit(self.ctx.get("max_pages", 1000)) + 1):
             data = http.get_json("/recipes", params={"per_page": 100, "page": page})
             items = data.get("items") if isinstance(data, dict) else data
             if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):

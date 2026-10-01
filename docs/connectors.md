@@ -29,6 +29,11 @@ lists them after each connector's own keys. `code.filesystem`, `code.github` and
 ignore those three keys, but a value supplied for one must still be a positive
 integer or the entry fails validation.
 
+Connectors that page through a live API accept `max_pages`, a positive integer
+(default 1000; larger values are capped at 1000). Zero, a negative or fractional
+number, a boolean or non-numeric text is a configuration error, never a silent
+one-page scan; reaching the page bound marks coverage incomplete.
+
 See [scan state and runtime correlation](scanning.md) for incremental scans,
 gateway workload bindings and completion semantics.
 
@@ -343,7 +348,7 @@ Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
 Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
 GenAI/agentic providers); triggers (schedule/webhook → autonomous), code
 steps (→ code-exec), models. Live pagination is bounded by `max_pages`
-(default 1000). Make scans one `team_id`, or every team of an
+(default and maximum 1000). Make scans one `team_id`, or every team of an
 `organization_id` when `team_id` is unset.
 An n8n workflow needs a nonempty provider ID for a usable resource identity.
 Exported blueprints without an ID retain detected AI evidence under an unresolved
@@ -478,8 +483,8 @@ shows access, not observed agent execution.
 Cloud Run discovery enumerates project locations and then lists services in each
 concrete region (`run.locations.list` and `run.services.list` permissions).
 Unreachable locations reported by GCP make the scan incomplete. `max_projects`
-limits discovery without loading all projects first; `max_pages` (default 1000)
-bounds every paginated call; resource lists stop at 500 pages and audit-log
+limits discovery without loading all projects first; `max_pages` (default and
+maximum 1000) bounds every paginated call; resource lists stop at 500 pages and audit-log
 queries at 50 pages regardless.
 
 ### `cloud.azure`
@@ -507,7 +512,7 @@ instance or resource principal.
 Options: `profile`, `config_file`, `auth`, `tenancy` (default: from the
 profile or the principal signer), `region` (session region for
 `instance_principal`; config auth uses the profile's region), `regions`,
-`compartments`, `max_pages` (default 1000).
+`compartments`, `max_pages` (default and maximum 1000).
 Function inspection retrieves application and function details, combines
 inherited configuration with function overrides, and supports both legacy image
 fields and `source_details.image`. Denied or invalid detail reads mark coverage

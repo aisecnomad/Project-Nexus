@@ -39,7 +39,7 @@ from shadowscan.connectors.cloud.common import (
     string_list,
 )
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials, require_local_adc
-from shadowscan.connectors.common import apply_matches, model_matches
+from shadowscan.connectors.common import apply_matches, max_pages_limit, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
@@ -157,8 +157,8 @@ class GcpConnector(BaseConnector):
         "audit_days": "look back N days in Cloud Audit Logs for Vertex callers (default 0 = off)",
         "max_projects": "default 200",
         "max_pages": (
-            "cap on pages per paginated call, at least 1 (default 1000; resource lists stop at 500 pages "
-            "and audit-log queries at 50 pages regardless)"
+            "maximum pages per paginated call, capped at 1000 (default 1000; resource lists stop at 500 "
+            "pages and audit-log queries at 50 pages regardless)"
         ),
         "input": "offline: JSONL dump of records",
     }
@@ -177,7 +177,7 @@ class GcpConnector(BaseConnector):
         self.max_projects = int(ctx.get("max_projects", 200))
         if self.max_projects < 1:
             raise ConnectorError("cloud.gcp: max_projects must be positive")
-        self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
+        self.max_pages = max_pages_limit(ctx.get("max_pages", 1000))
         self.http: HttpClient | None = None
 
     def _auth(self) -> None:
