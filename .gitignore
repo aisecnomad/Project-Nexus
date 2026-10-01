@@ -10,13 +10,24 @@ venv/
 .ruff_cache/
 .mypy_cache/
 .coverage
+.coverage.*
+coverage.xml
+coverage.json
 htmlcov/
+.tox/
+.nox/
 *.sarif
 report.*
 shadowscan-report*
 exports/
 .env
+.env.*
+!.env.example
+*.pem
+*.key
 .DS_Store
+.idea/
+.vscode/
 
 .shadowscan-state/
 site/
