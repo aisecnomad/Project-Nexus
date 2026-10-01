@@ -1,4 +1,9 @@
-"""Guard workflow privileges, manual publication, and valid issue-form labels."""
+"""Guard workflow privileges, manual publication, the container build, and valid issue-form labels.
+
+Each policy rule is a small function that takes one file's text or parsed data
+and returns the violations it finds, so the tests below can run the same check
+on the real tree and on a mutated copy that proves the rule still bites.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +12,8 @@ import re
 import shlex
 import shutil
 import subprocess
+import tomllib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +22,14 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 GITHUB = ROOT / ".github"
-WORKFLOWS = sorted((GITHUB / "workflows").glob("*.yml"))
+
+
+def _workflow_files(directory: Path) -> list[Path]:
+    """Every file GitHub runs from a workflows directory, in either YAML spelling."""
+    return sorted(path for path in directory.glob("*.y*ml") if path.is_file())
+
+
+WORKFLOWS = _workflow_files(GITHUB / "workflows")
 FORMS = sorted(path for path in (GITHUB / "ISSUE_TEMPLATE").glob("*.yml") if path.name != "config.yml")
 ACTION_PIN = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}")
 # Privileges belong only to the job that needs them, never to every workflow.
@@ -26,6 +40,25 @@ WRITE_SCOPES = {
     ("docs.yml", "deploy"): {"pages", "id-token"},
     ("stale.yml", "stale"): {"issues", "pull-requests"},
     ("labels.yml", "sync"): {"issues"},
+}
+# The aggregate floor AGENTS.md and CONTRIBUTING.md document.
+COVERAGE_FLOOR = 80.0
+# The only expression that may cancel an in-progress run of a push-triggered
+# workflow: a newer pull-request push supersedes the older run, while every
+# main push run finishes and leaves a complete record for its commit.
+PULL_REQUEST_ONLY_CANCELLATION = "${{ github.event_name == 'pull_request' }}"
+# Push-triggered workflows whose superseded push runs may be cancelled, and why.
+CANCELLABLE_PUSH_RUNS = {
+    "docs.yml": "it only rebuilds the site; CI's docs job builds every main commit, "
+    "and release evidence cites CI and CodeQL runs only",
+}
+# Explicit, justified exceptions to the failure-suppression rule, keyed by the
+# workflow and the exact stripped `run:` line.
+SUPPRESSION_EXCEPTIONS = {
+    (
+        "dco.yml",
+        'if [ "$(git rev-list --min-parents=2 --max-parents=2 -1 "$sha" 2>/dev/null || true)" = "$sha" ]; then',
+    ): "a failed merge probe prints nothing, so the commit counts as a non-merge and its sign-off is checked",
 }
 
 
@@ -112,6 +145,11 @@ def _triggers(workflow: dict[str, Any]) -> Any:
     return workflow.get("on", workflow.get(True, {}))
 
 
+def _trigger_names(workflow: dict[str, Any]) -> set[str]:
+    triggers = _triggers(workflow)
+    return {triggers} if isinstance(triggers, str) else {str(name) for name in triggers or ()}
+
+
 def _write_scopes(permissions: Any) -> set[str]:
     if permissions == "read-all":
         return set()
@@ -120,37 +158,586 @@ def _write_scopes(permissions: Any) -> set[str]:
     return {scope for scope, level in permissions.items() if level == "write"}
 
 
-@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)
-def test_workflows_use_pinned_actions_and_scoped_permissions(path: Path) -> None:
-    workflow = _load(path)
-    assert "permissions" in workflow
-    assert not _write_scopes(workflow["permissions"]), "top-level permissions must be read-only"
-    assert "pull_request_target" not in _triggers(workflow)
+def _scope_violations(owner: str, permissions: Any, allowed: set[str]) -> list[str]:
+    if permissions == "read-all":
+        return []
+    if not isinstance(permissions, dict):
+        return [f"{owner}: permissions must be an explicit mapping, not {permissions!r} (no write-all)"]
+    problems = [
+        f"{owner}: permission {scope} has unknown level {level!r}"
+        for scope, level in permissions.items()
+        if level not in {"read", "write", "none"}
+    ]
+    granted = {scope for scope, level in permissions.items() if level == "write"}
+    if granted - allowed:
+        problems.append(f"{owner}: write scopes {sorted(granted - allowed)} are not allowed here")
+    return problems
+
+
+def _trigger_violations(workflow: dict[str, Any]) -> list[str]:
+    # Both run with the base repository's secrets and write token in response to
+    # activity an outside contributor controls.
+    forbidden = _trigger_names(workflow) & {"pull_request_target", "workflow_run"}
+    return [f"forbidden trigger {name}" for name in sorted(forbidden)]
+
+
+def _job_violations(workflow_name: str, workflow: dict[str, Any]) -> list[str]:
+    """Permissions, timeouts, reusable-workflow calls and action pins of every job."""
+    if "permissions" not in workflow:
+        return ["the workflow must declare top-level permissions"]
+    problems = _scope_violations("workflow", workflow["permissions"], set())
     for name, job in workflow["jobs"].items():
         for key, value in (job.get("env") or {}).items():
-            assert not re.search(r"\$\{\{\s*(?:runner|steps)\.", str(value)), (
-                f"{name}: job env {key} uses a context available only after runner allocation"
-            )
-        permissions = job.get("permissions", workflow["permissions"])
-        assert _write_scopes(permissions) <= WRITE_SCOPES.get((path.name, name), set()), name
+            if re.search(r"\$\{\{\s*(?:runner|steps)\.", str(value)):
+                problems.append(
+                    f"{name}: job env {key} uses a context available only after runner allocation"
+                )
+        allowed = WRITE_SCOPES.get((workflow_name, name), set())
+        problems += _scope_violations(name, job.get("permissions", workflow["permissions"]), allowed)
         if "uses" in job:
             # Same-repository reusable workflows resolve at the caller's commit.
             # Their own jobs are checked here for timeouts, actions and scopes.
             target = job["uses"]
-            assert re.fullmatch(r"\./\.github/workflows/[\w-]+\.yml", target), name
             called = ROOT / target
-            assert called in WORKFLOWS and "workflow_call" in _triggers(_load(called)), name
-            assert not job.get("secrets"), "reusable CI must not inherit secrets"
-        else:
-            assert type(job.get("timeout-minutes")) is int and job["timeout-minutes"] > 0, name
+            if not re.fullmatch(r"\./\.github/workflows/[\w-]+\.ya?ml", target) or called not in WORKFLOWS:
+                problems.append(f"{name}: calls {target}, which is not a workflow in this repository")
+            elif "workflow_call" not in _trigger_names(_load(called)):
+                problems.append(f"{name}: calls {target}, which has no workflow_call trigger")
+            if job.get("secrets"):
+                problems.append(f"{name}: reusable CI must not inherit secrets")
+        elif type(job.get("timeout-minutes")) is not int or job["timeout-minutes"] <= 0:
+            problems.append(f"{name}: needs a positive integer timeout-minutes")
         for step in job.get("steps", []):
             action = step.get("uses")
-            if action:
-                assert ACTION_PIN.fullmatch(action), f"{name}: unpinned action {action}"
-                if action.startswith("actions/checkout@"):
-                    assert step.get("with", {}).get("persist-credentials") is False, name
-            script = step.get("run", "")
-            assert not re.search(r"\$\{\{\s*github\.(?:event\.|head_ref\b)", script), name
+            if not action:
+                continue
+            if not ACTION_PIN.fullmatch(action):
+                problems.append(f"{name}: unpinned action {action}")
+            if (
+                action.startswith("actions/checkout@")
+                and (step.get("with") or {}).get("persist-credentials") is not False
+            ):
+                problems.append(f"{name}: checkout must set persist-credentials: false")
+    return problems
+
+
+def _concurrency_violations(workflow_name: str, workflow: dict[str, Any]) -> list[str]:
+    """A newer push must never cancel the run that records an earlier push."""
+    if "push" not in _trigger_names(workflow) or workflow_name in CANCELLABLE_PUSH_RUNS:
+        return []
+    blocks = [("workflow", workflow.get("concurrency"))]
+    blocks += [(name, job.get("concurrency")) for name, job in workflow["jobs"].items()]
+    problems = []
+    for owner, block in blocks:
+        # Absent, or a bare group name: cancel-in-progress defaults to false.
+        cancel = block.get("cancel-in-progress", False) if isinstance(block, dict) else False
+        if cancel is False:
+            continue
+        if isinstance(cancel, str) and " ".join(cancel.replace('"', "'").split()) == (
+            PULL_REQUEST_ONLY_CANCELLATION
+        ):
+            continue
+        problems.append(
+            f"{owner}: cancel-in-progress {cancel!r} lets a newer push cancel a push run; "
+            f"use {PULL_REQUEST_ONLY_CANCELLATION}"
+        )
+    return problems
+
+
+# `|| true` and its spellings, linters told to exit 0, and audits told to skip a
+# vulnerability all turn a failing gate green.
+_SUPPRESSION = re.compile(r"\|\|\s*(?:true\b|:(?![\w:])|exit\s+0\b)|--exit-zero\b|--ignore-vuln\b")
+_COVERAGE_FLOOR_ARGUMENT = re.compile(r"(?<![\w-])--(?:cov-)?fail-under(?:=|\s+)(\S+)")
+_EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
+# Values that the workflow author or the runner controls. Event payload text,
+# branch and tag names, dispatch inputs, step outputs, env and toJSON dumps
+# reach a shell only through `env:`, where the shell treats them as data.
+_TRUSTED_RUN_EXPRESSION = re.compile(
+    r"(?:matrix|runner)\.[\w-]+"
+    r"|github\.(?:sha|run_id|run_number|run_attempt|repository|workflow|event_name|server_url|api_url)"
+)
+
+
+def _run_violations(workflow_name: str, workflow: dict[str, Any]) -> list[str]:
+    """Steps must not hide a failure, lower a coverage floor or interpolate untrusted text."""
+    problems = []
+    for name, job in workflow["jobs"].items():
+        if job.get("continue-on-error") not in (None, False):
+            problems.append(f"{name}: job sets continue-on-error")
+        for step in job.get("steps", []):
+            if step.get("continue-on-error") not in (None, False):
+                problems.append(
+                    f"{name}: step {step.get('name') or step.get('run') or step.get('uses')} "
+                    "sets continue-on-error"
+                )
+            script = step.get("run")
+            if not isinstance(script, str):
+                continue
+            for expression in _EXPRESSION.findall(script):
+                if not _TRUSTED_RUN_EXPRESSION.fullmatch(expression.strip()):
+                    problems.append(
+                        f"{name}: run interpolates ${{{{{expression}}}}}; pass the value through env:"
+                    )
+            for line in (line.strip() for line in script.splitlines()):
+                if _SUPPRESSION.search(line) and (workflow_name, line) not in SUPPRESSION_EXCEPTIONS:
+                    problems.append(f"{name}: `{line}` suppresses a failure")
+                for match in _COVERAGE_FLOOR_ARGUMENT.finditer(line):
+                    try:
+                        lowered = float(match.group(1)) < COVERAGE_FLOOR
+                    except ValueError:
+                        lowered = True
+                    if lowered:
+                        problems.append(f"{name}: `{line}` sets the coverage floor below {COVERAGE_FLOOR:g}%")
+    return problems
+
+
+# Publication is a manual maintainer action (AGENTS.md). No workflow publishes a
+# package, release, image or tag; that includes the release-evidence workflow,
+# which builds and attests a review bundle only.
+_PUBLICATION = {
+    "GitHub release": re.compile(
+        r"\bgh\s+release\s+(?:create|upload|edit)\b|softprops/action-gh-release|ncipollo/release-action"
+    ),
+    "package upload": re.compile(
+        r"\btwine\s+upload\b|\b(?:uv|poetry|flit|hatch|pdm)\s+publish\b|pypi-publish"
+    ),
+    "image push": re.compile(r"\bdocker\s+(?:image\s+)?push\b|docker/build-push-action"),
+    "git push": re.compile(r"\bgit\s+(?:-{1,2}[\w.-]+(?:[=\s]\S+)?\s+)*push\b"),
+    "release or ref API call": re.compile(r"\bgh\s+api\b[^\n]*/(?:releases|git/refs|git/tags)\b"),
+}
+
+
+def _publication_violations(text: str) -> list[str]:
+    return [
+        f"{kind}: `{match.group()}` publishes; publication is a manual maintainer action"
+        for kind, pattern in _PUBLICATION.items()
+        for match in pattern.finditer(text)
+    ]
+
+
+def _workflow_violations(path: Path) -> list[str]:
+    """Every policy violation in one workflow file; empty when the file complies."""
+    workflow = _load(path)
+    if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs"), dict):
+        return [f"{path.name} is not a workflow with a jobs mapping"]
+    return [
+        *_trigger_violations(workflow),
+        *_job_violations(path.name, workflow),
+        *_concurrency_violations(path.name, workflow),
+        *_run_violations(path.name, workflow),
+        *_publication_violations(path.read_text(encoding="utf-8")),
+    ]
+
+
+def _dockerfile_instructions(text: str) -> list[tuple[str, str]]:
+    """`(INSTRUCTION, arguments)` pairs, continuation lines joined, comments dropped."""
+    instructions = []
+    pending = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.endswith("\\"):
+            pending += stripped[:-1] + " "
+            continue
+        keyword, _, arguments = (pending + stripped).partition(" ")
+        instructions.append((keyword.upper(), arguments.strip()))
+        pending = ""
+    if pending:
+        keyword, _, arguments = pending.strip().partition(" ")
+        instructions.append((keyword.upper(), arguments.strip()))
+    return instructions
+
+
+# Options that may accompany an unhashed `pip install --no-deps` of local source.
+_LOCAL_INSTALL_OPTIONS = {
+    "--no-deps",
+    "--no-cache-dir",
+    "--no-build-isolation",
+    "--no-index",
+    "-q",
+    "--quiet",
+}
+
+
+def _pip_install_is_hash_checked(command: str) -> bool:
+    """`pip install` verifies hashes, or installs only local source without dependencies."""
+    tokens = command.split()
+    if "--require-hashes" in tokens:
+        return True
+    arguments = tokens[tokens.index("install") + 1 :]
+    options = [token for token in arguments if token.startswith("-")]
+    paths = [token for token in arguments if not token.startswith("-")]
+    return (
+        "--no-deps" in options
+        and set(options) <= _LOCAL_INSTALL_OPTIONS
+        and bool(paths)
+        and all(token.startswith(("/", ".")) for token in paths)
+    )
+
+
+def _dockerfile_violations(text: str) -> list[str]:
+    problems = []
+    stages: set[str] = set()
+    user: str | None = None
+    for keyword, arguments in _dockerfile_instructions(text):
+        if keyword == "FROM":
+            tokens = [token for token in arguments.split() if not token.startswith("--")]
+            image = tokens[0] if tokens else ""
+            if (
+                image.lower() not in stages
+                and image != "scratch"
+                and not re.fullmatch(r"\S+@sha256:[0-9a-f]{64}", image)
+            ):
+                problems.append(f"FROM {image} is not pinned by an image digest")
+            if len(tokens) == 3 and tokens[1].lower() == "as":
+                stages.add(tokens[2].lower())
+            user = None  # every stage starts as root
+        elif keyword == "USER":
+            user = arguments.split(":", 1)[0].strip()
+        elif keyword == "ADD" and re.search(r"(?:^|\s)(?:(?:https?|git)://|git@)", arguments):
+            problems.append(f"ADD fetches a remote source: {arguments}")
+        elif keyword == "RUN":
+            for command in re.split(r"&&|\|\||;|\|", arguments):
+                if re.search(r"\bpip3?\s+install\b", command) and not _pip_install_is_hash_checked(command):
+                    problems.append(f"pip install without --require-hashes: {command.strip()}")
+    if user is None or user in {"root", "0"}:
+        problems.append(f"the final stage runs as {user or 'root (no USER)'}; end with a non-root USER")
+    return problems
+
+
+def _dockerignore_violations(text: str) -> list[str]:
+    """The build context is an allow-list: exclude everything, re-include files."""
+    patterns = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
+    problems = []
+    if not patterns or patterns[0] not in {"*", "**"}:
+        problems.append(".dockerignore must start with `*` or `**` and re-include an allow-list")
+    for pattern in patterns:
+        if not pattern.startswith("!"):
+            continue
+        target = pattern[1:]
+        # A re-included directory readmits every file below it, bytecode and
+        # untracked files included.
+        if target.endswith("/") or target.rsplit("/", 1)[-1] in {"*", "**"} or (ROOT / target).is_dir():
+            problems.append(f".dockerignore re-includes the directory {pattern}; re-include files instead")
+    return problems
+
+
+def _violations(path: Path) -> list[str]:
+    """Policy violations in a workflow, the Dockerfile or .dockerignore."""
+    if path.name == "Dockerfile":
+        return _dockerfile_violations(path.read_text(encoding="utf-8"))
+    if path.name == ".dockerignore":
+        return _dockerignore_violations(path.read_text(encoding="utf-8"))
+    return _workflow_violations(path)
+
+
+def test_workflow_discovery_includes_both_yaml_spellings(tmp_path: Path) -> None:
+    # GitHub runs `.yaml` workflows too; a policy that globbed only `*.yml`
+    # would let a `.yaml` file bypass every check below.
+    assert WORKFLOWS, "no workflows found; every parametrised workflow test would be empty"
+    listed = {path.name for path in (GITHUB / "workflows").iterdir() if path.suffix in {".yml", ".yaml"}}
+    assert {path.name for path in WORKFLOWS} == listed
+    for name in ("ci.yml", "evil.yaml", "notes.txt"):
+        (tmp_path / name).write_text("{}\n", encoding="utf-8")
+    assert [path.name for path in _workflow_files(tmp_path)] == ["ci.yml", "evil.yaml"]
+
+
+def test_an_added_yaml_workflow_is_checked_like_any_other(tmp_path: Path) -> None:
+    evil = tmp_path / "evil.yaml"
+    evil.write_text(
+        "on: pull_request_target\n"
+        "permissions: write-all\n"
+        "jobs:\n"
+        "  release:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: 5\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v7\n"
+        "      - run: gh release create v0.1.1 dist/*\n",
+        encoding="utf-8",
+    )
+    assert _workflow_files(tmp_path) == [evil]
+    problems = "\n".join(_violations(evil))
+    for expected in ("pull_request_target", "write-all", "unpinned action", "GitHub release"):
+        assert expected in problems, problems
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)
+def test_workflows_use_pinned_actions_and_scoped_permissions(path: Path) -> None:
+    workflow = _load(path)
+    assert not [*_trigger_violations(workflow), *_job_violations(path.name, workflow)]
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)
+def test_workflow_steps_cannot_hide_failures_or_interpolate_untrusted_text(path: Path) -> None:
+    assert not _run_violations(path.name, _load(path))
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)
+def test_push_runs_are_not_cancelled_by_a_newer_push(path: Path) -> None:
+    assert not _concurrency_violations(path.name, _load(path))
+
+
+def test_ci_cancels_only_superseded_pull_request_runs() -> None:
+    concurrency = _load(GITHUB / "workflows" / "ci.yml")["concurrency"]
+    assert (
+        concurrency["group"] == "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+    )
+    assert concurrency["cancel-in-progress"] == PULL_REQUEST_ONLY_CANCELLATION
+
+
+def test_policy_exceptions_still_name_real_lines() -> None:
+    for workflow, line in SUPPRESSION_EXCEPTIONS:
+        script = "\n".join(
+            step.get("run", "")
+            for job in _load(GITHUB / "workflows" / workflow)["jobs"].values()
+            for step in job.get("steps", [])
+        )
+        assert line in {candidate.strip() for candidate in script.splitlines()}, f"stale exception: {line}"
+    for workflow in CANCELLABLE_PUSH_RUNS:
+        assert "push" in _trigger_names(_load(GITHUB / "workflows" / workflow)), (
+            f"stale exemption: {workflow}"
+        )
+
+
+def test_ci_enforces_the_documented_coverage_floors() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert pyproject["tool"]["coverage"]["report"]["fail_under"] >= COVERAGE_FLOOR
+    jobs = _load(GITHUB / "workflows" / "ci.yml")["jobs"]
+    for name in ("test", "test-macos"):
+        scripts = [step.get("run", "") for step in jobs[name]["steps"]]
+        assert any("python -m pytest" in script and "--cov-fail-under=80" in script for script in scripts), (
+            name
+        )
+        assert any("python -m tools.coverage_gate" in script for script in scripts), name
+
+
+def test_container_build_is_digest_pinned_hash_locked_and_non_root() -> None:
+    assert not _violations(ROOT / "Dockerfile")
+    assert not _violations(ROOT / ".dockerignore")
+
+
+def _replace(old: str, new: str) -> Callable[[str], str]:
+    def mutate(text: str) -> str:
+        assert old in text, f"the mutation no longer applies: {old!r} is not in the file"
+        return text.replace(old, new, 1)
+
+    return mutate
+
+
+_SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format sarif -o shadowscan.sarif"
+
+
+@pytest.mark.parametrize(
+    "source,mutate,expected",
+    [
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("  pull_request:\n", "  pull_request:\n  workflow_run:\n    workflows: [Docs]\n"),
+            "forbidden trigger workflow_run",
+            id="workflow_run-trigger",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("  pull_request:\n", "  pull_request_target:\n"),
+            "forbidden trigger pull_request_target",
+            id="pull_request_target-trigger",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("permissions:\n  contents: read\nconcurrency:", "permissions: write-all\nconcurrency:"),
+            "write-all",
+            id="write-all",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v7"),
+            "unpinned action",
+            id="unpinned-action",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(
+                "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: true"
+            ),
+            "lets a newer push cancel a push run",
+            id="cancel-every-run",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("== 'pull_request' }}", "!= 'pull_request' }}"),
+            "lets a newer push cancel a push run",
+            id="cancel-push-runs",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("  docs:\n    runs-on:", "  docs:\n    continue-on-error: true\n    runs-on:"),
+            "docs: job sets continue-on-error",
+            id="job-continue-on-error",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(
+                "      - run: ruff check shadowscan tests tools\n",
+                "      - run: ruff check shadowscan tests tools\n        continue-on-error: true\n",
+            ),
+            "sets continue-on-error",
+            id="step-continue-on-error",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("pip-audit --skip-editable --progress-spinner off", "pip-audit --skip-editable || true"),
+            "suppresses a failure",
+            id="or-true",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("run: ruff check shadowscan", "run: ruff check --exit-zero shadowscan"),
+            "suppresses a failure",
+            id="exit-zero",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("pip-audit --skip-editable", "pip-audit --ignore-vuln PYSEC-0000-0 --skip-editable"),
+            "suppresses a failure",
+            id="ignore-vuln",
+        ),
+        pytest.param(
+            ".github/workflows/dco.yml",
+            _replace("2>/dev/null || true)", "2>/dev/null || :)"),
+            "suppresses a failure",
+            id="changed-exception-line",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("--cov-fail-under=80", "--cov-fail-under=10"),
+            "coverage floor below 80%",
+            id="coverage-floor",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(
+                "run: mkdocs build --strict", 'run: mkdocs build --strict --site-dir "${{ inputs.site }}"'
+            ),
+            "interpolates ${{ inputs.site }}",
+            id="inputs-interpolation",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(
+                "run: python -m shadowscan.signatures.validate",
+                'run: echo "${{ github.ref_name }}" && python -m shadowscan.signatures.validate',
+            ),
+            "interpolates ${{ github.ref_name }}",
+            id="ref_name-interpolation",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("run: mkdocs build --strict", "run: echo '${{ toJSON(github.event) }}' && mkdocs build"),
+            "interpolates ${{ toJSON(github.event) }}",
+            id="event-json-interpolation",
+        ),
+        pytest.param(
+            ".github/workflows/dco.yml",
+            _replace(
+                'echo "All commits signed off."', 'echo "${{ github.event.pull_request.title }} signed off."'
+            ),
+            "interpolates ${{ github.event.pull_request.title }}",
+            id="event-title-interpolation",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace(
+                "        run: sha256sum --check SHA256SUMS\n",
+                "        run: sha256sum --check SHA256SUMS && uv publish --trusted-publishing always ./*.whl\n",
+            ),
+            "package upload",
+            id="uv-publish-in-oidc-job",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(_SELF_SCAN, _SELF_SCAN + " && python -m twine upload dist/*"),
+            "package upload",
+            id="twine-upload",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace("actions/upload-artifact@", "pypa/gh-action-pypi-publish@"),
+            "package upload",
+            id="pypi-publish-action",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(_SELF_SCAN, _SELF_SCAN + " && gh release create v0.1.1 dist/*.whl"),
+            "GitHub release",
+            id="gh-release-create",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(_SELF_SCAN, _SELF_SCAN + " && git push origin --tags"),
+            "git push",
+            id="git-push-tags",
+        ),
+        pytest.param(
+            ".github/workflows/ci.yml",
+            _replace(_SELF_SCAN, _SELF_SCAN + " && docker push ghcr.io/example/shadowscan:ci"),
+            "image push",
+            id="docker-push",
+        ),
+        pytest.param(
+            "Dockerfile",
+            lambda text: re.sub(r"@sha256:[0-9a-f]{64}", "", text, count=1),
+            "is not pinned by an image digest",
+            id="unpinned-base-image",
+        ),
+        pytest.param("Dockerfile", _replace("USER 65532:65532", "USER root"), "runs as root", id="root-user"),
+        pytest.param("Dockerfile", _replace("USER 65532:65532\n", ""), "runs as root", id="no-user"),
+        pytest.param("Dockerfile", lambda text: text + "USER 0\n", "runs as 0", id="final-root-user"),
+        pytest.param(
+            "Dockerfile",
+            _replace(
+                "WORKDIR /opt/shadowscan\n",
+                "WORKDIR /opt/shadowscan\nADD https://example.invalid/t.tgz /opt/\n",
+            ),
+            "ADD fetches a remote source",
+            id="remote-add",
+        ),
+        pytest.param(
+            "Dockerfile",
+            _replace("pip install --no-cache-dir --require-hashes", "pip install --no-cache-dir"),
+            "pip install without --require-hashes",
+            id="unhashed-pip-install",
+        ),
+        pytest.param(
+            "Dockerfile",
+            _replace("--no-build-isolation /opt/shadowscan", "--no-build-isolation /opt/shadowscan requests"),
+            "pip install without --require-hashes",
+            id="unhashed-no-deps-package",
+        ),
+        pytest.param(
+            ".dockerignore",
+            _replace("\n**\n", "\n"),
+            "must start with `*` or `**`",
+            id="deny-list-dockerignore",
+        ),
+        pytest.param(
+            ".dockerignore",
+            lambda text: text + "!shadowscan/\n",
+            "re-includes the directory !shadowscan/",
+            id="directory-reinclude",
+        ),
+    ],
+)
+def test_policy_checks_reject_a_mutated_copy_of_a_real_file(
+    tmp_path: Path, source: str, mutate: Callable[[str], str], expected: str
+) -> None:
+    original = ROOT / source
+    assert not _violations(original), "the unmutated file must comply"
+    mutated = tmp_path / original.name
+    mutated.write_text(mutate(original.read_text(encoding="utf-8")), encoding="utf-8")
+    problems = _violations(mutated)
+    assert any(expected in problem for problem in problems), problems
 
 
 def test_ci_gate_waits_for_every_job_and_cannot_skip_failed_dependencies() -> None:
@@ -333,17 +920,22 @@ def test_dco_executes_against_real_commit_ranges(tmp_path: Path, case: str, pass
 
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)
 def test_workflows_do_not_publish_releases_packages_or_tags(path: Path) -> None:
-    text = path.read_text(encoding="utf-8")
-    for marker in (
-        "pypa/gh-action-pypi-publish",
-        "softprops/action-gh-release",
-        "ncipollo/release-action",
-        "twine upload",
-        "gh release create",
-        "git push --tags",
-        "git push origin v",
-    ):
-        assert marker not in text, f"publication is a manual maintainer action: {marker}"
+    assert not _publication_violations(path.read_text(encoding="utf-8"))
+
+
+def test_release_workflow_stays_a_manual_evidence_bundle() -> None:
+    workflow = _load(GITHUB / "workflows" / "release.yml")
+    assert _trigger_names(workflow) == {"workflow_dispatch"}
+    assert "Deliberately produces a review bundle only." in (GITHUB / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    # Only the attestation job holds an OIDC token, and it never checks out or
+    # runs repository code.
+    for name, job in workflow["jobs"].items():
+        if (job.get("permissions") or {}).get("id-token") == "write":
+            assert name == "attest"
+            assert not any(step.get("uses", "").startswith("actions/checkout@") for step in job["steps"])
+    assert workflow["jobs"]["publication-input"]["permissions"] == {}
 
 
 def test_pages_requires_explicit_manual_publication_from_main() -> None:

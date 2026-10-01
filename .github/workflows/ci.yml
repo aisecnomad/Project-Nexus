@@ -7,7 +7,9 @@ permissions:
   contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A newer pull-request push supersedes the older run. Every main push run must
+  # finish: release evidence cites the CI run of one exact main commit.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   dco:
     if: github.event_name == 'pull_request'
@@ -104,6 +106,12 @@ jobs:
             -r requirements-ci.lock -r requirements-build.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
+      - name: Check tracked files for hardcoded credentials
+        run: |
+          set -euo pipefail
+          # The same standard-library script as the pre-commit hook; it skips
+          # the paths that hold synthetic credentials on purpose.
+          git ls-files -z | xargs -0 python tools/check_secrets.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
