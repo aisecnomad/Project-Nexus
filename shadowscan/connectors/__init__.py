@@ -247,6 +247,12 @@ def _load_plugin(name: str, path: str) -> type[BaseConnector]:
     except Exception as exc:  # noqa: BLE001 - any import failure refuses the plugin with a bounded diagnostic
         detail = f"{type(exc).__name__}: {_display(str(exc))}"
         raise _refuse(name, "load-failed", f"{where} could not be imported ({detail})") from exc
+    except BaseException as exc:  # noqa: BLE001 - sys.exit() at import must not end the scan
+        if isinstance(exc, KeyboardInterrupt):
+            raise
+        # A SystemExit argument is text meant for a terminal and may carry a
+        # credential, so only the exception type is reported.
+        raise _refuse(name, "load-failed", f"{where} could not be imported ({type(exc).__name__})") from None
     return _verify_connector_class(name, path, cls)
 
 
