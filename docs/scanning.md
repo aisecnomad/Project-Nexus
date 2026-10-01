@@ -3,8 +3,7 @@
 ## Coverage policy
 
 A code scan is *complete* when every file it was asked to assess was assessed.
-Situations that are deliberately outside a repository's own content, and gaps
-that are never silent:
+The following coverage rules define how omitted source is handled:
 
 * **Symbolic links** are never followed. A link is skipped silently when its
   own name is one the scanner never reads (a lockfile, generated bundle or
@@ -49,6 +48,16 @@ that are never silent:
 * **Directory nesting** deeper than the Python runtime can walk (about 1000
   levels before Python 3.12) stops the walk. Findings gathered so far are kept
   and the scan is incomplete with `directory nesting too deep`.
+* **Submodules** are never initialized or fetched. Bounded `.gitmodules`
+  declarations identify missing, empty or unsafe source directories as coverage
+  gaps, including declarations inside materialized nested directories. Ordinary
+  files in materialized submodule directories are scanned by the same confined
+  walker. GitHub/GitLab clone collection additionally inventories gitlinks in
+  the committed `HEAD` tree; local scans do so only with `use_git: true` and a
+  local `.git` directory. Malformed declarations or a failed authorized Git
+  inventory make coverage incomplete. Explicitly excluded submodule paths are
+  outside the declared scan scope. A nonempty directory establishes only that
+  source is available to scan, not that it matches an authentic remote commit.
 
 Default directory excludes are part of the documented scope and never make a
 scan incomplete, but they are not silent. The names in `DEFAULT_EXCLUDES` are
@@ -62,6 +71,12 @@ environments and tool caches (`.git`, `node_modules`, `venv`, `__pycache__`,
 `.idea` and similar) are not listed, and neither is a name the operator listed
 in `exclude`. Code under a listed name was not assessed; to cover it, scan that
 directory as its own root.
+
+Default local scans do not execute Git: an undeclared gitlink without a
+`.gitmodules` file is therefore not discoverable in that mode. The opt-in Git
+inventory reads committed `HEAD`, not staged-only index entries; an undeclared,
+staged-only gitlink is likewise outside that check. Use a reviewed committed
+checkout and declared submodule paths when completeness matters.
 
 By default, incomplete coverage is recorded as a warning and exits 3.
 `strict_coverage: true` (`--strict-coverage`) elevates the diagnostic to an
