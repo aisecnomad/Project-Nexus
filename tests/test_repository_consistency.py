@@ -28,6 +28,7 @@ import yaml
 
 from shadowscan.connectors import ConnectorContext, builtin_connector_names
 from shadowscan.connectors.cloud.gcp import GcpConnector
+from shadowscan.connectors.common import MAX_PAGES
 from shadowscan.models import ScanStats
 from shadowscan.reporters.csv_ import _safe_cell
 from shadowscan.utils import http
@@ -650,13 +651,20 @@ def test_documented_gcp_pagination_caps_match_the_connector(index) -> None:
         f"resource lists stop at {pages['lists']} pages and "
         f"audit-log queries at {pages['audit']} pages regardless"
     )
-    default = f"`max_pages` (default {pages['default']})"
+    # Every connector caps max_pages at MAX_PAGES; the docs state both bounds.
+    bounds = (
+        f"default and maximum {MAX_PAGES}"
+        if pages["default"] == MAX_PAGES
+        else f"default {pages['default']}, maximum {MAX_PAGES}"
+    )
+    default = f"`max_pages` ({bounds})"
     for path in (ROOT / "docs" / "connectors.md", ROOT / "docs" / "connectors" / "cloud.md"):
         assert any(default in text and caps in text for text in _paragraphs(path)), (
             f"{_relative(path)} must say in one paragraph that {default} applies and that {caps}"
         )
     help_text = " ".join(GcpConnector.config_keys["max_pages"].split())
-    assert f"default {pages['default']}" in help_text and caps in help_text
+    assert f"capped at {MAX_PAGES}" in help_text and f"default {pages['default']}" in help_text
+    assert caps in help_text
 
 
 # --- Documented report and transport behaviour matches the code --------------
