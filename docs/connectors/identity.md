@@ -15,8 +15,8 @@ Token: SSWS API token or OAuth bearer with `okta.apps.read`.
 
 ### `identity.entra`
 Microsoft Graph: service principals, delegated `oauth2PermissionGrants`,
-app-only `appRoleAssignments` (role ids resolved to names such as
-`Mail.ReadWrite`), tenant app registrations, managed identities. First-party
+app-only `appRoleAssignments` (role ids resolved to the names their resource
+defines, such as `Mail.ReadWrite`), tenant app registrations, managed identities. First-party
 Microsoft SPs are skipped unless they match AI signatures (Copilot).
 Permissions (application): `Application.Read.All`, `DelegatedPermissionGrant.Read.All`,
 `Directory.Read.All`. Or pass `access_token`.
