@@ -357,6 +357,62 @@ def test_salesforce_normal_query_pagination_is_complete(index, monkeypatch):
     assert connector.http.get_json.call_args.kwargs == {"params": None}
 
 
+POWER_AI_FLOW = {
+    "_kind": "flow",
+    "name": "flow-ai",
+    "properties": {
+        "displayName": "Summarise with OpenAI",
+        "connectionReferences": {"shared_openai": {"connectionName": "shared_openai"}},
+    },
+}
+
+
+def test_power_platform_oversized_flow_keeps_valid_neighbours(tmp_path, run_connector):
+    # A 3 MiB definition used to exhaust the matching budget and abort the
+    # connector: 0 findings, even for valid flows after it.
+    words = ["invoke", "openai", "api_key", "model=", "import", "tool", "{{", "}}", "https://example.com/x"]
+    definition = " ".join(f"{words[i % len(words)]}_{i:x}" for i in range(320_000))
+    assert len(definition) > 3 * 1024 * 1024
+    big = {
+        "_kind": "flow",
+        "name": "flow-big",
+        "properties": {"displayName": "Huge flow", "definition": definition},
+    }
+    export = tmp_path / "flows.json"
+    export.write_text(json.dumps([big, POWER_AI_FLOW]))
+    findings, ctx = run_connector("lowcode.power-platform", input=str(export))
+    assert "Power Automate flow using OpenAI (independent publisher): Summarise with OpenAI" in [
+        finding.title for finding in findings
+    ]
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert any("definition exceeds 300000 characters" in warning for warning in ctx.stats.warnings)
+
+
+def test_power_platform_match_timeout_skips_only_that_record(tmp_path, run_connector, monkeypatch):
+    from shadowscan.connectors.lowcode import power_platform
+
+    real = power_platform.blob_matches
+
+    def blob_matches(index, text, **kwargs):
+        if "hostile-marker" in text:
+            raise MatchTimeoutError("untrusted definition text must not be logged")
+        return real(index, text, **kwargs)
+
+    monkeypatch.setattr(power_platform, "blob_matches", blob_matches)
+    hostile = {"_kind": "flow", "name": "flow-x", "properties": {"definition": {"note": "hostile-marker"}}}
+    export = tmp_path / "flows.json"
+    export.write_text(json.dumps([hostile, POWER_AI_FLOW]))
+    findings, ctx = run_connector("lowcode.power-platform", input=str(export))
+    assert [finding.title for finding in findings] == [
+        "Power Automate flow using OpenAI (independent publisher): Summarise with OpenAI"
+    ]
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert ctx.stats.warnings == [
+        "lowcode.power-platform: skipped a flow record that could not be analysed "
+        "(MatchTimeoutError); coverage incomplete"
+    ]
+
+
 @pytest.mark.parametrize("graph", [{}, {"nodes": None}, {"nodes": {}}, {"nodes": [], "error": "denied"}])
 def test_n8n_missing_or_invalid_graph_preserves_next_workflow(index, graph):
     connector = N8nConnector(ConnectorContext(index=index))

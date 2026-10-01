@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from functools import partial
 from typing import Any, ClassVar
 from urllib.parse import quote, urlsplit
 
@@ -27,8 +28,16 @@ from requests import RequestException
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import apply_matches, blob_matches, config_boolean, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path
+
+# Signature matching over one flow or app definition is bounded like the other
+# low-code connectors; a longer definition is analysed up to this size and the
+# scan is marked incomplete.
+MAX_DEFINITION_CHARS = 300_000
+# Malformed or oversized provider fields raise these while one record is analysed.
+_RECORD_ERRORS = (AttributeError, TypeError, ValueError, KeyError, RecursionError, MatchTimeoutError)
 
 BAP = "https://api.bap.microsoft.com"
 FLOW = "https://api.flow.microsoft.com"
@@ -283,12 +292,12 @@ class PowerPlatformConnector(BaseConnector):
                 continue
             if kind == "flow":
                 self.ctx.examined()
-                f = self._flow_finding(rec)
+                f = self._guarded(self._flow_finding, rec, "flow")
                 if f:
                     yield f
             elif kind == "app":
                 self.ctx.examined()
-                f = self._app_finding(rec)
+                f = self._guarded(self._app_finding, rec, "app")
                 if f:
                     yield f
             elif kind == "bot":
@@ -309,7 +318,33 @@ class PowerPlatformConnector(BaseConnector):
             if bid in conflicting_bots:
                 continue
             self.ctx.examined()
-            yield self._bot_finding(bot, components.get(bid, []))
+            f = self._guarded(partial(self._bot_finding, comps=components.get(bid, [])), bot, "bot")
+            if f:
+                yield f
+
+    def _guarded(
+        self, build: Callable[[dict[str, Any]], Finding | None], rec: dict[str, Any], what: str
+    ) -> Finding | None:
+        """Isolate one record that cannot be analysed so its neighbours still are."""
+        try:
+            return build(rec)
+        except _RECORD_ERRORS as exc:
+            # Fixed summary: provider fields and match diagnostics are not echoed.
+            self.ctx.warn(
+                f"lowcode.power-platform: skipped a {what} record that could not be analysed "
+                f"({type(exc).__name__}); coverage incomplete"
+            )
+            return None
+
+    def _definition_blob(self, blob: str, what: str) -> str:
+        """The part of a definition that signature matching may examine."""
+        if len(blob) <= MAX_DEFINITION_CHARS:
+            return blob
+        self.ctx.warn(
+            f"lowcode.power-platform: {what} definition exceeds {MAX_DEFINITION_CHARS} characters; "
+            "only its start was matched against signatures"
+        )
+        return blob[:MAX_DEFINITION_CHARS]
 
     def _record_kind(self, rec: dict[str, Any]) -> str | None:
         if not self._record_fields_valid(
@@ -377,7 +412,7 @@ class PowerPlatformConnector(BaseConnector):
             default=str,
         )
         refs = self._ai_refs(blob)
-        matches = blob_matches(self.index, blob)
+        matches = blob_matches(self.index, self._definition_blob(blob, "flow"))
         if not refs and not matches:
             return None
         name = props.get("displayName") or fl.get("name")
@@ -453,7 +488,7 @@ class PowerPlatformConnector(BaseConnector):
             default=str,
         )
         refs = self._ai_refs(blob)
-        matches = blob_matches(self.index, blob)
+        matches = blob_matches(self.index, self._definition_blob(blob, "app"))
         if not refs and not matches:
             return None
         name = props.get("displayName") or app.get("name")
