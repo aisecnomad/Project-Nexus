@@ -78,7 +78,7 @@ make lint            # ruff check
 make format-check    # ruff format --check
 make typecheck       # mypy on the scanner and tools
 make signatures      # signature schema and regex validation
-make audit           # pip-audit on the installed environment
+make audit           # pip-audit on the environment and every hash lock, as CI
 make evaluate        # every bundled detection corpus
 make policy          # workflow, issue-form and repository consistency checks
 make check           # all of the above, in order

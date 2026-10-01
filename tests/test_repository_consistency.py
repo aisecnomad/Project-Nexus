@@ -366,6 +366,28 @@ def test_makefile_evaluates_the_same_corpora_as_ci() -> None:
         assert (ROOT / corpus).is_file(), f"CI references a missing corpus {corpus}"
 
 
+def _lock_audit_loop(text: str) -> str:
+    """The `for lock in ...; do pip-audit ...; done` loop, without shell and make syntax."""
+    flat = " ".join(text.replace("\\\n", " ").replace("$$", "$").replace(";", " ").split())
+    match = re.search(r"for lock in .*? done", flat)
+    assert match is not None, "no lock audit loop found"
+    return match.group()
+
+
+def test_make_audit_checks_the_environment_and_every_lock_like_ci() -> None:
+    """`make check` must not pass while CI's audit of the hash locks fails."""
+    makefile = _read(ROOT / "Makefile")
+    recipe = makefile.split("\naudit:", 1)[1].split("\n.PHONY", 1)[0]
+    ci_script = "\n".join(_ci_run_lines())
+    for command in ("pip-audit --skip-editable --progress-spinner off",):
+        assert command in recipe and command in ci_script
+    assert _lock_audit_loop(recipe) == _lock_audit_loop(ci_script)
+    locks = re.search(r"for lock in (.*?) do", _lock_audit_loop(recipe))
+    assert locks is not None
+    assert set(locks.group(1).split()) == {path.name for path in ROOT.glob("requirements*.lock")}
+    assert "set -e; for lock in" in recipe, "the first failing lock must fail make audit"
+
+
 def test_pre_commit_hooks_are_immutable_and_match_ci_versions() -> None:
     config_text = _read(ROOT / ".pre-commit-config.yaml")
     revisions = {
