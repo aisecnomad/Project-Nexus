@@ -41,7 +41,52 @@ _REGEX_PREFIX_WORDS = frozenset(
     }
 )
 _CONTROL_HEADS = frozenset({"catch", "for", "if", "switch", "while", "with"})
+# Keywords in a module, generator or async function but ordinary names in a script:
+# without a parse, a `/` after one of them cannot be classified.
+_AMBIGUOUS_REGEX_WORDS = frozenset({"await", "yield"})
 _MAX_REGEX_LENGTH = 8192
+# ECMAScript line terminators: LF, CR, LINE SEPARATOR and PARAGRAPH SEPARATOR.
+_JS_LINE_BREAK = re.compile("[\n\r\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]")
+
+
+def _js_line_end(text: str, pos: int) -> int:
+    """Return the offset of the first line terminator at or after ``pos``, or the end of ``text``."""
+    match = _JS_LINE_BREAK.search(text, pos)
+    return len(text) if match is None else match.start()
+
+
+def _skip_trivia(text: str, pos: int) -> int:
+    """Return the first offset at or after ``pos`` that is neither whitespace nor inside a comment.
+
+    This only looks ahead. An unterminated block comment returns -1: the lexer
+    reports it when its own walk reaches the comment.
+    """
+    size = len(text)
+    while pos < size:
+        if text[pos].isspace():
+            pos += 1
+        elif text.startswith("/*", pos):
+            end = text.find("*/", pos + 2)
+            if end < 0:
+                return -1
+            pos = end + 2
+        elif text.startswith("//", pos):
+            pos = _js_line_end(text, pos + 2)
+        else:
+            break
+    return pos
+
+
+def _property_name_start(text: str, pos: int) -> int:
+    """Return the offset of the name after a property-access dot that ends at ``pos``, or -1."""
+    if pos < len(text) and (text[pos].isalpha() or text[pos] in "_$"):
+        return pos
+    pos = _skip_trivia(text, pos)
+    if pos >= 0 and text.startswith("#", pos):  # private name: `this.#of`
+        pos += 1
+    if 0 <= pos < len(text) and (text[pos].isalpha() or text[pos] in "_$"):
+        return pos
+    return -1
 
 
 def _javascript_regex_end(text: str, start: int) -> int | None:
@@ -633,6 +678,7 @@ class _JavaScriptLexer:
             self.control_pending,
             self.control_parens,
         )
+        member_at = -1  # offset of the name after the latest single `.` or `?.`
         while i < size:
             if text.startswith("//", i):
                 end = text.find("\n", i + 2)
@@ -690,8 +736,22 @@ class _JavaScriptLexer:
                 while i < size and (text[i].isalnum() or text[i] in "_$"):
                     i += 1
                 word = text[start:i]
-                can_start_regex[-1] = word in _REGEX_PREFIX_WORDS
-                control_pending[-1] = word in _CONTROL_HEADS
+                if start == member_at:
+                    # A property name is an operand whatever it is called, so
+                    # `o.of / 1` and `o.for(x) / 2` divide.
+                    can_start_regex[-1] = False
+                    control_pending[-1] = False
+                else:
+                    # `of` is a keyword only after an operand (`for (x of /re/)`);
+                    # where an operand is expected it is an ordinary name.
+                    can_start_regex[-1] = word in _REGEX_PREFIX_WORDS and (
+                        word != "of" or not can_start_regex[-1]
+                    )
+                    control_pending[-1] = word in _CONTROL_HEADS
+                    if word in _AMBIGUOUS_REGEX_WORDS:
+                        following = _skip_trivia(text, i)
+                        if 0 <= following < size and text[following] == "/":
+                            self.incomplete = True
             elif text[i].isdigit():
                 i += 1
                 while i < size and (text[i].isalnum() or text[i] in "._"):
@@ -725,9 +785,15 @@ class _JavaScriptLexer:
                 control_pending[-1] = False
                 i += 1
             elif text[i] == ".":
-                can_start_regex[-1] = False
                 control_pending[-1] = False
-                i += 1
+                if text.startswith("...", i):
+                    # Spread: an expression, possibly a regular expression, follows.
+                    can_start_regex[-1] = True
+                    i += 3
+                else:
+                    can_start_regex[-1] = False
+                    member_at = _property_name_start(text, i + 1)
+                    i += 1
             else:
                 if not text[i].isspace():
                     control_pending[-1] = False
