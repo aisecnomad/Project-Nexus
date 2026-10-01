@@ -46,7 +46,7 @@ import time
 import tomllib
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
@@ -54,6 +54,7 @@ import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.code.import_provenance import local_module_conflict
+from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
 from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
 from shadowscan.connectors.code.mcp_tools import mcp_tool_capabilities, mcp_tool_names
 from shadowscan.connectors.code.ownership import (
@@ -86,8 +87,14 @@ from shadowscan.connectors.common import (
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
-from shadowscan.utils.files import open_confined_directory, open_confined_file
-from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
+from shadowscan.utils.files import open_confined_directory, open_confined_file, read_policy_text
+from shadowscan.utils.git import (
+    MAX_GITMODULES_BYTES,
+    declared_submodule_paths,
+    metadata_git_argv_prefix,
+    metadata_git_env,
+    read_gitlink_paths,
+)
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize, sanitize_text
@@ -555,6 +562,12 @@ class _ProjectEvidence:
             return False
         if self.in_tests(rel) and not self.test_only:
             return False
+        if (
+            match.signature.category == "framework"
+            and match.extra.get("lexical_source")
+            and match.signature_id not in self.library_evidence
+        ):
+            return False
         return not (self.mcp_server and match.signature.category == "heuristic")
 
     def weight_scale(self, rel: str) -> float:
@@ -909,6 +922,8 @@ class FilesystemConnector(BaseConnector):
         self._ownership_steps_remaining: dict[Path, int] = {}
         self._owner_cache: dict[tuple[Path, str], str | None] = {}
         self._symlink_warnings: set[Path] = set()
+        self._checked_submodules: set[tuple[Path, str]] = set()
+        self._gitlink_roots: set[Path] = set()
 
     # ----------------------------------------------------------------- input
     def _paths(self) -> list[Path]:
@@ -1040,6 +1055,82 @@ class FilesystemConnector(BaseConnector):
         for rel, path, proj, _ in self._iter_entries(root):
             yield rel, path, proj
 
+    def check_gitlink_coverage(self, root: Path) -> None:
+        """Check committed gitlinks where Git is authorized: a clone or use_git=True.
+
+        Default local scans never invoke Git, and instead inspect declarations
+        as the walk reaches .gitmodules. Gitlinks lacking that declaration
+        require clone mode or the existing local metadata opt-in to discover.
+        """
+        if root in self._gitlink_roots:
+            return
+        self._gitlink_roots.add(root)
+        self.ctx.check_deadline()
+        remaining = self.ctx.deadline - time.monotonic() if self.ctx.deadline is not None else 10.0
+        paths = read_gitlink_paths(root, timeout=remaining)
+        self.ctx.check_deadline()
+        if paths is None:
+            self._submodule_gap("could not inventory gitlinks safely; submodule coverage unknown")
+            return
+        self._check_submodule_paths(root, paths)
+
+    def _submodule_gap(self, message: str) -> None:
+        if self.strict_coverage:
+            self.ctx.error(f"code.filesystem: {message}")
+        else:
+            self.ctx.warn(f"code.filesystem: {message}")
+
+    def _check_submodule_paths(self, root: Path, paths: Iterable[str]) -> None:
+        """Missing/empty modules are gaps; operator-excluded paths remain out of scope.
+
+        Each directory component is opened without following symlinks. We only
+        test materialization here; the ordinary bounded walker scans its files.
+        A nonempty directory is not proof of a complete or authentic checkout.
+        """
+        for rel in paths:
+            self.ctx.check_deadline()
+            parts = PurePosixPath(rel).parts
+            if any(
+                self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name)
+                for depth, name in enumerate(parts, 1)
+            ):
+                continue
+            key = (root, rel)
+            if key in self._checked_submodules:
+                continue
+            self._checked_submodules.add(key)
+            materialized = False
+            try:
+                anchor = open_confined_directory(root / rel)
+                try:
+                    # The confined anchor may be O_PATH, which cannot enumerate.
+                    directory = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=anchor)
+                finally:
+                    os.close(anchor)
+                try:
+                    with os.scandir(directory) as entries:
+                        materialized = any(entry.name != ".git" for entry in entries)
+                finally:
+                    os.close(directory)
+            except (OSError, ValueError):
+                pass
+            if not materialized:
+                self._submodule_gap(
+                    f"submodule {rel}: checkout is missing, empty or unsafe; source coverage incomplete"
+                )
+
+    def _check_submodule_declarations(self, root: Path, rel_dir: str) -> None:
+        rel = ".gitmodules" if rel_dir == "." else f"{rel_dir}/.gitmodules"
+        if self._excluded_file(rel):
+            return
+        try:
+            text = read_policy_text(root / rel, MAX_GITMODULES_BYTES)
+            paths = declared_submodule_paths(text)
+        except (OSError, ValueError, UnicodeError):
+            self._submodule_gap(f"{rel}: cannot read submodule declarations safely; coverage unknown")
+            return
+        self._check_submodule_paths(root, (path if rel_dir == "." else f"{rel_dir}/{path}" for path in paths))
+
     def _iter_entries(self, root: Path) -> Iterator[tuple[str, Path, str, int]]:
         """Yield (relpath, path, project_root_rel, size) for every regular file to analyze.
 
@@ -1072,9 +1163,16 @@ class FilesystemConnector(BaseConnector):
         def walk_error(exc: OSError) -> None:
             self.ctx.error(f"code.filesystem: could not enumerate a directory under {root}")
 
+        # A gitfile or symlink also signals a checkout, but cannot authorize
+        # reading external metadata. The checker reports that unknown coverage
+        # even when this source tree produces no findings (and no enrichment).
+        if self.use_git and os.path.lexists(root / ".git"):
+            self.check_gitlink_coverage(root)
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=walk_error):
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else rel_dir
+            if ".gitmodules" in filenames:
+                self._check_submodule_declarations(root, rel_dir)
             dirnames[:] = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames)
             proj = _nearest_root(rel_dir, roots)
             if rel_dir != "." and _marks_project(Path(dirpath), filenames):
@@ -1624,7 +1722,7 @@ class FilesystemConnector(BaseConnector):
         file_uses_llm = any(
             m.signature.category in _LLM_CATEGORIES for m in (*imports, *code_matches, *bound)
         )
-        self._record_code_matches(file, code_matches, file_uses_llm)
+        self._record_code_matches(file, code_matches, file_uses_llm, bound)
         for m in bound:
             self._record_content(file, m, self._file_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
@@ -1637,8 +1735,10 @@ class FilesystemConnector(BaseConnector):
         ignored: list[tuple[int, int]],
         is_local_module: Callable[[str], bool],
     ) -> list[Match]:
-        """Return import-bound evidence; only Python and JavaScript have an import binder."""
+        """Return bound evidence, including narrow typed-field registration for Java."""
         lang = file.lang
+        if file.ext == ".java":
+            return spring_tool_registration_matches(self.index, content_text, ignored)
         if lang not in {"python", "javascript"}:
             return []
         try:
@@ -1664,13 +1764,31 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(message)
             return []
 
-    def _record_code_matches(self, file: _SourceFile, code_matches: list[Match], file_uses_llm: bool) -> None:
+    def _record_code_matches(
+        self, file: _SourceFile, code_matches: list[Match], file_uses_llm: bool, bound: list[Match]
+    ) -> None:
+        configured_spans = {
+            m.extra["configured_call_span"] for m in bound if "configured_call_span" in m.extra
+        }
         for m in code_matches:
             if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
                 continue
             if file.lang in {"python", "javascript"}:
                 if m.signature.category == "framework":
                     continue  # import-bound calls establish the library
+                if (
+                    m.signature_id in {"heuristic.tool-use", "heuristic.memory"}
+                    and re.match(r"(?:tools|checkpointer)\s*[=:]", m.value)
+                    and any(start <= m.extra.get("start", -1) < end for start, end in configured_spans)
+                ):
+                    # The parsed call owns these option values. A raw keyword
+                    # match must not turn empty, disabled or unknown options
+                    # into capabilities. Independent tool/memory calls remain.
+                    continue
+                if m.signature_id == "heuristic.tool-use" and re.fullmatch(
+                    r"tools\s*=\s*(?:None|False)\s*", m.value
+                ):
+                    continue  # explicit disabled options do not register tools
                 m.extra["verified_agent"] = False
             else:
                 # Other languages have lexical filtering but
@@ -2234,14 +2352,19 @@ class FilesystemConnector(BaseConnector):
         for m, rel, snip in decisive_first:
             if m.signature_id in evidence.uncorroborated and m.extra.get("lexical_source"):
                 m.weight = min(m.weight, 0.6)
+            observed = m.extra.get("source_capabilities")
+            applied = (
+                replace(m, signal=replace(m.signal, capabilities=observed)) if observed is not None else m
+            )
             apply_matches(
                 f,
-                [m],
+                [applied],
                 location=rel,
                 snippet=snip,
                 weight_scale=evidence.weight_scale(rel),
                 capabilities=evidence.implies_capabilities(m, rel),
-                signature_capabilities=evidence.verified_indicator(m) or m.signature.category != "framework",
+                signature_capabilities=observed is None
+                and (evidence.verified_indicator(m) or m.signature.category != "framework"),
             )
         if "protocol.mcp" in f.frameworks and evidence.server_tools:
             self._apply_mcp_tools(f, evidence.server_tools)

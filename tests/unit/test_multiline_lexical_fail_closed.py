@@ -120,8 +120,8 @@ def test_ruby_percent_literal_does_not_create_agent_or_hide_real_code(tmp_path, 
     assert any(start <= fake_call < end for start, end in spans)
     (tmp_path / "sample.rb").write_text(ruby_source, encoding="utf-8")
     (tmp_path / "real.java").write_text(
-        "import dev.langchain4j.service.AiServices;\n"
-        "class App { void run() { AiServices.builder(Foo.class); } }\n",
+        "import dev.langchain4j.agentic.AgenticServices;\n"
+        "class App { void run() { AgenticServices.agentBuilder(Foo.class); } }\n",
         encoding="utf-8",
     )
 
@@ -146,8 +146,8 @@ def test_ruby_modulo_expression_does_not_start_percent_string(tmp_path):
     assert not any(start <= call < end for start, end in spans)
     (tmp_path / "sample.rb").write_text(source, encoding="utf-8")
     (tmp_path / "real.java").write_text(
-        "import dev.langchain4j.service.AiServices;\n"
-        "class App { void run() { AiServices.builder(Foo.class); } }\n",
+        "import dev.langchain4j.agentic.AgenticServices;\n"
+        "class App { void run() { AgenticServices.agentBuilder(Foo.class); } }\n",
         encoding="utf-8",
     )
 
