@@ -66,7 +66,7 @@ Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
 `max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
-by default, as do undecodable or binary content in an analyzable file, non-regular
+by default, as do binary content (a NUL byte) in an analyzable file, non-regular
 entries named like configuration files, and directory nesting deeper than the
 walker supports; `strict_coverage` promotes their diagnostics to errors. Declared
 oversize skip globs remain visible omissions, and directories skipped by the

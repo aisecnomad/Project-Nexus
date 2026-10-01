@@ -26,7 +26,10 @@ text logs stream line by line, with a 4 MiB line cap; gzip gateway logs are boun
 by expanded size. Override `max_input_files`, `max_input_file_bytes` or
 `max_input_bytes` in the connector config when a trusted export needs larger
 limits. The existing hard ceilings remain 64 MiB per file and 512 MiB total.
-Any skipped symlink or input-limit hit marks the connector incomplete.
+Any skipped symlink or input-limit hit marks the connector incomplete, and so
+does any file in an offline input directory without one of the connector's
+export suffixes (a `README.md`, `.DS_Store` or rotated log): remove it or point
+`input` at the export file.
 These three keys are declared once on `BaseConnector.shared_config_keys` and
 apply to every connector that reads an export file, so `shadowscan connectors`
 lists them after each connector's own keys. `code.filesystem`, `code.github` and

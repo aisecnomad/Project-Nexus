@@ -16,15 +16,18 @@ Rollout effects of the remediation listed in the changelog. Re-run any baseline
 collected before this revision: some scans that previously finished complete now
 finish incomplete because the earlier result hid a gap.
 
-- **More exit 3 on real estates.** Expect new incomplete diagnostics for binary
-  or undecodable files with source or config names, rotated log files in a log
-  directory, unnamed `saas.generic` rows and negative gateway usage. Fix the
-  input (exclude the path, supply the rotated files by name, map the name column)
+- **More exit 3 on real estates.** Expect new incomplete diagnostics for files
+  with source or config names that hold a NUL byte, any file without a
+  supported export suffix in a connector's offline input directory (rotated
+  logs, a `README.md`, `.DS_Store`), unnamed `saas.generic` rows and negative
+  gateway usage. Fix the input (exclude the path, remove the extra files or point
+  `input` at the export file, supply rotated logs by name, map the name column)
   rather than ignoring exit 3. Do not read a finding that disappeared before this
   revision as resolved; compare only complete scans of the same scope.
 - **Notices are not completeness.** The default-exclude notice and the AWS/GCP
   default-region notice are warnings that leave the scan complete. Scope a scan to
-  an excluded directory as its own root, or set `regions`, to cover it. Review the
+  an excluded directory as its own root, or set `regions` (AWS) or `locations`
+  (GCP), to cover it. Review the
   notices before treating a clean report as estate-wide.
 - **New report fields.** `collection_scope.not_run`, finding metadata
   `registry_match_assurance` and tag `registry-identity-unverified`, and
@@ -34,12 +37,22 @@ finish incomplete because the earlier result hid a gap.
 - **CSV consumers.** An incomplete CSV report has a first data row with
   `id=SCAN-INCOMPLETE`, `kind=scan-status` and the unfinished connectors in the
   `connector` column. Skip or alert on it; exit code 3 remains the primary signal.
-- **Credential binding digest (open item).** Code and gateway findings still
+- **Credential digest (open item).** Code and cloud findings (credentials in
+  source files, and in cloud environment variables and app settings) still
   carry `credential:sha256:<digest>`, an unsalted SHA-256 of the raw credential
-  used for stable identity and gateway bindings. Anyone holding a report can
-  confirm a candidate credential against it. Treat reports as sensitive, and
-  plan an operator-supplied keyed digest, which changes finding identity and
-  bindings, as a separate migration.
+  used for stable finding identity. Anyone holding a report can confirm a
+  candidate credential against it. Gateway reports carry only scan-local
+  `credential:hmac-sha256:` identifiers; the public digest appears only in the
+  operator's gateway binding configuration, which must stay private. Treat
+  reports as sensitive, and plan an operator-supplied keyed digest, which
+  changes finding identity and bindings, as a separate migration.
+- **Lower risk for routine scope names.** OIDC `offline_access`, Salesforce
+  `full`, `web` and `refresh_token`, GitLab `api`, GitHub `workflow` and Slack
+  `admin` no longer match `policy.privileged-scopes`, because scopes are
+  matched by bare name across providers. Findings that held only these scopes
+  lose that risk factor and can drop a risk level. GitLab `api` and GitHub
+  `workflow` remain powerful on their own providers: review those grants by
+  hand rather than relying on the risk level.
 - **Private CA.** Set `ca_bundle` on `identity.jwt` to a PEM file to scan an
   endpoint behind internal PKI; TLS verification stays on and the bundle replaces
   the default store. Other connectors do not accept it yet.

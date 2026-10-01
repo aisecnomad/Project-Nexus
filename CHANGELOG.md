@@ -10,14 +10,21 @@ persisting credential-shaped text. These changes close the confirmed gaps; each
 has a regression test.
 
 - **Silent coverage gaps now mark the scan incomplete.** A source or config file
-  with a NUL byte or other undecodable content (UTF-8/16/32 files with a byte
-  order mark are now decoded instead), a FIFO, socket or device named like a
-  config file, a directory tree nested too deeply for the Python 3.11 walker,
-  unsupported files in a gateway log directory (`access.log.1`, `.bak`, `.zst`),
+  with a NUL byte in its first 8 KiB and no byte-order mark (UTF-8/16/32 files
+  with a byte-order mark are now decoded instead; other invalid UTF-8 is still
+  decoded with replacement characters), a FIFO, socket or device named like a
+  config file, a directory named like an MCP configuration file (`.mcp.json/`),
+  a directory tree nested too deeply for the Python 3.11 walker, any file
+  without a supported export suffix in a connector's offline input directory (a
+  rotated `access.log.1`, a `.bak` or `.zst` copy, a `README.md`),
   `saas.generic` rows without a resolvable name, wrong-schema `saas.generic` and
   `lowcode.zapier` objects, and negative or absurd gateway token and cost values
   each produce a specific incomplete diagnostic. A symlinked card inside an
-  inventory directory stops setup instead of being skipped.
+  inventory directory stops setup instead of being skipped. A recognised binary
+  artifact (executable, archive, image, PDF or SQLite database, by its header)
+  stays a quiet skip when it has no file extension, when only a directory-wide
+  signature glob such as `.cursor/rules/**` selected it, or when it is a `.ts`
+  MPEG transport-stream video segment; unrecognised binary content is a gap.
 - **Disclosure without failure.** Code scans list default-excluded directory
   names (`build`, `vendor`, `external`, ...) once per root, and default-scope AWS
   and GCP scans name the regions or locations that were not scanned. Both are
@@ -35,7 +42,11 @@ has a regression test.
   unquoted `host=` token, so a user agent or path cannot hide or forge LLM
   traffic. Generic vendor hosts (`api.cloudflare.com`, `huggingface.co`) are
   hints rather than LLM-usage evidence, PyPI `swarm` no longer maps to OpenAI
-  Swarm, and standard OIDC scope names are no longer "privileged".
+  Swarm. Scope names are matched by bare name across providers, so names that
+  are routine on another provider no longer match `policy.privileged-scopes`:
+  OIDC `offline_access`, Salesforce `full`, `web` and `refresh_token`, GitLab
+  `api`, GitHub `workflow` and Slack `admin`. Findings that held only these
+  scopes lose that risk factor and can drop a risk level.
   `identity.jwt` ignores empty or false agent claims, labels GitHub Actions,
   GitLab CI and Kubernetes tokens `workload`, and marks tokens scanned without a
   JWKS (`signature_verified: false`). Gateway registry matches on

@@ -110,8 +110,9 @@ App settings are read by default (`include_app_settings: true`) with a POST to
 `<site>/config/appsettings/list`. That call returns plaintext setting values and
 needs `Microsoft.Web/sites/config/list/action`, a Contributor-class permission
 that Reader and the usual discovery roles lack. Values are held in memory for
-analysis only: findings keep setting names and redacted previews, and dumps
-redact every value. A denied call is one warning per web app that names the
+analysis only: findings keep setting names and an unkeyed SHA-256 digest of
+each credential value (`credential:sha256:...`, see
+[production](../production.md)), and dumps redact every value. A denied call is one warning per web app that names the
 permission, and it marks the scan incomplete because those apps were not
 inspected; the rest of the scan continues. Set `include_app_settings: false` to
 skip the call and the permission; web and function apps are then not inspected
