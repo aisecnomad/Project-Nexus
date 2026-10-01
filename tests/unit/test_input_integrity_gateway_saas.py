@@ -291,6 +291,34 @@ def test_zapier_records_with_an_identity_are_still_analysed(run_connector, tmp_p
     assert len(findings) == 1 and not ctx.stats.incomplete
 
 
+@pytest.mark.parametrize("blank", [",,", ", ,\t", ",,\r\n,,", '"","",""'])
+def test_blank_zapier_csv_rows_are_skipped_without_a_diagnostic(run_connector, tmp_path, blank):
+    # Spreadsheet exports often end with comma-only rows; they carry no Zap.
+    source = tmp_path / "zaps.csv"
+    source.write_bytes(
+        f"Zap,Steps,Status\r\nSummarize email,Gmail > ChatGPT > Slack,on\r\n{blank}\r\n".encode()
+    )
+    findings, ctx = run_connector("lowcode.zapier", input=str(source))
+    assert len(findings) == 1
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
+@pytest.mark.parametrize(
+    "name,content",
+    [
+        ("zaps.csv", "Zap,Steps,Status\nSummarize email,Gmail > ChatGPT > Slack,on\n,Gmail > ChatGPT,on\n"),
+        ("zaps.json", json.dumps([{"title": None, "steps": None}])),
+        ("zaps.json", json.dumps([{"title": "", "steps": ["Gmail", "ChatGPT"]}])),
+    ],
+)
+def test_zapier_row_with_data_but_no_zap_identity_is_still_incomplete(run_connector, tmp_path, name, content):
+    source = tmp_path / name
+    source.write_text(content)
+    _, ctx = run_connector("lowcode.zapier", input=str(source))
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == ["lowcode.zapier: unsupported or malformed zap record; coverage incomplete"]
+
+
 # ------------------------------------------------------------- ServiceNow
 
 

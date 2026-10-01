@@ -506,6 +506,10 @@ class ZapierConnector(_AutomationBase):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for rec in records:
             self.ctx.examined()
+            if self._blank_row(rec):
+                # Spreadsheet exports often end with comma-only rows. They carry
+                # no Zap and need no diagnostic, as in saas.generic.
+                continue
             if not self._identified(rec, "id", "Id", "title", "Title", "name", "Zap"):
                 # A wrong-schema object must not pass as a complete, empty inventory.
                 self.ctx.warn("lowcode.zapier: unsupported or malformed zap record; coverage incomplete")
@@ -513,6 +517,20 @@ class ZapierConnector(_AutomationBase):
             f = self._guarded_finding(rec, self._zap_finding, "zap")
             if f:
                 yield f
+
+    @staticmethod
+    def _blank_row(rec: dict[str, Any]) -> bool:
+        """A CSV row whose every cell is empty or whitespace.
+
+        Only text cells count: a JSON object with null or non-text values
+        still goes to the record check, so a wrong-schema object stays a
+        diagnostic.
+        """
+        return (
+            isinstance(rec, dict)
+            and bool(rec)
+            and all(isinstance(value, str) and not value.strip() for value in rec.values())
+        )
 
     def _zap_finding(self, rec: dict[str, Any]) -> Finding | None:
         # JSON exports may carry numeric titles; CSV columns are always text.
