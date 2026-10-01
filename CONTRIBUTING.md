@@ -86,7 +86,7 @@ Existing Make targets provide the next steps:
 
 ```bash
 make test-fast       # full test suite without coverage, stop at first failure
-make test            # full suite with the overall coverage floor
+make test            # full suite with line and branch coverage and the overall floor
 make coverage-gate   # connector coverage; run after make test
 make check           # all local quality gates
 ```
@@ -102,10 +102,10 @@ python -m coverage json -o /tmp/shadowscan-coverage.json
 python -m tools.coverage_gate /tmp/shadowscan-coverage.json
 ```
 
-The gate requires the JSON report argument; running one test is not enough to
-measure every connector. See [quality gates](#quality-gates) for CI requirements,
-and the [testing guide](docs/testing.md#the-full-suite) for the isolation every
-test runs under.
+The gate requires the JSON report argument and branch data; running one test is
+not enough to measure every connector. See [quality gates](#quality-gates) for
+CI requirements, and the [testing guide](docs/testing.md#the-full-suite) for the
+isolation every test runs under.
 
 ## Trust model
 
@@ -125,8 +125,8 @@ exact supported Python matrix and dependency pins.
 |------|---------|-------------|
 | Lint | `ruff check shadowscan tests tools` | No errors |
 | Types | `mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release` | No errors |
-| Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate |
-| Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/` |
+| Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
+| Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |

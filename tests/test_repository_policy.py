@@ -7,11 +7,14 @@ import re
 import shlex
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+
+from tools.coverage_gate import MIN_CONNECTOR_COVERAGE
 
 ROOT = Path(__file__).resolve().parents[1]
 GITHUB = ROOT / ".github"
@@ -213,6 +216,13 @@ def test_ci_gate_executes_fail_closed(
         },
     )
     assert (result.returncode == 0) is passes, result.stdout + result.stderr
+
+
+def test_coverage_floors_count_branches_and_are_not_lowered() -> None:
+    coverage = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["coverage"]
+    assert coverage["run"]["branch"] is True
+    assert coverage["report"]["fail_under"] >= 80
+    assert MIN_CONNECTOR_COVERAGE >= 75
 
 
 @pytest.mark.parametrize(

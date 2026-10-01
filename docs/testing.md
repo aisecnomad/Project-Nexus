@@ -50,15 +50,15 @@ operator-run procedure described in [Tenant canaries](canaries.md).
 
 ```bash
 make test-fast      # stop at the first failure, no coverage
-make test           # full suite with the 80% aggregate coverage floor
+make test           # full suite with line and branch coverage and the 80% aggregate floor
 make coverage-gate  # 75% floor for every connector module; run after make test
 ```
 
 `make coverage-gate` exports the coverage data recorded by the preceding
-`make test`. The per-connector floor covers every module under
-`shadowscan/connectors/`, including the shared `base`, `common` and `offline`
-modules. It needs the cloud SDKs installed, so run it after `make install`
-rather than `make install-dev`.
+`make test`. Both floors count branches as well as statements, and the
+per-connector floor covers every module under `shadowscan/connectors/`,
+including the shared `base`, `common` and `offline` modules. It needs the cloud
+SDKs installed, so run it after `make install` rather than `make install-dev`.
 
 `tests/conftest.py` keeps the suite independent of the host:
 
@@ -128,7 +128,8 @@ describes running the scanner itself inside a pipeline.
   bounded-YAML subprocess check falls back from `RLIMIT_AS` to `RLIMIT_DATA`;
   report a platform where neither applies.
 - **Coverage below a floor:** `python -m coverage report --skip-empty` shows
-  the missing lines. Add offline tests rather than lowering the floor.
+  the missing lines and the branches never taken (`12->15` means line 12 never
+  continued to line 15). Add offline tests rather than lowering the floor.
 - **`test attempted outbound connections`:** the test reached for the network.
   Stub the transport, or serve the response from a loopback server.
 

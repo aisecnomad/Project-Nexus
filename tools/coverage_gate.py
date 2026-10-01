@@ -18,6 +18,10 @@ def connector_coverage(report: dict[str, Any]) -> dict[str, float]:
     family modules and their helpers, and also the shared ``base``, ``common``,
     ``offline`` and registry modules that every connector runs through. Modules
     without statements (empty package markers) have nothing to measure.
+
+    The percentage combines statements and branches, as the aggregate
+    ``fail_under`` floor does, so a module cannot pass on lines alone while
+    leaving half of its conditions untested.
     """
     measured: dict[str, float] = {}
     for path, details in report["files"].items():
@@ -25,10 +29,11 @@ def connector_coverage(report: dict[str, Any]) -> dict[str, float]:
         if parts[: len(CONNECTOR_PACKAGE)] != CONNECTOR_PACKAGE or not path.endswith(".py"):
             continue
         summary = details["summary"]
-        total = summary["num_statements"]
+        total = summary["num_statements"] + summary["num_branches"]
         if not total:
             continue
-        measured[Path(*parts).as_posix()] = 100.0 * summary["covered_lines"] / total
+        covered = summary["covered_lines"] + summary["covered_branches"]
+        measured[Path(*parts).as_posix()] = 100.0 * covered / total
     return measured
 
 
@@ -39,6 +44,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         report = json.loads(Path(args[0]).read_text(encoding="utf-8"))
+        # Statement-only data would let every module pass on lines alone.
+        if report["meta"]["branch_coverage"] is not True:
+            print("coverage report has no branch data; run the suite with branch coverage", file=sys.stderr)
+            return 2
         measured = connector_coverage(report)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"unreadable coverage report: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -56,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     lowest = min(measured, key=lambda path: (measured[path], path))
     print(
-        f"Checked {len(measured)} built-in connector modules "
+        f"Checked {len(measured)} built-in connector modules, statements and branches "
         f"(at least {MIN_CONNECTOR_COVERAGE:.0f}% each; lowest {lowest} at {measured[lowest]:.2f}%)"
     )
     return 0

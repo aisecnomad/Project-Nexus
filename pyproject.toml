@@ -113,6 +113,9 @@ ignore_missing_imports = true
 [tool.coverage.run]
 source = ["shadowscan"]
 omit = ["shadowscan/signatures/data/*"]
+# Both floors (fail_under below and tools/coverage_gate.py) count branches as
+# well as statements: a line that ran says nothing about its untaken branch.
+branch = true
 
 [tool.coverage.report]
 show_missing = true
