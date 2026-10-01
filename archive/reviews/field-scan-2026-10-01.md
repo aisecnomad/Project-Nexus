@@ -150,7 +150,7 @@ Gemini CLI configuration.
 | Google ADK attributed without ADK | 3 gemini-cli findings name ADK. The only ADK evidence is `GOOGLE_GENAI_USE_VERTEXAI`, mapped to `framework.google-adk` in `frameworks/orchestrators.yaml`. No `@google/adk` dependency or import exists. | Attribution error. The variable belongs to the google-genai SDK and is already a Vertex AI provider signal. |
 | GitHub MCP server's tools are not read | `mcp_tools.py` extracts Python and TypeScript registrations only. The Go server has more than 120 `mcp.Tool{...}` definitions, including `push_files`, `delete_file`, `create_or_update_file`, `merge_pull_request`, `actions_run_trigger` and `delete_repository`. | The server is reported as framework-usage, low 15, with only `tool-use`. The capabilities of what it exposes are missing. |
 | Test-fixture workflows reported as workflows | 10 of 11 Dify DSL findings are under `api/tests/fixtures/workflow/` or `cli/test/e2e/fixtures/`, at confidence 0.84 with no `test-code-only` tag | `_workflow_finding` ignores the test-path policy that project findings apply. |
-| Spurious project root | `src/agents/tracing/setup.py` is an ordinary module (no setuptools or distutils), but `setup.py` is in `PROJECT_ROOT_MARKERS` | Splits off a separate "LLM usage in src/agents/tracing" finding. |
+| Spurious project root | `src/agents/tracing/setup.py` (openai-agents-python) and `api/controllers/console/setup.py` (dify) are ordinary modules, but `setup.py` is in `PROJECT_ROOT_MARKERS` | Each splits off a separate "LLM usage" finding. |
 | Provider support drives risk | browser-use root: critical 98 for a framework-usage finding. 38 points come from 8 per-provider factors (DeepSeek +10, OpenRouter +10, …) across the 18 providers it supports. Without them it would score 60 (high). | Supporting a provider is scored like using one. A framework's adapter list inflates risk. |
 | Framework repositories are not agents | openai-agents-python and browser-use import their own package. The local-module rule leaves `agent_indicators` at 0, so the 111 example files in openai-agents-python that construct `Agent(...)` do not establish agents. | Works as designed. Only `examples/live/app`, with its own manifest, is an agent. |
 | Repeated evidence | `integration-tests/*.test.ts:11` appears 5 times as the same `@google/genai` import | Cosmetic. Confidence grouping prevents inflation. |
@@ -192,22 +192,105 @@ connectors, inventories or gateway logs. The selection favors well-known agent
 projects, so it says nothing about false-positive rates on ordinary
 repositories.
 
-## Suggested follow-ups
+## Fixes applied
 
-In priority order. Each needs a regression case written from scratch, not
-copied from these projects.
+The four clearest defects were fixed on this branch, each with regression tests
+in `tests/unit/test_field_scan_followups.py` (17 of the 21 tests fail on the
+original code; the other four are controls):
 
-1. JSX lexer: accept type arguments after a tag name, skip comments in
-   `jsx_tag` mode, and narrow the generic-arrow guard to what follows the
-   matching `)`.
-2. MCP: accept `httpUrl` as a URL alias. Load workflow YAML with the config
-   loader, or skip structural MCP parsing for `.github/workflows/`. Consider
-   extracting `settings` / `mcp_config` inputs of known agent actions.
-3. Signatures: drop `GOOGLE_GENAI_USE_VERTEXAI` from `framework.google-adk`.
-4. Extract MCP tool names from Go registrations (`mcp.Tool{Name: ...}`,
-   `mcp.NewTool("...")`).
-5. Apply the test-path policy to workflow exports. Require a `setup(` call or a
-   setuptools import before treating `setup.py` as a project root.
-6. Add `*.min.mjs` to the default `oversize_skip_globs`. Document a connector
-   deadline for repositories over about 10,000 files.
-7. Consider capping per-provider risk factors on framework-usage findings.
+1. JSX lexer: type arguments after a tag name are skipped, comments inside an
+   opening tag are skipped, and `<Name>(...)` is a generic arrow only when the
+   group is followed by `=>` or a return type. All 139 files lex completely;
+   none of the 4,818 `.jsx`/`.tsx` files in these checkouts became ambiguous.
+2. MCP: `httpUrl` is an endpoint alias, and a header that is only a shell-style
+   variable reference (`Bearer $TOKEN`) is not an inline credential.
+3. Workflows: loaded with the configuration loader (`on:` is a boolean key);
+   MCP servers passed as JSON step inputs are reported, and unparseable
+   embedded settings stay incomplete.
+4. Signatures: `GOOGLE_GENAI_USE_VERTEXAI` no longer attributes Google ADK.
+
+Re-scan with the fixes (1,200 s deadline):
+
+| Repository | Exit | Errors | Findings | Change |
+| --- | --- | --- | --- | --- |
+| openai-agents-python | 3 | 0 | 7 | none; incomplete only from the `CLAUDE.md` symlink and an oversize fixture |
+| browser-use | 0 | 0 | 4 | none |
+| gemini-cli | 3 | 0 (was 7) | 22 | +2 workflow MCP servers; ADK removed from 3 findings; incomplete only from a symlink and an oversize file |
+| github-mcp-server | **0** (was 3) | 0 (was 1) | 6 | +1 remote MCP server (`api.githubcopilot.com/mcp/`) |
+| dify | 3 | 0 (was 135) | 49 | none; incomplete only from a directory symlink and three oversize vendored bundles |
+
+The Monaco worker regex timeout did not recur on this run; it is timing
+dependent and remains a risk on slower workers.
+
+The two new workflow findings carry an `inline-secrets` tag because the shared
+sanitizer redacts the argument `GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json`,
+a file path. That is pre-existing behavior (the same argument in `.mcp.json`
+is flagged on the original code) and is listed below.
+
+## True and false positives
+
+There is no labeled ground truth; each finding was judged by reading the
+cited source. A finding is a true positive (TP) when its claim and scope are
+correct, partial when the resource is real but an attributed framework,
+capability or tag is wrong, and a false positive (FP) when the claim is wrong
+or contradicts the scanner's documented policy.
+
+| | TP | Partial | FP | Total | Strict precision | Lenient precision |
+| --- | --- | --- | --- | --- | --- | --- |
+| Original scanner | 66 | 7 | 12 | 85 | 78% | 86% |
+| With the four fixes | 70 | 6 | 12 | 88 | 80% | 86% |
+
+Strict precision counts partials as wrong; lenient precision counts them as
+right. FP:TP is 12:66 (about 1:5.5) before and 12:70 (about 1:5.8) after.
+
+- **FP (12):** 10 Dify DSL test fixtures reported as workflows without the
+  test-code policy, and 2 spurious `setup.py` project roots.
+- **Partial, original (7):** 3 findings attributed to Google ADK (fixed); 3
+  Dify observability exporters (Aliyun, Arize Phoenix, MLflow) credited with
+  function calling or Databricks from OpenTelemetry attribute names; Dify's
+  generated `packages/contracts` types credited with browsing and autonomy.
+- **Partial, after fixes (6):** the 4 observability/contracts findings and the
+  2 workflow MCP servers with the wrong `inline-secrets` tag.
+- **Missed findings:** 3 MCP servers (the Gemini `httpUrl` remote and two
+  workflow-embedded servers), all reported after the fixes.
+- **Under-classified (not counted as FP):** Gemini CLI's core loop and the
+  caretaker `pr-generator` are agents reported as framework usage; the GitHub
+  MCP server lacks the capabilities of its 120+ tools; framework repositories
+  cannot classify as agents by design.
+
+These rates describe 85 to 88 findings from five agent-heavy repositories,
+judged by one AI reviewer. They are not field precision estimates.
+
+## Recommended improvements
+
+In priority order. Each needs a regression case written from scratch.
+
+1. **Completeness on ordinary layouts.** Treat a file symlink to a scanned
+   in-root file (`CLAUDE.md -> AGENTS.md`) as complete, evaluating the alias
+   name's signals on the target. Add `*.min.mjs` to `oversize_skip_globs` and
+   recognize vendored bundle directories (`public/vs/`, `*.worker.js`) as
+   declared omissions. That clears the Dify bundles and two of the three
+   symlinks; oversize JSON test data (`tests/fixtures/`, `memory-tests/`) and
+   Dify's directory symlink would still need an operator exclusion, or a policy
+   that test-path data files are declared omissions.
+2. **Test-path policy everywhere.** Apply the test/fixture rule to workflow
+   exports and other non-project findings.
+3. **Project roots.** Require a `setup(` call or a setuptools/distutils import
+   before treating `setup.py` as a manifest.
+4. **Credential paths.** Do not flag `*_CREDENTIALS=/path` file-path arguments
+   as inline secrets.
+5. **Agent recall.** Recognize hand-written tool loops on `@google/genai` and
+   `google-genai` (request with function declarations, function-call branch,
+   function-response turn), as already done for Anthropic and OpenAI.
+6. **MCP server capabilities.** Extract tool names from Go registrations
+   (`mcp.Tool{Name: ...}`, `mcp.NewTool("...")`) and other SDKs.
+7. **Risk calibration.** Cap per-provider factors on framework-usage findings
+   so supported adapters do not read as active use.
+8. **Attribution hygiene.** Do not credit function calling or providers from
+   OpenTelemetry semantic-convention attribute names in observability
+   exporters or from generated API types.
+9. **Scale.** Document a connector deadline for repositories over about
+   10,000 files, or scale the default with file count; consider scanning
+   roots in parallel.
+10. **Field corpus.** Turn this scan's patterns into an authored regression
+    corpus, and re-run the field scan on each release candidate.
