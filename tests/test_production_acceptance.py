@@ -701,6 +701,60 @@ def test_finding_assertion_summaries_and_observations_are_recomputed(evidence):
     rejected(changed, "evaluation_assertion_failure")
 
 
+def test_capability_assertions_require_observed_capabilities_and_reject_forged_checks(evidence):
+    root, manifest, report = evidence
+    # Existing reports without capability labels or observations remain usable.
+    assert "capabilities" not in report["cases"][0]["findings"][0]
+    assert gate.verify(write_manifest(root, manifest), now=NOW)["status"] == "EVIDENCE_CONSISTENT"
+    corpus = json.loads((root / "corpus.json").read_text())
+    corpus["cases"][0]["assertions"] = {"expected_findings": [{"kind": "agent", "capabilities": []}]}
+    report["cases"][0]["findings"][0]["capabilities"] = []
+    refresh_evaluation(root, manifest, report, corpus)
+    assert gate.verify(write_manifest(root, manifest), now=NOW)["status"] == "EVIDENCE_CONSISTENT"
+    assert report["finding_assertions"]["capabilities"] == {"checks": 1, "passed": 1, "failed": 0}
+
+    _, cases, _ = load_corpus(root / "corpus.json")
+    for capabilities in (None, ["tool-use"]):
+        changed = copy.deepcopy(report)
+        finding = changed["cases"][0]["findings"][0]
+        if capabilities is None:
+            finding.pop("capabilities")
+        else:
+            finding["capabilities"] = capabilities
+        changed["cases"][0]["finding_checks"] = _finding_checks(cases[0], changed["cases"][0]["findings"])
+        changed["finding_assertions"] = finding_assertion_metrics(changed["cases"])
+        manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", changed)
+        expected_error = (
+            "missing_evaluation_capabilities" if capabilities is None else "evaluation_assertion_failure"
+        )
+        with pytest.raises(gate.EvidenceError, match=expected_error):
+            gate.verify(write_manifest(root, manifest), now=NOW)
+
+
+def test_forbidden_capability_selector_cannot_pass_without_capability_observations(evidence):
+    root, manifest, report = evidence
+    corpus = json.loads((root / "corpus.json").read_text())
+    corpus["cases"][0]["assertions"] = {
+        "forbidden_findings": [{"kind": "agent", "capabilities": ["code-exec"]}]
+    }
+    refresh_evaluation(root, manifest, report, corpus)
+    report["cases"][0]["assertion_failures"] = []
+    report["cases"][0]["correct"] = True
+    report["passed"] = True
+    manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", report)
+    with pytest.raises(gate.EvidenceError, match="missing_evaluation_capabilities"):
+        gate.verify(write_manifest(root, manifest), now=NOW)
+
+
+@pytest.mark.parametrize("capabilities", [None, "tool-use", [True], ["tool-use", "tool-use"], ["Tool Use"]])
+def test_verifier_rejects_malformed_capability_observations(evidence, capabilities):
+    root, manifest, report = evidence
+    report["cases"][0]["findings"][0]["capabilities"] = capabilities
+    manifest["evaluation"]["report"] = write_artifact(root, "evaluation.json", report)
+    with pytest.raises(gate.EvidenceError, match="invalid_evaluation_findings"):
+        gate.verify(write_manifest(root, manifest), now=NOW)
+
+
 def test_verifier_accepts_complete_mcp_finding_above_label_limits(evidence):
     root, manifest, report = evidence
     names = sorted([*(f"server-{number:02}" for number in range(20)), "server-" + "x" * 120])
