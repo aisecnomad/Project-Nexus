@@ -71,7 +71,9 @@ shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # re-analyse l
 
 ```bash
 shadowscan gateway litellm-spend.jsonl bedrock-invocations/ egress-proxy.log
-shadowscan jwt "$TOKEN" --jwks-url https://acme.okta.com/oauth2/default/v1/keys
+# Pass tokens on stdin (or with --file): a command-line argument is visible to
+# other local users through the process list and is kept in shell history.
+printf '%s\n' "$TOKEN" | shadowscan jwt --jwks-url https://acme.okta.com/oauth2/default/v1/keys
 ```
 
 ## 6. Register what you found
