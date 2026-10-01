@@ -204,7 +204,7 @@ contract. In brief:
 2. Implement `collect()` (live API) and `analyze()` (offline records → findings).
 3. Register in `shadowscan/connectors/__init__.py`.
 4. Add offline test fixtures under `tests/fixtures/`.
-5. Achieve ≥ 75% statement coverage.
+5. Achieve ≥ 75% coverage of statements and branches (the per-connector floor).
 6. Document in `docs/connectors.md` with configuration keys, required API
    scopes, and offline export format.
 

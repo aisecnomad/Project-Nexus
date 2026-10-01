@@ -213,8 +213,9 @@ SHA-256 hashes; Linux CI checks installation and dependency consistency on all
 three interpreters. Linux x86_64 is the only validated deployment target for
 this full runtime/cloud lock. The macOS 3.11 and 3.13 CI jobs install
 `requirements-ci.lock` and this runtime lock from the same published wheel
-hashes and run the full test suite with the per-connector coverage floor, which
-validates development use there; a macOS deployment still needs its own wheel,
+hashes and run the full test suite, which validates development use there;
+the coverage floors are enforced on Linux Python 3.11. A macOS deployment still
+needs its own wheel,
 container and acceptance evidence. Windows is not
 supported at all, because the confined file reader
 (`O_NOFOLLOW`, `O_DIRECTORY`, `dir_fd`) is unavailable there and the scanner
@@ -993,12 +994,12 @@ and pull request status at release time.
 
 The CI workflow installs hash-locked runtime, build and core/development
 dependency sets and validates signatures, lint, typing, dependency advisories
-(including the documentation lock), tests with a minimum 80% statement coverage,
-wheel creation, installed-wheel validation outside the source checkout and
-offline SARIF output. All three Linux matrix jobs
-(Python 3.11, 3.12 and 3.13) enforce a 75% statement-coverage floor for each
-built-in connector module, so a well-tested engine cannot conceal an untested
-provider. Coverage proves execution of code paths in tests; it does not prove
+(including the documentation lock), tests, wheel creation, installed-wheel
+validation outside the source checkout and offline SARIF output. The Linux
+Python 3.11 job traces coverage and enforces a minimum of 80% overall and 75%
+for each module under `shadowscan/connectors/`, both counting statements and
+branches, so a well-tested engine cannot conceal an untested provider; the
+other jobs run the same tests untraced. Coverage proves execution of code paths in tests; it does not prove
 provider compatibility or complete tenant inventory. The aggregate `CI gate`
 requires every Linux and macOS matrix job and documentation to succeed; it also
 requires DCO on pull requests. It fails if a required prerequisite fails, is
