@@ -116,6 +116,9 @@ fields and `source_details.image`. Denied or invalid detail reads mark coverage
 incomplete while preserving available resource evidence. Audit credentials need
 the corresponding application/function read permissions; list-only access is
 insufficient to inspect configuration.
+SDK objects become records through `oci.util.to_dict`, or through the model's
+declared fields when the SDK cannot be imported; an object that cannot be
+converted is skipped with a warning and makes the scan incomplete.
 
 ### Offline record kinds
 Offline exports are JSONL files with one record per line. Each record's `_kind`

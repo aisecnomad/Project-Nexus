@@ -15,8 +15,9 @@ Offline export: JSONL of dumped records (``_kind`` per record).
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Iterator
-from typing import Any, ClassVar
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from datetime import UTC, date, datetime, time
+from typing import Any, ClassVar, TypeGuard
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import (
@@ -80,6 +81,39 @@ def _tool_type(tool: dict[str, Any]) -> str:
     """Tool type from the tool configuration, else the legacy ``type`` field."""
     config = tool.get("tool_config")
     return str(config.get("tool_config_type") if isinstance(config, dict) else tool.get("type") or "?")
+
+
+def _model_dict(value: Any) -> Any:
+    """``oci.util.to_dict`` without the SDK: plain data, with models mapped through their field lists.
+
+    SDK models keep each field in a ``_``-prefixed attribute behind a property
+    named by the keys of ``swagger_types`` and ``attribute_map``, so their
+    ``__dict__`` holds none of the names analysis reads. Any other object, or a
+    model missing a declared field, raises rather than yield a partial record.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
+    if isinstance(value, (date, time)):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return {key: _model_dict(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_model_dict(item) for item in value]
+    fields = getattr(value, "swagger_types", None) or getattr(value, "attribute_map", None)
+    if not isinstance(fields, Mapping):
+        raise TypeError("not an OCI SDK model")
+    return {name: _model_dict(getattr(value, name)) for name in fields}
+
+
+def _sdk_record(obj: Any) -> Any:
+    """``oci.util.to_dict`` when the SDK is importable, else the same mapping without it."""
+    try:
+        import oci
+    except ImportError:
+        return _model_dict(obj)
+    return oci.util.to_dict(obj)
 
 
 class OciConnector(BaseConnector):
@@ -223,15 +257,23 @@ class OciConnector(BaseConnector):
         self.ctx.warn(f"cloud.oci: pagination limit reached for {operation}")
         return records
 
-    @staticmethod
-    def _d(obj: Any) -> dict[str, Any]:
-        import oci
+    def _d(self, obj: Any) -> dict[str, Any] | None:
+        """An SDK object as a plain record, or None when it cannot be converted.
 
+        ``oci.util.to_dict`` returns objects it does not recognise unchanged, so
+        only a dict is a record. A skipped object marks coverage incomplete
+        instead of becoming a silently partial record.
+        """
         try:
-            result: dict[str, Any] = oci.util.to_dict(obj)
-            return result
-        except Exception:  # noqa: BLE001
-            return dict(getattr(obj, "__dict__", {}) or {})
+            record = _sdk_record(obj)
+        except Exception:  # noqa: BLE001 - one unconvertible object must not end collection
+            record = None
+        if not isinstance(record, dict):
+            self.ctx.warn(
+                f"cloud.oci: could not convert {type(obj).__name__} to a record; coverage incomplete"
+            )
+            return None
+        return record
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -259,7 +301,8 @@ class OciConnector(BaseConnector):
         }
         yield from self._iter_policies(identity, compartments)
         for dg in self._all(identity.list_dynamic_groups, self.tenancy):
-            yield {"_kind": "dynamic-group", **self._d(dg)}
+            if (group := self._d(dg)) is not None:
+                yield {"_kind": "dynamic-group", **group}
         for region in regions:
             for comp in compartments:
                 yield from self._collect_region_comp(region, comp)
@@ -304,42 +347,50 @@ class OciConnector(BaseConnector):
         agents = self._client(oci.generative_ai_agent.GenerativeAiAgentClient, region)
         for a in self._all(agents.list_agents, compartment_id=comp):
             rec = self._d(a)
+            if rec is None:
+                continue
             rec.update({"_kind": "genai-agent", "_region": region, "_compartment": comp})
             if hasattr(agents, "list_tools"):
                 tools = self._all(agents.list_tools, compartment_id=comp, agent_id=a.id)
-                rec["_tools"] = [self._d(t) for t in tools]
+                rec["_tools"] = [tool for t in tools if (tool := self._d(t)) is not None]
             else:
                 self.ctx.warn("cloud.oci: list_tools unavailable in installed SDK", incomplete=True)
                 rec["_tools"] = []
             yield rec
         for e in self._all(agents.list_agent_endpoints, compartment_id=comp):
-            yield {"_kind": "genai-agent-endpoint", "_region": region, "_compartment": comp, **self._d(e)}
+            if (endpoint := self._d(e)) is not None:
+                yield {"_kind": "genai-agent-endpoint", "_region": region, "_compartment": comp, **endpoint}
         for kb in self._all(agents.list_knowledge_bases, compartment_id=comp):
-            yield {"_kind": "genai-knowledge-base", "_region": region, "_compartment": comp, **self._d(kb)}
+            if (base := self._d(kb)) is not None:
+                yield {"_kind": "genai-knowledge-base", "_region": region, "_compartment": comp, **base}
 
     def _collect_genai(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         genai = self._client(oci.generative_ai.GenerativeAiClient, region)
         for ep in self._all(genai.list_endpoints, comp):
-            yield {"_kind": "genai-endpoint", "_region": region, "_compartment": comp, **self._d(ep)}
+            if (endpoint := self._d(ep)) is not None:
+                yield {"_kind": "genai-endpoint", "_region": region, "_compartment": comp, **endpoint}
         for cl in self._all(genai.list_dedicated_ai_clusters, comp):
-            yield {"_kind": "genai-cluster", "_region": region, "_compartment": comp, **self._d(cl)}
+            if (cluster := self._d(cl)) is not None:
+                yield {"_kind": "genai-cluster", "_region": region, "_compartment": comp, **cluster}
         for m in self._all(genai.list_models, comp):
             d = self._d(m)
             # Custom (fine-tuned) models are type CUSTOM and reference a base model;
             # FINE_TUNE is a capability that *base* models advertise, and OCI custom
             # models are built on the same vendors as the base catalogue.
-            if d.get("type") == "CUSTOM" or d.get("base_model_id"):
+            if d is not None and (d.get("type") == "CUSTOM" or d.get("base_model_id")):
                 yield {"_kind": "genai-custom-model", "_region": region, "_compartment": comp, **d}
 
     def _collect_oda(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         oda = self._client(oci.oda.OdaClient, region)
         for inst in self._all(oda.list_oda_instances, comp):
-            yield {"_kind": "oda-instance", "_region": region, "_compartment": comp, **self._d(inst)}
+            if (instance := self._d(inst)) is not None:
+                yield {"_kind": "oda-instance", "_region": region, "_compartment": comp, **instance}
 
     def _collect_model_deployments(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         ds = self._client(oci.data_science.DataScienceClient, region)
         for md in self._all(ds.list_model_deployments, comp):
-            yield {"_kind": "model-deployment", "_region": region, "_compartment": comp, **self._d(md)}
+            if (deployment := self._d(md)) is not None:
+                yield {"_kind": "model-deployment", "_region": region, "_compartment": comp, **deployment}
 
     def _collect_function_apps(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         fn = self._client(oci.functions.FunctionsManagementClient, region)
@@ -349,12 +400,16 @@ class OciConnector(BaseConnector):
         ci = self._client(oci.container_instances.ContainerInstanceClient, region)
         for inst in self._all(ci.list_container_instances, comp):
             d = self._d(inst)
+            if d is None:
+                continue
             containers = []
             for c in self._all(ci.list_containers, comp, container_instance_id=inst.id):
                 try:
                     cd = self._d(ci.get_container(c.id).data)
                 except Exception as exc:  # noqa: BLE001 - continue other containers
                     self.ctx.warn(f"cloud.oci: container detail collection failed ({type(exc).__name__})")
+                    continue
+                if cd is None:
                     continue
                 containers.append(
                     {
@@ -891,5 +946,5 @@ class OciConnector(BaseConnector):
         return done(f, self.index, Kind.SERVICE_IDENTITY)
 
 
-def _has_id(summary: Any) -> bool:
+def _has_id(summary: Any) -> TypeGuard[dict[str, Any]]:
     return isinstance(summary, dict) and isinstance(summary.get("id"), str) and bool(summary["id"].strip())
