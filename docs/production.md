@@ -509,9 +509,11 @@ group/container cleanup to reap child processes and bound native code that holds
 the interpreter lock indefinitely.
 
 Code scans follow a documented coverage policy. Links whose own names are never
-read, and source-file links whose real targets are analyzed in the same project
-with the same test classification, are skipped because nothing at the alias
-path is lost (see [scan semantics](scanning.md) for the exact rule). Directory
+read, source-file links whose real targets are analyzed in the same project
+with the same test classification, and coding-agent instruction-document links
+to another instruction document under the same condition, are skipped because
+nothing at the alias path is lost (see [scan semantics](scanning.md) for the
+exact rule). Directory
 links, configuration aliases, links into excluded or unread content, links
 leaving the root and oversized files the scanner would
 inspect make the scan incomplete (exit 3) by default, with a warning naming
@@ -523,7 +525,10 @@ agent unless `include_tests: true` (`--include-tests`) is set, and a project
 finding whose evidence is already reported by an MCP configuration, agent
 manifest, exported workflow, IaC or credential finding is not emitted again.
 Recognisable placeholder credentials (repeated characters, marker words such as
-`EXAMPLE`, very low character diversity) are no longer reported. Risk factors
+`EXAMPLE`, very low character diversity) are no longer reported. A
+real-format credential in a test, fixture or `cassettes/` path is still a
+`secret` finding, at half weight and tagged `test-code-only` unless
+`include_tests: true` is set. Risk factors
 always sum to the reported score; `risk.danger_score` excludes the governance
 factors and `options.risk_basis: danger` bases `level` and `--fail-on` on it.
 Review [scan state and runtime correlation](scanning.md) and the changelog
@@ -765,6 +770,17 @@ a candidate before enforcing policy on the new output:
 - **Credential files.** MCP servers whose only inline-secret evidence was a
   credential-file path argument or a repeated variable reference lose the
   `inline-secrets` tag and its risk factor.
+- **Test-path credentials.** `secret` findings under test, fixture or
+  `cassettes/` paths gain the `test-code-only` tag, lower confidence and a lower
+  risk score unless `include_tests` is set; they are still reported.
+- **Coding-agent configuration.** A product named only by an environment
+  variable or display name (such as `GOOSE_PROVIDER` in a test matrix) no longer
+  yields an `agent-config` finding; `diff` shows such findings as resolved.
+  Instruction-document aliases (`CLAUDE.md` linking to `AGENTS.md` in the same
+  project) no longer make a scan incomplete.
+- **MCP parsing.** Compiled agentic-workflow lock files (`*.lock.yml`) and
+  cookiecutter `{{...}}` template paths are not parsed as MCP configuration and
+  no longer make a scan incomplete.
 
 ## Finding identity and comparison migration
 

@@ -116,6 +116,8 @@ _MAX_MCP_TOOLS = 200
 
 # Signal types that establish a library in a project (see _emit_project).
 _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
+# Signals that name a product without configuring it.
+_MENTION_SIGNALS = frozenset({"env", "name"})
 
 # Saved outputs (plots, tables, logs) routinely push small notebooks past
 # max_file_size. Their code cells are still analyzed up to this size.
@@ -699,6 +701,22 @@ def _is_test_path(rel: str) -> bool:
     return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
 
 
+_CODING_AGENT_DOC_NAMES = frozenset(
+    {
+        "agents.md",
+        "agent.md",
+        "claude.md",
+        "claude.local.md",
+        "gemini.md",
+        "copilot-instructions.md",
+    }
+)
+
+
+def _is_coding_agent_doc(name: str) -> bool:
+    return name.lower() in _CODING_AGENT_DOC_NAMES
+
+
 def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
     """Resolve only to classify a link; never open it through the link path."""
     try:
@@ -869,7 +887,10 @@ class FilesystemConnector(BaseConnector):
             "is not covered) as errors instead of warnings; either way the scan is incomplete "
             "(default false)"
         ),
-        "include_tests": "let test and fixture code establish agents at full weight (default false)",
+        "include_tests": (
+            "let test and fixture code establish agents and credential findings at full weight "
+            "(default false)"
+        ),
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
         "account": "account label recorded on every finding (default none)",
@@ -1049,7 +1070,9 @@ class FilesystemConnector(BaseConnector):
         alias path would have had: same project, same test classification, same
         source type and no file-name signal that only the alias name carries.
         Directory links, links into excluded or unread content and config or
-        document aliases (whose parsing can depend on their path) are gaps.
+        document aliases (whose parsing can depend on their path) are gaps. A
+        coding-agent instruction document linked to another one is the exception:
+        the target keeps the alias's project and test classification.
         """
         relative = target.relative_to(root)
         target_rel = relative.as_posix()
@@ -1072,6 +1095,14 @@ class FilesystemConnector(BaseConnector):
                 return False
         if not target.is_file() or self._excluded_file(target_rel) or _never_read_by_name(target.name):
             return False
+        # Coding-agent instruction aliases (CLAUDE.md -> AGENTS.md) are the
+        # same document family. The real file is scanned and the alias hides no
+        # second agent definition, so the alias-only file-name signal is not a
+        # gap. Project ownership and test classification must still match.
+        if _is_coding_agent_doc(link_name) and _is_coding_agent_doc(target.name):
+            return _project_root(root, rel) == _project_root(root, target_rel) and _is_test_path(
+                rel
+            ) == _is_test_path(target_rel)
         # Only source aliases are equivalent without opening the link: config
         # and document parsing can depend on the file name and directory.
         if link_ext not in SOURCE_EXTENSIONS or Path(target.name).suffix.lower() != link_ext:
@@ -1954,6 +1985,13 @@ class FilesystemConnector(BaseConnector):
             return
         proj.seen.add(key)
         if m.signature.category == "coding-agent":
+            if (
+                not self.include_tests
+                and _is_test_path(rel)
+                and m.signal.type != "file"
+                and not _is_coding_agent_doc(PurePosixPath(rel).name)
+            ):
+                return
             proj.coding_agent_files.setdefault(m.signature_id, [])
             if rel not in proj.coding_agent_files[m.signature_id]:
                 proj.coding_agent_files[m.signature_id].append(rel)
@@ -2021,6 +2059,11 @@ class FilesystemConnector(BaseConnector):
     @staticmethod
     def _looks_like_mcp_config(rel: str, name: str, text: str) -> bool:
         lower = name.lower()
+        # Cookiecutter template paths and compiled agentic-workflow lock files are
+        # not client configuration. Other GitHub Actions workflows are parsed for
+        # MCP servers embedded in step inputs (see _embedded_workflow_mcp).
+        if "{{" in rel or lower.endswith((".lock.yml", ".lock.yaml")):
+            return False
         if lower == "server.json":
             # A generic service can use this filename. The MCP registry format
             # has a name and structured package or remote transport records.
@@ -2277,6 +2320,15 @@ class FilesystemConnector(BaseConnector):
         ):
             yield self._project_finding(label, root, proj, observations)
         for sig_id, files in proj.coding_agent_files.items():
+            # Env-name and display-name mentions (GOOSE_PROVIDER in a detector
+            # matrix, "GitHub Copilot" in an SDK adapter) are not configuration.
+            # Config files, instruction docs, dependencies and code such as a
+            # workflow step or a YOLO-mode flag still establish the agent.
+            if not any(
+                m.signal.type not in _MENTION_SIGNALS or _is_coding_agent_doc(PurePosixPath(rel).name)
+                for m, rel, _ in proj.coding_agent_matches.get(sig_id, [])
+            ):
+                continue
             yield self._coding_agent_finding(label, root, proj, sig_id, files)
 
     @staticmethod
@@ -2844,9 +2896,16 @@ class FilesystemConnector(BaseConnector):
         if not hits:
             return None
         f = self._base(label, root, rel, Kind.SECRET, f"LLM provider credential in {rel}", "file")
+        # Test, fixture and recorded-cassette paths follow the project test-code
+        # policy: half weight and an explicit tag unless test code is included.
+        # The credential is still reported: cassettes record real traffic, and a
+        # key committed under tests/ is as exposed as one anywhere else.
+        test_only = not self.include_tests and _is_test_path(rel)
         for m, snip in hits:
-            apply_matches(f, [m], location=rel, snippet=snip)
+            apply_matches(f, [m], location=rel, snippet=snip, weight_scale=0.5 if test_only else 1.0)
         f.add_tag("hardcoded-credential")
+        if test_only:
+            f.add_tag("test-code-only")
         f.metadata["providers"] = sorted({m.signature_id for m, _ in hits})
         f.metadata["count"] = len(hits)
         f.owner = self._owner_for(root, rel) or f.owner

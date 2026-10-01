@@ -10,15 +10,21 @@ that are never silent:
   own name is one the scanner never reads (a lockfile, generated bundle or
   image), or when it is a source file whose target is analyzed at its real path
   in the same project, with the same test classification, extension and
-  file-name signals. Every other link makes the scan incomplete (exit code 3):
-  directory links, whose alias paths are not inspected; configuration and
-  document aliases, whose parsing can depend on their path; source aliases into
-  another project or test directory; links into excluded or unread content;
-  links outside the root; and unresolved links. Files are read relative to the
-  opened scan root without following a link in any path component, so a
-  directory replaced by a link after the walk listed it fails that file's read
-  (incomplete) instead of reading content outside the root. Like a read by
-  path, this needs only search permission on the directories above each file.
+  file-name signals. A coding-agent instruction document (`AGENTS.md`,
+  `AGENT.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`,
+  `copilot-instructions.md`) that links to another instruction document in the
+  same project with the same test classification is also covered: the target is
+  scanned at its real path, so the alias is not a second agent definition and
+  its alias-only file name is not reported separately. Every other link makes
+  the scan incomplete (exit code 3): directory links, whose alias paths are not
+  inspected; other configuration and document aliases, whose parsing can depend
+  on their path; aliases into another project or test directory; links into
+  excluded or unread content; links outside the root; and unresolved links.
+  Files are read relative to the opened scan root without following a link in
+  any path component, so a directory replaced by a link after the walk listed it
+  fails that file's read (incomplete) instead of reading content outside the
+  root. Like a read by path, this needs only search permission on the
+  directories above each file.
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
@@ -83,9 +89,16 @@ found only under test or fixture paths (`tests/`, `fixtures/`, `cassettes/`,
 promote a project to an *agent*; a project whose evidence is entirely test code
 is tagged `test-code-only`. Exported low-code workflows found under those paths
 follow the same rule. Set `include_tests: true` (`--include-tests`) to
-treat test code like any other source. Credentials are still reported from test
-paths unless they are recognisable placeholders (repeated characters, marker
-words such as `EXAMPLE`, or very low character diversity).
+treat test code like any other source. A real-format credential under a test,
+fixture or `cassettes/` path is still reported as a `secret` finding, because
+recorded cassettes capture real traffic and a committed key is exposed wherever
+it lives; without `include_tests` it has half weight and the `test-code-only`
+tag. Recognisable placeholders (repeated characters, marker words such as
+`EXAMPLE`, or very low character diversity) are never reported.
+Evidence that only names a coding agent in a test path (an environment variable,
+a display name, a dependency or a code pattern) likewise does not establish a
+coding-agent configuration; instruction documents and coding-agent config
+files still do.
 
 ## Incremental scans
 
@@ -403,7 +416,12 @@ findings. A credential whose value looks like a documentation placeholder
 (`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
 sequences after the provider prefix) is never a `secret` finding; it is listed
 on the project finding as low-weight `example-credential` evidence. A key alone
-does not establish LLM usage, and vendor-neutral heuristics (agent loops,
+does not establish LLM usage, a coding-agent configuration needs more than an
+environment-variable or display-name mention (`GOOSE_PROVIDER` in a detector
+list is not "Goose configured"; a config file, instruction document,
+dependency or workflow step still is), MCP parsing skips
+`*.lock.yml` / `*.lock.yaml` files (compiled agentic workflows) and cookiecutter
+`{{...}}` template paths, and vendor-neutral heuristics (agent loops,
 `subprocess.run`, auto-approve flags) only count in a project that also matches
 a framework, provider, platform, protocol or cloud-service signature. When every
 observation for a project other than those heuristics is an environment-variable
