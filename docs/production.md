@@ -768,6 +768,17 @@ enforcing policy on the new output:
 - **Threshold filtering.** With `--min-confidence`, `related` links and
   `runtime_activity` references to findings below the threshold are removed.
   The runtime observations themselves remain.
+- **Redaction.** Report excerpts withhold the API key passed positionally to
+  well-known LLM SDK calls whose names carry no credential word: Semantic
+  Kernel's .NET Azure OpenAI and OpenAI connectors, go-openai's
+  `openai.DefaultConfig`, `DefaultAzureConfig` and `NewClient`,
+  `new OpenAiService(...)` and `new GoogleGenerativeAI(...)` (see SECURITY.md
+  for the remaining gaps). Earlier reports of such code could show the key:
+  regenerate them and rotate any key they show. A long run of blanks before a
+  character the Python 3.11 tokenizer cannot read no longer makes redaction
+  quadratic and the scan incomplete, and on Python 3.12 and later a
+  non-ASCII character after a lone carriage return, or a lone surrogate, no
+  longer makes a file's analysis incomplete.
 
 ## October field scan changes
 
