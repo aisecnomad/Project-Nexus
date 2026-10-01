@@ -26,7 +26,7 @@
 
 | module | responsibility |
 |---|---|
-| `shadowscan/models.py` | `Finding`, `Evidence`, `Risk`, `ScanResult`; confidence = noisy-OR of evidence weights |
+| `shadowscan/models.py` | `Finding`, `Evidence`, `Risk`, `ScanResult`; confidence = noisy-OR of evidence weights, each group of correlated evidence counted once at its strongest weight (`confidence_group`, else the same signal outside the code surface) |
 | `shadowscan/signatures/` | YAML loader/validator (`loader.py`) and matchers (`matcher.py`); packs in `data/` |
 | `shadowscan/connectors/base.py` | `BaseConnector` (`collect`, `analyze`, `load_offline`, `run`, record dumping, [engine hooks](#engine-hooks)), `ConnectorContext` |
 | `shadowscan/connectors/offline.py` | offline export reading: file discovery without following links, confined readers with byte limits, JSON / JSONL / YAML / CSV parsing, envelope and pagination checks |

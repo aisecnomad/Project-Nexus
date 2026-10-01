@@ -349,7 +349,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.989,
+   "confidence": 0.977,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -963,7 +963,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.984,
+   "confidence": 0.966,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
