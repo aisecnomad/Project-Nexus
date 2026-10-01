@@ -138,6 +138,56 @@ def test_github_actions_oidc_token_is_a_workload_not_a_human_or_agent(index: Sig
     assert "agent-claims" not in finding.tags
 
 
+_GITHUB_ACTIONS = {
+    "iss": "https://token.actions.githubusercontent.com",
+    "sub": "repo:acme/app:ref:refs/heads/main",
+    "aud": "sts.amazonaws.com",
+    "repository": "acme/app",
+}
+
+
+@pytest.mark.parametrize(
+    "claim,framework",
+    [
+        ({"actor": "claude[bot]"}, "coding-agent.claude-code"),
+        ({"actor": "copilot-swe-agent[bot]"}, "coding-agent.github-copilot"),
+        ({"actor": "devin-ai-integration[bot]"}, "identity-app.coding-assistants-saas"),
+        (
+            {"actor": "octocat", "triggering_actor": "chatgpt-codex-connector[bot]"},
+            "coding-agent.openai-codex",
+        ),
+    ],
+)
+def test_github_actions_run_started_by_an_ai_agent_keeps_its_agent_claims(
+    index: SignatureIndex, claim: dict, framework: str
+):
+    finding = _analyze(index, {**_GITHUB_ACTIONS, **claim})
+    agent_claims = {key: value for key, value in claim.items() if value != "octocat"}
+    assert finding.metadata["identity_type"] == "workload"
+    assert finding.metadata["agent_claims"] == agent_claims
+    assert "agent-claims" in finding.tags
+    assert framework in finding.frameworks
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        {"actor": "octocat"},
+        # Every GitHub App login ends in [bot]; that alone does not name an AI agent.
+        {"actor": "dependabot[bot]"},
+        {"actor": "github-actions[bot]", "triggering_actor": "renovate[bot]"},
+    ],
+)
+def test_github_actions_run_started_by_a_person_or_ordinary_bot_has_no_agent_claims(
+    index: SignatureIndex, claim: dict
+):
+    finding = _analyze(index, {**_GITHUB_ACTIONS, **claim})
+    assert finding.metadata["identity_type"] == "workload"
+    assert finding.metadata["agent_claims"] == {}
+    assert "agent-claims" not in finding.tags
+    assert finding.frameworks == []
+
+
 def test_kubernetes_service_account_token_is_a_workload(index: SignatureIndex):
     finding = _analyze(
         index,
