@@ -21,11 +21,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 from requests import RequestException
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import config_boolean, finalize, scope_matches
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
+from shadowscan.connectors.common import config_boolean, failure_summary, finalize, scope_matches
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -113,7 +114,7 @@ class EntraConnector(BaseConnector):
         self.include_first_party = config_boolean(
             ctx.get("include_first_party", False), "include_first_party"
         )
-        self.max_lookups = int(ctx.get("max_app_role_lookups", 2000))
+        self.max_lookups = _positive_limit(ctx.get("max_app_role_lookups", 2000), "max_app_role_lookups")
         self.http: HttpClient | None = None
 
     # ----------------------------------------------------------------- auth
@@ -146,7 +147,7 @@ class EntraConnector(BaseConnector):
         try:
             yield from self.http.paginate_odata(path, **kwargs)
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            status = failure_summary(exc)
             if path.endswith("/appRoleAssignments"):
                 self.ctx.warn(
                     f"identity.entra: appRoleAssignments unreadable for {path} ({status}); app-only "
@@ -179,7 +180,8 @@ class EntraConnector(BaseConnector):
                 self.ctx.warn("identity.entra: max_app_role_lookups reached; app-only permissions partial")
                 break
             lookups += 1
-            for a in self._pages(f"/servicePrincipals/{sp['id']}/appRoleAssignments", params={"$top": 999}):
+            principal = quote(str(sp["id"]), safe="")
+            for a in self._pages(f"/servicePrincipals/{principal}/appRoleAssignments", params={"$top": 999}):
                 a["_kind"] = "appRoleAssignment"
                 yield a
         for app in self._pages(

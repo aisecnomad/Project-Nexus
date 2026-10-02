@@ -737,3 +737,18 @@ def test_documented_http_read_deadline_matches_the_client() -> None:
     for path, match in claims:
         claimed = (_READ_DEADLINE_FACTORS.get(match.group(1)), int(match.group(2)))
         assert claimed == expected, f"{_relative(path)} says {match.group(0)!r}; the client uses {expected}"
+
+
+_FIXTURE_CLAIM = re.compile(r"(\d+) of (\d+) connectors ship fixtures")
+
+
+def test_documented_fixture_connector_count_matches_the_demo_configuration() -> None:
+    demo = yaml.safe_load((ROOT / "examples" / "shadowscan.offline.yaml").read_text(encoding="utf-8"))
+    configured = {entry["name"] for entry in demo["connectors"]}
+    assert configured <= set(builtin_connector_names())
+    actual = (len(configured), len(builtin_connector_names()))
+    claims = [(path, match) for path in _current_docs() for match in _FIXTURE_CLAIM.finditer(_read(path))]
+    assert claims, "the README should state how many connectors the offline demo covers"
+    for path, match in claims:
+        claimed = (int(match.group(1)), int(match.group(2)))
+        assert claimed == actual, f"{_relative(path)} claims {claimed}, the demo configures {actual}"

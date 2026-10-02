@@ -596,3 +596,22 @@ def test_gcp_suppressed_rate_limit_does_not_report_clean_inventory(index):
     connector.http.get_json.side_effect = HttpError(429, "https://example.googleapis.com/v1/items")
     assert list(connector._pages("https://example.googleapis.com/v1/items", "items")) == []
     assert ctx.stats.incomplete
+
+
+def test_malformed_service_record_is_a_coverage_gap_not_a_project_failure(index):
+    # One service entry without a config name used to raise inside collect()
+    # and abandon every remaining project and service.
+    connector = GcpConnector(context(index, projects=[PROJECT], locations=["us-central1"], audit_days=0))
+    fake = FakeGoogle(
+        {
+            "/services": {
+                "services": [{"config": "oops"}, {}, {"config": {"name": "secretmanager.googleapis.com"}}]
+            }
+        }
+    )
+    connector._auth = lambda: setattr(connector, "http", fake)  # type: ignore[method-assign]
+    records = list(connector.collect())
+    (project,) = [record for record in records if record.get("_kind") == "project"]
+    assert project["ai_services"] == []
+    assert sum("malformed service record" in w for w in connector.ctx.stats.warnings) == 2
+    assert connector.ctx.stats.incomplete

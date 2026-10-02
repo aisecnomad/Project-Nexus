@@ -19,7 +19,7 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import cap_confidence, config_boolean, finalize
+from shadowscan.connectors.common import cap_confidence, config_boolean, failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -100,7 +100,7 @@ class GitHubAppsConnector(BaseConnector):
     def _collection_warning(self, source: str, exc: Exception) -> None:
         # Sources need different grants. Keep findings from available sources,
         # report incomplete coverage, and never echo a provider's response body.
-        reason = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+        reason = failure_summary(exc)
         self.ctx.warn(f"saas.github-apps: {source} unavailable ({reason}); coverage incomplete")
 
     @staticmethod

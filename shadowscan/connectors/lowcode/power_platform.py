@@ -26,7 +26,14 @@ from urllib.parse import quote, urlsplit
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import apply_matches, blob_matches, config_boolean, finalize, name_matches
+from shadowscan.connectors.common import (
+    apply_matches,
+    blob_matches,
+    config_boolean,
+    failure_summary,
+    finalize,
+    name_matches,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
@@ -276,7 +283,7 @@ class PowerPlatformConnector(BaseConnector):
     def _failure_reason(exc: HttpError | RequestException | RuntimeError | ValueError) -> str:
         # Pagination exceptions are generic; never include server-supplied URLs
         # (which can contain opaque skip tokens) in scan warnings.
-        return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+        return failure_summary(exc)
 
     # --------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:

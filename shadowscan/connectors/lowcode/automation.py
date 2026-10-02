@@ -20,11 +20,19 @@ import json
 import re
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 from requests import RequestException
 
-from shadowscan.connectors.base import BaseConnector, ConnectorError
-from shadowscan.connectors.common import apply_matches, blob_matches, finalize, model_matches, name_matches
+from shadowscan.connectors.base import BaseConnector, ConnectorError, _positive_limit
+from shadowscan.connectors.common import (
+    apply_matches,
+    blob_matches,
+    failure_summary,
+    finalize,
+    model_matches,
+    name_matches,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
@@ -151,7 +159,7 @@ class N8nConnector(_AutomationBase):
             items_key="data",
             token_key="nextCursor",
             token_param="cursor",
-            max_pages=max(1, int(self.ctx.get("max_pages", 1000))),
+            max_pages=_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"),
         )
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -282,11 +290,11 @@ class MakeConnector(_AutomationBase):
         **params: Any,
     ) -> Iterator[dict[str, Any]]:
         seen: set[str] = set()
-        for page in range(max(1, int(self.ctx.get("max_pages", 1000)))):
+        for page in range(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages")):
             try:
                 data = http.get_json(path, params={**params, "pg[limit]": 100, "pg[offset]": page * 100})
             except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                status = failure_summary(exc)
                 self.ctx.warn(f"lowcode.make: collection incomplete for {path} ({status})")
                 return
             items = data.get(items_key) if isinstance(data, dict) else None
@@ -322,7 +330,7 @@ class MakeConnector(_AutomationBase):
             blueprint_errors: dict[str, int] = {}
             for s in self._offset_pages(http, "/scenarios", "scenarios", teamId=team):
                 try:
-                    bp = http.get_json(f"/scenarios/{s['id']}/blueprint")
+                    bp = http.get_json(f"/scenarios/{quote(str(s['id']), safe='')}/blueprint")
                     response = bp.get("response") if isinstance(bp, dict) else None
                     blueprint = (response.get("blueprint") if isinstance(response, dict) else None) or bp
                     if not isinstance(blueprint, dict):
@@ -330,7 +338,7 @@ class MakeConnector(_AutomationBase):
                     else:
                         s["blueprint"] = blueprint
                 except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    status = failure_summary(exc)
                     blueprint_errors[status] = blueprint_errors.get(status, 0) + 1
                 yield {**s, "_kind": "scenario", "_team": team}
             if blueprint_errors:
@@ -344,7 +352,7 @@ class MakeConnector(_AutomationBase):
             try:
                 data = http.get_json("/ai-agents/v1/agents", params={"teamId": team})
             except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                status = failure_summary(exc)
                 self.ctx.warn(
                     f"lowcode.make: AI agents unreadable for team {team} ({status}); "
                     "agent inventory incomplete"
@@ -492,7 +500,7 @@ class ZapierConnector(_AutomationBase):
         http = HttpClient("https://api.zapier.com", headers={"Authorization": f"Bearer {token}"})
         url: str | None = "/v2/zaps"
         seen: set[str] = set()
-        for _ in range(max(1, int(self.ctx.get("max_pages", 1000)))):
+        for _ in range(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages")):
             if not url:
                 return
             if not isinstance(url, str) or url in seen:
@@ -600,7 +608,7 @@ class WorkatoConnector(_AutomationBase):
             raise ConnectorError("lowcode.workato: token required")
         http = HttpClient(base, headers={"Authorization": f"Bearer {token}"})
         seen: set[str] = set()
-        for page in range(1, max(1, int(self.ctx.get("max_pages", 1000))) + 1):
+        for page in range(1, _positive_limit(self.ctx.get("max_pages", 1000), "max_pages") + 1):
             data = http.get_json("/recipes", params={"per_page": 100, "page": page})
             items = data.get("items") if isinstance(data, dict) else data
             if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):

@@ -225,3 +225,12 @@ def test_read_text_does_not_decode_hostile_slow_codec(tmp_path):
     assert read_text(tmp_path / "a.py", 1_000_000, errors) is None
     assert time.monotonic() - started < 2.0
     assert errors == [BINARY_CONTENT_ERROR]
+
+
+def test_compact_calendar_days_are_dates_not_epoch_seconds():
+    # A gateway log's ``date: 20240101`` field was read as epoch seconds (1970).
+    assert parse_timestamp("20240101") == datetime(2024, 1, 1, tzinfo=UTC)
+    assert parse_timestamp("20240101") != parse_timestamp(20240101.0)
+    assert parse_timestamp("20241399") is None  # an impossible day is no timestamp
+    assert parse_timestamp("1704067200") == datetime(2024, 1, 1, tzinfo=UTC)
+    assert parse_timestamp("12345678") == datetime.fromtimestamp(12345678, tz=UTC)

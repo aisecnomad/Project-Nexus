@@ -22,7 +22,8 @@ import re
 import threading
 import weakref
 from bisect import bisect_right
-from collections.abc import Callable
+from collections import ChainMap
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 
 import regex
@@ -200,7 +201,7 @@ class _PythonBindings(ast.NodeVisitor):
         self.offsets = [0]
         for line in self.lines:
             self.offsets.append(self.offsets[-1] + len(line))
-        self.scopes: list[dict[str, _Binding | None]] = [{}]
+        self.scopes: list[MutableMapping[str, _Binding | None]] = [{}]
         self.scope_kinds = ["module"]
         self.calls: list[_Call] = []
         self.imports: list[tuple[_Binding, int]] = []
@@ -479,18 +480,27 @@ class _PythonBindings(ast.NodeVisitor):
                 self.visit(statement)
             return
         # Neither branch is assumed to execute. Only bindings identical after
-        # both branches survive into subsequent code.
-        before = self.scopes[-1].copy()
-        outcomes = []
+        # both branches survive into subsequent code. Each branch writes to an
+        # overlay of the enclosing bindings, so the merge costs the branches'
+        # own assignments rather than a copy of the whole scope per ``if``,
+        # which made a file of many top-level names and ifs quadratic.
+        before = self.scopes[-1]
+        outcomes: list[Mapping[str, _Binding | None]] = []
         for branch in (node.body, node.orelse):
-            self.scopes[-1] = before.copy()
+            overlay: dict[str, _Binding | None] = {}
+            chain = ChainMap(overlay, before)
+            self.scopes[-1] = chain
             for statement in branch:
                 self.visit(statement)
-            outcomes.append(self.scopes[-1])
-        self.scopes[-1] = {
-            name: outcomes[0].get(name) if outcomes[0].get(name) == outcomes[1].get(name) else None
-            for name in set(outcomes[0]) | set(outcomes[1])
-        }
+            # A star import replaces the branch's scope with a plain mapping
+            # of every name; that mapping is then the branch's whole outcome.
+            scope = self.scopes[-1]
+            outcomes.append(overlay if scope is chain else scope)
+        self.scopes[-1] = before
+        for name in set(outcomes[0]) | set(outcomes[1]):
+            first = outcomes[0].get(name, before.get(name))
+            second = outcomes[1].get(name, before.get(name))
+            before[name] = first if first == second else None
 
 
 _LiteralGroups = tuple[tuple[str, ...], ...]

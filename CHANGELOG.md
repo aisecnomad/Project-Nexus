@@ -412,6 +412,57 @@ field precision. Behavior changes that affect an existing baseline are listed in
   connector page named. A consistency test now fails when a key reported by
   `shadowscan connectors --json` is undocumented.
 
+
+### October 1 review fixes: bounded matching, link walks and record tolerance
+
+Fixes for the findings of an AI-assisted repository review (not an
+independent human review); each behavior change has a regression test.
+
+- `code.filesystem`: the IaC wildcard-action and agent front-matter patterns
+  now run on the bounded regex engine with possessive whitespace, under the
+  per-input matching budget. Before, a planted file (`Action:` followed by a
+  long run of spaces, or `---` followed by many blank lines) backtracked
+  quadratically in stdlib patterns that nothing could interrupt, which could
+  hold the connector past its deadline and discard every code finding.
+- `code.filesystem`: symbolic links now count toward `max_files`, link checks
+  stop at the connector deadline with an explicit error (`connector deadline
+  reached while checking symbolic links`), and the project lookup behind each
+  link is cached per directory. A tree planted with thousands of links was
+  quadratic and uncounted. Scans of repositories holding more links than the
+  remaining `max_files` budget become incomplete; raise `max_files` or exclude
+  the link directories.
+- `code.filesystem`: a JSON, YAML or TOML file that merely contains the words
+  `"mcp"` and `"servers"` but configures no MCP server (an exported workflow
+  tagged `mcp`, a template with such a comment) is ordinary configuration
+  again. Before, it was treated as MCP configuration and the IaC,
+  configuration and lexical passes skipped it without a diagnostic, hiding
+  the workflow or the wildcard IAM grant. Dedicated MCP file names
+  (`.mcp.json`, `claude_desktop_config.json`, ...) are unchanged.
+- `code.filesystem`: a credential in a notebook code cell is counted once;
+  the raw document's copy of the cell no longer doubles the count and the
+  confidence. Outputs and markdown cells are still scanned.
+- `cloud.aws`: a malformed provider record (a function without an ARN, an
+  endpoint without a name, an alias version that is not a string) skips that
+  record with a warning and incomplete coverage instead of aborting every
+  remaining service and region. Failed SDK calls now report the operation
+  and the provider error code (`cloud.aws: get_agent access denied
+  (AccessDeniedException)`), never the message text, which can echo request
+  arguments or encoded policy context. `cloud.gcp` treats a service record
+  without a config name the same way.
+- `identity.entra`, `saas.microsoft-teams`, `lowcode.make`: response-derived
+  identifiers are percent-encoded before they enter a request path.
+  `max_app_role_lookups`, `max_users` and the automation connectors'
+  `max_pages` must be positive integers; a zero or non-numeric value now
+  stops the connector with a configuration error instead of being coerced.
+- Gateway timestamps: an eight-digit `yyyymmdd` value is a calendar day.
+  It was read as epoch seconds and attributed callers to 1970.
+- One `failure_summary` helper replaces eighteen copies of the HTTP-status or
+  exception-type expression in connector diagnostics (no output change).
+- Documentation: the README states the usage, setup and `diff` exit codes
+  and carries the OpenSSF Scorecard badge the roadmap refers to;
+  `docs/connectors.md` lists the GitHub credential-name permissions and adds
+  least-privilege rows and option lists for Slack, ServiceNow and Notion. A
+  repository test now checks the "25 of 27 connectors ship fixtures" claim.
 ### Confined file portability and plugin deadlines
 
 - On platforms exposing `O_NOFOLLOW_ANY` without Linux `O_PATH` (including
