@@ -243,7 +243,7 @@ EVASION_PAYLOAD = (
 
 
 def _code_report(tmp_path: Path, source: str) -> dict:
-    (tmp_path / "agent.js").write_text(source)
+    (tmp_path / "agent.js").write_bytes(source.encode())  # exact bytes: no newline translation
     result = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
     assert result.exit_code == 0, result.output
     return json.loads(result.stdout)
@@ -274,5 +274,55 @@ def test_division_cannot_mask_the_code_between_two_slashes(tmp_path: Path, prefi
     control = _code_report(tmp_path, EVASION_PAYLOAD)
     assert control["findings"], "the payload alone is detected"
     report = _code_report(tmp_path, prefix + EVASION_PAYLOAD)
+    assert report["summary"]["complete"]
+    assert _fingerprint(report) == _fingerprint(control)
+
+
+# --- Line terminators -----------------------------------------------------------------------------
+# JavaScript ends a line at LF, CR, LINE SEPARATOR and PARAGRAPH SEPARATOR (CRLF counts once). A `//`
+# comment that was assumed to end only at LF hid everything after it in a CR-only file, which node runs.
+
+LS = "\N{LINE SEPARATOR}"
+PS = "\N{PARAGRAPH SEPARATOR}"
+TERMINATORS = {"lf": "\n", "cr": "\r", "crlf": "\r\n", "line-separator": LS, "paragraph-separator": PS}
+
+
+@pytest.mark.parametrize("terminator", TERMINATORS.values(), ids=TERMINATORS.keys())
+def test_line_comment_ends_at_every_javascript_line_terminator(terminator: str) -> None:
+    source = f'// note{terminator}const OpenAI = require("openai");{terminator}'
+    assert _masked(source) == ["// note", '"openai"']
+
+
+@pytest.mark.parametrize("terminator", TERMINATORS.values(), ids=TERMINATORS.keys())
+def test_line_comment_inside_a_jsx_tag_ends_at_every_javascript_line_terminator(terminator: str) -> None:
+    source = f'const a = <div // note{terminator} title="x" />;{terminator}const b = run();{terminator}'
+    ignored, ambiguous = noncode_ranges(source, "javascript", ".tsx", jsx=True)
+    assert not ambiguous
+    assert not any(start <= source.index("run()") < end for start, end in ignored)
+
+
+@pytest.mark.parametrize("terminator", ["\r", LS, PS], ids=["cr", "line-separator", "paragraph-separator"])
+def test_unterminated_regex_stops_at_every_javascript_line_terminator(terminator: str) -> None:
+    # A regular expression literal cannot contain a line terminator. The ambiguous line is masked up to
+    # it and the code after it is scanned; the file is reported incomplete.
+    source = f"const r = /abc{terminator}const OpenAI = require('openai');{terminator}"
+    ignored, ambiguous = noncode_ranges(source, "javascript", ".js")
+    assert ambiguous
+    assert not any(start <= source.index("require(") < end for start, end in ignored)
+
+
+def test_string_line_continuation_over_crlf_does_not_hide_following_code() -> None:
+    # Backslash, CR, LF is one line continuation. Counting the CR alone ended the string at the LF and
+    # turned the closing quote into the start of a "string" that hid the rest of the line.
+    source = 'const s = "abc\\\r\ndef"; const OpenAI = require("openai");\r\n'
+    assert _masked(source) == ['"abc\\\r\ndef"', '"openai"']
+
+
+@pytest.mark.parametrize("terminator", ["\r", LS, PS], ids=["cr", "line-separator", "paragraph-separator"])
+def test_line_comment_does_not_hide_the_code_of_a_file_node_runs(tmp_path: Path, terminator: str) -> None:
+    source = f"// note{terminator}" + EVASION_PAYLOAD.replace("; ", f";{terminator}")
+    control = _code_report(tmp_path, EVASION_PAYLOAD)
+    assert control["findings"], "the payload alone is detected"
+    report = _code_report(tmp_path, source)
     assert report["summary"]["complete"]
     assert _fingerprint(report) == _fingerprint(control)

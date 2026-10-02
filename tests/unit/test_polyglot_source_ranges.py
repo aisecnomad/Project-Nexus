@@ -263,3 +263,126 @@ def test_ruby_block_comments_scan_in_linear_time():
     # quadratic scan would cost 256 times); no absolute bound, since coverage
     # tracing on CI runners slows the loop by an interpreter-dependent factor.
     assert large_time < max(small_time, 0.005) * 64
+
+
+# --- Line comments end at the language's line terminators -------------------------------------------
+# Treating a comment as running to LF alone hid the code after a bare-CR (or, in C#, NEL, LINE SEPARATOR
+# and PARAGRAPH SEPARATOR) line break in a file the compiler reads normally.
+
+LS = "\N{LINE SEPARATOR}"
+PS = "\N{PARAGRAPH SEPARATOR}"
+CR_TERMINATORS = ("\n", "\r", "\r\n")
+LINE_COMMENTS = {
+    "java": ("java", ".java", "", "//", CR_TERMINATORS),
+    "kotlin": ("java", ".kt", "", "//", CR_TERMINATORS),
+    "swift": ("swift", ".swift", "", "//", CR_TERMINATORS),
+    "dart": ("dart", ".dart", "", "//", CR_TERMINATORS),
+    "csharp": ("dotnet", ".cs", "", "//", (*CR_TERMINATORS, "\x85", LS, PS)),
+    "php-slashes": ("php", ".php", "<?php\n", "//", CR_TERMINATORS),
+    "php-hash": ("php", ".php", "<?php\n", "#", CR_TERMINATORS),
+}
+
+
+def _line_comment_cases() -> list[tuple[str, str, str, str, str]]:
+    return [
+        (language, dialect, prefix, leader, terminator)
+        for language, dialect, prefix, leader, terminators in LINE_COMMENTS.values()
+        for terminator in terminators
+    ]
+
+
+@pytest.mark.parametrize(
+    ("language", "dialect", "prefix", "leader", "terminator"),
+    _line_comment_cases(),
+    ids=[f"{name}-{terminator!r}" for name, case in LINE_COMMENTS.items() for terminator in case[4]],
+)
+def test_line_comment_ends_at_the_language_line_terminator(
+    language: str, dialect: str, prefix: str, leader: str, terminator: str
+):
+    source = f"{prefix}{leader} note{terminator}live_code(1);{terminator}"
+    ignored, ambiguous = noncode_ranges(source, language, dialect)
+    assert not ambiguous
+    assert [source[start:end] for start, end in ignored if start >= len(prefix)] == [f"{leader} note"]
+
+
+@pytest.mark.parametrize(
+    ("language", "dialect", "prefix", "leader"),
+    [
+        ("java", ".java", "", "//"),
+        ("java", ".kt", "", "//"),
+        ("dotnet", ".cs", "", "//"),
+        ("swift", ".swift", "", "//"),
+        ("dart", ".dart", "", "//"),
+        ("go", ".go", "", "//"),
+        ("rust", ".rs", "", "//"),
+        ("ruby", ".rb", "", "#"),
+        ("php", ".php", "<?php\n", "#"),
+    ],
+)
+def test_line_comment_is_not_ended_by_a_character_the_language_does_not_break_on(
+    language: str, dialect: str, prefix: str, leader: str
+):
+    # LINE SEPARATOR is white space in every one of these but C#, and the Go, Rust and Ruby compilers
+    # also read a bare CR as white space, so the comment (and the dead text after it) runs on to LF.
+    separators = ["\x85", LS, PS] if language != "dotnet" else []
+    separators += ["\r"] if language in {"go", "rust", "ruby"} else []
+    for separator in separators:
+        source = f"{prefix}{leader} note{separator}dead_text(1);\nlive_code(2);\n"
+        ignored, ambiguous = noncode_ranges(source, language, dialect)
+        assert not ambiguous
+        masked = [source[start:end] for start, end in ignored if start >= len(prefix)]
+        assert masked == [f"{leader} note{separator}dead_text(1);"]
+
+
+@pytest.mark.parametrize("escape", [r"\u000a", r"\u000A", r"\u000d", r"\uu000a", r"\\\u000a", r"\\\\\u000D"])
+def test_java_unicode_escaped_line_break_ends_a_line_comment(escape: str):
+    # javac translates unicode escapes before lexing, so this import is code, not comment text.
+    source = f"// note {escape} import dev.langchain4j.service.AiServices;\nclass App {{}}\n"
+    ignored, ambiguous = noncode_ranges(source, "java", ".java")
+    assert not ambiguous
+    assert [source[start:end] for start, end in ignored] == [f"// note {escape[: escape.index('u') - 1]}"]
+    assert not any(start <= source.index("import dev") < end for start, end in ignored)
+
+
+@pytest.mark.parametrize(
+    "text", [r"\\u000a", r"\\\\u000a", r"\u000b", r"\u0009", "\\" + "u005c" + "u000a", r"\u000", r"\u00a"]
+)
+def test_java_text_that_is_not_a_line_break_escape_stays_in_the_comment(text: str):
+    source = f"// note {text} import dev.langchain4j.service.AiServices;\nclass App {{}}\n"
+    ignored, _ = noncode_ranges(source, "java", ".java")
+    assert [source[start:end] for start, end in ignored] == [source.split("\n")[0]]
+
+
+def test_kotlin_does_not_translate_unicode_escapes_in_comments():
+    source = "// note \\u000a import dev.langchain4j.service.AiServices\nclass App\n"
+    ignored, _ = noncode_ranges(source, "java", ".kt")
+    assert [source[start:end] for start, end in ignored] == [source.split("\n")[0]]
+
+
+LIVE_CALLS = {
+    "Agent.java": "AiServices.builder(Foo.class);",
+    "Agent.cs": "AIFunctionFactory.Create(foo);",
+    "Agent.swift": "AiServices.builder(foo)",
+    "Agent.dart": "AiServices.builder(foo);",
+}
+
+
+@pytest.mark.parametrize(
+    ("filename", "comment", "terminator"),
+    [
+        ("Agent.java", "// harmless", "\r"),
+        ("Agent.java", "// harmless \\u000a", " "),
+        ("Agent.cs", "// harmless", LS),
+        ("Agent.cs", "// harmless", "\x85"),
+        ("Agent.swift", "// harmless", "\r"),
+        ("Agent.dart", "// harmless", "\r"),
+    ],
+)
+def test_code_after_a_comment_is_scanned_whatever_ends_the_line(
+    tmp_path: Path, run_connector, filename: str, comment: str, terminator: str
+):
+    (tmp_path / filename).write_bytes(f"{comment}{terminator}{LIVE_CALLS[filename]}{terminator}".encode())
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    # Lexing establishes the call is source; without a library import it stays a weak candidate.
+    assert findings and any(e.signal.startswith("code:") for finding in findings for e in finding.evidence)

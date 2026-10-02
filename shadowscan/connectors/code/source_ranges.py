@@ -45,8 +45,9 @@ _CONTROL_HEADS = frozenset({"catch", "for", "if", "switch", "while", "with"})
 # without a parse, a `/` after one of them cannot be classified.
 _AMBIGUOUS_REGEX_WORDS = frozenset({"await", "yield"})
 _MAX_REGEX_LENGTH = 8192
-# ECMAScript line terminators: LF, CR, LINE SEPARATOR and PARAGRAPH SEPARATOR.
-_JS_LINE_BREAK = re.compile("[\n\r\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]")
+# ECMAScript line terminators: LF, CR, LINE SEPARATOR and PARAGRAPH SEPARATOR (CRLF counts once).
+_JS_LINE_TERMINATORS = "\n\r\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}"
+_JS_LINE_BREAK = re.compile(f"[{_JS_LINE_TERMINATORS}]")
 
 
 def _js_line_end(text: str, pos: int) -> int:
@@ -98,10 +99,10 @@ def _javascript_regex_end(text: str, start: int) -> int | None:
     pos = start + 1
     in_class = False
     limit = min(len(text), start + _MAX_REGEX_LENGTH)
-    while pos < limit and text[pos] not in "\r\n":
+    while pos < limit and text[pos] not in _JS_LINE_TERMINATORS:
         char = text[pos]
         if char == "\\":
-            if pos + 1 >= limit or text[pos + 1] in "\r\n":
+            if pos + 1 >= limit or text[pos + 1] in _JS_LINE_TERMINATORS:
                 return None
             pos += 2
             continue
@@ -601,8 +602,8 @@ class _JavaScriptLexer:
             # Comments may separate attributes; their text is never an
             # attribute string or expression.
             if text.startswith("//", i):
-                end = text.find("\n", i + 2)
-                if end < 0:
+                end = _js_line_end(text, i + 2)
+                if end >= size:
                     return self._unterminated(start)
                 i = end
                 continue
@@ -652,7 +653,11 @@ class _JavaScriptLexer:
         quote = text[start]
         i = start + 1
         while i < size and text[i] != quote and text[i] not in "\r\n":
-            i += 2 if text[i] == "\\" else 1
+            if text[i] == "\\":
+                # A backslash continues the string over a line break; CRLF is one break.
+                i += 3 if text.startswith("\r\n", i + 1) else 2
+            else:
+                i += 1
         if i < size and text[i] == quote:
             i += 1
         self.spans.append((start, i))
@@ -662,8 +667,7 @@ class _JavaScriptLexer:
         """Mask a regular-expression literal; an ambiguous one masks the rest of its line."""
         regex_end = _javascript_regex_end(self.text, start)
         if regex_end is None:
-            end = self.text.find("\n", start)
-            end = self.size if end < 0 else end
+            end = _js_line_end(self.text, start)
             self.spans.append((start, end))
             self.incomplete = True
             return end
@@ -681,9 +685,9 @@ class _JavaScriptLexer:
         member_at = -1  # offset of the name after the latest single `.` or `?.`
         while i < size:
             if text.startswith("//", i):
-                end = text.find("\n", i + 2)
-                spans.append((i, size if end < 0 else end))
-                i = size if end < 0 else end
+                end = _js_line_end(text, i + 2)
+                spans.append((i, end))
+                i = end
             elif text.startswith("/*", i):
                 end = text.find("*/", i + 2)
                 if end < 0:
@@ -817,6 +821,13 @@ class _Expression:
     depth: int = 1
 
 
+_LINE_BREAK_LF = re.compile("\n")
+_LINE_BREAK_CR = re.compile("[\n\r]")
+# C# new-line characters also include NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR.
+_LINE_BREAK_UNICODE = re.compile("[\n\r\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]")
+# Java translates unicode escapes before it lexes: `// note \u000a import x;` ends the comment at the
+# escape. A backslash starts an escape only after an even number of backslashes.
+_JAVA_LINE_BREAK_ESCAPE = re.compile(r"(?<!\\)(?:\\\\)*(\\u+000[aAdD])")
 _RUST_RAW = re.compile(r'(?:br|rb|r)(#{0,255})"')
 _RUBY_HEREDOC = re.compile(r"<<[-~]?(['\"]?)([A-Za-z_]\w*)\1")
 _PHP_HEREDOC = re.compile(r"<<<[ \t]*(['\"]?)([A-Za-z_]\w*)\1")
@@ -825,6 +836,17 @@ _MAX_GO_IMPORT_PREFIX = 4096
 _RUBY_PERCENT_PAIRS = {"{": "}", "[": "]", "(": ")", "<": ">"}
 # Languages whose string literals can carry a prefix (see ``_literal_prefix``).
 _PREFIXED_LITERALS = frozenset({"dotnet", "dart", "rust", "swift"})
+
+
+def _line_break_pattern(language: str) -> re.Pattern[str]:
+    """Return the line terminators that end a ``//`` or ``#`` comment in ``language``.
+
+    Go, Rust and Ruby compilers treat a bare CR as white space; the others end the
+    comment there, and C# also at NEL and the Unicode line and paragraph separators.
+    """
+    if language in {"go", "rust", "ruby"}:
+        return _LINE_BREAK_LF
+    return _LINE_BREAK_UNICODE if language == "dotnet" else _LINE_BREAK_CR
 
 
 def _ruby_percent_delimiter(text: str, start: int) -> bool:
@@ -965,6 +987,7 @@ class _SourceLexer:
         "heredocs",
         "incomplete",
         "language",
+        "line_break",
         "line_checked_through",
         "line_start",
         "modes",
@@ -980,6 +1003,7 @@ class _SourceLexer:
         self.size = len(text)
         self.language = language
         self.dialect = dialect
+        self.line_break = _line_break_pattern(language)
         self.spans: list[tuple[int, int]] = []
         self.modes: list[_Literal | _Expression] = []
         self.incomplete = False
@@ -1033,6 +1057,16 @@ class _SourceLexer:
                 self.incomplete = True  # Too long to classify as a Go import safely.
             return None
         return self.text[self.line_start : index]
+
+    def _line_comment_end(self, start: int) -> int:
+        """Return where the ``//`` or ``#`` comment at ``start`` ends: at its language's first line break."""
+        match = self.line_break.search(self.text, start)
+        end = self.size if match is None else match.start()
+        if self.dialect == ".java":
+            escape = _JAVA_LINE_BREAK_ESCAPE.search(self.text, start, end)
+            if escape is not None:
+                end = escape.start(1)
+        return end
 
     def _php_template(self, i: int) -> int:
         """Mask template text up to and including the next PHP opening tag."""
@@ -1207,8 +1241,7 @@ class _SourceLexer:
             if (language != "ruby" and text.startswith("//", i)) or (
                 language in {"ruby", "php"} and text[i] == "#"
             ):
-                end = text.find("\n", i)
-                end = size if end < 0 else end
+                end = self._line_comment_end(i)
                 spans.append((i, end))
                 i = end
                 continue
