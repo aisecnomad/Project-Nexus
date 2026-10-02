@@ -119,6 +119,45 @@ def remote_record(data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if not key.startswith("_")}
 
 
+def config_string_list(value: Any, name: str, *, allow_int: bool = False) -> list[str]:
+    """Require a list of non-empty strings; an unset option is an empty list.
+
+    A bare string must not pass: iterating ``"llm"`` yields the characters ``l``, ``l``, ``m``, and a
+    topic filter or repository list built from them matches nothing while the scan reports itself
+    complete. Errors name the option, never its value.
+    """
+    if value is None:
+        return []
+    items = list(value) if isinstance(value, (list, tuple)) else None
+    if items is not None and allow_int:
+        items = [str(i) if isinstance(i, int) and not isinstance(i, bool) else i for i in items]
+    if items is None or any(not isinstance(item, str) or not item.strip() for item in items):
+        raise ConnectorError(f"{name} must be a list of non-empty strings (--set: a,b or a JSON list)")
+    return items
+
+
+def config_text(value: Any, name: str) -> str | None:
+    """An optional text option such as a login; blank (for example an empty variable) is unset."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ConnectorError(f"{name} must be a string")
+    return value.strip() or None
+
+
+def config_integer(value: Any, name: str) -> int:
+    """A whole number. A bool or a fraction is not one; text from ``${VAR}`` expansion must be digits."""
+    if isinstance(value, bool):
+        raise ConnectorError(f"{name} must be a whole number")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]{1,9}", value.strip()):
+        return int(value)
+    raise ConnectorError(f"{name} must be a whole number")
+
+
 class UnusualRepositoryPath(ConnectorError):
     """A legal Git path this scanner does not materialise (backslash, drive-like prefix)."""
 
@@ -228,7 +267,7 @@ class RemoteRepositoryConnector(BaseConnector):
         return mode
 
     def _record_cap(self, value: Any) -> int:
-        cap = int(value)
+        cap = config_integer(value, self.limit_key)
         if cap < 1:
             raise ConnectorError(f"{self.name}: {self.limit_key} must be positive")
         return cap

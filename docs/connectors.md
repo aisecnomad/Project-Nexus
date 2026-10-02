@@ -205,7 +205,11 @@ Options: `org` (env `GITHUB_ORG`), `user` or `repos`; `token` (env
 `mode`, `include_archived`, `include_forks`, `max_repos`, `clone_depth`,
 `topics`. The filesystem scanner options `exclude`, `max_file_size`,
 `max_files`, `scan_timeout`, `scan_secrets` and `use_git` are forwarded to
-every repository scan.
+every repository scan. `repos` and `topics` must be lists of non-empty strings,
+and `max_repos` and `clone_depth` whole numbers; anything else (including a bare
+string such as `--set topics=llm`, which would be read as single characters)
+stops the connector with an error that names the option, and the scan exits 3.
+With `--set`, write `a,b` or a JSON list such as `'["a"]'`.
 
 ### `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
@@ -237,7 +241,9 @@ disk quota on the worker.
 Options: `group` (env `GITLAB_GROUP`) or `projects`; `token` (env
 `GITLAB_TOKEN`); `api_url` (env `GITLAB_API_URL`), `mode`, `include_archived`,
 `max_projects`. The same filesystem scanner options as `code.github` are
-forwarded to every project scan.
+forwarded to every project scan. `projects` must be a list of non-empty strings
+(numeric project ids may be written unquoted) and `max_projects` a whole number;
+other values stop the connector with an error that names the option (exit 3).
 
 ## Identity
 

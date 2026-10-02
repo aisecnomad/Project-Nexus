@@ -31,6 +31,9 @@ from shadowscan.connectors.code.remote import (  # noqa: F401 - re-exported for 
     SOURCE_SAMPLE,
     RemoteRepositoryConnector,
     UnusualRepositoryPath,
+    config_integer,
+    config_string_list,
+    config_text,
     remote_record,
     repository_blob_id,
     repository_blob_matches,
@@ -129,14 +132,19 @@ class GitHubConnector(RemoteRepositoryConnector):
         self.token = ctx.get("token", env="GITHUB_TOKEN") or ctx.get("github_token", env="GH_TOKEN")
         self.mode = self._clone_mode(ctx.get("mode", "clone" if shutil.which("git") else "api"))
         self.max_records = self._record_cap(ctx.get("max_repos", 500))
-        self.depth = int(ctx.get("clone_depth", 1))
+        self.depth = config_integer(ctx.get("clone_depth", 1), "clone_depth")
+        if self.depth < 1:
+            raise ConnectorError("code.github: clone_depth must be positive")
         self.clone_max_bytes, self.clone_timeout_seconds = clone_limits(
             ctx.get("clone_max_bytes", 256 * 1024 * 1024),
             ctx.get("clone_timeout_seconds", 120),
         )
         self.include_archived = config_boolean(ctx.get("include_archived", False), "include_archived")
         self.include_forks = config_boolean(ctx.get("include_forks", False), "include_forks")
-        self.topics = set(ctx.get("topics", []) or [])
+        self.topics = set(config_string_list(ctx.get("topics"), "topics"))
+        self.org = config_text(ctx.get("org", env="GITHUB_ORG"), "org")
+        self.user = config_text(ctx.get("user"), "user")
+        self.repos = config_string_list(ctx.get("repos"), "repos")
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -147,9 +155,7 @@ class GitHubConnector(RemoteRepositoryConnector):
         return self._complete_listing(self._enumerate())
 
     def _enumerate(self) -> Iterator[dict[str, Any]]:
-        org = self.ctx.get("org", env="GITHUB_ORG")
-        user = self.ctx.get("user")
-        repos = self.ctx.get("repos") or []
+        org, user, repos = self.org, self.user, self.repos
         if not (org or user or repos):
             raise ConnectorError("code.github: set 'org', 'user' or 'repos'")
         seen: set[str] = set()

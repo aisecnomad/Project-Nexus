@@ -23,6 +23,8 @@ from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code.remote import (
     API_MAX_BLOB_BYTES,
     RemoteRepositoryConnector,
+    config_string_list,
+    config_text,
     remote_record,
     repository_blob_id,
     select_api_paths,
@@ -114,20 +116,22 @@ class GitLabConnector(RemoteRepositoryConnector):
             ctx.get("clone_timeout_seconds", 120),
         )
         self.include_archived = config_boolean(ctx.get("include_archived", False), "include_archived")
+        group = ctx.get("group", env="GITLAB_GROUP")
+        # A group may be named by its numeric id.
+        self.group = config_text(str(group) if _is_project_id(group) else group, "group")
+        self.projects = config_string_list(ctx.get("projects"), "projects", allow_int=True)
         self.http = self._api_client({"PRIVATE-TOKEN": self.token} if self.token else {})
 
     def collect(self) -> Iterable[dict[str, Any]]:
         return self._complete_listing(self._enumerate())
 
     def _enumerate(self) -> Iterator[dict[str, Any]]:
-        group = self.ctx.get("group", env="GITLAB_GROUP")
-        projects = self.ctx.get("projects") or []
+        group, projects = self.group, self.projects
         if not (group or projects):
             raise ConnectorError("code.gitlab: set 'group' or 'projects'")
         seen: set[int] = set()
         requested: set[str] = set()
-        for p in projects:
-            project = str(p)
+        for project in projects:
             if project in requested:
                 continue
             requested.add(project)

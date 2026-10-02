@@ -1057,3 +1057,99 @@ def test_api_snapshot_with_an_lfs_pointer_is_incomplete_coverage(tmp_path, index
     assert connector.ctx.stats.warnings == [
         f"{cls.name}: Git LFS pointer files in acme/app are not resolved; source coverage partial"
     ]
+
+
+# ---------------------------------------------------- option validation
+LIST_OPTIONS = [(GitHubConnector, "topics"), (GitHubConnector, "repos"), (GitLabConnector, "projects")]
+
+
+@pytest.mark.parametrize("cls,key", LIST_OPTIONS)
+@pytest.mark.parametrize(
+    "value",
+    ["llm", "acme/app", "a,b", "", 7, True, {"acme/app": 1}, ["ok", ""], ["ok", "  "], ["ok", None], [["x"]]],
+    ids=lambda v: repr(v),
+)
+def test_list_options_accept_only_a_list_of_non_empty_strings(index, cls, key, value):
+    """`--set topics=llm` became the characters l, l, m: zero repositories examined, scan complete."""
+    with pytest.raises(ConnectorError, match=f"^{key} must be a list of non-empty strings"):
+        cls(ConnectorContext(config={key: value}, index=index))
+
+
+@pytest.mark.parametrize("cls,key", LIST_OPTIONS)
+def test_list_option_errors_name_the_key_not_the_value(index, cls, key):
+    with pytest.raises(ConnectorError) as raised:
+        cls(ConnectorContext(config={key: "synthetic-topic-value-1f3a"}, index=index))
+    assert key in str(raised.value) and "synthetic-topic-value-1f3a" not in str(raised.value)
+
+
+@pytest.mark.parametrize("cls,key", LIST_OPTIONS)
+@pytest.mark.parametrize("value", [None, [], (), ["one"], ("one", "two")])
+def test_list_options_accept_unset_empty_and_real_lists(index, cls, key, value):
+    cls(ConnectorContext(config={key: value}, index=index))
+
+
+def test_topics_filter_uses_whole_topic_names(index):
+    connector = _connector(index, GitHubConnector, topics=["llm", "agents"])
+    assert connector.topics == {"llm", "agents"}
+    assert connector._wanted({"full_name": "acme/app", "topics": ["llm"]})
+    assert not connector._wanted({"full_name": "acme/app", "topics": ["l", "m"]})
+
+
+def test_gitlab_projects_may_name_numeric_ids_and_the_group_a_number(index):
+    connector = _connector(index, GitLabConnector, projects=[42, "acme/app"], group=1234)
+    assert connector.projects == ["42", "acme/app"] and connector.group == "1234"
+
+
+def test_cli_run_with_a_bare_topic_is_incomplete_not_an_empty_clean_scan():
+    from click.testing import CliRunner
+
+    from shadowscan.cli import main
+
+    result = CliRunner().invoke(
+        main, ["run", "code.github", "--set", "org=acme", "--set", "topics=llm", "--format", "json"]
+    )
+    assert result.exit_code == 3
+    assert "topics must be a list of non-empty strings" in result.output
+    assert '"complete": false' in result.output
+
+
+@pytest.mark.parametrize("cls,key", [(GitHubConnector, "max_repos"), (GitLabConnector, "max_projects")])
+@pytest.mark.parametrize("value", [True, False, 2.5, "many", "1e3", [5], {"n": 5}, "", "12345678901"])
+def test_record_caps_must_be_whole_numbers(index, cls, key, value):
+    with pytest.raises(ConnectorError, match=f"^{key} must be a whole number"):
+        cls(ConnectorContext(config={key: value}, index=index))
+
+
+@pytest.mark.parametrize("cls,key", [(GitHubConnector, "max_repos"), (GitLabConnector, "max_projects")])
+@pytest.mark.parametrize("value,expected", [(5, 5), (5.0, 5), ("25", 25), (" 7 ", 7)])
+def test_record_caps_accept_whole_numbers_including_expanded_text(index, cls, key, value, expected):
+    assert cls(ConnectorContext(config={key: value}, index=index)).max_records == expected
+
+
+@pytest.mark.parametrize("value", [0, -1, "-3"])
+def test_record_caps_must_be_positive(index, value):
+    with pytest.raises(ConnectorError, match="max_repos must be positive"):
+        GitHubConnector(ConnectorContext(config={"max_repos": value}, index=index))
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "deep", 0, -2])
+def test_clone_depth_must_be_a_positive_whole_number(index, value):
+    with pytest.raises(ConnectorError, match="clone_depth must be"):
+        GitHubConnector(ConnectorContext(config={"clone_depth": value}, index=index))
+
+
+@pytest.mark.parametrize(
+    "key,cls", [("org", GitHubConnector), ("user", GitHubConnector), ("group", GitLabConnector)]
+)
+@pytest.mark.parametrize("value", [["acme"], {"name": "acme"}, True, 3.5])
+def test_target_names_must_be_text(index, key, cls, value):
+    with pytest.raises(ConnectorError, match=f"^{key} must be a string"):
+        cls(ConnectorContext(config={key: value}, index=index))
+
+
+def test_blank_target_names_are_unset_like_an_empty_variable(index, monkeypatch):
+    monkeypatch.setenv("GITHUB_ORG", "  ")
+    connector = _connector(index, GitHubConnector, user="")
+    assert connector.org is None and connector.user is None
+    with pytest.raises(ConnectorError, match="set 'org', 'user' or 'repos'"):
+        list(connector.collect())
