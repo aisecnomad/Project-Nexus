@@ -137,6 +137,19 @@ def test_text_shape_gaps_are_redacted(text, expected):
     assert _clean(text) == expected
 
 
+@pytest.mark.parametrize("depth", [1, 2, 3])
+@pytest.mark.parametrize("value", [f'ab"cd{SECRET}', f"{SECRET}\\", f'a\\"b{SECRET}', f"x'{SECRET}"])
+def test_escaped_json_values_close_at_their_own_delimiter(value, depth):
+    # A quote inside the value, escaped one level deeper than its delimiter,
+    # ends with a copy of that delimiter. The value closed there and the rest
+    # of it was shown.
+    text = json.dumps({"password": value, "model": 1})
+    for _ in range(depth):
+        text = json.dumps(text)
+    result = _clean(text)
+    assert REDACTED in result and "model" in result
+
+
 _PGP_KEY = f"-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n{SECRET}\n=AbCd\n-----END PGP PRIVATE KEY BLOCK-----"
 
 

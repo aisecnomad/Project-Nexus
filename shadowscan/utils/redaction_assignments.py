@@ -393,19 +393,35 @@ def _redact_plain_assignments(value: str, depth: int = 0) -> str:
 _GLUED_VALUE = _GLUED_SEMICOLON + r"[^;\r\n]*"
 # What the established assignment rules leave of two forms they do not read.
 # Quotes escaped up to eight levels deep (JSON inside a string literal:
-# '\\"api_key\\": \\"v\\"'), where the closing delimiter repeats the opening
-# one exactly, or the value runs to the end of the line; and the rest of an
-# unquoted value after a ';' glued to it, behind the marker that withheld the
-# value's start ('db-password=[REDACTED];cd', 'password: "[REDACTED]";cd').
-# The statement rules read most of the '=' forms first. The established
-# passes write that marker bare after '=' only for an unquoted value; after
-# ': ' they quote it either way.
+# '\\"api_key\\": \\"v\\"'), where the value closes at the opening
+# delimiter's run of backslashes and quote (see _ESCAPED_CLOSER), or runs to
+# the end of the line; and the rest of an unquoted value after a ';' glued to
+# it, behind the marker that withheld the value's start
+# ('db-password=[REDACTED];cd', 'password: "[REDACTED]";cd'). The statement
+# rules read most of the '=' forms first. The established passes write that
+# marker bare after '=' only for an unquoted value; after ': ' they quote it
+# either way.
+#
+# Each level of escaping doubles a backslash and adds one before a quote, so
+# inside a value whose delimiter is k backslashes and a quote, the value's
+# own quote is 2k + 1 of them ('\\\"' for k = 1) and a backslash that
+# ends the value adds 2k + 2 before the closing delimiter. A run of
+# backslashes and that quote closes the value only when the run, read
+# whole, is k plus a multiple of 2k + 2: read as the opener's tail, the
+# value's own quote ended it early and the rest of the value was shown.
+_ESCAPED_CLOSER = r"(?:(?P=run)(?P=run)\\\\)*+(?P=escaped)"
 _ADDED_ASSIGNMENT = re.compile(
-    _ASSIGNMENT_KEY + r"(?P<sep>\\{0,8}[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+"
-    r"|:[ \t]*(?=\\{1,8}[\"']))"
-    r"(?P<value>(?P<escaped>\\{1,8}[\"'])(?:(?!(?P=escaped))[^\r\n])*(?P=escaped)"
-    r"|(?P<unclosed>\\{1,8}[\"'])[^\r\n]*"
-    r"|(?P<glued>\"?\[REDACTED\]\"?(?:" + _GLUED_VALUE + r")+))"
+    _ASSIGNMENT_KEY
+    + r"(?P<sep>\\{0,8}[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+|:[ \t]*(?=\\{1,8}[\"']))"
+    + r"(?P<value>(?P<escaped>(?P<run>\\{1,8})[\"'])"
+    + r"(?:[^\\\r\n]++|\\++(?![\"'])|(?!"
+    + _ESCAPED_CLOSER
+    + r")\\++[\"'])*+"
+    + _ESCAPED_CLOSER
+    + r"|(?P<unclosed>\\{1,8}[\"'])[^\r\n]*"
+    + r"|(?P<glued>\"?\[REDACTED\]\"?(?:"
+    + _GLUED_VALUE
+    + r")+))"
 )
 
 
