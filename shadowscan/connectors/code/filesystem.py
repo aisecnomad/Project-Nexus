@@ -65,7 +65,12 @@ import regex
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.code.catalogs import catalog_metadata, project_catalog_files
+from shadowscan.connectors.code.catalogs import (
+    CATALOG_MIN_SIGNATURES,
+    catalog_metadata,
+    configuration_document,
+    project_catalog_files,
+)
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
 from shadowscan.connectors.code.manifests import (
@@ -569,6 +574,8 @@ class _Project:
     mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
     detection_rules: dict[str, int] = field(default_factory=dict)  # rule-pack format -> files
     detection_rule_files: list[str] = field(default_factory=list)  # the first, in walk order
+    # Data files that declare what a deployment or a job runs with: never catalogs.
+    configuration_files: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -1234,9 +1241,7 @@ class FilesystemConnector(BaseConnector):
         if not skipped:
             return
         named = ", ".join(f"{name} ({count})" for name, count in sorted(skipped.items()))
-        paths = self.ctx.get("paths")
-        several = (isinstance(paths, list) and len(paths) > 1) or self.ctx.get("_shared_label_roots") is True
-        where = f"{scan.label}: " if several else ""
+        where = self._root_prefix(scan.label)
         self.ctx.warn(
             f"code.filesystem: {where}default-excluded directories not scanned: {named}; "
             "set default_excludes: false to scan them",
@@ -2104,10 +2109,15 @@ class FilesystemConnector(BaseConnector):
         elif not is_nonexecutable:
             self._scan_config(scan, file, content_text)
         if not is_nonexecutable and not file.is_mcp:
-            for m in self.index.match_envs_in_text(content_text):
+            variables = self.index.match_envs_in_text(content_text)
+            for m in variables:
                 self._record_content(file, m, self._file_excerpt(file, m.line))
             for m in self.index.match_domains_in_text(content_text):
                 self._record_content(file, m, self._file_excerpt(file, m.line))
+            # A deployment or CI document is configuration however many products it names.
+            parsed = None if file.structure is _NO_STRUCTURE else file.structure
+            if configuration_document(file.rel, content_text, parsed, {m.value for m in variables}):
+                file.proj.configuration_files.add(file.rel)
 
     def _scan_source(self, root: Path, file: _SourceFile, content_text: str) -> None:
         """Match the imports, code patterns and import-bound calls of a source file."""
@@ -2739,34 +2749,75 @@ class FilesystemConnector(BaseConnector):
         proj: _Project,
         covered_files: frozenset[str] = frozenset(),
     ) -> Iterator[Finding]:
-        observations = self._project_observations(proj)
-        # Anchors establish LLM / agent technology on their own. A credential
-        # alone is already a SECRET finding, evidence that an MCP, manifest,
-        # workflow or IaC finding already reports is not a project anchor, and
-        # a vendor-neutral heuristic alone (a retry loop, subprocess.run)
-        # describes ordinary automation.
-        if any(
-            m.signature.category != "heuristic" and rel not in covered_files and m.signal.type != "secret"
-            for m, rel, _ in observations
-        ):
+        catalogs = project_catalog_files(proj, proj.configuration_files)
+        observations = self._project_observations(proj, catalogs)
+        # Evidence held back only because it sits in a catalog is listed in the
+        # project finding (catalog_mentions) or, without one, in a scan note.
+        reported = self._anchored(observations, covered_files)
+        if reported:
             yield self._project_finding(label, root, proj, observations)
-        catalogs = project_catalog_files(proj) if proj.coding_agent_files else frozenset()
+        discounted = (
+            bool(catalogs)
+            and not reported
+            and self._anchored(self._project_observations(proj, frozenset()), covered_files)
+        )
         for sig_id, files in proj.coding_agent_files.items():
             # Env-name and display-name mentions (GOOSE_PROVIDER in a detector
             # matrix, "GitHub Copilot" in an SDK adapter) are not configuration.
             # Config files, instruction docs, dependencies and code such as a
             # workflow step or a YOLO-mode flag still establish the agent. A
             # catalog (an allowlist of vendor hosts) establishes none.
-            if not any(
-                (m.signal.type not in _MENTION_SIGNALS or _is_coding_agent_doc(PurePosixPath(rel).name))
-                and rel not in catalogs
+            establishing = [
+                rel
                 for m, rel, _ in proj.coding_agent_matches.get(sig_id, [])
-            ):
+                if m.signal.type not in _MENTION_SIGNALS or _is_coding_agent_doc(PurePosixPath(rel).name)
+            ]
+            if all(rel in catalogs for rel in establishing):
+                discounted = discounted or (bool(establishing) and not reported)
                 continue
             yield self._coding_agent_finding(label, root, proj, sig_id, files)
+        if discounted:
+            self._note_discounted_catalogs(label, proj, catalogs)
 
     @staticmethod
-    def _project_observations(proj: _Project) -> list[_Observation]:
+    def _anchored(observations: list[_Observation], covered_files: frozenset[str]) -> bool:
+        """Whether ``observations`` establish a project finding.
+
+        Anchors establish LLM / agent technology on their own. A credential
+        alone is already a SECRET finding, evidence that an MCP, manifest,
+        workflow or IaC finding already reports is not a project anchor, and
+        a vendor-neutral heuristic alone (a retry loop, subprocess.run)
+        describes ordinary automation.
+        """
+        return any(
+            m.signature.category != "heuristic" and rel not in covered_files and m.signal.type != "secret"
+            for m, rel, _ in observations
+        )
+
+    def _note_discounted_catalogs(self, label: str, proj: _Project, catalogs: frozenset[str]) -> None:
+        """Name the catalogs that held evidence a project finding would have listed; never drop it silently.
+
+        A shape cannot tell every configuration from a list, so the files are named
+        for review. A note, not a coverage gap: every file was read and matched.
+        """
+        listed = sorted(catalogs)
+        names = ", ".join(listed[:5]) + (f" and {len(listed) - 5} more" if len(listed) > 5 else "")
+        where = "repository root" if proj.root == "." else proj.root
+        self.ctx.warn(
+            f"code.filesystem: {self._root_prefix(label)}{where}: evidence not reported because it is only "
+            f"in catalog-like data files that name {CATALOG_MIN_SIGNATURES} or more products, which nothing "
+            f"else in the project uses: {names}; review them if they configure a deployment",
+            incomplete=False,
+        )
+
+    def _root_prefix(self, label: str) -> str:
+        """Name the scan root in a diagnostic only when this connector scans several roots."""
+        paths = self.ctx.get("paths")
+        several = (isinstance(paths, list) and len(paths) > 1) or self.ctx.get("_shared_label_roots") is True
+        return f"{label}: " if several else ""
+
+    @staticmethod
+    def _project_observations(proj: _Project, catalogs: frozenset[str]) -> list[_Observation]:
         """Return a project's technology evidence without policy, catalog or ambiguous-only matches."""
         observations = [
             (m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}
@@ -2783,7 +2834,6 @@ class FilesystemConnector(BaseConnector):
         # A catalog (a blocklist, a vendor policy, a copy of the signature
         # packs) names many products and uses none, so its mentions are held
         # to the same rule (see shadowscan.connectors.code.catalogs).
-        catalogs = project_catalog_files(proj)
         return [
             t
             for t in observations
@@ -2810,7 +2860,7 @@ class FilesystemConnector(BaseConnector):
             f.add_tag("env-names-only")
         self._attach_example_credentials(f, proj)
         self._attach_project_metadata(f, root, proj, evidence)
-        catalogs = project_catalog_files(proj)
+        catalogs = project_catalog_files(proj, proj.configuration_files)
         if catalogs:
             f.metadata["catalog_mentions"] = catalog_metadata(catalogs)
         if evidence.test_only:

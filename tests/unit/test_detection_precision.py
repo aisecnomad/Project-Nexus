@@ -539,6 +539,83 @@ def test_helm_values_next_to_sdk_dependencies_are_still_usage(tmp_path: Path, ru
     assert "catalog_mentions" not in project.metadata
 
 
+# Deployment and CI documents declare what a service or a job runs with. A
+# GitOps repository of manifests, or a pipeline that hands four provider keys to
+# an evaluation job, used to report nothing at all as a "catalog".
+K8S_DEPLOYMENT = (
+    "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: support-bot\nspec:\n  template:\n"
+    "    spec:\n      containers:\n        - name: bot\n"
+    "          image: registry.example.com/acme/support-bot:1.4.2\n          env:\n"
+    + "".join(
+        f"            - name: {name}\n              valueFrom: {{secretKeyRef: {{name: llm, key: k{number}}}}}\n"
+        for number, name in enumerate(PROVIDER_ENV_NAMES[:4])
+    )
+)
+GITLAB_CI = (
+    "llm-eval:\n  image: python:3.12\n  variables:\n"
+    + "".join(f"    {name}: ${name}\n" for name in PROVIDER_ENV_NAMES[:4])
+    + "  script:\n    - python eval/run.py\n"
+)
+ECS_TASK = json.dumps(
+    {
+        "family": "support-bot",
+        "containerDefinitions": [
+            {
+                "name": "bot",
+                "image": "registry.example.com/acme/support-bot:1.4.2",
+                "secrets": [
+                    {"name": name, "valueFrom": f"arn:aws:ssm:::{name}"} for name in PROVIDER_ENV_NAMES[:4]
+                ],
+            }
+        ],
+    }
+)
+SERVICE_ENVIRONMENT = "service:\n  name: support-bot\n  environment:\n" + "".join(
+    f"    {name}: ${{{name}}}\n" for name in PROVIDER_ENV_NAMES[:4]
+)
+
+
+@pytest.mark.parametrize(
+    "rel,text",
+    [
+        ("k8s/deployment.yaml", K8S_DEPLOYMENT),
+        ("k8s/all.yaml", K8S_DEPLOYMENT + "---\napiVersion: v1\nkind: Service\nmetadata:\n  name: bot\n"),
+        (".gitlab-ci.yml", GITLAB_CI),
+        ("ci/azure-pipelines.yml", GITLAB_CI),
+        (".circleci/config.yml", GITLAB_CI),
+        ("ecs/task-definition.json", ECS_TASK),
+        ("config/service.yaml", SERVICE_ENVIRONMENT),
+    ],
+    ids=["kubernetes", "kubernetes-stream", "gitlab-ci", "azure-pipelines", "circleci", "ecs", "environment"],
+)
+def test_deployment_and_ci_configuration_is_not_a_catalog(tmp_path: Path, run_connector, rel, text):
+    _write_tree(tmp_path, {rel: text})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    project = _project(findings)
+    assert project is not None and len(project.model_providers) == 4
+    assert "catalog_mentions" not in project.metadata
+
+
+def test_a_projects_only_evidence_is_never_discounted_silently(tmp_path: Path, run_connector):
+    # Four providers configured by base URL cannot be told from a vendor list by
+    # their shape; when such files are all a project has, the scan says so.
+    routing = "providers:\n" + "".join(
+        f"  {name}:\n    base_url: https://{host}/v1\n    api_key_env: {env}\n"
+        for name, host, env in VENDOR_POLICY[:4]
+    )
+    _write_tree(tmp_path, {"config/llm.yaml": routing, "network/ai-domain-blocklist.yaml": BLOCKLIST_YAML})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert findings == [] and not ctx.stats.errors and not ctx.stats.incomplete
+    notes = [w for w in ctx.stats.warnings if "catalog" in w]
+    assert len(notes) == 1
+    assert "config/llm.yaml" in notes[0] and "network/ai-domain-blocklist.yaml" in notes[0]
+    # With library evidence the project finding is reported and lists the catalogs itself.
+    (tmp_path / "requirements.txt").write_text("openai>=1.0\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert _project(findings) is not None and not [w for w in ctx.stats.warnings if "catalog" in w]
+
+
 # ------------------------------------------------------ heuristics alone
 def test_vendor_neutral_heuristics_alone_are_not_an_agent(tmp_path: Path, run_connector):
     (tmp_path / "deploy.py").write_text(HEURISTIC_ONLY_SOURCE)

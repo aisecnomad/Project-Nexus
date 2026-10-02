@@ -11,6 +11,7 @@ from shadowscan.connectors.code.catalogs import (
     MAX_CATALOG_FILES,
     catalog_files,
     catalog_metadata,
+    configuration_document,
     project_catalog_files,
 )
 from shadowscan.signatures import Match, Signal, Signature
@@ -112,6 +113,105 @@ def test_source_code_that_lists_providers_is_multi_provider_code(rel):
 )
 def test_manifests_declare_the_environment_they_do_not_list_it(rel):
     assert catalog_files(products(rel, 8, "env")) == frozenset()
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".gitlab-ci.yml",
+        "ci/.gitlab-ci.yaml",
+        ".gitlab/ci/eval.yml",
+        "azure-pipelines.yml",
+        "build/azure-pipelines.yaml",
+        "bitbucket-pipelines.yml",
+        ".circleci/config.yml",
+        ".buildkite/pipeline.yml",
+        "buildspec.yml",
+        ".travis.yml",
+        ".drone.yml",
+        "src/main/resources/application.yml",
+        "src/main/resources/application-prod.yaml",
+        "config/application.properties",
+        "src/main/resources/bootstrap.yml",
+    ],
+)
+def test_ci_pipelines_and_service_configuration_are_never_catalogs(rel):
+    # A pipeline or a Spring profile hands variables and endpoints to what it runs.
+    assert catalog_files(products(rel, 8, "env")) == frozenset()
+
+
+def test_a_configuration_document_is_never_a_catalog():
+    observations = [*products("k8s/deployment.yaml", 6, "env"), *products("net/blocklist.yaml", 5)]
+    assert catalog_files(observations) == {"k8s/deployment.yaml", "net/blocklist.yaml"}
+    assert catalog_files(observations, configuration={"k8s/deployment.yaml"}) == {"net/blocklist.yaml"}
+    # Configuration also counts as evidence beside small mention-only data files.
+    small = mention("identity/policies.yaml", "domain", 20)
+    assert catalog_files([*observations, small], configuration={"k8s/deployment.yaml"}) == {
+        "net/blocklist.yaml"
+    }
+
+
+KUBERNETES_STREAM = (
+    "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: llm\ndata:\n"
+    "  OPENAI_BASE_URL: https://api.openai.com/v1\n---\napiVersion: v1\nkind: Service\n"
+)
+
+
+@pytest.mark.parametrize(
+    "rel,text,parsed,names",
+    [
+        ("k8s/configmap.yaml", KUBERNETES_STREAM, None, set()),
+        ("k8s/pod.json", "{}", {"apiVersion": "v1", "kind": "Pod", "spec": {}}, set()),
+        ("ecs/task.json", "{}", {"family": "bot", "containerDefinitions": []}, set()),
+        ("ecs/describe.json", "{}", {"taskDefinition": {"containerDefinitions": []}}, set()),
+        (
+            "deploy/service.json",
+            "{}",
+            {"containers": [{"env": [{"name": "OPENAI_API_KEY", "value": ""}]}]},
+            {"OPENAI_API_KEY"},
+        ),
+        ("deploy/job.yaml", "", {"job": {"Environment": {"OPENAI_API_KEY": "x"}}}, {"OPENAI_API_KEY"}),
+        ("deploy/job.yaml", "", {"job": {"variables": {"OPENAI_API_KEY": "x"}}}, {"OPENAI_API_KEY"}),
+        ("deploy/render.yaml", "", {"services": [{"envVars": [{"key": "GROQ_API_KEY"}]}]}, {"GROQ_API_KEY"}),
+        ("deploy/run.yaml", "", {"env": ["OPENAI_API_KEY=${OPENAI_API_KEY}"]}, {"OPENAI_API_KEY"}),
+    ],
+    ids=[
+        "kubernetes-stream",
+        "kubernetes-json",
+        "ecs",
+        "ecs-describe",
+        "env-list",
+        "environment",
+        "variables",
+        "env-vars",
+        "env-strings",
+    ],
+)
+def test_configuration_documents_are_recognized(rel, text, parsed, names):
+    assert configuration_document(rel, text, parsed, names)
+
+
+@pytest.mark.parametrize(
+    "rel,text,parsed,names",
+    [
+        # A vendor policy names each product's variable as a value, not as configuration.
+        (
+            "governance/vendors.yaml",
+            "",
+            {"vendors": [{"name": "OpenAI", "host": "api.openai.com", "key_env": "OPENAI_API_KEY"}]},
+            {"OPENAI_API_KEY"},
+        ),
+        ("net/blocklist.yaml", "blocked:\n  - api.openai.com\n", {"blocked": ["api.openai.com"]}, set()),
+        # The variable a file configures must be one it names, and a key in prose is not a resource.
+        ("deploy/job.yaml", "", {"env": {"PATH": "/bin"}}, {"OPENAI_API_KEY"}),
+        ("docs/kinds.yaml", "notes: |\n  apiVersion: v1\n  kind: Pod\n", None, set()),
+        # Source code and manifests are never catalogs, so they need no exemption.
+        ("app/settings.py", "", {"env": {"OPENAI_API_KEY": ""}}, {"OPENAI_API_KEY"}),
+    ],
+    ids=["vendor-policy", "blocklist", "other-variable", "indented-keys", "source"],
+)
+def test_lists_are_not_configuration_documents(rel, text, parsed, names):
+    assert not configuration_document(rel, text, parsed, names)
 
 
 @pytest.mark.parametrize(

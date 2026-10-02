@@ -90,6 +90,18 @@ integrating them:
   characters); anything else is skipped with a warning and the scan is
   incomplete. Listed subscriptions without a string id used to be dropped
   silently and are now counted in that warning.
+- `code.filesystem`: the catalog rule no longer discounts deployment and CI
+  configuration. A Kubernetes-style resource (`apiVersion` and `kind`, also in
+  a multi-document stream), an ECS task definition, a CI pipeline
+  (`.gitlab-ci.yml`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`,
+  `.circleci/`, `.buildkite/`, `buildspec.yml` and others), Spring
+  `application*`/`bootstrap*` configuration, and any data file that assigns a
+  variable it names under an `env`, `environment`, `variables` or `secrets` key
+  are configuration however many products they name. A Deployment injecting
+  four provider keys, or a pipeline handing them to a job, used to give no
+  finding and a complete scan. When a project's only evidence is in
+  catalog-like files, a scan note (a warning that does not make the scan
+  incomplete) names them instead of dropping it silently.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

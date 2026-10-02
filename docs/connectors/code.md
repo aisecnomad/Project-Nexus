@@ -50,13 +50,22 @@ uses what they name. A project finding that remains lists the discounted files
 under `metadata.catalog_mentions` (`files`, at most 20, and `min_signatures`).
 Source code that lists providers is multi-provider code, and files that declare
 what a project builds or runs with (dotenv files, Compose files, Helm
-`values.yaml`, CI workflows, dependency manifests, IaC) are never catalogs; a
-data file naming one to three products is configuration. The threshold of four is
-a judgement from the bundled corpora and fixtures: their multi-provider
-configurations name at most four products and are dotenv files, while blocklists
-and vendor policies name six to ten and the signature packs seven to
-thirty-six per file. A real routing table kept in a plain data file that names
-four or more providers, with no other evidence, is therefore not reported.
+`values.yaml`, CI pipelines such as GitHub workflows, `.gitlab-ci.yml`,
+`azure-pipelines.yml`, `bitbucket-pipelines.yml`, `.circleci/` and
+`.buildkite/`, Spring `application*` and `bootstrap*` configuration, dependency
+manifests, IaC) are never catalogs. Neither is a configuration document: a
+Kubernetes-style resource (`apiVersion` and `kind`, also in a multi-document
+stream), an ECS task definition, or a data file that assigns a variable it
+names under an `env`, `environment`, `variables` or `secrets` key (as a key, or
+as the `name` or `key` of an item). A data file naming one to three products is
+configuration. The threshold of four is a judgement from the bundled corpora and
+fixtures: their multi-provider configurations name at most four products and are
+dotenv files, while blocklists and vendor policies name six to ten and the
+signature packs seven to thirty-six per file. A real routing table kept in a
+plain data file that names four or more providers by base URL, with no other
+evidence, therefore yields no finding; whenever a project's only evidence is in
+catalogs, the scan names those files in a note (a warning that does not make the
+scan incomplete) so the discount is never silent.
 
 Ordinary Spring `ChatClient` and LangChain4j `AiServices` construction, and
 standalone Java tool declarations, remain framework usage. Recognized explicit

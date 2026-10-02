@@ -682,6 +682,20 @@ Graph resource whose id is not a plain ARM path, is skipped with a warning and
 the scan is incomplete. ARM does not return such identifiers; a scan that
 reports one points at a proxy or a response that should be investigated.
 Configured `subscriptions` keep their existing validation.
+### October 2 code connector review fixes
+
+Re-run code scans before updating baselines. Kubernetes manifests, ECS task
+definitions, CI pipelines and other files that assign provider variables to a
+service or job are configuration again: repositories that reported nothing
+because such a file named four or more products now report LLM usage. A data
+file that only lists products is still discounted; when a project's only
+evidence is in such files, the scan adds a note (a warning that does not make
+the scan incomplete) naming them. Review the named files: a provider routing
+file that configures four or more providers by base URL cannot be told from a
+vendor list by its shape.
+
+These fixes come from an AI-assisted review and have offline regression tests
+only; they are not independent human review or field precision evidence.
 
 ### October 2 production review migration
 
