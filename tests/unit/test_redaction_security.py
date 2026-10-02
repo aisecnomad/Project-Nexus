@@ -114,6 +114,42 @@ def test_gcp_api_key_string_never_reaches_report_or_record_dump(tmp_path, index)
     assert secret not in result.to_json() and secret not in dump_files[0].read_text()
 
 
+def test_generic_saas_record_dump_withholds_fields_named_for_a_credential_by_their_words(tmp_path, index):
+    names = [
+        "webhook_secret",
+        "signing_secret",
+        "bot_token",
+        "slack_token",
+        "npm_token",
+        "client_key",
+        "consumer_secret",
+        "openai_key",
+        "authorization_token",
+        "verification_token",
+        "pwd",
+        "passphrase",
+        "db_pass",
+        "security_token",
+        "jwtSecret",
+        "access_secret",
+    ]
+    secrets = {name: f"synthetic-{name}-value-0123456789" for name in names}
+    export = tmp_path / "apps.jsonl"
+    record = {"id": "app-1", "name": "Slack bot", "users": 4, "next_token": "page-2"}
+    export.write_text(json.dumps({**record, **secrets}) + "\n")
+    dumped = tmp_path / "dumped"
+    config = ScanConfig(
+        connectors=[ConnectorSpec("saas.generic", {"input": str(export)})], dump_records=str(dumped)
+    )
+    result = Engine(config, index).run()
+    assert result.complete
+    (dump_file,) = dumped.glob("*.jsonl")
+    row = json.loads(dump_file.read_text())
+    assert {name: row[name] for name in names} == dict.fromkeys(names, REDACTED)
+    assert {key: row[key] for key in record} == record
+    assert not any(secret in dump_file.read_text() for secret in secrets.values())
+
+
 @pytest.mark.parametrize(
     "value",
     [

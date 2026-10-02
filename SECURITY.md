@@ -150,9 +150,19 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   pass to the sanitizer read their name as a setting too, in either field
   order (`{"name": "OpenAI:Secret", "value": "..."}`, and an opaque value under
   `OpenAIKey`); an environment-style name there (`PAGE_TOKEN`) withholds only
-  an opaque value. The rules added for settings, options, numbered names and
-  YAML values run after the earlier rules, on their output, so they only
-  withhold more.
+  an opaque value. The fields of structured records (including every record
+  of `--dump-records`) are withheld by name and by the words of the name: the
+  last word, ignoring digits, is `secret`, `token`, `password`, `passwd`,
+  `pwd`, `passphrase`, `pass`, `credential(s)`, `cookie` or `bearer`
+  (`webhook_secret`, `bot_token`, `jwtSecret`, `db_pass`), or is `key` after
+  `api`, `access`, `secret`, `private`, `signing`, `client`, `license`,
+  `encryption`, `master`, `auth`, a provider such as `openai` or similar
+  (`client_key`, `openai_key`). Cursors (`next_token`, `page_token`,
+  `skipToken`), tokenizer tokens (`eos_token`), switches (`requires_auth`,
+  `has_secret`), the bare `key` of tags and S3 objects, `sort_key`,
+  `partition_key` and `cache_key` stay. The rules added for settings, options,
+  numbered names and YAML values run after the earlier rules, on their
+  output, so they only withhold more.
 * Redaction cannot withhold a credential that nothing names or shapes as one,
   so treat reports as confidential. These forms can remain: an unprefixed
   literal passed to an ordinary function or nested in another call inside a
@@ -183,7 +193,9 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   with a sensitive name (`token == hunter2`), a literal written before the
   operator (`"..." == token`) or compared with a subscript
   (`headers["token"] == "..."`); a readable value glued to the colon of a
-  sensitive name (`password:hunter2`); a name/value
+  sensitive name (`password:hunter2`); a field of a structured record whose
+  name does not end in a credential word as above (`OpenAIKey`, `key1`, a
+  bare `auth` or `pass`) and holds a value that looks like no credential; a name/value
   record in text whose value field comes before its name
   (`{"value": "...", "name": "Password"}`, `- value: ...` above
   `name: DB_PASSWORD`); the part of a quoted record value after a `}` inside

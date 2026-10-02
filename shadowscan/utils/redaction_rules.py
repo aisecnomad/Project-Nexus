@@ -96,7 +96,65 @@ class SanitizationLimitError(ValueError):
     """Evidence cannot be safely sanitized within the work/output budget."""
 
 
-def _sensitive_key(key: str) -> bool:
+# A record key is also sensitive by its words ('webhook_secret', 'botToken', 'jwtSecret',
+# 'db_pass', 'client_key'): the last word names a credential, or is 'key' after a word that
+# makes it one. The bare suffixes 'key' and 'token' stay out of the whole-name rules above
+# because connectors need S3 object keys, tag 'Key' members and pagination tokens.
+_CREDENTIAL_WORDS = frozenset(
+    {"secret", "token", "password", "passwd", "pwd", "passphrase", "pass", "credential", "credentials"}
+    | {"cookie", "bearer", "apikey"}
+)
+_KEY_QUALIFIERS = frozenset(
+    {"api", "access", "secret", "private", "signing", "client", "license", "licence", "encryption"}
+    | {"decryption", "master", "auth", "authorization", "bearer", "service", "session", "shared"}
+    | {"subscription", "account", "admin", "root", "app", "application", "functions", "function"}
+    | {"openai", "anthropic", "claude", "gemini", "cohere", "mistral", "groq", "huggingface", "hf"}
+    | {"azure", "aws", "gcp", "litellm", "stripe", "twilio", "sendgrid", "github", "gitlab", "slack"}
+)
+# Words before a credential word that make it something else: a cursor ('next_token',
+# 'skipToken'), a tokenizer's special token ('eos_token'), a cancellation token, or a
+# switch ('requires_secret', 'use_token').
+_NOT_CREDENTIAL_QUALIFIERS = frozenset(
+    {"next", "page", "continuation", "pagination", "sync", "delta", "cursor", "skip", "resume"}
+    | {"previous", "prev", "cancellation", "eos", "bos", "pad", "unk", "sep", "cls", "mask", "stop"}
+    | {"special", "separator", "start", "end"}
+    | {"has", "have", "is", "use", "uses", "using", "enable", "enabled", "disable", "disabled"}
+    | {"require", "requires", "required", "no", "without", "with", "need", "needs", "allow"}
+    | {"allows", "show", "hide", "check", "masked", "redact", "redacted", "rotate"}
+)
+# Names that stay visible as a whole, for the record: cursors and the bare 'key'.
+_NON_SECRET_KEYS = frozenset(
+    {"nexttoken", "nextpagetoken", "pagetoken", "continuationtoken", "paginationtoken", "synctoken"}
+    | {"deltatoken", "skiptoken", "cursortoken", "key", "sortkey", "partitionkey", "cachekey", "kid"}
+)
+_CREDENTIAL_WORD_SUFFIXES = ("secret", "token", "pwd", "passphrase", "pass", "cookie", "bearer", "key")
+
+
+def _credential_key_words(key: str) -> bool:
+    """Whether the words of ``key`` name a credential (see ``_CREDENTIAL_WORDS``)."""
+    words = [word.lower() for word in _CALLEE_WORD.findall(key)]
+    while words and words[-1].isdigit():
+        words.pop()  # 'password2', 'secret_2'
+    if not words:
+        return False
+    last, before = words[-1], words[-2] if len(words) > 1 else ""
+    if before in _NOT_CREDENTIAL_QUALIFIERS:
+        return False
+    if last == "key":
+        # 'OpenAIKey' and 'AzureOpenAI:Key' are not matched (words 'AI', 'Key'): they name a
+        # setting whose value counts only when it looks like a key (see ``_setting_level``).
+        return before in _KEY_QUALIFIERS
+    # A key named just 'pass' is more often a test result than a password.
+    return last in _CREDENTIAL_WORDS and (last != "pass" or len(words) > 1)
+
+
+def _sensitive_name(key: str) -> bool:
+    """Whether the whole name ``key`` is a credential's: one of a few names, or a compound suffix.
+
+    Text assignments and the names of settings and name/value records read names this
+    way (and, in text, by ``_ASSIGNMENT_CREDENTIAL_NAME``). A name whose last word only
+    names a credential ('OpenAIKey', 'AzureOpenAI:Key') is read by ``_setting_level``.
+    """
     normalized = _KEY_NORMALISE.sub("", key.lower())
     # This runs for every key of every sanitized record. ``str.endswith`` with
     # a tuple compares the suffixes in C; a Python loop over length-bucketed
@@ -104,9 +162,23 @@ def _sensitive_key(key: str) -> bool:
     return normalized in _SENSITIVE_NAMES or normalized.endswith(_SENSITIVE_SUFFIXES)
 
 
+def _sensitive_key(key: str) -> bool:
+    """Whether the field ``key`` of a structured record holds a credential, by its name or its words."""
+    if _sensitive_name(key):
+        return True
+    # Splitting a key into words is left to the keys that end like a credential word
+    # (ignoring the digits that number it).
+    stem = _KEY_NORMALISE.sub("", key.lower()).rstrip("0123456789")
+    return (
+        stem.endswith(_CREDENTIAL_WORD_SUFFIXES)
+        and stem not in _NON_SECRET_KEYS
+        and _credential_key_words(key)
+    )
+
+
 def _sensitive_assignment_key(key: str) -> bool:
     """Sensitive-key test for assignments and mapping entries inside text."""
-    return _sensitive_key(key) or _ASSIGNMENT_CREDENTIAL_NAME.fullmatch(key.strip()) is not None
+    return _sensitive_name(key) or _ASSIGNMENT_CREDENTIAL_NAME.fullmatch(key.strip()) is not None
 
 
 def _redact_value(value: Any) -> Any:
@@ -246,7 +318,7 @@ def _setting_level(name: str, *, record: bool = False) -> int:
     environment-style name ('PAGE_TOKEN', 'SORT_KEY') is too broad to
     withhold any value (see _ASSIGNMENT_CREDENTIAL_NAME) and counts as 1.
     """
-    sensitive = _sensitive_key if record else _sensitive_assignment_key
+    sensitive = _sensitive_name if record else _sensitive_assignment_key
     last = _SETTING_SEGMENT.split(name)[-1]
     if sensitive(name) or (last != name and sensitive(last)):
         return 2

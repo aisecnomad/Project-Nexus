@@ -78,6 +78,7 @@ from shadowscan.utils.redaction_rules import (
     _redact_value,
     _sensitive_assignment_key,
     _sensitive_key,
+    _sensitive_name,
     _setting_level,
     _setting_value_withheld,
 )
@@ -209,7 +210,7 @@ def _record_has_secret_value(item: Mapping, *, environment: bool = False, extend
     if not isinstance(name, str):
         return False
     if not extended:
-        return _sensitive_assignment_key(name) if environment else _sensitive_key(name)
+        return _sensitive_assignment_key(name) if environment else _sensitive_name(name)
     level = _setting_level(name, record=not environment)
     return _setting_value_withheld(level, item.get("value") or item.get("Value")) if level else False
 
