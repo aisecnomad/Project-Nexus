@@ -25,6 +25,13 @@ before relying on enforcement. The ruleset has no configured bypass actors,
 but it only blocks anything while it is enabled. Do not weaken it, bypass
 review or checks, or count a green workflow as an independent review.
 
+The [merge-protection procedure](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/merge-protection.md) includes
+a reviewed desired ruleset and a read-only verifier for downloaded settings.
+The desired policy adds the aggregate `CI gate` while retaining CodeQL and the
+existing required checks. Neither a checked-in definition nor a passing local
+verification proves live enforcement; an authorized administrator must apply
+the reviewed change and retain fresh effective-rule readbacks.
+
 ## Roles
 
 | Role | Responsibilities | Current holders |

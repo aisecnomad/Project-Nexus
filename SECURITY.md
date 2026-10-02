@@ -21,6 +21,11 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
 
 ## Implemented controls and limits
 
+* Recognized source and manifest inputs accept UTF-8 and BOM-encoded UTF-16/32.
+  Unsupported or malformed encodings and binary/NUL-bearing analyzed files
+  leave coverage incomplete. Ordinary binary assets are not text evidence.
+  IAM wildcard and agent-definition front-matter matching shares the bounded
+  matcher budget; keep an external worker/job deadline for hard isolation.
 * Shared `HttpClient` requests require HTTPS without embedded credentials.
   Redirects and pagination stay on the configured origin. By default, private,
   loopback, link-local, metadata and other non-global addresses are rejected.

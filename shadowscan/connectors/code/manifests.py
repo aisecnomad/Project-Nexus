@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import tomllib
 import xml.etree.ElementTree as ET
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from functools import partial
@@ -155,6 +155,18 @@ def parse_requirements(text: str) -> ManifestResult:
             line = line.split(None, 1)[1].strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
+        if "@" in line:
+            # A named PEP 508 reference owns its identity even when the URL's
+            # distribution filename or repository basename is different.
+            name = line.split("@", 1)[0].strip()
+            if re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]*(\[[^\]]*\])?",
+                name,
+                timeout=_pattern_timeout(),
+                concurrent=False,
+            ):
+                res.deps.append(Dep("pypi", name.split("[", 1)[0], line, i))
+                continue
         if line.startswith(("http://", "https://", "git+", "ssh://", "git://")) or "://" in line:
             # The fragment is part of a VCS requirement, not a comment.
             egg = re.search(
@@ -171,17 +183,6 @@ def parse_requirements(text: str) -> ManifestResult:
                 res.deps.append(Dep("pypi", m.group(1), line, i))
             continue
         line = line.split("#", 1)[0].strip()
-        if "@" in line and not line.startswith("-e"):
-            # PEP 508 direct reference: name @ url
-            name = line.split("@", 1)[0].strip()
-            if re.fullmatch(
-                r"[A-Za-z0-9][A-Za-z0-9._-]*(\[[^\]]*\])?",
-                name,
-                timeout=_pattern_timeout(),
-                concurrent=False,
-            ):
-                res.deps.append(Dep("pypi", name.split("[", 1)[0], line, i))
-                continue
         m = _REQ_LINE.match(line, timeout=_pattern_timeout(), concurrent=False)
         if m:
             res.deps.append(Dep("pypi", m.group(1), (m.group(3) or "").strip() or None, i))
@@ -446,14 +447,155 @@ _GRADLE_PLATFORM = re.compile(
 )
 
 
-def parse_gradle(text: str) -> ManifestResult:
+def _gradle_slashy_start(text: str, position: int) -> bool:
+    """Recognize a Groovy slashy literal where an expression can begin."""
+    before = position - 1
+    while before >= 0 and text[before].isspace():
+        before -= 1
+    if before < 0 or text[before] in "=([{,:!~?":
+        return True
+    end = before + 1
+    while before >= 0 and (text[before].isalnum() or text[before] == "_"):
+        before -= 1
+    return text[before + 1 : end] in {"return", "case", "assert"}
+
+
+def _mask_manifest_comments(
+    text: str, *, shell: bool = False, kotlin: bool = False
+) -> tuple[str, list[tuple[int, int]], bool]:
+    """Mask comments without moving offsets or interpreting quoted markers.
+
+    Gradle accepts Java-style comments and quoted/triple-quoted strings. Kotlin
+    additionally permits nested block comments. Docker shell comments begin at
+    a word boundary; URL fragments and quoted/escaped hashes stay literal.
+    The returned inert spans also keep Gradle example strings from becoming
+    dependency declarations. This is a bounded lexical filter, not execution.
+    """
+    masked = list(text)
+    ignored: list[tuple[int, int]] = []
+    incomplete = False
+    i, size, next_check = 0, len(text), 0
+
+    def check_budget(position: int) -> None:
+        nonlocal next_check
+        if position >= next_check:
+            _pattern_timeout()
+            next_check = position + 4096
+
+    def mask(start: int, end: int) -> None:
+        ignored.append((start, end))
+        for position in range(start, end):
+            if text[position] not in "\r\n":
+                masked[position] = " "
+
+    while i < size:
+        check_budget(i)
+        start = i
+        char = text[i]
+        if shell and char == "\\":
+            i += 2
+        elif (
+            not shell
+            and not kotlin
+            and char == "/"
+            and not text.startswith(("//", "/*"), i)
+            and _gradle_slashy_start(text, i)
+        ):
+            i += 1
+            while i < size and text[i] != "/":
+                check_budget(i)
+                i += 2 if text.startswith("\\/", i) else 1
+            closed = i < size
+            i = min(size, i + 1) if closed else size
+            ignored.append((start, i))
+            incomplete = incomplete or not closed
+        elif not shell and text.startswith("$/", i):
+            # Groovy dollar-slashy strings use '$' to escape '$' and '/'.
+            i += 2
+            while i < size and not text.startswith("/$", i):
+                check_budget(i)
+                i += 2 if text[i] == "$" and text[i + 1 : i + 2] in {"$", "/"} else 1
+            closed = i < size
+            i = min(size, i + 2) if closed else size
+            ignored.append((start, i))
+            incomplete = incomplete or not closed
+        elif char in "\"'":
+            delimiter = char * 3 if not shell and text.startswith(char * 3, i) else char
+            escaped = not (shell and char == "'" or kotlin and delimiter == '"""')
+            i += len(delimiter)
+            while i < size and not text.startswith(delimiter, i):
+                check_budget(i)
+                i += 2 if text[i] == "\\" and escaped else 1
+            closed = i < size
+            i = min(size, i + len(delimiter)) if closed else size
+            ignored.append((start, i))
+            incomplete = incomplete or not closed
+        elif (not shell and text.startswith("//", i)) or (
+            shell and char == "#" and (not i or text[i - 1].isspace() or text[i - 1] in ";|&()")
+        ):
+            end = text.find("\n", i)
+            i = size if end < 0 else end
+            mask(start, i)
+        elif not shell and text.startswith("/*", i):
+            depth = 1
+            i += 2
+            while i < size and depth:
+                check_budget(i)
+                if kotlin and text.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif text.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            incomplete = incomplete or bool(depth)
+            mask(start, i)
+        else:
+            i += 1
+    return "".join(masked), ignored, incomplete
+
+
+def manifest_comment_projection(relpath: str, text: str) -> str:
+    """Share comment filtering with generic code detection; keep all line offsets.
+
+    This projection must not replace the original input to credential scanning:
+    credentials can remain sensitive even inside a comment.
+    """
+    lower = PurePosixPath(relpath.replace("\\", "/")).name.lower()
+    if (
+        lower == "dockerfile"
+        or lower.startswith("dockerfile.")
+        or lower.endswith(".dockerfile")
+        or lower == "containerfile"
+    ):
+        return _docker_comment_projection(text)
+    if lower.endswith((".gradle", ".gradle.kts")):
+        return _mask_manifest_comments(text, kotlin=lower.endswith(".kts"))[0]
+    return text
+
+
+def parse_gradle(text: str, *, kotlin: bool = False) -> ManifestResult:
     res = ManifestResult()
-    for m in _GRADLE_DEP.finditer(text, timeout=_pattern_timeout(), concurrent=False):
-        res.deps.append(
-            Dep("maven", f"{m.group(2)}:{m.group(3)}", m.group(4), dev=m.group(1).startswith("test"))
-        )
-    for m in _GRADLE_PLATFORM.finditer(text, timeout=_pattern_timeout(), concurrent=False):
-        res.deps.append(Dep("maven", f"{m.group(1)}:{m.group(2)}", m.group(3)))
+    masked, ignored, incomplete = _mask_manifest_comments(text, kotlin=kotlin)
+    if incomplete:
+        res.errors.append("unterminated Gradle comment or string")
+    starts = [start for start, _ in ignored]
+    lines = _LineIndex(text)
+    for pattern, offset in ((_GRADLE_DEP, 1), (_GRADLE_PLATFORM, 0)):
+        for m in pattern.finditer(masked, timeout=_pattern_timeout(), concurrent=False):
+            preceding = bisect_right(starts, m.start()) - 1
+            if preceding >= 0 and m.start() < ignored[preceding][1]:
+                continue
+            res.deps.append(
+                Dep(
+                    "maven",
+                    f"{m.group(1 + offset)}:{m.group(2 + offset)}",
+                    m.group(3 + offset),
+                    lines.at(m.start()),
+                    dev=bool(offset and m.group(1).startswith("test")),
+                )
+            )
     return res
 
 
@@ -564,9 +706,108 @@ def _unique_artifacts(artifacts: list[Artifact]) -> list[Artifact]:
     return unique
 
 
+def _docker_escape(text: str) -> str:
+    """Read the optional Docker parser escape directive before instructions."""
+    escape = "\\"
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            break
+        directive = stripped[1:].strip().partition("=")
+        if directive[0].strip().lower() == "escape" and directive[2].strip() in {"\\", "`"}:
+            escape = directive[2].strip()
+    return escape
+
+
+def _docker_continues(body: str, escape: str) -> bool:
+    trimmed = body.rstrip()
+    return bool((len(trimmed) - len(trimmed.rstrip(escape))) % 2)
+
+
+_DOCKER_COMMAND = re.compile(r"^[ \t]*(?:RUN|CMD|ENTRYPOINT)[ \t]+(?:--\S+[ \t]+)*(.*)$", re.I)
+
+
+def _docker_comment_projection(text: str) -> str:
+    """Mask Docker comments, with inline shell comments limited to shell form.
+
+    Docker's ENV/ARG/LABEL/COPY arguments and JSON-form instructions treat '#'
+    as literal data. Only shell-form RUN/CMD/ENTRYPOINT interpret an unquoted
+    word-boundary hash as an inline comment. Keep quoted strings and all source
+    offsets intact; this does not interpret scripts embedded in JSON strings.
+    """
+    escape = _docker_escape(text)
+    projected: list[str] = []
+    pending: list[str] = []
+    shell_form = False
+
+    def flush() -> None:
+        instruction = "".join(pending)
+        if shell_form:
+            # Docker removes escaped newlines before the shell sees '#'. A
+            # comment can therefore consume several physical source lines.
+            # Resolve spans on the joined instruction, then mask those same
+            # offsets in the original so generic detection retains line IDs.
+            logical = _docker_join_continuations(instruction, escape)
+            _, ignored, _ = _mask_manifest_comments(logical, shell=True)
+            masked = list(instruction)
+            for start, end in ignored:
+                if logical[start] == "#":
+                    for position in range(start, end):
+                        if instruction[position] not in "\r\n":
+                            masked[position] = " "
+            instruction = "".join(masked)
+        projected.append(instruction)
+        pending.clear()
+
+    for line in text.splitlines(keepends=True):
+        if line.lstrip(" \t").startswith("#"):
+            line = "".join(char if char in "\r\n" else " " for char in line)
+        body = line.rstrip("\r\n")
+        if not pending and not body.strip():
+            projected.append(line)
+            continue
+        if not pending:
+            command = _DOCKER_COMMAND.match(body, timeout=_pattern_timeout(), concurrent=False)
+            shell_form = bool(
+                command and command.group(1).strip() and not command.group(1).lstrip().startswith("[")
+            )
+        pending.append(line)
+        # Docker ignores blank/comment-only lines inside a continuation.
+        if body.strip() and not _docker_continues(body, escape):
+            flush()
+    if pending:
+        flush()
+    return "".join(projected)
+
+
+def _docker_join_continuations(text: str, escape: str) -> str:
+    """Join escaped lines and intervening empty/comment lines without moving offsets."""
+    projected: list[str] = []
+    continued = False
+    for line in text.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        if continued and not body.strip():
+            projected.append(" " * len(line))
+            continue
+        trimmed = body.rstrip()
+        continued = _docker_continues(body, escape)
+        if continued:
+            marker = len(trimmed) - 1
+            projected.append(line[:marker] + " " * (len(line) - marker))
+        else:
+            projected.append(line)
+    return "".join(projected)
+
+
+def _docker_command_text(text: str) -> str:
+    """Project Docker comments and continuations without moving token offsets."""
+    return _docker_join_continuations(_docker_comment_projection(text), _docker_escape(text))
+
+
 def parse_dockerfile(text: str) -> ManifestResult:
     res = ManifestResult()
     lines = _LineIndex(text)
+    text = _docker_command_text(text)
     for m in _DOCKER_FROM.finditer(text, timeout=_pattern_timeout(), concurrent=False):
         img = m.group(1)
         if img.lower() != "scratch" and "$" not in img:
@@ -863,7 +1104,7 @@ def _parse_manifest(relpath: str, text: str) -> ManifestResult | None:
         "settings.gradle",
         "settings.gradle.kts",
     } or lower.endswith(".gradle"):
-        return parse_gradle(text)
+        return parse_gradle(text, kotlin=lower.endswith(".kts"))
     if lower.endswith((".csproj", ".fsproj", ".vbproj", ".props", ".targets")) or lower == "packages.config":
         return parse_nuget(text)
     if lower == "gemfile":

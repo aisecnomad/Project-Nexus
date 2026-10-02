@@ -2,6 +2,24 @@
 
 ## 0.1.1 — Unreleased
 
+### October 2 review remediation
+
+- Source reading supports UTF-8, UTF-16 and UTF-32 byte-order marks. Malformed
+  encodings and binary/NUL-bearing content in recognized source or manifest
+  files mark coverage incomplete instead of disappearing into a complete scan.
+  Ordinary binary assets remain outside text analysis.
+- IAM wildcard and agent-definition front-matter matching now share the bounded
+  matching budget and avoid ambiguous whitespace backtracking. An external
+  worker/job deadline remains required for a hard execution limit.
+- Named Python URL requirements retain their declared package identity. Gradle
+  and Dockerfile dependency extraction excludes inert comments while retaining
+  quoted strings and active dependency declarations. New paired regressions
+  are authored test evidence, not a fresh field-accuracy measurement.
+- A reviewed merge-protection definition and offline verifier make the required
+  aggregate `CI gate`, CodeQL, independent approval and no-bypass policy
+  inspectable. They do not modify GitHub settings; verify live enforcement
+  after an authorized administrator applies the reviewed change.
+
 ### October 1 discovery review corrections
 
 - Code collection identifies declared submodules whose source has not been

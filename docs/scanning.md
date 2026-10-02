@@ -190,6 +190,13 @@ override and private-endpoint policies, output changes and rollout checks.
 
 ## Large and generated files
 
+Recognized source and manifest files support UTF-8 (with or without its BOM),
+and UTF-16/UTF-32 when a byte-order mark declares the encoding. Malformed or
+unsupported encodings, and binary/NUL-bearing analyzed content, produce an
+incomplete scan rather than a complete empty result. Ordinary opaque binary
+assets remain outside text analysis. Correct the input encoding or explicitly
+exclude it from the intended scope, then rerun before replacing a baseline.
+
 `code.filesystem.max_file_size` (default 1,000,000 bytes) bounds every file the
 scanner reads. A larger file is never analyzed. Whether that makes the scan
 incomplete depends on what the file could hide:
@@ -228,6 +235,10 @@ boundary while remaining capped at 10 seconds, or at `scan_timeout` when that
 is higher. A 900 KB JSON index gets 8 seconds by default and a pathological
 file still fails fast. An exhausted budget marks the file's analysis incomplete
 and the scan incomplete.
+
+IAM wildcard and agent-definition front-matter parsing use this same bounded
+matching mechanism. The matching budget does not replace an external process
+or job timeout for the complete worker.
 
 ## Connector deadlines and parallelism
 

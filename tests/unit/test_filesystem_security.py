@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -611,3 +614,156 @@ def test_excerpt_helper_redacts_then_truncates():
     line = "x" * 150 + " key=" + "s" * 40
     assert "s" * 8 not in _excerpt([line], 1, "s" * 40)
     assert _excerpt([line], 2) == ""
+
+
+@pytest.mark.parametrize(
+    ("bom", "encoding"),
+    [
+        (codecs.BOM_UTF8, "utf-8"),
+        (codecs.BOM_UTF16_LE, "utf-16-le"),
+        (codecs.BOM_UTF16_BE, "utf-16-be"),
+        (codecs.BOM_UTF32_LE, "utf-32-le"),
+        (codecs.BOM_UTF32_BE, "utf-32-be"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [("agent.py", "# résumé\nfrom crewai import Agent\n"), ("requirements.txt", "# résumé\ncrewai>=1\n")],
+)
+def test_bom_source_and_manifest_keep_detection(tmp_path, run_connector, bom, encoding, name, text):
+    (tmp_path / name).write_bytes(bom + text.encode(encoding))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert any("framework.crewai" in finding.frameworks for finding in findings)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+
+
+@pytest.mark.parametrize("name", ["agent.py", "requirements.txt", "Dockerfile", ".cursorrules"])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"\xffopaque-source-value",
+        b"\x00from crewai import Agent\n",
+        b"#" + b" " * 9000 + b"\x00\nfrom crewai import Agent\n",
+        codecs.BOM_UTF16_LE + b"\x01",
+        codecs.BOM_UTF32_BE + b"\x00\x11\x00\x00",
+    ],
+)
+def test_unreadable_analyzable_text_is_incomplete_with_neighbor_findings(
+    tmp_path, run_connector, name, payload
+):
+    (tmp_path / name).write_bytes(payload)
+    (tmp_path / "neighbor.py").write_text("from langgraph.graph import StateGraph\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert any("framework.langgraph" in finding.frameworks for finding in findings)
+    assert ctx.stats.incomplete
+    assert any(name in issue and ("encoding" in issue or "NUL" in issue) for issue in ctx.stats.errors)
+    assert "opaque-source-value" not in json.dumps(ctx.stats.errors)
+
+
+def test_unreadable_text_makes_cli_scan_incomplete(tmp_path):
+    (tmp_path / "package.json").write_bytes(b'{"dependencies":\xff}')
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    assert json.loads(result.stdout)["summary"]["complete"] is False
+
+
+def test_opaque_binary_assets_remain_ignored(tmp_path, run_connector):
+    for name in ("image.bin", "opaque-executable"):
+        path = tmp_path / name
+        path.write_bytes(b"\xff\x00opaque-value")
+        errors = []
+        assert read_text(path, 100, errors) is None
+        assert errors == []
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert findings == [] and not ctx.stats.incomplete
+
+
+def test_bom_decoding_keeps_raw_byte_limit(tmp_path):
+    path = tmp_path / "agent.py"
+    path.write_bytes(codecs.BOM_UTF16_LE + "from crewai import Agent\n".encode("utf-16-le"))
+    errors = []
+    assert read_text(path, 30, errors, require_text=True) is None
+    assert errors == ["file exceeds max_file_size"]
+
+
+@pytest.mark.parametrize("case", ["iam", "frontmatter"])
+def test_hostile_iac_and_frontmatter_finish_in_external_timeout_with_neighbor_detection(tmp_path, case):
+    # A separate process enforces the regression timeout even if a stdlib
+    # expression regresses to holding the GIL and blocks Python watchdogs.
+    relative = "attack.tf" if case == "iam" else ".claude/agents/attack.md"
+    target = tmp_path / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    text = "Action = " + " " * 262_144 + "!" if case == "iam" else "---" + "\n" * 262_144 + "!"
+    target.write_text(text)
+    (tmp_path / "neighbor.py").write_text("from crewai import Agent\n")
+    script = """
+import json, sys
+from shadowscan.connectors.base import ConnectorContext
+from shadowscan.connectors.code.filesystem import FilesystemConnector
+ctx = ConnectorContext(config={'path': sys.argv[1], 'use_git': False, 'scan_timeout': 0.5})
+findings = FilesystemConnector(ctx).run()
+print(json.dumps({'frameworks': [v for f in findings for v in f.frameworks],
+                  'errors': ctx.stats.errors}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    )
+    result = json.loads(completed.stdout)
+    assert "framework.crewai" in result["frameworks"]
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_agent_definition_frontmatter_keeps_multiline_metadata(tmp_path, index, newline):
+    ctx = ConnectorContext(config={"path": str(tmp_path)}, index=index)
+    connector = FilesystemConnector(ctx)
+    text = newline.join(["--- \t", "", "name: reviewer", "tools:", "  - Read", "--- \t", "Body"])
+    info = connector._parse_agent_definition(".claude/agents/reviewer.md", text)
+    assert info["name"] == "reviewer" and info["tools"] == ["Read"]
+
+
+@pytest.mark.parametrize(
+    ("name", "commented", "active"),
+    [
+        (
+            "Dockerfile",
+            "FROM python:3.12\n# RUN curl https://api.openai.com/v1/chat/completions\n"
+            "# ENV OPENAI_API_KEY=example\n",
+            "FROM python:3.12\nRUN curl https://api.openai.com/v1/chat/completions\n"
+            "ENV OPENAI_API_KEY=example\n",
+        ),
+        (
+            "build.gradle.kts",
+            '/*\nval endpoint = "https://api.openai.com/v1/chat/completions"\n'
+            'val OPENAI_API_KEY = "example"\n*/\n',
+            'val endpoint = "https://api.openai.com/v1/chat/completions"\nval OPENAI_API_KEY = "example"\n',
+        ),
+    ],
+)
+def test_manifest_comment_provider_signals_do_not_establish_active_use(
+    tmp_path, run_connector, name, commented, active
+):
+    path = tmp_path / name
+    path.write_text(commented)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not any("provider.openai" in finding.model_providers for finding in findings)
+    assert not ctx.stats.incomplete
+    path.write_text(active)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert any("provider.openai" in finding.model_providers for finding in findings)
+    assert not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("name", ["Dockerfile", "build.gradle.kts"])
+def test_manifest_comments_still_expose_committed_credentials(tmp_path, run_connector, name):
+    key = "sk-proj-" + hashlib.sha256(b"comment-credential-regression").hexdigest()
+    comment = f'OPENAI_API_KEY = "{key}"'
+    text = f"# {comment}\n" if name == "Dockerfile" else f"/* {comment} */\n"
+    (tmp_path / name).write_text(text)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    secrets = [finding for finding in findings if finding.kind == Kind.SECRET]
+    assert secrets and not ctx.stats.incomplete
+    assert key not in json.dumps([finding.to_dict() for finding in findings])

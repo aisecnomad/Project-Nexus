@@ -55,7 +55,7 @@ jobs:
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
-      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance
       - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
         run: |
@@ -108,7 +108,7 @@ jobs:
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
-      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off

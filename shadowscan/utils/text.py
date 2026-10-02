@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import math
 import re
 from datetime import UTC, datetime
@@ -12,7 +13,6 @@ from shadowscan.utils.files import NotRegularFileError, open_confined_file
 from shadowscan.utils.redaction import credential_id
 from shadowscan.utils.safe_json import strict_json_loads
 
-_BINARY_SNIFF = 8192
 # Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
 _EPOCH_RX = re.compile(r"\d{1,19}(?:\.\d{1,9})?")
 
@@ -35,6 +35,7 @@ def read_text(
     errors: list[str] | None = None,
     *,
     dir_fd: int | None = None,
+    require_text: bool = False,
 ) -> str | None:
     """Read a bounded regular file without following a symlink in any path component.
 
@@ -45,8 +46,11 @@ def read_text(
     for a link between directory traversal and reading fails the read instead
     of redirecting it outside the tree. Validate the opened descriptor, not a
     separate stat result: the file may change between directory traversal and
-    reading. Binary inputs are ignored; limits and I/O failures are reported to
-    callers that track completeness.
+    reading. BOM-marked UTF-8, UTF-16 and UTF-32 are decoded before testing for
+    NUL characters. Other input must be valid UTF-8. Undecodable or NUL-bearing
+    inputs are ignored unless ``require_text`` marks them as source or
+    configuration, in which case they are reported as a coverage gap. Limits
+    and I/O failures are always reported to callers that track completeness.
     """
     try:
         if max_bytes < 1:
@@ -57,9 +61,24 @@ def read_text(
             raw = fh.read(max_bytes + 1)
         if len(raw) > max_bytes:
             raise ValueError("file exceeds max_file_size")
-        if b"\x00" in raw[:_BINARY_SNIFF]:
+        # UTF-32's little-endian BOM starts with UTF-16's BOM: test it first.
+        if raw.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+            encoding = "utf-32"
+        elif raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+            encoding = "utf-16"
+        else:
+            encoding = "utf-8-sig"
+        try:
+            text = raw.decode(encoding)
+        except UnicodeDecodeError:
+            if require_text:
+                raise ValueError("file has unsupported or invalid text encoding") from None
             return None
-        return raw.decode("utf-8", errors="replace")
+        if "\x00" in text:
+            if require_text:
+                raise ValueError("file contains NUL characters")
+            return None
+        return text
     except (OSError, ValueError) as exc:
         if errors is not None:
             # Do not embed raw file contents or exception messages in reports.

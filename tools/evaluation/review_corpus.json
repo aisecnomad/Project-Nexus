@@ -197,6 +197,126 @@
       "assertions": {
         "max_agent_findings": 0
       }
+    },
+    {
+      "id": "named-url-requirement-inert",
+      "family": "manifest-dependency",
+      "description": "Author-written review regression: a commented dependency example does not establish installed framework usage.",
+      "files": {
+        "requirements.txt": "# openai-agents @ https://example.org/distributions/agents-0.1.0.tar.gz\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": []
+      }
+    },
+    {
+      "id": "named-url-requirement-active",
+      "family": "manifest-dependency",
+      "description": "Author-written review regression: an active dependency declaration retains its package identity.",
+      "files": {
+        "requirements.txt": "openai-agents @ https://example.org/distributions/agents-0.1.0.tar.gz\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.openai-agents-sdk"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "gradle-dependency-comment-inert",
+      "family": "manifest-dependency",
+      "description": "Author-written review regression: a commented dependency example does not establish installed framework usage.",
+      "files": {
+        "build.gradle": "// implementation \"dev.langchain4j:langchain4j:1.0.0\"\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.langchain4j"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": []
+      }
+    },
+    {
+      "id": "gradle-dependency-comment-active",
+      "family": "manifest-dependency",
+      "description": "Author-written review regression: an active dependency declaration retains its package identity.",
+      "files": {
+        "build.gradle": "implementation \"dev.langchain4j:langchain4j:1.0.0\"\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.langchain4j"
+      },
+      "present": true,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.langchain4j"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "docker-dependency-comment-inert",
+      "family": "manifest-dependency",
+      "description": "Author-written review regression: a commented dependency example does not establish installed framework usage.",
+      "files": {
+        "Dockerfile": "# RUN pip install openai-agents\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": []
+      }
+    },
+    {
+      "id": "docker-dependency-comment-active",
+      "family": "manifest-dependency",
+      "description": "Author-written review regression: an active dependency declaration retains its package identity.",
+      "files": {
+        "Dockerfile": "RUN pip install openai-agents\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.openai-agents-sdk"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
     }
   ]
 }

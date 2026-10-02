@@ -50,12 +50,19 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
+import regex
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
-from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
+from shadowscan.connectors.code.manifests import (
+    Artifact,
+    Dep,
+    is_manifest_name,
+    manifest_comment_projection,
+    parse_manifest,
+)
 from shadowscan.connectors.code.mcp_tools import mcp_tool_capabilities, mcp_tool_names
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
@@ -86,7 +93,13 @@ from shadowscan.connectors.common import (
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
-from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
+from shadowscan.signatures.matcher import (
+    SOURCE_EXTENSIONS,
+    MatchTimeoutError,
+    _run_regex,
+    _search,
+    language_for_path,
+)
 from shadowscan.utils.files import open_confined_directory, open_confined_file, read_policy_text
 from shadowscan.utils.git import (
     MAX_GITMODULES_BYTES,
@@ -362,16 +375,20 @@ MCP_CONFIG_NAMES = {
 }
 
 
-def _analyzed_by_name(name: str) -> bool:
-    """Whether the name alone makes a file source or configuration that the walker reads."""
+def _known_text_name(name: str) -> bool:
+    """Whether a name promises source or configuration rather than an opaque asset."""
     ext = Path(name).suffix.lower()
     return (
         ext in SOURCE_EXTENSIONS
         or ext in TEXT_CONFIG_EXTENSIONS
         or name.lower().startswith(".env")
         or is_manifest_name(name)
-        or "." not in name
     )
+
+
+def _analyzed_by_name(name: str) -> bool:
+    """Read known text and inspect extensionless files for possible text content."""
+    return _known_text_name(name) or "." not in name
 
 
 # Files that may be manifests whatever their name: IaC, compose, CI and deployment templates.
@@ -383,7 +400,9 @@ _WORKFLOW_EXTENSIONS = frozenset({".json", ".yaml", ".yml"})
 # Coding-agent sub-agent and rule definitions (Markdown with YAML front matter).
 _AGENT_DEFINITION_DIRS = (".claude/agents/", ".github/agents/", ".cursor/rules/", ".windsurf/rules/")
 
-_FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
+# Delimiter whitespace cannot consume body lines and retry the body at each
+# newline. Use the bounded engine too, sharing the file's matching deadline.
+_FRONTMATTER = regex.compile(r"^---[ \t]*+\r?\n(.*?)\r?\n---[ \t]*+\r?\n", regex.S)
 # Files whose parsed structure supplies credential context for excerpt
 # redaction (see _structured_context).
 _JSON_SUFFIXES = (".json", ".jsonc", ".json5")
@@ -616,8 +635,8 @@ _LLM_CATEGORIES = frozenset({"provider", "framework", "protocol", "platform", "c
 # Signatures that are only meaningful when the same file also invokes an LLM.
 _COLOCATED_SIGNATURES = frozenset({"heuristic.llm-command-execution"})
 # IAM statements granting every action (Terraform, CloudFormation, ARM/Bicep JSON).
-_IAM_WILDCARD_RE = re.compile(
-    r"""(?i)["']?\bActions?["']?\s*[:=]\s*\[?\s*["']\*["']"""
+_IAM_WILDCARD_RE = regex.compile(
+    r"""(?i)["']?\bActions?["']?\s*+[:=]\s*+\[?\s*+["']\*["']"""
     r"""|["'](?:bedrock|iam|sts|lambda|s3|secretsmanager|kms):\*["']"""
 )
 _IAC_MODEL_RE = re.compile(
@@ -1411,7 +1430,9 @@ class FilesystemConnector(BaseConnector):
         file_matches = self.index.match_file(rel)
         if not (_analyzed_by_name(path.name) or file_matches):
             return
-        loaded = self._read_source(rel, path, scan.root_fd)
+        loaded = self._read_source(
+            rel, path, scan.root_fd, require_text=_known_text_name(path.name) or bool(file_matches)
+        )
         if loaded is None:
             return
         text, raw_notebook = loaded
@@ -1442,7 +1463,9 @@ class FilesystemConnector(BaseConnector):
         # 4. special files
         self._record_special_files(scan, file)
 
-    def _read_source(self, rel: str, path: Path, root_fd: int) -> tuple[str, str | None] | None:
+    def _read_source(
+        self, rel: str, path: Path, root_fd: int, *, require_text: bool
+    ) -> tuple[str, str | None] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document.
 
         ``rel`` is read relative to the open scan root ``root_fd``. A notebook's
@@ -1450,7 +1473,13 @@ class FilesystemConnector(BaseConnector):
         diagnostics say why.
         """
         read_errors: list[str] = []
-        text = read_text(PurePosixPath(rel), self._size_limit(path.name), read_errors, dir_fd=root_fd)
+        text = read_text(
+            PurePosixPath(rel),
+            self._size_limit(path.name),
+            read_errors,
+            dir_fd=root_fd,
+            require_text=require_text,
+        )
         for issue in read_errors:
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
                 self.ctx.warn(
@@ -1663,9 +1692,9 @@ class FilesystemConnector(BaseConnector):
         rel, text = file.rel, file.text
         # Excerpts come from the redacted source, which is only
         # produced for files that actually contain a wildcard.
-        if _IAM_WILDCARD_RE.search(text):
+        if _search(_IAM_WILDCARD_RE, text, "IAM wildcard analysis"):
             for number, line_text in enumerate(self._redacted_lines(file), start=1):
-                if _IAM_WILDCARD_RE.search(line_text):
+                if _search(_IAM_WILDCARD_RE, line_text, "IAM wildcard analysis"):
                     wildcard_hits = scan.iam_wildcards.setdefault(file.proj_root, [])
                     if len(wildcard_hits) < 20:
                         wildcard_hits.append((rel, number, truncate(line_text.strip(), 160) or ""))
@@ -1689,7 +1718,9 @@ class FilesystemConnector(BaseConnector):
         # XML comments are examples/disabled declarations. Preserve
         # offsets for match line numbers and the original redacted
         # excerpts; the manifest parser handles active XML itself.
-        content_text = _without_xml_comments(file.text) if file.ext in _XML_EXTENSIONS else file.text
+        content_text = manifest_comment_projection(file.rel, file.text)
+        if file.ext in _XML_EXTENSIONS:
+            content_text = _without_xml_comments(content_text)
         if file.ext in SOURCE_EXTENSIONS:
             self._scan_source(scan.root, file, content_text)
         elif not is_nonexecutable:
@@ -2180,7 +2211,13 @@ class FilesystemConnector(BaseConnector):
                     errors: list[str] = []
                     directory = open_confined_directory(root)
                     try:
-                        content = read_text(PurePosixPath(cand), self.max_file_size, errors, dir_fd=directory)
+                        content = read_text(
+                            PurePosixPath(cand),
+                            self.max_file_size,
+                            errors,
+                            dir_fd=directory,
+                            require_text=True,
+                        )
                     finally:
                         os.close(directory)
                     for issue in errors:
@@ -2900,7 +2937,10 @@ class FilesystemConnector(BaseConnector):
 
     def _parse_agent_definition(self, rel: str, text: str) -> dict[str, Any]:
         info: dict[str, Any] = {"file": rel, "name": PurePosixPath(rel).stem}
-        m = _FRONTMATTER.match(text)
+        m = _run_regex(
+            lambda timeout: _FRONTMATTER.match(text, timeout=timeout, concurrent=False),
+            "agent definition front matter",
+        )
         if m:
             try:
                 fm = strict_bounded_safe_load(m.group(1)) or {}

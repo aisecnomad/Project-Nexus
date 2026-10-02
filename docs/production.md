@@ -10,6 +10,32 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 2 review remediation
+
+Collect a fresh baseline after upgrading: named URL dependencies and supported
+BOM-encoded manifests can now add findings, while dependency examples confined
+to comments no longer establish framework usage. Recognized source/configuration
+that cannot be decoded, or contains binary/NUL-bearing content, makes coverage
+incomplete. Repair or explicitly scope out such input and rerun; do not interpret
+the absence of findings in an incomplete report as resolution.
+
+IAM and agent-definition front-matter matching uses the bounded per-file matcher.
+Retain the external worker/job timeout described below: bounded parsing does not
+turn cooperative Python thread cancellation into process isolation.
+
+Use the [merge-protection procedure](operations/merge-protection.md) to review the
+desired rules, preserve stronger live settings and verify the administrator's
+readback. Committing a JSON definition or passing its tests does not activate a
+GitHub ruleset. The October 2 review again observed both existing rulesets disabled;
+that observation must be refreshed before any deployment decision.
+
+The new regression cases are authored from observed defects. They do not replace
+the [fresh human-reviewed holdout](evaluation.md#build-a-genuinely-held-out-field-set),
+independent review of the final candidate, or [live tenant canaries](canaries.md).
+Run the existing [scope-specific acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+on real evidence for the intended population and tenant scopes. Record unmet
+requirements as unmet; do not substitute offline replays or AI-generated labels.
+
 ## October 1 discovery review migration
 
 Review finding kinds, capabilities and risk scores before replacing an existing
@@ -919,6 +945,12 @@ read back the effective rules on `main`; editing this guide or merging its PR
 does not change repository settings. Do not claim that protection was restored
 until that readback confirms it. If the API connection lacks administration
 access, use an authorized administrator session rather than weakening the rules.
+
+The [reviewed definition and verifier](operations/merge-protection.md) provide
+an importable policy and a fail-closed check of supplied ruleset readbacks.
+The verifier performs no network calls or administrative writes. Retain fresh
+GitHub responses and the effective `main` rules alongside its result; supplied
+JSON alone cannot authenticate current enforcement or independent approval.
 
 Whatever the ruleset's state, the history is unchanged: the repository has a
 single maintainer, and no change merged to `main` through 2026-09-25 (including
