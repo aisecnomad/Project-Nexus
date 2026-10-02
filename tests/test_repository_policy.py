@@ -76,6 +76,8 @@ def test_wheel_validation_uses_private_workspace_and_always_cleans_up(
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     shutil.copyfile(ROOT / "Makefile", checkout / "Makefile")
+    (checkout / "dist").mkdir()
+    (checkout / "dist" / "project_nexus_shadowscan-0.1.1-py3-none-any.whl").touch()
     shared_temp = tmp_path / "shared temp"
     shared_temp.mkdir()
     previous = shared_temp / "shadowscan-wheel-test"

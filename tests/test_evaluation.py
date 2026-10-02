@@ -184,6 +184,59 @@ def test_corpus_rejects_escaping_file_paths(tmp_path: Path, bad_name: str):
         load_corpus(_write(tmp_path / "data.json", _corpus({bad_name: "text"})))
 
 
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"AGENT.py": "active", "agent.py": "plain"},
+        {"caf\u00e9.py": "active", "cafe\u0301.py": "plain"},
+        {"Project/active.py": "active", "project/plain.py": "plain"},
+        {"project": "plain", "project/agent.py": "active"},
+        {"project/agent.py": "active", "project": "plain"},
+        {"Project": "plain", "project/agent.py": "active"},
+    ],
+)
+def test_corpus_rejects_portable_file_and_directory_aliases(tmp_path: Path, files: dict[str, str]):
+    with pytest.raises(CorpusError, match="distinct portable files and directories") as error:
+        load_corpus(_write(tmp_path / "data.json", _corpus(files)))
+    assert all(name not in str(error.value) for name in files)
+
+
+def test_corpus_bounds_unicode_filename_components_in_bytes(tmp_path: Path):
+    name = "\u00e9" * 128 + ".py"
+    assert len(name) < 240 and len(name.encode("utf-8")) > 255
+    with pytest.raises(CorpusError, match="unsafe relative path") as error:
+        load_corpus(_write(tmp_path / "data.json", _corpus({name: "pass\n"})))
+    assert name not in str(error.value)
+    valid_name = "\u00e9" * 120 + ".py"
+    _, cases, _ = load_corpus(_write(tmp_path / "valid.json", _corpus({valid_name: "pass\n"})))
+    assert cases[0].files == {valid_name: "pass\n"}
+
+
+def test_corpus_keeps_distinct_files_in_a_shared_portable_directory(tmp_path: Path):
+    files = {"project/agent.py": "pass\n", "project/plain.py": "pass\n"}
+    _, cases, _ = load_corpus(_write(tmp_path / "data.json", _corpus(files)))
+    assert cases[0].files == files
+
+
+def test_evaluator_never_overwrites_an_existing_materialized_sample(tmp_path: Path, monkeypatch):
+    module = importlib.import_module("tools.evaluation.evaluate")
+    path = _write(tmp_path / "data.json", _corpus({"plain.py": "pass\n"}))
+    original_open = Path.open
+
+    def create_alias_before_open(sample, mode="r", *args, **kwargs):
+        if sample.name == "plain.py" and mode == "x":
+            with original_open(sample, "w", encoding="utf-8") as handle:
+                handle.write("another frozen sample\n")
+        return original_open(sample, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", create_alias_before_open)
+    monkeypatch.setattr(
+        module, "_scan_case", lambda *args: pytest.fail("aliased samples must not be scanned")
+    )
+    with pytest.raises(FileExistsError):
+        evaluate(path)
+
+
 def test_corpus_rejects_duplicate_json_keys(tmp_path: Path):
     path = tmp_path / "data.json"
     path.write_text('{"schema":1,"schema":1,"cases":[]}', encoding="utf-8")

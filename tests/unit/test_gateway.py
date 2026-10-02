@@ -206,6 +206,40 @@ def test_activity_buckets_use_utc_regardless_of_export_offset(index):
     assert "always-on" in findings[0].tags
 
 
+@pytest.mark.parametrize("timestamp", ["9999-12-31T23:59:59-01:00", "0001-01-01T00:00:00+01:00"])
+def test_unrepresentable_utc_timestamp_does_not_poison_valid_caller_records(index, timestamp):
+    records = [_litellm(0), _litellm(1, startTime=timestamp), _litellm(2)]
+
+    findings, ctx = _scan(index, records, format="litellm")
+
+    assert len(findings) == 1
+    assert findings[0].metadata["events"] == 2
+    assert findings[0].first_seen == findings[0].last_seen == "2026-01-05T09:00:00+00:00"
+    assert ctx.stats.incomplete
+    assert any("invalid record 2" in warning for warning in ctx.stats.warnings)
+    assert all("caller analysis failed" not in warning for warning in ctx.stats.warnings)
+
+
+def test_unrepresentable_utc_interval_end_does_not_poison_valid_usage_record(index):
+    valid = {
+        "api_key_id": "key-one",
+        "model": "gpt-4o",
+        "num_model_requests": 2,
+        "start_time": "2026-01-05T09:00:00Z",
+        "end_time": "2026-01-05T10:00:00Z",
+    }
+    malformed = {**valid, "end_time": "9999-12-31T23:59:59-01:00", "num_model_requests": 100}
+
+    findings, ctx = _scan(index, [malformed, valid], format="openai-usage")
+
+    assert len(findings) == 1
+    assert findings[0].metadata["events"] == 2
+    assert findings[0].last_seen == "2026-01-05T10:00:00+00:00"
+    assert ctx.stats.incomplete
+    assert any("invalid record 1" in warning for warning in ctx.stats.warnings)
+    assert all("caller analysis failed" not in warning for warning in ctx.stats.warnings)
+
+
 @pytest.mark.parametrize("per_second", [1, 1000, 1_000_000, 1_000_000_000], ids=["s", "ms", "us", "ns"])
 @pytest.mark.parametrize("as_text", [False, True], ids=["number", "text"])
 def test_generic_epoch_timestamps_keep_activity_window_in_every_unit(

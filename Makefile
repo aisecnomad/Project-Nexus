@@ -50,8 +50,11 @@ test-parallel: ## Run tests in parallel with pytest-xdist
 
 .PHONY: coverage-gate
 coverage-gate: ## Enforce per-connector coverage floor
-	python -m coverage json -o /tmp/shadowscan-coverage.json
-	python -m tools.coverage_gate /tmp/shadowscan-coverage.json
+	@set -euo pipefail; \
+	coverage_file="$$(mktemp "$${TMPDIR:-/tmp}/shadowscan-coverage.XXXXXX")"; \
+	trap 'rm -f "$$coverage_file"' EXIT; \
+	python -m coverage json -o "$$coverage_file"; \
+	python -m tools.coverage_gate "$$coverage_file"
 
 .PHONY: signatures
 signatures: ## Validate all signature schemas and regexes
@@ -96,12 +99,18 @@ build: ## Build distributable wheel
 .PHONY: wheel-validate
 wheel-validate: build ## Validate the wheel installs and works outside checkout
 	@set -euo pipefail; \
+		set -- dist/project_nexus_shadowscan-*.whl; \
+		if [ "$$#" -ne 1 ] || [ ! -f "$$1" ]; then \
+			echo "wheel-validate requires exactly one scanner wheel in dist; remove stale build artifacts" >&2; \
+			exit 1; \
+		fi; \
+		wheel="$$1"; \
 		wheel_test_root="$$(cd "$${TMPDIR:-/tmp}" && pwd -P)"; \
 		wheel_test_dir="$$(mktemp -d "$$wheel_test_root/shadowscan-wheel-test.XXXXXXXX")"; \
 		trap 'rm -rf -- "$$wheel_test_dir"' EXIT; \
 		python -m venv "$$wheel_test_dir/venv"; \
 		"$$wheel_test_dir/venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements.lock; \
-		"$$wheel_test_dir/venv/bin/python" -m pip install --no-deps dist/project_nexus_shadowscan-*.whl; \
+		"$$wheel_test_dir/venv/bin/python" -m pip install --no-deps "$$wheel"; \
 		"$$wheel_test_dir/venv/bin/python" -m pip check; \
 		cd "$$wheel_test_dir"; \
 		"$$wheel_test_dir/venv/bin/python" -m shadowscan.signatures.validate; \

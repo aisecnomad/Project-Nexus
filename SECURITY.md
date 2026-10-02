@@ -54,6 +54,12 @@ coverage, even when a response includes an empty collection field.
   arbitrary upstream text can contain data beyond recognized secret formats.
   Opaque `api_token`, `foundry_token`, and `github_token` values, including the
   `GH_TOKEN` fallback, are sensitive.
+  Diagnostic sanitization preserves credential context across errors, warnings
+  and skip reasons; JSON publication also checks connector statistics together.
+* Live collectors assign record classification and collection scope after
+  copying provider fields. Provider data cannot replace these local provenance
+  fields. Offline exports remain untrusted operator-supplied records and do not
+  authenticate the declared collection scope.
 * `options.connector_timeout_seconds` / `--connector-timeout-seconds` defaults
   to a 120-second cooperative completion deadline. Late connector results are
   discarded and coverage is incomplete. Legacy `connector_timeout` /

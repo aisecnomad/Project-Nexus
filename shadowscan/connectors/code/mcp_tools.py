@@ -16,6 +16,7 @@ reported with the tool names behind it.
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 
 MAX_TOOLS_PER_FILE = 100
 _NAME = r"([A-Za-z][A-Za-z0-9_.-]{0,63})"
@@ -41,9 +42,9 @@ _ENUM_CLASS = re.compile(
     r"^class[ \t]+(\w+)\((?:str,[ \t]*)?(?:Str)?Enum\):[ \t]*\r?\n((?:[ \t]+[^\n]*\n|[ \t]*\r?\n){1,200})",
     re.MULTILINE,
 )
-_ENUM_TOOL_NAME = re.compile(r"\bTool\(\s*name\s*=\s*(\w+)\.")
+_ENUM_TOOL_NAME = re.compile(r"\bTool\(\s*name\s*=\s*(\w+)\.(\w+)\b")
 _ENUM_MEMBER = re.compile(
-    r"^[ \t]+[A-Z][A-Z0-9_]*[ \t]*=[ \t]*[\"']([a-z][a-z0-9_.-]{0,63})[\"']", re.MULTILINE
+    r"^[ \t]+([A-Z][A-Z0-9_]*)[ \t]*=[ \t]*[\"']([a-z][a-z0-9_.-]{0,63})[\"']", re.MULTILINE
 )
 
 _WORDS = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+")
@@ -142,9 +143,15 @@ _VOCABULARY: dict[str, frozenset[str]] = {
 _RUNNABLE = frozenset({"code", "script", "command", "python", "shell", "program"})
 
 
-def mcp_tool_names(text: str) -> list[str]:
+def mcp_tool_names(text: str, *, ignore_spans: list[tuple[int, int]] | None = None) -> list[str]:
     """Literal tool names registered in one source file, in first-seen order."""
     names: dict[str, None] = {}
+    spans = ignore_spans or []
+    starts = [start for start, _ in spans]
+
+    def executable(offset: int) -> bool:
+        number = bisect_right(starts, offset) - 1
+        return number < 0 or offset >= spans[number][1]
 
     def add(name: str) -> bool:
         names.setdefault(name, None)
@@ -152,15 +159,27 @@ def mcp_tool_names(text: str) -> list[str]:
 
     for pattern in (*_REGISTRATIONS, _DECORATED):
         for match in pattern.finditer(text):
-            if add(match.group(1)):
+            # The registration must start in source code. Its literal name
+            # remains inside a string span, so masking all strings first would
+            # also erase real registrations.
+            if executable(match.start()) and add(match.group(1)):
                 return list(names)
     # One pass collects the enums used as tool names; searching the whole
     # text once per enum class was quadratic in files with many enums.
-    referenced = set(_ENUM_TOOL_NAME.findall(text))
+    referenced = {
+        (match.group(1), match.group(2))
+        for match in _ENUM_TOOL_NAME.finditer(text)
+        if executable(match.start())
+    }
+    classes = {name for name, _ in referenced}
     for enum in _ENUM_CLASS.finditer(text):
-        if enum.group(1) in referenced:
+        if enum.group(1) in classes and executable(enum.start()):
             for member in _ENUM_MEMBER.finditer(enum.group(2)):
-                if add(member.group(1)):
+                if (
+                    (enum.group(1), member.group(1)) in referenced
+                    and executable(enum.start(2) + member.start())
+                    and add(member.group(2))
+                ):
                     return list(names)
     return list(names)
 

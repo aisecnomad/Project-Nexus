@@ -205,6 +205,9 @@ Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding (`metadata.manifests`). MCP server capabilities come
 from the tool names the server registers outside tests (`metadata.mcp_tools`);
+comments and string examples do not establish registrations, and enum-based
+names count only the referenced members. Static registration evidence does
+not prove the server executed those tools.
 a server without recognised tools keeps the capabilities its code implies.
 
 Gemini CLI's `httpUrl` (Streamable HTTP) is read as an MCP endpoint, like

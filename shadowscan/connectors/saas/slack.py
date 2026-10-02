@@ -96,7 +96,7 @@ class SlackConnector(BaseConnector):
                 "collected"
             )
             return
-        yield {"_kind": "team", **team}
+        yield {**team, "_kind": "team"}
         for u in self._cursor(http, "/users.list", {"limit": 200}, "members"):
             if u.get("is_bot") or u.get("is_app_user"):
                 u["_kind"] = "bot_user"
@@ -125,7 +125,7 @@ class SlackConnector(BaseConnector):
                 if not isinstance(entry, dict):
                     self.ctx.warn("saas.slack: invalid integration log record; coverage unknown")
                     continue
-                yield {"_kind": "integration_log", **entry}
+                yield {**entry, "_kind": "integration_log"}
             paging = data.get("paging")
             pages = paging.get("pages") if isinstance(paging, dict) else None
             if type(pages) is not int or pages < 0 or (pages == 0 and logs):

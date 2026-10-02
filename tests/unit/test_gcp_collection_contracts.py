@@ -59,6 +59,74 @@ def enabled(*services: str) -> dict[str, Any]:
     return {"services": [{"config": {"name": name}} for name in services]}
 
 
+@pytest.mark.parametrize(
+    "service,items_key,kind,regional",
+    [
+        ("dialogflow.googleapis.com", "agents", "dialogflow-agent", True),
+        ("discoveryengine.googleapis.com", "engines", "discovery-engine", True),
+        ("cloudfunctions.googleapis.com", "functions", "cloud-function", False),
+        ("apikeys.googleapis.com", "keys", "api-key", False),
+        ("aiplatform.googleapis.com", "reasoningEngines", "reasoning-engine", True),
+        ("aiplatform.googleapis.com", "endpoints", "vertex-endpoint", True),
+    ],
+)
+def test_gcp_live_records_cannot_override_collected_scope(
+    index, monkeypatch, service, items_key, kind, regional
+):
+    scanner = GcpConnector(context(index, locations=["us-central1"]))
+
+    def pages(url, key, **params):
+        if key == "services":
+            return iter(enabled(service)["services"])
+        if key == items_key:
+            return iter(
+                [
+                    {
+                        "name": "upstream-resource",
+                        "_kind": "project",
+                        "_project": "other-project",
+                        "_location": "other-region",
+                    }
+                ]
+            )
+        return iter([])
+
+    monkeypatch.setattr(scanner, "_pages", pages)
+    monkeypatch.setattr(scanner, "_collect_iam_policy", lambda project: iter([]))
+    records = [
+        record for record in scanner._collect_project(PROJECT) if record.get("name") == "upstream-resource"
+    ]
+    assert records
+    assert all(record["_kind"] == kind and record["_project"] == PROJECT for record in records)
+    if regional:
+        assert all(record["_location"] != "other-region" for record in records)
+
+
+@pytest.mark.parametrize(
+    "invalid_id",
+    [None, 7, "", ".", "..", "../other", "project?quotaUser=other", "project/locations/other"],
+)
+def test_gcp_discovered_projects_reject_unsafe_scope_and_preserve_neighbours(index, monkeypatch, invalid_id):
+    scanner = GcpConnector(context(index))
+    monkeypatch.setattr(scanner, "_auth", lambda: None)
+    monkeypatch.setattr(
+        scanner,
+        "_pages",
+        lambda *args, **kwargs: iter([{"projectId": invalid_id}, {"projectId": PROJECT}]),
+    )
+    collected = []
+
+    def project_records(project):
+        collected.append(project)
+        yield {"_kind": "project", "project": project, "ai_services": []}
+
+    monkeypatch.setattr(scanner, "_collect_project", project_records)
+    records = list(scanner.collect())
+    assert collected == [PROJECT] and records[0]["project"] == PROJECT
+    assert scanner.ctx.stats.incomplete
+    assert "invalid discovered project identifier" in scanner.ctx.stats.warnings[0]
+
+
 def _by_kind(findings: list[Any]) -> dict[str, list[Any]]:
     grouped: dict[str, list[Any]] = {}
     for finding in findings:

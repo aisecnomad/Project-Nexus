@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.check_secrets import findings, main
+from tools.check_secrets import display, findings, main
 
 _ALNUM = string.ascii_letters + string.digits
 _UPPER = string.ascii_uppercase + string.digits
@@ -195,3 +195,14 @@ def test_patterns_stay_linear_on_hostile_input() -> None:
     for text in hostile:
         list(findings(text))
     assert time.perf_counter() - started < 2
+
+
+def test_reported_file_names_cannot_forge_a_report_line_or_a_workflow_command(tmp_path, capsys):
+    # A tracked file name may hold control characters; the report escapes them
+    # so a crafted name cannot start a new line or a `::` workflow command.
+    path = tmp_path / "config.py\n::error::forged"
+    path.write_text("token = 'sk-" + "proj-" + _random("n1", 40, _URLSAFE) + "'\n", encoding="utf-8")
+    assert main([str(path)]) == 1
+    out = capsys.readouterr().out
+    assert out.count("\n") == 1 and "\\x0a::error::forged" in out
+    assert display("plain/name.py") == "plain/name.py"

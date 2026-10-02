@@ -653,7 +653,7 @@ class ScanResult:
             "inventory_size": self.inventory_size,
             "collection_scope": sanitize(self.collection_scope),
             "summary": self.summary(),
-            "stats": [sanitize(asdict(s)) for s in self.stats],
+            "stats": sanitize([asdict(s) for s in self.stats]),
             "findings": [f.to_dict() for f in self.findings],
         }
 

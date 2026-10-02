@@ -168,6 +168,14 @@ re-audits every lock between commits.
 
 Do not commit private adjudicated evaluation corpora.
 
+The secret-pattern gate runs in CI, in `make check` and in the pre-commit hook.
+It names the file, line and credential family of each match, never the value,
+and fails on a file it cannot read. The script itself skips `tests/`, the
+signature packs and the evaluation corpora, which hold synthetic
+credential-shaped strings on purpose. Those exemptions require review, and the
+bounded pattern check does not establish that the repository contains no
+secrets.
+
 ## Pull requests
 
 1. Make one focused change on your branch. For a documentation-only change,

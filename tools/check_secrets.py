@@ -2,6 +2,7 @@
 """Pre-commit hook: check for common hardcoded secret patterns.
 
 Usage: python tools/check_secrets.py FILE [FILE ...]
+       python tools/check_secrets.py --tracked
 
 Exits 1 when a file contains a string shaped like a known credential, or when
 a named file cannot be read. Each report names the file, line and credential
@@ -87,6 +88,15 @@ def _is_placeholder(match: re.Match[str]) -> bool:
     )
 
 
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def display(path: str) -> str:
+    """The path as reported: control characters are escaped, so a crafted file
+    name cannot forge a report line or a workflow log command."""
+    return _CONTROL.sub(lambda match: f"\\x{ord(match.group()):02x}", path)
+
+
 def findings(text: str) -> Iterator[tuple[int, str, str]]:
     """Yield ``(line, family, match)`` for every credential-shaped string in ``text``."""
     for family, pattern in PATTERNS:
@@ -111,11 +121,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             with open(path, encoding="utf-8", errors="ignore") as handle:
                 text = handle.read()
         except OSError as exc:
-            print(f"{path}: cannot read: {exc.strerror}", file=sys.stderr)
+            print(f"{display(path)}: cannot read: {exc.strerror}", file=sys.stderr)
             failed = True
             continue
         for line, family, value in findings(text):
-            print(f"{path}:{line}: possible hardcoded {family}: {value[:4]}... ({len(value)} characters)")
+            where = f"{display(path)}:{line}"
+            print(f"{where}: possible hardcoded {family}: {value[:4]}... ({len(value)} characters)")
             failed = True
     return 1 if failed else 0
 

@@ -353,7 +353,7 @@ class OciConnector(BaseConnector):
         yield from self._iter_policies(identity, compartments)
         for dg in self._all(identity.list_dynamic_groups, self.tenancy):
             if (group := self._d(dg)) is not None:
-                yield {"_kind": "dynamic-group", **group}
+                yield {**group, "_kind": "dynamic-group"}
         for region in regions:
             for comp in compartments:
                 yield from self._collect_region_comp(region, comp)
@@ -410,38 +410,38 @@ class OciConnector(BaseConnector):
             yield rec
         for e in self._all(agents.list_agent_endpoints, compartment_id=comp):
             if (endpoint := self._d(e)) is not None:
-                yield {"_kind": "genai-agent-endpoint", "_region": region, "_compartment": comp, **endpoint}
+                yield {**endpoint, "_kind": "genai-agent-endpoint", "_region": region, "_compartment": comp}
         for kb in self._all(agents.list_knowledge_bases, compartment_id=comp):
             if (base := self._d(kb)) is not None:
-                yield {"_kind": "genai-knowledge-base", "_region": region, "_compartment": comp, **base}
+                yield {**base, "_kind": "genai-knowledge-base", "_region": region, "_compartment": comp}
 
     def _collect_genai(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         genai = self._client(oci.generative_ai.GenerativeAiClient, region)
         for ep in self._all(genai.list_endpoints, comp):
             if (endpoint := self._d(ep)) is not None:
-                yield {"_kind": "genai-endpoint", "_region": region, "_compartment": comp, **endpoint}
+                yield {**endpoint, "_kind": "genai-endpoint", "_region": region, "_compartment": comp}
         for cl in self._all(genai.list_dedicated_ai_clusters, comp):
             if (cluster := self._d(cl)) is not None:
-                yield {"_kind": "genai-cluster", "_region": region, "_compartment": comp, **cluster}
+                yield {**cluster, "_kind": "genai-cluster", "_region": region, "_compartment": comp}
         for m in self._all(genai.list_models, comp):
             d = self._d(m)
             # Custom (fine-tuned) models are type CUSTOM and reference a base model;
             # FINE_TUNE is a capability that *base* models advertise, and OCI custom
             # models are built on the same vendors as the base catalogue.
             if d is not None and (d.get("type") == "CUSTOM" or d.get("base_model_id")):
-                yield {"_kind": "genai-custom-model", "_region": region, "_compartment": comp, **d}
+                yield {**d, "_kind": "genai-custom-model", "_region": region, "_compartment": comp}
 
     def _collect_oda(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         oda = self._client(oci.oda.OdaClient, region)
         for inst in self._all(oda.list_oda_instances, comp):
             if (instance := self._d(inst)) is not None:
-                yield {"_kind": "oda-instance", "_region": region, "_compartment": comp, **instance}
+                yield {**instance, "_kind": "oda-instance", "_region": region, "_compartment": comp}
 
     def _collect_model_deployments(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         ds = self._client(oci.data_science.DataScienceClient, region)
         for md in self._all(ds.list_model_deployments, comp):
             if (deployment := self._d(md)) is not None:
-                yield {"_kind": "model-deployment", "_region": region, "_compartment": comp, **deployment}
+                yield {**deployment, "_kind": "model-deployment", "_region": region, "_compartment": comp}
 
     def _collect_function_apps(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         fn = self._client(oci.functions.FunctionsManagementClient, region)
@@ -470,7 +470,7 @@ class OciConnector(BaseConnector):
                     }
                 )
             d["_containers"] = containers
-            yield {"_kind": "container-instance", "_region": region, "_compartment": comp, **d}
+            yield {**d, "_kind": "container-instance", "_region": region, "_compartment": comp}
 
     def _collect_secret_names(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         vaults = self._client(oci.vault.VaultsClient, region)

@@ -500,12 +500,15 @@ def _failure_message(spec: ConnectorSpec, exc: BaseException) -> str:
 
 def _sanitize_diagnostics(st: ScanStats) -> None:
     try:
-        st.errors = sanitize(st.errors)
-        st.warnings = sanitize(st.warnings)
+        # Preserve credential context across diagnostics until every field has
+        # been checked. Redacting errors first would erase a known opaque value
+        # before an identical copy in warnings or the skip reason is examined.
+        st.errors, st.warnings, (st.skip_reason,) = sanitize((st.errors, st.warnings, (st.skip_reason,)))
     except SanitizationLimitError:
         st.incomplete = True
         st.errors = ["connector diagnostics omitted: sanitization safety limit exceeded"]
         st.warnings = []
+        st.skip_reason = None
 
 
 _MAX_INVENTORY_WARNINGS = 20

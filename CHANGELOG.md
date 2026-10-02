@@ -450,6 +450,40 @@ field precision. Behavior changes that affect an existing baseline are listed in
 - **API reference:** mkdocstrings pages for the core modules are part of the
   documentation site.
 
+### October 2 production hygiene review
+
+- Connector diagnostic sanitization retains credential context across errors,
+  warnings and skip reasons. JSON statistics are sanitized together, matching
+  the other report formats. A sanitization limit clears omitted skip reasons.
+- GCP, Azure, OCI and Slack live collectors preserve their locally assigned
+  record classification and collection scope over provider fields. Invalid
+  discovered GCP project identifiers produce incomplete coverage rather than
+  entering authenticated request paths.
+- MCP tool attribution ignores commented and string examples, and counts only
+  referenced enum members. Recheck capability labels and enforcement baselines
+  when comparing reports made before this correction.
+- The secret-pattern checker escapes control characters in the file names it
+  reports, so a crafted name cannot forge a report line or a workflow log
+  command. It runs over every tracked text file in CI, `make check` and the
+  pre-commit hook; the test, signature-pack and evaluation-corpus exemptions
+  remain explicit, and this pattern check is not a complete secret detector.
+- Local coverage and wheel validation use private temporary paths with cleanup
+  on success or failure. Wheel validation refuses multiple stale scanner wheels.
+- Evaluation rejects ambiguous case/Unicode path layouts, file/directory
+  collisions and overlong UTF-8 filename components before materialization.
+  Existing labeled files are never overwritten.
+- Gateway UTC timestamp validation runs before caller state changes. An invalid
+  timestamp or interval end marks coverage incomplete without suppressing valid
+  neighboring observations for the same caller.
+- Tenant-canary verification indexes exact resource identities instead of
+  comparing every control with every collected record. Dump verification reads
+  lines incrementally under the existing file-size cap; acceptance selectors
+  and scope requirements are unchanged.
+- Live ruleset readback found both rulesets active, with independent approval
+  required, but the required-check list still omitted `CI gate`. This review
+  does not alter repository settings, publish a release or establish live
+  tenant acceptance or independent human review.
+
 ### October 1 scan integrity remediation
 
 An AI-assisted audit of the unreleased candidate (not independent human review)

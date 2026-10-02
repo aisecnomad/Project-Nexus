@@ -18,6 +18,7 @@ import statistics
 import sys
 import tempfile
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path, PurePosixPath
@@ -83,11 +84,38 @@ def _safe_name(name: Any) -> bool:
     if not isinstance(name, str) or not name or len(name) > 240 or "\\" in name or "\x00" in name:
         return False
     path = PurePosixPath(name)
+    try:
+        # NAME_MAX is a byte limit on the supported Linux filesystems. A short
+        # Unicode name can still exceed it, before any sample can be scanned.
+        component_bytes = [len(part.encode("utf-8")) for part in name.split("/")]
+    except UnicodeError:
+        return False
     return (
         not path.is_absolute()
         and path.as_posix() == name
         and all(part not in {"", ".", ".."} for part in name.split("/"))
+        and all(size <= 255 for size in component_bytes)
     )
+
+
+def _validate_file_layout(files: dict[str, str], where: str) -> None:
+    """Require the frozen samples to materialize identically on Linux and macOS."""
+    nodes: dict[tuple[str, ...], tuple[tuple[str, ...], bool]] = {}
+    for name in files:
+        parts = tuple(name.split("/"))
+        canonical = tuple(unicodedata.normalize("NFC", part.casefold()) for part in parts)
+        for position in range(1, len(parts) + 1):
+            key = canonical[:position]
+            node = (parts[:position], position == len(parts))
+            previous = nodes.get(key)
+            # APFS commonly ignores case and canonical Unicode differences.
+            # Parent aliases also matter: they can merge separate projects.
+            # A file used as another file's parent is invalid on every host.
+            if previous is not None and previous != node:
+                raise CorpusError(
+                    f"{where}: file paths must identify distinct portable files and directories"
+                )
+            nodes[key] = node
 
 
 def _selector_key(selector: dict[str, Any]) -> _SelectorKey:
@@ -293,6 +321,7 @@ def _parse_case(item: Any, where: str, ids: set[str], total_bytes: int, corpus_t
         total_bytes += size
         if total_bytes > MAX_TOTAL_FILE_BYTES:
             raise CorpusError("case files exceed 1 MB combined")
+    _validate_file_layout(files, where)
     source = obj.get("source")
     if source is not None:
         source = _case_source(source, files, where)
@@ -708,7 +737,10 @@ def evaluate(path: Path, *, repeats: int = 1, annotations: Path | None = None) -
             for name, contents in case.files.items():
                 dest = root / name
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_text(contents, encoding="utf-8")
+                # A host-specific alias must fail closed rather than replace a
+                # different labeled file after the portable layout preflight.
+                with dest.open("x", encoding="utf-8") as handle:
+                    handle.write(contents)
                 file_bytes += len(contents.encode("utf-8"))
             iterations = [_scan_case(case, root, index) for _ in range(repeats)]
             durations.extend(duration for duration, _ in iterations)
