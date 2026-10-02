@@ -217,6 +217,10 @@ def test_slow_drip_status_and_headers_are_interrupted_before_the_body_reader(tmp
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
+        def setup(self):
+            super().setup()
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
         def do_GET(self):
             clients.append(self.client_address)
             body = b'{"items": []}'
@@ -246,10 +250,14 @@ def test_slow_drip_status_and_headers_are_interrupted_before_the_body_reader(tmp
     _resolve_to(server.server_port, monkeypatch)
     http = HttpClient(allow_private_origin=True, timeout=0.15, max_retries=0)
     url = f"https://service.example:{server.server_port}/items"
+    # Isolate the acquisition watchdog from per-read platform buffering. A
+    # request override leaves the client's 0.3 s acquisition budget unchanged;
+    # the 1 s read timeout tolerates macOS TLS/TCP delayed delivery of tiny writes.
+    request_timeout = 1
     try:
         started = time.monotonic()
         with pytest.raises(ValueError, match="acquisition deadline"):
-            http.get_json(url, verify=str(cert_path))
+            http.get_json(url, verify=str(cert_path), timeout=request_timeout)
         elapsed = time.monotonic() - started
         # Every byte is inside the socket timeout; the status/header phase
         # still ends within the aggregate budget, before even the status drip.
@@ -258,7 +266,7 @@ def test_slow_drip_status_and_headers_are_interrupted_before_the_body_reader(tmp
         # An expired checkout is discarded. Subsequent successful requests can
         # reuse their fresh TLS connection without a stale watchdog shutting it.
         for _ in range(2):
-            assert http.get_json(url, verify=str(cert_path)) == {"items": []}
+            assert http.get_json(url, verify=str(cert_path), timeout=request_timeout) == {"items": []}
         assert clients[0] != clients[1] and clients[1] == clients[2]
     finally:
         stop.set()
