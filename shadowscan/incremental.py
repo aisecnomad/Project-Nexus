@@ -358,8 +358,13 @@ def _checkout_container_digest(
     budget: _HashBudget,
     max_file_bytes: int,
     unread_above: int | None = None,
+    skip_default_excludes: bool = True,
 ) -> str:
-    """Offline provider inputs contain repositories; their names are not exclusions."""
+    """Offline provider inputs contain repositories; their names are not exclusions.
+
+    Inside each repository the provider scans like ``code.filesystem``, so its
+    ``default_excludes`` option decides whether built-in directories count.
+    """
     budget.check(entries=1)
     if not root.is_dir():
         raise ValueError("checkout container must be a directory")
@@ -387,6 +392,7 @@ def _checkout_container_digest(
                             budget=budget,
                             max_file_bytes=max_file_bytes,
                             unread_above=unread_above,
+                            skip_default_excludes=skip_default_excludes,
                         ),
                     ]
                 )
@@ -704,6 +710,7 @@ class IncrementalCache:
                         budget=budget,
                         max_file_bytes=max_bytes,
                         unread_above=unread_above,
+                        skip_default_excludes=spec.config.get("default_excludes", True) is True,
                     )
                 else:
                     digest = _tree_digest(

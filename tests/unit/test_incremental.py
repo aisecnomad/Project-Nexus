@@ -1034,3 +1034,23 @@ def test_absolute_xdg_state_home_is_used(tmp_path, monkeypatch, index):
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     assert IncrementalCache(ScanConfig(), index).directory == tmp_path / "state" / "shadowscan"
+
+
+@pytest.mark.parametrize("connector", ["code.github", "code.gitlab"])
+def test_offline_checkout_fingerprint_follows_the_default_excludes_option(tmp_path, index, connector):
+    # With default_excludes false the provider scans vendor/, so a change there
+    # must miss the cache instead of replaying a complete result without it.
+    cfg = config(tmp_path)
+    clones = tmp_path / "clones"
+    vendored = clones / "acme__repo" / "vendor" / "helper.py"
+    vendored.parent.mkdir(parents=True)
+    vendored.write_text("print('unrelated')\n")
+    options = {"input": str(clones), "use_git": False, "default_excludes": False}
+    cfg.connectors = [ConnectorSpec(connector, options)]
+    first = Engine(cfg, index).run()
+    assert first.complete and not first.findings
+    assert Engine(cfg, index).run().stats[0].cached
+    vendored.write_text("import langgraph\n")
+    changed = Engine(cfg, index).run()
+    assert changed.complete and not changed.stats[0].cached
+    assert any("framework.langgraph" in f.frameworks for f in changed.findings)
