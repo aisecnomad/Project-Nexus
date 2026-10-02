@@ -350,6 +350,7 @@ intended connector instance; export names are not a fixed `cloud_aws.jsonl`.
 ```yaml
 options:
   plugins: []
+  plugin_execution: thread
   allow_signature_override: false
   allow_private_origin: false
   allow_credential_mixing: false
@@ -367,6 +368,29 @@ connectors:
 Approved plugins still run trusted Python code. `shadowscan connectors` lists
 installed plugin metadata without importing it. A plugin must be explicitly
 allowed on each scan, even if a prior scan imported it.
+
+Use `options.plugin_execution: process` or `--plugin-execution process` to run
+approved third-party connectors in dedicated spawned workers. Built-in
+connectors keep their existing thread execution; the default for plugins also
+remains `thread`. Plugin import and execution happen in the child. The original
+connector deadline includes worker startup and result transfer, and the worker
+exits as soon as its result is sent (plugin `atexit` handlers do not run); expired results
+are discarded, and termination escalates from TERM to KILL with bounded cleanup.
+A parent supervision guard allows up to two additional seconds for cleanup.
+Workers also exit by themselves two seconds after the deadline, or as soon as
+the scanner process exits (job-deadline watchdog, signals), and a
+`KeyboardInterrupt` during collection kills them at once. Worker crashes, invalid result schemas and output above the 16 MiB JSON
+transport limit make the scan incomplete. There is no automatic thread fallback.
+
+Process mode is lifecycle isolation, not a security sandbox. Workers inherit the
+scanner's privileges and environment, and killing one does not undo remote
+changes, completed cache/export writes, or terminate its independently spawned
+descendants. Continue to use an external job deadline and disposable workers
+with appropriately restricted credentials and filesystem/network access.
+Embedded Python entry points must use the usual `if __name__ == "__main__"`
+guard for spawning. Plugin workers are daemonic and cannot themselves start
+`multiprocessing.Process` children. See [connectors](connectors.md) for the
+plugin execution contract.
 
 Keep scans of repository content separate from jobs holding live cloud, identity,
 SaaS or low-code credentials. By default, configuration rejects a selected code
@@ -480,7 +504,7 @@ risk threshold. `connector_timeout_seconds` defaults to 120 seconds and must be 
 finite number. It starts when the connector worker begins, and split filesystem
 roots share that connector's deadline. The engine stops accepting a connector's
 results after the deadline and records incomplete coverage. Python
-worker threads cannot safely be killed: a blocked SDK call can continue after
+worker threads (the default backend) cannot safely be killed: a blocked SDK call can continue after
 that soft deadline. The CLI normally exits after emitting an incomplete report,
 but a filesystem replacement already in progress can finish after the timeout
 report. Such cache or record artifacts are unaccepted even if present; timed-out
@@ -1033,6 +1057,17 @@ or explicitly exclude such paths before accepting a completeness gate.
 Pre/post content hashes can detect ordinary concurrent edits but do not form an
 atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
 and revert between those reads.
+
+Confined regular-file reads use `O_NOFOLLOW_ANY` on macOS too, both for full
+paths and paths relative to an open scan root. The kernel rejects links in any
+component in the same lookup; the scanner does not call `realpath` to turn a
+rejected link into an accepted input. This also avoids opening every ancestor
+for reading. Nonblocking opens and `fstat` still reject FIFOs and other special
+files. On other supported POSIX platforms the component-by-component confined
+walk remains in use. Signature-pack directory enumeration fails if a subtree
+cannot be read or the entry budget is exceeded, including directory-only
+trees; correct those inputs before accepting the policy.
+
 Incremental state uses nonblocking advisory `flock` per cache slot
 (`<sha256>.lock`): shared for reading and exclusive for publication, as well as
 atomic writes and current-input fingerprint checks.

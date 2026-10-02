@@ -412,6 +412,37 @@ field precision. Behavior changes that affect an existing baseline are listed in
   connector page named. A consistency test now fails when a key reported by
   `shadowscan connectors --json` is undocumented.
 
+### Confined file portability and plugin deadlines
+
+- On platforms exposing `O_NOFOLLOW_ANY` without Linux `O_PATH` (including
+  supported macOS versions), confined file reads use one kernel-checked path
+  lookup, including reads relative to an already-open scan root. This avoids
+  opening every ancestor for reading while still rejecting symbolic links in
+  every component. FIFO protection and regular-file verification remain in
+  force; paths are never resolved through symlinks as a fallback.
+- Signature directory traversal now fails on unreadable subdirectories and
+  enforces its entry budget for directory-only trees. A partial signature pack
+  must not silently become an accepted policy or digest.
+- `pytest` console invocations can import checkout-only evaluation and canary
+  tooling without a caller-supplied `PYTHONPATH`; macOS CI exercises this entry
+  point as part of the full suite.
+- Optional `options.plugin_execution: process` / `--plugin-execution process`
+  runs approved third-party connectors in dedicated spawned workers, including
+  plugin import. Connector deadline expiry terminates the worker and marks its
+  results incomplete. A worker also stops itself two seconds after that
+  deadline, or as soon as the scanner process exits (including the job-deadline
+  watchdog, SIGTERM and SIGKILL), and a `KeyboardInterrupt` during collection
+  kills running workers. Processes a plugin starts itself are not terminated.
+  Workers write record exports only into the private export directory the
+  scanner prepared, and exit as soon as their result is sent, so lingering
+  non-daemon plugin threads cannot turn a delivered result into a timeout.
+  Result transport serializes like the JSON report (`str()` for values such as
+  `datetime`, sets and bytes; NaN and infinity still fail closed).
+  Crashes, malformed output and output above the 16 MiB transport
+  limit also fail closed. The default remains `thread`; built-ins retain their
+  existing execution path. Process mode provides lifecycle isolation, not a
+  security sandbox or rollback of external effects.
+
 ### October 1 discovery review corrections
 
 - Code collection identifies declared submodules whose source has not been

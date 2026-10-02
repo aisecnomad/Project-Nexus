@@ -507,9 +507,12 @@ def test_ci_enforces_the_documented_coverage_floors() -> None:
     jobs = _load(GITHUB / "workflows" / "ci.yml")["jobs"]
     for name in ("test", "test-macos"):
         scripts = [step.get("run", "") for step in jobs[name]["steps"]]
-        assert any("python -m pytest" in script and "--cov-fail-under=80" in script for script in scripts), (
-            name
-        )
+        # Either spelling runs the same suite; the macOS job uses the console
+        # entry point on purpose, to prove it imports the checkout-only tools.
+        assert any(
+            re.search(r"(?:^|\s)(?:python -m )?pytest\b", script) and "--cov-fail-under=80" in script
+            for script in scripts
+        ), name
         assert any("python -m tools.coverage_gate" in script for script in scripts), name
 
 

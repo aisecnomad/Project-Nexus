@@ -80,6 +80,7 @@ ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-q"
 
 [tool.ruff.format]

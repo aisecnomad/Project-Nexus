@@ -305,7 +305,13 @@ security_options = [
         type=float,
         callback=_connector_timeout_option,
         help="per-connector completion deadline in seconds (default: 120); --connector-timeout is a"
-        " deprecated alias; blocking calls cannot be forcibly stopped",
+        " deprecated alias; thread workers use cooperative cancellation",
+    ),
+    click.option(
+        "--plugin-execution",
+        type=click.Choice(["thread", "process"]),
+        default=None,
+        help="third-party connector execution backend (default: thread); process enables worker termination",
     ),
     click.option(
         "--allow-plugin",
@@ -406,6 +412,7 @@ class ScanOptions:
     allow_credential_mixing: bool | None
     connector_timeout_seconds: float | None
     allow_plugin: tuple[str, ...]
+    plugin_execution: str | None
     allow_signature_override: bool | None
     allow_private_origin: bool | None
     incremental: bool | None
@@ -450,6 +457,8 @@ def scan_options(command: Callable[..., None]) -> Callable[..., None]:
 def _apply_security_options(cfg: ScanConfig, opts: ScanOptions) -> None:
     """Command-line approvals and deadlines override the configuration when given."""
     cfg.plugins = list(dict.fromkeys([*cfg.plugins, *opts.allow_plugin]))
+    if opts.plugin_execution is not None:
+        cfg.plugin_execution = opts.plugin_execution
     if opts.allow_signature_override is not None:
         cfg.allow_signature_override = opts.allow_signature_override
     if opts.allow_private_origin is not None:

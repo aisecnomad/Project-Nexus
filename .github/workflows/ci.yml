@@ -53,12 +53,15 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
+      - name: Check native file confinement and plugin worker lifecycle
+        run: pytest -q tests/unit/test_confined_file_portability.py tests/unit/test_plugin_process.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
       - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
-      - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+      # Exercise the console entry point too: it must import checkout-only tools.
+      - run: pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
         run: |
           python -m coverage json -o "$RUNNER_TEMP/shadowscan-coverage.json"
