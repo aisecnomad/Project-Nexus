@@ -78,8 +78,9 @@ sizes separately before setting a production latency or memory target.
 for executable Python/TypeScript calls, f-string interpolation, JavaScript
 regex followed by code, JSX text, comments, strings, README examples,
 dependency-only usage, MCP JSON/JSONC/TOML/YAML and mixed enabled/disabled MCP
-entries. An MCP case can also require an exact active server count and names,
-and forbid any agent or secret finding. These cases test known boundary
+entries (a server that declares itself disabled is still reported, tagged
+`declared-disabled`, but is not an active server). An MCP case can also require
+an exact active server count and names, and forbid any agent or secret finding. These cases test known boundary
 behavior and were used to guide the implementation. Most are one small file
 written to exercise one rule, so the scanner is expected to score 1.0 on them;
 that score means "no regression on the rules we already know about", not
@@ -89,8 +90,8 @@ regression scores**, not independently measured field accuracy.
 The September 27 classification correction keeps the original generic
 StateGraph and schema-only Vercel examples as negative agent cases, and adds
 actual agent factories and executable-tool examples as positives. New negatives
-cover generic CrewAI Flow and disabled tools. These 77 authored cases (29
-positives, 48 negatives) describe the intended boundary; they are not a new
+cover generic CrewAI Flow and disabled tools. These 77 authored cases (32
+positives, 45 negatives) describe the intended boundary; they are not a new
 holdout. The frozen public, realistic and independently AI-labeled sources and
 labels are unchanged. Review capabilities separately from binary agent labels:
 an available framework feature is not an observed workload capability.

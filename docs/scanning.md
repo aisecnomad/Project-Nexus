@@ -3,7 +3,8 @@
 ## Coverage policy
 
 A code scan is *complete* when every file it was asked to assess was assessed.
-Two situations are deliberately outside a repository's own content:
+These situations are outside a repository's own content, or need an operator
+decision:
 
 * **Symbolic links** are never followed. A link is skipped silently when its
   own name is one the scanner never reads (a lockfile, generated bundle or
@@ -28,6 +29,26 @@ Two situations are deliberately outside a repository's own content:
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.
+* **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
+  byte-order mark is decoded and the mark removed. A Python source is decoded
+  with the codec its `# coding:` cookie declares. Any other file the scanner
+  analyzes by name (source, configuration, documents, `.env`, extensionless
+  files) that has a NUL byte in its first 8 KiB, or that its declared codec
+  cannot decode, makes the scan incomplete (exit code 3) with `binary or
+  undecodable content in analyzable file`; it is never silently treated as
+  empty. A compiled or packed artifact with no file extension and a known
+  header (ELF, Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG,
+  GIF, PDF) is skipped quietly, as are names the scanner never analyzes
+  (images, archives, fonts, lockfiles, minified bundles). Exclude a directory
+  of binary data that carries an analyzed extension.
+* **Default-excluded directories.** The walk skips a built-in list of directory
+  names (see `default_excludes` in the [code connector](connectors/code.md)).
+  Tool metadata, caches, virtualenvs and dependency trees are skipped without
+  comment. A skipped `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`,
+  `vendor`, `third_party`, `thirdparty` or `external` directory that holds a
+  file is a warning (the scan stays complete) naming each such directory name
+  with its count, because projects also keep their own code there.
+  `default_excludes: false` (`--no-default-excludes`) scans them.
 
 By default, incomplete coverage is recorded as a warning and exits 3.
 `strict_coverage: true` (`--strict-coverage`) elevates the diagnostic to an

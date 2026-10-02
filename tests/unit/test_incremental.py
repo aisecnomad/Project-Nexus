@@ -579,6 +579,32 @@ def test_literal_excluded_directory_reuses_cache_but_direct_codeowners_remains_t
     assert updated.findings[0].owner == "@second-team"
 
 
+def test_default_excludes_option_decides_whether_built_in_directories_are_fingerprinted(tmp_path, index):
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["default_excludes"] = False
+    (tmp_path / "skipped").mkdir()
+    skipped = config(tmp_path / "skipped")
+    agent = tmp_path / "repo" / "bin" / "agent.py"
+    agent.parent.mkdir()
+    agent.write_text("import crewai\n")
+    ignored = tmp_path / "skipped" / "repo" / "bin" / "agent.py"
+    ignored.parent.mkdir()
+    ignored.write_text("import crewai\n")
+
+    # Scanned directory: a change inside it must miss the cache and be reported.
+    assert Engine(cfg, index).run().stats[0].cached is False
+    assert Engine(cfg, index).run().stats[0].cached
+    agent.write_text("import langgraph\n")
+    updated = Engine(cfg, index).run()
+    assert not updated.stats[0].cached
+    assert any("framework.langgraph" in f.frameworks for f in updated.findings)
+
+    # Skipped (default) directory: it is outside the scan, so a change there reuses the cache.
+    assert Engine(skipped, index).run().stats[0].cached is False
+    ignored.write_text("import langgraph\n")
+    assert Engine(skipped, index).run().stats[0].cached
+
+
 @pytest.mark.parametrize("limit", ["_MAX_HASH_BYTES", "_MAX_HASH_ENTRIES", "_MAX_HASH_SECONDS"])
 def test_fingerprint_work_limits_fall_back_to_full_scan(tmp_path, index, monkeypatch, limit):
     cfg = config(tmp_path)

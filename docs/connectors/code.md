@@ -45,9 +45,40 @@ reviewed local metadata. The metadata command must support `--no-lazy-fetch`;
 unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 
-Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
+Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`,
 `max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
+
+`paths`, `exclude` and `oversize_skip_globs` must be lists of non-empty strings.
+A bare string, such as the YAML scalar `exclude: "vendor/*"`, is a configuration
+error (the message names the option, not the value) rather than being read
+one character at a time; on the command line repeat `--exclude`, or give
+`--set 'exclude=["vendor/*"]'`.
+
+The walk skips a built-in list of directory names at any depth. `exclude` only
+adds to it; `default_excludes: false` (`--no-default-excludes`) turns the list
+off. Most names are tool metadata, caches, virtualenvs, dependency trees and IDE
+state that never hold a project's own source, and are skipped without comment:
+`.git`, `.hg`, `.svn`, `node_modules`, `bower_components`, `.yarn`,
+`.pnpm-store`, `Pods`, `.venv`, `venv`, `.virtualenv`, `site-packages`,
+`__pycache__`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.tox`, `.nox`,
+`.cache`, `.coverage`, `.dart_tool`, `.gradle`, `.terraform`, `.serverless`,
+`.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.parcel-cache`, `.idea` and `.vs`.
+The remaining names are build output or vendored code by convention, but
+projects also keep first-party code there (scripts in `bin/`, an agent under
+`vendor/` or `build/`): `bin`, `build`, `dist`, `out`, `target`, `obj`,
+`coverage`, `vendor`, `third_party`, `thirdparty` and `external`. When the walk
+skips one of these that holds at least one file, the scan records the warning
+`default-excluded directories not scanned: bin (2), vendor (1); set
+default_excludes: false to scan them` (the count is directories with that name,
+and a name listed in `exclude` is not repeated there). It is a warning, not
+incomplete coverage, because the exclusion is a documented default. With
+`default_excludes: false` only the explicit `exclude` entries apply, so
+dependency trees such as `node_modules` and virtualenvs are scanned too (add
+them to `exclude` unless that is intended); version-control metadata (`.git`,
+`.hg`, `.svn`) is never scanned, since its index and objects are binary. The
+same option is accepted by `code.github` and `code.gitlab` and forwarded to the
+scan of each checkout.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
 by default; `strict_coverage` promotes their diagnostics to errors. Declared
 oversize skip globs remain visible omissions. Each root is opened once, and every
@@ -63,6 +94,19 @@ denied`, `not found` or `a path component is a link or not a directory`; nothing
 below it is scanned and the scan is incomplete. Findings describe
 one consistent state of the tree only when the checkout does not change during
 the scan.
+
+The directory walk keeps its own stack, so how deep a tree nests is not limited
+by Python's recursion limit (on Python 3.11 the standard walk fails at about a
+thousand levels and would discard every finding). A Python file more than 128
+directories deep cannot have its imports checked against local packages, and is
+reported as `file analysis incomplete (ImportProvenanceError)` for that file
+alone.
+
+A file or directory name that is not valid UTF-8 appears in findings and
+diagnostics with each undecodable byte written as a `\xNN` escape (for example
+`agent-\xff.py`), so every report format can carry it; the file is still read
+under its real name. Two names that differ only in such bytes, or a name that
+contains the literal text `\xff`, are indistinguishable in a report.
 
 Configuration files are parsed as JSONC where their format allows comments.
 A syntax error in a file that is not coding-agent settings only skips its
@@ -80,7 +124,25 @@ the scan incomplete. Deciding this takes time linear in the module and at most
 that needs more, which ordinary code does not, is treated like one that imports
 a signature's library. Any other Python module over `max_ast_nodes` (default
 50000) keeps its lexical evidence without import-bound analysis: a warning in
-test code, an error elsewhere. Malformed YAML front matter in an agent
+test code, an error elsewhere.
+
+An absolute import is read as repository code rather than the SDK of the same
+name when the scan root, the project root, its `src` directory or the importing
+file's directory holds a module `name.py`, a package directory with an
+`__init__.py`, or a directory without one that contains Python source (a
+bounded look: 256 entries and 8 levels; a larger or deeper directory, or a link
+inside it, is reported as `file analysis incomplete (ImportProvenanceError)`).
+An empty directory, or one of data files, does not count: Python ignores it in
+favour of the installed package, so it does not hide that SDK's imports.
+
+A Python source the running interpreter cannot parse (syntax newer than it, such
+as a PEP 695 `type` statement on Python 3.11, or a notebook's `!pip` and `%magic`
+lines) has no import binding either: it keeps its lexical evidence, so an agent
+can show as framework usage, and the scan records the warning `import-bound
+analysis skipped (source did not parse); lexical evidence retained` without
+becoming incomplete.
+
+Malformed YAML front matter in an agent
 definition, including a YAML value PyYAML cannot construct (an impossible date,
 an integer over 4,300 digits), is reported as `invalid agent definition YAML`;
 the definition is still listed by its file name.
@@ -89,6 +151,17 @@ A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding and listed under `metadata.manifests`. MCP server
 capabilities are derived from the tool names the server registers
 (`metadata.mcp_tools`, for example `write_file` implies `data-access`).
+
+An MCP server entry that declares itself disabled (`disabled: true` or
+`enabled: false`) is still reported. The flag is client-specific (Cline and Roo
+honour it, Claude Code's `.mcp.json` does not) and the repository sets it, so
+honouring it would let a repository hide a server. The finding lists the server
+with `disabled: true` in `metadata.servers`, keeps its endpoints, environment
+names and capabilities as evidence, and carries the tag `declared-disabled` (not
+`disabled`, which would lower the risk score); `metadata.disabled` is `true`
+when no server is left enabled. `metadata.server_count` counts the servers that
+are not declared disabled and `metadata.disabled_server_count` the others. An
+entry with no command, URL or package is not a server, whatever its flag.
 
 Gemini CLI's `httpUrl` (Streamable HTTP) is read as an MCP endpoint, like
 `url`, `serverUrl` and `endpoint`; an entry with more than one of them is

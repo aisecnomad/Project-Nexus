@@ -26,6 +26,7 @@ from shadowscan.connectors.code import source_semantics
 from shadowscan.connectors.code.source_semantics import (
     MAX_AST_NODES,
     SourceBudgetExceeded,
+    SourceNotParsed,
     bound_source_matches,
 )
 from shadowscan.signatures import Match, SignatureIndex
@@ -361,6 +362,13 @@ def test_default_budget_applies_only_when_a_binding_can_resolve(index):
     assert bound_source_matches(index, PLAIN_MODULE, "python", []) == []
     with pytest.raises(SourceBudgetExceeded, match="source binding AST limit exceeded"):
         bound_source_matches(index, OPENAI_MODULE, "python", [])
+
+
+@pytest.mark.parametrize("text", ["def broken(:\n    pass\n", "!pip install openai\nimport openai\n"])
+def test_source_that_does_not_parse_is_reported_not_returned_as_empty(index, text):
+    # An empty list would be indistinguishable from a file with no bound evidence.
+    with pytest.raises(SourceNotParsed, match="source did not parse"):
+        bound_source_matches(index, text, "python", [])
 
 
 def test_nesting_budget_applies_only_when_a_binding_can_resolve(index):
