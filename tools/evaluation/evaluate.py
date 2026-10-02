@@ -392,7 +392,13 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
             **(
                 {
                     "server_count": f.metadata.get("server_count"),
-                    "server_names": sorted(str(server["name"]) for server in f.metadata.get("servers", [])),
+                    # Active servers only: a server that declares itself disabled is listed
+                    # in the metadata (tagged declared-disabled) but is not counted here.
+                    "server_names": sorted(
+                        str(server["name"])
+                        for server in f.metadata.get("servers", [])
+                        if not server["disabled"]
+                    ),
                 }
                 if f.kind == Kind.MCP_SERVER
                 else {}

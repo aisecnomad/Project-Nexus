@@ -152,6 +152,17 @@ into that project's finding and listed under `metadata.manifests`. MCP server
 capabilities are derived from the tool names the server registers
 (`metadata.mcp_tools`, for example `write_file` implies `data-access`).
 
+An MCP server entry that declares itself disabled (`disabled: true` or
+`enabled: false`) is still reported. The flag is client-specific (Cline and Roo
+honour it, Claude Code's `.mcp.json` does not) and the repository sets it, so
+honouring it would let a repository hide a server. The finding lists the server
+with `disabled: true` in `metadata.servers`, keeps its endpoints, environment
+names and capabilities as evidence, and carries the tag `declared-disabled` (not
+`disabled`, which would lower the risk score); `metadata.disabled` is `true`
+when no server is left enabled. `metadata.server_count` counts the servers that
+are not declared disabled and `metadata.disabled_server_count` the others. An
+entry with no command, URL or package is not a server, whatever its flag.
+
 Gemini CLI's `httpUrl` (Streamable HTTP) is read as an MCP endpoint, like
 `url`, `serverUrl` and `endpoint`; an entry with more than one of them is
 ambiguous. A header or env value that is only a shell-style variable reference

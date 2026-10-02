@@ -556,7 +556,7 @@ class _SourceFile:
     card_valid: bool = False
     is_mcp: bool = False
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
-    mcp_active: bool = False  # at least one configured MCP server is enabled
+    mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
 
     @property
     def name(self) -> str:
@@ -1681,7 +1681,12 @@ class FilesystemConnector(BaseConnector):
             self._record(file.proj, m, file.rel, None)
 
     def _detect_mcp(self, file: _SourceFile) -> None:
-        """Parse an MCP client/server configuration; only an enabled server is MCP evidence."""
+        """Parse an MCP client/server configuration.
+
+        A server that declares itself disabled is still a configured server: the flag
+        is client-specific (Cline and Roo honour it, Claude Code does not) and comes
+        from the repository, so honouring it here would let a repository hide a server.
+        """
         file.is_mcp = self._looks_like_mcp_config(file.rel, file.name, file.text) or (
             file.name.lower() == "server.json" and '"mcpServers"' in file.text
         )
@@ -1689,7 +1694,7 @@ class FilesystemConnector(BaseConnector):
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors)
             self._file_errors(file.rel, dict.fromkeys(mcp_errors))
-        file.mcp_active = any(not server["disabled"] for server in file.mcp_servers)
+        file.mcp_active = bool(file.mcp_servers)
         if file.mcp_active:
             for m in file.file_matches:
                 if m.signature_id == "protocol.mcp":
@@ -1697,7 +1702,7 @@ class FilesystemConnector(BaseConnector):
 
     def _record_content(self, file: _SourceFile, m: Match, snippet: str | None) -> None:
         # A bare key or matching filename is not evidence of a
-        # configured server when all entries are empty/disabled.
+        # configured server when the entries are all empty.
         if m.signature_id != "protocol.mcp" or not file.is_mcp or file.mcp_active:
             self._record(file.proj, m, file.rel, snippet)
 
@@ -2657,6 +2662,8 @@ class FilesystemConnector(BaseConnector):
         return f"{what} in {where}: {detail}"
 
     def _mcp_finding(self, label: str, root: Path, rel: str, servers: list[dict[str, Any]]) -> Finding:
+        # Every configured server is evidence, including one that declares itself
+        # disabled (see _detect_mcp); each record carries its own ``disabled`` flag.
         enabled = [server for server in servers if not server["disabled"]]
         f = self._base(label, root, rel, Kind.MCP_SERVER, f"MCP configuration: {rel}", "mcp-config")
         sig = self.index.get("protocol.mcp")
@@ -2672,7 +2679,7 @@ class FilesystemConnector(BaseConnector):
             )
         )
         remote_hosts: list[str] = []
-        for s in enabled:
+        for s in servers:
             urls = s.get("urls")
             if not isinstance(urls, list):
                 urls = [s["url"]] if s.get("url") else []
@@ -2705,9 +2712,14 @@ class FilesystemConnector(BaseConnector):
                 if any(k in cmd for k in keywords):
                     f.add_capability(capability)
                     break
-        f.metadata["servers"] = enabled
+        f.metadata["servers"] = servers
+        # Servers that are not declared disabled; the others are counted apart.
         f.metadata["server_count"] = len(enabled)
         f.metadata["disabled_server_count"] = len(servers) - len(enabled)
+        if len(enabled) < len(servers):
+            f.add_tag("declared-disabled")
+            if not enabled:
+                f.metadata["disabled"] = True
         f.metadata["remote_urls"] = remote_hosts
         f.metadata["client"] = _mcp_client_for(rel)
         f.owner = self._owner_for(root, rel) or f.owner
