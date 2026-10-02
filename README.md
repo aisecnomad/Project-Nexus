@@ -287,7 +287,7 @@ See [deployment and migration](docs/production.md) for the rollout checks.
   "account": "123456789012", "region": "us-east-1", "owner": null,
   "frameworks": ["cloud.aws-bedrock-agents"], "model_providers": ["provider.openai"],
   "capabilities": ["tool-use"], "tags": ["plaintext-credential", "secret-in-env"],
-  "confidence": 1.0, "likelihood": "confirmed",
+  "confidence": 1.0, "likelihood": "strong",
   "shadow": true, "registry_match": null,
   "risk": {"score": 90, "level": "critical", "factors": [
       {"id": "shadow", "description": "not present in the sanctioned agent inventory", "weight": 25},

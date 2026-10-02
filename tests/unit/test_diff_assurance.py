@@ -50,6 +50,18 @@ def _invoke(tmp_path: Path, baseline: dict, current: dict, *extra: str):
     return CliRunner().invoke(main, ["diff", str(before), str(after), *extra])
 
 
+def test_baseline_written_before_the_likelihood_rename_still_compares(tmp_path):
+    current = _finding("agent")
+    current["confidence"], current["likelihood"] = 0.95, "strong"
+    baseline = copy.deepcopy(current)
+    baseline["likelihood"] = "confirmed"  # what reports called the top bucket before it was renamed
+    result = _invoke(tmp_path, _report(baseline), _report(current), "--json")
+    assert result.exit_code == 0, result.output
+    output = json.loads(result.output)
+    assert output["comparable"] is True
+    assert output["new"] == [] and output["changed"] == [] and output["resolved"] == []
+
+
 def test_completed_comparable_report_can_resolve(tmp_path):
     result = _invoke(tmp_path, _report(_finding("agent")), _report(), "--json")
     assert result.exit_code == 0, result.output

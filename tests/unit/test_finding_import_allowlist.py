@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from shadowscan.models import Evidence, Finding, Kind, Risk, RiskFactor, ScanResult, Surface
+from shadowscan.models import Evidence, Finding, Kind, Likelihood, Risk, RiskFactor, ScanResult, Surface
 
 
 def _finding() -> Finding:
@@ -155,3 +155,55 @@ def test_report_serialization_hides_private_state_and_tolerates_newer_fields():
     assert restored.id == finding.id and restored.risk.factors[0].id == "x"
     with pytest.raises(TypeError):
         Finding.from_dict("not an object")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------- likelihood label
+def test_likelihood_is_a_confidence_bucket_named_strong():
+    assert [member.value for member in Likelihood] == ["strong", "likely", "possible", "weak"]
+    assert not hasattr(Likelihood, "CONFIRMED")
+    for confidence, expected in [
+        (1.0, Likelihood.STRONG),
+        (0.85, Likelihood.STRONG),
+        (0.849, Likelihood.LIKELY),
+        (0.6, Likelihood.LIKELY),
+        (0.599, Likelihood.POSSIBLE),
+        (0.3, Likelihood.POSSIBLE),
+        (0.299, Likelihood.WEAK),
+        (0.0, Likelihood.WEAK),
+    ]:
+        assert Likelihood.from_confidence(confidence) is expected
+    for member in Likelihood:
+        assert Likelihood(member.value) is member
+
+
+def test_the_legacy_confirmed_spelling_reads_as_strong_and_nothing_else_does():
+    assert Likelihood("confirmed") is Likelihood.STRONG
+    for value in ["CONFIRMED", "Confirmed", " confirmed", "certain", "", None, 1]:
+        with pytest.raises(ValueError):
+            Likelihood(value)
+
+
+def test_finding_import_reads_reports_written_before_the_rename():
+    finding = _finding()
+    finding.evidence[0].weight = 0.9
+    finding.recompute_confidence()
+    payload = finding.to_dict()
+    assert payload["likelihood"] == "strong" and finding.likelihood is Likelihood.STRONG
+    payload["likelihood"] = "confirmed"
+    restored = Finding.from_dict(payload)
+    assert restored.likelihood is Likelihood.STRONG and restored.to_dict()["likelihood"] == "strong"
+    assert restored.id == finding.id  # the label is not part of a finding's identity
+    # The label is derived from confidence; a stored label never overrides it.
+    payload["confidence"] = 0.2
+    assert Finding.from_dict(payload).likelihood is Likelihood.WEAK
+    payload["likelihood"] = "certain"
+    with pytest.raises(ValueError):
+        Finding.from_dict(payload)
+
+
+def test_json_report_uses_the_new_label_only():
+    finding = _finding()
+    finding.evidence[0].weight = 0.95
+    finding.recompute_confidence()
+    report = ScanResult(findings=[finding]).to_json()
+    assert '"likelihood": "strong"' in report and "confirmed" not in report

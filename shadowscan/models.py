@@ -168,15 +168,22 @@ class Kind(str, Enum):
 
 
 class Likelihood(str, Enum):
-    CONFIRMED = "confirmed"  # >= 0.85
+    """A heuristic bucket of ``Finding.confidence``. It is not a verification state."""
+
+    STRONG = "strong"  # >= 0.85
     LIKELY = "likely"  # >= 0.6
     POSSIBLE = "possible"  # >= 0.3
     WEAK = "weak"  # < 0.3
 
     @classmethod
+    def _missing_(cls, value: object) -> Likelihood | None:
+        # Reports, diff baselines and cache entries written before the rename carry "confirmed".
+        return cls.STRONG if value == "confirmed" else None
+
+    @classmethod
     def from_confidence(cls, confidence: float) -> Likelihood:
         if confidence >= 0.85:
-            return cls.CONFIRMED
+            return cls.STRONG
         if confidence >= 0.6:
             return cls.LIKELY
         if confidence >= 0.3:

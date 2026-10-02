@@ -850,7 +850,7 @@
     {
       "id": "env-names-only-usage",
       "family": "framework-usage",
-      "description": "Provider environment variable names in .env.example establish likely, not confirmed, LLM usage",
+      "description": "Provider environment variable names in .env.example establish likely, not strong, LLM usage",
       "files": {
         ".env.example": "OPENAI_API_KEY=\nANTHROPIC_API_KEY=\nGEMINI_API_KEY=\n"
       },

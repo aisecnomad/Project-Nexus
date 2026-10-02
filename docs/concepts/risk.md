@@ -22,14 +22,20 @@ Agent with a confirmed runtime status.
 
 Confidence is a heuristic evidence score, not a calibrated probability of
 agent execution: the weights are authored in signature packs and connectors,
-not fitted to observed outcomes. The `likelihood` label is derived from it:
+not fitted to observed outcomes. The `likelihood` label is only a bucket of that
+score, not a verification state (`strong` is not "confirmed"):
 
 | Likelihood | Confidence |
 |------------|------------|
-| `confirmed` | ≥ 0.85 |
+| `strong` | ≥ 0.85 |
 | `likely` | ≥ 0.6 |
 | `possible` | ≥ 0.3 |
 | `weak` | < 0.3 |
+
+The top bucket was called `confirmed` before the label was renamed. Reports,
+`diff` baselines and incremental-cache entries that carry `confirmed` are still
+read, as `strong`; all output uses `strong`. The label is not part of a finding's
+identity.
 
 Static findings retain framework features supported only by imports or
 dependencies under `metadata.potential_capabilities`. Those features are not

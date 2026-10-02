@@ -164,7 +164,7 @@ def test_env_sample_placeholder_is_example_credential_not_secret(tmp_path: Path,
         assert e.location.startswith(".env.sample:")
     assert project.metadata["placeholder_samples"] == {"count": 2, "files": [".env.sample"]}
     # The env names still say "likely LLM usage"; the sample keys add nothing that alarms.
-    assert project.likelihood != Likelihood.CONFIRMED
+    assert project.likelihood != Likelihood.STRONG
     assert "hardcoded-credential" not in project.tags
     assert assess(project, index).score < 50
 
@@ -251,7 +251,7 @@ def test_secret_alone_does_not_establish_llm_usage(tmp_path: Path, run_connector
 
 
 # -------------------------------------------------- environment-name saturation
-def test_env_names_only_stay_below_confirmed(tmp_path: Path, run_connector):
+def test_env_names_only_stay_below_strong(tmp_path: Path, run_connector):
     (tmp_path / ".env.example").write_text("".join(f"{name}=\n" for name in PROVIDER_ENV_NAMES[:3]))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
     assert not ctx.stats.errors
@@ -279,7 +279,7 @@ def test_env_names_only_stay_below_confirmed(tmp_path: Path, run_connector):
         and "env-names-only" not in project.tags
         and "confidence_cap" not in project.metadata
     )
-    assert project.likelihood == Likelihood.CONFIRMED
+    assert project.likelihood == Likelihood.STRONG
 
 
 def test_evidence_per_signature_is_capped_before_confidence_is_computed():
@@ -573,7 +573,7 @@ def test_heuristics_next_to_env_names_only_do_not_make_an_agent(tmp_path: Path, 
     assert project is not None and project.kind == Kind.FRAMEWORK_USAGE
     assert "env-names-only" in project.tags
     assert project.metadata["confidence_cap"] == {"reason": "env-names-only", "maximum": 0.8}
-    assert project.confidence <= 0.8 and project.likelihood != Likelihood.CONFIRMED
+    assert project.confidence <= 0.8 and project.likelihood != Likelihood.STRONG
     assert not {"autonomous", "code-exec"} & set(project.capabilities)
     assert project.metadata["agent_indicators"] == 0
     # The finding is built from the name references alone: no heuristic evidence, no deploy.py.

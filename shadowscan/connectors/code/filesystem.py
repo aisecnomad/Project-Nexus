@@ -30,7 +30,7 @@ Precision safeguards
   environment-variable or display-name reference, the heuristics are dropped
   and the finding is built from the name references alone: evidence weights
   are halved, the finding is tagged ``env-names-only`` and confidence is
-  capped below the ``confirmed`` band.
+  capped below the ``strong`` band.
 * A data or prose file that only lists products (a blocklist, a vendor
   policy, a copy of the signature packs: four or more products by domain or
   variable name, no import, dependency, code or other structural evidence) is
@@ -504,7 +504,7 @@ class _ProjectEvidence:
         # Environment-variable and display-name references are weak
         # anchors, so they are judged before heuristics join: an agent
         # loop or subprocess.run next to a .env.example must not promote
-        # the project to a confirmed agent with autonomous or code-exec
+        # the project to a strong agent with autonomous or code-exec
         # capabilities. Such a finding is built from the name references
         # alone. A live credential is not a name: it keeps full weights
         # and lets the heuristics count. Every anchor is non-heuristic,
@@ -2271,7 +2271,7 @@ class FilesystemConnector(BaseConnector):
             f.metadata["potential_capabilities"] = sorted(potential)
         # Repeated observations of one technology are correlated evidence.
         # Generic idioms share a single supporting group; loops in several
-        # worker files must never accumulate into a confirmed AI agent.
+        # worker files must never accumulate into a strong AI agent.
         for item in f.evidence:
             category = item.attributes.get("category")
             item.attributes["confidence_group"] = (

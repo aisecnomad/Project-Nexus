@@ -377,7 +377,7 @@ options. Extra statements, nested scopes, mutations and dynamic options cannot
 establish this proof. Unsupported shapes, including files longer than such a
 program can be, still produce ordinary SDK evidence and leave coverage complete.
 
-Several rules keep weak observations from producing confirmed or high-risk
+Several rules keep weak observations from producing strong or high-risk
 findings. A credential whose value looks like a documentation placeholder
 (`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
 sequences after the provider prefix) is never a `secret` finding; it is listed
