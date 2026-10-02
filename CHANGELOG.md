@@ -18,8 +18,12 @@
   point as part of the full suite.
 - Optional `options.plugin_execution: process` / `--plugin-execution process`
   runs approved third-party connectors in dedicated spawned workers, including
-  plugin import. Deadline expiry terminates the worker and marks its results
-  incomplete. Crashes, malformed output and output above the 16 MiB transport
+  plugin import. Connector deadline expiry terminates the worker and marks its
+  results incomplete. A worker also stops itself two seconds after that
+  deadline, or as soon as the scanner process exits (including the job-deadline
+  watchdog, SIGTERM and SIGKILL), and a `KeyboardInterrupt` during collection
+  kills running workers. Processes a plugin starts itself are not terminated.
+  Crashes, malformed output and output above the 16 MiB transport
   limit also fail closed. The default remains `thread`; built-ins retain their
   existing execution path. Process mode provides lifecycle isolation, not a
   security sandbox or rollback of external effects.

@@ -3,20 +3,26 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
+import signal
 import socket
+import subprocess
 import sys
 import time
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
+import shadowscan
+from shadowscan import engine as engine_module
 from shadowscan.cli import main
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.models import ScanStats
-from shadowscan.plugin_process import _decode_result, _encode_result, _receive
+from shadowscan.plugin_process import _decode_result, _encode_result, _receive, _worker
 from shadowscan.signatures import SignatureIndex
 
 ENTRY = "platform.process-probe"
@@ -98,6 +104,44 @@ def _assert_reaped(marker):
         os.kill(pid, 0)
 
 
+def _plugin_pid(marker, limit=30.0):
+    """Wait (bounded) until the plugin has been imported in its worker."""
+    end = time.monotonic() + limit
+    while time.monotonic() < end:
+        try:
+            return int(marker.read_text())
+        except (OSError, ValueError):
+            time.sleep(0.05)
+    raise AssertionError("plugin worker did not start")
+
+
+def _exited(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    try:
+        # An orphan that init has not reaped yet is a zombie: it no longer runs.
+        with open(f"/proc/{pid}/stat") as status:
+            return status.read().rsplit(")", 1)[1].split()[0] == "Z"
+    except OSError:
+        return False
+
+
+def _wait_exited(pid, limit):
+    end = time.monotonic() + limit
+    while not _exited(pid):
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def _kill_leftover(pid):
+    if not _exited(pid):
+        os.kill(pid, signal.SIGKILL)
+
+
 def test_spawned_plugin_result_and_export_without_parent_import(installed_probe, tmp_path):
     directory = tmp_path / "exports"
     engine = _engine(dump_records=str(directory))
@@ -176,6 +220,90 @@ def test_child_crash_or_bad_wire_result_fails_closed(installed_probe, monkeypatc
     assert result.stats[0].incomplete and result.stats[0].errors
     assert MODULE not in sys.modules
     _assert_reaped(installed_probe)
+
+
+# Run as `python -c`: spawn then has no main module to re-import in the worker.
+_DYING_SCANNER = """
+import os, sys, threading, time
+from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.engine import Engine
+from shadowscan.signatures import SignatureIndex
+
+marker, entry = sys.argv[1:]
+
+def exit_without_cleanup():
+    while True:
+        try:
+            int(open(marker).read())
+            break
+        except (OSError, ValueError):
+            time.sleep(0.05)
+    os._exit(0)  # like the job-deadline watchdog or SIGKILL: no finally/atexit
+
+threading.Thread(target=exit_without_cleanup, daemon=True).start()
+config = ScanConfig(
+    connectors=[ConnectorSpec(entry)], plugins=[entry], plugin_execution="process",
+    connector_timeout_seconds=120,
+)
+Engine(config, SignatureIndex([])).run()
+"""
+
+
+def test_worker_exits_when_scanner_process_dies(installed_probe, monkeypatch, tmp_path):
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "hang")
+    checkout = Path(shadowscan.__file__).resolve().parents[1]
+    environment = {**os.environ, "PYTHONPATH": os.pathsep.join([str(tmp_path), str(checkout)])}
+    command = [sys.executable, "-c", _DYING_SCANNER, str(installed_probe), ENTRY]
+    subprocess.run(command, env=environment, timeout=60, check=True)
+    pid = _plugin_pid(installed_probe)
+    try:
+        # The connector deadline is 120 s: only parent-death detection can stop it.
+        assert _wait_exited(pid, 10), "orphaned plugin worker kept running"
+    finally:
+        _kill_leftover(pid)
+
+
+def test_interrupted_collection_kills_worker_promptly(installed_probe, monkeypatch):
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "hang")
+
+    def interrupted(self):
+        _plugin_pid(installed_probe)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(engine_module._Supervisor, "run", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        _engine(connector_timeout_seconds=120).run()
+    pid = _plugin_pid(installed_probe)
+    try:
+        assert _wait_exited(pid, 10), "interrupted scan left its plugin worker running"
+    finally:
+        _kill_leftover(pid)
+
+
+def test_worker_enforces_its_own_deadline_without_parent_supervision(installed_probe, monkeypatch):
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "hang")
+    parent, child = socket.socketpair()
+    config = ScanConfig(connectors=[ConnectorSpec(ENTRY)], plugins=[ENTRY])
+    # Leave time for spawn start-up and plugin import before the deadline.
+    deadline = time.monotonic() + 4
+    process = multiprocessing.get_context("spawn").Process(
+        target=_worker, args=(child, config, [], 1, deadline, b"k" * 32), daemon=True
+    )
+    try:
+        process.start()
+        child.close()
+        _plugin_pid(installed_probe)
+        assert time.monotonic() < deadline, "worker started too late to reach the plugin"
+        # The parent neither reads nor kills: the worker must stop by itself
+        # shortly after its deadline (two seconds of cleanup grace, plus slack).
+        process.join(deadline + 12 - time.monotonic())
+        assert process.exitcode == 1
+    finally:
+        if process.is_alive():
+            process.kill()
+            process.join(5)
+        parent.close()
+        child.close()
 
 
 def test_plugin_allowlist_still_required_without_parent_import(installed_probe):

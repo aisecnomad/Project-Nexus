@@ -370,7 +370,9 @@ remains `thread`. Plugin import and execution happen in the child. The original
 connector deadline includes worker startup and result transfer; expired results
 are discarded, and termination escalates from TERM to KILL with bounded cleanup.
 A parent supervision guard allows up to two additional seconds for cleanup.
-Worker crashes, invalid result schemas and output above the 16 MiB JSON
+Workers also exit by themselves two seconds after the deadline, or as soon as
+the scanner process exits (job-deadline watchdog, signals), and a
+`KeyboardInterrupt` during collection kills them at once. Worker crashes, invalid result schemas and output above the 16 MiB JSON
 transport limit make the scan incomplete. There is no automatic thread fallback.
 
 Process mode is lifecycle isolation, not a security sandbox. Workers inherit the
