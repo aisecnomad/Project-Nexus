@@ -904,6 +904,14 @@ class Engine:
             supervisor.run()
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
+            # Supervision can end abnormally (KeyboardInterrupt). A plugin
+            # worker must not outlive it until its deadline; a job whose worker
+            # is not started yet sees the cancellation and stops it at once.
+            for state in states.values():
+                if state.isolated_process:
+                    state.cancelled.set()
+                    if state.kill_process is not None:
+                        state.kill_process()
         return supervisor.completed, supervisor.timed_out
 
     # --------------------------------------------------------- postprocessing
