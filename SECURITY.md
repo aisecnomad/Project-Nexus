@@ -160,7 +160,9 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   (`client_key`, `openai_key`). Cursors (`next_token`, `page_token`,
   `skipToken`), tokenizer tokens (`eos_token`), switches (`requires_auth`,
   `has_secret`), the bare `key` of tags and S3 objects, `sort_key`,
-  `partition_key` and `cache_key` stay. The rules added for settings, options,
+  `partition_key` and `cache_key` stay. A value that is not JSON-like (bytes,
+  a set, an exception, a plugin's object) is converted to text before it is
+  redacted, so `default=str` never prints it raw. The rules added for settings, options,
   numbered names and YAML values run after the earlier rules, on their
   output, so they only withhold more.
 * Redaction cannot withhold a credential that nothing names or shapes as one,

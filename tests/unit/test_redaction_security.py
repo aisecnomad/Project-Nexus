@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import csv
+import datetime
 import io
 import json
 import stat
 
 import jwt
 import pytest
+from rich.console import Console
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector, ConnectorContext
@@ -17,7 +19,9 @@ from shadowscan.connectors.identity.jwt import JwtConnector
 from shadowscan.connectors.saas.generic import GenericSaaSConnector
 from shadowscan.engine import Engine
 from shadowscan.models import Evidence, Finding, Kind, ScanResult, ScanStats, Surface
+from shadowscan.reporters import render
 from shadowscan.reporters.csv_ import render_csv
+from shadowscan.reporters.table import print_table
 from shadowscan.signatures.loader import Signature
 from shadowscan.signatures.matcher import SignatureIndex
 from shadowscan.utils.redaction import REDACTED, credential_id, sanitize, sanitize_text
@@ -399,3 +403,78 @@ def test_long_secret_is_redacted_before_excerpt_truncation():
     excerpt = _excerpt([f"token={credential}"], 1, credential)
     assert credential not in excerpt
     assert credential[:120] not in excerpt
+
+
+LEAF_KEY = "sk" + "-proj-" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6"
+
+
+class _PluginObject:
+    """An arbitrary object a plugin may leave in metadata; only its repr shows the value."""
+
+    def __repr__(self) -> str:
+        return f"PluginObject(token={LEAF_KEY})"
+
+
+def _leaf_finding():
+    return _finding(
+        metadata={
+            "b": LEAF_KEY.encode(),
+            "ba": bytearray(LEAF_KEY.encode()),
+            "s": {LEAF_KEY},
+            "fs": frozenset({LEAF_KEY}),
+            "e": ValueError(LEAF_KEY),
+            "o": _PluginObject(),
+            "nested": [{"deeper": (b"\xff" + LEAF_KEY.encode(),)}],
+        }
+    )
+
+
+def test_unknown_leaf_types_are_stringified_and_sanitized():
+    clean = sanitize({"b": LEAF_KEY.encode(), "s": {LEAF_KEY, "other"}, "e": ValueError(LEAF_KEY), "n": 3})
+    assert LEAF_KEY not in repr(clean)
+    assert clean["n"] == 3
+    assert clean["b"] == REDACTED
+    assert sorted(clean["s"]) == sorted([REDACTED, "other"])
+    assert clean["e"] == REDACTED
+    # Bytes that are not text are decoded with replacement characters, not an error.
+    assert sanitize({"x": b"\xff\xfe ok"}) == {"x": "�� ok"}
+    # Plain JSON-like leaves and the standard library's scalars keep their type.
+    scalars = {"i": 1, "f": 1.5, "t": True, "none": None, "when": datetime.date(2024, 1, 2)}
+    assert sanitize(scalars) == scalars
+
+
+@pytest.mark.parametrize("fmt", ["json", "html", "markdown", "csv", "sarif"])
+def test_unknown_leaf_types_never_reach_a_report(fmt):
+    result = ScanResult(findings=[_leaf_finding()])
+    assert LEAF_KEY not in render(result, fmt)
+    assert LEAF_KEY not in repr(result.findings[0].metadata)
+
+
+def test_unknown_leaf_types_never_reach_the_terminal_table():
+    out = io.StringIO()
+    print_table(ScanResult(findings=[_leaf_finding()]), console=Console(file=out, width=200), verbose=True)
+    assert LEAF_KEY not in out.getvalue()
+
+
+def test_unknown_leaf_types_never_reach_a_record_dump(tmp_path):
+    target = tmp_path / "records.jsonl"
+
+    class Connector(BaseConnector):
+        name = "test.leaf"
+
+        def collect(self):
+            yield {
+                "id": "1",
+                "payload": LEAF_KEY.encode(),
+                "labels": {LEAF_KEY},
+                "error": RuntimeError(LEAF_KEY),
+            }
+
+        def analyze(self, records):
+            for _ in records:
+                self.ctx.examined()
+            yield from ()
+
+    connector = Connector(ConnectorContext(config={"_dump_path": str(target)}, index=_index()))
+    connector.run()
+    assert target.exists() and LEAF_KEY not in target.read_text()
