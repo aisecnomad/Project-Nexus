@@ -1,4 +1,4 @@
-# Registry
+# Inventory registry
 
 ::: shadowscan.registry
     options:

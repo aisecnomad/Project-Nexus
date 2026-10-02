@@ -1,4 +1,7 @@
-"""SARIF output must stay valid for the 2.1.0 schema and for GitHub code scanning."""
+"""SARIF output must stay valid for the 2.1.0 schema and for GitHub code scanning.
+
+Discovery hits must not be published as CVSS-like security severities (docs/severity.md).
+"""
 
 from __future__ import annotations
 
@@ -20,6 +23,9 @@ SCHEMA = ROOT / "tests" / "fixtures" / "sarif" / "sarif-schema-2.1.0.json"
 RULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")  # GitHub code scanning requirement for rule names
 UTC_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")  # SARIF section 3.9
 LEVELS = {"none", "note", "warning", "error"}
+# ``error`` is reserved for tool failures; a discovery hit is at most a warning.
+DISCOVERY_LEVELS = {"note", "warning"}
+HEURISTIC_LEVELS = {level.value for level in RiskLevel}
 STARTED = "2026-01-01T00:00:00+00:00"
 
 
@@ -74,10 +80,15 @@ def _assert_spec_rules(document: dict[str, Any]) -> None:
     for run in document["runs"]:
         for rule in run["tool"]["driver"]["rules"]:
             assert RULE_NAME.match(rule["name"]), rule["name"]
-            assert rule["defaultConfiguration"]["level"] in LEVELS
-            assert 0.0 <= float(rule["properties"]["security-severity"]) <= 10.0
+            assert rule["defaultConfiguration"]["level"] in DISCOVERY_LEVELS
+            # GitHub reads ``security-severity`` on a ``security``-tagged rule as a CVSS-like score.
+            assert "security-severity" not in rule["properties"]
+            assert "security" not in rule["properties"]["tags"]
+            assert rule["properties"]["shadowscan/heuristic-risk"] in HEURISTIC_LEVELS
+            assert rule["properties"]["shadowscan/score-basis"] == "heuristic-not-cvss"
         for res in run["results"]:
-            assert res["level"] in LEVELS
+            assert res["level"] in DISCOVERY_LEVELS
+            assert res["properties"]["risk_level"] in HEURISTIC_LEVELS
             assert res["partialFingerprints"] and all(
                 isinstance(v, str) for v in res["partialFingerprints"].values()
             )
@@ -403,9 +414,48 @@ def test_sarif_rule_severity_is_the_most_severe_result(order):
         _located_finding(f"/repo/{i}.py:1", level=level, title=f"Agent {i}") for i, level in enumerate(order)
     ]
     (rule,) = _sarif(*findings)["runs"][0]["tool"]["driver"]["rules"]
+    assert rule["properties"]["shadowscan/heuristic-risk"] == "critical"
+    assert rule["defaultConfiguration"]["level"] == "warning"
+    assert "security-severity" not in rule["properties"]
+
+
+# ------------------------------------------------------- heuristic severity (docs/severity.md)
+
+
+@pytest.mark.parametrize(
+    "level,sarif_level",
+    [
+        (RiskLevel.CRITICAL, "warning"),
+        (RiskLevel.HIGH, "warning"),
+        (RiskLevel.MEDIUM, "warning"),
+        (RiskLevel.LOW, "note"),
+        (RiskLevel.INFO, "note"),
+    ],
+)
+def test_discovery_hits_are_not_published_as_cvss_severities(level, sarif_level):
+    # A heuristic critical hit once became an ``error`` with ``security-severity`` 9.5, which
+    # GitHub code scanning shows as a critical security alert and code-scanning rules can block on.
+    document = _sarif(_located_finding("/repo/agent.py:1", level=level))
+    run = document["runs"][0]
+    (rule,) = run["tool"]["driver"]["rules"]
+    (result,) = run["results"]
+    assert result["level"] == rule["defaultConfiguration"]["level"] == sarif_level
     assert (
-        rule["properties"]["security-severity"] == "9.5" and rule["defaultConfiguration"]["level"] == "error"
+        result["properties"]["risk_level"] == rule["properties"]["shadowscan/heuristic-risk"] == level.value
     )
+    assert rule["properties"]["shadowscan/score-basis"] == "heuristic-not-cvss"
+    assert "security-severity" not in rule["properties"] and "security" not in rule["properties"]["tags"]
+    assert rule["helpUri"].endswith("/docs/severity.md") and rule["helpUri"] in rule["help"]["text"]
+    _validate(document)
+
+
+def test_tool_failures_keep_the_error_level():
+    stats = [
+        _stats(errors=["cannot enumerate scope"]),
+        ScanStats(connector="cloud.aws", started_at=STARTED, warnings=["partial listing"]),
+    ]
+    (invocation,) = _render(_finding(), stats=stats)["runs"][0]["invocations"]
+    assert [n["level"] for n in invocation["toolExecutionNotifications"]] == ["error", "warning"]
 
 
 # ------------------------------------------------------- embedded links (SARIF 3.11.6)

@@ -24,7 +24,7 @@ theme:
       accent: amber
       toggle:
         icon: material/brightness-4
-        name: Switch to dark mode
+        name: Switch to light mode
   features:
     - navigation.instant
     - navigation.tabs
@@ -104,6 +104,7 @@ nav:
       - Inventory: inventory.md
       - Scanning: scanning.md
       - Risk scoring: concepts/risk.md
+      - Severity and enforcement: severity.md
   - Operations:
       - Production deployment: production.md
       - Evaluation: evaluation.md
@@ -134,9 +135,9 @@ nav:
           - Risk: api/risk.md
           - Merge: api/merge.md
           - Correlation: api/correlation.md
+          - Inventory registry: api/registry.md
       - Connectors:
           - Base: api/base.md
-          - Registry: api/registry.md
       - Utilities:
           - HTTP client: api/http.md
           - Redaction: api/redaction.md

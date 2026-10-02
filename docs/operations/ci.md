@@ -2,6 +2,9 @@
 
 ShadowScan is designed to run in CI pipelines. It produces SARIF output for
 GitHub Code Scanning and exits with deterministic codes for gate decisions.
+SARIF results are warnings or notes for analyst triage, without a
+`security-severity`: the risk level is a heuristic, not a CVSS score (see
+[Severity is not an enforcement signal](../severity.md)).
 
 ## GitHub Actions
 
