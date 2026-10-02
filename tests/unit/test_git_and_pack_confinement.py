@@ -289,7 +289,7 @@ def test_hardened_clone_takes_ordinary_repositories_and_refuses_malformed_object
     git("-C", str(origin), "add", "-A")
     git(
         *("-C", str(origin), "-c", "user.name=Test", "-c", "user.email=test@example.test"),
-        *("-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"),
+        *("-c", "commit.gpgsign=false", "-c", "maintenance.auto=false", "commit", "-q", "-m", "init"),
     )
     good = git("-C", str(origin), "rev-parse", "HEAD").stdout.decode().strip()
     tree = git("-C", str(origin), "write-tree").stdout.decode().strip()

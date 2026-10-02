@@ -58,6 +58,7 @@ def test_metadata_policy_is_distinct_from_clone_policy(monkeypatch):
     assert "GIT_NO_LAZY_FETCH" not in clone
 
 
+@pytest.mark.requires_git_2_45
 def test_read_git_snapshot_returns_checked_out_commit_and_tree_without_inherited_config(
     tmp_path, monkeypatch
 ):
@@ -75,7 +76,8 @@ def test_read_git_snapshot_returns_checked_out_commit_and_tree_without_inherited
         ["git", "-C", str(repo), "add", "requirements.txt"], check=True, capture_output=True, env=env
     )
     subprocess.run(
-        ["git", "-C", str(repo), "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "source"],
+        ["git", "-C", str(repo), "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false"]
+        + ["commit", "--quiet", "-m", "source"],
         check=True,
         capture_output=True,
         env=env,

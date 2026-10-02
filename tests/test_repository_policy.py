@@ -1340,7 +1340,8 @@ def test_dco_executes_against_real_commit_ranges(tmp_path: Path, case: str, pass
 
     def git(*args: str, extra_env: dict[str, str] | None = None) -> str:
         return subprocess.run(
-            [git_path, "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={os.devnull}", *args],
+            [git_path, "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={os.devnull}"]
+            + ["-c", "maintenance.auto=false", *args],
             cwd=tmp_path,
             env={**env, **(extra_env or {})},
             check=True,

@@ -977,7 +977,7 @@ def test_git_replacement_cannot_reuse_stale_owner(tmp_path, index):
     git("config", "user.name", "Alice")
     git("config", "user.email", "alice@example.com")
     git("add", "requirements.txt")
-    git("commit", "-m", "initial")
+    git("-c", "maintenance.auto=false", "commit", "-m", "initial")
     first = Engine(cfg, index).run()
     assert first.complete and first.findings[0].owner == "alice@example.com"
     assert Engine(cfg, index).run().stats[0].cached

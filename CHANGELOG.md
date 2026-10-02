@@ -5,6 +5,23 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 2 Git test fixes after #135
+
+- `test-macos (3.11)` failed `main` after #135 merged. The confinement test for
+  a symlinked `.git/objects` deletes that directory right after its fixture
+  commits. Since Git 2.47 a commit starts `git maintenance run --auto` in the
+  background, and the detached process removed its `maintenance.lock` while
+  `shutil.rmtree` was deleting the directory; Python 3.11 reports the vanished
+  file as an error. With Git 2.55 and Python 3.11 the test failed in 4 of 150
+  repeated runs. Every test helper that commits now passes
+  `-c maintenance.auto=false`, and the repeated runs pass 150 of 150. The
+  scanner's own Git commands (a clone and read-only metadata reads) never start
+  maintenance.
+- Five tests that read a repository snapshot need Git 2.45 or newer, like the
+  other history tests, but were not marked `requires_git_2_45`. On an older
+  Git, such as the 2.43 in Ubuntu 24.04, they failed instead of being skipped.
+  They now carry the marker.
+
 ### October 2 integration of #134 and repository hygiene review
 
 Pull request #134 landed through an integration pull request as one
