@@ -68,6 +68,15 @@ A large module that does import such a library, or has more imports than that,
 still reports
 `import-bound analysis skipped (source binding AST limit exceeded); lexical evidence retained`.
 
+The JavaScript and TypeScript lexer that masks comments, strings and JSX text
+has a look-ahead allowance of its own: a fixed floor plus four characters of
+look-ahead per character of the file. Real components use under one percent of
+it. A JSX file that exhausts it, such as tens of thousands of repeated `<A>(`,
+ends in well under a second with
+`file analysis incomplete (MatchTimeoutError: JavaScript lexical analysis look-ahead budget exceeded)`
+instead of stalling the scan until the connector deadline. Other files are
+unaffected and the scan exits 3.
+
 ## Test and fixture code
 
 Library test suites often construct agents to exercise integrations. Evidence
