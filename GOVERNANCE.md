@@ -16,7 +16,8 @@ found the `CI gate` context missing from the disabled ruleset; the source's
 settings-patch generator adds it and tightens the supplied settings to the
 versioned minimum policy while retaining additional protections.
 Ruleset enforcement has been
-switched on and off during 2026-09; a disabled ruleset blocks nothing. The
+switched on and off several times since 2026-09; a disabled ruleset blocks
+nothing. The
 author cannot approve their own change; the single maintainer therefore needs a
 second eligible human reviewer for changes they author. AI-assisted review is
 advisory, not an approval. Independent human review is also required before any

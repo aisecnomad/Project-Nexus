@@ -6,9 +6,9 @@ Markdown link and heading anchor resolves, the community files GitHub and the
 OpenSSF Scorecard look for exist, `CITATION.cff` matches `pyproject.toml`, the
 CI matrix matches the classifiers, the Makefile and pre-commit hooks run what CI
 runs, every CodeQL action step is pinned to the same release, the docs toolchain
-comes from its lock everywhere, and documented counts, CSV report markers and
-the HTTP read deadline match the shipped code. Run both modules with
-``make policy``.
+comes from its lock everywhere, and documented counts, the README's demo output,
+CSV report markers and the HTTP read deadline match the shipped code. Run both
+modules with ``make policy``.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import textwrap
 import tomllib
+from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -31,9 +32,11 @@ from urllib.parse import unquote
 import pytest
 import yaml
 
+from shadowscan.config import ScanConfig
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.cloud.gcp import GcpConnector
 from shadowscan.connectors.common import MAX_PAGES
+from shadowscan.engine import Engine
 from shadowscan.models import ScanStats
 from shadowscan.reporters.csv_ import _safe_cell
 from shadowscan.utils import http
@@ -619,7 +622,7 @@ _PINNED = re.compile(r"^[\w.-]+/[\w.-]+(?:/[\w./-]+)?@(?P<sha>[0-9a-f]{40})$")
 
 @pytest.mark.parametrize("example", sorted((ROOT / "examples").glob("*.yml")), ids=lambda path: path.name)
 def test_example_workflows_pin_actions_to_commit_shas(example: Path) -> None:
-    """Consumer examples are copied verbatim; Dependabot does not track examples/."""
+    """Consumer examples are copied verbatim, so every action they use is pinned like the workflows."""
     problems: list[str] = []
     for number, line in enumerate(_read(example).splitlines(), start=1):
         match = _USES_LINE.match(line)
@@ -653,6 +656,26 @@ def test_example_action_pins_match_the_repository_workflows() -> None:
             assert shas <= repository[name], (
                 f"examples pin {name} to {sorted(shas)} but workflows use {sorted(repository[name])}"
             )
+
+
+def test_dependabot_moves_the_example_action_pins_with_the_workflows() -> None:
+    """One grouped update covers both, so the pin-equality test above does not fail every bump."""
+    updates = _load_yaml(GITHUB / "dependabot.yml")["updates"]
+    (actions,) = [update for update in updates if update["package-ecosystem"] == "github-actions"]
+    assert {"/", "/examples"} <= set(actions.get("directories") or [actions.get("directory")])
+    assert any(group.get("patterns") == ["*"] for group in actions["groups"].values())
+
+
+def test_example_workflow_runs_python_modules_outside_the_scanned_checkout() -> None:
+    """``python -m`` imports from its working directory first, and the example scans untrusted code."""
+    workflow = _load_yaml(ROOT / "examples" / "github-action-code-scan.yml")
+    steps = [step for job in workflow["jobs"].values() for step in job["steps"]]
+    modules = [step for step in steps if re.search(r"\bpython3? -m\b", step.get("run", ""))]
+    assert modules, "the example should install and validate the scanner with python -m"
+    for step in modules:
+        assert step.get("working-directory") == "${{ runner.temp }}", (
+            f"step {step.get('name')!r} runs `python -m` inside the scanned checkout"
+        )
 
 
 def test_secret_check_runs_on_the_same_files_in_the_hook_and_ci() -> None:
@@ -778,11 +801,17 @@ def test_signature_count_claims_are_recognised(text: str, claims: list[tuple[int
     assert _signature_claims(text) == claims
 
 
+# Root documents that describe the current tree. The site includes RELEASE_NOTES.md, SECURITY.md and
+# GOVERNANCE.md as snippets, so a stale number there is published too. CHANGELOG.md is a dated log
+# that quotes earlier counts and is left out.
+_CURRENT_ROOT_DOCS = ("README.md", "RELEASE_NOTES.md", "SECURITY.md", "GOVERNANCE.md", "CONTRIBUTING.md")
+
+
 def _current_docs() -> list[Path]:
     """Documents that describe the current tree; dated review logs may quote old numbers."""
     return [
         path
-        for path in [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
+        for path in [*(ROOT / name for name in _CURRENT_ROOT_DOCS), *sorted((ROOT / "docs").rglob("*.md"))]
         if "hardening-logs" not in path.parts and not re.search(r"review-\d{4}-\d{2}-\d{2}", path.name)
     ]
 
@@ -940,7 +969,7 @@ def test_documented_csv_markers_match_the_reporter() -> None:
     names = sorted({_CSV_SEPARATOR_NAMES[sep] for sep in inside})
     claims = [
         (path, paragraph)
-        for path in [ROOT / "SECURITY.md", *_current_docs()]
+        for path in _current_docs()
         for paragraph in _paragraphs(path)
         if "csv" in paragraph.lower() and "`'`" in paragraph
     ]
@@ -953,7 +982,7 @@ def test_documented_csv_markers_match_the_reporter() -> None:
 def test_documented_http_read_deadline_matches_the_client() -> None:
     claims = [
         (path, match)
-        for path in [ROOT / "SECURITY.md", *_current_docs()]
+        for path in _current_docs()
         for paragraph in _paragraphs(path)
         for match in _READ_DEADLINE_CLAIM.finditer(paragraph)
     ]
@@ -977,6 +1006,53 @@ def test_documented_fixture_connector_count_matches_the_demo_configuration() -> 
     for path, match in claims:
         claimed = (int(match.group(1)), int(match.group(2)))
         assert claimed == actual, f"{_relative(path)} claims {claimed}, the demo configures {actual}"
+
+
+_DEMO_COMMAND = "$ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows "
+_DEMO_TOTALS = re.compile(r"(\d+) findings  •  (\d+) shadow \(inventory: (\d+) registered agents\)")
+_DEMO_LEVELS = re.compile(r"\b(critical|high|medium|low|info) (\d+)\b")
+_DEMO_SURFACES = re.compile(r"\b(cloud|code|gateway|identity|lowcode|saas) (\d+)\b")
+_DEMO_ROW = re.compile(r"^ ([A-Z]+) +(\d+)  (\S+) +(\S+) +(\S+) +(.+?)\s*$", re.MULTILINE)
+
+
+def test_readme_demo_output_matches_the_offline_demo(index) -> None:
+    """The README's abridged example is the current result of the bundled offline demo."""
+    readme = _read(ROOT / "README.md")
+    start = readme.index(_DEMO_COMMAND)
+    block = readme[start : readme.index("```", start)]
+    max_rows = int(block[len(_DEMO_COMMAND) :].split(None, 1)[0])
+    header, _, table = block.partition("╰")
+    totals = _DEMO_TOTALS.search(header)
+    assert totals, "the README demo output should state the totals line"
+    result = Engine(ScanConfig.from_yaml(ROOT / "examples" / "shadowscan.offline.yaml"), index).run()
+    findings = result.findings
+    assert tuple(map(int, totals.groups())) == (
+        len(findings),
+        sum(1 for f in findings if f.shadow),
+        result.inventory_size,
+    ), "README demo totals are stale; rerun the command it shows"
+    levels = Counter(f.risk.level.value for f in findings)
+    surfaces = Counter(f.surface.value for f in findings)
+    # The header is abridged: every number it shows must be current, not every number must be shown.
+    for name, count in _DEMO_LEVELS.findall(header):
+        assert levels[name] == int(count), f"README demo shows {name} {count}; the demo has {levels[name]}"
+    for name, count in _DEMO_SURFACES.findall(header):
+        assert surfaces[name] == int(count), (
+            f"README demo shows {name} {count}; the demo has {surfaces[name]}"
+        )
+    expected = [
+        (
+            f.risk.level.value.upper(),
+            f.risk.score,
+            "SHADOW" if f.shadow else f.registry_match,
+            f.surface.value,
+            f.kind.value,
+            f.title,
+        )
+        for f in findings[:max_rows]
+    ]
+    shown = [(lvl, int(score), *rest) for lvl, score, *rest in _DEMO_ROW.findall(table)]
+    assert shown == expected, "README demo rows are stale; rerun the command it shows"
 
 
 def test_connector_configuration_reference_is_current() -> None:

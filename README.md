@@ -25,13 +25,13 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 99 findings  •  95 shadow (inventory: 3 registered agents)                  │
-│ critical 11  high 53  medium 35  •  cloud 27 identity 19 saas 17 …          │
+│ critical 10  high 54  medium 35  •  cloud 27 identity 19 saas 17 …          │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
  CRITICAL  95  SHADOW  code      mcp-server   MCP configuration: .mcp.json
  CRITICAL  90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
- CRITICAL  90  SHADOW  identity  oauth-grant  Entra service principal: Otter.ai
  CRITICAL  83  SHADOW  cloud     mcp-server   AgentCore Gateway (MCP): tools-gateway
+ CRITICAL  82  SHADOW  cloud     agent        Azure AI Foundry agent: contract-reviewer
 ```
 
 ## The Why
@@ -342,7 +342,9 @@ See [deployment and migration](docs/production.md) for the rollout checks.
 * **related** links findings across surfaces (the Terraform that provisions an agent ↔ the agent in the account ↔ the role calling Bedrock ↔ the CloudTrail caller).
 
 Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
-findings carry file: line locations), `csv`, `markdown`, `html` (self-contained,
+findings carry file: line locations; results are warnings or notes with the
+heuristic risk level, never a CVSS `security-severity`, see
+[severity](docs/severity.md)), `csv`, `markdown`, `html` (self-contained,
 filterable, with evidence drill-down). In `csv` output a literal `'` is
 inserted at the start of a value, and after each `,`, `;`, tab, `|` or line
 break inside it, where the text that follows begins with `=`, `+`, `-` or `@`
@@ -380,7 +382,7 @@ metadata:
 discovery:
   resources:
     - "arn:aws:bedrock:*:123456789012:agent/AGENT1"
-    - "github: acme/infra-agents"
+    - "github:acme/infra-agents/*"
   names: ["ops provisioning agent"]
 ```
 

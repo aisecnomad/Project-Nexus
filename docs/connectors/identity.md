@@ -7,7 +7,7 @@ managed identities, and JWT tokens related to AI services and agent frameworks.
     Identity connectors support live API collection and offline JSON export
     analysis. JWT analysis is always offline (supplied tokens).
 
-### `identity.okta`
+## `identity.okta`
 `/api/v1/apps` (+ `/grants`, `/tokens` for OIDC apps). Reports OAuth apps that
 match AI SaaS signatures or hold privileged scopes, and service apps
 (`application_type: service` / `client_credentials` / token-exchange).
@@ -15,7 +15,7 @@ Token: SSWS API token or OAuth bearer with `okta.apps.read`. A 429 is retried
 after the window named by Okta's `X-Rate-Limit-Reset` header (bounded to 120 s
 per wait); exhausted retries mark the scan incomplete.
 
-### `identity.entra`
+## `identity.entra`
 Microsoft Graph: service principals, delegated `oauth2PermissionGrants`,
 app-only `appRoleAssignments` (role ids resolved to the names their resource
 defines, such as `Mail.ReadWrite`), tenant app registrations, managed identities. First-party
@@ -28,7 +28,7 @@ an approved resource identity.
 A service principal exported with conflicting records is reported the same way,
 keeping AI evidence from up to 16 of its snapshots (64 evidence items).
 
-### `identity.google-workspace`
+## `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
 "Fireflies has Gmail + Calendar for 214 users". Auth: service account with
 domain-wide delegation impersonating an admin (`service_account_file` +
@@ -48,12 +48,12 @@ makes collection incomplete and retained observations nonapprovable. Regenerate
 older Google Workspace inventory cards with the explicit customer in
 `discovery.accounts`; an accountless OAuth client binding cannot approve a grant.
 
-### `identity.auth0`
+## `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their
 audiences and scopes, AI-named apps. Auth: M2M client for the Management API
 (`read:clients`, `read:client_grants`) or `token`.
 
-### `identity.jwt`
+## `identity.jwt`
 Decodes tokens (never stored) and classifies the holder as `human`, `service`,
 `workload`, `delegated`, `agent` or `delegated-agent` using issuer-specific
 conventions (Entra `idtyp=app`, Okta `cid == sub`, Auth0 `gty`, Google service

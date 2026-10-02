@@ -41,7 +41,7 @@ describes.
 - Confidence counts correlated evidence once, so repeated matches of one
   signal no longer inflate it; some non-code findings report lower
   confidence.
-- 215 signatures and 1,001 signals cover current agent SDKs, including Vercel
+- 215 signatures and 1,006 signals cover current agent SDKs, including Vercel
   AI SDK tool loops (AI SDK 7's `isStepCount`). Custom-pack framework patterns
   apply in every language, and detection-rule files (ShadowScan signature
   packs, Semgrep, Sigma, gitleaks) are treated as data.
@@ -49,6 +49,12 @@ describes.
   in their trust policy names a Bedrock service.
 - `diff` reports gateway findings as not comparable unless every compared
   scan uses the same `SHADOWSCAN_IDENTITY_KEY`.
+- SARIF results are warnings (critical, high, medium) or notes (low, info)
+  that carry the heuristic level as `risk_level`. Rules no longer set
+  `security-severity` or the `security` tag, so GitHub code scanning no longer
+  rates ShadowScan alerts as security severities; the
+  [severity guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/severity.md)
+  explains why.
 
 ### Security and safety
 

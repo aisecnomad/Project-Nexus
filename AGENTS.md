@@ -47,7 +47,8 @@ Run `make check` or the commands in CONTRIBUTING.md. Pull requests must keep:
 
 - Bug fixes need a regression test.
 - Connector work: `collect()` + `analyze()`, offline fixtures under
-  `tests/fixtures/`, documentation in `docs/connectors.md` and a regenerated
+  `tests/fixtures/`, documentation in the connector's guide under
+  `docs/connectors/` and its summary in `docs/connectors.md`, and a regenerated
   `docs/connectors/reference.md` (`make connector-reference`).
 - Signature work: YAML packs + validate + `make evaluate`. See
   `docs/signatures.md`.

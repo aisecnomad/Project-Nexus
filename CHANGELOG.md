@@ -5,6 +5,96 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 2 integration of #134 and repository hygiene review
+
+Pull request #134 landed through an integration pull request as one
+signed-off commit, rebuilt on the current `main`: its branch predated #123,
+#132 and #133 and conflicted with the SARIF message escaping from #123. The
+other changes come from an AI-assisted review of CI, documentation, code and
+repository layout. Each defect was reproduced before it was fixed and has a
+regression test or check; none had a second-person review. Migration notes are
+in `docs/production.md` under "Candidate change history".
+
+#### Heuristic severity in SARIF (#134)
+
+- SARIF output no longer presents the heuristic risk level as a CVSS-like
+  security severity. Rules carry neither `security-severity` nor the `security`
+  tag. The level is recorded as the rule property `shadowscan/heuristic-risk`,
+  next to `shadowscan/score-basis: heuristic-not-cvss`, and as the result
+  property `risk_level`. Discovery hits are SARIF `warning` (critical, high,
+  medium) or `note` (low, info), never `error`, which stays reserved for
+  connector failures in the tool execution notifications. Each rule's help text
+  and `helpUri` link to the new
+  [severity guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/severity.md),
+  which states what the score is and what enforcement would require. Rule IDs
+  and `partialFingerprints` are unchanged.
+
+#### CI on `main`
+
+- The SIGINT clone test failed `main` after #133 merged: its child scanner
+  aborted (SIGABRT) instead of exiting after the interrupt. The child waited for
+  its clone worker with `Thread.join()`. On CPython 3.11 and 3.12 a
+  KeyboardInterrupt that interrupts `join()` marks the still-running thread as
+  stopped, so interpreter shutdown did not wait for it, and the process aborts
+  when that thread holds the stderr lock at exit. The child now waits with
+  `concurrent.futures.wait` on a pool thread, as `Engine.run` does, and the test
+  requires the clone worker to return before the process exits. The scanner's
+  scan path already waited this way and is unaffected.
+
+#### Scanner fixes
+
+- JavaScript import, `require` and bound-call line numbers, and IaC model ids,
+  are numbered incrementally (`shadowscan.utils.text.line_counter`). Each match
+  counted the file's newlines from its start, which was charged against the
+  match deadline: a scanned file with thousands of imports made its analysis
+  incomplete on purpose. Line numbers are unchanged.
+- `code.filesystem` rejects a boolean, fractional or non-numeric
+  `max_file_size` or `max_files`, and a boolean, non-finite or out-of-range
+  `scan_timeout`, as configuration errors with a fixed message. `max_file_size:
+  true` was a 1-byte limit that skipped every file, and `max_files: 1.9` became
+  1. Numbers and numeric text are accepted as before.
+- The wheel ships `.yml` signature packs as well as `.yaml`; the loader reads
+  both.
+
+#### Container and CI tooling
+
+- The worker image no longer carries the build backend: the wheel is built in
+  a separate environment that is not copied, so `setuptools`, `wheel` and
+  `packaging` stay out of `/opt/venv` (the Dockerfile already said so). The CI
+  smoke test asserts it, and the Dockerfile policy test covers `pip wheel` as
+  well as `pip install`.
+- The consumer workflow example runs `python -m` from the runner's temporary
+  directory, never from the scanned checkout, where a `pip/__main__.py` or
+  `shadowscan/` package in a pull request would run in place of the installed
+  tools. Its `security-events: write` permission moved to the job.
+- Dependabot updates the example's action pins with the workflows' in one
+  grouped pull request, and groups the remaining pip constraint updates; a
+  bump that changed only the workflows failed the pin-equality test.
+- The Docs workflow also builds for `RELEASE_NOTES.md` and the docstrings the
+  API pages render, and a push no longer cancels a manual publishing run.
+  Scorecard grants nothing at workflow level.
+- Pre-commit: `pre-commit run --all-files` passes on a clean checkout again.
+  The private-key hook skips the redaction rules and tests that name synthetic
+  key markers, the format hook formats Python only (as CI does), the check hook
+  uses its current id `ruff-check`, and Markdown line-break spaces are kept.
+- `.gitignore` anchors root build, report and site outputs, so a source file
+  such as `shadowscan/reporters/report.py` is no longer ignored, and the
+  digest-bound licence texts are never converted by Git (`-text`).
+
+#### Documentation
+
+- The README demo output and inventory example match the code; a consistency
+  test reruns the demo and compares the shown totals and rows. Signature counts
+  are checked in the root documents the site publishes (a stale "1,001
+  signals" was in the release notes).
+- Ruleset enforcement is described in one dated place, `docs/production.md`;
+  the other documents no longer call the disabled rules active. The exit codes
+  for usage errors (`docs/scanning.md`) and for expired or over-budget
+  known-gap policies (`docs/evaluation.md`) match the code.
+- Smaller corrections: the dark theme's toggle label, the inventory registry's
+  place in the API reference, connector page heading levels, and a dropped
+  fail-closed sentence in the connector overview.
+
 ### October 2 integrity and capability corrections
 
 - Selected source and configuration files use strict supported text decoding,

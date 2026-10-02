@@ -470,6 +470,11 @@ actors. At 08:05 UTC on 2026-10-02 both rulesets read back as
 `enforcement: disabled` again (last updated 04:28 UTC), and
 `GET /repos/aisecnomad/Project-Nexus/rules/branches/main` returned no active
 rules, so nothing enforced review, CI or linear history on `main` at that time.
+At 19:08 UTC on 2026-10-02 both again read back as `enforcement: disabled`
+(last updated 18:39 UTC) with no active rules on `main`. The committed
+snapshots in
+[`.github/rulesets/observed/`](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets/observed)
+record the 04:28 UTC state.
 Classic branch protection is not readable through the app
 integration. Read and retain the current configuration before changing it,
 and compare it against the [versioned merge policy](operations/merge-policy.md):
@@ -483,8 +488,10 @@ Do not claim that the full merge gate is enforced until readback confirms
 an authorized administrator session rather than weakening the rules.
 
 Whatever the ruleset's state, the history is unchanged: the repository has a
-single maintainer, and no change merged to `main` through 2026-09-25 (including
-#62, #65 and #42) carries an approving review from a second person. A repository
+single maintainer, and no change merged to `main` through 2026-10-02 (including
+#42, #62, #65 and #123 to #133) carries an approving review from a second person;
+the only approvals on merged pull requests are the maintainer's own, on two
+Dependabot updates. A repository
 administrator can bypass or reconfigure rules, so a merged pull request, the
 version string and the internal AI-assisted hardening logs are not evidence of
 independent review. The review and merge policy is in
@@ -673,6 +680,37 @@ These notes record behavior changes made while the 0.1.1 candidate was being
 hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 2 integration of #134 and hygiene review
+
+Earlier candidate builds tagged every SARIF rule `security`, set
+`security-severity` from the heuristic level (critical 9.5, high 7.5, medium
+5.0, low 2.5, info 1.0) and reported critical and high findings at level
+`error`. Reports from this revision carry no security severity: GitHub code
+scanning shows ShadowScan alerts as Warning or Note rather than as security
+alerts rated Critical to Low, and a filter on the `security` tag no longer
+matches them. Rule IDs and `partialFingerprints` are unchanged, so existing
+alerts keep their identity and history.
+
+A code-scanning merge-protection rule whose security-alert threshold was met
+by ShadowScan alerts no longer blocks on them, and neither does an alerts
+threshold of Errors; Errors and warnings still blocks on critical, high and
+medium findings. Do not restore blocking by lowering a threshold. Follow
+[Severity is not an enforcement signal](severity.md) and gate on the exit code
+only after the acceptance steps it lists. A consumer that sorted results by
+SARIF level should read the result property `risk_level` or the rule property
+`shadowscan/heuristic-risk` instead.
+
+`code.filesystem` now stops at setup (exit 1) on a boolean, fractional or
+non-numeric `max_file_size` or `max_files` and on a boolean, non-finite or
+out-of-range `scan_timeout`. Such values used to be coerced: `max_file_size:
+true` skipped every file larger than one byte and reported the scan
+incomplete. Correct the value and rescan instead of comparing against reports
+it produced; numbers and numeric text are accepted as before.
+
+The worker image's `/opt/venv` no longer contains `setuptools`, `wheel` or
+`packaging`, which only the build needs. An image that extends the worker and
+imports them must install them from its own hash-locked requirements.
 
 ### October 2 integrity and capability corrections
 

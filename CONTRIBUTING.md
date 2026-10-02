@@ -256,7 +256,7 @@ review from someone with write access for every pull request, including routine
 changes. An author cannot approve their own change: a maintainer-authored PR
 requires a second eligible human reviewer. Stale approvals are dismissed after
 a push; request a new approval for the final revision. That ruleset has been
-enabled and disabled more than once during 2026-09, so check the live rules
+enabled and disabled several times since 2026-09, so check the live rules
 before relying on it. AI-assisted review is advisory and is never an
 independent human approval.
 
@@ -292,10 +292,10 @@ the review author, state and `commit_id` with
 `gh api repos/aisecnomad/Project-Nexus/pulls/<number>/reviews`, and compare that
 commit to the current PR head. The ruleset on `main` is configured to require
 one approving review from a reviewer with write access; its enforcement state
-has changed more than once during 2026-09 and it read back as disabled on
-2026-09-27, so check the
-[live rules](https://github.com/aisecnomad/Project-Nexus/rules) rather than this
-sentence. While the maintainer is the only account with write access, that rule
+has changed several times since 2026-09 (the dated readbacks are under
+[merge gate and review status](docs/production.md#merge-gate-and-review-status)),
+so check the [live rules](https://github.com/aisecnomad/Project-Nexus/rules)
+rather than this sentence. While the maintainer is the only account with write access, that rule
 cannot be satisfied for the maintainer's own changes until a second eligible
 reviewer receives write access and approves. Never manufacture an approval or
 treat an AI reviewer as that person.
