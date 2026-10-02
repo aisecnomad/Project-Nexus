@@ -139,7 +139,6 @@ from shadowscan.utils.safe_yaml import (
     strict_bounded_safe_load,
 )
 from shadowscan.utils.text import (
-    BINARY_CONTENT_ERROR,
     notebook_to_source,
     parse_timestamp,
     read_text,
@@ -325,6 +324,9 @@ DEADLINE_MARGIN_MIN_SECONDS = 0.25
 
 # Generated or locked files the walker never reads at any size.
 _NEVER_READ_SUFFIXES = (".min.js", ".min.css", ".map", ".pyc", ".lock")
+# A name no real file can have (a path component cannot contain NUL), so only
+# a wildcard glob segment such as ``**`` matches it.
+_ANY_FILE_NAME = "\x00"
 
 
 def _never_read_by_name(name: str) -> bool:
@@ -510,9 +512,10 @@ _AGENT_DEFINITION_DIRS = (".claude/agents/", ".github/agents/", ".cursor/rules/"
 # possessive quantifier never backtracks, and the bounded engine applies the
 # per-input matching budget where the pattern runs (_parse_agent_definition).
 _FRONTMATTER = regex.compile(r"^---[ \t\r]*+\n(.*?)\n---[ \t\r]*+\n", regex.S)
-_GLOB_KEY = re.compile(r"(globs|paths)[ \t]*:[ \t]*(.*?)[ \t]*")
-_GLOB_ITEM = re.compile(r"([ \t]*-[ \t]+)(\*.*?)[ \t]*")
-_TRAILING_COMMENT = re.compile(r"(?<![ \t])[ \t]++#.*")
+# Front-matter keys whose bare glob values _quote_glob_values quotes.
+_GLOB_KEYS = ("globs", "paths")
+# A YAML comment starts at a "#" that follows a space or tab.
+_COMMENT_START = re.compile(r"[ \t]#")
 # Files whose parsed structure supplies credential context for excerpt
 # redaction (see _structured_context).
 _JSON_SUFFIXES = (".json", ".jsonc", ".json5")
@@ -1522,11 +1525,11 @@ class FilesystemConnector(BaseConnector):
             except OSError:
                 self.ctx.error(f"code.filesystem: could not inspect {rel}")
                 continue
-            if name in MCP_CONFIG_NAMES or self.index.match_file(name):
-                # A directory is walked, but no client reads it as the
-                # configuration file its name implies. Only the directory's
-                # own name counts: file-name globs such as ``.kiro/specs/**``
-                # also match the directories they describe.
+            if name in MCP_CONFIG_NAMES:
+                # The walk descends into it, but no client reads a directory
+                # as the configuration file its name implies. A file-signature
+                # glob is not such a name: ``.roo/**`` or ``.clinerules`` also
+                # match directories that their clients read as directories.
                 self._skip_non_regular(walk, root, rel, "directory")
             kept.append(name)
         return kept
@@ -1744,9 +1747,11 @@ class FilesystemConnector(BaseConnector):
 
         # 1. file-name signals (config files of agents / MCP / A2A ...)
         file_matches = self.index.match_file(rel)
-        if not (_analyzed_by_name(path.name) or file_matches):
+        by_name = _analyzed_by_name(path.name)
+        if not (by_name or file_matches):
             return
-        loaded = self._read_source(rel, path, scan.root_fd, scan.base)
+        named = by_name or self._named_by_signature(rel, file_matches)
+        loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
         if loaded is None:
             return
         text, raw_notebook = loaded
@@ -1782,23 +1787,24 @@ class FilesystemConnector(BaseConnector):
         self._record_special_files(scan, file)
 
     def _read_source(
-        self, rel: str, path: Path, root_fd: int, base: Path | None = None
+        self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
     ) -> tuple[str, str | None] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document.
 
         The file is read relative to the open scan root ``root_fd``: by its on-disk
         name (``path`` below ``base``), while ``rel`` is the report-safe name used in
         diagnostics. A notebook's text is its code cells. None means nothing is
-        analyzed; the recorded diagnostics say why.
+        analyzed; the recorded diagnostics say why. ``named`` is False when only a
+        directory-wide signature glob selects the file, so a recognised binary
+        artifact there (an image beside coding-agent rules) is skipped without a
+        coverage gap.
         """
         read_errors: list[str] = []
         on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
-        text = read_text(on_disk, self._size_limit(path.name), read_errors, dir_fd=root_fd)
+        text = read_text(
+            on_disk, self._size_limit(path.name), read_errors, dir_fd=root_fd, analyzable_name=named
+        )
         for issue in read_errors:
-            if issue == BINARY_CONTENT_ERROR and not _analyzed_by_name(path.name):
-                # Read only because a file-name signature matched (an image under
-                # a rules directory): binary content there was never analyzed.
-                continue
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
                 self.ctx.warn(
                     f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
@@ -1811,6 +1817,19 @@ class FilesystemConnector(BaseConnector):
         if path.suffix.lower() != ".ipynb":
             return text, None
         return self._notebook_source(rel, text)
+
+    def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
+        """Whether a file-name signature selects ``rel`` by its name, not only by its directory.
+
+        A signal that also matches a name no file can have, in the same
+        directory, comes from a directory-wide glob such as ``.cursor/rules/**``:
+        it says nothing about this file, which may be an image kept beside the
+        rules. A literal name such as ``.cursorrules`` selects the file itself.
+        """
+        parent = rel.rpartition("/")[0]
+        probe = f"{parent}/{_ANY_FILE_NAME}" if parent else _ANY_FILE_NAME
+        directory_wide = {(m.signature.id, id(m.signal)) for m in self.index.match_file(probe)}
+        return any((m.signature.id, id(m.signal)) not in directory_wide for m in file_matches)
 
     def _notebook_source(self, rel: str, document: str) -> tuple[str, str | None] | None:
         """Return a notebook's code cells and, when within max_file_size, its raw document."""
@@ -3382,6 +3401,12 @@ class FilesystemConnector(BaseConnector):
         return info
 
 
+def _strip_comment(text: str) -> str:
+    """Remove a trailing YAML comment and the blanks before it."""
+    start = _COMMENT_START.search(text)
+    return text if start is None else text[: start.start()].rstrip(" \t")
+
+
 def _quote_glob_values(front_matter: str) -> str:
     """Quote bare ``globs``/``paths`` values that start with ``*``.
 
@@ -3389,6 +3414,9 @@ def _quote_glob_values(front_matter: str) -> str:
     unquoted, which YAML reads as an alias and rejects. Only those two keys
     (a scalar, a flow list or block list items) are rewritten, so a real alias
     elsewhere is untouched and the bounded loader still parses the result.
+    Lines are split with string methods, not backtracking patterns: the front
+    matter is untrusted, and the scan budget cannot interrupt stdlib ``re``,
+    so a long run of blanks must cost linear time.
     """
 
     def quote(value: str) -> str:
@@ -3398,13 +3426,14 @@ def _quote_glob_values(front_matter: str) -> str:
     in_list = False
     for raw in front_matter.split("\n"):
         line = raw.rstrip("\r")
-        key = _GLOB_KEY.fullmatch(line)
-        if key:
-            name, value = key.groups()
+        head, colon, rest = line.partition(":")
+        name = head.rstrip(" \t")
+        if colon and name in _GLOB_KEYS:
+            value = rest.strip(" \t")
             if value.startswith("#"):
                 value = ""
             elif value.startswith("*"):
-                value = _TRAILING_COMMENT.sub("", value)
+                value = _strip_comment(value)
             in_list = not value
             if value.startswith("*"):
                 raw = f"{name}: {quote(value)}"
@@ -3417,9 +3446,12 @@ def _quote_glob_values(front_matter: str) -> str:
                 items = [item.strip() for item in value[1:-1].split(",")]
                 raw = f"{name}: [{', '.join(quote(i) if i.startswith('*') else i for i in items)}]"
         elif in_list:
-            item = _GLOB_ITEM.fullmatch(_TRAILING_COMMENT.sub("", line))
-            if item:
-                raw = item.group(1) + quote(item.group(2))
+            # A block item is blanks, "-", at least one blank, then the glob.
+            item = _strip_comment(line)
+            body = item.lstrip(" \t")
+            glob = body[1:].lstrip(" \t")
+            if body.startswith("-") and glob.startswith("*") and len(glob) < len(body) - 1:
+                raw = item[: len(item) - len(glob)] + quote(glob.rstrip(" \t"))
             elif line[:1] not in ("", " ", "\t", "-", "#"):
                 in_list = False
         out.append(raw)

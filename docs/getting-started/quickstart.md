@@ -88,6 +88,11 @@ shadowscan diff last-week.json today.json                 # informational: exit 
 shadowscan diff last-week.json today.json --fail-on-new   # exit 2 on new findings or a higher risk level
 ```
 
+`diff` can complete only for local repository scans and offline exports; a
+live API connector or a third-party connector always gives 3, and `gateway.logs`
+does unless both scans were keyed with the same identity key (see
+[scan state](../scanning.md)).
+
 ## Exit codes
 
 | Code | Meaning |

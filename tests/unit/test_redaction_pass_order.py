@@ -95,6 +95,37 @@ MAIN_WITHHELD_FORMS = [
 ]
 
 
+# Withheld before the name passes, an armored PGP private key block took the
+# start of a value that runs past its END line, and the rest of the value
+# was shown. Main (d65b27f) withholds each secret.
+_PGP_BEGIN = "-----BEGIN PGP PRIVATE KEY BLOCK-----"
+_PGP_END = "-----END PGP PRIVATE KEY BLOCK-----"
+MAIN_WITHHELD_FORMS += [
+    (f'{_PGP_BEGIN}\npassword: "abc\n{_PGP_END}\n{SECRET}"\n', "quoted mapping value past the block"),
+    (f"{_PGP_BEGIN}\npassword:\n  x\n  {_PGP_END}\n  {SECRET}\n", "indented YAML value past the block"),
+    (f"{_PGP_BEGIN}\nENV GPG_PASSWORD \\\n{_PGP_END} {SECRET}\n", "continued ENV value past the block"),
+    (f"{_PGP_BEGIN}\n<password>abc\n{_PGP_END}\n{SECRET}</password>\n", "element content past the block"),
+    (f'{_PGP_BEGIN}\napi_key = """abc\n{_PGP_END}\n{SECRET}"""\n', "triple-quoted value past the block"),
+    (f"{_PGP_BEGIN}\npassword: [abc,\n{_PGP_END}\n{SECRET}]\n", "bracketed value past the block"),
+]
+
+
+# A value only the last option pass withholds (of an option only the added
+# rules read, such as '--auth' or '--pat', or a quote that never closes) took
+# an option inside it with it, and that option's own value, which main
+# withholds, was shown. Main (d65b27f) withholds each secret.
+MAIN_WITHHELD_FORMS += [
+    (f"--auth x=--pwd {SECRET}", "option glued after '=' in an '--auth' value"),
+    (f"--auth=x=--pwd {SECRET}", "option glued in an inline '--auth' value"),
+    (f"--pat x=--key {SECRET}", "option glued in a '--pat' value"),
+    (f"--passphrase x=a:--pass {SECRET}", "option glued after ':'"),
+    (f"curl --pat \\\n  user%-pass {SECRET}", "single-dash option glued after '%'"),
+    (f"llm --passphrase x#--key {SECRET}", "option glued after '#'"),
+    (f"--pat x[REDACTED]=--pwd {SECRET}", "option glued after a marker"),
+    (f'curl -H "api-key:x docker login --pass \\\n  {SECRET}', "option inside a quote that never closes"),
+]
+
+
 @pytest.mark.parametrize(("source", "rule"), MAIN_WITHHELD_FORMS)
 def test_what_main_withholds_stays_withheld(source, rule):
     assert SECRET in source
