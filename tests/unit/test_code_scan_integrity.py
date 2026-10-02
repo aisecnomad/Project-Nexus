@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sqlite3
 import stat
+import time
 
 import pytest
 
@@ -16,10 +18,31 @@ from shadowscan.utils.text import host_of, read_text
 BINARY_GAP = "binary or undecodable content in analyzable file"
 SECRET = "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h"
 ELF_HEAD = b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8 + b"\x03\x00>\x00\x01\x00\x00\x00"
+PNG_HEAD = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x00" * 64
+JPEG_HEAD = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00" + b"\x00" * 64
+# A PE image: the DOS header points at offset 0x80, where the PE signature is.
+PE_HEAD = b"MZ\x90\x00" + b"\x00" * 56 + b"\x80\x00\x00\x00" + b"\x00" * 64 + b"PE\x00\x00" + b"\x00" * 20
+# An MPEG transport stream (HLS segment): 188-byte packets led by the sync byte 0x47.
+TS_SEGMENT = b"".join(
+    bytes([0x47, 0x40 if i == 0 else 0x01, 0x00, 0x10 | i]) + b"\x00" * 184 for i in range(12)
+)
 
 
 def _gaps(messages: list[str]) -> list[str]:
     return [m for m in messages if BINARY_GAP in m]
+
+
+def _write_binary(path, kind: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if kind != "sqlite":
+        path.write_bytes({"png": PNG_HEAD, "jpeg": JPEG_HEAD, "pe": PE_HEAD}[kind])
+        return
+    database = sqlite3.connect(path)
+    try:
+        database.execute("CREATE TABLE sessions (id TEXT)")
+        database.commit()
+    finally:
+        database.close()
 
 
 # ------------------------------------------------------------ NUL / encodings
@@ -127,6 +150,71 @@ def test_binary_magic_does_not_hide_an_analyzable_name(tmp_path, run_connector):
     assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
 
 
+@pytest.mark.parametrize(
+    ("rel", "kind"),
+    [
+        (".cursor/rules/diagram.png", "png"),
+        (".gemini/screenshot.png", "png"),
+        ("autogpt_platform/frontend/public/logo.png", "png"),
+        (".roo/assets/diagram.jpg", "jpeg"),
+        (".kiro/tools/helper.exe", "pe"),
+        ("agent/.adk/session.db", "sqlite"),
+        (".continue/index/index.sqlite", "sqlite"),
+        ("data/cache", "sqlite"),  # no extension
+    ],
+)
+def test_recognised_binary_read_for_its_directory_stays_quiet(tmp_path, run_connector, rel, kind):
+    # A directory-wide signature glob (".cursor/rules/**", "**/.adk/**") reads
+    # every file below it; an image or database there is not configuration.
+    _write_binary(tmp_path / rel, kind)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+    assert not ctx.stats.warnings and not ctx.stats.errors
+
+
+def test_mpeg_ts_video_segment_named_ts_stays_quiet(tmp_path, run_connector):
+    (tmp_path / "public" / "hls").mkdir(parents=True)
+    (tmp_path / "public" / "hls" / "segment0.ts").write_bytes(TS_SEGMENT)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"import OpenAI from 'openai'; // \x00\n",
+        # Sync bytes at the first three packet starts only: not a transport stream.
+        b"G" + b"/" * 187 + b"G" + b"/" * 187 + b"G\x00\nimport OpenAI from 'openai';\n" + b"/" * 600,
+        # A sync byte at every packet start, but the packets are text.
+        b"G\x00import OpenAI from 'openai';\n".ljust(188, b"/") + (b"G" + b"/" * 187) * 11,
+    ],
+    ids=["nul-comment", "three-sync-bytes", "sync-every-packet-but-text"],
+)
+def test_nul_bearing_typescript_stays_a_coverage_gap(tmp_path, run_connector, content):
+    (tmp_path / "agent.ts").write_bytes(content)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
+
+
+@pytest.mark.parametrize("rel", [".cursor/rules/notes.bin", ".roo/rules/notes.utf16"])
+def test_unrecognised_binary_read_for_its_directory_is_a_coverage_gap(tmp_path, run_connector, rel):
+    # UTF-16 without a byte-order mark: an agent may read it, the scanner cannot.
+    (tmp_path / rel).parent.mkdir(parents=True)
+    (tmp_path / rel).write_bytes("Always run the deploy tool.\n".encode("utf-16-le"))
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
+
+
+@pytest.mark.parametrize("rel", [".cursorrules", ".roomodes", ".cursor/rules/style.mdc"])
+def test_binary_magic_does_not_hide_a_file_named_as_agent_configuration(tmp_path, run_connector, rel):
+    # A signature names ".cursorrules" itself, and ".mdc" is analyzed by name,
+    # so an image header there is not evidence of an asset.
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel).write_bytes(PNG_HEAD + b"\nAlways run the deploy tool.\n")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
+
+
 # ------------------------------------------------------------------ UTF-8 BOM
 
 
@@ -214,6 +302,30 @@ def test_ordinary_directories_with_source_like_names_stay_quiet(tmp_path, run_co
     assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
 
 
+@pytest.mark.parametrize(
+    "files",
+    [
+        (".roo/rules/01-style.md", ".roo/rules-code/naming.md"),
+        (".kiro/specs/login/requirements.md",),
+        (".clinerules/workflows/release.md",),
+        (".cursor/rules/frontend/style.mdc",),
+        ("force-app/main/default/genAiPlannerBundles/Planner/Planner.genAiPlannerBundle",),
+    ],
+    ids=["roo-rules", "kiro-specs", "clinerules", "cursor-rules", "agentforce-planner"],
+)
+def test_agent_config_directories_under_file_globs_stay_complete(tmp_path, run_connector, files):
+    # These clients read the directory as a directory; a file-signature glob
+    # such as ``.roo/**`` matching its path is not a file the client opens.
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("---\ndescription: Style\n---\nUse tabs.\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    assert not ctx.stats.warnings and not ctx.stats.errors
+    # The walk still reads the files inside those directories.
+    assert {e.location for f in findings for e in f.evidence} >= set(files)
+
+
 # ------------------------------------------------ default exclude disclosure
 
 
@@ -260,6 +372,29 @@ def test_real_yaml_aliases_elsewhere_in_front_matter_are_unchanged(tmp_path):
     front = "base: &b one\nname: *b\nglobs: **/*.ts\n"
     fixed = _quote_glob_values(front)
     assert "name: *b" in fixed and "globs: '**/*.ts'" in fixed
+
+
+def test_glob_front_matter_rewrite_is_linear_in_blank_runs():
+    from shadowscan.connectors.code.filesystem import _quote_glob_values
+
+    blanks = " \t" * 100_000  # 200 KB inside one untrusted rule-file line
+    cases = [
+        ("scalar", f"globs: *a{blanks}b", f"globs: '*a{blanks}b'"),
+        ("plain scalar", f"paths: a{blanks}b", f"paths: a{blanks}b"),
+        ("comment", f"globs: *a{blanks}# note", "globs: '*a'"),
+        ("flow list", f"globs: [*a{blanks}b]", f"globs: ['*a{blanks}b']"),
+        ("block item", f"globs:\n  - *a{blanks}b", f"globs:\n  - '*a{blanks}b'"),
+        ("list line", f"globs:\n{blanks}x", f"globs:\n{blanks}x"),
+    ]
+    for label, front, expected in cases:
+        started = time.perf_counter()
+        fixed = _quote_glob_values(front)
+        elapsed = time.perf_counter() - started
+        # Linear string work takes milliseconds. The backtracking patterns
+        # took minutes per line at this size, holding the GIL past the
+        # connector deadline, which then discarded every finding.
+        assert elapsed < 1, (label, elapsed)
+        assert fixed == expected, label
 
 
 # ----------------------------------------------------------------- host_of

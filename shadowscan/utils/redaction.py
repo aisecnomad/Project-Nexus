@@ -28,7 +28,7 @@ import re
 import sys
 import types
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from shadowscan.utils import (
@@ -57,6 +57,7 @@ from shadowscan.utils.redaction_commands import (
     _redact_user_secrets,
 )
 from shadowscan.utils.redaction_formats import (
+    _ADDED_PEM,
     _PEM,
     _URL,
     _redact_authorization,
@@ -206,20 +207,149 @@ def _redact_extended(text: str) -> str:
     text = _redact_reversed_records(text)
     text = _redact_query_text(text)
     text = _redact_extended_options(text)
-    text = _redact_compact_colons(text)
-    text = _redact_opaque_options(text)
+    # A cookie header comes before the compact names: the rest of its line
+    # holds the other cookies, past any ';' the others stop at.
+    headers = _redact_cookie_headers(text)
+    compact = _redact_compact_colons(headers)
+    reshaped = compact != text
+    text = _redact_opaque_options(compact)
     # A bare marker that these passes leave after a sensitive key's colon
     # ('api_key : <opaque>') is read by the established mapping pass as the start
     # of a mapping value; normalize it here so that sanitizing again changes nothing.
-    return _redact_mapping_values(text) if REDACTED in text else text
+    result = _redact_mapping_values(text) if REDACTED in text else text
+    if not reshaped:
+        return result
+    # A cookie header withheld to the end of its line, or a withheld
+    # 'name:value', changes the statement around it for the statement rules:
+    # 'get(url, cookie=a; b=v' loses the ';' that ended the argument, and
+    # 'api_key:a=1; sid=v' becomes 'api_key:"[REDACTED]"; sid=v', an
+    # annotation they read on past the ';'; a bare marker left in an
+    # argument ('get(url, cookie=[REDACTED]') is one they quote. What they
+    # would change there on the next sanitization is changed now.
+    return _redact_mapping_values(_redact_python_assignments(result))
 
 
 def _sanitize_established(text: str) -> str:
-    """The established passes, in their order and with their rules (see ``sanitize_text``)."""
-    text = _checked_text(text)
-    text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
+    """The established passes, in their order and with their rules (see ``sanitize_text``).
+
+    Armored PGP private key blocks are withheld next to the PEM keys, before
+    any pass reads a name (see ``_withhold_key_blocks``).
+    """
+    text = _PEM.sub(_withheld_block, _checked_text(text))
+    blocks = list(_ADDED_PEM.finditer(text))
+    return _withhold_key_blocks(text, blocks) if blocks else _established_passes(text)
+
+
+def _withheld_block(match: re.Match[str]) -> str:
+    """The marker for a private key block, keeping its line breaks so excerpt lines stay aligned."""
+    return REDACTED + "\n" * match.group(0).count("\n")
+
+
+def _withhold_key_blocks(text: str, blocks: list[re.Match[str]]) -> str:
+    """The established passes on ``text``, with its armored PGP private key ``blocks`` withheld first.
+
+    A credential name before a block ('private_key: -----BEGIN PGP ...')
+    made the established rules withhold its BEGIN line, and the extended
+    rule that withholds a block starts at that line: the key's body on the
+    lines after it was shown. Withheld before every name pass, as a PEM key
+    is, the whole block goes and the name before it stays. A value that
+    starts inside a block and runs past its END line ('password: "...' in
+    the block, closed on a later line), though, is withheld by the
+    established order and was shown once the block went first. So the
+    blocks go first only where no line outside them then shows anything the
+    established order withholds (see ``_shows_no_more``). Otherwise the
+    text every pass leaves in the established order is kept up to the line
+    of the first block, and every line from there on is withheld; the
+    established passes then read that text once more, as the next
+    sanitization would.
+    """
+    pieces: list[str] = []
+    cursor = 0
+    for block in blocks:
+        pieces.append(text[cursor : block.start()])
+        pieces.append(_withheld_block(block))
+        cursor = block.end()
+    pieces.append(text[cursor:])
+    first = _established_passes("".join(pieces))
+    kept = _redact_extended(_established_passes(text))
+    if _shows_no_more(text, blocks, kept, _redact_extended(first)):
+        return first
+    lines = kept.split("\n")
+    if len(lines) != text.count("\n") + 1:
+        return REDACTED + "\n" * text.count("\n")
+    start = text.count("\n", 0, blocks[0].start())
+    return _established_passes("\n".join([*lines[:start], REDACTED, *[""] * (len(lines) - start - 1)]))
+
+
+def _shows_no_more(text: str, blocks: list[re.Match[str]], kept: str, shown: str) -> bool:
+    """Whether ``shown`` shows nothing that ``kept`` withholds outside the ``blocks`` of ``text``.
+
+    Every pass keeps the lines of a text, so the two are compared line by
+    line. The lines inside a block are withheld in ``shown``. Any other line
+    must be its line in ``kept`` with at most one more span withheld: the
+    text before one of its markers starts ``kept``'s line and the text after
+    that marker ends it. The marker of a block is on its first line, so the
+    start of its last line, where the rest of the block was, counts as one.
+    The blanks and carriage return that end a line are not compared: the
+    block's marker keeps only the line feeds of the CRLF breaks inside it,
+    and a mapping value withheld in ``kept`` keeps the blanks after it.
+    """
+    kept_lines, shown_lines = kept.split("\n"), shown.split("\n")
+    if not len(kept_lines) == len(shown_lines) == text.count("\n") + 1:
+        return False
+    inside: set[int] = set()
+    ends: set[int] = set()
+    line = position = 0
+    for block in blocks:
+        line += text.count("\n", position, block.start())
+        last = line + block.group().count("\n")
+        inside.update(range(line + 1, last))
+        if last > line:
+            ends.add(last)
+        line, position = last, block.end()
+    return all(
+        index in inside
+        or _line_shows_no_more(kept_line.rstrip(" \t\r"), shown_line.rstrip(" \t\r"), end=index in ends)
+        for index, (kept_line, shown_line) in enumerate(zip(kept_lines, shown_lines, strict=True))
+    )
+
+
+def _line_shows_no_more(kept: str, shown: str, *, end: bool) -> bool:
+    """Whether ``shown`` is ``kept`` with at most one more span withheld (see ``_shows_no_more``).
+
+    ``end`` counts the start of ``shown`` as a marker.
+    """
+    if kept == shown:
+        return True
+    limit = min(len(kept), len(shown))
+    head = _common_length(lambda size: kept[:size] == shown[:size], limit)
+    tail = _common_length(lambda size: kept[len(kept) - size :] == shown[len(shown) - size :], limit)
+    markers = [(0, 0)] if end else []
+    found = shown.find(REDACTED)
+    while found >= 0:
+        markers.append((found, found + len(REDACTED)))
+        found = shown.find(REDACTED, found + len(REDACTED))
+    return any(
+        before <= head and len(shown) - after <= tail and before + len(shown) - after <= len(kept)
+        for before, after in markers
+    )
+
+
+def _common_length(equal: Callable[[int], bool], limit: int) -> int:
+    """The largest size up to ``limit`` for which ``equal`` holds, if it holds for every smaller one."""
+    low, high = 0, limit
+    while low < high:
+        middle = (low + high + 1) // 2
+        if equal(middle):
+            low = middle
+        else:
+            high = middle - 1
+    return low
+
+
+def _established_passes(text: str) -> str:
+    """The established passes that follow the private keys, in their order (see ``_sanitize_established``)."""
     text = _URL.sub(_sanitize_url, text)
-    text = _redact_cookie_headers(text)
     text = _redact_markup_credentials(text)
     text = _redact_flow_records(text, quoted_only=True)
     text = _redact_name_value_pairs(text)
@@ -361,17 +491,22 @@ class _Sanitizer:
             for child in item:
                 self.discover(child, depth + 1, environment=environment)
         elif isinstance(item, (list, tuple)):
-            previous = None
+            previous: Any = None
             for child in item:
-                if isinstance(previous, str) and previous.startswith("-") and "=" not in previous:
-                    if (established and _sensitive_flag(previous.lstrip("-"))) or (
-                        self.extended and _opaque_option(previous) and _opaque_literal(child)
+                # An argv option or value given as bytes is read as its text; the
+                # established pass remembers only text otherwise, and a credential
+                # after a bytes option was shown in a sibling field.
+                option = _plain(previous) if isinstance(previous, (bytes, bytearray)) else previous
+                value = _plain(child) if isinstance(child, (bytes, bytearray)) else child
+                if isinstance(option, str) and option.startswith("-") and "=" not in option:
+                    if (established and _sensitive_flag(option.lstrip("-"))) or (
+                        self.extended and _opaque_option(option) and _opaque_literal(value)
                     ):
                         self.remember(child)
-                elif established and isinstance(child, str) and child.startswith("-") and "=" in child:
+                elif established and isinstance(value, str) and value.startswith("-") and "=" in value:
                     # --api-key=VALUE: the value is a credential to remove from
                     # sibling fields, exactly as for a separate argv entry.
-                    flag, _, flag_value = child.partition("=")
+                    flag, _, flag_value = value.partition("=")
                     if _sensitive_flag(flag.lstrip("-")):
                         self.remember(flag_value)
                 self.discover(child, depth + 1, environment=environment)
