@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import select
 import subprocess
 import sys
 import threading
@@ -32,6 +33,27 @@ def _context(index, **options):
     ctx = ConnectorContext(config={"use_git": True, **options}, index=index)
     ctx.stats = ScanStats(connector="code.filesystem", started_at="2026-10-01T00:00:00Z")
     return ctx
+
+
+def _wait_for_exit_without_reaping(pid: int) -> None:
+    """Block until ``pid`` has exited, leaving it unreaped: the group then holds a zombie."""
+    if hasattr(os, "waitid"):
+        os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
+        return
+    if hasattr(select, "kqueue"):  # Darwin has no os.waitid
+        queue = select.kqueue()
+        try:
+            exit_event = select.kevent(
+                pid,
+                filter=select.KQ_FILTER_PROC,
+                flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                fflags=select.KQ_NOTE_EXIT,
+            )
+            assert queue.control([exit_event], 1, 30), "the child did not exit within 30 seconds"
+        finally:
+            queue.close()
+        return
+    pytest.skip("this platform cannot observe a child's exit without reaping it")
 
 
 def _record_processes(monkeypatch):
@@ -112,11 +134,30 @@ def test_metadata_reader_overflow_from_an_exited_child_keeps_its_diagnostic(inde
     def exited_before_reading(*args, **kwargs):
         proc = original(*args, **kwargs)
         # Wait for the exit without reaping: the group now holds one zombie.
-        os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT)
+        _wait_for_exit_without_reaping(proc.pid)
         return proc
 
     monkeypatch.setattr(git_module.subprocess, "Popen", exited_before_reading)
     command = "import os; os.write(1, b'a' * 1025)"
+    with pytest.raises(MetadataOutputLimitError, match="^git metadata output limit exceeded$"):
+        run_bounded_metadata([sys.executable, "-c", command], safe_git_env(), _context(index), max_bytes=1024)
+    _assert_cleaned(started)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX only")
+def test_metadata_reader_overflow_survives_a_refused_group_signal(index, monkeypatch):
+    """Darwin also refuses killpg() for a group holding a zombie helper while the child runs.
+
+    The child is then killed by pid: the output-limit diagnostic stays and no
+    process is left behind.
+    """
+    started = _record_processes(monkeypatch)
+
+    def refused(pgid, sig):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(git_module.os, "killpg", refused)
+    command = "import os, time; os.write(1, b'a' * 1025); time.sleep(30)"
     with pytest.raises(MetadataOutputLimitError, match="^git metadata output limit exceeded$"):
         run_bounded_metadata([sys.executable, "-c", command], safe_git_env(), _context(index), max_bytes=1024)
     _assert_cleaned(started)

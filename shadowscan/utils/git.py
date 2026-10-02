@@ -213,12 +213,13 @@ def _stop_clone(proc: subprocess.Popen[bytes]) -> None:
         except ProcessLookupError:
             pass
         except PermissionError:
-            # Darwin's killpg() reports EPERM when the group holds only
-            # unreaped zombies, which is the normal state once the child has
-            # exited before the reader stopped. A still-running child that
-            # cannot be signalled is a real failure.
+            # Darwin's killpg() reports EPERM for a group that holds an
+            # unreaped zombie: the child itself once it exited before the
+            # reader stopped, or a helper it spawned while it still runs. The
+            # direct child is ours to signal by pid; the wait below settles
+            # whether it is gone.
             if proc.poll() is None:
-                raise
+                proc.kill()
     else:
         # Windows Popen.kill covers only Git itself; taskkill also requests
         # termination of its transport children. A containing job object is
