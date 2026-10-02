@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import sys
 import threading
+import time
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -196,3 +200,121 @@ cli.main(['run', 'code.filesystem', '--job-deadline-seconds', '0.2'])
     )
     assert marker.read_text() == "discovering"
     assert result.returncode == 3, result.stderr
+
+
+# ------------------------------------------------ the hard exit must not orphan a credentialed clone
+FAKE_CLONE = (
+    "import os,pathlib,sys,time;pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(60)"
+)
+
+
+def _alive(pid: int) -> bool:
+    """Whether *pid* is running; a zombie that no init reaps counts as gone."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[-1].split()[0]
+    except (OSError, IndexError):
+        return True
+    return state not in {"Z", "X"}
+
+
+def _eventually(predicate, seconds=15.0) -> bool:
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
+def test_deadline_watchdog_stops_live_clones_and_deletes_checkouts_before_exiting(tmp_path):
+    from shadowscan.utils.git import register_checkout, run_bounded_clone, unregister_checkout
+
+    class NoDeadline:
+        deadline = None
+
+        def check_deadline(self) -> None:
+            return None
+
+    pidfile = tmp_path / "pid"
+    checkout = tmp_path / "shadowscan-gh-test"
+    (checkout / "repo").mkdir(parents=True)
+    register_checkout(str(checkout))
+    seen: dict[str, bool] = {}
+    exited = threading.Event()
+
+    def exit_probe(code: int) -> None:
+        # What os._exit would be about to abandon: the state at this very moment.
+        seen["clone_running"] = _alive(int(pidfile.read_text()))
+        seen["checkout_exists"] = checkout.exists()
+        exited.set()
+
+    command = [sys.executable, "-c", FAKE_CLONE, str(pidfile)]
+    worker = threading.Thread(
+        target=lambda: _swallow(run_bounded_clone, command, os.environ.copy(), NoDeadline(), 60)
+    )
+    worker.start()
+    try:
+        assert _eventually(lambda: pidfile.exists() and pidfile.read_text())
+        arm_job_deadline(0.2, _exit=exit_probe)
+        assert exited.wait(15)
+        assert seen == {"clone_running": False, "checkout_exists": False}
+    finally:
+        from shadowscan.utils import git as git_module
+
+        git_module._INTERRUPTED.clear()
+        unregister_checkout(str(checkout))
+        worker.join(15)
+
+
+def _swallow(function, *args) -> None:
+    try:
+        function(*args)
+    except Exception:  # noqa: BLE001 - the clone is stopped on purpose
+        pass
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
+def test_job_deadline_exit_leaves_no_clone_process_or_checkout(tmp_path):
+    """The orphaned-clone defect: os._exit left git running, token in its environment, checkout on disk."""
+    script = """
+import os, sys, time
+from shadowscan.utils.deadline import arm_job_deadline
+from shadowscan.utils.git import register_checkout, run_bounded_clone
+
+class Ctx:
+    deadline = None
+    def check_deadline(self):
+        pass
+
+pidfile, checkout = sys.argv[1], sys.argv[2]
+register_checkout(checkout)
+arm_job_deadline(0.5)
+try:
+    run_bounded_clone([sys.executable, '-c', sys.argv[3], pidfile], dict(os.environ), Ctx(), 120)
+except Exception:
+    pass
+time.sleep(60)  # the stand-in for a scan that is still busy when the deadline passes
+"""
+    pidfile = tmp_path / "pid"
+    checkout = tmp_path / "shadowscan-gh-test"
+    (checkout / "repo").mkdir(parents=True)
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(pidfile), str(checkout), FAKE_CLONE],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    clone_pid = int(pidfile.read_text())
+    try:
+        assert result.returncode == 3, result.stderr
+        assert _eventually(lambda: not _alive(clone_pid), 5), "git outlived the scanner"
+        assert not checkout.exists()
+    finally:
+        if _alive(clone_pid):
+            os.killpg(clone_pid, signal.SIGKILL)

@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import re
+import shutil
 import signal
 import stat
 import subprocess
+import threading
 import time
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 _OBJECT_ID_RX = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 
 if TYPE_CHECKING:
+    from types import FrameType
+
     from shadowscan.connectors.base import ConnectorContext
 
 # Git refname rules we accept from untrusted API JSON. Hierarchical names
@@ -29,7 +35,23 @@ class CloneSizeError(RuntimeError):
     """The checkout exceeds its observed size budget or cannot be measured."""
 
 
+class CloneInterruptedError(RuntimeError):
+    """A termination signal or hard exit stopped the clones; no new clone may start."""
+
+
 _MAX_CLONE_ENTRIES = 100_000
+
+# Clones and temporary checkouts this process owns right now. A termination
+# signal or a hard exit (``os._exit``) skips the ``finally`` blocks that stop
+# git and delete the checkout; git would otherwise keep running in its own
+# session, unbounded, with the clone credential in its environment. Single
+# dict and set operations are atomic under the GIL, so no lock is needed and
+# the signal-handler and watchdog paths can never block on one.
+_ACTIVE_CLONES: set[subprocess.Popen[bytes]] = set()
+_ACTIVE_CHECKOUTS: set[str] = set()
+_INTERRUPTED = threading.Event()
+_CLEANUP_BUDGET_SECONDS = 3.0
+_TERMINATION_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP")
 
 
 def _clone_disk_usage(root: str, max_bytes: int) -> int:
@@ -108,12 +130,8 @@ def clone_limits(max_bytes: Any, timeout: Any) -> tuple[int, float]:
     return max_value, timeout_value
 
 
-def _stop_clone(proc: subprocess.Popen[bytes]) -> None:
-    """Stop Git and its HTTPS transport subprocesses before API fallback.
-
-    Git launches ``git-remote-https`` as a child. Killing only the Git parent
-    can leave that transport downloading after the scanner has moved on.
-    """
+def _signal_clone_group(proc: subprocess.Popen[bytes]) -> None:
+    """Kill Git and its HTTPS transport subprocesses without waiting for them."""
     if os.name == "posix":
         try:
             os.killpg(proc.pid, signal.SIGKILL)
@@ -137,11 +155,121 @@ def _stop_clone(proc: subprocess.Popen[bytes]) -> None:
                 pass
             if proc.poll() is None:
                 proc.kill()
+
+
+def _stop_clone(proc: subprocess.Popen[bytes]) -> None:
+    """Stop Git and its HTTPS transport subprocesses before API fallback.
+
+    Git launches ``git-remote-https`` as a child. Killing only the Git parent
+    can leave that transport downloading after the scanner has moved on.
+    """
+    _signal_clone_group(proc)
     try:
         proc.wait(timeout=2)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=2)
+
+
+def register_checkout(path: str) -> None:
+    """Record a temporary checkout so an interrupted process can delete it."""
+    _ACTIVE_CHECKOUTS.add(path)
+
+
+def unregister_checkout(path: str) -> None:
+    """Forget a checkout the caller has removed itself."""
+    _ACTIVE_CHECKOUTS.discard(path)
+
+
+def terminate_active_clones(budget: float = _CLEANUP_BUDGET_SECONDS, *, refuse_new: bool = True) -> None:
+    """Stop every live clone and delete the recorded checkouts; the process is ending.
+
+    For the termination-signal handler and the job-deadline watchdog, whose
+    exits skip the ``finally`` blocks that normally do this. Callable from any
+    thread or signal handler; never raises and never waits longer than
+    *budget* seconds. Unless *refuse_new* is false, no new clone starts
+    afterwards (``CloneInterruptedError``): a worker that outlives the call
+    must not spawn the clone that the exit would then orphan.
+    """
+    if refuse_new:
+        _INTERRUPTED.set()
+    deadline = time.monotonic() + max(0.0, budget)
+    procs = list(_ACTIVE_CLONES)
+    checkouts = sorted(_ACTIVE_CHECKOUTS)
+    for proc in procs:
+        with contextlib.suppress(Exception):
+            _signal_clone_group(proc)
+    for proc in procs:
+        # Reap what we can so git is gone before its checkout is deleted.
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=max(0.0, min(0.5, deadline - time.monotonic())))
+    if not checkouts:
+        return
+
+    def remove() -> None:
+        for path in checkouts:
+            shutil.rmtree(path, ignore_errors=True)
+
+    # A large checkout must not hold a hard exit past its budget.
+    remover = threading.Thread(target=remove, name="shadowscan-checkout-cleanup", daemon=True)
+    with contextlib.suppress(Exception):
+        remover.start()
+        remover.join(max(0.0, deadline - time.monotonic()))
+
+
+class _TerminationHandler:
+    """Stop the clones, then let the signal take the effect it would have had."""
+
+    def __init__(self, previous: Any) -> None:
+        self.previous = previous
+
+    def __call__(self, signum: int, frame: FrameType | None) -> None:
+        terminate_active_clones()
+        if callable(self.previous):
+            self.previous(signum, frame)
+            return
+        # Default disposition: end the process by the same signal.
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+
+@contextlib.contextmanager
+def terminate_clones_on_signal() -> Iterator[None]:
+    """Make SIGINT, SIGTERM and SIGHUP stop live clones before they take effect.
+
+    The previous handler runs afterwards and is restored on exit. Python runs
+    signal handlers only on the main thread, while connectors run on worker
+    threads: a command must enter this on its main thread around the scan.
+    Elsewhere, and for a signal that is ignored or handled outside Python,
+    it changes nothing.
+    """
+    installed: dict[int, Any] = {}
+    if threading.current_thread() is threading.main_thread():
+        for name in _TERMINATION_SIGNALS:
+            signum = getattr(signal, name, None)
+            if signum is None:
+                continue
+            try:
+                previous = signal.getsignal(signum)
+                if (
+                    previous is None
+                    or previous == signal.SIG_IGN
+                    or isinstance(previous, _TerminationHandler)
+                ):
+                    continue
+                signal.signal(signum, _TerminationHandler(previous))
+            except (OSError, ValueError):
+                continue
+            installed[signum] = previous
+        if installed:
+            # A new guarded run starts clean; a nested guard installs nothing.
+            _INTERRUPTED.clear()
+    try:
+        yield
+    finally:
+        for signum, previous in installed.items():
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(signum, previous)
 
 
 def run_bounded_clone(
@@ -169,49 +297,58 @@ def run_bounded_clone(
         isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1
     ):
         raise ValueError("max_bytes must be a positive integer")
+    if _INTERRUPTED.is_set():
+        raise CloneInterruptedError("clone not started: the scan was interrupted")
     ctx.check_deadline()
     deadline = time.monotonic() + timeout
     if ctx.deadline is not None:
         deadline = min(deadline, ctx.deadline)
-    if os.name == "posix":
-        proc: subprocess.Popen[bytes] = subprocess.Popen(
-            cmd,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    else:
-        proc = subprocess.Popen(
-            cmd,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-        )
-    try:
-        while True:
-            ctx.check_deadline()
-            if destination is not None and max_bytes is not None:
-                _clone_disk_usage(destination, max_bytes)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise CloneTimeoutError("git clone timeout exceeded")
-            try:
-                status = proc.wait(timeout=min(remaining, 0.1))
-            except subprocess.TimeoutExpired:
-                continue
-            ctx.check_deadline()
-            if destination is not None and max_bytes is not None:
-                _clone_disk_usage(destination, max_bytes)
-            if status != 0:
-                _stop_clone(proc)
-            return status == 0
-    except BaseException:
-        _stop_clone(proc)
-        raise
+    with terminate_clones_on_signal():
+        if os.name == "posix":
+            proc: subprocess.Popen[bytes] = subprocess.Popen(
+                cmd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        else:
+            proc = subprocess.Popen(
+                cmd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            )
+        _ACTIVE_CLONES.add(proc)
+        try:
+            while True:
+                ctx.check_deadline()
+                if destination is not None and max_bytes is not None:
+                    _clone_disk_usage(destination, max_bytes)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise CloneTimeoutError("git clone timeout exceeded")
+                try:
+                    status = proc.wait(timeout=min(remaining, 0.1))
+                except subprocess.TimeoutExpired:
+                    continue
+                ctx.check_deadline()
+                if destination is not None and max_bytes is not None:
+                    _clone_disk_usage(destination, max_bytes)
+                if status != 0:
+                    _stop_clone(proc)
+                    if _INTERRUPTED.is_set():
+                        # Stopped by the termination path: not a failed clone to retry through the API.
+                        raise CloneInterruptedError("clone stopped: the scan was interrupted")
+                return status == 0
+        except BaseException:
+            _stop_clone(proc)
+            raise
+        finally:
+            _ACTIVE_CLONES.discard(proc)
 
 
 def exceeds_clone_size(size: object, unit: int, max_bytes: int) -> bool:

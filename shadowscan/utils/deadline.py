@@ -16,6 +16,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from shadowscan.utils.git import terminate_active_clones
+
 JOB_DEADLINE_EXIT_CODE = 3
 JOB_DEADLINE_MESSAGE = (
     "job deadline exceeded; exiting without waiting for blocked workers (scan coverage is incomplete)"
@@ -70,7 +72,13 @@ def arm_job_deadline(
         try:
             threading.Thread(target=_announce, name="shadowscan-deadline-message", daemon=True).start()
         finally:
-            stopper(exit_code)
+            try:
+                # The exit skips every finally block: stop git and delete the
+                # checkouts first, or the clone outlives the scanner.
+                # A replaced exit (tests, embedding) leaves the process alive.
+                terminate_active_clones(refuse_new=_exit is None)
+            finally:
+                stopper(exit_code)
 
     thread = threading.Thread(target=_watch, name="shadowscan-job-deadline", daemon=True)
     thread.start()

@@ -38,7 +38,9 @@ from shadowscan.utils.git import (
     git_argv_prefix,
     has_clone_size_estimate,
     read_git_snapshot,
+    register_checkout,
     run_bounded_clone,
+    unregister_checkout,
     validate_git_ref,
 )
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
@@ -297,6 +299,8 @@ class RemoteRepositoryConnector(BaseConnector):
                 # The scan root check rejects symlinked ancestors; the
                 # default temp directory has one on macOS (/var -> /private/var).
                 tmp = os.path.realpath(tempfile.mkdtemp(prefix=self.temp_prefix, dir=self.ctx.workdir))
+                # A termination signal or hard exit skips the finally below.
+                register_checkout(tmp)
                 local = fetch(repo, tmp)
                 if not local:
                     return
@@ -311,6 +315,7 @@ class RemoteRepositoryConnector(BaseConnector):
         finally:
             if tmp:
                 shutil.rmtree(tmp, ignore_errors=True)
+                unregister_checkout(tmp)
 
     @abstractmethod
     def _filesystem_options(self) -> dict[str, Any]:
