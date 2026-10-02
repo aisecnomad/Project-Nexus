@@ -321,10 +321,10 @@ def _trust_finding(index, trust_policy):
 )
 def test_allowed_bedrock_assume_role_marks_agent_execution_role(index, trust_policy):
     finding, description, stats = _trust_finding(index, trust_policy)
-    assert "bedrock.amazonaws.com" in finding.metadata["trusted_services"]
+    assert any(service == "bedrock.amazonaws.com" for service in finding.metadata["trusted_services"])
     trusted = re.search(r"trusted by (.+?)\. Effective authorization", description)
     assert trusted is not None
-    assert "bedrock.amazonaws.com" in [service.strip() for service in trusted.group(1).split(",")]
+    assert any(service.strip() == "bedrock.amazonaws.com" for service in trusted.group(1).split(","))
     assert "agent-execution-role" in finding.tags and "cloud.aws-bedrock-agents" in finding.frameworks
     assert "Effective authorization is not evaluated." in description
     assert not stats.incomplete
