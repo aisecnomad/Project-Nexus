@@ -50,6 +50,7 @@ from shadowscan.reporters.table import print_table
 from shadowscan.signatures import Match, SignatureIndex, get_index
 from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
 from shadowscan.utils.output import (
+    encodable_text,
     prepare_private_directory,
     terminal_report_text,
     terminal_text,
@@ -119,7 +120,7 @@ def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_r
             except (OverflowError, RecursionError, TypeError, ValueError):
                 raise click.ClickException("could not render report; result data is invalid") from None
     else:
-        click.echo(terminal_report_text(text, fmt))
+        click.echo(encodable_text(terminal_report_text(text, fmt)))
 
 
 def _exit_code(result: ScanResult, fail_on: str | None) -> int:
