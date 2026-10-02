@@ -174,6 +174,10 @@ def repository_target(root: str, path: str) -> Path:
     rel = PurePosixPath(path)
     if not rel.parts or rel.is_absolute() or ".." in rel.parts or "\x00" in path:
         raise ConnectorError("Refusing unsafe repository tree path")
+    # Git never stores a .git entry and refuses to check one out; a tree that names one (in any case, or
+    # with the trailing dots and blanks some file systems ignore) is hostile.
+    if any(part.rstrip(" .").casefold() == ".git" for part in rel.parts):
+        raise ConnectorError("Refusing unsafe repository tree path")
     if "\\" in path or ":" in rel.parts[0]:
         raise UnusualRepositoryPath("Refusing unsafe repository tree path")
     target = (Path(root) / path).resolve()

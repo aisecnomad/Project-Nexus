@@ -196,6 +196,12 @@ submodules; a clone that could not be inspected for either does too.
 An oversized repository or missing/malformed size estimate falls back to sampled
 API mode without launching Git and marks coverage incomplete. A failed clone or
 Git being unavailable for explicit `mode: clone` also marks the scan incomplete.
+A clone also makes Git verify every object it receives (`transfer.fsckObjects`,
+`fetch.fsckObjects`), so a repository with malformed objects fails to clone and
+is scanned through the incomplete API fallback. A clone URL or API link that
+contains whitespace or control characters is refused outright rather than
+cleaned up, and an API tree path with a `.git` component (any case) aborts that
+repository's API snapshot.
 Cloning requires Git 2.32 or newer: the protections that keep a clone on its
 origin and out of local configuration are passed through `GIT_CONFIG_COUNT` and
 `GIT_CONFIG_GLOBAL`, which older versions ignore without an error. With an older

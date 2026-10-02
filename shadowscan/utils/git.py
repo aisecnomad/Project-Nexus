@@ -461,6 +461,10 @@ def clone_environment(origin: str, token: str | None, username: str) -> dict[str
         ("credential.helper", ""),
         ("protocol.allow", "never"),
         ("protocol.https.allow", "always"),
+        # Refuse objects a well-formed repository never contains (a .git or malformed tree entry, a
+        # symlinked .gitmodules, ...) instead of unpacking whatever the remote sends.
+        ("transfer.fsckObjects", "true"),
+        ("fetch.fsckObjects", "true"),
     ]
     extra: dict[str, str] = {}
     if token:
