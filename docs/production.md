@@ -10,6 +10,17 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 2 repository hygiene
+
+Two completeness changes can turn a previously complete scan incomplete
+(exit 3). Agentforce metadata that declares XML entities or attribute defaults
+is no longer parsed: remove the declarations, or exclude the file if it is not
+deployed metadata. A `cloud.oci` record the SDK cannot convert is reported
+instead of being inventoried with missing fields; the message names only the
+exception type, so check that the installed OCI SDK matches the hash lock and
+report the failure if it persists. Embedders that imported the non-strict
+`bounded_safe_load_all` must switch to `strict_bounded_safe_load_all`.
+
 ## October 1 discovery review migration
 
 Review finding kinds, capabilities and risk scores before replacing an existing
